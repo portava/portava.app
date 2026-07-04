@@ -1,0 +1,558 @@
+Run a full SQL/backend database audit for Travel Buddy.
+
+Goal:
+Audit the current backend database layer and produce an exact report of what SQL/database pieces are missing, incomplete, unused, mismatched, or required to make the app’s backend fully support the UI/features already built or planned.
+
+Do not blindly create migrations. Do not run destructive SQL. Do not alter production data. First inspect everything, compare schema vs backend services vs frontend usage, then produce a precise SQL action plan. Only apply tiny safe migrations if explicitly low-risk and required to fix a confirmed compile/runtime blocker.
+
+Primary objective:
+Find:
+- Missing tables
+- Missing columns
+- Missing indexes
+- Missing foreign keys
+- Missing unique constraints
+- Missing RLS policies if Supabase RLS is used
+- Missing enums
+- Missing join tables
+- Missing storage buckets/policies
+- Missing triggers/functions
+- Missing seed data
+- Missing migration entries
+- Tables/columns used by code but absent from SQL
+- SQL objects that exist but no code uses
+- Backend routes/services expecting fields that are not in schema
+- UI features that require database support but do not have it yet
+- SQL commands/migrations needed to fix each gap
+
+Important rules:
+- Be brutally honest.
+- Do not assume a database object exists because TypeScript types mention it.
+- Do not assume a feature is persisted unless schema, backend route, and service usage confirm it.
+- Do not generate destructive SQL such as DROP TABLE, TRUNCATE, or destructive column changes.
+- Do not rename columns without a migration/backfill strategy.
+- Do not weaken privacy/security rules.
+- Do not fake database support by adding frontend-only local storage.
+- Do not modify standalone directly unless the project workflow requires sync from canonical source.
+- Prefer producing an exact migration plan over applying large schema changes in this audit.
+
+Audit sources to inspect:
+1. SQL migrations
+- supabase/migrations
+- artifacts/api-server/supabase/migrations
+- any db/migrations
+- any project migration folders
+- docs/migrations.md
+- migration logs/checklists
+- seed files
+- SQL setup scripts
+
+2. Generated database types
+- Supabase generated types
+- API database model/types
+- frontend database types
+- any manually maintained DB type files
+
+3. Backend API/services
+Inspect every backend route/service that reads or writes database data:
+- auth/profile
+- onboarding
+- Pulse/posts/memories/postcards
+- likes/comments/saves
+- hashtags/tags
+- Discovery
+- Hidden Gems
+- Trips
+- Plans
+- Events
+- Trip Crew
+- Telegraph/messages
+- notifications/activity
+- Compass/recommendations
+- Passport/stamps
+- Trust score
+- verification
+- blocking/reporting/moderation
+- Safe Return/SOS
+- Rent a Buddy
+- media/uploads/storage
+- admin routes
+
+4. Frontend service assumptions
+Inspect frontend services/hooks that call backend or assume database-backed data:
+- trip services
+- discovery services
+- hidden gem services
+- pulse/post services
+- save/bookmark services
+- message services
+- profile/passport services
+- notification services
+- Compass services
+- Safe Return services
+- RAB services
+- map/location/stamp services
+
+5. Tests and fixtures
+Inspect:
+- API tests
+- service tests
+- component tests that mock database data
+- fixture objects
+- fake/mock records
+- local-only stores
+- tests referencing fields not in schema
+- schema expectations hidden inside tests
+
+Feature-by-feature SQL audit:
+
+A. Auth / users / profiles / onboarding
+Check database support for:
+- user profile table
+- display name
+- username/handle
+- avatar/photo
+- bio/about
+- home country
+- verified home country lock
+- city/current city
+- default language
+- spoken languages
+- travel style
+- interests
+- age or age-range support if required
+- verification status
+- trust score
+- profile privacy
+- account status/deactivation
+- created/updated timestamps
+
+Report:
+- Missing columns/tables
+- Backend fields not persisted
+- Onboarding fields dropped
+- Profile edit fields with no DB support
+- Needed SQL
+
+B. Pulse / posts / postcards / memories
+Check database support for:
+- posts table
+- post type/kind
+- postcard/memory variants
+- media attachments
+- video support
+- captions
+- location metadata
+- delayed posting/geofence fields
+- publish_at / release_after_departure
+- privacy settings
+- comment visibility
+- like visibility
+- tagged users
+- hashtags
+- linked trip/place/event/gem
+- likes
+- comments
+- saves/bookmarks
+- shares
+- reports
+- moderation status
+
+Report:
+- Missing join tables
+- Missing counters
+- Missing privacy fields
+- Missing delayed-posting fields
+- Missing indexes
+- Missing SQL commands
+
+C. Discovery / places / Hidden Gems
+Check database support for:
+- hidden gems table
+- places table if separate
+- exact coordinates
+- approximate coordinates
+- sensitivity/privacy level
+- reveal-after-approval fields
+- creator/host ownership
+- approval/moderation status
+- save counts
+- saves/bookmarks
+- popularity counts
+- categories/tags
+- city/country
+- source/provider fields
+- map/open-in-maps safe fields
+- reviews/ratings if UI expects them
+
+Report:
+- Any coordinate leak risks
+- Any fields used in UI/API missing from schema
+- Any privacy rules that need RLS/policies/functions
+- Needed SQL
+
+D. Trips / Plans / Saved Ideas / Itinerary
+Check database support for:
+- trips
+- trip members
+- trip roles
+- trip invites
+- trip privacy
+- saved ideas
+- itinerary items
+- trip stops
+- trip memories
+- linked posts/postcards
+- linked hidden gems
+- linked Discovery places
+- linked Compass recommendations
+- plans/events inside trips
+- RSVP/join/maybe state
+- host controls
+- group chat linkage
+- created/updated timestamps
+- duplicate prevention
+
+Report:
+- Whether Add to Trip/Add to Plan is possible with current schema
+- Missing tables or join tables
+- Needed SQL for saved ideas/itinerary
+- Needed unique constraints/indexes
+
+E. Events / plans
+Check database support for:
+- events table
+- event hosts
+- attendees
+- join requests
+- maybe/RSVP
+- capacity/full state
+- waitlist
+- language/age/gender/group-size filters
+- trust threshold
+- event chat linkage
+- event recommendations
+- status/cancelled/completed
+- location privacy
+- timestamps
+
+Report:
+- UI fields with no schema
+- Backend routes with missing columns
+- Needed SQL
+
+F. Telegraph messaging
+Check database support for:
+- conversations/threads
+- messages
+- participants
+- message requests
+- unknown-user gating
+- accept/decline state
+- read receipts
+- typing/presence if persisted
+- attachments
+- translations
+- original language
+- translated text
+- default language snapshots
+- trip chat linkage
+- event chat linkage
+- circle/group chat linkage
+- blocking/reporting integration
+- AI recommendation messages
+
+Report:
+- What SQL exists
+- What SQL is missing
+- What is needed for auto-translation persistence
+- What is needed for group chats
+- What is needed for message requests
+
+G. Passport / stamps / trust / verification
+Check database support for:
+- passport stamps
+- stamp definitions
+- earned stamps
+- GPS proof
+- source trip/place/postcard/event
+- duplicate prevention
+- stamp artwork/design customization
+- verification records
+- ID verification status
+- trust score events
+- trust score current value
+- penalties
+- review/audit log
+
+Report:
+- Visual-only stamp gaps
+- Missing trust-score tables
+- Missing verification fields
+- Needed SQL
+
+H. Safety / Safe Return / reports / blocking
+Check database support for:
+- safe return check-ins
+- check-in schedules
+- missed check-in escalation
+- trusted contacts
+- SOS events
+- emergency logs
+- block list
+- report records
+- moderation actions
+- abuse penalties
+- audit logs
+
+Report:
+- Safety-critical missing tables/fields
+- Missing indexes
+- Missing RLS/policies
+- Needed SQL
+
+I. Rent a Buddy
+Check database support for:
+- buddy profiles
+- listings/services
+- availability
+- bookings
+- booking states
+- active booking
+- deposits/payments placeholders
+- reviews
+- safety boundaries
+- SOS linkage
+- disputes
+- reports
+- ratings
+
+Report:
+- What is shell-only
+- What database support is missing
+- Needed SQL, but do not build payment schema unless already planned and required
+
+J. Notifications / activity center
+Check database support for:
+- notifications
+- activity feed
+- notification preferences
+- unread state
+- push tokens
+- device tokens
+- deep link target
+- actor/user linkage
+- entity type/entity id
+- read_at
+- created_at
+
+Report:
+- Missing notification tables/fields
+- Missing indexes
+- Needed SQL
+
+K. Compass AI / recommendations
+Check database support for:
+- recommendation logs
+- user preference snapshots
+- recommendation source inputs
+- recommendation explanations
+- hidden gem/place/event/trip recommendations
+- Telegraph recommendation injection
+- dismissed/saved/clicked recommendation state
+- model/provider metadata if applicable
+
+Report:
+- Whether recommendations can be audited/explained
+- Whether saved/dismissed state persists
+- Needed SQL
+
+L. Media/storage
+Check database/storage support for:
+- media attachments table
+- file metadata
+- owner id
+- linked entity
+- mime type
+- size
+- duration
+- width/height
+- storage bucket names
+- storage policies
+- thumbnails
+- moderation status
+- failed upload state
+
+Report:
+- Missing storage buckets/policies if visible in config
+- Missing media metadata fields
+- Needed SQL/storage policy changes
+
+M. Admin/moderation
+Check database support for:
+- admin roles
+- role grants
+- moderation queue
+- content reports
+- verification queue
+- hidden gem approval queue
+- admin audit logs
+- feature flags
+- app config
+- metrics/events
+
+Report:
+- Missing role checks at DB level
+- Missing admin audit tables
+- Needed SQL
+
+Cross-check requirements:
+1. Code-to-SQL mapping
+Create a mapping table:
+- File/service
+- Table expected
+- Columns expected
+- SQL object exists? yes/no
+- Mismatch found
+- Risk
+- Required migration
+
+2. UI-to-SQL mapping
+Create a mapping table:
+- UI screen/component
+- User-visible feature
+- Database support exists? yes/no/partial
+- Backend route exists? yes/no/partial
+- Persistence real? yes/no/local-only/mock
+- Required SQL
+
+3. Table health report
+For every major table found, report:
+- Purpose
+- Primary key
+- Foreign keys
+- Indexes
+- Unique constraints
+- RLS/policies if any
+- Used by which backend files
+- Used by which UI features
+- Missing indexes or constraints
+- Risk level
+
+4. Missing SQL action plan
+Produce SQL/migration recommendations grouped by priority:
+
+Priority 0 — Critical security/privacy/safety
+Examples:
+- protected coordinate leakage
+- missing owner/user foreign keys
+- missing RLS policy for user-private data
+- missing report/block tables for visible safety UI
+- missing session-sensitive user scoping
+
+Priority 1 — Visible UI currently needs persistence
+Examples:
+- Add to Trip / saved ideas
+- likes/comments/saves
+- message requests
+- trip invites
+- profile onboarding fields
+- hidden gem saves
+
+Priority 2 — Backend functions exist but schema incomplete
+Examples:
+- service writes fields that do not exist
+- API returns fields not persisted
+- tests mock fields absent in DB
+
+Priority 3 — Performance/integrity
+Examples:
+- missing indexes
+- missing unique constraints
+- duplicate prevention
+- missing cascade behavior
+- missing updated_at triggers
+
+Priority 4 — Future feature support
+Examples:
+- Compass logs
+- advanced stamp artwork
+- RAB payments placeholder
+- recommendation analytics
+
+5. SQL command output
+For every recommended migration, provide:
+- Migration filename suggestion, e.g. 0094_add_trip_saved_ideas.sql
+- Purpose
+- Dependencies
+- Safe SQL draft
+- Backfill needs
+- Rollback notes
+- Test plan
+
+SQL draft rules:
+- Use CREATE TABLE IF NOT EXISTS where safe.
+- Use ALTER TABLE ... ADD COLUMN IF NOT EXISTS where safe.
+- Add indexes with CREATE INDEX IF NOT EXISTS.
+- Add unique constraints carefully.
+- Do not include destructive drops.
+- Do not include broad permissive RLS policies.
+- If RLS is used, propose conservative owner/member policies.
+- If a policy cannot be safely inferred, mark it “needs owner decision” instead of guessing.
+- Include comments explaining each migration.
+- Include timestamps/created_at/updated_at where appropriate.
+- Include updated_at trigger/function only if the project already uses that pattern; otherwise report the missing pattern.
+
+6. Validation plan
+For each SQL recommendation, include how to validate:
+- Type generation needed?
+- API tests to add/update
+- Frontend services affected
+- Manual QA steps
+- Privacy checks
+- Duplicate prevention checks
+
+7. Final deliverable
+Produce a database audit report with these sections:
+A. Executive summary
+B. Current migration/schema inventory
+C. Tables confirmed working
+D. Tables partially used or mismatched
+E. Missing tables
+F. Missing columns
+G. Missing indexes/constraints
+H. Missing RLS/policies/security rules
+I. UI features blocked by missing SQL
+J. Backend routes/services blocked by missing SQL
+K. SQL objects that exist but appear unused
+L. Code-to-SQL mismatch table
+M. UI-to-SQL mismatch table
+N. Prioritized SQL migration plan
+O. Draft SQL commands for each recommended migration
+P. Backfill/rollback notes
+Q. Tests needed after migrations
+R. Risks and owner decisions needed
+S. Recommended next database task
+
+8. Safe fixes during this audit
+Do not apply large migrations automatically.
+
+Allowed only if tiny and clearly safe:
+- Update documentation to correct stale migration inventory.
+- Add missing migration log entry if the migration file already exists.
+- Add a harmless index only if there is an existing pattern and no risk.
+- Fix a generated type reference only if it is clearly stale and generation command exists.
+
+Otherwise, report the SQL commands but do not run them.
+
+Validation required if any file changes:
+- Root typecheck
+- Standalone typecheck if frontend files touched
+- API server typecheck if backend files touched
+- Existing API tests if backend touched
+- Source drift check
+- Dependency drift check
+- test-sync-standalone.sh if canonical/standalone files touched
+
+Final instruction:
+This is an audit and SQL plan task. The main deliverable is the exact list of missing backend/database pieces and the SQL migrations needed. Do not start building all migrations unless I explicitly approve the SQL plan afterward.

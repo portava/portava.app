@@ -21,6 +21,7 @@ import {
   FlatList,
   StyleSheet,
   KeyboardAvoidingView,
+  Keyboard,
   Platform,
   Image,
   ActivityIndicator,
@@ -519,6 +520,7 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
   return (
     <LikeHitSlopCtx.Provider value={12}>
     <AuthorPressCtx.Provider value={setPreviewHandle}>
+      <Pressable onPress={() => Keyboard.dismiss()} accessible={false}>
       <View style={sec.wrap}>
         {loading ? (
           <View style={sec.center}>
@@ -611,6 +613,7 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
           </View>
         )}
       </View>
+      </Pressable>
 
       <ProfilePreviewCard
         username={previewHandle}
@@ -848,6 +851,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
               showsVerticalScrollIndicator={false}
               style={s.list}
               keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
             />
           )}
 
