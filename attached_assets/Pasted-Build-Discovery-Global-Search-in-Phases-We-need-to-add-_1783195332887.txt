@@ -1,0 +1,962 @@
+Build Discovery Global Search in Phases
+
+We need to add a complete global search system to Travel Buddy. Do this in careful phases so nothing is missed. This should not be rushed into one messy patch.
+
+Core goal:
+Discovery should have a search bar at the top. When tapped, it opens a dedicated blank Search screen. The Search screen stays blank until the user starts typing. Once the user types 2+ characters, results auto-populate from the real backend across travelers, users, buddies, events, trips, plans, hashtags, places, hidden gems, circles, posts, stamps, activities, cities, countries, languages, interests, and vibes.
+
+Do not use fake local data. Do not create separate search truth. Search must use backend/database truth and respect privacy, access, blocked users, muted users, age limits, and invite-only/private content rules.
+
+PHASE 1 — Discovery Entry Point UI
+
+Goal:
+Add the search entry point to the top of the Discovery page without changing the rest of Discovery.
+
+Tasks:
+- Add a full-width search bar at the top of the Discovery page.
+- Placeholder text: “Search travelers, trips, events, places, or hashtags”
+- Search bar should match the current app design.
+- Include a search icon on the left.
+- Keep proper mobile-safe padding.
+- Do not show inline results on Discovery.
+- Tapping the search bar should navigate to a dedicated Search screen.
+- Discovery content should still load normally below the search bar.
+- Back navigation from Search should return to Discovery without breaking Discovery scroll state if possible.
+
+Validation:
+- Discovery still loads.
+- Search bar appears at the top.
+- Tapping the bar opens the Search screen.
+- No existing Discovery sections break.
+
+PHASE 2 — Dedicated Blank Search Screen
+
+Goal:
+Create the focused Search screen.
+
+Tasks:
+- Create a new Search page/screen.
+- Add a search input at the top.
+- Auto-focus the input when the screen opens.
+- Show a back or close button to return to Discovery.
+- The page must be blank under the search input by default.
+- Do not show fake suggestions.
+- Do not show trending results yet.
+- Do not show recent searches yet unless real history already exists.
+- If input is empty, keep the page blank.
+- If the user clears the input, return to blank state.
+
+Validation:
+- Search screen opens from Discovery.
+- Keyboard focuses automatically.
+- Screen is blank before typing.
+- Clearing the input returns to blank state.
+- Back button returns to Discovery.
+
+PHASE 3 — Search State, Debounce, and Client Behavior
+
+Goal:
+Wire clean frontend search behavior before adding the full backend.
+
+Tasks:
+- Maintain local search query state.
+- Minimum query length: 2 characters.
+- Debounce input by 300ms.
+- Do not call backend on every keystroke.
+- Do not call backend for empty or 1-character queries.
+- Auto-populate results as the user types after the debounce.
+- No manual search button required.
+- Add loading state only after a valid query starts.
+- Add empty state only after a valid query returns no results.
+- Add error state only after a valid query fails.
+- Loading message: small spinner or subtle loading row.
+- Empty message: “No results found.”
+- Error message: “Couldn’t search right now. Try again.”
+
+Validation:
+- No backend call before 2 characters.
+- Debounced search works.
+- Loading state appears only for valid query.
+- Empty/error states do not show on blank screen.
+- Clearing input cancels/clears results.
+
+PHASE 4 — Backend Search Endpoint Contract
+
+Goal:
+Create one unified backend search endpoint.
+
+Suggested route:
+GET /api/discovery/search?q=&type=&cursor=&limit=
+
+Supported type values:
+- all
+- travelers
+- users
+- buddies
+- events
+- trips
+- plans
+- hashtags
+- places
+- hidden_gems
+- circles
+- posts
+- postcards
+- stamps
+- activities
+- cities
+- countries
+- languages
+- interests
+- vibes
+
+Tasks:
+- Create or connect one unified backend endpoint.
+- Validate query length server-side.
+- Validate type server-side.
+- Sanitize query input.
+- Prevent SQL injection.
+- Enforce access control on the backend, not just frontend.
+- Never return private fields.
+- Never return hidden safety fields.
+- Never rely on frontend filtering for privacy.
+- Add pagination/cursor support.
+- Add limit support.
+- Default limit should be reasonable for mobile, such as 20.
+- Do not return entire tables.
+
+Validation:
+- Endpoint rejects invalid type.
+- Endpoint does not search for empty query.
+- Endpoint does not expose private data.
+- Endpoint returns paginated data.
+- Endpoint works for type=all and type-specific searches.
+
+PHASE 5 — Unified Result Shape
+
+Goal:
+All result types should return a consistent frontend-friendly shape.
+
+Every result should include:
+- id
+- type
+- title
+- subtitle
+- imageUrl or avatarUrl
+- fallbackInitials if no image
+- locationPreview
+- matchedReason, if useful
+- actionState
+- privacyState
+- accessState
+- destinationRoute
+- metadata needed for rendering only
+- createdAt or startsAt where relevant
+
+Result type labels:
+- Traveler
+- User
+- Buddy
+- Event
+- Trip
+- Plan
+- Place
+- Hidden Gem
+- Hashtag
+- Post
+- Postcard
+- Circle
+- Stamp
+- Activity
+- City
+- Country
+- Language
+- Interest
+- Vibe
+
+Examples of matchedReason:
+- “Matches username”
+- “Event in Siargao tonight”
+- “Trip open to join”
+- “Hashtag used in 42 posts”
+- “Buddy speaks English and Tagalog”
+- “Place near General Luna”
+- “Post tagged #solotravel”
+
+Validation:
+- Frontend can render all result types from one shape.
+- No result type requires fake local mapping.
+- Bad/missing optional fields do not crash the UI.
+
+PHASE 6 — Search Category Coverage
+
+Goal:
+Search across the Travel Buddy ecosystem.
+
+Search matching rules:
+
+Travelers / Users:
+- display name
+- username
+- handle
+- city
+- home country
+- interests
+- languages
+- vibes
+- verified/trust status, for ranking only
+
+Buddies:
+- display name
+- username
+- buddy categories
+- city
+- country
+- availability
+- interests
+- languages
+- vibes
+
+Events:
+- title
+- description
+- city
+- venue
+- category
+- tags
+- host
+- date/time
+- vibe
+- language
+- open/joinable status
+
+Trips:
+- title
+- destination
+- dates
+- host
+- tags
+- vibe
+- open-to-join status
+- itinerary keywords
+
+Plans:
+- title
+- description
+- city
+- date/time
+- category
+- host
+- tags
+- open/maybe/attending status
+
+Places / Venues:
+- name
+- city
+- country
+- category
+- tags
+- description
+- venue type
+
+Hidden Gems:
+- name
+- description
+- city
+- country
+- tags
+- category
+- creator, if public-safe
+
+Hashtags:
+- hashtag text
+- related post count
+- related city
+- related event/trip/place usage
+
+Pulse Posts / Postcards:
+- caption
+- hashtags
+- tagged places
+- tagged users
+- city
+- public content only
+
+Circles / Groups:
+- name
+- city
+- vibe
+- language
+- category
+- description
+- public/open status
+
+Passport Stamps:
+- city
+- country
+- place
+- event
+- trip
+- stamp label
+
+Activities:
+- category
+- title
+- city
+- tags
+- vibe
+
+Cities / Destinations:
+- city name
+- country
+- aliases
+- common misspellings where possible
+
+Countries / Regions:
+- country name
+- region
+- city matches
+
+Languages:
+- language name
+- users/events/buddies connected to language
+
+Interests / Vibes:
+- interest label
+- vibe label
+- connected users/events/trips/places
+
+Validation:
+- Search works for names.
+- Search works for usernames.
+- Search works for cities.
+- Search works for hashtags.
+- Search works for events.
+- Search works for trips.
+- Search works for places.
+- Search works for buddies.
+- Search works for posts.
+- Search works for circles where allowed.
+
+PHASE 7 — Result UI Rendering
+
+Goal:
+Show clean grouped results on the Search screen.
+
+Tasks:
+- Once a valid query exists, show filter tabs:
+  - All
+  - Travelers
+  - Events
+  - Trips
+  - Places
+  - Hashtags
+- Default tab: All.
+- In All, show mixed results grouped or clearly labeled by type.
+- Each result row/card should show:
+  - image/avatar/icon
+  - title/name
+  - subtitle
+  - location preview when relevant
+  - result type label
+  - matched reason when useful
+  - action button when appropriate
+- Use shared avatar/profile component for users.
+- Circle profile pictures should appear beside user names.
+- If no avatar, show initials/monogram fallback.
+- Keep layout mobile-friendly.
+- Avoid crowding the screen.
+
+Validation:
+- Mixed All results render clearly.
+- Type-specific tabs filter correctly.
+- User avatars are consistent with the rest of app.
+- Missing images do not break layout.
+- Result labels are clear.
+
+PHASE 8 — Navigation From Results
+
+Goal:
+Every result should open the right destination.
+
+Navigation rules:
+- Traveler/user opens public Passport/profile.
+- Buddy opens buddy profile or Rent a Buddy detail.
+- Event opens event detail.
+- Trip opens trip detail.
+- Plan opens plan detail.
+- Place opens place detail.
+- Hidden gem opens hidden gem/place detail.
+- Hashtag opens hashtag feed.
+- Post/Postcard opens post detail.
+- Circle opens circle detail if viewer has access.
+- Stamp opens stamp detail or related Passport/stamp page.
+- Activity opens activity category/details.
+- City opens destination/city page.
+- Country opens country/destination page.
+- Language opens filtered language result page or search filter.
+- Interest/vibe opens filtered result page or search filter.
+
+Back behavior:
+- Opening a result then going back should return to the same search query and same results.
+- Search screen should not reset unnecessarily.
+- Discovery scroll state should remain stable when returning from Search.
+
+Validation:
+- Every result type routes correctly.
+- Back returns to same query/results.
+- Restricted result routes do not expose private screens.
+
+PHASE 9 — Real Action States
+
+Goal:
+Search results should show the same truth as detail pages.
+
+Possible actions:
+- Follow
+- Request Sent
+- Following
+- Request Buddy
+- Open Telegraph
+- Join
+- Requested
+- Attending
+- Maybe
+- Save
+- Saved
+- Request to Join
+- Share
+
+Rules:
+- Action states must come from backend truth.
+- Do not create fake/local action truth.
+- Follow state in search must match Passport page.
+- Join state in search must match event/trip detail.
+- Save state in search must match place/post detail.
+- Private users should show request behavior instead of instant follow.
+- Invite-only trips/events/circles should show request/access state, not direct join.
+
+Validation:
+- Following a user updates state correctly.
+- Private user follow becomes Request Sent.
+- Joining/saving/maybe actions match detail pages.
+- Search results do not drift from backend truth.
+
+PHASE 10 — Privacy, Safety, and Access Control
+
+Goal:
+Search must never leak private information.
+
+Backend must hide or limit:
+- private exact location
+- emails
+- phone numbers
+- verification details
+- safety fields
+- emergency contact fields
+- private account settings
+- blocked users
+- users who blocked viewer
+- muted/hidden users if app rules require hiding
+- banned accounts
+- suspended accounts
+- deleted accounts
+- incomplete onboarding accounts unless intentionally allowed
+- private trips unless viewer has access
+- private circles unless viewer has access
+- private posts unless viewer has access
+- invite-only events unless viewer has access or preview is allowed
+- age-restricted events for ineligible users
+- reported/removed/moderation-hidden content
+
+Private profile preview:
+- avatar
+- display name
+- username
+- very limited basic location only if allowed
+- follow/request button
+- no sensitive profile details
+
+Validation:
+- Blocked users do not appear.
+- Users who blocked viewer do not appear.
+- Private content does not appear unless viewer has access.
+- Invite-only content respects permissions.
+- Age-restricted content respects eligibility.
+- No private fields are returned by endpoint.
+
+PHASE 11 — Ranking Logic
+
+Goal:
+Results should feel smart and not random.
+
+Ranking priority:
+1. Exact username/handle match
+2. Exact title/name match
+3. Exact hashtag match
+4. Prefix match
+5. Strong keyword match
+6. Nearby relevance
+7. Upcoming events/trips/plans
+8. Mutual connections
+9. Shared interests/vibes
+10. Language match
+11. Verified/trust status
+12. Fresh activity
+13. Popularity
+14. User’s saved/attending/following history
+
+Important:
+- Searching @username should rank that exact user first.
+- Searching a city should surface city, events, trips, places, buddies, and posts related to that city.
+- Upcoming events should rank above old events.
+- Active users/content should rank above stale content.
+- Do not rank unsafe or unauthorized results.
+
+Validation:
+- Exact username appears first.
+- Exact hashtag appears first.
+- Upcoming events rank above past events.
+- Nearby results rank better when location context exists.
+- Private/blocked content never ranks because it is not returned.
+
+PHASE 12 — Typo Tolerance and Aliases
+
+Goal:
+Search should handle common travel misspellings.
+
+Tasks:
+- Add typo-tolerant matching where reasonable.
+- Add common city/place aliases if the app already supports them.
+- Support common misspellings:
+  - siargou → Siargao
+  - manilla → Manila
+  - tokoyo → Tokyo
+  - cebu city / cebu → Cebu
+  - general luna / GL → General Luna where safe
+- Do not overcomplicate if full fuzzy search is not available yet.
+- Start with database-supported fuzzy search or normalized alias tables if available.
+
+Validation:
+- Common misspellings still find correct destination/results.
+- Typo matching does not expose private data.
+- Exact matches still rank above fuzzy matches.
+
+PHASE 13 — Nearby and Location-Aware Search
+
+Goal:
+Support nearby intent safely.
+
+Examples:
+- “events near me”
+- “buddies near me”
+- “bars near me”
+- “food near me”
+- “trips leaving from Manila”
+- “food near General Luna”
+
+Rules:
+- Do not request location just because user opens Search.
+- Only use location if permission already exists or user explicitly searches nearby.
+- If location permission is off, text search should still work.
+- If nearby intent is detected and location is unavailable, show a gentle prompt/action to enable location or enter a city.
+- Never expose a user’s exact live location in results.
+
+Validation:
+- Search works without location permission.
+- Nearby search works when location permission exists.
+- Nearby search handles no-location state safely.
+- No exact private location leaks.
+
+PHASE 14 — Time-Based Search
+
+Goal:
+Support travel/event timing phrases.
+
+Examples:
+- “tonight”
+- “tomorrow”
+- “this weekend”
+- “next week”
+- “events tonight in Cebu”
+- “trips this weekend”
+- “plans tomorrow in Manila”
+
+Tasks:
+- Parse simple time intent.
+- Apply time filters to events, trips, and plans.
+- Keep timezone handling consistent with the app.
+- Past events should rank lower or be hidden depending on current app rules.
+
+Validation:
+- “tonight” returns relevant events/plans.
+- “this weekend” returns weekend events/trips/plans.
+- Time search does not affect unrelated categories incorrectly.
+
+PHASE 15 — Natural-Language Intent Search
+
+Goal:
+Later-ready smart search that understands phrases.
+
+Examples:
+- “people who speak Spanish in Tokyo”
+- “nightlife events tonight in Manila”
+- “solo travelers going to Siargao”
+- “female buddies in Cebu who speak English”
+- “beach plans tomorrow”
+- “food crawl this weekend”
+
+Tasks:
+- Implement basic intent parsing if existing app intelligence supports it.
+- Otherwise structure backend/frontend so Compass can be added later.
+- Detect category, location, date/time, language, vibe, and activity intent.
+- Return normal search results, not a separate fake AI result set.
+
+Validation:
+- Natural phrases produce relevant category/location/time filters where supported.
+- Unsupported phrase still falls back to keyword search.
+
+PHASE 16 — Hashtag Search and Hashtag Feeds
+
+Goal:
+Hashtags should be first-class search results.
+
+Tasks:
+- Search hashtags by exact and partial match.
+- Show hashtag result with post count if available.
+- Show related cities/events/trips if available.
+- Tapping hashtag opens a dedicated hashtag feed.
+- Hashtag feed should show public posts/postcards/trips/events related to that hashtag.
+- Do not show private posts in hashtag feeds.
+
+Validation:
+- #siargao search finds hashtag.
+- Tapping hashtag opens feed.
+- Feed respects privacy.
+- Post counts are real if displayed.
+
+PHASE 17 — Compass Fallback and Empty Recovery
+
+Goal:
+If search has no clear result, help the user recover.
+
+Empty state after valid query:
+- Show “No results found.”
+- Add helpful actions when possible:
+  - “Try a different spelling”
+  - “Search nearby”
+  - “Create an event”
+  - “Ask Compass”
+
+Compass fallback:
+- For broad queries like “I want something fun tonight,” Compass can suggest searches/actions.
+- Do not show fake results.
+- Compass suggestions should lead to real searches or real app actions.
+- Add this only if Compass integration is already available or can be safely connected.
+
+Validation:
+- No-results state appears only after valid query.
+- Suggested actions do not break navigation.
+- Compass suggestions do not create fake search truth.
+
+PHASE 18 — Recent Searches
+
+Goal:
+Add real recent searches only after the user has searched.
+
+Rules:
+- Search screen is blank for users with no search history.
+- After a user searches, store recent searches per user.
+- Show recent searches only when input is empty and real history exists.
+- Allow user to delete one recent search.
+- Allow user to clear all recent searches.
+- Do not store sensitive searches unnecessarily.
+- Consider privacy setting later to disable search history.
+
+Validation:
+- First-time search screen remains blank.
+- Real recent searches appear after actual searches.
+- User can remove one search.
+- User can clear all searches.
+- Clearing input shows recent searches only if real history exists.
+
+PHASE 19 — Trending Searches Later
+
+Goal:
+Prepare for real trending search, but do not fake it.
+
+Rules:
+- Do not add fake trending placeholders.
+- Only show trending searches if backend has real activity data.
+- Trending can include:
+  - trending cities
+  - trending hashtags
+  - trending events
+  - trending places
+  - trending trips
+- Trending can be location-aware when safe.
+- If no real trending data exists, show nothing.
+
+Validation:
+- No fake trending data appears.
+- Trending only appears when backed by real data.
+- Trending respects moderation/privacy.
+
+PHASE 20 — Saved Search Alerts Later
+
+Goal:
+Prepare for future saved search alerts.
+
+Examples:
+- “Notify me when a trip to Japan opens.”
+- “Notify me when a buddy in Cebu is available.”
+- “Notify me about nightlife events in Siargao.”
+
+Tasks:
+- Do not build full alerts unless already in scope.
+- Make search query/type/location/date structure reusable later.
+- Leave clean TODO or interface for saved searches if appropriate.
+
+Validation:
+- Current search works without alerts.
+- Future saved-search work has a clear path.
+
+PHASE 21 — Search Analytics and Abuse Protection
+
+Goal:
+Improve search safely and prevent scraping.
+
+Analytics:
+- Track safe search analytics if the app already has analytics infrastructure.
+- Track:
+  - query text
+  - selected result type
+  - clicked result type
+  - no-result searches
+  - city/context if safe
+  - timestamp
+- Avoid storing sensitive/private data unnecessarily.
+
+Abuse protection:
+- Rate-limit search requests.
+- Prevent empty-query scraping.
+- Keep minimum query length at 2.
+- Consider stricter limits for user/account search.
+- Do not expose full user lists.
+- Do not allow unauthenticated scraping if app requires auth.
+
+Validation:
+- Search cannot be abused to dump users.
+- Endpoint is rate-limited or protected according to app patterns.
+- Analytics do not expose private data.
+
+PHASE 22 — Admin Moderation Controls Later
+
+Goal:
+Search must respect moderation systems.
+
+Search should respect:
+- banned hashtags
+- hidden places
+- reported content
+- removed posts
+- suspended users
+- spam accounts
+- unsafe keywords
+- moderation suppression rules
+
+Tasks:
+- Connect search filtering to existing moderation fields if available.
+- Do not invent a separate moderation truth.
+- If admin moderation search tools exist, ensure suppressed content does not appear.
+- If no admin controls exist yet, document the needed moderation hooks.
+
+Validation:
+- Removed/reported/banned content does not appear in normal search.
+- Search uses existing moderation truth.
+
+PHASE 23 — Performance and Search Indexing
+
+Goal:
+Search should stay fast as the app grows.
+
+Tasks:
+- Do not client-filter huge datasets.
+- Use backend queries with indexes.
+- Add database indexes where needed.
+- Consider normalized searchable text fields.
+- Consider full-text search if database supports it.
+- Paginate results.
+- Avoid heavy joins where possible.
+- Target instant mobile feel.
+
+Potential indexed fields:
+- users: display_name, username, handle, city, country
+- profiles: interests, languages, vibes if searchable
+- events: title, city, category, starts_at, tags
+- trips: title, destination, starts_at, tags
+- places: name, city, category, tags
+- posts: caption, hashtags, city, visibility
+- circles: name, city, category, visibility
+- hashtags: tag, usage_count
+
+Validation:
+- Query plans are reasonable.
+- Search stays fast for common queries.
+- Pagination works.
+- No full-table client loads.
+
+PHASE 24 — Pagination / Infinite Scroll
+
+Goal:
+Search results should scale.
+
+Tasks:
+- Fetch first page quickly.
+- Add cursor or page-based pagination.
+- Load more results as the user scrolls.
+- Prevent duplicate results across pages.
+- Preserve query and selected tab while paginating.
+- Reset pagination when query/type changes.
+
+Validation:
+- First page loads.
+- Scrolling loads more.
+- Changing tabs resets results correctly.
+- Clearing query resets pagination.
+- No duplicate rows.
+
+PHASE 25 — Deep Links and Sharing
+
+Goal:
+Search results should be shareable and route-safe.
+
+Tasks:
+- Every result should have a valid destination route.
+- Supported deep links:
+  - traveler profile
+  - buddy profile
+  - trip
+  - event
+  - place
+  - hashtag
+  - post/postcard
+  - circle if access allowed
+- Share action can be added to supported results.
+- Shared private/invite-only results must still enforce access when opened.
+
+Validation:
+- Deep links open correct pages.
+- Private links do not bypass permissions.
+- Share action uses real route.
+
+PHASE 26 — Tests
+
+Goal:
+Add test coverage so search does not regress.
+
+Add tests for:
+- Discovery search bar appears.
+- Tapping Discovery search opens Search screen.
+- Search screen is blank before typing.
+- Input auto-focuses.
+- Minimum 2-character query.
+- Debounce behavior.
+- Loading state.
+- No-results state.
+- Error state.
+- Clearing input returns to blank/recent state.
+- Mixed All results render.
+- Type tabs filter correctly.
+- Each result type renders.
+- Tapping each result type routes correctly.
+- Follow state matches backend.
+- Private follow shows Request Sent.
+- Join/save/maybe state matches backend.
+- Private profile preview is limited.
+- Private trip/event/circle access is enforced.
+- Blocked users are hidden.
+- Users who blocked viewer are hidden.
+- Deleted/banned/suspended users are hidden.
+- Exact username priority.
+- Exact hashtag priority.
+- Typo-tolerant city search.
+- Time-based search.
+- Nearby search without permission.
+- Nearby search with permission.
+- Pagination/infinite scroll.
+- Backend validation rejects invalid type.
+- Backend does not expose private fields.
+- Failed backend request is handled safely.
+
+Validation:
+- All existing tests still pass.
+- New search tests pass.
+- No unrelated screens regress.
+
+PHASE 27 — Final Manual QA Checklist
+
+Before marking complete, manually verify:
+
+Discovery:
+- Discovery page still loads normally.
+- Search bar is at the top.
+- Search bar opens Search screen.
+- Discovery content remains unchanged.
+
+Blank Search:
+- Search screen starts blank.
+- Keyboard opens automatically.
+- Back button works.
+- Clearing input returns to blank state.
+
+Search:
+- Typing 2+ characters triggers results.
+- Results auto-populate.
+- Results are not fake.
+- Loading/empty/error states work.
+- Tabs work.
+- Pagination works.
+
+Categories:
+- Travelers/users search works.
+- Buddies search works.
+- Events search works.
+- Trips search works.
+- Plans search works.
+- Places search works.
+- Hidden gems search works.
+- Hashtags search works.
+- Posts/postcards search works.
+- Circles search works where allowed.
+- Cities/countries search works.
+- Languages/interests/vibes search works.
+
+Navigation:
+- Every result opens correct page.
+- Back returns to same search.
+- Private/invite-only access is respected.
+
+Actions:
+- Follow works.
+- Request Sent works for private users.
+- Following state is accurate.
+- Join/Maybe/Save states match detail pages.
+- Open Telegraph works only where allowed.
+
+Privacy:
+- No email/phone/private location leaks.
+- Blocked users hidden.
+- Users who blocked viewer hidden.
+- Private content hidden unless viewer has access.
+- Age-restricted content hidden for ineligible users.
+- Deleted/banned/suspended users hidden.
+
+Performance:
+- No giant client-side table loads.
+- Search feels fast.
+- Endpoint is paginated.
+- Backend uses indexes or efficient search strategy.
+
+Deliverable:
+Implement this phased Discovery Global Search system. Complete each phase in order. After each phase, run relevant checks/tests before moving to the next. Keep changes focused and do not rebuild unrelated Discovery features.
