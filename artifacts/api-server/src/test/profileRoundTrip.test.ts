@@ -600,6 +600,82 @@ describe("PATCH → GET /api/me/profile round-trip", () => {
       "name column must not be mutated when the DB write fails");
   });
 
+  it("isPrivate survives a round-trip and is written as is_private in the DB", async () => {
+    const profiles: ProfileRow[] = [
+      { id: ME, name: "Private User", display_name: "Private User", username: "priv_user",
+        bio: null, avatar_url: null, home_city: null, home_country: null,
+        current_city: null, travel_style: null, interests: [], verified: false,
+        verification_status: "unverified", verified_at: null, open_to_meet: false,
+        is_private: false, passport_visibility: "public", cover_photo_url: null,
+        username_updated_at: null, created_at: null, spoken_languages: [],
+        default_language: null, travel_styles: [], travel_pace: null,
+        budget_style: null, travel_group_style: [], looking_for: [],
+        comfort_level: null, availability_tags: [], planning_style: null,
+        public_social_links: {}, preferred_language: null, date_of_birth: null,
+        dob_verified: false, handle: null },
+    ];
+
+    const client = makeClient(profiles);
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const patchRes = await api("/me/profile", {
+      method: "PATCH",
+      body: { isPrivate: true },
+    });
+    const patchBody = await patchRes.json() as any;
+    assert.equal(patchRes.status, 200, `PATCH failed: ${JSON.stringify(patchBody)}`);
+    assert.equal(patchBody.isPrivate, true,
+      "PATCH response must return updated isPrivate");
+
+    const getRes = await api("/me/profile");
+    const getBody = await getRes.json() as any;
+    assert.equal(getRes.status, 200, `GET failed: ${JSON.stringify(getBody)}`);
+    assert.equal(getBody.isPrivate, true,
+      "GET after PATCH must return isPrivate: true, not the stale false");
+
+    assert.equal(profiles[0].is_private, true,
+      "is_private column must be written with the correct DB column name");
+  });
+
+  it("passportVisibility survives a round-trip and is written as passport_visibility in the DB", async () => {
+    const profiles: ProfileRow[] = [
+      { id: ME, name: "Passport User", display_name: "Passport User", username: "passport_user",
+        bio: null, avatar_url: null, home_city: null, home_country: null,
+        current_city: null, travel_style: null, interests: [], verified: false,
+        verification_status: "unverified", verified_at: null, open_to_meet: false,
+        is_private: false, passport_visibility: "public", cover_photo_url: null,
+        username_updated_at: null, created_at: null, spoken_languages: [],
+        default_language: null, travel_styles: [], travel_pace: null,
+        budget_style: null, travel_group_style: [], looking_for: [],
+        comfort_level: null, availability_tags: [], planning_style: null,
+        public_social_links: {}, preferred_language: null, date_of_birth: null,
+        dob_verified: false, handle: null },
+    ];
+
+    const client = makeClient(profiles);
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const patchRes = await api("/me/profile", {
+      method: "PATCH",
+      body: { passportVisibility: "private" },
+    });
+    const patchBody = await patchRes.json() as any;
+    assert.equal(patchRes.status, 200, `PATCH failed: ${JSON.stringify(patchBody)}`);
+    assert.equal(patchBody.passportVisibility, "private",
+      "PATCH response must return updated passportVisibility");
+
+    const getRes = await api("/me/profile");
+    const getBody = await getRes.json() as any;
+    assert.equal(getRes.status, 200, `GET failed: ${JSON.stringify(getBody)}`);
+    assert.equal(getBody.passportVisibility, "private",
+      "GET after PATCH must return passportVisibility: private, not the stale public");
+
+    assert.equal(profiles[0].passport_visibility, "private",
+      "passport_visibility column must be written with the correct DB column name");
+  });
+
   it("displayName exceeding 60 chars is rejected before any DB write", async () => {
     const profiles: ProfileRow[] = [
       { id: ME, name: "Short", display_name: "Short", username: "short",
