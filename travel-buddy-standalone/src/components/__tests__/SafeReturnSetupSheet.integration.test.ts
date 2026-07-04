@@ -49,7 +49,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { runOpenEffect } from '../safeReturn/SafeReturnSetupSheet.openEffect.ts';
+import { runOpenEffect, startCheckedOpenEffect } from '../safeReturn/SafeReturnSetupSheet.openEffect.ts';
 import { runHandleStart } from '../safeReturn/SafeReturnSetupSheet.handleStart.ts';
 
 // ── Parent state machine — mirrors TripPlanSection memoized callbacks ─────────
@@ -1373,5 +1373,365 @@ describe('SafeReturnSetupSheet — double-open guard (rapid visible=true re-trig
       'without guard: both concurrent effects fire onStarted (double-open bug — fixed by openEffectHandleRef)');
     assert.equal(closeCalls, 2,
       'without guard: onClose fires twice (double-open bug — fixed by openEffectHandleRef)');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION 10: startCheckedOpenEffect timeout race — Android background-mid-check
+//
+// The production SafeReturnSetupSheet passes an `onTimeout` callback to
+// startCheckedOpenEffect so it can show "Still checking…" feedback and linger
+// before opening the form fail-open. This is the path taken when the app is
+// backgrounded mid-check.
+//
+// These tests call startCheckedOpenEffect directly (the production function,
+// not a model) to make the guarantee explicit:
+//
+//   a) getActiveSession stalls → timeout fires → onTimeout() is called.
+//      The overlay is NOT cleared immediately (live stays true, timedOut=true).
+//   b) A follow-up linger timer (mirrors the component's slowCheckTimerRef)
+//      calls onCheckingChange(false) after the brief linger — exactly once.
+//   c) When the stalled getActiveSession eventually resolves, the IIFE's
+//      finally-block checks `live && !timedOut` — timedOut is true, so
+//      onCheckingChange(false) is NOT called a second time.
+//   d) If cancel() fires during the linger, the linger finds isLive()=false
+//      and is a no-op. The single onCheckingChange(false) comes from cancel().
+//   e) isLive() stays true immediately after onTimeout fires (unlike the
+//      legacy no-onTimeout path where the timeout sets live=false directly).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SafeReturnSetupSheet — startCheckedOpenEffect timeout race (Android background guard)', () => {
+  const LINGER_MS = 10; // fast linger for tests (component uses 1 500 ms)
+  const TIMEOUT_MS = 10; // fast timeout for tests (component uses 5 000 ms)
+
+  /**
+   * Mirrors SafeReturnSetupSheet's onTimeout handler:
+   *   onTimeout: () => {
+   *     onSlowCheck?.();
+   *     slowCheckTimerRef.current = setTimeout(() => {
+   *       if (!handle.isLive()) return;
+   *       onCheckingChange?.(false);
+   *       setModalVisible(true);   ← captured as modalOpenCalled
+   *     }, SLOW_CHECK_LINGER_MS);
+   *   }
+   *
+   * Returns the linger promise so tests can await it, and an openedHandle ref
+   * so isLive() can be queried from inside the linger callback.
+   */
+  function makeOnTimeoutHandler(opts: {
+    onCheckingChange: (v: boolean) => void;
+    lingerMs?: number;
+    onModalOpen?: () => void;
+  }) {
+    let openedHandle: ReturnType<typeof startCheckedOpenEffect> | null = null;
+    let resolveLingerDone!: () => void;
+    const lingerDone = new Promise<void>((r) => { resolveLingerDone = r; });
+
+    function setHandle(h: ReturnType<typeof startCheckedOpenEffect>) {
+      openedHandle = h;
+    }
+
+    function onTimeout() {
+      setTimeout(() => {
+        if (openedHandle && !openedHandle.isLive()) {
+          resolveLingerDone();
+          return;
+        }
+        opts.onCheckingChange(false);
+        opts.onModalOpen?.();
+        resolveLingerDone();
+      }, opts.lingerMs ?? LINGER_MS);
+    }
+
+    return { setHandle, onTimeout, lingerDone };
+  }
+
+  // ── a) timeout fires → onTimeout() called, live stays true ─────────────────
+
+  it('timeout fires onTimeout() — live stays true (unlike legacy path) so linger can use isLive()', async () => {
+    const checking: boolean[] = [];
+
+    const handler = makeOnTimeoutHandler({ onCheckingChange: (v) => { checking.push(v); } });
+
+    const handle = startCheckedOpenEffect(
+      {
+        onCheckingChange: (v) => { checking.push(v); },
+        onClose: () => {},
+        getActiveSession: () => new Promise(() => {}), // stalled
+        onTimeout: handler.onTimeout,
+      },
+      { timeoutMs: TIMEOUT_MS },
+    );
+    handler.setHandle(handle);
+
+    // Wait for timeout to fire (TIMEOUT_MS) and linger to elapse (LINGER_MS)
+    await handler.lingerDone;
+
+    assert.equal(handle.isLive(), true,
+      'isLive() must still be true after onTimeout fires — live is only set false by cancel() or legacy path');
+
+    handle.cancel();
+  });
+
+  it('timeout fires → onTimeout() is invoked (not onClose) when onTimeout is provided', async () => {
+    let onTimeoutCalled = false;
+    let onCloseCalled = false;
+
+    const handler = makeOnTimeoutHandler({ onCheckingChange: () => {} });
+    const origOnTimeout = handler.onTimeout;
+    const wrappedOnTimeout = () => { onTimeoutCalled = true; origOnTimeout(); };
+
+    const handle = startCheckedOpenEffect(
+      {
+        onClose: () => { onCloseCalled = true; },
+        getActiveSession: () => new Promise(() => {}), // stalled
+        onTimeout: wrappedOnTimeout,
+      },
+      { timeoutMs: TIMEOUT_MS },
+    );
+    handler.setHandle(handle);
+
+    await handler.lingerDone;
+
+    assert.equal(onTimeoutCalled, true, 'onTimeout must be called when the safety-net fires');
+    assert.equal(onCloseCalled, false,
+      'onClose must NOT be called by the timeout when onTimeout is provided — the caller owns fail-open');
+
+    handle.cancel();
+  });
+
+  // ── b) linger fires → onCheckingChange(false) exactly once ─────────────────
+
+  it('linger elapses → onCheckingChange(false) delivered exactly once (overlay clears)', async () => {
+    const log: boolean[] = [];
+
+    const handler = makeOnTimeoutHandler({ onCheckingChange: (v) => { log.push(v); } });
+
+    const handle = startCheckedOpenEffect(
+      {
+        onCheckingChange: (v) => { log.push(v); },
+        onClose: () => {},
+        getActiveSession: () => new Promise(() => {}), // stalled
+        onTimeout: handler.onTimeout,
+      },
+      { timeoutMs: TIMEOUT_MS },
+    );
+    handler.setHandle(handle);
+
+    await handler.lingerDone;
+
+    // Sequence: onCheckingChange(true) from IIFE start, then onCheckingChange(false)
+    // from the linger callback once the timer elapses.
+    assert.equal(log[0], true,  'first call must be onCheckingChange(true) — check started');
+    assert.equal(log[1], false, 'second call must be onCheckingChange(false) — linger elapsed');
+    assert.equal(log.length, 2, 'onCheckingChange must be called exactly twice (true then false)');
+
+    handle.cancel();
+  });
+
+  it('linger elapses → checking ends as false — trigger button is unlocked', async () => {
+    let checking = true; // starts as true (checking is active)
+
+    const handler = makeOnTimeoutHandler({ onCheckingChange: (v) => { checking = v; } });
+
+    const handle = startCheckedOpenEffect(
+      {
+        onCheckingChange: (v) => { checking = v; },
+        onClose: () => {},
+        getActiveSession: () => new Promise(() => {}), // stalled
+        onTimeout: handler.onTimeout,
+      },
+      { timeoutMs: TIMEOUT_MS },
+    );
+    handler.setHandle(handle);
+
+    await handler.lingerDone;
+
+    assert.equal(checking, false,
+      'safeReturnChecking must be false after the linger elapses — trigger button must not stay locked');
+
+    handle.cancel();
+  });
+
+  it('linger elapses → form modal is signalled to open (fail-open after slow check)', async () => {
+    let modalOpened = false;
+
+    const handler = makeOnTimeoutHandler({
+      onCheckingChange: () => {},
+      onModalOpen: () => { modalOpened = true; },
+    });
+
+    const handle = startCheckedOpenEffect(
+      {
+        onClose: () => {},
+        getActiveSession: () => new Promise(() => {}), // stalled
+        onTimeout: handler.onTimeout,
+      },
+      { timeoutMs: TIMEOUT_MS },
+    );
+    handler.setHandle(handle);
+
+    await handler.lingerDone;
+
+    assert.equal(modalOpened, true,
+      'form modal must open fail-open after the linger elapses — user must not be blocked');
+
+    handle.cancel();
+  });
+
+  // ── c) no double-call when stalled session eventually resolves ───────────────
+
+  it('stalled session resolves after timeout+linger — onCheckingChange(false) NOT called a second time', async () => {
+    let resolveSession!: (v: { session: null }) => void;
+    const sessionPromise = new Promise<{ session: null }>((r) => { resolveSession = r; });
+    const log: boolean[] = [];
+
+    const handler = makeOnTimeoutHandler({ onCheckingChange: (v) => { log.push(v); } });
+
+    const handle = startCheckedOpenEffect(
+      {
+        onCheckingChange: (v) => { log.push(v); },
+        onClose: () => {},
+        getActiveSession: () => sessionPromise,
+        onTimeout: handler.onTimeout,
+      },
+      { timeoutMs: TIMEOUT_MS },
+    );
+    handler.setHandle(handle);
+
+    // Wait for timeout → linger → onCheckingChange(false) delivered once
+    await handler.lingerDone;
+    const countAfterLinger = log.filter((v) => !v).length;
+
+    // Now the stalled network call finally returns — the IIFE finally-block runs
+    resolveSession({ session: null });
+    await new Promise<void>((r) => setTimeout(r, 20)); // drain microtasks
+
+    assert.equal(
+      log.filter((v) => !v).length,
+      countAfterLinger,
+      'onCheckingChange(false) must NOT fire a second time when the stalled session resolves ' +
+      'after timeout+linger — timedOut=true guard in the IIFE finally-block prevents the double-call',
+    );
+
+    handle.cancel();
+  });
+
+  it('stalled session resolves after timeout — onCheckingChange(false) fires exactly once total', async () => {
+    let resolveSession!: (v: { session: null }) => void;
+    const sessionPromise = new Promise<{ session: null }>((r) => { resolveSession = r; });
+    let falseCalls = 0;
+
+    const handler = makeOnTimeoutHandler({ onCheckingChange: (v) => { if (!v) falseCalls++; } });
+
+    const handle = startCheckedOpenEffect(
+      {
+        onCheckingChange: (v) => { if (!v) falseCalls++; },
+        onClose: () => {},
+        getActiveSession: () => sessionPromise,
+        onTimeout: handler.onTimeout,
+      },
+      { timeoutMs: TIMEOUT_MS },
+    );
+    handler.setHandle(handle);
+
+    await handler.lingerDone;
+    resolveSession({ session: null });
+    await new Promise<void>((r) => setTimeout(r, 20));
+
+    assert.equal(falseCalls, 1,
+      'onCheckingChange(false) must be called exactly once total — linger delivers it, ' +
+      'the IIFE finally-block is suppressed by timedOut=true');
+
+    handle.cancel();
+  });
+
+  // ── d) cancel() during linger → linger is no-op, cancel delivers the false ──
+
+  it('cancel() during linger — linger fires but is a no-op (isLive()=false)', async () => {
+    let falseCalls = 0;
+    let modalOpened = false;
+
+    const handler = makeOnTimeoutHandler({
+      onCheckingChange: (v) => { if (!v) falseCalls++; },
+      onModalOpen: () => { modalOpened = true; },
+    });
+
+    const handle = startCheckedOpenEffect(
+      {
+        onCheckingChange: (v) => { if (!v) falseCalls++; },
+        onClose: () => {},
+        getActiveSession: () => new Promise(() => {}), // stalled
+        onTimeout: handler.onTimeout,
+      },
+      { timeoutMs: TIMEOUT_MS },
+    );
+    handler.setHandle(handle);
+
+    // Wait just long enough for the timeout to fire and onTimeout() to be called,
+    // then cancel before the linger timer fires.
+    await new Promise<void>((r) => setTimeout(r, TIMEOUT_MS + 2));
+
+    // Cancel while linger is still pending
+    handle.cancel();
+
+    // Wait for the linger to elapse — it should be a no-op because isLive()=false
+    await handler.lingerDone;
+
+    assert.equal(falseCalls, 1,
+      'onCheckingChange(false) must be called exactly once — cancel() delivers it; ' +
+      'the linger finds isLive()=false and skips the second call');
+    assert.equal(modalOpened, false,
+      'linger must not open the modal after cancel() — handle.isLive() guard prevents it');
+  });
+
+  it('cancel() during linger — checking ends as false exactly once (no stuck overlay)', async () => {
+    const falseCallTimestamps: number[] = [];
+
+    const handler = makeOnTimeoutHandler({
+      onCheckingChange: (v) => { if (!v) falseCallTimestamps.push(Date.now()); },
+    });
+
+    const handle = startCheckedOpenEffect(
+      {
+        onCheckingChange: (v) => { if (!v) falseCallTimestamps.push(Date.now()); },
+        onClose: () => {},
+        getActiveSession: () => new Promise(() => {}), // stalled
+        onTimeout: handler.onTimeout,
+      },
+      { timeoutMs: TIMEOUT_MS },
+    );
+    handler.setHandle(handle);
+
+    await new Promise<void>((r) => setTimeout(r, TIMEOUT_MS + 2));
+    handle.cancel();
+    await handler.lingerDone;
+
+    assert.equal(falseCallTimestamps.length, 1,
+      'safeReturnChecking must flip to false exactly once — cancel() is the source; ' +
+      'linger is suppressed by the isLive() guard');
+  });
+
+  // ── e) isLive() after cancel() ──────────────────────────────────────────────
+
+  it('isLive() returns false after cancel() — subsequent linger and IIFE callbacks are all suppressed', async () => {
+    const handler = makeOnTimeoutHandler({ onCheckingChange: () => {} });
+
+    const handle = startCheckedOpenEffect(
+      {
+        onClose: () => {},
+        getActiveSession: () => new Promise(() => {}), // stalled
+        onTimeout: handler.onTimeout,
+      },
+      { timeoutMs: TIMEOUT_MS },
+    );
+    handler.setHandle(handle);
+
+    await new Promise<void>((r) => setTimeout(r, TIMEOUT_MS + 2));
+    handle.cancel();
+    await handler.lingerDone;
+
+    assert.equal(handle.isLive(), false,
+      'isLive() must be false after cancel() — this is the guard the linger callback uses');
   });
 });
