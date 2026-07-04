@@ -237,6 +237,7 @@ async function searchTravelers(
   sc: any, q: string, userId: string,
   blockedSet: Set<string> | null, ageRestrictedSet: Set<string> | null,
   offset: number, fetchLimit: number, isBuddy = false,
+  ctx?: SearchQueryContext,
 ): Promise<SearchResult[]> {
   if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
@@ -284,7 +285,7 @@ async function searchTravelers(
     const followingSet = new Set<string>((followEdges ?? []).map((e: any) => e.following_id as string));
 
     const type: Exclude<SearchType, "all"> = isBuddy ? "buddies" : "travelers";
-    return visible.map((p: any): SearchResult => ({
+    const mapped: SearchResult[] = visible.map((p: any): SearchResult => ({
       id: p.id,
       type,
       title: (p.name as string) ?? (p.handle as string) ?? "",
@@ -304,6 +305,19 @@ async function searchTravelers(
       createdAt: null,
       startsAt: null,
     }));
+
+    // City-boost: when user searched "nearby" and their city is known, surface
+    // local travelers first (profiles have home_city but no lat/lng in DB).
+    if (ctx?.nearbyIntent && ctx?.userCity) {
+      const uCity = ctx.userCity.toLowerCase();
+      mapped.sort((a, b) => {
+        const aMatch = (a.locationPreview ?? "").toLowerCase().includes(uCity) ? 0 : 1;
+        const bMatch = (b.locationPreview ?? "").toLowerCase().includes(uCity) ? 0 : 1;
+        return aMatch - bMatch;
+      });
+    }
+
+    return mapped;
   } catch {
     return [];
   }
@@ -331,8 +345,17 @@ async function searchEvents(
       .neq("status", "deleted")
       .neq("status", "banned")
       .order("starts_at", { ascending: true });
-    if (ctx?.startsAfter)  evQ = evQ.gte("starts_at", ctx.startsAfter);
-    if (ctx?.startsBefore) evQ = evQ.lt("starts_at",  ctx.startsBefore);
+
+    if (ctx?.startsAfter || ctx?.startsBefore) {
+      // Time-intent active — apply the explicit date window and include past events in range
+      if (ctx.startsAfter)  evQ = evQ.gte("starts_at", ctx.startsAfter);
+      if (ctx.startsBefore) evQ = evQ.lt("starts_at",  ctx.startsBefore);
+    } else {
+      // Default: upcoming-first — only surface events that haven't ended (started ≤ 2h ago)
+      const cutoff = new Date(Date.now() - 2 * 3600_000).toISOString();
+      evQ = evQ.gte("starts_at", cutoff);
+    }
+
     const { data, error } = await evQ.range(offset, offset + fetchLimit - 1);
 
     if (error || !data) return [];
@@ -357,7 +380,7 @@ async function searchEvents(
       .in("event_id", eventIds);
     const attendingSet = new Set<string>((rsvpRows ?? []).map((r: any) => r.event_id as string));
 
-    return activeRows.map((e: any): SearchResult => ({
+    const mapped: SearchResult[] = activeRows.map((e: any): SearchResult => ({
       id: e.id,
       type: "events",
       title: (e.title as string) ?? "",
@@ -375,6 +398,19 @@ async function searchEvents(
       createdAt: (e.created_at as string | null) ?? null,
       startsAt: (e.starts_at as string | null) ?? null,
     }));
+
+    // City-boost: surface events in the user's city first when nearby intent is active
+    // (events have city but not lat/lng, so haversine is not applicable here)
+    if (ctx?.nearbyIntent && ctx?.userCity) {
+      const uCity = ctx.userCity.toLowerCase();
+      mapped.sort((a, b) => {
+        const aMatch = (a.locationPreview ?? "").toLowerCase().includes(uCity) ? 0 : 1;
+        const bMatch = (b.locationPreview ?? "").toLowerCase().includes(uCity) ? 0 : 1;
+        return aMatch - bMatch;
+      });
+    }
+
+    return mapped;
   } catch {
     return [];
   }
@@ -449,6 +485,7 @@ async function searchPlans(
   sc: any, q: string, userId: string,
   blockedSet: Set<string> | null, ageRestrictedSet: Set<string> | null,
   offset: number, fetchLimit: number,
+  ctx?: SearchQueryContext,
 ): Promise<SearchResult[]> {
   if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
@@ -471,7 +508,7 @@ async function searchPlans(
     const tripIds = [...new Set(items.map((p: any) => p.trip_id as string))];
     const { data: trips } = await sc
       .from("trips")
-      .select("id, visibility, owner_id, status")
+      .select("id, visibility, owner_id, status, start_date")
       .in("id", tripIds)
       .neq("status", "deleted")
       .neq("status", "cancelled")
@@ -481,7 +518,10 @@ async function searchPlans(
       (t: any) =>
         ((t.visibility as string) === "public" || (t.owner_id as string) === userId) &&
         !blockedSet.has(t.owner_id as string) &&
-        !ageRestrictedSet.has(t.owner_id as string),
+        !ageRestrictedSet.has(t.owner_id as string) &&
+        // Time-intent: filter by parent trip's start_date when bounds are present
+        (!ctx?.startsAfter  || !(t.start_date as string | null) || (t.start_date as string) >= ctx.startsAfter.slice(0, 10)) &&
+        (!ctx?.startsBefore || !(t.start_date as string | null) || (t.start_date as string) <  ctx.startsBefore.slice(0, 10)),
     );
 
     const allowedOwnerIds: string[] = [...new Set<string>(allowedTrips.map((t: any) => t.owner_id as string))];
@@ -1069,11 +1109,11 @@ async function dispatchSearch(
   // searchPlaces handles its own ordering (proximity or match-tier) — do not re-sort.
   // All other types: apply rankByMatchTier so exact title matches surface first.
   switch (type) {
-    case "travelers":   return rankByMatchTier(await searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, false), q);
-    case "buddies":     return rankByMatchTier(await searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, true),  q);
-    case "events":      return rankByMatchTier(await searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, ctx),       q);
-    case "trips":       return rankByMatchTier(await searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, ctx),        q);
-    case "plans":       return rankByMatchTier(await searchPlans(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),             q);
+    case "travelers":   return rankByMatchTier(await searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, false, ctx), q);
+    case "buddies":     return rankByMatchTier(await searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, true,  ctx), q);
+    case "events":      return rankByMatchTier(await searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, ctx),            q);
+    case "trips":       return rankByMatchTier(await searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, ctx),             q);
+    case "plans":       return rankByMatchTier(await searchPlans(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, ctx),             q);
     case "places":      return searchPlaces(sc, q, offset, fetchLimit, ctx);
     case "hidden_gems": return rankByMatchTier(await searchHiddenGems(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),        q);
     case "hashtags":    return rankByMatchTier(await searchHashtags(sc, q, offset, fetchLimit),                                                q);
@@ -1110,11 +1150,11 @@ async function searchAll(
   }
 
   const settled = await Promise.allSettled([
-    searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),        // travelers
-    searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, true),  // buddies
-    searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, ctx),      // events
-    searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, ctx),       // trips
-    searchPlans(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),            // plans
+    searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, false, ctx), // travelers
+    searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, true,  ctx), // buddies
+    searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, ctx),           // events
+    searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, ctx),            // trips
+    searchPlans(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, ctx),            // plans
     searchPlaces(sc, q, 0, FAN_LIMIT, ctx),                                            // places
     searchHiddenGems(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),       // hidden_gems
     searchHashtags(sc, q, 0, FAN_LIMIT),                                               // hashtags
@@ -1199,7 +1239,11 @@ router.get("/discovery/search", async (req, res) => {
   const rawLng = parseFloat(String(req.query.lng ?? ""));
   const lat = Number.isFinite(rawLat) && rawLat >= -90  && rawLat <= 90  ? rawLat : null;
   const lng = Number.isFinite(rawLng) && rawLng >= -180 && rawLng <= 180 ? rawLng : null;
-  const tz  = typeof req.query.tz === "string" && req.query.tz.length <= 50 ? req.query.tz : null;
+  const tz  = typeof req.query.tz  === "string" && req.query.tz.length  <= 50 ? req.query.tz  : null;
+  // Human-readable city name — mobile passes this alongside lat/lng for city-level boosting
+  // of content types that have city text (events, travelers) but no lat/lng coordinate column.
+  const userCity = typeof req.query.city === "string" && req.query.city.trim().length > 0
+    ? req.query.city.trim().slice(0, 100) : null;
 
   // Parse proximity intent ("nearby", "near me") — strip it and flag ctx
   const nearbyResult = parseNearbyIntent(q);
@@ -1227,6 +1271,7 @@ router.get("/discovery/search", async (req, res) => {
     startsBefore:   timeIntentResult.intent?.startsBefore ?? null,
     timeLabel:      displayLabel,
     nearbyIntent:   nearbyResult.nearbyIntent,
+    userCity:       userCity ?? null,
   };
 
   const type = (parsed.data.type ?? "all") as SearchType;

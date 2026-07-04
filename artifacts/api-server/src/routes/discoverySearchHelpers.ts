@@ -22,6 +22,12 @@ export interface SearchQueryContext {
   timeLabel?: string | null;
   /** True when the query contained a proximity keyword ("nearby", "near me", etc.) */
   nearbyIntent?: boolean;
+  /**
+   * Human-readable city name for the user's current location.
+   * Mobile passes this when nearbyIntent=true and location is granted.
+   * Used to city-boost events, travelers, and places that don't have lat/lng.
+   */
+  userCity?: string | null;
 }
 
 // ── Alias / typo-tolerance map ─────────────────────────────────────────────────
@@ -97,6 +103,8 @@ export const SEARCH_ALIASES: Record<string, string> = {
   "wknd":         "weekend",
   "tonite":       "tonight",
   "tmrw":         "tomorrow",
+  // Philippine destination abbreviations (gensan already listed above; gl added here)
+  "gl":           "general luna",
 };
 
 /**

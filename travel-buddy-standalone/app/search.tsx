@@ -67,10 +67,14 @@ export default function SearchScreen() {
   // Pass user coords only when permission already granted — never prompt from search screen
   const userCoords = useMemo(() => {
     if (locationGranted && locationState.coords) {
-      return { lat: locationState.coords.lat, lng: locationState.coords.lng };
+      return {
+        lat: locationState.coords.lat,
+        lng: locationState.coords.lng,
+        city: (locationState as any).place?.city ?? undefined,
+      };
     }
     return undefined;
-  }, [locationGranted, locationState.coords]);
+  }, [locationGranted, locationState]);
 
   const tz = useMemo(() => {
     try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; }
@@ -398,33 +402,33 @@ export default function SearchScreen() {
             </View>
           )}
 
-          {(!historyLoaded || recentSearches.length === 0) && (
+          {/* When history has loaded but is empty: show nothing (blank canvas) */}
+          {historyLoaded && recentSearches.length === 0 && (
             <View style={[styles.center, { paddingVertical: space.xl }]}>
               <Search size={36} color={color.haze} />
-              <Text style={styles.emptyTitle}>Search everything</Text>
-              <Text style={styles.emptySub}>
-                Find travelers, trips, events, places, and more
-              </Text>
             </View>
           )}
 
-          <View style={styles.historySection}>
-            <Text style={styles.historyTitle}>Try searching for</Text>
-            <View style={[styles.chipsRow, { marginTop: space.sm }]}>
-              {locationGranted && (
-                <Pressable style={[styles.chip, styles.chipPrimary]} onPress={() => setQuery('travelers nearby')}>
-                  <MapPin size={12} color={color.onInk} />
-                  <Text style={[styles.chipText, { color: color.onInk }]}>Travelers nearby</Text>
-                </Pressable>
-              )}
-              {recoveryChips.map((chip) => (
-                <Pressable key={chip} style={styles.chip} onPress={() => setQuery(chip)}>
-                  <Zap size={12} color={color.signal} />
-                  <Text style={styles.chipText}>{chip}</Text>
-                </Pressable>
-              ))}
+          {/* Suggestion chips — only shown when there is history to contextualise them */}
+          {recentSearches.length > 0 && (
+            <View style={styles.historySection}>
+              <Text style={styles.historyTitle}>Try searching for</Text>
+              <View style={[styles.chipsRow, { marginTop: space.sm }]}>
+                {locationGranted && (
+                  <Pressable style={[styles.chip, styles.chipPrimary]} onPress={() => setQuery('travelers nearby')}>
+                    <MapPin size={12} color={color.onInk} />
+                    <Text style={[styles.chipText, { color: color.onInk }]}>Travelers nearby</Text>
+                  </Pressable>
+                )}
+                {recoveryChips.map((chip) => (
+                  <Pressable key={chip} style={styles.chip} onPress={() => setQuery(chip)}>
+                    <Zap size={12} color={color.signal} />
+                    <Text style={styles.chipText}>{chip}</Text>
+                  </Pressable>
+                ))}
+              </View>
             </View>
-          </View>
+          )}
         </ScrollView>
       ) : (
         <FlatList
