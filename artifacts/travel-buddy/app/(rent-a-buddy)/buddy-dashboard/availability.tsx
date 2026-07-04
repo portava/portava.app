@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, Pressable, Switch, Alert,
 } from 'react-native';
@@ -25,6 +25,7 @@ export default function BuddyAvailabilityScreen() {
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const saveLockRef = useRef(false);
   const [availableNow, setAvailableNow] = useState(false);
   const [grid, setGrid] = useState<Record<string, Record<string, boolean>>>({});
   const [notice, setNotice] = useState('2 hours');
@@ -70,37 +71,43 @@ export default function BuddyAvailabilityScreen() {
   }
 
   async function handleSave() {
+    if (saveLockRef.current) return;
+    saveLockRef.current = true;
     setSaving(true);
-    const entries: Array<{ date: string; timeSlots: string[]; isAvailable: boolean }> = [];
-    DAYS.forEach((day) => {
-      const slots = Object.entries(grid[day] ?? {})
-        .filter(([, on]) => on)
-        .map(([k]) => k);
-      if (slots.length > 0) {
-        entries.push({ date: day, timeSlots: slots, isAvailable: true });
+    try {
+      const entries: Array<{ date: string; timeSlots: string[]; isAvailable: boolean }> = [];
+      DAYS.forEach((day) => {
+        const slots = Object.entries(grid[day] ?? {})
+          .filter(([, on]) => on)
+          .map(([k]) => k);
+        if (slots.length > 0) {
+          entries.push({ date: day, timeSlots: slots, isAvailable: true });
+        }
+      });
+      const [gridRes, settingsRes] = await Promise.all([
+        rentABuddy.setDashboardAvailability(entries),
+        rentABuddy.setAvailabilitySettings({
+          availableNow,
+          minNoticeHours: NOTICE_OPTIONS.indexOf(notice) >= 0
+            ? [1, 2, 4, 24][NOTICE_OPTIONS.indexOf(notice)]
+            : undefined,
+          bufferMinutes: BUFFER_OPTIONS.indexOf(buffer) >= 0
+            ? [0, 30, 60][BUFFER_OPTIONS.indexOf(buffer)]
+            : undefined,
+          maxBookingsPerDay: maxPerDay,
+          blockedFrom: vacStart.trim() || undefined,
+          blockedTo: vacEnd.trim() || undefined,
+        }),
+      ]);
+      if (gridRes.ok && settingsRes.ok) {
+        Alert.alert('Saved', 'Your availability has been updated.');
+      } else {
+        const errMsg = !gridRes.ok ? gridRes.error : (!settingsRes.ok ? settingsRes.error : undefined);
+        Alert.alert('Error', errMsg ?? 'Could not save availability.');
       }
-    });
-    const [gridRes, settingsRes] = await Promise.all([
-      rentABuddy.setDashboardAvailability(entries),
-      rentABuddy.setAvailabilitySettings({
-        availableNow,
-        minNoticeHours: NOTICE_OPTIONS.indexOf(notice) >= 0
-          ? [1, 2, 4, 24][NOTICE_OPTIONS.indexOf(notice)]
-          : undefined,
-        bufferMinutes: BUFFER_OPTIONS.indexOf(buffer) >= 0
-          ? [0, 30, 60][BUFFER_OPTIONS.indexOf(buffer)]
-          : undefined,
-        maxBookingsPerDay: maxPerDay,
-        blockedFrom: vacStart.trim() || undefined,
-        blockedTo: vacEnd.trim() || undefined,
-      }),
-    ]);
-    setSaving(false);
-    if (gridRes.ok && settingsRes.ok) {
-      Alert.alert('Saved', 'Your availability has been updated.');
-    } else {
-      const errMsg = !gridRes.ok ? gridRes.error : (!settingsRes.ok ? settingsRes.error : undefined);
-      Alert.alert('Error', errMsg ?? 'Could not save availability.');
+    } finally {
+      saveLockRef.current = false;
+      setSaving(false);
     }
   }
 

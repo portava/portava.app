@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, StyleSheet, Pressable, Alert,
   TextInput, Modal, RefreshControl, ScrollView,
@@ -319,6 +319,7 @@ export default function BuddyRequests() {
   const [declineId, setDeclineId] = useState<string | null>(null);
   const [suggestBooking, setSuggestBooking] = useState<BuddyBooking | null>(null);
   const [acting, setActing] = useState<string | null>(null);
+  const actingLockRef = useRef(false);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -341,29 +342,41 @@ export default function BuddyRequests() {
   }, [load]);
 
   const handleAccept = useCallback(async (id: string) => {
+    if (actingLockRef.current) return;
+    actingLockRef.current = true;
     setActing(id);
-    const res = await rentABuddy.acceptBooking(id);
-    setActing(null);
-    if (!res.ok) {
-      Alert.alert('Error', res.error ?? 'Could not accept booking.');
-      return;
+    try {
+      const res = await rentABuddy.acceptBooking(id);
+      if (!res.ok) {
+        Alert.alert('Error', res.error ?? 'Could not accept booking.');
+        return;
+      }
+      setRequests((prev) => prev.filter((r) => r.id !== id));
+      Alert.alert('Booking accepted!', 'The traveller has been notified. Check upcoming bookings in your dashboard.');
+    } finally {
+      actingLockRef.current = false;
+      setActing(null);
     }
-    setRequests((prev) => prev.filter((r) => r.id !== id));
-    Alert.alert('Booking accepted!', 'The traveller has been notified. Check upcoming bookings in your dashboard.');
   }, []);
 
   const handleDecline = useCallback(async (reason: string) => {
     if (!declineId) return;
+    if (actingLockRef.current) return;
     const id = declineId;
+    actingLockRef.current = true;
     setDeclineId(null);
     setActing(id);
-    const res = await rentABuddy.declineBooking(id);
-    setActing(null);
-    if (!res.ok) {
-      Alert.alert('Error', res.error ?? 'Could not decline booking.');
-      return;
+    try {
+      const res = await rentABuddy.declineBooking(id);
+      if (!res.ok) {
+        Alert.alert('Error', res.error ?? 'Could not decline booking.');
+        return;
+      }
+      setRequests((prev) => prev.filter((r) => r.id !== id));
+    } finally {
+      actingLockRef.current = false;
+      setActing(null);
     }
-    setRequests((prev) => prev.filter((r) => r.id !== id));
   }, [declineId]);
 
   const handleSuggest = useCallback(async (payload: {
@@ -374,17 +387,23 @@ export default function BuddyRequests() {
     message?: string;
   }) => {
     if (!suggestBooking) return;
+    if (actingLockRef.current) return;
     const id = suggestBooking.id;
+    actingLockRef.current = true;
     setSuggestBooking(null);
     setActing(id);
-    const res = await rentABuddy.suggestChanges(id, payload);
-    setActing(null);
-    if (!res.ok) {
-      Alert.alert('Error', res.error ?? 'Could not send suggestion.');
-      return;
+    try {
+      const res = await rentABuddy.suggestChanges(id, payload);
+      if (!res.ok) {
+        Alert.alert('Error', res.error ?? 'Could not send suggestion.');
+        return;
+      }
+      setRequests((prev) => prev.filter((r) => r.id !== id));
+      Alert.alert('Suggestion sent', 'The traveller has been notified of your proposed changes.');
+    } finally {
+      actingLockRef.current = false;
+      setActing(null);
     }
-    setRequests((prev) => prev.filter((r) => r.id !== id));
-    Alert.alert('Suggestion sent', 'The traveller has been notified of your proposed changes.');
   }, [suggestBooking]);
 
   return (

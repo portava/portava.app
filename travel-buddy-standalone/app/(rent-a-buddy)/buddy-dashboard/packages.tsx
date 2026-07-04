@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, StyleSheet, Pressable, Alert, Modal,
   TextInput, ScrollView, Switch,
@@ -241,6 +241,7 @@ export default function BuddyPackages() {
   const [error, setError] = useState<string | null>(null);
   const [packages, setPackages] = useState<BuddyPackage[]>([]);
   const [editing, setEditing] = useState<{ pkg: BuddyPackage | null; form: PackageForm } | null>(null);
+  const saveLockRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -254,6 +255,8 @@ export default function BuddyPackages() {
 
   async function handleSave(form: PackageForm) {
     if (!editing) return;
+    if (saveLockRef.current) return;
+    saveLockRef.current = true;
     const payload = {
       title: form.title,
       description: form.description || null,
@@ -263,17 +266,21 @@ export default function BuddyPackages() {
       maxGroup: form.maxGroup,
       isActive: form.isActive,
     };
-    if (editing.pkg) {
-      const res = await rentABuddy.updatePackage(editing.pkg.id, payload);
-      if (!res.ok) { Alert.alert('Error', res.error); return; }
-      setPackages((prev) => prev.map((p) => p.id === editing.pkg!.id ? { ...p, ...payload } : p));
-    } else {
-      const res = await rentABuddy.createPackage(payload as any);
-      if (!res.ok) { Alert.alert('Error', res.error); return; }
-      if (!res.data.pkg) { Alert.alert('Error', 'Could not create package'); return; }
-      setPackages((prev) => [...prev, res.data.pkg!]);
+    try {
+      if (editing.pkg) {
+        const res = await rentABuddy.updatePackage(editing.pkg.id, payload);
+        if (!res.ok) { Alert.alert('Error', res.error); return; }
+        setPackages((prev) => prev.map((p) => p.id === editing.pkg!.id ? { ...p, ...payload } : p));
+      } else {
+        const res = await rentABuddy.createPackage(payload as any);
+        if (!res.ok) { Alert.alert('Error', res.error); return; }
+        if (!res.data.pkg) { Alert.alert('Error', 'Could not create package'); return; }
+        setPackages((prev) => [...prev, res.data.pkg!]);
+      }
+      setEditing(null);
+    } finally {
+      saveLockRef.current = false;
     }
-    setEditing(null);
   }
 
   async function handleDelete(id: string) {
