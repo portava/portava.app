@@ -85,12 +85,23 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
   // a modal that immediately dismisses itself on slower connections.
   const [modalVisible, setModalVisible] = useState(false);
   const startLock = useRef(false);
+  // Tracks the currently active open-effect handle so rapid visible=true
+  // re-triggers (before React cleanup has a chance to run the previous cancel)
+  // are safely deduplicated. Second-wins: the new effect cancels the old one.
+  const openEffectHandleRef = useRef<ReturnType<typeof startCheckedOpenEffect> | null>(null);
 
   useEffect(() => {
     if (!visible) {
       setModalVisible(false);
       return;
     }
+
+    // Guard against concurrent open effects: cancel any in-flight handle before
+    // starting a new one. React's useEffect cleanup normally handles this via the
+    // returned cancel function, but explicit cancellation here defends against
+    // rapid visible=true re-triggers that arrive in the same render batch before
+    // the cleanup of the previous effect has run (second-wins policy).
+    openEffectHandleRef.current?.cancel();
 
     // startCheckedOpenEffect owns the safety-net 5 s timeout + onCheckingChange
     // signalling + live-flag guard. The handle returned here lets us (a) query
@@ -116,8 +127,12 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
         });
       },
     });
+    openEffectHandleRef.current = handle;
 
-    return handle.cancel;
+    return () => {
+      handle.cancel();
+      openEffectHandleRef.current = null;
+    };
   }, [visible]);
 
   // Auto-enable TC when escalation >= 1

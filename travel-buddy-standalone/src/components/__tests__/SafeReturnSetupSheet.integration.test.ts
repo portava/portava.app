@@ -1144,3 +1144,234 @@ describe('SafeReturnSetupSheet — 5-second timeout safety net', () => {
       'cancel() itself delivers onCheckingChange(false) exactly once (cleanup path)');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION 9: Double-open guard — rapid visible=true re-trigger
+//
+// TripPlanSection sets safeReturnSetupOpen=true to open SafeReturnSetupSheet.
+// If the trigger fires while a previous open-effect is already in flight (e.g.
+// visible=false→true immediately after an onClose-triggered reset, before
+// React cleanup has run cancel() on the old effect), two concurrent effects
+// could each call onStarted/onClose independently — a double-fire bug.
+//
+// SafeReturnSetupSheet guards against this with openEffectHandleRef: before
+// starting any new open-effect it cancels the previous handle (if live).
+// Policy: SECOND-WINS — the newer open always supersedes the older one.
+//
+// These tests verify that policy using the machine-layer pattern (no React):
+//   • The guarded opener's `makeGuardedOpener` mirrors the component's
+//     openEffectHandleRef.current?.cancel() + startCheckedOpenEffect pattern.
+//   • The unguarded test documents the exact bug the guard closes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Models the component's openEffectHandleRef guard at the runSheetOpenEffect
+ * level (same abstraction used throughout this file).
+ *
+ * On each call to openWithGuard():
+ *   1. Cancels the previous in-flight effect — mirrors
+ *      openEffectHandleRef.current?.cancel() in SafeReturnSetupSheet.
+ *   2. Starts a fresh runSheetOpenEffect.
+ *   3. Returns { promise, cancel } identical to runSheetOpenEffect's return.
+ *
+ * Policy: SECOND-WINS — the second open cancels the first.
+ */
+function makeGuardedOpener(callbacks: {
+  onStarted: (id: string) => void;
+  onClose: () => void;
+}) {
+  let currentCancel: (() => void) | null = null;
+
+  function openWithGuard(
+    getActiveSession: () => Promise<{ session: { id: string } | null }>,
+  ) {
+    // Guard: cancel any in-flight effect before starting the new one
+    currentCancel?.();
+    currentCancel = null;
+
+    const { promise, cancel } = runSheetOpenEffect({
+      onStarted: callbacks.onStarted,
+      onClose: callbacks.onClose,
+      getActiveSession,
+    });
+
+    currentCancel = cancel;
+    return { promise, cancel };
+  }
+
+  return { openWithGuard };
+}
+
+describe('SafeReturnSetupSheet — double-open guard (rapid visible=true re-trigger)', () => {
+  function delay(ms: number) {
+    return new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
+
+  // ── Core second-wins behaviour ─────────────────────────────────────────────
+
+  it('second-wins: second open cancels the first — onStarted fires exactly once', async () => {
+    const startedIds: string[] = [];
+    let closeCalls = 0;
+
+    const { openWithGuard } = makeGuardedOpener({
+      onStarted: (id) => { startedIds.push(id); },
+      onClose:   () => { closeCalls++; },
+    });
+
+    // First open: slow getActiveSession — simulates in-flight pre-check
+    const e1 = openWithGuard(async () => {
+      await delay(40);
+      return { session: { id: 'sess-first' } };
+    });
+
+    // Second open: fast getActiveSession — arrives before e1 resolves.
+    // The guard cancels e1 before starting e2 (second-wins policy).
+    const e2 = openWithGuard(async () => ({ session: { id: 'sess-second' } }));
+
+    await Promise.all([e1.promise, e2.promise]);
+
+    assert.equal(startedIds.length, 1,
+      'onStarted must fire exactly once despite double-open');
+    assert.equal(startedIds[0], 'sess-second',
+      'second-wins: second open\'s session id must be the one that fires');
+  });
+
+  it('second-wins: second open cancels the first — onClose fires exactly once', async () => {
+    let closeCalls = 0;
+
+    const { openWithGuard } = makeGuardedOpener({
+      onStarted: () => {},
+      onClose:   () => { closeCalls++; },
+    });
+
+    const e1 = openWithGuard(async () => {
+      await delay(40);
+      return { session: { id: 'sess-close-first' } };
+    });
+
+    const e2 = openWithGuard(async () => ({ session: { id: 'sess-close-second' } }));
+
+    await Promise.all([e1.promise, e2.promise]);
+
+    assert.equal(closeCalls, 1,
+      'onClose must fire exactly once despite double-open');
+  });
+
+  it('second-wins: cancelled first effect fires no callbacks', async () => {
+    const firstCallbacks: string[] = [];
+    const secondCallbacks: string[] = [];
+
+    // Two independent callback sets — one per effect
+    let currentCancel: (() => void) | null = null;
+
+    function openTracked(
+      label: string,
+      getActiveSession: () => Promise<{ session: { id: string } | null }>,
+    ) {
+      currentCancel?.();
+      currentCancel = null;
+
+      const { promise, cancel } = runSheetOpenEffect({
+        onStarted: () => { (label === 'e1' ? firstCallbacks : secondCallbacks).push('started'); },
+        onClose:   () => { (label === 'e1' ? firstCallbacks : secondCallbacks).push('close'); },
+        getActiveSession,
+      });
+      currentCancel = cancel;
+      return { promise };
+    }
+
+    const e1 = openTracked('e1', async () => {
+      await delay(40);
+      return { session: { id: 'sess-tracked-first' } };
+    });
+
+    const e2 = openTracked('e2', async () => ({ session: { id: 'sess-tracked-second' } }));
+
+    await Promise.all([e1.promise, e2.promise]);
+
+    assert.equal(firstCallbacks.length, 0,
+      'first effect was cancelled — its callbacks must not fire');
+    assert.ok(secondCallbacks.length > 0,
+      'second effect is live — its callbacks must fire');
+  });
+
+  it('second-wins: parent state reflects exactly one close after double-open', async () => {
+    const { state, handleSafeReturnStarted, handleSafeReturnClose } =
+      makeTripPlanSectionCallbacks({ safeReturnSetupOpen: true });
+
+    const { openWithGuard } = makeGuardedOpener({
+      onStarted: () => { handleSafeReturnStarted(); },
+      onClose:   () => { handleSafeReturnClose(); },
+    });
+
+    const e1 = openWithGuard(async () => {
+      await delay(40);
+      return { session: { id: 'sess-state-first' } };
+    });
+
+    const e2 = openWithGuard(async () => ({ session: { id: 'sess-state-second' } }));
+
+    await Promise.all([e1.promise, e2.promise]);
+    await Promise.resolve(); // fire-and-forget tick inside handleSafeReturnStarted
+
+    assert.equal(state.safeReturnSetupOpen, false,
+      'sheet must be closed exactly once after double-open');
+    assert.equal(state.safeReturnSetupItemId, null,
+      'plan item ref must be cleared once');
+  });
+
+  // ── Ordering guarantee ─────────────────────────────────────────────────────
+
+  it('second-wins: onStarted fires before onClose (ordering preserved after double-open)', async () => {
+    const order: string[] = [];
+
+    const { openWithGuard } = makeGuardedOpener({
+      onStarted: () => { order.push('onStarted'); },
+      onClose:   () => { order.push('onClose'); },
+    });
+
+    const e1 = openWithGuard(async () => {
+      await delay(40);
+      return { session: { id: 'sess-order-first' } };
+    });
+
+    const e2 = openWithGuard(async () => ({ session: { id: 'sess-order-second' } }));
+
+    await Promise.all([e1.promise, e2.promise]);
+
+    assert.ok(order.indexOf('onStarted') < order.indexOf('onClose'),
+      'onStarted must fire before onClose even after a double-open');
+  });
+
+  // ── Documents the unguarded bug ────────────────────────────────────────────
+
+  it('without guard: two concurrent effects both fire callbacks (documents the double-open bug)', async () => {
+    // This test deliberately omits the guard to show what happens when two
+    // concurrent runSheetOpenEffect calls share the same onStarted/onClose —
+    // both effects fire independently, causing double-fire. The guard
+    // (makeGuardedOpener above) closes this by cancelling the first effect.
+    const startedIds: string[] = [];
+    let closeCalls = 0;
+
+    // NO guard — start both effects without cancelling the first
+    const e1 = runSheetOpenEffect({
+      onStarted: (id) => { startedIds.push(`e1:${id}`); },
+      onClose:   () => { closeCalls++; },
+      getActiveSession: async () => ({ session: { id: 'sess-unguarded-1' } }),
+    });
+
+    const e2 = runSheetOpenEffect({
+      onStarted: (id) => { startedIds.push(`e2:${id}`); },
+      onClose:   () => { closeCalls++; },
+      getActiveSession: async () => ({ session: { id: 'sess-unguarded-2' } }),
+    });
+
+    await Promise.all([e1.promise, e2.promise]);
+
+    // Without guard, BOTH effects fire independently — double-open bug documented.
+    assert.equal(startedIds.length, 2,
+      'without guard: both concurrent effects fire onStarted (double-open bug — fixed by openEffectHandleRef)');
+    assert.equal(closeCalls, 2,
+      'without guard: onClose fires twice (double-open bug — fixed by openEffectHandleRef)');
+  });
+});
