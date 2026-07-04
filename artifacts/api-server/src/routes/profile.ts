@@ -450,6 +450,10 @@ router.patch("/me/profile", async (req, res) => {
 
   if (updateError) {
     req.log.error({ err: updateError }, "Failed to update profile");
+    if ((updateError as any).code === "23505") {
+      sendError(res, "conflict", "Username is already taken");
+      return;
+    }
     sendError(res, "db_error", updateError.message);
     return;
   }

@@ -770,6 +770,136 @@ describe("PATCH → GET /api/me/profile round-trip", () => {
       "avatar_url must remain unchanged when storage upload fails");
   });
 
+  it("unique-constraint violation on username write returns 409 conflict and leaves username unchanged", async () => {
+    const profiles: ProfileRow[] = [
+      { id: ME, name: "Racer", display_name: "Racer", username: "original_handle",
+        bio: null, avatar_url: null, home_city: null, home_country: null,
+        current_city: null, travel_style: null, interests: [], verified: false,
+        verification_status: "unverified", verified_at: null, open_to_meet: false,
+        is_private: false, passport_visibility: "public", cover_photo_url: null,
+        username_updated_at: null, created_at: null, spoken_languages: [],
+        default_language: null, travel_styles: [], travel_pace: null,
+        budget_style: null, travel_group_style: [], looking_for: [],
+        comfort_level: null, availability_tags: [], planning_style: null,
+        public_social_links: {}, preferred_language: null, date_of_birth: null,
+        dob_verified: false, handle: null },
+    ];
+
+    // Fake client: availability check says the name is free (no takenBy row),
+    // but the final .update().single() returns a 23505 unique-constraint error
+    // without mutating the in-memory row — simulating a race where another
+    // concurrent request claimed the handle between the check and the write.
+    function makeRaceClient() {
+      function makeBuilder(table: string) {
+        const filters: Array<(r: any) => boolean> = [];
+        let pendingUpdate: Record<string, unknown> | null = null;
+        let hasNeq = false;
+
+        const builder: any = {
+          select()                      { return builder; },
+          eq(col: string, val: any)     { filters.push((r) => String(r[col]) === String(val)); return builder; },
+          neq(col: string, val: any)    { hasNeq = true; filters.push((r) => r[col] !== val); return builder; },
+          in(col: string, vals: any[])  { filters.push((r) => vals.map(String).includes(String(r[col]))); return builder; },
+          is(col: string, val: any)     { filters.push((r) => val === null ? r[col] == null : r[col] === val); return builder; },
+          lt(col: string, val: any)     { filters.push((r) => r[col] < val); return builder; },
+          gte(col: string, val: any)    { filters.push((r) => r[col] >= val); return builder; },
+          order()                       { return builder; },
+          limit()                       { return builder; },
+          nullsFirst()                  { return builder; },
+          update(_patch: Record<string, unknown>) {
+            pendingUpdate = _patch;
+            return builder;
+          },
+          insert(_row: any) { return builder; },
+          upsert(_row: any) { return builder; },
+          maybeSingle() {
+            if (table === "profiles" && !pendingUpdate) {
+              // Availability check (has a neq filter) → return null (appears free)
+              if (hasNeq) return Promise.resolve({ data: null, error: null });
+              // Cooldown / current-profile read → return row so cooldown passes
+              const rows = profiles.filter((r) => filters.every((f) => f(r)));
+              return Promise.resolve({ data: rows[0] ? { ...rows[0] } : null, error: null });
+            }
+            return Promise.resolve({ data: null, error: null });
+          },
+          single() {
+            if (pendingUpdate) {
+              // The race: DB rejects the write with a unique-constraint violation
+              return Promise.resolve({
+                data: null,
+                error: { message: "duplicate key value violates unique constraint \"profiles_username_key\"", code: "23505" },
+              });
+            }
+            if (table === "profiles") {
+              const rows = profiles.filter((r) => filters.every((f) => f(r)));
+              return Promise.resolve({ data: rows[0] ? { ...rows[0] } : null, error: null });
+            }
+            return Promise.resolve({ data: null, error: null });
+          },
+          then(onF: any, onR: any) {
+            if (pendingUpdate) {
+              return Promise.resolve({
+                data: [],
+                error: { message: "duplicate key value violates unique constraint \"profiles_username_key\"", code: "23505" },
+              }).then(onF, onR);
+            }
+            const rows = table === "profiles"
+              ? profiles.filter((r) => filters.every((f) => f(r))).map((r) => ({ ...r }))
+              : [];
+            return Promise.resolve({ data: rows, error: null, count: rows.length }).then(onF, onR);
+          },
+          catch() { return builder; },
+        };
+        return builder;
+      }
+
+      const client: any = {
+        auth: {
+          getUser: async (tok: string) => {
+            if (tok === ME_TOK) return { data: { user: { id: ME } }, error: null };
+            return { data: { user: null }, error: { message: "invalid token" } };
+          },
+        },
+        from: (table: string) => makeBuilder(table),
+        storage: {
+          createBucket: async () => ({ error: null }),
+          from: () => ({
+            upload: async () => ({ error: null }),
+            getPublicUrl: () => ({ data: { publicUrl: "" } }),
+          }),
+        },
+      };
+      return client;
+    }
+
+    const client = makeRaceClient();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const patchRes = await api("/me/profile", {
+      method: "PATCH",
+      body: { username: "new_handle" },
+    });
+
+    // Must NOT silently succeed — the DB rejected the write
+    assert.notEqual(patchRes.status, 200,
+      "username constraint violation must not return 200");
+    // Expected: 409 conflict (or at minimum a 4xx/5xx error)
+    assert.ok(
+      patchRes.status === 409 || (patchRes.status >= 400 && patchRes.status < 600),
+      `expected a non-200 error status, got ${patchRes.status}`,
+    );
+    const body = await patchRes.json() as any;
+    assert.ok(
+      body.error === "conflict" || body.error === "db_error",
+      `error code must be conflict or db_error, got: ${JSON.stringify(body)}`,
+    );
+
+    // The in-memory row must be unchanged — constraint error must not partially apply
+    assert.equal(profiles[0].username, "original_handle",
+      "username must remain unchanged when the DB write fails with a constraint violation");
+  });
+
   it("displayName exceeding 60 chars is rejected before any DB write", async () => {
     const profiles: ProfileRow[] = [
       { id: ME, name: "Short", display_name: "Short", username: "short",
