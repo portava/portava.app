@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, Pressable, ActivityIndicator,
   ScrollView, StyleSheet, Alert,
@@ -40,6 +40,12 @@ export default function EditTrip() {
   const [calOpen, setCalOpen] = useState(false);
   const [placeOpen, setPlaceOpen] = useState(false);
 
+  // Synchronous guard: prevents re-entry on a rapid double-tap before the
+  // setBusy(true) state update has caused a re-render and updated the
+  // Pressable's `disabled` prop. Unlike the React state flag, a ref update
+  // is immediate and visible within the same JS turn.
+  const saveLock = useRef(false);
+
   useEffect(() => {
     if (!id || !live) { setLoading(false); return; }
     getTrip(id).then((tr) => {
@@ -61,11 +67,18 @@ export default function EditTrip() {
     }).catch(() => { setLoadError('Could not load trip.'); setLoading(false); });
   }, [id, live, userId]);
 
-  async function save() {
+  const save = useCallback(async () => {
+    // Synchronous guard — checked before any async work or React state update.
+    // setBusy(true) below is async (deferred until next render), so a rapid
+    // double-tap could bypass the `disabled={busy}` check and re-enter this
+    // handler before the button has re-rendered as disabled.
+    if (saveLock.current) return;
+    saveLock.current = true;
+
     setError(null);
-    if (!title.trim()) { setError('Trip name is required.'); return; }
-    if (!place) { setError('Destination is required.'); return; }
-    if (!live || !id) { setError('Sign in to edit trips.'); return; }
+    if (!title.trim()) { setError('Trip name is required.'); saveLock.current = false; return; }
+    if (!place) { setError('Destination is required.'); saveLock.current = false; return; }
+    if (!live || !id) { setError('Sign in to edit trips.'); saveLock.current = false; return; }
     setBusy(true);
     try {
       const updated = await updateTrip(id, {
@@ -76,13 +89,15 @@ export default function EditTrip() {
         endDate: endDate ?? undefined,
         visibility,
       });
-      if (!updated) { setError('Could not save changes. Try again.'); setBusy(false); return; }
+      if (!updated) { setError('Could not save changes. Try again.'); return; }
       router.replace(`/trip/${id}` as any);
     } catch (e: any) {
       setError(e?.message ?? 'Something went wrong.');
+    } finally {
       setBusy(false);
+      saveLock.current = false;
     }
-  }
+  }, [title, place, live, id, startDate, endDate, visibility]);
 
   if (!live) {
     return (

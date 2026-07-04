@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator, ScrollView, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { CalendarDays, MapPin, X } from 'lucide-react-native';
@@ -27,11 +27,24 @@ export default function NewTrip() {
   const [calOpen, setCalOpen] = useState(false);
   const [placeOpen, setPlaceOpen] = useState(false);
 
-  async function create() {
+  // Synchronous guard: prevents re-entry on a rapid double-tap before the
+  // setBusy(true) state update has caused a re-render and updated the
+  // Pressable's `disabled` prop. Unlike the React state flag, a ref update
+  // is immediate and visible within the same JS turn.
+  const saveLock = useRef(false);
+
+  const create = useCallback(async () => {
+    // Synchronous guard — checked before any async work or React state update.
+    // setBusy(true) below is async (deferred until next render), so a rapid
+    // double-tap could bypass the `disabled={busy}` check and re-enter this
+    // handler before the button has re-rendered as disabled.
+    if (saveLock.current) return;
+    saveLock.current = true;
+
     setError(null);
-    if (!title.trim()) { setError('Add a trip name.'); return; }
-    if (!place) { setError('Add a destination.'); return; }
-    if (!live) { setError('Sign in to create a trip.'); return; }
+    if (!title.trim()) { setError('Add a trip name.'); saveLock.current = false; return; }
+    if (!place) { setError('Add a destination.'); saveLock.current = false; return; }
+    if (!live) { setError('Sign in to create a trip.'); saveLock.current = false; return; }
     setBusy(true);
     try {
       const trip = await createTrip({
@@ -50,8 +63,9 @@ export default function NewTrip() {
       setError(e?.message ?? 'Something went wrong.');
     } finally {
       setBusy(false);
+      saveLock.current = false;
     }
-  }
+  }, [title, place, live, startDate, endDate, checkForNewStamps]);
 
   const startD = startDate ? fromISODate(startDate) : null;
   const endD = endDate ? fromISODate(endDate) : null;
