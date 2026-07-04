@@ -40,14 +40,17 @@ function resetDb() {
     [POST_ID]: {
       id: POST_ID, author_id: AUTHOR_ID, status: 'active',
       visibility: 'public', trip_id: null, save_count: 0,
+      content: 'Test post', category: null,
     },
     [TRIP_POST_ID]: {
       id: TRIP_POST_ID, author_id: AUTHOR_ID, status: 'active',
       visibility: 'trip_only', trip_id: TRIP_ID, save_count: 0,
+      content: 'Trip post', category: null,
     },
     [PRIVATE_POST_ID]: {
       id: PRIVATE_POST_ID, author_id: AUTHOR_ID, status: 'active',
       visibility: 'private', trip_id: null, save_count: 0,
+      content: 'Private post', category: null,
     },
   };
   postSaves = [];
@@ -94,8 +97,22 @@ function buildFakeClient(tokenToId: Record<string, string>, dbError?: { table: s
       },
       update(data: any) { updateData = data; return b; },
       delete() { deleteMode = true; return b; },
-      async single() { return { data: { ...filtered[0] } ?? null, error: null }; },
-      async maybeSingle() { return { data: filtered[0] ? { ...filtered[0] } : null, error: null }; },
+      async single() {
+        const base = filtered[0] ? { ...filtered[0] } : null;
+        if (updateData !== null && base) {
+          Object.assign(base, updateData);
+          if (table === 'posts' && posts[base.id]) Object.assign(posts[base.id], updateData);
+        }
+        return { data: base, error: null };
+      },
+      async maybeSingle() {
+        const base = filtered[0] ? { ...filtered[0] } : null;
+        if (updateData !== null && base) {
+          Object.assign(base, updateData);
+          if (table === 'posts' && posts[base.id]) Object.assign(posts[base.id], updateData);
+        }
+        return { data: base, error: null };
+      },
       then(resolve: any) {
         if (dbError?.table === table) {
           if (
@@ -209,8 +226,12 @@ function authHeaders(token: string) {
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 }
 
-async function req(method: string, path: string, token: string) {
-  const res = await fetch(`${baseUrl}${path}`, { method, headers: authHeaders(token) });
+async function req(method: string, path: string, token: string, body?: object) {
+  const res = await fetch(`${baseUrl}${path}`, {
+    method,
+    headers: authHeaders(token),
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
   const text = await res.text();
   let data: any;
   try { data = JSON.parse(text); } catch { data = text; }
@@ -309,5 +330,42 @@ describe('DELETE /api/posts/:id/save', () => {
   it('returns 401 when no token is provided', async () => {
     const res = await fetch(`${baseUrl}/api/posts/${POST_ID}/save`, { method: 'DELETE' });
     assert.equal(res.status, 401);
+  });
+});
+
+describe('PATCH /api/posts/:id — category field', () => {
+  it('sets category on an existing post and returns it in the response', async () => {
+    const { status, data } = await req('PATCH', `/api/posts/${POST_ID}`, TOKEN_AUTHOR, {
+      category: 'food',
+    });
+    assert.equal(status, 200, JSON.stringify(data));
+    assert.equal(data.category, 'food');
+    assert.equal(posts[POST_ID].category, 'food', 'in-memory DB must be updated');
+  });
+
+  it('clears category when null is sent', async () => {
+    posts[POST_ID].category = 'beach';
+    const { status, data } = await req('PATCH', `/api/posts/${POST_ID}`, TOKEN_AUTHOR, {
+      category: null,
+    });
+    assert.equal(status, 200, JSON.stringify(data));
+    assert.equal(data.category, null);
+    assert.equal(posts[POST_ID].category, null, 'category must be cleared in DB');
+  });
+
+  it('ignores category when the field is omitted — category stays unchanged', async () => {
+    posts[POST_ID].category = 'nightlife';
+    const { status, data } = await req('PATCH', `/api/posts/${POST_ID}`, TOKEN_AUTHOR, {
+      content: 'Updated content',
+    });
+    assert.equal(status, 200, JSON.stringify(data));
+    assert.equal(posts[POST_ID].category, 'nightlife', 'category must not be touched when omitted');
+  });
+
+  it('returns 403 when a non-author tries to update the category', async () => {
+    const { status } = await req('PATCH', `/api/posts/${POST_ID}`, TOKEN_OTHER, {
+      category: 'food',
+    });
+    assert.equal(status, 403);
   });
 });

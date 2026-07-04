@@ -251,6 +251,8 @@ export const updatePostSchema = z
     mediaUrls: z.array(z.string().url()).max(10).optional(),
     visibility: postVisibility.optional(),
     status: postStatus.optional(), // author may hide their own post
+    /** Update or clear the editorial category. Pass null to remove it. */
+    category: z.string().max(64).nullish(),
   })
   .refine((v) => Object.keys(v).length > 0, {
     message: "At least one field must be provided",

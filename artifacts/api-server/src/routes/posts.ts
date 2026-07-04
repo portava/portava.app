@@ -1322,6 +1322,7 @@ router.patch("/posts/:postId", async (req, res) => {
   if (parsed.data.mediaUrls !== undefined) patch.media_urls = parsed.data.mediaUrls;
   if (parsed.data.visibility !== undefined) patch.visibility = parsed.data.visibility;
   if (parsed.data.status !== undefined) patch.status = parsed.data.status;
+  if (parsed.data.category !== undefined) patch.category = parsed.data.category ?? null;
 
   const { data, error } = await client
     .from("posts")
