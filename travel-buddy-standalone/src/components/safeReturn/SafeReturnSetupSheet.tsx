@@ -148,7 +148,14 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
       });
 
       if (!created.ok || !created.session) {
-        Alert.alert('Error', 'Could not set up Safe Return. Please try again.');
+        if (created.error === 'conflict') {
+          Alert.alert(
+            'Session already active',
+            'You already have an active Safe Return session. Cancel or confirm that one before starting a new one.',
+          );
+        } else {
+          Alert.alert('Error', 'Could not set up Safe Return. Please try again.');
+        }
         return;
       }
 
