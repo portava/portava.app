@@ -51,8 +51,7 @@ router.post("/users/:userId/follow", async (req, res) => {
     }
   } catch (err) {
     req.log.error({ err }, "permission engine failed for follow");
-    // TEMP DEBUG: surface the real error to diagnose the follow failure
-    sendError(res, "db_error", "PERMENGINE: " + (err instanceof Error ? err.message : String(err)));
+    sendError(res, "db_error", "Permission check failed");
     return;
   }
 

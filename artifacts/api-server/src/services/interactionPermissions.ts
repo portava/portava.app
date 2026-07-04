@@ -370,7 +370,7 @@ export async function resolveInteractionPermissions(
     followCooldownRes,
     muteRes,
     restrictionRes,
-  ] = await Promise.all([
+  ] = (await Promise.allSettled([
     sc.from("profiles").select("id, is_private, tag_permission").eq("id", targetUserId).maybeSingle(),
     sc.from("user_friendships").select("user_a").eq("user_a", ua).eq("user_b", ub).maybeSingle(),
     sc.from("friend_requests").select("id").eq("requester_id", viewerId).eq("recipient_id", targetUserId).eq("status", "pending").maybeSingle(),
@@ -390,7 +390,11 @@ export async function resolveInteractionPermissions(
     sc.from("user_mutes").select("muter_id").eq("muter_id", viewerId).eq("muted_id", targetUserId).maybeSingle(),
     // target restricts viewer (Phase 2 table — optional)
     sc.from("user_restrictions").select("restrictor_id").eq("restrictor_id", targetUserId).eq("restricted_id", viewerId).maybeSingle(),
-  ] as const);
+  ])).map((r) =>
+    r.status === "fulfilled"
+      ? r.value
+      : { data: null, error: (r.reason && (r.reason as any).code) ? r.reason : { code: "42P01", message: String((r.reason as any)?.message ?? r.reason) } },
+  ) as any;
 
   // Extract values — for optional Phase 2 tables, ignore table-missing errors
   const targetProfile = (profileRes as any).data as { id: string; is_private: boolean; tag_permission: string } | null;

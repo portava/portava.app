@@ -89,8 +89,11 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
 
     (async () => {
       const { modalShouldOpen } = await runOpenEffect({
-        onStarted,
-        onClose,
+        // Wrap callbacks with the cancellation guard so a stale in-flight
+        // effect (visible flipped false before getActiveSession resolved)
+        // cannot call onStarted/onClose a second time.
+        onStarted: (id) => { if (!cancelled) onStarted?.(id); },
+        onClose: () => { if (!cancelled) onClose(); },
         getActiveSession,
       });
 

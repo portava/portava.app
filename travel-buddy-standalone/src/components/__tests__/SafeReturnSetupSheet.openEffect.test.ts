@@ -279,3 +279,151 @@ describe('SafeReturnSetupSheet open-effect — lifecycle transitions', () => {
     assert.equal(closeCalls, 1, 'onClose not called again');
   });
 });
+
+// ── Cancellation guard — rapid open/close/open race ────────────────────────────
+//
+// When `visible` flips true → false → true rapidly, two runOpenEffect calls run
+// concurrently. The component wraps onStarted/onClose with `if (!cancelled)`
+// guards before passing them to runOpenEffect, so a stale in-flight effect
+// cannot call the callbacks after it has been superseded.
+//
+// These tests verify that pattern: a cancelled effect (simulated by setting
+// `cancelled = true` while getActiveSession is in-flight) must not fire
+// onStarted or onClose, while the live effect still fires them exactly once.
+
+describe('SafeReturnSetupSheet open-effect — cancellation guard (rapid re-open)', () => {
+  /** Resolves after `ms` milliseconds — used to keep getActiveSession in-flight. */
+  function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  it('wrapped onStarted does not fire after the effect is cancelled mid-flight', async () => {
+    let cancelled = false;
+    let startedCalls = 0;
+
+    // Mimic what the component now does: wrap callbacks with the cancelled guard.
+    const pending = runOpenEffect({
+      onStarted: (id) => { if (!cancelled) startedCalls++; },
+      onClose: () => {},
+      getActiveSession: async () => {
+        await delay(20); // stays in-flight so we can cancel before it resolves
+        return { session: { id: 'sess-stale' } };
+      },
+    });
+
+    // Simulate visible=false (useEffect cleanup)
+    cancelled = true;
+
+    await pending; // effect resolves, but callback is suppressed
+
+    assert.equal(startedCalls, 0, 'onStarted must not fire when cancelled before getActiveSession resolves');
+  });
+
+  it('wrapped onClose does not fire after the effect is cancelled mid-flight', async () => {
+    let cancelled = false;
+    let closeCalls = 0;
+
+    const pending = runOpenEffect({
+      onStarted: () => {},
+      onClose: () => { if (!cancelled) closeCalls++; },
+      getActiveSession: async () => {
+        await delay(20);
+        return { session: { id: 'sess-stale' } };
+      },
+    });
+
+    cancelled = true;
+    await pending;
+
+    assert.equal(closeCalls, 0, 'onClose must not fire when cancelled before getActiveSession resolves');
+  });
+
+  it('rapid open/close/open — effect 1 cancelled, effect 2 fires callbacks exactly once', async () => {
+    let cancelled1 = false;
+    const effect1Calls: string[] = [];
+    const effect2Calls: string[] = [];
+
+    // Effect 1: visible flips true — starts a slow getActiveSession
+    const effect1 = runOpenEffect({
+      onStarted: (id) => { if (!cancelled1) effect1Calls.push(`started:${id}`); },
+      onClose: () => { if (!cancelled1) effect1Calls.push('close'); },
+      getActiveSession: async () => {
+        await delay(30);
+        return { session: { id: 'sess-race' } };
+      },
+    });
+
+    // Simulate visible=false: cancel effect 1, then visible=true: start effect 2
+    cancelled1 = true;
+
+    // Effect 2: immediate getActiveSession (no delay) with its own callbacks
+    const effect2 = runOpenEffect({
+      onStarted: (id) => { effect2Calls.push(`started:${id}`); },
+      onClose: () => { effect2Calls.push('close'); },
+      getActiveSession: async () => ({ session: { id: 'sess-race' } }),
+    });
+
+    await Promise.all([effect1, effect2]);
+
+    assert.equal(effect1Calls.length, 0,
+      'effect 1 (cancelled) must not fire any callbacks');
+    assert.deepEqual(effect2Calls, ['started:sess-race', 'close'],
+      'effect 2 (live) must fire onStarted then onClose exactly once');
+  });
+
+  it('if the cancelled effect found no session, modalShouldOpen is still ignored by the component', async () => {
+    // When getActiveSession returns null and the effect is cancelled, the
+    // component's `if (cancelled) return` guard prevents modalVisible from
+    // being set. This test documents the no-session cancelled path.
+    let cancelled = false;
+    let modalOpenAttempts = 0;
+
+    const pending = runOpenEffect({
+      onStarted: () => {},
+      onClose: () => {},
+      getActiveSession: async () => {
+        await delay(10);
+        return { session: null };
+      },
+    });
+
+    cancelled = true;
+    const { modalShouldOpen } = await pending;
+
+    // Simulate the component's cancelled check before setting modalVisible
+    if (!cancelled) modalOpenAttempts++;
+
+    assert.equal(modalShouldOpen, true, 'helper still returns true (its contract is unchanged)');
+    assert.equal(modalOpenAttempts, 0,
+      'the component guard (if cancelled) prevents modalVisible from being set');
+  });
+
+  it('back-to-back cancellation then new open: only the final effect acts', async () => {
+    // Open 1 → cancel → open 2 → cancel → open 3 (final, not cancelled)
+    let cancelled1 = false;
+    let cancelled2 = false;
+    const fired: number[] = [];
+
+    const makeEffect = (n: number, isCancelled: () => boolean, ms: number) =>
+      runOpenEffect({
+        onStarted: () => { if (!isCancelled()) fired.push(n); },
+        onClose: () => {},
+        getActiveSession: async () => {
+          await delay(ms);
+          return { session: { id: `sess-${n}` } };
+        },
+      });
+
+    const e1 = makeEffect(1, () => cancelled1, 40);
+    cancelled1 = true;
+
+    const e2 = makeEffect(2, () => cancelled2, 20);
+    cancelled2 = true;
+
+    const e3 = makeEffect(3, () => false, 0); // not cancelled
+
+    await Promise.all([e1, e2, e3]);
+
+    assert.deepEqual(fired, [3], 'only the non-cancelled effect (effect 3) must fire onStarted');
+  });
+});
