@@ -352,7 +352,7 @@ export default function SearchScreen() {
             )}
             <Pressable
               style={styles.chip}
-              onPress={() => router.push('/compass' as any)}
+              onPress={() => router.push('/(tabs)/ai' as any)}
             >
               <Zap size={12} color={color.signal} />
               <Text style={styles.chipText}>Ask Compass</Text>

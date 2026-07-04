@@ -51,6 +51,7 @@ import { checkRateLimit } from "../lib/rateLimit";
 import { logger as rootLogger } from "../lib/logger";
 import {
   applyAliases,
+  matchTier,
   rankByMatchTier,
   rankCombined,
   parseTimeIntent,
@@ -415,7 +416,7 @@ async function searchTrips(
       .neq("status", "cancelled")
       .neq("status", "deleted")
       .neq("status", "banned")
-      .order("created_at", { ascending: false });
+      .order("start_date", { ascending: true });
     // Apply time-intent date bounds to trip start_date when present
     if (ctx?.startsAfter)  trQ = trQ.gte("start_date", ctx.startsAfter.slice(0, 10));
     if (ctx?.startsBefore) trQ = trQ.lt("start_date",  ctx.startsBefore.slice(0, 10));
@@ -579,11 +580,17 @@ async function searchPlaces(
       startsAt: null,
     }));
 
-    // Proximity-aware sort: when user coords are known, sort nearest places first.
+    // Combined sort: match-tier is always primary so exact-name matches surface
+    // first regardless of location.  Haversine distance is the tiebreak when
+    // user coordinates are available — nearby places win when two results share
+    // the same match tier.
     if (ctx?.lat != null && ctx?.lng != null) {
       const uLat = ctx.lat!;
       const uLng = ctx.lng!;
       return [...mapped].sort((a, b) => {
+        const tierA = matchTier(a.title, q);
+        const tierB = matchTier(b.title, q);
+        if (tierA !== tierB) return tierB - tierA;   // exact > prefix > contains
         const am = a.metadata as { lat?: number | null; lng?: number | null };
         const bm = b.metadata as { lat?: number | null; lng?: number | null };
         const ad = am.lat != null && am.lng != null ? haversineKm(uLat, uLng, am.lat, am.lng) : Infinity;
@@ -1105,15 +1112,15 @@ async function dispatchSearch(
     }
     case "events": {
       const raw = await searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, 0, pool, ctx);
-      return rankCombined(raw, q, ctx?.userCity).slice(offset, offset + fetchLimit);
+      return rankCombined(raw, q, ctx?.userCity, { upcomingFirst: true }).slice(offset, offset + fetchLimit);
     }
     case "trips": {
       const raw = await searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, 0, pool, ctx);
-      return rankCombined(raw, q, ctx?.userCity).slice(offset, offset + fetchLimit);
+      return rankCombined(raw, q, ctx?.userCity, { upcomingFirst: true }).slice(offset, offset + fetchLimit);
     }
     case "plans": {
       const raw = await searchPlans(sc, q, userId, blockedSet, ageRestrictedSet, 0, pool, ctx);
-      return rankCombined(raw, q, ctx?.userCity).slice(offset, offset + fetchLimit);
+      return rankCombined(raw, q, ctx?.userCity, { upcomingFirst: true }).slice(offset, offset + fetchLimit);
     }
     case "places":      return searchPlaces(sc, q, offset, fetchLimit, ctx);
     case "hidden_gems": return rankByMatchTier(await searchHiddenGems(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit), q);
@@ -1175,9 +1182,10 @@ async function searchAll(
   // when userCity is absent, so it is safe for all types.
   // searchPlaces already handles its own ordering — re-ranking by title here is still
   // OK for the "all" tab because diversity matters more than proximity when mixing types.
+  // upcomingFirst is a no-op for types without startsAt (travelers, places, etc.)
   const buckets: SearchResult[][] = settled.map((r) => {
     const items = r.status === "fulfilled" ? r.value : [];
-    return rankCombined(items, q, ctx?.userCity);
+    return rankCombined(items, q, ctx?.userCity, { upcomingFirst: true });
   });
 
   // Round-robin interleave

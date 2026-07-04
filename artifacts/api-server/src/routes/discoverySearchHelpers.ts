@@ -166,27 +166,61 @@ export function rankByMatchTier<T extends { title: string; subtitle?: string | n
   );
 }
 
+export interface RankCombinedOpts {
+  /**
+   * When true, upcoming items (startsAt >= now) sort before past items
+   * within the same match tier.  Nearest upcoming sorts first; past items
+   * sort most-recent-first.  Items without a startsAt date are treated as
+   * past.  Use for trip and event types.
+   */
+  upcomingFirst?: boolean;
+}
+
 /**
- * Combined weighted sort: match tier (primary) + city-name proximity (tiebreak).
+ * Combined weighted sort in a single pass:
+ *   1. Match tier (primary)  — exact > prefix > contains > none
+ *   2. Upcoming-first        — (optional) future startsAt before past ones
+ *   3. City proximity        — (optional) locationPreview matches userCity
  *
- * Use this instead of `rankByMatchTier` for types that carry location text
- * (travelers, events) so that city-boosting from a nearby-intent search is
- * not undone by a second pure-tier sort downstream.
+ * Use this instead of `rankByMatchTier` for types that carry location/time
+ * so that city-boosting or upcoming-first ordering is not undone by a second
+ * sort downstream.  Without optional fields the function degenerates to a
+ * pure match-tier sort (stable).
  *
- * @param userCity  Human-readable city name from the user's location; if
- *                  null/undefined the sort degenerates to pure match-tier.
+ * @param userCity  Human-readable city name from the user's location; ignored
+ *                  when null/undefined.
+ * @param opts      See {@link RankCombinedOpts}.
  */
-export function rankCombined<T extends { title: string; subtitle?: string | null; locationPreview?: string | null }>(
+export function rankCombined<T extends {
+  title: string;
+  subtitle?: string | null;
+  locationPreview?: string | null;
+  startsAt?: string | null;
+}>(
   items: T[],
   q: string,
   userCity?: string | null,
+  opts?: RankCombinedOpts,
 ): T[] {
+  const nowMs = Date.now();
   return [...items].sort((a, b) => {
+    // ── 1. Match tier ─────────────────────────────────────────────────────────
     const tierA = matchTier(a.title, q, a.subtitle);
     const tierB = matchTier(b.title, q, b.subtitle);
     if (tierA !== tierB) return tierB - tierA;
 
-    // Tiebreak: items whose locationPreview contains the user's city surface first
+    // ── 2. Upcoming-first (trips, events) ────────────────────────────────────
+    if (opts?.upcomingFirst) {
+      const aMs = a.startsAt ? new Date(a.startsAt).getTime() : null;
+      const bMs = b.startsAt ? new Date(b.startsAt).getTime() : null;
+      const aUp = aMs != null && aMs >= nowMs ? 1 : 0;
+      const bUp = bMs != null && bMs >= nowMs ? 1 : 0;
+      if (aUp !== bUp) return bUp - aUp;            // upcoming before past
+      if (aUp && bUp && aMs != null && bMs != null) return aMs - bMs; // nearest upcoming first
+      if (!aUp && !bUp && aMs != null && bMs != null) return bMs - aMs; // most recent past first
+    }
+
+    // ── 3. City tiebreak (nearby intent) ─────────────────────────────────────
     if (userCity) {
       const uCity = userCity.toLowerCase();
       const inCityA = (a.locationPreview ?? "").toLowerCase().includes(uCity) ? 1 : 0;
@@ -194,7 +228,7 @@ export function rankCombined<T extends { title: string; subtitle?: string | null
       if (inCityA !== inCityB) return inCityB - inCityA;
     }
 
-    return 0; // preserve original relative order (stable sort)
+    return 0; // preserve original relative order (stable)
   });
 }
 

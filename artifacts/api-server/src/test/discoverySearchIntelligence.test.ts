@@ -246,6 +246,33 @@ describe("rankCombined", () => {
     assert.equal(ranked[0]!.title, "Beach",
       "exact match must beat city-matched contains-match even when userCity set");
   });
+
+  it("upcomingFirst: future trip surfaces before past trip when tiers are tied", () => {
+    const past  = { title: "beach trip past",     locationPreview: null, startsAt: "2020-01-01T00:00:00Z" };
+    const future = { title: "beach trip upcoming", locationPreview: null, startsAt: new Date(Date.now() + 86400000 * 30).toISOString() };
+    const ranked = rankCombined([past, future], "beach", undefined, { upcomingFirst: true });
+    assert.equal(ranked[0]!.title, "beach trip upcoming",
+      "upcoming trip must surface before past trip within same tier");
+  });
+
+  it("upcomingFirst: exact match surfaces first even when it is a past trip", () => {
+    const past  = { title: "beach trip",    locationPreview: null, startsAt: "2020-01-01T00:00:00Z" }; // exact tier
+    const future = { title: "beach party 2025", locationPreview: null, startsAt: new Date(Date.now() + 86400000).toISOString() }; // prefix tier
+    const ranked = rankCombined([future, past], "beach trip", undefined, { upcomingFirst: true });
+    assert.equal(ranked[0]!.title, "beach trip",
+      "exact match must win over upcoming-prefix even with upcomingFirst enabled — tier beats upcoming");
+  });
+
+  it("upcomingFirst: is a no-op for items without startsAt (travelers, places)", () => {
+    const items = [
+      { title: "beach club",   locationPreview: "Manila" },
+      { title: "beach resort", locationPreview: "Cebu City" },
+    ];
+    const withOpt    = rankCombined(items, "beach", undefined, { upcomingFirst: true });
+    const withoutOpt = rankCombined(items, "beach");
+    assert.deepEqual(withOpt.map(i => i.title), withoutOpt.map(i => i.title),
+      "upcomingFirst with no startsAt fields must produce same order as without the option");
+  });
 });
 
 describe("haversineKm", () => {
