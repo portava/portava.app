@@ -245,6 +245,14 @@ router.post("/me/safe-return/sessions", async (req, res) => {
     return;
   }
 
+  // Reject if the user already has an active session — prevents double-sessions
+  // when the setup sheet is opened from two different screens concurrently.
+  const existing = await getActiveSession(db, user.id);
+  if (existing) {
+    sendError(res, "conflict", "You already have an active Safe Return session");
+    return;
+  }
+
   const session = await createSession(db, { userId: user.id, ...parsed.data });
   if (!session) {
     sendError(res, "db_error", "Failed to create session");
