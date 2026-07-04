@@ -14,6 +14,7 @@ import { color, space, radius, type as t } from '../../theme/tokens';
 import {
   createSession,
   startSession,
+  getActiveSession,
   getTrustedContacts,
   type TrustedContact,
   type SafeReturnContactInput,
@@ -70,20 +71,46 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
   const [contactsLoading, setContactsLoading] = useState(false);
   const [showWhyExpanded, setShowWhyExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [checking, setChecking] = useState(true);
   const startLock = useRef(false);
 
   useEffect(() => {
-    if (visible) {
-      setContactsLoading(true);
-      Promise.all([
-        getTrustedContacts(),
-        listEmergencyContacts(),
-      ]).then(([tc, ec]) => {
-        setTrustedContacts(tc);
-        setEmergencyContacts(ec.contacts);
-        setContactsLoading(false);
-      });
+    if (!visible) {
+      setChecking(true);
+      return;
     }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { session } = await getActiveSession();
+        if (cancelled) return;
+        if (session) {
+          onStarted?.(session.id);
+          onClose();
+          return;
+        }
+        setChecking(false);
+        setContactsLoading(true);
+        try {
+          const [tc, ec] = await Promise.all([getTrustedContacts(), listEmergencyContacts()]);
+          if (!cancelled) {
+            setTrustedContacts(tc);
+            setEmergencyContacts(ec.contacts);
+          }
+        } finally {
+          if (!cancelled) setContactsLoading(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setChecking(false);
+          setContactsLoading(false);
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
   }, [visible]);
 
   // Auto-enable TC when escalation >= 1
@@ -188,7 +215,17 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
           </Pressable>
         </View>
 
-        <ScrollView style={styles.body} contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+        {checking ? (
+          <View style={styles.checkingContainer}>
+            <ActivityIndicator size="large" color={color.deep} />
+          </View>
+        ) : null}
+
+        <ScrollView
+          style={[styles.body, checking && { display: 'none' }]}
+          contentContainerStyle={{ paddingBottom: 40 }}
+          showsVerticalScrollIndicator={false}
+        >
           {/* Suggestion reason */}
           {suggestionReason ? (
             <View style={styles.reasonBanner}>
@@ -489,4 +526,5 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginTop: space.xl,
   },
   startBtnText: { ...t.bodyStrong, color: '#fff', fontSize: 15 },
+  checkingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 });
