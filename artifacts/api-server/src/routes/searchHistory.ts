@@ -79,7 +79,7 @@ router.post("/me/search-history", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   try {
-    const { error: upsertErr } = await sc
+    const { data: upserted, error: upsertErr } = await sc
       .from("search_history")
       .upsert(
         {
@@ -89,7 +89,9 @@ router.post("/me/search-history", async (req, res) => {
           searched_at: new Date().toISOString(),
         },
         { onConflict: "user_id,query,search_type" },
-      );
+      )
+      .select("id")
+      .single();
 
     if (upsertErr) {
       sendError(res, "db_error", "Failed to save search history");
@@ -99,7 +101,9 @@ router.post("/me/search-history", async (req, res) => {
     // Non-blocking prune: ignore errors
     void pruneOldest(sc, user.id);
 
-    res.status(200).json({ ok: true });
+    // Return the persisted row id so the UI can replace its optimistic
+    // synthetic id with the real server id before allowing per-item delete.
+    res.status(200).json({ ok: true, id: (upserted as { id: string } | null)?.id ?? null });
   } catch {
     sendError(res, "db_error", "Failed to save search history");
   }

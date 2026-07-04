@@ -438,17 +438,46 @@ function makeFakeClient(state: FakeState) {
       let _rangeStart = 0;
       let _rangeEnd = Infinity;
       let inIds: string[] | null = null;
+      let _singleMode = false;
 
       const builder: any = {
         select()                         { pending = "select"; return builder; },
-        upsert(row: Partial<HistoryRow>) { pending = "upsert"; upsertPayload = row; return { error: null }; },
+        upsert(row: Partial<HistoryRow>) { pending = "upsert"; upsertPayload = row; return builder; },
         delete()                         { pending = "delete"; return builder; },
+        single()                         { _singleMode = true; return builder; },
         eq(col: string, val: any)        { filters.push((r) => (r as any)[col] === val); return builder; },
         order()                          { return builder; },
         limit(n: number)                 { _limitN = n; return builder; },
         range(s: number, e: number)      { _rangeStart = s; _rangeEnd = e; return builder; },
         in(col: string, vals: string[])  { inIds = vals; return builder; },
         then(onF: any, onR: any) {
+          if (pending === "upsert" && upsertPayload) {
+            // Simulate upsert: find existing row by (user_id, query, search_type) conflict,
+            // update it if found; otherwise insert a new row.
+            const p = upsertPayload;
+            const existing = rows.find(
+              (r) => r.user_id === p.user_id && r.query === p.query && r.search_type === p.search_type,
+            );
+            let result: HistoryRow;
+            if (existing) {
+              existing.searched_at = p.searched_at ?? existing.searched_at;
+              result = existing;
+            } else {
+              const newRow: HistoryRow = {
+                id: p.id ?? `fake-uuid-${rows.length}`,
+                user_id: p.user_id ?? ME,
+                query: p.query ?? "",
+                search_type: p.search_type ?? "all",
+                searched_at: p.searched_at ?? new Date().toISOString(),
+              };
+              rows.push(newRow);
+              result = newRow;
+            }
+            const out = _singleMode
+              ? { data: { ...result }, error: null }
+              : { data: [{ ...result }], error: null };
+            return Promise.resolve(out).then(onF, onR);
+          }
           if (pending === "delete") {
             const toRemove = rows.filter((r) => {
               const passFilters = filters.every((f) => f(r));
@@ -462,6 +491,9 @@ function makeFakeClient(state: FakeState) {
           const matched = rows
             .filter((r) => filters.every((f) => f(r)))
             .slice(_rangeStart, _rangeEnd < Infinity ? _rangeEnd + 1 : _limitN < Infinity ? _limitN : undefined);
+          if (_singleMode) {
+            return Promise.resolve({ data: matched[0] ?? null, error: null }).then(onF, onR);
+          }
           return Promise.resolve({ data: [...matched], error: null }).then(onF, onR);
         },
       };
@@ -562,6 +594,50 @@ describe("POST /api/me/search-history", () => {
     assert.equal(res.status, 200);
     const body = await res.json() as { ok: boolean };
     assert.equal(body.ok, true);
+  });
+
+  it("200 response includes the persisted row id (deletion identity contract)", async () => {
+    // The UI replaces its optimistic synthetic id with this server id so that
+    // per-item DELETE ?id= actually finds the row.  Verify the field exists.
+    setup({
+      search_history: [
+        { id: "server-uuid-1", user_id: ME, query: "surfing", search_type: "all", searched_at: new Date().toISOString() },
+      ],
+    });
+    const res = await post("/me/search-history", { query: "surfing", search_type: "all" });
+    assert.equal(res.status, 200);
+    const body = await res.json() as { ok: boolean; id: string | null };
+    assert.equal(body.ok, true);
+    assert.ok(
+      typeof body.id === "string" || body.id === null,
+      "response must include an id field (string uuid or null on error)",
+    );
+  });
+
+  it("save → delete by returned id → entry is gone (end-to-end deletion contract)", async () => {
+    // Simulates the UI flow: save search, get server id, delete using that id.
+    setup({
+      search_history: [
+        { id: "server-uuid-abc", user_id: ME, query: "volcano hike", search_type: "all", searched_at: new Date().toISOString() },
+        { id: "server-uuid-xyz", user_id: ME, query: "beach",        search_type: "all", searched_at: new Date().toISOString() },
+      ],
+    });
+
+    // 1. GET to confirm both entries visible
+    const before = await get("/me/search-history");
+    const beforeBody = await before.json() as { history: HistoryRow[] };
+    assert.equal(beforeBody.history.length, 2);
+
+    // 2. DELETE the first entry by its server id
+    const delRes = await del("/me/search-history?id=server-uuid-abc");
+    assert.equal(delRes.status, 200);
+
+    // 3. GET to confirm only the other entry remains
+    const after = await get("/me/search-history");
+    const afterBody = await after.json() as { history: HistoryRow[] };
+    assert.equal(afterBody.history.length, 1);
+    assert.equal(afterBody.history[0]!.id, "server-uuid-xyz",
+      "only the deleted entry must be removed; the other must survive");
   });
 });
 

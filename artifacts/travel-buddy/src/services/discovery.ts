@@ -438,21 +438,27 @@ export async function getSearchHistory(limit = 20): Promise<SearchHistoryEntry[]
 }
 
 /**
- * Save a search term to history. Fire-and-forget; errors are swallowed.
+ * Save a search term to the user's history.
+ * Returns the server-assigned UUID for the saved row so the UI can
+ * replace its optimistic synthetic id before allowing per-item delete.
+ * Returns null on error (save is non-fatal; deletion will fall back to ?q=).
  */
-export async function saveSearchHistory(query: string, searchType = 'all'): Promise<void> {
+export async function saveSearchHistory(query: string, searchType = 'all'): Promise<string | null> {
   const base = apiBase();
-  if (!base) return;
+  if (!base) return null;
   const token = await freshToken();
-  if (!token) return;
+  if (!token) return null;
   try {
-    await fetch(`${base}/api/me/search-history`, {
+    const res = await fetch(`${base}/api/me/search-history`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ query, search_type: searchType }),
     });
+    if (!res.ok) return null;
+    const json = await res.json() as { ok: boolean; id?: string | null };
+    return json.id ?? null;
   } catch {
-    // non-fatal
+    return null;
   }
 }
 

@@ -123,9 +123,11 @@ export default function SearchScreen() {
         setTimeLabel(label ?? null);
 
         if (newRows.length > 0) {
-          void saveSearchHistory(trimmed, tab);
+          // Optimistic-add with a temp id, then patch with the real server UUID
+          // once the save resolves so that per-item deletion is reliable.
+          const tempId = `local-${Date.now()}`;
           const newEntry: SearchHistoryEntry = {
-            id: `local-${Date.now()}`,
+            id: tempId,
             query: trimmed,
             search_type: tab,
             searched_at: new Date().toISOString(),
@@ -136,6 +138,13 @@ export default function SearchScreen() {
             );
             return [newEntry, ...deduped].slice(0, 10);
           });
+          saveSearchHistory(trimmed, tab).then((serverId) => {
+            if (serverId) {
+              setRecentSearches((prev) =>
+                prev.map((r) => r.id === tempId ? { ...r, id: serverId } : r),
+              );
+            }
+          }).catch(() => {/* non-fatal */});
         }
       } else {
         setResults((prev) => {
