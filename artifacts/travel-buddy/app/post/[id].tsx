@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, ScrollView, Pressable, Modal, Share, StyleSheet,
   Image, ActivityIndicator, useWindowDimensions,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView, Platform, Keyboard,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import * as Linking from 'expo-linking';
@@ -248,6 +248,7 @@ export default function PostDetail() {
           ref={scrollRef}
           contentContainerStyle={{ padding: space.lg, gap: space.lg }}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
         >
           {loading ? (
             <View style={{ paddingVertical: space.xxl, alignItems: 'center' }}>
@@ -258,7 +259,11 @@ export default function PostDetail() {
           ) : post ? (
             reported
               ? <ReportedBanner undoAvailable={undoAvailable} onUndo={handleUndo} />
-              : <PostDetailCard post={post} commentCount={commentCount} />
+              : (
+                <Pressable onPress={Keyboard.dismiss}>
+                  <PostDetailCard post={post} commentCount={commentCount} />
+                </Pressable>
+              )
           ) : null}
 
           {post && !reported && (
