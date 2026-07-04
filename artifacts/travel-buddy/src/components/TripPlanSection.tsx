@@ -394,6 +394,19 @@ export function TripPlanSection({
     [],
   );
 
+  const handleSafeReturnClose = useCallback(() => {
+    setSafeReturnSetupOpen(false);
+    setSafeReturnSetupItem(null);
+  }, []);
+
+  const handleSafeReturnStarted = useCallback(() => {
+    setSafeReturnSetupOpen(false);
+    setSafeReturnSetupItem(null);
+    getActiveSession()
+      .then((r) => setActiveSafeReturnSession(r.session))
+      .catch(() => {});
+  }, []);
+
   // Poll active Safe Return session every 60 s.
   // Auto-show MissedCheckinPrompt when the backend flags the session as 'missed'.
   useEffect(() => {
@@ -670,15 +683,8 @@ export function TripPlanSection({
         planItemId={safeReturnSetupItem?.id}
         tripId={tripId}
         planEndsAt={safeReturnSetupItem?.endsAt ?? null}
-        onClose={() => { setSafeReturnSetupOpen(false); setSafeReturnSetupItem(null); }}
-        onStarted={() => {
-          setSafeReturnSetupOpen(false);
-          setSafeReturnSetupItem(null);
-          // Refresh active session to show the new card
-          getActiveSession()
-            .then((r) => setActiveSafeReturnSession(r.session))
-            .catch(() => {});
-        }}
+        onClose={handleSafeReturnClose}
+        onStarted={handleSafeReturnStarted}
       />
 
       <AddToPlanSheet

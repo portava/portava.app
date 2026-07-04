@@ -101,6 +101,8 @@ export default function ActiveRouteScreen() {
   const [compassExpanded, setCompassExpanded]   = useState(false);
   const [safeReturnVisible, setSafeReturnVisible] = useState(false);
   const [safeReturnChecking, setSafeReturnChecking] = useState(false);
+  const handleSafeReturnClose = useCallback(() => setSafeReturnVisible(false), []);
+  const handleSafeReturnStarted = useCallback(() => setSafeReturnVisible(false), []);
   const [routeStarted, setRouteStarted]         = useState(false);
   const [fullMapVisible, setFullMapVisible]     = useState(false);
   const [membersExpanded, setMembersExpanded]   = useState(false);
@@ -528,8 +530,8 @@ export default function ActiveRouteScreen() {
 
       <SafeReturnSetupSheet
         visible={safeReturnVisible}
-        onClose={() => setSafeReturnVisible(false)}
-        onStarted={() => setSafeReturnVisible(false)}
+        onClose={handleSafeReturnClose}
+        onStarted={handleSafeReturnStarted}
         tripId={plan.tripId ?? undefined}
         planEndsAt={
           estimatedReturnMinutes > 0

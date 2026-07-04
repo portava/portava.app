@@ -74,6 +74,8 @@ function TripDetailScreen() {
     setTimeout(() => { commandBarRef.current?.focus(); }, 350);
   }, []);
 
+  const handleSafeReturnClose = useCallback(() => setSafeReturnSetupOpen(false), []);
+
   useEffect(() => {
     if (!live) return;
     let cancelled = false;
@@ -414,7 +416,7 @@ function TripDetailScreen() {
         <SafeReturnSetupSheet
           visible={safeReturnSetupOpen}
           tripId={live ? trip.id : undefined}
-          onClose={() => setSafeReturnSetupOpen(false)}
+          onClose={handleSafeReturnClose}
           onCheckingChange={setSafeReturnChecking}
         />
         <TripPostsSection posts={[]} />

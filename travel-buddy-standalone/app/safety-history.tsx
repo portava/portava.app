@@ -177,6 +177,9 @@ export default function SafetyHistoryScreen() {
     setRefreshing(false);
   }, [load]);
 
+  const handleSetupClose = useCallback(() => setSetupVisible(false), []);
+  const handleSetupStarted = useCallback(() => { setSetupVisible(false); load(); }, [load]);
+
   return (
     <View style={styles.root}>
       <ScreenHeader title="Safe Return History" back />
@@ -236,8 +239,8 @@ export default function SafetyHistoryScreen() {
 
       <SafeReturnSetupSheet
         visible={setupVisible}
-        onClose={() => setSetupVisible(false)}
-        onStarted={() => { setSetupVisible(false); load(); }}
+        onClose={handleSetupClose}
+        onStarted={handleSetupStarted}
       />
     </View>
   );
