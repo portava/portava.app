@@ -52,6 +52,7 @@ import { logger as rootLogger } from "../lib/logger";
 import {
   applyAliases,
   rankByMatchTier,
+  rankCombined,
   parseTimeIntent,
   parseNearbyIntent,
   haversineKm,
@@ -306,17 +307,6 @@ async function searchTravelers(
       startsAt: null,
     }));
 
-    // City-boost: when user searched "nearby" and their city is known, surface
-    // local travelers first (profiles have home_city but no lat/lng in DB).
-    if (ctx?.nearbyIntent && ctx?.userCity) {
-      const uCity = ctx.userCity.toLowerCase();
-      mapped.sort((a, b) => {
-        const aMatch = (a.locationPreview ?? "").toLowerCase().includes(uCity) ? 0 : 1;
-        const bMatch = (b.locationPreview ?? "").toLowerCase().includes(uCity) ? 0 : 1;
-        return aMatch - bMatch;
-      });
-    }
-
     return mapped;
   } catch {
     return [];
@@ -398,17 +388,6 @@ async function searchEvents(
       createdAt: (e.created_at as string | null) ?? null,
       startsAt: (e.starts_at as string | null) ?? null,
     }));
-
-    // City-boost: surface events in the user's city first when nearby intent is active
-    // (events have city but not lat/lng, so haversine is not applicable here)
-    if (ctx?.nearbyIntent && ctx?.userCity) {
-      const uCity = ctx.userCity.toLowerCase();
-      mapped.sort((a, b) => {
-        const aMatch = (a.locationPreview ?? "").toLowerCase().includes(uCity) ? 0 : 1;
-        const bMatch = (b.locationPreview ?? "").toLowerCase().includes(uCity) ? 0 : 1;
-        return aMatch - bMatch;
-      });
-    }
 
     return mapped;
   } catch {
@@ -1106,26 +1085,48 @@ async function dispatchSearch(
   fetchLimit: number,
   ctx?: SearchQueryContext,
 ): Promise<SearchResult[]> {
-  // searchPlaces handles its own ordering (proximity or match-tier) — do not re-sort.
-  // All other types: apply rankByMatchTier so exact title matches surface first.
+  // For location-aware types (travelers, events, trips, plans, buddies):
+  //   Fetch a larger pool (up to 3x the requested page + offset, capped at 100)
+  //   so that exact-handle/exact-title matches aren't excluded by DB ordering before
+  //   ranking runs.  rankCombined then applies match-tier (primary) + city boost
+  //   (tiebreak) in one pass, and we slice to the caller's requested page.
+  //
+  // For types without location context, rankByMatchTier is sufficient.
+  // searchPlaces manages its own ordering (haversine/match-tier) — skip re-sort.
+  const pool = Math.min(offset + fetchLimit * 3, 100);
   switch (type) {
-    case "travelers":   return rankByMatchTier(await searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, false, ctx), q);
-    case "buddies":     return rankByMatchTier(await searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, true,  ctx), q);
-    case "events":      return rankByMatchTier(await searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, ctx),            q);
-    case "trips":       return rankByMatchTier(await searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, ctx),             q);
-    case "plans":       return rankByMatchTier(await searchPlans(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, ctx),             q);
+    case "travelers": {
+      const raw = await searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, 0, pool, false, ctx);
+      return rankCombined(raw, q, ctx?.userCity).slice(offset, offset + fetchLimit);
+    }
+    case "buddies": {
+      const raw = await searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, 0, pool, true, ctx);
+      return rankCombined(raw, q, ctx?.userCity).slice(offset, offset + fetchLimit);
+    }
+    case "events": {
+      const raw = await searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, 0, pool, ctx);
+      return rankCombined(raw, q, ctx?.userCity).slice(offset, offset + fetchLimit);
+    }
+    case "trips": {
+      const raw = await searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, 0, pool, ctx);
+      return rankCombined(raw, q, ctx?.userCity).slice(offset, offset + fetchLimit);
+    }
+    case "plans": {
+      const raw = await searchPlans(sc, q, userId, blockedSet, ageRestrictedSet, 0, pool, ctx);
+      return rankCombined(raw, q, ctx?.userCity).slice(offset, offset + fetchLimit);
+    }
     case "places":      return searchPlaces(sc, q, offset, fetchLimit, ctx);
-    case "hidden_gems": return rankByMatchTier(await searchHiddenGems(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),        q);
-    case "hashtags":    return rankByMatchTier(await searchHashtags(sc, q, offset, fetchLimit),                                                q);
-    case "posts":       return rankByMatchTier(await searchPosts(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),             q);
-    case "circles":     return rankByMatchTier(await searchCircles(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),           q);
-    case "stamps":      return rankByMatchTier(await searchStamps(sc, q, offset, fetchLimit),                                                  q);
-    case "activities":  return rankByMatchTier(await searchActivities(sc, q, offset, fetchLimit),                                              q);
-    case "cities":      return rankByMatchTier(await searchCities(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit),                    q);
-    case "countries":   return rankByMatchTier(await searchCountries(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit),                 q);
-    case "languages":   return rankByMatchTier(searchStatic(q, COMMON_LANGUAGES, "languages", "/language", offset, fetchLimit),               q);
-    case "interests":   return rankByMatchTier(searchStatic(q, COMMON_INTERESTS, "interests", "/interest", offset, fetchLimit),               q);
-    case "vibes":       return rankByMatchTier(searchStatic(q, COMMON_VIBES,     "vibes",     "/vibe",     offset, fetchLimit),               q);
+    case "hidden_gems": return rankByMatchTier(await searchHiddenGems(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit), q);
+    case "hashtags":    return rankByMatchTier(await searchHashtags(sc, q, offset, fetchLimit),                                         q);
+    case "posts":       return rankByMatchTier(await searchPosts(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),      q);
+    case "circles":     return rankByMatchTier(await searchCircles(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),    q);
+    case "stamps":      return rankByMatchTier(await searchStamps(sc, q, offset, fetchLimit),                                          q);
+    case "activities":  return rankByMatchTier(await searchActivities(sc, q, offset, fetchLimit),                                      q);
+    case "cities":      return rankByMatchTier(await searchCities(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit),            q);
+    case "countries":   return rankByMatchTier(await searchCountries(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit),         q);
+    case "languages":   return rankByMatchTier(searchStatic(q, COMMON_LANGUAGES, "languages", "/language", offset, fetchLimit),        q);
+    case "interests":   return rankByMatchTier(searchStatic(q, COMMON_INTERESTS, "interests", "/interest", offset, fetchLimit),        q);
+    case "vibes":       return rankByMatchTier(searchStatic(q, COMMON_VIBES,     "vibes",     "/vibe",     offset, fetchLimit),        q);
     default:            return [];
   }
 }
@@ -1169,12 +1170,14 @@ async function searchAll(
     Promise.resolve(searchStatic(q, COMMON_VIBES, "vibes", "/vibe", 0, FAN_LIMIT)),
   ]);
 
-  // Apply match-tier ranking within each bucket before the round-robin interleave.
-  // searchPlaces already handles its own ordering — re-ranking by title here is still OK for
-  // the "all" tab because diversity matters more than proximity when mixing types.
+  // Apply combined ranking (match-tier primary, city tiebreak) within each bucket
+  // before the round-robin interleave.  rankCombined degenerates to pure match-tier
+  // when userCity is absent, so it is safe for all types.
+  // searchPlaces already handles its own ordering — re-ranking by title here is still
+  // OK for the "all" tab because diversity matters more than proximity when mixing types.
   const buckets: SearchResult[][] = settled.map((r) => {
     const items = r.status === "fulfilled" ? r.value : [];
-    return rankByMatchTier(items, q);
+    return rankCombined(items, q, ctx?.userCity);
   });
 
   // Round-robin interleave

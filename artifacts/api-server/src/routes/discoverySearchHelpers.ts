@@ -166,6 +166,38 @@ export function rankByMatchTier<T extends { title: string; subtitle?: string | n
   );
 }
 
+/**
+ * Combined weighted sort: match tier (primary) + city-name proximity (tiebreak).
+ *
+ * Use this instead of `rankByMatchTier` for types that carry location text
+ * (travelers, events) so that city-boosting from a nearby-intent search is
+ * not undone by a second pure-tier sort downstream.
+ *
+ * @param userCity  Human-readable city name from the user's location; if
+ *                  null/undefined the sort degenerates to pure match-tier.
+ */
+export function rankCombined<T extends { title: string; subtitle?: string | null; locationPreview?: string | null }>(
+  items: T[],
+  q: string,
+  userCity?: string | null,
+): T[] {
+  return [...items].sort((a, b) => {
+    const tierA = matchTier(a.title, q, a.subtitle);
+    const tierB = matchTier(b.title, q, b.subtitle);
+    if (tierA !== tierB) return tierB - tierA;
+
+    // Tiebreak: items whose locationPreview contains the user's city surface first
+    if (userCity) {
+      const uCity = userCity.toLowerCase();
+      const inCityA = (a.locationPreview ?? "").toLowerCase().includes(uCity) ? 1 : 0;
+      const inCityB = (b.locationPreview ?? "").toLowerCase().includes(uCity) ? 1 : 0;
+      if (inCityA !== inCityB) return inCityB - inCityA;
+    }
+
+    return 0; // preserve original relative order (stable sort)
+  });
+}
+
 // ── Distance helpers ───────────────────────────────────────────────────────────
 
 /** Haversine distance in km between two lat/lng points. */

@@ -24,6 +24,7 @@ import {
   applyAliases,
   matchTier,
   rankByMatchTier,
+  rankCombined,
   haversineKm,
   parseTimeIntent,
   parseNearbyIntent,
@@ -164,6 +165,86 @@ describe("rankByMatchTier", () => {
     const ranked = rankByMatchTier(items, "alice");
     assert.equal(ranked[0]!.subtitle, "@alice");
     assert.equal(ranked[1]!.subtitle, "@randomuser");
+  });
+});
+
+describe("rankCombined", () => {
+  it("sorts exact > prefix > contains > none (same as rankByMatchTier when no userCity)", () => {
+    const items = [
+      { title: "great beach experience", locationPreview: "Cebu" },
+      { title: "mountain trek",          locationPreview: "Bohol" },
+      { title: "Beach",                  locationPreview: "Cebu" },
+      { title: "beach party",            locationPreview: "Cebu" },
+    ];
+    const ranked = rankCombined(items, "beach");
+    assert.equal(ranked[0]!.title, "Beach");
+    assert.equal(ranked[1]!.title, "beach party");
+    assert.equal(ranked[2]!.title, "great beach experience");
+    assert.equal(ranked[3]!.title, "mountain trek");
+  });
+
+  it("exact handle surfaces first under high-noise (20+ same-tier travelers)", () => {
+    // Simulate 25 travelers whose titles all contain "alice" (contains-tier = 1)
+    // plus one exact username match (via subtitle, tier = 3).
+    const noise: { title: string; subtitle: string; locationPreview: string }[] = Array.from(
+      { length: 25 }, (_, i) => ({
+        title: `Traveler alice${i}`,
+        subtitle: `@noise${i}`,
+        locationPreview: "Manila",
+      }),
+    );
+    const exactMatch = { title: "Traveler Person", subtitle: "@alice", locationPreview: "Manila" };
+    const pool = [...noise, exactMatch];
+
+    const ranked = rankCombined(pool, "alice");
+    assert.equal(ranked[0]!.subtitle, "@alice",
+      "exact handle match must be first regardless of pool size");
+  });
+
+  it("city-matched result surfaces first when tier is tied (nearby tiebreak)", () => {
+    const items = [
+      { title: "beach party",   subtitle: undefined, locationPreview: "Davao City, Philippines" },
+      { title: "beach club",    subtitle: undefined, locationPreview: "Manila, Philippines" },
+      { title: "beach resort",  subtitle: undefined, locationPreview: "Cebu City, Philippines" },
+    ];
+    // All three are contains-tier for "beach" — city boost should determine order
+    const ranked = rankCombined(items, "beach", "cebu");
+    assert.equal(ranked[0]!.locationPreview, "Cebu City, Philippines",
+      "cebu-city result must be first when userCity='cebu' and tiers are tied");
+  });
+
+  it("without userCity degenerates to pure match-tier (no city boost)", () => {
+    // Both items are prefix-tier for "beach" (same tier).
+    // Without userCity, no city boost is applied and stable (original) order is preserved.
+    // If userCity were "cebu", beach resort (Cebu) would jump to front — this test proves it doesn't.
+    const items = [
+      { title: "beach club",   locationPreview: "Manila" },
+      { title: "beach resort", locationPreview: "Cebu City" },
+    ];
+    const ranked = rankCombined(items, "beach"); // no userCity
+    assert.equal(ranked[0]!.title, "beach club",
+      "without userCity, stable original order is preserved — city boost must not apply");
+    assert.equal(ranked[1]!.title, "beach resort");
+  });
+
+  it("does not mutate the original array", () => {
+    const items = [
+      { title: "foo", locationPreview: "City A" },
+      { title: "foobar", locationPreview: "City B" },
+    ];
+    const copy = [...items];
+    rankCombined(items, "foobar", "City B");
+    assert.deepEqual(items, copy);
+  });
+
+  it("nearby-intent: higher-tier match wins over city boost (tier beats proximity)", () => {
+    const items = [
+      { title: "beach bar",   subtitle: undefined, locationPreview: "Cebu City" }, // contains-tier + city match
+      { title: "Beach",       subtitle: undefined, locationPreview: "Manila" },    // exact-tier, no city match
+    ];
+    const ranked = rankCombined(items, "beach", "cebu");
+    assert.equal(ranked[0]!.title, "Beach",
+      "exact match must beat city-matched contains-match even when userCity set");
   });
 });
 
