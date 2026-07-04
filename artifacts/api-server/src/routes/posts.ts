@@ -1513,7 +1513,7 @@ router.post("/posts/:postId/save", async (req, res) => {
     .upsert({ post_id: postId, user_id: user.id }, { onConflict: "post_id,user_id", ignoreDuplicates: true });
   if (upsertErr) { sendError(res, "db_error", upsertErr.message); return; }
 
-  const { count } = await sc.from("post_saves").select("id", { count: "exact", head: true }).eq("post_id", postId);
+  const { count } = await sc.from("post_saves").select("post_id", { count: "exact", head: true }).eq("post_id", postId);
   await sc.from("posts").update({ save_count: count ?? 0 }).eq("id", postId);
 
   res.status(200).json({ savedByMe: true, saveCount: count ?? 0 });
@@ -1538,7 +1538,7 @@ router.delete("/posts/:postId/save", async (req, res) => {
     .from("post_saves").delete().eq("post_id", postId).eq("user_id", user.id);
   if (delErr) { sendError(res, "db_error", delErr.message); return; }
 
-  const { count } = await sc.from("post_saves").select("id", { count: "exact", head: true }).eq("post_id", postId);
+  const { count } = await sc.from("post_saves").select("post_id", { count: "exact", head: true }).eq("post_id", postId);
   await sc.from("posts").update({ save_count: count ?? 0 }).eq("id", postId);
 
   res.status(200).json({ savedByMe: false, saveCount: count ?? 0 });
