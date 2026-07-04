@@ -26,6 +26,8 @@ import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { createComposerDismissHandlers, createSubmitLock, createOnceGuard, handleSubmitResult, handleUploadResult, handleFilterApplyResult, TYPE_CATEGORY, CATEGORY_OPTIONS, resolveDefaultCategory, handleCategoryChipPress, resolveCreateCategory } from './PulseCreate.machine';
 import { createFilterDismissHandlers } from './PulseFilterSheet.machine';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { loadLastCategory, saveLastCategory, clearLastCategory } from './pulseCreateCategoryStorage';
 
 /* ── Types ── */
 
@@ -189,12 +191,13 @@ export function UnifiedPostComposer({
   const [locationPrivacyMode, setLocationPrivacyMode] = useState<LocationPrivacyMode>('none');
   const [scheduledTime, setScheduledTime] = useState<Date | null>(null);
 
-  // Auto-set the default category whenever the post type changes.
-  // The user can override it via the chip picker.
+  // Restore the last-used category for the selected post type, falling back to
+  // the type default when no preference has been saved yet.
   useEffect(() => {
-    if (selectedType) {
-      setSelectedCategory(resolveDefaultCategory(selectedType));
-    }
+    if (!selectedType) return;
+    loadLastCategory(AsyncStorage, selectedType).then((saved) => {
+      setSelectedCategory(saved ?? resolveDefaultCategory(selectedType));
+    });
   }, [selectedType]);
 
   // Auto-select delayed_until_exit when the user attaches a GPS location
@@ -482,13 +485,30 @@ export function UnifiedPostComposer({
                 {/* category chip picker */}
                 {!DEDICATED_COMPOSERS[selectedType] && (
                   <View style={uc.field}>
-                    <Text style={uc.fieldLabel}>Category</Text>
+                    <View style={uc.fieldLabelRow}>
+                      <Text style={uc.fieldLabel}>Category</Text>
+                      {selectedCategory !== resolveDefaultCategory(selectedType) && (
+                        <Pressable
+                          onPress={() => {
+                            clearLastCategory(AsyncStorage, selectedType);
+                            setSelectedCategory(resolveDefaultCategory(selectedType));
+                          }}
+                          disabled={submitting}
+                        >
+                          <Text style={uc.resetLink}>Reset to default</Text>
+                        </Pressable>
+                      )}
+                    </View>
                     <View style={uc.chipRowWrap}>
                       {CATEGORY_OPTIONS.map(({ value, label }) => (
                         <Pressable
                           key={value}
                           style={[uc.visChip, selectedCategory === value && uc.visChipOn]}
-                          onPress={() => setSelectedCategory(handleCategoryChipPress(value))}
+                          onPress={() => {
+                            const cat = handleCategoryChipPress(value);
+                            setSelectedCategory(cat);
+                            saveLastCategory(AsyncStorage, selectedType, cat);
+                          }}
                           disabled={submitting}
                         >
                           <Text style={[uc.visChipText, selectedCategory === value && uc.visChipTextOn]}>
@@ -862,6 +882,8 @@ const uc = StyleSheet.create({
   form: { gap: space.md },
   field: { gap: 6 },
   fieldLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.mute, letterSpacing: 0.8, textTransform: 'uppercase' },
+  fieldLabelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  resetLink: { fontSize: 11, color: color.mute, textDecorationLine: 'underline' },
   input: {
     ...t.body,
     color: color.ink,
