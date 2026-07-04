@@ -1,0 +1,589 @@
+Fix the Passport/Profile editing system end-to-end without rebuilding unrelated systems.
+
+This is an audit-and-fix pass, not a rebuild. The current issue is that users cannot properly edit and save their Passport/Profile page. Saving still says the user “cannot select a username,” which likely means username/handle validation got mixed up with real name/display name, stale form state, backend error mapping, or profile completion logic.
+
+The profile should be fully editable and savable after this pass. Fix the real root cause, not just the visible error message.
+
+Current bugs:
+- User cannot properly edit and save their profile page.
+- Saving still says the user “cannot select a username.”
+- Username/handle appears to be mixed up with real/display name.
+- Profile completion appears stuck or incomplete.
+- Passport/Profile menu button looks outdated.
+- User cannot change the back-page/header/cover photo directly from Passport.
+- Passport profile photo camera button should ask whether the user wants to change display photo or add/change a highlight.
+
+Core safety rules:
+- Do not rebuild the Passport page from scratch.
+- Do not create a duplicate profile system.
+- Do not break onboarding.
+- Do not break public profile viewing.
+- Do not break Trip Crew, Telegraph, Pulse, Discovery, profile links, or user cards.
+- Do not change database schema unless absolutely required.
+- If schema is required, add a safe migration and update database types.
+- Keep changes small, traceable, and cohesive.
+- Reuse existing storage/upload/profile helpers where possible.
+- Run relevant tests and type checks before reporting completion.
+
+1. Audit the active profile/passport flow
+
+Find the active Passport/Profile screen used by the app.
+
+Find:
+- Edit profile screen/modal/sheet.
+- Save handler.
+- Username/handle validation.
+- Real name/display name validation.
+- Profile completion logic.
+- Profile cache/store/context.
+- Image upload flow.
+- Back-page/header/cover photo field.
+- Highlight media flow.
+- Public profile route/screen.
+- Onboarding profile creation/update flow.
+
+Confirm the actual fields used for:
+- username / handle
+- display name / real name
+- bio
+- location / city / country
+- languages
+- interests
+- avatar/profile photo
+- back-page/header/cover photo
+- highlights
+- profile completion status
+- verification/trust fields that must not be overwritten
+
+Confirm which fields exist in database types and backend routes before changing anything.
+
+2. Fix username vs real/display name confusion
+
+Username/handle must be completely separate from display name/real name.
+
+Rules:
+- Username/handle saves to the correct username/handle field.
+- Display name/real name saves to the correct display name field.
+- Editing display name must not trigger username validation.
+- Editing bio, location, languages, interests, avatar, cover photo, or highlights must not trigger username validation.
+- User should never see “cannot select a username” when only editing normal profile info.
+- If username is required for profile completion, show a clear username field and clear validation message.
+- If username is already set, allow the rest of the profile to save without asking for username again.
+- Username uniqueness checks should only run when username is changed or when a brand-new user is required to choose one.
+- Existing username should be allowed to save unchanged.
+- Username uniqueness must ignore the current user’s own username.
+- Username uniqueness should be case-insensitive if the app treats usernames case-insensitively.
+
+Normalize username safely:
+- trim spaces
+- remove leading @
+- lowercase
+- allow only the app’s accepted username characters
+- store raw username without @
+- display visually as @username where appropriate
+
+Use one consistent user-facing term:
+- Prefer “Username” or “Handle,” not both unless the UI explains it.
+- Prefer “Display name” instead of confusing “real name,” unless the app intentionally requires legal names.
+
+3. Fix duplicate/stale username checks
+
+Search for every place the app checks username availability.
+
+Remove or bypass stale checks that fire during normal profile saves.
+
+Do not allow old validation paths to remain active if they are wrong.
+
+Check:
+- frontend form validation
+- save handler validation
+- profile completion validation
+- onboarding validation
+- backend route validation
+- Supabase uniqueness checks
+- cached profile checks
+- username availability endpoint
+- any local “selected username” flag
+
+The username check should not run just because a save button was pressed. It should run only when username changed or when username is truly required and missing.
+
+4. Fix profile edit-and-save behavior
+
+User must be able to:
+- Open Passport/Profile.
+- Tap edit profile.
+- Update profile fields.
+- Save successfully.
+- See saved changes immediately.
+- Refresh/reopen and still see saved changes.
+
+Save behavior:
+- Disable save only while an actual save is in progress.
+- Do not silently fail.
+- Show clear loading, success, and error states.
+- Save payload must only include fields accepted by backend/Supabase.
+- Frontend field names must match backend/database field names.
+- Preserve unchanged fields.
+- Do not accidentally send blank/null username if username was not edited.
+- Do not overwrite avatar, cover photo, highlights, trust score, verification status, home country lock, or other sensitive/internal fields unless intentionally changed.
+- Empty optional fields should be handled intentionally.
+- If one optional field fails, do not block unrelated fields unless backend/database requires it.
+- Profile completion status should update correctly after save.
+
+5. Fix form initialization bugs
+
+Audit how the edit profile form initializes values.
+
+Requirements:
+- Form should load from current profile only after profile data is available.
+- Do not initialize username/display name as empty strings before the profile fetch finishes and then accidentally save those blanks.
+- Show loading skeleton/state before the form is editable.
+- Prevent save until the real profile record has loaded.
+- Preserve unchanged fields when user edits only one field.
+- Cancel/discard should reset form state correctly.
+- If profile fetch fails, show retry/error state instead of treating profile as incomplete.
+
+6. Fix stale cache and profile refetch issues
+
+Audit any React Query, SWR, Zustand, Context, AsyncStorage, Supabase cache, local store, or profile provider used by Passport/Profile.
+
+After successful save:
+- Invalidate/refetch every profile query that can show stale data.
+- Update local profile context/store immediately.
+- Update offline/local profile copy if one exists.
+- Do not let old cached username/profile data re-trigger “select username.”
+- Passport, Settings, Telegraph user cards, Pulse cards, Trip Crew, Discovery, and public profile preview should show the updated display name/avatar after save.
+
+7. Fix onboarding-to-profile field mapping
+
+Audit onboarding fields that create the first profile record.
+
+Confirm onboarding writes these to the same fields Passport reads:
+- username/handle
+- display name
+- avatar
+- home country
+- city
+- languages
+- interests
+- travel style/preferences
+
+Fix mismatches such as:
+- onboarding saves name but Passport expects display_name
+- onboarding saves username but edit profile expects handle
+- onboarding saves city/country in fields Passport does not read
+- onboarding completes but Passport still thinks username/profile is missing
+
+A user who completed onboarding must not be forced to “select a username” again unless they truly never chose one.
+
+8. Fix auth metadata vs profile table confusion
+
+Audit whether the app reads profile info from:
+- auth user metadata
+- profiles table
+- travelers table
+- passports table
+- user_profiles table
+- another source
+
+Pick the correct source of truth and make these use it consistently:
+- Passport/Profile screen
+- Edit profile form
+- Onboarding
+- Public profile
+- Profile cards
+- Telegraph user cards
+- Pulse author cards
+- Trip Crew user cards
+- Discovery user cards
+
+Do not save real/display name to auth metadata only if visible profile reads from Supabase profile table.
+
+Do not save username to one table while validation checks another table.
+
+9. Verify profile table row creation
+
+Check whether every authenticated user has a corresponding profile/passport row.
+
+If current user’s profile row is missing:
+- Create it safely using existing app conventions.
+- Do not create duplicates.
+- Do not overwrite existing data.
+- Do not treat temporary fetch delay as missing profile.
+
+If multiple profile rows exist for one user:
+- Identify the source of duplication.
+- Fix the code path that creates duplicates.
+- Make save update the existing row instead of inserting a second row.
+
+10. Fix race conditions between onboarding and Passport
+
+After onboarding completes:
+- Wait for profile creation/update to finish before navigating to Passport.
+- If Passport opens before profile row is available, show loading/retry state.
+- Do not show “select username” just because profile fetch is pending.
+- Add safe retry/refetch when profile data is temporarily missing.
+
+11. Fix database constraints and RLS issues
+
+Inspect actual database constraints and RLS policies for:
+- username/handle
+- display name
+- avatar/profile photo
+- cover/header/back-page photo
+- profile completion fields
+- profile owner updates
+
+Confirm:
+- Authenticated user can update their own profile row.
+- Authenticated user cannot update another user’s profile row.
+- Public profile reads only public-safe fields.
+- RLS does not block valid own-profile updates.
+- Database constraint errors are mapped correctly.
+
+If update is failing because RLS only allows certain columns, fix the policy or update route safely.
+
+If update is failing because username is non-null/unique, frontend and backend must handle that clearly.
+
+Do not hide RLS/database errors behind a generic username message.
+
+12. Fix backend/API error mapping
+
+Audit profile update route/service error handling.
+
+Do not map every failed save to “cannot select a username.”
+
+Return and display field-specific errors:
+- username unavailable
+- username invalid
+- display name required
+- upload failed
+- profile not found
+- unauthorized
+- database update failed
+- RLS/policy denied
+- unknown save failure
+
+Frontend should display the correct field error.
+
+Log useful developer details without exposing private user data.
+
+13. Complete the profile completion flow
+
+Profile should be considered complete based on the app’s intended minimum fields.
+
+Do not confuse:
+- missing username with missing display name
+- missing display photo with missing username
+- profile fetch pending with incomplete profile
+- unchanged username with unavailable username
+
+If profile completion uses a checklist/banner:
+- Make it disappear after required fields are saved.
+- If username is missing, show “Add a username.”
+- If display name is missing, show “Add your display name.”
+- If photo is missing, show the correct photo requirement.
+- Do not use one generic username error for all missing fields.
+
+The profile completion checklist should use the same validation logic as the save flow.
+
+14. Modernize the Passport/Profile menu button
+
+Replace the outdated profile menu button with a modern, sophisticated design.
+
+Requirements:
+- Premium/native feel.
+- Consistent with Travel Buddy Passport design.
+- Clean icon button or pill button.
+- Subtle border/background.
+- Proper hit area.
+- Proper spacing.
+- Accessibility label.
+- Good contrast.
+- Should not look like a default/basic button.
+- Must still open the same menu/actions as before.
+- Do not break existing profile menu actions.
+
+15. Add attachment button to back-page/header/cover photo
+
+On the Passport/Profile back-page/header/cover photo area, add an attachment/camera/edit button directly on the photo.
+
+User should be able to tap it and change the back-page/header/cover photo there, without going into settings.
+
+Requirements:
+- Button appears only on the logged-in user’s own Passport/Profile.
+- Button is hidden when viewing another user’s profile.
+- Supports picking image from device/gallery.
+- Reuse existing camera capture support if available.
+- Reuse existing media/profile storage helpers.
+- Upload selected image through the existing profile media flow.
+- Save URL/path to correct cover/header/back-page photo field.
+- Show upload progress/loading state.
+- If user cancels picker, do nothing and show no error.
+- If upload fails, keep old cover image.
+- Do not replace old cover URL until upload and profile save both succeed.
+- Refresh Passport/Profile UI immediately after successful change.
+- Preserve fallback/gradient/placeholder if no photo exists.
+- Prevent double-tapping from creating duplicate uploads.
+
+16. Update Passport profile camera button behavior
+
+The camera button on the Passport profile photo should not immediately assume one action.
+
+On tap, show an action sheet/bottom sheet/modal with:
+- Change display photo
+- Add or change highlight
+- Cancel
+
+Behavior:
+- “Change display photo” opens avatar/profile photo picker.
+- Avatar upload saves only to avatar/profile photo field.
+- “Add or change highlight” opens existing highlight picker/creator if one exists.
+- If highlights are partially built, wire to existing highlight flow without duplicating it.
+- If no highlight flow exists, add a safe minimal flow that lets user pick media and save it as a profile highlight using the existing media/profile data model.
+- Highlight update must not overwrite avatar.
+- Avatar update must not overwrite highlight.
+- Use clear labels so user understands the choice.
+- Button appears only on the logged-in user’s own Passport/Profile.
+- Button is hidden when viewing another user’s profile.
+
+17. Fix image upload correctness
+
+Requirements:
+- Reuse existing Supabase bucket/storage helpers if available.
+- Reuse existing image upload utilities if available.
+- Do not create a second media upload system unless no shared helper exists.
+- Uploaded images must be associated with the authenticated user.
+- Respect existing RLS/auth assumptions.
+- Do not expose private storage paths if app uses signed/public URLs differently.
+- Avatar and cover photos must use separate fields.
+- Avatar and cover photos must not overwrite each other.
+- Use separate path prefixes if the existing app already does that.
+- If avatar or cover upload succeeds but profile update fails, either clean up orphaned upload or record safely and retry profile update.
+- If upload fails halfway, keep old image.
+- Compress/resize selected profile and cover images if existing app utilities support it.
+- Support iOS, Android, and web if the app supports all three.
+
+18. Add owner-only edit guards
+
+Edit controls must only appear on the logged-in user’s own Passport/Profile.
+
+Hide these when viewing another user:
+- Edit profile button
+- Cover/back-page/header photo attachment button
+- Profile camera button
+- Highlight editing button
+- Any profile menu action that edits owner-only data
+
+Backend/API must also reject attempts to edit another user’s profile.
+
+Public profiles should remain viewable but not editable.
+
+19. Public profile vs own Passport consistency
+
+Own Passport and public profile should read from the same normalized public profile source.
+
+Own Passport may show private/edit-only fields, but public visible fields should match.
+
+Changing these on own Passport should update everywhere the user appears:
+- display name
+- username
+- avatar
+- cover photo if public
+- bio if public
+- city/country if public
+- public profile preview
+- Pulse author cards
+- Telegraph user cards
+- Trip Crew user cards
+- Discovery user cards
+
+Do not leak private fields:
+- email
+- phone
+- auth metadata
+- verification internals
+- trust calculations
+- private safety settings
+- hidden profile data
+
+20. Regression-test navigation entry points
+
+Verify editing works when entering Passport/Profile from:
+- bottom tab
+- profile avatar tap
+- public profile deep link to own profile
+- onboarding completion redirect
+- settings/account page
+- any profile link from Pulse, Telegraph, Trip Crew, or Discovery that points to the current user
+
+All entry points should load the same editable owner profile state.
+
+21. Accessibility and mobile touch behavior
+
+Requirements:
+- Modern menu button must have clear accessibility label.
+- Camera/edit/attachment buttons must be reachable by screen readers.
+- Buttons over photos need enough contrast against light and dark images.
+- Buttons must have mobile-friendly touch targets.
+- Attachment button should not block normal profile/header interactions.
+- Bottom sheet/action sheet should be usable on mobile.
+- Cancel action should be obvious and safe.
+
+22. Tests to add or update
+
+Add or update tests for:
+
+Profile save:
+- Editing display name does not trigger username validation.
+- Editing bio does not trigger username validation.
+- Editing location/city/country does not trigger username validation.
+- Editing languages does not trigger username validation.
+- Editing interests does not trigger username validation.
+- Username validation runs only when username is changed or required.
+- Saving existing unchanged username succeeds.
+- Username uniqueness ignores current user.
+- Saving completed profile succeeds.
+- Saved profile data reappears after reload/refetch.
+- Save payload does not send blank username when username was not edited.
+- Save payload preserves avatar, cover photo, highlights, trust score, verification status, and home country lock unless intentionally changed.
+
+Profile completion:
+- Missing display name shows display name error.
+- Missing username shows username error only when username is truly required.
+- Pending profile fetch does not show incomplete username error.
+- Completion banner/checklist disappears after required fields are saved.
+
+Onboarding:
+- Onboarding writes fields to same source Passport reads.
+- Onboarding completion does not force username selection again if username exists.
+- Passport handles profile row loading after onboarding without false username error.
+
+Images:
+- Back-page/header/cover attachment button updates only cover/header/back-page photo field.
+- Cover photo update does not overwrite avatar.
+- Cover photo persists after refetch.
+- Canceling image picker does nothing.
+- Upload failure keeps old image.
+- Passport camera button opens choice sheet.
+- Choosing display photo updates only avatar/profile photo.
+- Choosing highlight updates/creates highlight without overwriting avatar.
+- Highlight update does not overwrite display photo.
+
+Ownership/public profile:
+- Edit/photo controls show on own profile.
+- Edit/photo controls are hidden on other users’ profiles.
+- Backend/API rejects edit attempt for another user.
+- Public profile still loads correctly.
+- Profile menu button still opens same menu actions.
+
+Cache:
+- Profile save invalidates/refetches affected profile queries.
+- Updated display name/avatar appears in Passport, Settings, Telegraph user cards, Pulse cards, Trip Crew, Discovery, and public profile preview.
+
+23. Manual QA flow required before completion
+
+Manually verify this exact flow:
+
+New/existing user profile save:
+- Open Passport/Profile.
+- Tap edit.
+- Change display name only.
+- Save.
+- No username error appears.
+- Display name updates immediately.
+- Refresh/reopen app.
+- Display name persists.
+- Change bio/location/languages/interests.
+- Save.
+- No username error appears.
+- Refresh/reopen app.
+- Changes persist.
+
+Username flow:
+- If username exists, save normal profile info without reselecting username.
+- If username is edited, validate it properly.
+- Existing unchanged username saves without being marked unavailable.
+- Invalid username shows username-specific error.
+- Taken username shows username-specific error.
+
+Cover photo flow:
+- Open own Passport/Profile.
+- Tap back-page/header/cover photo attachment button.
+- Pick photo.
+- Cover photo updates.
+- Refresh/reopen app.
+- Cover photo persists.
+- Avatar is unchanged.
+
+Profile camera flow:
+- Tap Passport profile photo camera button.
+- Confirm app asks:
+  - Change display photo
+  - Add or change highlight
+  - Cancel
+- Choose display photo.
+- Avatar updates.
+- Highlight is unchanged.
+- Choose add/change highlight.
+- Highlight updates.
+- Avatar is unchanged.
+
+Public/other user flow:
+- View another user’s profile.
+- Confirm edit/profile photo/cover photo controls are hidden.
+- Confirm public profile still displays normally.
+
+Navigation flow:
+- Enter Passport/Profile from bottom tab.
+- Enter own profile from avatar tap.
+- Enter own profile from deep link/profile link.
+- Enter after onboarding completion.
+- Enter from settings/account page.
+- Confirm edit/save works from all entry points.
+
+24. Final acceptance criteria
+
+The pass is not complete until this exact flow works:
+
+- New user completes onboarding.
+- User chooses or already has a username.
+- User opens Passport.
+- User taps edit.
+- User changes display name only.
+- User saves.
+- No username error appears.
+- Display name updates immediately.
+- User refreshes/reopens app.
+- Display name persists.
+- User changes bio/location/languages/interests.
+- User saves.
+- No username error appears.
+- User changes cover/back-page photo directly from Passport.
+- Cover photo persists.
+- User taps profile camera button.
+- App asks: Change display photo or Add/change highlight.
+- Display photo update does not affect highlight.
+- Highlight update does not affect display photo.
+- Viewing another user’s profile shows no edit/photo controls.
+- Public profile still works.
+- Profile cards across Pulse, Telegraph, Trip Crew, and Discovery show updated display name/avatar.
+- No old broken “select username” error appears unless username is actually missing or invalid.
+
+25. Final report required
+
+At the end, report clearly:
+
+- Exact root cause of the username error.
+- Whether it was frontend validation, backend validation, database constraint, RLS, stale cache, wrong field mapping, form initialization, missing profile row, duplicate profile row, or multiple causes.
+- Exact source-of-truth table and fields now used for username/handle.
+- Exact source-of-truth table and fields now used for display name.
+- Exact source-of-truth table and fields now used for avatar/profile photo.
+- Exact source-of-truth table and fields now used for cover/back-page/header photo.
+- Exact files changed.
+- Tests added or updated.
+- Commands run.
+- Manual flows verified.
+- Any remaining limitation, if one truly remains.
+
+Do not mark the task complete until the profile save bug is fixed at the real root cause and the final QA proof explains exactly why the username error was appearing.
