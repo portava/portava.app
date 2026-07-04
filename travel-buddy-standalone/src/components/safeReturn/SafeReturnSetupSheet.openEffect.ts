@@ -81,6 +81,16 @@ export interface CheckedOpenEffectCallbacks {
    * and start loading contacts.
    */
   onModalShouldOpen?: () => void;
+  /**
+   * Called when the safety-net timeout fires and `onTimeout` is provided.
+   * When this is set, `onClose` is NOT called by the timeout path — the
+   * caller is responsible for showing brief feedback and then opening the
+   * form (fail-open). `isLive()` stays `true` while the caller lingers so
+   * it can be used as a cancellation guard in the follow-up timer.
+   * If omitted, the original behaviour is preserved: the timeout calls
+   * `onCheckingChange(false)` + `onClose()`.
+   */
+  onTimeout?: () => void;
 }
 
 export interface CheckedOpenEffectOptions {
@@ -130,11 +140,22 @@ export function startCheckedOpenEffect(
   callbacks: CheckedOpenEffectCallbacks,
   { timeoutMs = 5_000 }: CheckedOpenEffectOptions = {},
 ): CheckedOpenEffectHandle {
-  const { onCheckingChange, onStarted, onClose, getActiveSession, onModalShouldOpen } = callbacks;
+  const { onCheckingChange, onStarted, onClose, getActiveSession, onModalShouldOpen, onTimeout } = callbacks;
   let live = true;
+  // Set to true when the safety-net timeout fires. Prevents the still-in-flight
+  // promise from calling onCheckingChange(false) or onModalShouldOpen after the
+  // timeout handler has already taken over (avoiding a double-open race).
+  let timedOut = false;
 
   const timeoutId = setTimeout(() => {
-    if (live) {
+    if (!live) return;
+    timedOut = true;
+    if (onTimeout) {
+      // Caller manages fail-open feedback; keep live = true so isLive() can
+      // still be used as a cancellation guard in the caller's linger timer.
+      onTimeout();
+    } else {
+      // Legacy fall-back: dismiss silently so the trigger button unsticks.
       live = false;
       onCheckingChange?.(false);
       onClose();
@@ -147,8 +168,8 @@ export function startCheckedOpenEffect(
     let modalShouldOpen = true;
     try {
       ({ modalShouldOpen } = await runOpenEffect({
-        onStarted: (id) => { if (live) onStarted?.(id); },
-        onClose: () => { if (live) onClose(); },
+        onStarted: (id) => { if (live && !timedOut) onStarted?.(id); },
+        onClose: () => { if (live && !timedOut) onClose(); },
         getActiveSession,
       }));
     } catch {
@@ -156,10 +177,12 @@ export function startCheckedOpenEffect(
       // stuck indicator in the unlikely event it throws anyway.
     } finally {
       clearTimeout(timeoutId);
-      if (live) onCheckingChange?.(false);
+      // Only reset the checking indicator if the timeout hasn't already taken
+      // over — the caller's linger timer will call onCheckingChange(false).
+      if (live && !timedOut) onCheckingChange?.(false);
     }
 
-    if (!live) return;
+    if (!live || timedOut) return;
     if (modalShouldOpen) onModalShouldOpen?.();
   })();
 

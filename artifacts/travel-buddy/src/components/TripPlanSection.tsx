@@ -263,6 +263,7 @@ export function TripPlanSection({
   const [safeReturnSetupItem, setSafeReturnSetupItem] = useState<TripPlanItem | null>(null);
   const [safeReturnSetupOpen, setSafeReturnSetupOpen] = useState(false);
   const [safeReturnChecking, setSafeReturnChecking] = useState(false);
+  const [safeReturnSlowCheck, setSafeReturnSlowCheck] = useState(false);
   const [activeSafeReturnSession, setActiveSafeReturnSession] = useState<import('../services/safeReturn').SafeReturnSession | null>(null);
   const [showMissedPrompt, setShowMissedPrompt] = useState(false);
   const [routeBuilderOpen, setRouteBuilderOpen] = useState(false);
@@ -394,6 +395,11 @@ export function TripPlanSection({
     },
     [],
   );
+
+  const handleSafeReturnCheckingChange = useCallback((checking: boolean) => {
+    setSafeReturnChecking(checking);
+    if (!checking) setSafeReturnSlowCheck(false);
+  }, []);
 
   const handleSafeReturnClose = useCallback(() => {
     setSafeReturnSetupOpen(false);
@@ -683,7 +689,9 @@ export function TripPlanSection({
         <View style={sr.overlay}>
           <View style={sr.card}>
             <ActivityIndicator color={color.deep} />
-            <Text style={sr.label}>Checking Safe Return…</Text>
+            <Text style={sr.label}>
+              {safeReturnSlowCheck ? 'Still checking…' : 'Checking Safe Return…'}
+            </Text>
           </View>
         </View>
       </Modal>
@@ -696,7 +704,8 @@ export function TripPlanSection({
         planEndsAt={safeReturnSetupItem?.endsAt ?? null}
         onClose={handleSafeReturnClose}
         onStarted={handleSafeReturnStarted}
-        onCheckingChange={setSafeReturnChecking}
+        onCheckingChange={handleSafeReturnCheckingChange}
+        onSlowCheck={() => setSafeReturnSlowCheck(true)}
       />
 
       <AddToPlanSheet

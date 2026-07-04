@@ -44,6 +44,12 @@ interface Props {
    * trigger button so the user knows something is happening.
    */
   onCheckingChange?: (checking: boolean) => void;
+  /**
+   * Called when the session pre-check times out (slow connection). The
+   * caller can use this to update its indicator label (e.g. "Still
+   * checking…") before the form opens fail-open after a brief linger.
+   */
+  onSlowCheck?: () => void;
 }
 
 // ── Timer options ─────────────────────────────────────────────────────────────
@@ -65,7 +71,12 @@ const ESCALATION_OPTIONS: Array<{ level: 0 | 1 | 2 | 3; label: string; desc: str
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, tripId, planEndsAt, suggestionReason, onCheckingChange }: Props) {
+// How long to keep the "still checking…" overlay visible before opening the
+// form fail-open when the session pre-check times out. Tune this constant
+// (or expose as a prop) to adjust the feedback window.
+const SLOW_CHECK_LINGER_MS = 1_500;
+
+export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, tripId, planEndsAt, suggestionReason, onCheckingChange, onSlowCheck }: Props) {
   const [timerMinutes, setTimerMinutes] = useState<number | null>(30);
   const [escalationLevel, setEscalationLevel] = useState<0 | 1 | 2 | 3>(0);
   const [trustedCircleEnabled, setTrustedCircleEnabled] = useState(false);
@@ -89,10 +100,17 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
   // re-triggers (before React cleanup has a chance to run the previous cancel)
   // are safely deduplicated. Second-wins: the new effect cancels the old one.
   const openEffectHandleRef = useRef<ReturnType<typeof startCheckedOpenEffect> | null>(null);
+  // Timer that lingers the checking overlay after a timeout before opening
+  // the form fail-open. Cleared by effect cleanup when visible goes false.
+  const slowCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!visible) {
       setModalVisible(false);
+      if (slowCheckTimerRef.current !== null) {
+        clearTimeout(slowCheckTimerRef.current);
+        slowCheckTimerRef.current = null;
+      }
       return;
     }
 
@@ -102,11 +120,18 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
     // rapid visible=true re-triggers that arrive in the same render batch before
     // the cleanup of the previous effect has run (second-wins policy).
     openEffectHandleRef.current?.cancel();
+    if (slowCheckTimerRef.current !== null) {
+      clearTimeout(slowCheckTimerRef.current);
+      slowCheckTimerRef.current = null;
+    }
 
     // startCheckedOpenEffect owns the safety-net 5 s timeout + onCheckingChange
     // signalling + live-flag guard. The handle returned here lets us (a) query
     // liveness from the contact-loading continuation and (b) cancel from the
     // cleanup function below.
+    //
+    // The safety-net timeout defaults to 5 000 ms. Pass a second argument to
+    // startCheckedOpenEffect({ timeoutMs: N }) here if you need to tune it.
     const handle = startCheckedOpenEffect({
       onCheckingChange,
       onStarted,
@@ -126,12 +151,36 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
           }
         });
       },
+      onTimeout: () => {
+        // Session pre-check timed out (slow connection). Instead of closing,
+        // signal the parent to show "Still checking…" feedback, then open the
+        // form fail-open after a brief linger so the user sees what happened.
+        onSlowCheck?.();
+        slowCheckTimerRef.current = setTimeout(() => {
+          slowCheckTimerRef.current = null;
+          if (!handle.isLive()) return; // cancelled while lingering — do nothing
+          onCheckingChange?.(false); // hide the checking overlay
+          setModalVisible(true);     // open the form (fail-open)
+          setContactsLoading(true);
+          runContactLoad({ getTrustedContacts, listEmergencyContacts }).then((contactResult) => {
+            if (handle.isLive()) {
+              setTrustedContacts(contactResult.trustedContacts);
+              setEmergencyContacts(contactResult.emergencyContacts);
+              setContactsLoading(false);
+            }
+          });
+        }, SLOW_CHECK_LINGER_MS);
+      },
     });
     openEffectHandleRef.current = handle;
 
     return () => {
       handle.cancel();
       openEffectHandleRef.current = null;
+      if (slowCheckTimerRef.current !== null) {
+        clearTimeout(slowCheckTimerRef.current);
+        slowCheckTimerRef.current = null;
+      }
     };
   }, [visible]);
 
