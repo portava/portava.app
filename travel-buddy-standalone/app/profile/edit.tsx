@@ -12,6 +12,7 @@ import { renderAvatarImage, renderCoverImage, MAX_ORIGINAL_BYTES } from '../../s
 import { getMyProfile, updateMyProfile, uploadAvatar, uploadCover, checkUsername } from '../../src/services/profile';
 import { getCurrentGps, reverseGeocodeDetailed } from '../../src/services/location';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
+import { DatePickerField } from '../../src/components/DatePickerField';
 import type { OwnProfile } from '../../src/types/models';
 import { useLanguagePreference } from '../../src/context/LanguagePreferenceContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
@@ -1072,15 +1073,10 @@ export default function EditProfileScreen() {
               {/* Date of Birth */}
               <View style={styles.field}>
                 <Text style={styles.fieldLabel}>Date of Birth</Text>
-                <TextInput
-                  style={styles.fieldInput}
+                <DatePickerField
                   value={form.dateOfBirth ?? ''}
-                  onChangeText={(text) => setForm((f) => ({ ...f, dateOfBirth: text || null }))}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor={color.faint}
-                  maxLength={10}
-                  keyboardType="numeric"
-                  returnKeyType="next"
+                  onChange={(dateStr) => setForm((f) => ({ ...f, dateOfBirth: dateStr || null }))}
+                  placeholder="Select your date of birth"
                 />
                 <Text style={styles.fieldHint}>
                   Used to enforce age limits on meetups and circles. Not shown publicly.

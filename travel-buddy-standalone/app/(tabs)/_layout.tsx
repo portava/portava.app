@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform, useColorScheme } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Tabs, router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -84,6 +84,15 @@ interface FloatBarProps {
 function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications }: FloatBarProps) {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
+  const colorScheme = useColorScheme();
+  const isDark = colorScheme === 'dark';
+
+  const pillBg      = isDark ? 'rgba(20,20,20,0.30)'     : 'rgba(255,255,255,0.30)';
+  const pillBorder  = isDark ? 'rgba(255,255,255,0.12)'  : 'rgba(255,255,255,0.45)';
+  const blurTint    = isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterial';
+  const iconActive  = isDark ? color.onInk               : color.ink;
+  const iconMuted   = isDark ? color.onInkMute            : color.mute;
+  const activeHighlight = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.07)';
 
   const isActive = (match: readonly string[]) =>
     match.some((m) => pathname === m || pathname.startsWith(m + '/'));
@@ -93,11 +102,11 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
       style={[fb.wrapper, { bottom: insets.bottom + 12 }]}
       pointerEvents="box-none"
     >
-      <View style={fb.pill}>
+      <View style={[fb.pill, { backgroundColor: pillBg, borderColor: pillBorder }]}>
         {/* Glass blur layer — iOS: real blur; Android: rgba only */}
         {Platform.OS === 'ios' && (
           <BlurView
-            tint="systemChromeMaterial"
+            tint={blurTint as any}
             intensity={70}
             style={StyleSheet.absoluteFillObject}
           />
@@ -105,8 +114,7 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
         {/* Left items: Pulse, Explore */}
         {NAV_ITEMS.slice(0, 2).map(({ href, label, icon: Icon, match }) => {
           const active = isActive(match);
-          const badge =
-            label === 'Explore' ? newHighlights : 0;
+          const badge = label === 'Explore' ? newHighlights : 0;
           return (
             <Pressable
               key={href}
@@ -116,16 +124,16 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
               accessibilityRole="button"
               accessibilityLabel={label}
             >
-              <View style={[fb.itemInner, active && fb.itemInnerActive]}>
+              <View style={[fb.itemInner, active && { backgroundColor: activeHighlight }]}>
                 <View>
-                  <Icon size={20} color={active ? color.ink : color.mute} />
+                  <Icon size={20} color={active ? iconActive : iconMuted} />
                   {badge > 0 && (
                     <View style={fb.dot}>
                       <Text style={fb.dotText}>{badge > 9 ? '9+' : String(badge)}</Text>
                     </View>
                   )}
                 </View>
-                <Text style={[fb.label, active && fb.labelActive]}>{label}</Text>
+                <Text style={[fb.label, active && [fb.labelActive, { color: iconActive }]]}>{label}</Text>
               </View>
             </Pressable>
           );
@@ -160,16 +168,16 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
               accessibilityRole="button"
               accessibilityLabel={label}
             >
-              <View style={[fb.itemInner, active && fb.itemInnerActive]}>
+              <View style={[fb.itemInner, active && { backgroundColor: activeHighlight }]}>
                 <View>
-                  <Icon size={20} color={active ? color.ink : color.mute} />
+                  <Icon size={20} color={active ? iconActive : iconMuted} />
                   {badge > 0 && (
                     <View style={fb.dot}>
                       <Text style={fb.dotText}>{badge > 9 ? '9+' : String(badge)}</Text>
                     </View>
                   )}
                 </View>
-                <Text style={[fb.label, active && fb.labelActive]}>{label}</Text>
+                <Text style={[fb.label, active && [fb.labelActive, { color: iconActive }]]}>{label}</Text>
               </View>
             </Pressable>
           );
