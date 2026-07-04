@@ -17,6 +17,9 @@
  *   - type=all: all type buckets including cities/countries; round-robin; cursor
  *   - Rate limiting: 429 on request 31
  *   - Age-restriction: profiles with age_restriction_enabled=true excluded from travelers, events; fail-closed on DB error
+ *   - Hidden gems: age-restricted/suspended submitters excluded; fail-closed
+ *   - Plans: trips with deleted/cancelled/banned status excluded from plan search
+ *   - Cities/Countries: discovery opt-out (allow_profile_discovery=false) excluded; fail-closed on error
  */
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -609,11 +612,15 @@ describe("GET /api/discovery/search — plans: trip visibility enforcement", () 
 
   beforeEach(() => {
     setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "Alice", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+      ],
       blocks: [],
       profile_privacy_settings: [],
+      user_follows: [],
       trips: [
-        { id: TRIP_PUB, visibility: "public",  owner_id: ALICE },
-        { id: TRIP_PRI, visibility: "private", owner_id: ALICE },
+        { id: TRIP_PUB, visibility: "public",  owner_id: ALICE, status: "planning" },
+        { id: TRIP_PRI, visibility: "private", owner_id: ALICE, status: "planning" },
       ],
       trip_plan_items: [
         { id: PLAN_PUB, title: "Visit Tokyo Tower", notes: "Amazing", trip_id: TRIP_PUB, creator_id: ALICE, removed_at: null, created_at: "2026-01-01T00:00:00Z" },
@@ -638,9 +645,13 @@ describe("GET /api/discovery/search — plans: trip visibility enforcement", () 
 
   it("includes caller-owned private trip plans", async () => {
     setup({
+      profiles: [
+        { id: ME, handle: "me", name: "Me", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+      ],
       blocks: [],
       profile_privacy_settings: [],
-      trips: [{ id: TRIP_PRI, visibility: "private", owner_id: ME }],
+      user_follows: [],
+      trips: [{ id: TRIP_PRI, visibility: "private", owner_id: ME, status: "planning" }],
       trip_plan_items: [
         { id: PLAN_OWN, title: "My Secret Plan", notes: null, trip_id: TRIP_PRI, creator_id: ME, removed_at: null, created_at: "2026-01-01T00:00:00Z" },
       ],
@@ -956,5 +967,144 @@ describe("GET /api/discovery/search — age-restricted content exclusion", () =>
     assert.equal(r.status, 200);
     const { results } = await r.json() as any;
     assert.equal(results.length, 0, "Fail-closed: must return empty when age-restriction state is unknown");
+  });
+});
+
+// ── Hidden gems — submitter account-state and age-restriction ──────────────────
+
+const GEM_OK   = "gg000000-0000-4000-a000-000000000030";
+const GEM_AGE  = "gg000000-0000-4000-a000-000000000031";
+const GEM_SUSP = "gg000000-0000-4000-a000-000000000032";
+const SUSP_USER = "gg000000-0000-4000-a000-000000000033";
+
+describe("GET /api/discovery/search — hidden gems submitter enforcement", () => {
+  it("excludes a hidden gem submitted by an age-restricted user", async () => {
+    setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "Alice", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+        { id: AGE_DAVE, handle: "dave", name: "Dave", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+      ],
+      blocks: [],
+      profile_privacy_settings: [],
+      user_follows: [],
+      hidden_gems: [
+        { id: GEM_OK,  name: "Secret Beach",    description: null, city: "Cebu", country: "PH", submitted_by: ALICE,    image_url: null, category: "nature", status: "approved", created_at: "2026-01-01T00:00:00Z" },
+        { id: GEM_AGE, name: "Adult Night Spot", description: null, city: "Cebu", country: "PH", submitted_by: AGE_DAVE, image_url: null, category: "nightlife", status: "approved", created_at: "2026-01-01T00:00:00Z" },
+      ],
+      user_privacy_settings: [
+        { user_id: AGE_DAVE, age_restriction_enabled: true },
+      ],
+    });
+
+    const r = await get("/discovery/search?q=cebu&type=hidden_gems");
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    const ids = (results as any[]).map((g: any) => g.id as string);
+    assert.ok(ids.includes(GEM_OK),   "Gem from non-restricted submitter should appear");
+    assert.ok(!ids.includes(GEM_AGE), "Gem from age-restricted submitter must NOT appear");
+  });
+
+  it("excludes a hidden gem submitted by a suspended account", async () => {
+    setup({
+      profiles: [
+        { id: ALICE,     handle: "alice", name: "Alice", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+        { id: SUSP_USER, handle: "susp",  name: "Susp",  avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "suspended" },
+      ],
+      blocks: [],
+      profile_privacy_settings: [],
+      user_follows: [],
+      hidden_gems: [
+        { id: GEM_OK,   name: "Gem Cebu",  description: null, city: "Cebu", country: "PH", submitted_by: ALICE,     image_url: null, category: "nature", status: "approved", created_at: "2026-01-01T00:00:00Z" },
+        { id: GEM_SUSP, name: "Gem Cebu2", description: null, city: "Cebu", country: "PH", submitted_by: SUSP_USER, image_url: null, category: "nature", status: "approved", created_at: "2026-01-01T00:00:00Z" },
+      ],
+      user_privacy_settings: [],
+    });
+
+    const r = await get("/discovery/search?q=cebu&type=hidden_gems");
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    const ids = (results as any[]).map((g: any) => g.id as string);
+    assert.ok(ids.includes(GEM_OK),    "Gem from active submitter should appear");
+    assert.ok(!ids.includes(GEM_SUSP), "Gem from suspended submitter must NOT appear");
+  });
+});
+
+// ── Plans — deleted/cancelled/banned trip status exclusion ────────────────────
+
+const PLAN_DEL = "pd000000-0000-4000-a000-000000000040";
+const TRIP_DEL = "td000000-0000-4000-a000-000000000041";
+const PLAN_LIVE = "pd000000-0000-4000-a000-000000000042";
+const TRIP_LIVE = "td000000-0000-4000-a000-000000000043";
+
+describe("GET /api/discovery/search — plans: deleted/cancelled/banned trip exclusion", () => {
+  it("excludes plan items from a deleted trip", async () => {
+    setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "Alice", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+      ],
+      blocks: [],
+      profile_privacy_settings: [],
+      user_follows: [],
+      trips: [
+        { id: TRIP_LIVE, visibility: "public", owner_id: ALICE, status: "planning" },
+        { id: TRIP_DEL,  visibility: "public", owner_id: ALICE, status: "deleted"  },
+      ],
+      trip_plan_items: [
+        { id: PLAN_LIVE, title: "Visit Museum",  notes: null, trip_id: TRIP_LIVE, creator_id: ALICE, removed_at: null, created_at: "2026-01-01T00:00:00Z" },
+        { id: PLAN_DEL,  title: "Visit Museum2", notes: null, trip_id: TRIP_DEL,  creator_id: ALICE, removed_at: null, created_at: "2026-01-01T00:00:00Z" },
+      ],
+      user_privacy_settings: [],
+    });
+
+    const r = await get("/discovery/search?q=museum&type=plans");
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    const ids = (results as any[]).map((p: any) => p.id as string);
+    assert.ok(ids.includes(PLAN_LIVE),  "Plan from active trip should appear");
+    assert.ok(!ids.includes(PLAN_DEL), "Plan from deleted trip must NOT appear");
+  });
+});
+
+// ── Cities — discovery opt-out exclusion ──────────────────────────────────────
+
+describe("GET /api/discovery/search — cities: discovery opt-out exclusion", () => {
+  it("excludes a city contributed only by opt-out profiles", async () => {
+    setup({
+      profiles: [
+        { id: ALICE,    handle: "alice", name: "Alice", avatar_url: null, is_private: false, home_city: "Cebu",   home_country: "PH", account_status: "active" },
+        { id: AGE_DAVE, handle: "dave",  name: "Dave",  avatar_url: null, is_private: false, home_city: "Manila", home_country: "PH", account_status: "active" },
+      ],
+      blocks: [],
+      profile_privacy_settings: [
+        { user_id: AGE_DAVE, allow_profile_discovery: false },
+      ],
+      user_follows: [],
+      user_privacy_settings: [],
+    });
+
+    const r = await get("/discovery/search?q=manila&type=cities");
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    const titles = (results as any[]).map((c: any) => (c.title as string).toLowerCase());
+    assert.ok(!titles.includes("manila"), "City contributed only by opted-out profile must NOT appear");
+  });
+
+  it("returns empty cities (fail-closed) when profile_privacy_settings errors", async () => {
+    setup(
+      {
+        profiles: [
+          { id: ALICE, handle: "alice", name: "Alice", avatar_url: null, is_private: false, home_city: "Cebu", home_country: "PH", account_status: "active" },
+        ],
+        blocks: [],
+        user_follows: [],
+        user_privacy_settings: [],
+      },
+      ["profile_privacy_settings"],
+    );
+
+    const r = await get("/discovery/search?q=cebu&type=cities");
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    assert.equal(results.length, 0, "Fail-closed: must return empty cities when opt-out state is unknown");
   });
 });
