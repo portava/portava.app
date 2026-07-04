@@ -294,6 +294,20 @@ export default function DiscoveryHub() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
+      {/* ── Search entry bar ── */}
+      <Pressable
+        style={styles.searchEntryBar}
+        onPress={() => router.push('/search')}
+        accessible
+        accessibilityRole="search"
+        accessibilityLabel="Open search"
+      >
+        <Search size={15} color={color.mute} />
+        <Text style={styles.searchEntryText} numberOfLines={1}>
+          Search travelers, trips, events, places, or hashtags
+        </Text>
+      </Pressable>
+
       {/* ── Header ── */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
@@ -317,20 +331,6 @@ export default function DiscoveryHub() {
           <DestinationBar destination={destination} onSelectPlace={handleSelectPlaceFromBar} />
         </View>
       </View>
-
-      {/* ── Search entry bar ── */}
-      <Pressable
-        style={styles.searchEntryBar}
-        onPress={() => router.push('/search')}
-        accessible
-        accessibilityRole="search"
-        accessibilityLabel="Open search"
-      >
-        <Search size={15} color={color.mute} />
-        <Text style={styles.searchEntryText} numberOfLines={1}>
-          Search travelers, trips, events, places, or hashtags
-        </Text>
-      </Pressable>
 
       {/* ── Context mode selector ── */}
       <ScrollView

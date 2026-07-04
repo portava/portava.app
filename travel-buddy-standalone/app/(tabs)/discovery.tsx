@@ -469,6 +469,20 @@ function DiscoveryHubScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
+      {/* ── Search entry bar ── */}
+      <Pressable
+        style={styles.searchEntryBar}
+        onPress={() => router.push('/search')}
+        accessible
+        accessibilityRole="search"
+        accessibilityLabel="Open search"
+      >
+        <Search size={15} color={color.mute} />
+        <Text style={styles.searchEntryText} numberOfLines={1}>
+          Search travelers, trips, events, places, or hashtags
+        </Text>
+      </Pressable>
+
       {/* ── Header ── */}
       <View style={styles.header}>
         <Compass size={20} color={color.signal} />
@@ -485,20 +499,6 @@ function DiscoveryHubScreen() {
           </Pressable>
         )}
       </View>
-
-      {/* ── Search entry bar ── */}
-      <Pressable
-        style={styles.searchEntryBar}
-        onPress={() => router.push('/search')}
-        accessible
-        accessibilityRole="search"
-        accessibilityLabel="Open search"
-      >
-        <Search size={15} color={color.mute} />
-        <Text style={styles.searchEntryText} numberOfLines={1}>
-          Search travelers, trips, events, places, or hashtags
-        </Text>
-      </Pressable>
 
       {/* ── Content area: map fills edge-to-edge, chrome floats on top ── */}
       <View style={styles.contentArea}>

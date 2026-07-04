@@ -158,6 +158,7 @@ export default function SearchScreen() {
         setHashtags([]);
         setSearched(false);
         setLoading(false);
+        setError(null);
         return;
       }
       // 0 chars → fetch trending; >= 2 chars → fetch suggestions
@@ -173,6 +174,7 @@ export default function SearchScreen() {
       setEvents([]);
       setSearched(false);
       setLoading(false);
+      setError(null);
       return;
     }
     setLoading(true);
