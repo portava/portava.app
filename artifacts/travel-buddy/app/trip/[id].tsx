@@ -60,6 +60,7 @@ function TripDetailScreen() {
   const [gapDestination, setGapDestination] = useState('');
   const [activeSafeReturnSession, setActiveSafeReturnSession] = useState<SafeReturnSession | null>(null);
   const [safeReturnSetupOpen, setSafeReturnSetupOpen] = useState(false);
+  const [safeReturnChecking, setSafeReturnChecking] = useState(false);
   const [showMissedPrompt, setShowMissedPrompt] = useState(false);
   const [completingTrip, setCompletingTrip] = useState(false);
   const handleGapDays = useCallback((days: string[], dest: string) => {
@@ -372,9 +373,17 @@ function TripDetailScreen() {
             onSessionUpdated={(s) => setActiveSafeReturnSession(s)}
           />
         ) : (
-          <Pressable style={styles.safeSetupBtn} onPress={() => setSafeReturnSetupOpen(true)}>
-            <ShieldCheck size={16} color={color.deep} />
-            <Text style={styles.safeSetupBtnText}>Set up Safe Return</Text>
+          <Pressable
+            style={[styles.safeSetupBtn, safeReturnChecking && { opacity: 0.7 }]}
+            onPress={() => setSafeReturnSetupOpen(true)}
+            disabled={safeReturnChecking}
+          >
+            {safeReturnChecking
+              ? <ActivityIndicator size="small" color={color.deep} />
+              : <ShieldCheck size={16} color={color.deep} />}
+            <Text style={styles.safeSetupBtnText}>
+              {safeReturnChecking ? 'Checking…' : 'Set up Safe Return'}
+            </Text>
           </Pressable>
         )}
         {activeSafeReturnSession && activeSafeReturnSession.status === 'missed' && (
@@ -406,6 +415,7 @@ function TripDetailScreen() {
           visible={safeReturnSetupOpen}
           tripId={live ? trip.id : undefined}
           onClose={() => setSafeReturnSetupOpen(false)}
+          onCheckingChange={setSafeReturnChecking}
         />
         <TripPostsSection posts={[]} />
         {live && trip.id ? (

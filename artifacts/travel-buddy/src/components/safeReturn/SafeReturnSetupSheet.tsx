@@ -37,6 +37,12 @@ interface Props {
   /** ISO timestamp of when the linked plan item ends (enables "Until plan ends" timer chip). */
   planEndsAt?: string | null;
   suggestionReason?: string | null;
+  /**
+   * Called with `true` when the active-session pre-check starts and `false`
+   * when it resolves. Callers can use this to show an inline spinner on the
+   * trigger button so the user knows something is happening.
+   */
+  onCheckingChange?: (checking: boolean) => void;
 }
 
 // ── Timer options ─────────────────────────────────────────────────────────────
@@ -58,7 +64,7 @@ const ESCALATION_OPTIONS: Array<{ level: 0 | 1 | 2 | 3; label: string; desc: str
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, tripId, planEndsAt, suggestionReason }: Props) {
+export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, tripId, planEndsAt, suggestionReason, onCheckingChange }: Props) {
   const [timerMinutes, setTimerMinutes] = useState<number | null>(30);
   const [escalationLevel, setEscalationLevel] = useState<0 | 1 | 2 | 3>(0);
   const [trustedCircleEnabled, setTrustedCircleEnabled] = useState(false);
@@ -88,6 +94,8 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
     let cancelled = false;
 
     (async () => {
+      onCheckingChange?.(true);
+
       const { modalShouldOpen } = await runOpenEffect({
         // Wrap callbacks with the cancellation guard so a stale in-flight
         // effect (visible flipped false before getActiveSession resolved)
@@ -98,6 +106,8 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
       });
 
       if (cancelled) return;
+
+      onCheckingChange?.(false);
 
       if (!modalShouldOpen) return; // redirected to an active session
 
@@ -112,7 +122,12 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      // If visible was toggled off while the pre-check was still in flight,
+      // reset the caller's checking indicator so it doesn't stay stuck.
+      onCheckingChange?.(false);
+    };
   }, [visible]);
 
   // Auto-enable TC when escalation >= 1

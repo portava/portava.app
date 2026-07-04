@@ -100,6 +100,7 @@ export default function ActiveRouteScreen() {
   const { locationState, requestLocation } = useActiveLocation();
   const [compassExpanded, setCompassExpanded]   = useState(false);
   const [safeReturnVisible, setSafeReturnVisible] = useState(false);
+  const [safeReturnChecking, setSafeReturnChecking] = useState(false);
   const [routeStarted, setRouteStarted]         = useState(false);
   const [fullMapVisible, setFullMapVisible]     = useState(false);
   const [membersExpanded, setMembersExpanded]   = useState(false);
@@ -504,9 +505,17 @@ export default function ActiveRouteScreen() {
             </Pressable>
           ) : (
             <View style={styles.activeActions}>
-              <Pressable style={styles.safeReturnBtn} onPress={() => setSafeReturnVisible(true)}>
-                <Shield size={15} color={color.deep} />
-                <Text style={styles.safeReturnBtnText}>Safe Return</Text>
+              <Pressable
+                style={[styles.safeReturnBtn, safeReturnChecking && { opacity: 0.7 }]}
+                onPress={() => setSafeReturnVisible(true)}
+                disabled={safeReturnChecking}
+              >
+                {safeReturnChecking
+                  ? <ActivityIndicator size="small" color={color.deep} />
+                  : <Shield size={15} color={color.deep} />}
+                <Text style={styles.safeReturnBtnText}>
+                  {safeReturnChecking ? 'Checking…' : 'Safe Return'}
+                </Text>
               </Pressable>
               <Pressable style={styles.endBtn} onPress={handleEndSession}>
                 <StopCircle size={15} color={color.signal} />
@@ -528,6 +537,7 @@ export default function ActiveRouteScreen() {
             : null
         }
         suggestionReason={`Your route has ${totalCount} stops — estimated ~${estimatedReturnMinutes} min total.`}
+        onCheckingChange={setSafeReturnChecking}
       />
 
       <RouteFullMapModal
