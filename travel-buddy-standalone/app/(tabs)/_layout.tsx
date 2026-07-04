@@ -6,7 +6,7 @@ import { Activity, CalendarDays, Compass, Map, User, Plus, Plane } from 'lucide-
 import { NotificationBell } from '../../src/components/NotificationBell';
 import { color, space, type as t, shadow } from '../../src/theme/tokens';
 import { useIsDesktop } from '../../src/hooks/useBreakpoint';
-import { useUnreadCounts, markHighlightsViewed } from '../../src/hooks/useMessaging';
+import { useUnreadCounts } from '../../src/hooks/useMessaging';
 import { useGeofenceMonitor } from '../../src/hooks/useGeofenceMonitor';
 import { getIncomingMessageRequests } from '../../src/services/messaging';
 import { getPendingTripInvites } from '../../src/services/trips';
@@ -20,30 +20,37 @@ const NAV_ITEMS = [
   { href: '/(tabs)/passport', label: 'Passport', icon: User, match: ['/(tabs)/passport'] },
 ] as const;
 
-function DesktopSidebar({ unreadNotifications, unreadMessages, pendingRequests }: { unreadNotifications: number; unreadMessages: number; pendingRequests: number }) {
+/* ─── Desktop sidebar ──────────────────────────────────────────────────── */
+function DesktopSidebar({
+  unreadNotifications,
+  unreadMessages,
+  pendingRequests,
+}: {
+  unreadNotifications: number;
+  unreadMessages: number;
+  pendingRequests: number;
+}) {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
 
   return (
-    <View style={[styles.sidebar, { paddingTop: insets.top + space.xl, paddingBottom: insets.bottom + space.lg }]}>
-      {/* Brand */}
-      <View style={styles.brand}>
-        <View style={styles.brandIcon}><Plane size={18} color={color.onInk} /></View>
-        <Text style={styles.brandName}>Travel Buddy</Text>
+    <View style={[ds.sidebar, { paddingTop: insets.top + space.xl, paddingBottom: insets.bottom + space.lg }]}>
+      <View style={ds.brand}>
+        <View style={ds.brandIcon}><Plane size={18} color={color.onInk} /></View>
+        <Text style={ds.brandName}>Travel Buddy</Text>
       </View>
 
-      {/* Nav links */}
-      <View style={styles.navLinks}>
+      <View style={ds.navLinks}>
         {NAV_ITEMS.map(({ href, label, icon: Icon, match }) => {
           const active = match.some((m) => pathname === m || pathname.startsWith(m + '/'));
           return (
             <Pressable
               key={href}
-              style={[styles.navItem, active && styles.navItemActive]}
+              style={[ds.navItem, active && ds.navItemActive]}
               onPress={() => router.push(href as any)}
             >
               <Icon size={20} color={active ? color.signal : color.mute} />
-              <Text style={[styles.navLabel, active && styles.navLabelActive]}>{label}</Text>
+              <Text style={[ds.navLabel, active && ds.navLabelActive]}>{label}</Text>
             </Pressable>
           );
         })}
@@ -51,34 +58,120 @@ function DesktopSidebar({ unreadNotifications, unreadMessages, pendingRequests }
 
       <View style={{ flex: 1 }} />
 
-      {/* Notifications — bell with popover preview */}
-      <View style={styles.notifBtn}>
+      <View style={ds.notifBtn}>
         <NotificationBell />
-        <Text style={styles.navLabel}>Notifications</Text>
+        <Text style={ds.navLabel}>Notifications</Text>
       </View>
 
-      {/* Compose button */}
-      <Pressable style={styles.composeBtn} onPress={() => router.push('/create')}>
+      <Pressable style={ds.composeBtn} onPress={() => router.push('/create')}>
         <Plus size={18} color={color.onInk} />
-        <Text style={styles.composeBtnText}>New Post</Text>
+        <Text style={ds.composeBtnText}>New Post</Text>
       </Pressable>
     </View>
   );
 }
 
-/** Flat Post tab button — same size and alignment as all other nav items. */
-function PostTabButton() {
+/* ─── Floating tab bar ─────────────────────────────────────────────────── */
+
+const FLOAT_PILL_H = 64;
+
+interface FloatBarProps {
+  newHighlights: number;
+  pendingTripInvites: number;
+  unreadNotifications: number;
+}
+
+function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications }: FloatBarProps) {
+  const pathname = usePathname();
+  const insets = useSafeAreaInsets();
+
+  const isActive = (match: readonly string[]) =>
+    match.some((m) => pathname === m || pathname.startsWith(m + '/'));
+
   return (
-    <Pressable
-      onPress={() => router.push('/create')}
-      style={({ pressed }) => [styles.postTabBtn, pressed && { opacity: 0.6 }]}
-      accessibilityRole="button"
-      accessibilityLabel="Create a post"
+    <View
+      style={[fb.wrapper, { bottom: insets.bottom + 12 }]}
+      pointerEvents="box-none"
     >
-      <Plus size={22} color={color.signal} />
-    </Pressable>
+      <View style={fb.pill}>
+        {/* Left items: Pulse, Explore, Events */}
+        {NAV_ITEMS.slice(0, 3).map(({ href, label, icon: Icon, match }) => {
+          const active = isActive(match);
+          const badge =
+            label === 'Explore' ? newHighlights : 0;
+          return (
+            <Pressable
+              key={href}
+              style={fb.item}
+              onPress={() => router.push(href as any)}
+              hitSlop={4}
+              accessibilityRole="button"
+              accessibilityLabel={label}
+            >
+              <View style={[fb.itemInner, active && fb.itemInnerActive]}>
+                <View>
+                  <Icon size={20} color={active ? color.ink : color.mute} />
+                  {badge > 0 && (
+                    <View style={fb.dot}>
+                      <Text style={fb.dotText}>{badge > 9 ? '9+' : String(badge)}</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={[fb.label, active && fb.labelActive]}>{label}</Text>
+              </View>
+            </Pressable>
+          );
+        })}
+
+        {/* Center: Create / + button */}
+        <Pressable
+          style={fb.plusWrap}
+          onPress={() => router.push('/create')}
+          hitSlop={4}
+          accessibilityRole="button"
+          accessibilityLabel="Create a post"
+        >
+          <View style={fb.plusBtn}>
+            <Plus size={22} color="#fff" strokeWidth={2.5} />
+          </View>
+        </Pressable>
+
+        {/* Right items: Trips, Passport */}
+        {NAV_ITEMS.slice(3).map(({ href, label, icon: Icon, match }) => {
+          const active = isActive(match);
+          const badge =
+            label === 'Trips' ? pendingTripInvites
+            : label === 'Passport' ? unreadNotifications
+            : 0;
+          return (
+            <Pressable
+              key={href}
+              style={fb.item}
+              onPress={() => router.push(href as any)}
+              hitSlop={4}
+              accessibilityRole="button"
+              accessibilityLabel={label}
+            >
+              <View style={[fb.itemInner, active && fb.itemInnerActive]}>
+                <View>
+                  <Icon size={20} color={active ? color.ink : color.mute} />
+                  {badge > 0 && (
+                    <View style={fb.dot}>
+                      <Text style={fb.dotText}>{badge > 9 ? '9+' : String(badge)}</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={[fb.label, active && fb.labelActive]}>{label}</Text>
+              </View>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
   );
 }
+
+/* ─── Root layout ──────────────────────────────────────────────────────── */
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
@@ -88,15 +181,12 @@ export default function TabLayout() {
   const [pendingTripInvites, setPendingTripInvites] = useState(0);
   const { isAuthed, loading, configured } = useSession();
 
-  // Redirect to sign-in when the session expires while the app is open.
   useEffect(() => {
     if (configured && !loading && !isAuthed) {
       router.replace('/(auth)/sign-in' as any);
     }
   }, [configured, loading, isAuthed]);
 
-  // Monitor geofence exits for pending_location_exit posts.
-  // Lives here so it runs across all tabs, not just passport.
   useGeofenceMonitor();
 
   useEffect(() => {
@@ -124,73 +214,31 @@ export default function TabLayout() {
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: false,
-        tabBarActiveTintColor: color.ink,
-        tabBarInactiveTintColor: color.faint,
         tabBarStyle: isDesktop
           ? { display: 'none' }
-          : [styles.bar, { height: 58 + insets.bottom, paddingBottom: insets.bottom }],
-        tabBarLabelStyle: styles.label,
+          : { display: 'none' },
       }}
     >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Pulse',
-          tabBarIcon: ({ color: c }) => <Activity size={22} color={c} />,
-        }}
-      />
+      <Tabs.Screen name="index" options={{ title: 'Pulse' }} />
       <Tabs.Screen
         name="discovery"
-        options={{
-          title: 'Explore',
-          tabBarIcon: ({ color: c }) => (
-            <View>
-              <Compass size={22} color={c} />
-              {newHighlights > 0 && (
-                <View style={styles.tabBadge}>
-                  <Text style={styles.tabBadgeText}>
-                    {newHighlights > 99 ? '99+' : String(newHighlights)}
-                  </Text>
-                </View>
-              )}
-            </View>
-          ),
-        }}
+        options={{ title: 'Explore' }}
         listeners={{ focus: refreshUnread }}
       />
-      <Tabs.Screen
-        name="events"
-        options={{
-          title: 'Events',
-          tabBarIcon: ({ color: c }) => <CalendarDays size={22} color={c} />,
-        }}
-      />
+      <Tabs.Screen name="events" options={{ title: 'Events' }} />
       <Tabs.Screen
         name="create-tab"
-        options={{
-          title: 'Post',
-          tabBarButton: () => (isDesktop ? <View style={{ width: 0 }} /> : <PostTabButton />),
-        }}
+        options={{ title: 'Post', href: null }}
         listeners={{ tabPress: (e) => { e.preventDefault(); router.push('/create'); } }}
       />
       <Tabs.Screen
         name="trips"
-        options={{
-          title: 'Trips',
-          tabBarIcon: ({ color: c }) => (
-            <View>
-              <Map size={22} color={c} />
-              {pendingTripInvites > 0 && (
-                <View style={styles.tabBadge}>
-                  <Text style={styles.tabBadgeText}>
-                    {pendingTripInvites > 99 ? '99+' : String(pendingTripInvites)}
-                  </Text>
-                </View>
-              )}
-            </View>
-          ),
+        options={{ title: 'Trips' }}
+        listeners={{
+          focus: () => {
+            getPendingTripInvites().then((invites) => setPendingTripInvites(invites.length)).catch(() => {});
+          },
         }}
-        listeners={{ focus: () => { getPendingTripInvites().then((invites) => setPendingTripInvites(invites.length)).catch(() => {}); } }}
       />
       <Tabs.Screen
         name="messages"
@@ -198,21 +246,7 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="passport"
-        options={{
-          title: 'Passport',
-          tabBarIcon: ({ color: c }) => (
-            <View>
-              <User size={22} color={c} />
-              {unreadNotifications > 0 && (
-                <View style={styles.tabBadge}>
-                  <Text style={styles.tabBadgeText}>
-                    {unreadNotifications > 99 ? '99+' : String(unreadNotifications)}
-                  </Text>
-                </View>
-              )}
-            </View>
-          ),
-        }}
+        options={{ title: 'Passport' }}
         listeners={{ focus: refreshUnread, tabPress: refreshUnread }}
       />
       <Tabs.Screen name="ai" options={{ href: null, title: 'AI' }} />
@@ -221,30 +255,124 @@ export default function TabLayout() {
 
   if (isDesktop) {
     return (
-      <View style={styles.desktopShell}>
-        <DesktopSidebar unreadNotifications={unreadNotifications} unreadMessages={unreadMessages} pendingRequests={pendingRequests} />
-        <View style={styles.desktopContent}>{tabs}</View>
+      <View style={ds.desktopShell}>
+        <DesktopSidebar
+          unreadNotifications={unreadNotifications}
+          unreadMessages={unreadMessages}
+          pendingRequests={pendingRequests}
+        />
+        <View style={ds.desktopContent}>{tabs}</View>
       </View>
     );
   }
 
-  return tabs;
+  return (
+    <View style={{ flex: 1 }}>
+      {tabs}
+      <FloatingTabBar
+        newHighlights={newHighlights}
+        pendingTripInvites={pendingTripInvites}
+        unreadNotifications={unreadNotifications}
+      />
+    </View>
+  );
 }
+
+/* ─── Floating bar styles ──────────────────────────────────────────────── */
+
+const fb = StyleSheet.create({
+  wrapper: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    zIndex: 100,
+  },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 36,
+    paddingHorizontal: 6,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.07)',
+    shadowColor: '#000',
+    shadowOpacity: 0.14,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 10,
+  },
+  item: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  itemInner: {
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 24,
+    minWidth: 52,
+  },
+  itemInnerActive: {
+    backgroundColor: 'rgba(0,0,0,0.07)',
+  },
+  label: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: color.mute,
+    letterSpacing: 0.1,
+  },
+  labelActive: {
+    color: color.ink,
+    fontWeight: '700',
+  },
+  dot: {
+    position: 'absolute',
+    top: -3,
+    right: -5,
+    minWidth: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: color.signal,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
+  dotText: {
+    color: '#fff',
+    fontSize: 8,
+    fontWeight: '700',
+    lineHeight: 10,
+  },
+  plusWrap: {
+    paddingHorizontal: 6,
+    paddingVertical: 6,
+  },
+  plusBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: color.signal,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: color.signal,
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+});
+
+/* ─── Desktop styles ───────────────────────────────────────────────────── */
 
 const SIDEBAR_WIDTH = 220;
 
-const styles = StyleSheet.create({
-  /* ── Desktop shell ── */
-  desktopShell: {
-    flex: 1,
-    flexDirection: 'row',
-    backgroundColor: color.paper,
-  },
-  desktopContent: {
-    flex: 1,
-    maxWidth: 720,
-  },
-  /* ── Sidebar ── */
+const ds = StyleSheet.create({
+  desktopShell: { flex: 1, flexDirection: 'row', backgroundColor: color.paper },
+  desktopContent: { flex: 1, maxWidth: 720 },
   sidebar: {
     width: SIDEBAR_WIDTH,
     backgroundColor: color.paperRaised,
@@ -253,122 +381,30 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg,
     gap: space.xl,
   },
-  brand: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-  },
+  brand: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   brandIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
+    width: 32, height: 32, borderRadius: 10,
     backgroundColor: color.signal,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center', justifyContent: 'center',
   },
-  brandName: {
-    ...t.bodyStrong,
-    color: color.ink,
-    fontWeight: '800',
-  },
-  navLinks: {
-    gap: space.xs,
-  },
+  brandName: { ...t.bodyStrong, color: color.ink, fontWeight: '800' },
+  navLinks: { gap: space.xs },
   navItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    paddingVertical: space.md,
-    paddingHorizontal: space.md,
-    borderRadius: 10,
+    flexDirection: 'row', alignItems: 'center', gap: space.md,
+    paddingVertical: space.md, paddingHorizontal: space.md, borderRadius: 10,
   },
-  navItemActive: {
-    backgroundColor: color.paper,
-  },
-  navLabel: {
-    ...t.body,
-    color: color.mute,
-    fontWeight: '500',
-    flex: 1,
-  },
-  navLabelActive: {
-    color: color.ink,
-    fontWeight: '700',
-  },
+  navItemActive: { backgroundColor: color.paper },
+  navLabel: { ...t.body, color: color.mute, fontWeight: '500', flex: 1 },
+  navLabelActive: { color: color.ink, fontWeight: '700' },
   notifBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    paddingVertical: space.md,
-    paddingHorizontal: space.md,
-    borderRadius: 10,
-  },
-  sidebarBadge: {
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: color.signal,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 4,
-  },
-  sidebarBadgeText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '700',
-    lineHeight: 12,
+    flexDirection: 'row', alignItems: 'center', gap: space.md,
+    paddingVertical: space.md, paddingHorizontal: space.md, borderRadius: 10,
   },
   composeBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: space.sm,
-    backgroundColor: color.signal,
-    borderRadius: 12,
-    paddingVertical: space.md,
-    paddingHorizontal: space.lg,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: space.sm, backgroundColor: color.signal,
+    borderRadius: 12, paddingVertical: space.md, paddingHorizontal: space.lg,
     ...shadow.card,
   },
-  composeBtnText: {
-    ...t.bodyStrong,
-    color: color.onInk,
-    fontWeight: '700',
-  },
-  /* ── Mobile tab bar ── */
-  bar: {
-    backgroundColor: 'rgba(255, 255, 255, 0.30)',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.18)',
-    paddingTop: 6,
-  },
-  label: { ...t.stamp, fontFamily: 'Courier', marginTop: 2 },
-  postTabBtn: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 58,
-    gap: 2,
-  },
-  postTabLabel: {
-    color: color.signal,
-  },
-  /* ── Tab badge ── */
-  tabBadge: {
-    position: 'absolute',
-    top: -4,
-    right: -6,
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: color.signal,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 3,
-  },
-  tabBadgeText: {
-    color: '#fff',
-    fontSize: 9,
-    fontWeight: '700',
-    lineHeight: 11,
-  },
+  composeBtnText: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },
 });
