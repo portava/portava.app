@@ -1,0 +1,43 @@
+Audit and fix the Edit Profile username/profile save flow.
+
+Current confirmed mobile errors:
+1. Username field shows “Could not check username” when entering @draie.
+2. Saving profile fails with Supabase error: “Could not find the 'updated_by' column of 'profiles' in the schema cache.”
+
+Do not rebuild the profile system. Patch only confirmed broken wiring.
+
+Required fixes:
+- Find the Edit Profile screen/component and all profile update services/API routes it calls.
+- Find the username availability check logic.
+- Ensure username input is normalized before checking/saving:
+  - strip leading @
+  - trim spaces
+  - lowercase if usernames are intended to be case-insensitive
+  - allow only 3–24 chars: letters, numbers, underscores, periods
+- The UI may show @ visually, but the stored username must not include @.
+- Fix the username availability check so it uses the real backend/Supabase path and returns clear states:
+  - available
+  - taken
+  - invalid
+  - current user’s own username is allowed
+  - network/server error shows “Could not check username”
+- Find where profile save sends `updated_by` to Supabase.
+- Remove `updated_by` from the profiles update payload unless the database actually has that column.
+- Do not add random columns blindly.
+- Compare payload keys against the actual generated database types / profiles table schema.
+- Ensure profile save only sends columns that exist on `profiles`.
+- If `updated_at` exists, keep it. If not, remove it too.
+- Make the Save button disabled only when:
+  - username is invalid
+  - username check is actively pending
+  - username is taken
+  - save is in progress
+- Do not block save just because the username is unchanged.
+- Add or update tests for:
+  - entering @draie checks/saves as draie
+  - unchanged username does not fail availability
+  - taken username blocks save
+  - profile update payload never includes updated_by
+  - save succeeds with valid username and display name
+- Run the affected tests and typecheck.
+- Report exactly which files changed and why.

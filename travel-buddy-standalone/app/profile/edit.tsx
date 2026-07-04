@@ -328,7 +328,7 @@ export default function EditProfileScreen() {
   }, [navigation, isDirty]);
 
   const handleUsernameChange = useCallback((text: string) => {
-    const cleaned = text.toLowerCase().replace(/[^a-z0-9_]/g, '');
+    const cleaned = text.replace(/^@+/, '').toLowerCase().replace(/[^a-z0-9_.]/g, '');
     setForm((f) => ({ ...f, username: cleaned }));
     setUsernameStatus('idle');
     setUsernameMessage(null);

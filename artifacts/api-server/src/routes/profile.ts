@@ -314,7 +314,7 @@ router.patch("/me/profile", async (req, res) => {
   }
   const p = parsed.data;
 
-  const row: Record<string, unknown> = { updated_by: user.id };
+  const row: Record<string, unknown> = {};
 
   if (p.displayName !== undefined) {
     row.name = p.displayName;
@@ -472,10 +472,7 @@ router.patch("/me/profile", async (req, res) => {
 router.get("/users/check-username", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
-
-  const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+  const { client, user } = auth;
 
   const username = String(req.query.username ?? "").toLowerCase().trim();
   if (!username) {
@@ -489,7 +486,7 @@ router.get("/users/check-username", async (req, res) => {
     return;
   }
 
-  const { data } = await sc
+  const { data } = await client
     .from("profiles")
     .select("id")
     .eq("username", username)
