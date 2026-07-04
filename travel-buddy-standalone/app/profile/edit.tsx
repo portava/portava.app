@@ -204,6 +204,8 @@ export default function EditProfileScreen() {
   const usernameTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   type PhotoPhase = 'idle' | 'optimizing' | 'uploading';
+  const [photoPhase, setPhotoPhase] = useState<PhotoPhase>('idle');
+  const coverOriginalWidthRef = useRef<number>(1920);
   const saveLockRef = useRef(false);
 
   const isDirty = originalForm !== null && (

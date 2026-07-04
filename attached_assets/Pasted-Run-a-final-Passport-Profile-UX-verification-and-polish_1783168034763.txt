@@ -1,0 +1,70 @@
+Run a final Passport/Profile UX verification and polish pass.
+
+Do not rebuild the profile system. The backend, database types, save flow, and Travel Persona fields were already fixed and merged.
+
+Focus only on visible UX and final wiring verification.
+
+Check and fix if needed:
+
+1. Passport/Profile visual polish
+- Confirm the profile menu button looks modern, premium, and consistent with the Passport design.
+- Confirm button spacing, hit area, contrast, and accessibility label.
+- Confirm the button still opens the same profile menu actions.
+- Confirm it does not look like a default/plain button.
+
+2. Cover/back-page/header photo edit shortcut
+- Confirm the cover/back-page/header photo has an attachment/camera/edit button directly on the Passport page.
+- Confirm user can change the cover photo from there without going into settings.
+- Confirm upload progress/loading state appears.
+- Confirm canceling image picker does nothing.
+- Confirm failed upload keeps old cover photo.
+- Confirm new cover photo persists after reload/refetch.
+- Confirm cover update does not overwrite avatar.
+
+3. Passport profile camera button behavior
+- Confirm tapping the profile photo camera button opens a choice sheet/modal with:
+  - Change display photo
+  - Add or change highlight
+  - Cancel
+- Confirm Change display photo updates only avatar/profile photo.
+- Confirm Add/change highlight updates only highlight.
+- Confirm avatar and highlight never overwrite each other.
+- Confirm the sheet looks native and clean on mobile.
+
+4. Owner-only controls
+- Confirm edit profile, cover photo edit, avatar camera, highlight edit, and owner-only menu actions only appear on the logged-in user’s own Passport.
+- Confirm these controls are hidden when viewing another user’s public profile.
+- Confirm backend/API still rejects attempts to edit another user.
+
+5. Profile save regression
+- Open Passport.
+- Tap Edit Profile.
+- Change display name only.
+- Save.
+- Confirm no username error appears.
+- Change Travel Persona fields only.
+- Save.
+- Confirm no username error appears.
+- Confirm username, avatar, cover photo, highlights, trust score, verification status, and home country lock are not wiped.
+- Reopen/reload and confirm values persist.
+
+6. Public/profile-card consistency
+- Confirm updated display name/avatar appears in:
+  - Passport
+  - public profile
+  - Pulse author cards
+  - Telegraph user cards
+  - Trip Crew user cards
+  - Discovery user cards
+  - Settings/account preview if present
+
+7. Final tests
+Add or update lightweight UI/logic tests only if a confirmed gap is found.
+Run relevant tests, typecheck, and sync/drift checks.
+
+Final report must include:
+- Whether each Passport/Profile UX item was already working or fixed.
+- Exact files changed, if any.
+- Tests/commands run.
+- Screens/flows manually verified.
+- Any remaining limitation.

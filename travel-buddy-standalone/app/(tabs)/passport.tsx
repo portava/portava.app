@@ -1,8 +1,10 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { View, Text, Image, ScrollView, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, Image, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Share2, Users, Clock } from 'lucide-react-native';
+import { Share2, Users, Clock, Camera } from 'lucide-react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { uploadAvatar, uploadCover } from '../../src/services/profile';
 import { getPendingPosts } from '../../src/services/posts';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { usePassport } from '../../src/hooks/usePassport';
@@ -81,8 +83,8 @@ export default function PassportScreen() {
     else setHighlightComposerOpen(true);
   }, [hasOwnHighlights]);
 
-  // Camera button: always opens the composer directly (for adding a new highlight)
-  const handleNewHighlightPress = useCallback(() => {
+  // Opens the highlight composer directly (shared by camera sheet + viewer "+" button)
+  const openHighlightComposer = useCallback(() => {
     composerFromViewer.current = false;
     setHighlightComposerOpen(true);
   }, []);
@@ -93,6 +95,46 @@ export default function PassportScreen() {
     setHighlightViewerOpen(false);
     setHighlightComposerOpen(true);
   }, []);
+
+  // Change avatar via camera overlay: pick image → upload → reload
+  const handleChangeAvatarViaCamera = useCallback(async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permission required', 'Allow photo library access to change your profile photo.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.85,
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+    const uri = result.assets[0].uri;
+    const mime = uri.endsWith('.png') ? 'image/png' : uri.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+    const res = await uploadAvatar(uri, mime);
+    if (!res.ok) {
+      Alert.alert('Upload failed', res.message ?? 'Could not update your display photo.');
+      return;
+    }
+    reload();
+  }, [reload]);
+
+  // Camera overlay button on avatar: action sheet with Change photo / Add highlight / Cancel
+  const handleCameraPress = useCallback(() => {
+    Alert.alert(
+      'Profile photo',
+      undefined,
+      [
+        { text: 'Change display photo', onPress: handleChangeAvatarViaCamera },
+        {
+          text: hasOwnHighlights ? 'Add or change highlight' : 'Add highlight',
+          onPress: openHighlightComposer,
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+    );
+  }, [handleChangeAvatarViaCamera, hasOwnHighlights, openHighlightComposer]);
 
   // On successful highlight creation: bust the cache and trigger immediate ring refresh
   const handleHighlightSuccess = useCallback(() => {
@@ -216,7 +258,7 @@ export default function PassportScreen() {
         hasHighlights={hasOwnHighlights}
         allHighlightsViewed={allOwnHighlightsViewed}
         onHighlightRingPress={handleOwnRingPress}
-        onNewHighlightPress={handleNewHighlightPress}
+        onNewHighlightPress={handleCameraPress}
         rentBuddyEnabled={rentBuddyEnabled}
       />
       <HighlightViewer
@@ -278,6 +320,32 @@ function PassportContent({
   const { cardRef, share, sharing } = usePassportShare(profile.username ?? null);
   const [pendingCount, setPendingCount] = useState(0);
   const [coverError, setCoverError] = useState(false);
+  const [coverUploading, setCoverUploading] = useState(false);
+
+  const handleChangeCover = useCallback(async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permission required', 'Allow photo library access to change your cover photo.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [16, 9],
+      quality: 0.85,
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+    setCoverUploading(true);
+    const uri = result.assets[0].uri;
+    const mime = uri.endsWith('.png') ? 'image/png' : uri.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+    const res = await uploadCover(uri, mime);
+    setCoverUploading(false);
+    if (!res.ok) {
+      Alert.alert('Upload failed', res.message ?? 'Could not update your cover photo. Your previous cover is still shown.');
+      return;
+    }
+    reload();
+  }, [reload]);
 
   useFocusEffect(useCallback(() => {
     reload();
@@ -294,18 +362,32 @@ function PassportContent({
         showsVerticalScrollIndicator={false}
       >
         {/* Cover photo band — full-width above the hero card.
-            Fallback (haze) shown when coverPhotoUrl is absent or the URL fails to load,
-            preventing any blank/white area regardless of URL validity. */}
-        {profile.coverPhotoUrl && !coverError ? (
-          <Image
-            source={{ uri: profile.coverPhotoUrl }}
-            style={{ width: '100%', height: 140 }}
-            resizeMode="cover"
-            onError={() => setCoverError(true)}
-          />
-        ) : (
-          <View style={{ width: '100%', height: 140, backgroundColor: color.haze }} />
-        )}
+            Owner sees a camera edit button (bottom-right).
+            Fallback (haze) shown when coverPhotoUrl is absent or the URL fails to load. */}
+        <View style={styles.coverBand}>
+          {profile.coverPhotoUrl && !coverError ? (
+            <Image
+              source={{ uri: profile.coverPhotoUrl }}
+              style={StyleSheet.absoluteFill}
+              resizeMode="cover"
+              onError={() => setCoverError(true)}
+            />
+          ) : (
+            <View style={[StyleSheet.absoluteFill, { backgroundColor: color.haze }]} />
+          )}
+          <Pressable
+            style={styles.coverEditBtn}
+            onPress={handleChangeCover}
+            disabled={coverUploading}
+            hitSlop={8}
+            accessibilityLabel="Change cover photo"
+            accessibilityRole="button"
+          >
+            {coverUploading
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <Camera size={15} color="#fff" />}
+          </Pressable>
+        </View>
 
         {/* Profile header */}
         <PassportHero
@@ -470,6 +552,21 @@ function PassportContent({
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paper },
+
+  coverBand: { width: '100%', height: 140, overflow: 'hidden' },
+  coverEditBtn: {
+    position: 'absolute',
+    bottom: 10,
+    right: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.35)',
+  },
 
   offScreen: {
     position: 'absolute',

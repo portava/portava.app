@@ -86,7 +86,13 @@ export function PassportHero({
           <Text style={styles.brand}>TRAVEL BUDDY PASSPORT</Text>
         </View>
         {isOwner && onMenuPress ? (
-          <Pressable onPress={onMenuPress} hitSlop={8} style={styles.menuBtn}>
+          <Pressable
+            onPress={onMenuPress}
+            hitSlop={8}
+            style={styles.menuBtn}
+            accessibilityLabel="Profile menu"
+            accessibilityRole="button"
+          >
             <MoreHorizontal size={20} color={color.ink} />
           </Pressable>
         ) : !isOwner && onFollowPress !== undefined ? (
@@ -212,7 +218,17 @@ const styles = StyleSheet.create({
   brand: { ...t.bodyStrong, color: color.ink, letterSpacing: 0.5, fontSize: 13 },
   topDivider: { height: 1, backgroundColor: color.haze, marginVertical: space.md },
 
-  menuBtn: { padding: 4 },
+  menuBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadow.card,
+  },
   followBtn: {
     borderWidth: 1, borderColor: color.ink, borderRadius: radius.pill,
     paddingHorizontal: space.md, paddingVertical: 5,
