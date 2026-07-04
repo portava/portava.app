@@ -676,6 +676,100 @@ describe("PATCH → GET /api/me/profile round-trip", () => {
       "passport_visibility column must be written with the correct DB column name");
   });
 
+  it("storage rejection on avatar upload returns 500 and leaves avatar_url unchanged", async () => {
+    const profiles: ProfileRow[] = [
+      { id: ME, name: "Uploader", display_name: "Uploader", username: "uploader",
+        bio: null, avatar_url: "https://old.example.com/avatar.jpg", home_city: null,
+        home_country: null, current_city: null, travel_style: null, interests: [],
+        verified: false, verification_status: "unverified", verified_at: null,
+        open_to_meet: false, is_private: false, passport_visibility: "public",
+        cover_photo_url: null, username_updated_at: null, created_at: null,
+        spoken_languages: [], default_language: null, travel_styles: [],
+        travel_pace: null, budget_style: null, travel_group_style: [],
+        looking_for: [], comfort_level: null, availability_tags: [],
+        planning_style: null, public_social_links: {}, preferred_language: null,
+        date_of_birth: null, dob_verified: false, handle: null },
+    ];
+
+    // Client whose storage upload always returns an error
+    const filters: Array<(r: any) => boolean> = [];
+    const failClient: any = {
+      auth: {
+        getUser: async (tok: string) => {
+          if (tok === ME_TOK) return { data: { user: { id: ME } }, error: null };
+          return { data: { user: null }, error: { message: "invalid token" } };
+        },
+      },
+      from: (table: string) => {
+        const localFilters: Array<(r: any) => boolean> = [];
+        const b: any = {
+          select()                     { return b; },
+          eq(col: string, val: any)    { localFilters.push((r) => String(r[col]) === String(val)); return b; },
+          neq()                        { return b; },
+          in()                         { return b; },
+          is()                         { return b; },
+          lt()                         { return b; },
+          gte()                        { return b; },
+          order()                      { return b; },
+          limit()                      { return b; },
+          nullsFirst()                 { return b; },
+          update()                     { return b; },
+          insert()                     { return b; },
+          upsert()                     { return b; },
+          maybeSingle() {
+            if (table === "profiles") {
+              const rows = profiles.filter((r) => localFilters.every((f) => f(r)));
+              return Promise.resolve({ data: rows[0] ? { ...rows[0] } : null, error: null });
+            }
+            return Promise.resolve({ data: null, error: null });
+          },
+          single() { return Promise.resolve({ data: null, error: null }); },
+          then(onF: any, onR: any) {
+            return Promise.resolve({ data: [], error: null, count: 0 }).then(onF, onR);
+          },
+          catch() { return b; },
+        };
+        return b;
+      },
+      storage: {
+        createBucket: async () => ({ error: null }),
+        from: () => ({
+          upload: async () => ({ error: { message: "Bucket policy violation: quota exceeded" } }),
+          getPublicUrl: () => ({ data: { publicUrl: "" } }),
+          remove: async () => ({ error: null }),
+        }),
+      },
+    };
+    void filters; // unused but kept for symmetry with other tests
+
+    _setTestClient(failClient, true);
+    _setTestServiceClient(failClient);
+
+    // Send a minimal valid JPEG header so the route passes the size and type checks
+    const fakeJpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+
+    const uploadRes = await fetch(`${base}/me/avatar/upload`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ME_TOK}`,
+        "Content-Type": "image/jpeg",
+      },
+      body: fakeJpeg,
+    });
+
+    assert.equal(uploadRes.status, 500,
+      `storage rejection must return 500, not ${uploadRes.status}`);
+    const uploadBody = await uploadRes.json() as any;
+    assert.ok(
+      uploadBody.error === "db_error" || uploadBody.error === "upload_failed",
+      `error code must indicate upload failure, got: ${JSON.stringify(uploadBody)}`,
+    );
+
+    // The in-memory profile row must not have been mutated
+    assert.equal(profiles[0].avatar_url, "https://old.example.com/avatar.jpg",
+      "avatar_url must remain unchanged when storage upload fails");
+  });
+
   it("displayName exceeding 60 chars is rejected before any DB write", async () => {
     const profiles: ProfileRow[] = [
       { id: ME, name: "Short", display_name: "Short", username: "short",

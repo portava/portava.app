@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
+import { BlurView } from 'expo-blur';
 import { Tabs, router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Activity, Compass, Map, User, Plus, Plane } from 'lucide-react-native';
@@ -93,6 +94,14 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
       pointerEvents="box-none"
     >
       <View style={fb.pill}>
+        {/* Glass blur layer — iOS: real blur; Android: rgba only */}
+        {Platform.OS === 'ios' && (
+          <BlurView
+            tint="systemChromeMaterial"
+            intensity={70}
+            style={StyleSheet.absoluteFillObject}
+          />
+        )}
         {/* Left items: Pulse, Explore */}
         {NAV_ITEMS.slice(0, 2).map(({ href, label, icon: Icon, match }) => {
           const active = isActive(match);
@@ -285,21 +294,23 @@ const fb = StyleSheet.create({
     left: 16,
     right: 16,
     zIndex: 100,
-  },
-  pill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
     borderRadius: 36,
-    paddingHorizontal: 6,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.07)',
     shadowColor: '#000',
     shadowOpacity: 0.14,
     shadowRadius: 24,
     shadowOffset: { width: 0, height: 8 },
-    elevation: 10,
+    elevation: 8,
+  },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.30)',
+    borderRadius: 36,
+    paddingHorizontal: 6,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.45)',
+    overflow: 'hidden',
   },
   item: {
     flex: 1,
