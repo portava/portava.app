@@ -333,3 +333,66 @@ export async function getDiscoveryCategoryCounts(
   });
   return counts;
 }
+
+// ── Unified search ────────────────────────────────────────────────────────────
+
+export interface UnifiedSearchResult {
+  id: string;
+  type: string;
+  title: string;
+  subtitle: string | null;
+  avatarUrl: string | null;
+  imageUrl: string | null;
+  fallbackInitials: string | null;
+  locationPreview: string | null;
+  matchedReason: string | null;
+  actionState: Record<string, boolean | string | number> | null;
+  privacyState: { isPrivate?: boolean; isPublic?: boolean } | null;
+  accessState: { canAccess: boolean } | null;
+  destinationRoute: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string | null;
+  startsAt: string | null;
+}
+
+export interface UnifiedSearchResponse {
+  results: UnifiedSearchResult[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  query: string;
+  type: string;
+}
+
+/**
+ * Search across all content types via /api/discovery/search.
+ * Requires authentication — returns `{ ok: false }` when not signed in.
+ * Pass `cursor` from the previous response to load the next page.
+ */
+export async function searchUnified(
+  query: string,
+  type = 'all',
+  cursor?: string | null,
+): Promise<{ ok: true; data: UnifiedSearchResponse } | { ok: false; error: string }> {
+  const base = apiBase();
+  if (!base) return { ok: false, error: 'API not configured' };
+
+  const token = await freshToken();
+  if (!token) return { ok: false, error: 'Not signed in' };
+
+  const params = new URLSearchParams({ q: query, type });
+  if (cursor) params.set('cursor', cursor);
+
+  try {
+    const res = await fetch(`${base}/api/discovery/search?${params}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+      return { ok: false, error: (body.message as string) ?? `HTTP ${res.status}` };
+    }
+    const data = (await res.json()) as UnifiedSearchResponse;
+    return { ok: true, data };
+  } catch {
+    return { ok: false, error: 'Network error — check your connection' };
+  }
+}
