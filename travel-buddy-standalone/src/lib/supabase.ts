@@ -7,13 +7,14 @@
  * so the app keeps running on mock data.
  */
 import { createClient } from '@supabase/supabase-js';
+import type { Database } from '@db-types';
 
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
 const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
 
 export const isSupabaseConfigured = Boolean(url && anonKey);
 
-export const supabase = createClient(url || 'https://placeholder.supabase.co', anonKey || 'placeholder', {
+export const supabase = createClient<Database>(url || 'https://placeholder.supabase.co', anonKey || 'placeholder', {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
 });
 
@@ -23,7 +24,7 @@ export const supabase = createClient(url || 'https://placeholder.supabase.co', a
  * (observed on Expo web: valid session present, but auth.uid() null at the DB).
  */
 export function authedClient(accessToken: string) {
-  return createClient(url, anonKey, {
+  return createClient<Database>(url, anonKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     global: { headers: { Authorization: `Bearer ${accessToken}` } },
   });

@@ -26,6 +26,7 @@
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
+import type { Database } from "./database.types";
 import { logger } from "./logger";
 import {
   setBroadcastHook,
@@ -134,7 +135,7 @@ export function initTelegraphBroadcast(): void {
 
   // Dedicated long-lived client for the persistent Realtime WebSocket.
   // Not shared with the per-request service client (which is short-lived).
-  const realtimeClient = createClient(supabaseUrl, serviceKey, {
+  const realtimeClient = createClient<Database>(supabaseUrl, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
     realtime: {
       params: {
