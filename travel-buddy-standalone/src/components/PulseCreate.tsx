@@ -72,7 +72,18 @@ function photoLabel(t: PostTypeId) {
   return 'Add photo (optional)';
 }
 
-function validate(type: PostTypeId, text: string, placeName: string, media: PickedMedia | null): string | null {
+function validate(
+  type: PostTypeId,
+  text: string,
+  placeName: string,
+  media: PickedMedia | null,
+  selectedCategory: PostCategory | null,
+): string | null {
+  // Defense-in-depth: if the post type maps to a default category but none was
+  // selected (e.g. due to a state bug), block submit before the API is called.
+  if (TYPE_CATEGORY[type] && !selectedCategory) {
+    return 'Pick a category before posting.';
+  }
   switch (type) {
     case 'post_update':     return (!text.trim() && !media) ? 'Add text or a photo.' : null;
     case 'ask_question':    return !text.trim() ? 'Type your question.' : null;
@@ -311,7 +322,7 @@ export function UnifiedPostComposer({
     // unauthenticated upload failure.
     if (!submitLock.current.acquire()) return;
     setError(null);
-    const vErr = validate(selectedType, text, placeName, media);
+    const vErr = validate(selectedType, text, placeName, media, selectedCategory);
     if (vErr) { submitLock.current.release(); setError(vErr); return; }
 
     // Defense-in-depth: even within a single submit invocation wrap onClose so
@@ -388,7 +399,7 @@ export function UnifiedPostComposer({
 
   const canSubmit = !!selectedType && !submitting &&
     !DEDICATED_COMPOSERS[selectedType as PostTypeId] &&
-    validate(selectedType, text, placeName, media) === null;
+    validate(selectedType, text, placeName, media, selectedCategory) === null;
 
   const dismiss = createComposerDismissHandlers(onClose);
 

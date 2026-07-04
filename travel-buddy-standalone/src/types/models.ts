@@ -740,6 +740,12 @@ export interface PulseFeedItem {
   spanTags?: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
   /** Saved #hashtag annotations from `hashtag_usage` — positioned spans for RichText. */
   spanHashtags?: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number; isBlocked?: boolean }>;
+  /**
+   * True when the first entry in `tags` is the 'Travel' fallback (i.e. the post
+   * has no explicit category). Used by TagRow to render it with muted styling so
+   * QA and users can distinguish a real category stamp from the default.
+   */
+  categoryFallback?: boolean;
   /** ID of the discovery_places row — set only when type = 'place_card'. */
   placeId?: string | null;
   /** Trip name label surfaced when the post is attached to a trip — displayed as a badge on the media frame. */

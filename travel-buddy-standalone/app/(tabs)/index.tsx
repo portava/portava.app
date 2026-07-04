@@ -43,6 +43,7 @@ function postRowToFeedItem(p: PostRow): PulseFeedItem {
     createdAt: p.createdAt,
     timeAgo: timeAgo(p.createdAt),
     tags: [categoryToStamp(p.category)],
+    categoryFallback: !p.category,
     mediaUrl: p.mediaUrls[0],
     caption: p.content,
     source: 'user',

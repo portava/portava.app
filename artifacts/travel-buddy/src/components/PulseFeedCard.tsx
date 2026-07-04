@@ -102,11 +102,15 @@ function AuthorRow({ item, badge, light }: { item: PulseFeedItem; badge?: { labe
   );
 }
 
-function TagRow({ tags }: { tags: string[] }) {
+function TagRow({ tags, fallbackFirst }: { tags: string[]; fallbackFirst?: boolean }) {
   if (!tags.length) return null;
   return (
     <View style={s.tags}>
-      {tags.map((tg) => <View key={tg} style={s.tag}><Text style={s.tagText}>{tg}</Text></View>)}
+      {tags.map((tg, i) => (
+        <View key={tg} style={s.tag}>
+          <Text style={[s.tagText, fallbackFirst && i === 0 ? s.tagTextMuted : null]}>{tg}</Text>
+        </View>
+      ))}
     </View>
   );
 }
@@ -186,7 +190,7 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
         {item.caption ? (
           <RichText content={item.caption} tags={item.spanTags} hashtagUsages={item.spanHashtags} style={s.caption} numberOfLines={4} />
         ) : null}
-        <TagRow tags={item.tags} />
+        <TagRow tags={item.tags} fallbackFirst={item.categoryFallback} />
         {chipVariant !== 'no_location' && (
           <LocationChip
             variant={chipVariant}
@@ -552,6 +556,7 @@ const s = StyleSheet.create({
   tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   tag: { backgroundColor: color.paper, borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: 3 },
   tagText: { ...t.small, color: color.ink, fontWeight: '600', fontSize: 11 },
+  tagTextMuted: { ...t.small, color: color.mute, fontWeight: '400', fontSize: 11 },
 
   fit: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', backgroundColor: '#E3F1EA', paddingHorizontal: space.sm, paddingVertical: 3, borderRadius: radius.sm },
   fitText: { ...t.small, color: color.success, fontWeight: '700', fontSize: 11 },
