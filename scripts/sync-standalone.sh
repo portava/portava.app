@@ -157,6 +157,7 @@ STANDALONE_OWNED_FILES=(
   "src/test/onboardingPassportFlow.test.ts"
   "src/services/fillHomeFromGps.machine.ts"
   "src/services/__tests__/fillHomeFromGps.test.ts"
+  "src/components/__tests__/CreateMemory.doubletap.test.ts"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.

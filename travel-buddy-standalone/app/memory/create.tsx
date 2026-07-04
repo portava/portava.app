@@ -5,7 +5,7 @@
  * choose visibility, then publish. Media uploads to Supabase Storage
  * (memories bucket) before the memory row is created.
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, Pressable, TextInput,
   StyleSheet, ActivityIndicator, Alert, Image,
@@ -51,6 +51,12 @@ export default function CreateMemoryScreen() {
   const [visibility, setVisibility] = useState<MemoryVisibility>('friends_only');
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
+
+  // Synchronous guard: prevents re-entry on a rapid double-tap before the
+  // setUploading(true) state update has caused a re-render and updated the
+  // Pressable's `disabled` prop. Unlike the React state flag, a ref update
+  // is immediate and visible within the same JS turn.
+  const publishLock = useRef(false);
 
   // ── Media picker ────────────────────────────────────────────────────────────
 
@@ -128,6 +134,13 @@ export default function CreateMemoryScreen() {
   // ── Submit ──────────────────────────────────────────────────────────────────
 
   const handlePublish = useCallback(async () => {
+    // Synchronous guard — checked before any async work or React state update.
+    // setUploading(true) below is async (deferred until next render), so a rapid
+    // double-tap could bypass the `disabled={!canPublish}` check and re-enter
+    // this handler before the button has re-rendered as disabled.
+    if (publishLock.current) return;
+    publishLock.current = true;
+
     setError('');
     setUploading(true);
 
@@ -164,6 +177,7 @@ export default function CreateMemoryScreen() {
       router.replace({ pathname: '/memory/[id]' as any, params: { id: memoryId } });
     } finally {
       setUploading(false);
+      publishLock.current = false;
     }
   }, [assets, title, caption, visibility]);
 

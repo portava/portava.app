@@ -171,6 +171,12 @@ export function UnifiedPostComposer({
   const { create, submitting } = usePostActions();
   const { signOut } = useSession();
 
+  // True from the moment the submit lock is acquired until the finally block
+  // releases it. Covers the upload phase where `submitting` (from usePostActions)
+  // is still false, ensuring the button is visually disabled for the full
+  // upload → create lifecycle, not just the create phase.
+  const [inFlight, setInFlight] = useState(false);
+
   const [selectedType, setSelectedType] = useState<PostTypeId | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<PostCategory | null>(null);
   const [text, setText] = useState('');
@@ -329,16 +335,20 @@ export function UnifiedPostComposer({
     : null;
 
   async function handleSubmit() {
-    if (!selectedType || submitting) return;
+    if (!selectedType || submitting || inFlight) return;
     // Acquire the shared submit lock before any async work.
     // The `submitting` flag from usePostActions only flips true inside create(),
     // AFTER the upload phase — so without this lock a rapid double-tap could
     // re-enter here while upload is in flight and call onClose() twice on an
     // unauthenticated upload failure.
     if (!submitLock.current.acquire()) return;
+    // Flip inFlight immediately (synchronously after lock acquisition) so the
+    // button is visually disabled for the whole upload → create cycle, not only
+    // the create phase.
+    setInFlight(true);
     setError(null);
     const vErr = validate(selectedType, text, placeName, media, selectedCategory);
-    if (vErr) { submitLock.current.release(); setError(vErr); return; }
+    if (vErr) { submitLock.current.release(); setInFlight(false); setError(vErr); return; }
 
     // Defense-in-depth: even within a single submit invocation wrap onClose so
     // it can only fire once (covers hypothetical paths where both upload and
@@ -400,6 +410,7 @@ export function UnifiedPostComposer({
       });
     } finally {
       submitLock.current.release();
+      setInFlight(false);
     }
   }
 
@@ -412,7 +423,9 @@ export function UnifiedPostComposer({
     }
   }
 
-  const canSubmit = !!selectedType && !submitting &&
+  // inFlight covers the upload phase; submitting covers the create() call.
+  // Both must be false for the button to be interactive.
+  const canSubmit = !!selectedType && !submitting && !inFlight &&
     !DEDICATED_COMPOSERS[selectedType as PostTypeId] &&
     validate(selectedType, text, placeName, media, selectedCategory) === null;
 
@@ -759,7 +772,7 @@ export function UnifiedPostComposer({
                 onPress={handleSubmit}
                 disabled={!canSubmit}
               >
-                {submitting
+                {(submitting || inFlight)
                   ? <ActivityIndicator size="small" color={color.onInk} />
                   : <Text style={uc.submitText}>{SUBMIT_LABEL[selectedType]}</Text>}
               </Pressable>
