@@ -255,7 +255,15 @@ router.post("/me/safe-return/sessions", async (req, res) => {
 
   const session = await createSession(db, { userId: user.id, ...parsed.data });
   if (!session) {
-    sendError(res, "db_error", "Failed to create session");
+    // Could be a true DB error, or the partial unique index fired for a concurrent
+    // request that slipped past the pre-check above.  Re-check so we can return a
+    // meaningful 409 instead of a generic 500.
+    const stillActive = await getActiveSession(db, user.id);
+    if (stillActive) {
+      sendError(res, "conflict", "You already have an active Safe Return session");
+    } else {
+      sendError(res, "db_error", "Failed to create session");
+    }
     return;
   }
 
