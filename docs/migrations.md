@@ -116,6 +116,7 @@ When the idempotency check at step 3 finds an existing `awarded` event but no co
 
 | `0093_activate_stamp_definitions.sql` | Activates 15 previously-inactive stamp definitions whose route-level triggers are now wired: `first_post`, `storyteller`, `photographer` (post counts in posts.ts); `city_explorer`, `globe_trotter`, `world_citizen` (GPS location milestones in posts.ts); `community_connector`, `popular_traveler`, `travel_influencer` (follow counts in follows.ts); `trip_planner`, `good_host` (trip lifecycle in trips.ts); `buddy_veteran`, `nightlife_guide`, `food_guide`, `top_rated_buddy` (rent-a-buddy in rentABuddy.ts); `event_host`, `event_participant` (event completion in events.ts). Safe to re-run (idempotent). | Pending |
 | `0094_profile_account_status_and_privacy.sql` | Three items used by live backend routes that had no SQL file committed: **(1)** `profiles.account_status TEXT NOT NULL DEFAULT 'active'` — read by `GET /admin/users` (explicit SELECT column, no guard) and written by `POST /me/deactivate` + `POST /me/reactivate` + `POST /me/delete-request`; backfills deactivated rows from `user_account_states` to stay consistent. **(2)** `profile_privacy_settings` table — 17-column per-user privacy config (profile_visibility, show_* toggles, allow_* toggles, delayed_posting_default, precise_location_visible; user_id PK → auth.users CASCADE; RLS: users manage own row, service role all); used by `GET /me/privacy` (table-missing guard exists) and `PATCH /me/privacy` (no guard — hard-fails if table absent). **(3)** `user_deletion_requests` table — (user_id PK, requested_at, scheduled_at, status pending/cancelled/executed, cancelled_at, executed_at; RLS: users SELECT own, service role all; partial index on status='pending'); used by `POST /me/delete-request` (awaited upsert — hard-fails if table absent). All statements idempotent (ADD COLUMN IF NOT EXISTS / CREATE TABLE IF NOT EXISTS). **Also fixed:** `hiddenGems.ts` local `requireAdmin()` was reading `profiles.is_admin` (column never created) instead of `profiles.role`; changed to `.select("role")` with `.role === "admin"` check — matching the pattern used everywhere else in the codebase. | 2026-07-03 |
+| `0095_post_category.sql` | Adds nullable `category TEXT` column to `posts` (`ADD COLUMN IF NOT EXISTS` — idempotent). Values match the `PostCategory` enum on the client (e.g. `food`, `nightlife`, `beach`, `adventure`). Required for the category stamp overlay on the post detail screen and for the category picker in the post composer (task #1498). Without this column the production API returns a PostgREST `PGRST204` / column-not-found error whenever a post is created or read. | **pending** — apply before deploying the category stamp or composer picker |
 
 ## Schema verification notes (2026-07-03)
 
@@ -161,3 +162,41 @@ Role is **not** read from `auth.app_metadata` or `auth.users.raw_app_meta_data`.
 ### `profiles.cover_photo_url` column
 
 Added by migration `0087_profiles_cover_photo_url.sql` (`ADD COLUMN IF NOT EXISTS cover_photo_url TEXT`). Used by `GET /api/me/profile`, `PATCH /api/me/profile`, passport loader, and admin media routes. Absence causes PostgREST PGRST204 errors on profile saves — apply 0087 if the Edit Profile screen shows an error banner.
+
+### `posts.category` column (migration 0095) — applying to production
+
+Migration file: `artifacts/api-server/migrations/0095_post_category.sql`
+
+**SQL (single idempotent statement — safe to run more than once):**
+
+```sql
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS category TEXT;
+```
+
+**Apply via Supabase SQL editor (recommended):**
+1. Open [supabase.com/dashboard](https://supabase.com/dashboard) → select project `ajrurzioarfkagpuxfnb`
+2. Left sidebar → **SQL Editor** → **New query**
+3. Paste the SQL above and click **Run**
+4. Expected result: `ALTER TABLE` with no errors
+5. Update the `Applied` column in the table above from `pending` to today's date
+
+**Apply via Management API (CI / scripted):**
+```bash
+SUPABASE_PROJECT_TOKEN=<your-token> \
+  PROJECT_REF=ajrurzioarfkagpuxfnb \
+  curl -s -X POST \
+    "https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query" \
+    -H "Authorization: Bearer ${SUPABASE_PROJECT_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"query":"ALTER TABLE posts ADD COLUMN IF NOT EXISTS category TEXT"}'
+```
+
+**Verify the column exists:**
+```sql
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name   = 'posts'
+  AND column_name  = 'category';
+```
+Expected: one row with `data_type = text`, `is_nullable = YES`.
