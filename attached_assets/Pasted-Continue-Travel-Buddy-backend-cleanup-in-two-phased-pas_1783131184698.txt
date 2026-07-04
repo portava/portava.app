@@ -1,0 +1,415 @@
+Continue Travel Buddy backend cleanup in two phased passes. For every function touched, check SQL/schema support first before writing code. Do not fake persistence. Do not build UI on top of missing database support. Do not apply production SQL automatically unless I explicitly say I ran it or approve it. If SQL is missing, report the exact SQL needed first.
+
+Context:
+I manually applied these SQL changes in Supabase:
+1. Added posts.category
+2. Created post_saves
+3. Added posts.save_count
+4. Added post_saves RLS policies
+5. Added profiles.preferred_message_language
+6. Added profiles.auto_translate_messages
+7. Added profiles.show_original_messages
+8. Added profiles.translation_updated_at
+9. Added profiles.tag_permission
+10. Confirmed thread_reports does not exist in production, so skip the thread_reports UUID migration
+
+Break this work into phases.
+
+==================================================
+PHASE 1 — Verify SQL I manually applied, then wire the related functions
+==================================================
+
+Goal:
+Confirm the SQL I applied is recognized by the backend, then wire only the functions that now have real database support:
+- posts.category
+- post_saves
+- posts.save_count
+- Telegraph translation preference fields
+
+Step 1.1 — SQL verification before code
+Before writing code, verify the schema assumptions in code/tests or local Supabase metadata if available:
+- posts.category exists
+- post_saves table exists
+- posts.save_count exists
+- post_saves has user_id, post_id, created_at, unique(user_id, post_id)
+- profiles has preferred_message_language, auto_translate_messages, show_original_messages, translation_updated_at, tag_permission
+- thread_reports does not exist, so do not create or migrate it in this pass
+
+If the local/dev schema files do not include these objects yet, create matching migration files in the repo only as documentation/source-of-truth for the already-applied Supabase SQL:
+- 0095_post_category.sql if not already present
+- 0097_post_saves.sql
+- 0098_profile_translation_prefs.sql
+
+Do not mark them as production-applied unless the migration docs have a column/status for manual production application. The docs should honestly say these were manually applied in Supabase by the owner if appropriate.
+
+Step 1.2 — Wire posts.category
+Inspect:
+- post create API
+- post update API if present
+- post list/feed API
+- post detail API
+- post composer/category UI
+- post category stamp display
+
+Requirements:
+- Ensure POST /api/posts writes category safely.
+- Ensure GET post/feed/detail routes select and return category.
+- Ensure category falls back honestly when null.
+- Do not hardcode every post as travel.
+- Confirm the category stamp uses the real post category.
+
+Step 1.3 — Wire real post save/bookmark persistence
+Inspect existing like/comment patterns first. Then wire post saves using post_saves.
+
+Requirements:
+- Add save post route if missing.
+- Add unsave post route if missing.
+- Add savedByMe in feed/detail responses using post_saves for the current user.
+- Add save_count in feed/detail responses using posts.save_count or count fallback.
+- Update save_count safely when saving/unsaving.
+- Prevent duplicate saves using unique(user_id, post_id).
+- Handle already-saved as an honest idempotent state, not an error.
+- Handle unsaving a non-saved post gracefully.
+- Update feed and post detail SaveButton to use real API persistence, not local/mock state.
+- If optimistic UI is used, rollback on failure.
+- Do not reuse profile/user save tables for post saves.
+- Do not expose private user save lists broadly.
+- Keep likes/comments/share behavior untouched unless directly needed.
+
+Add tests where patterns exist:
+- save post succeeds
+- duplicate save does not duplicate row/count
+- unsave succeeds
+- savedByMe true for current user
+- save_count returns correctly
+- API failure does not show fake success
+- feed/detail save state stays consistent if testable
+
+Step 1.4 — Verify Telegraph translation preference fields
+Inspect:
+- messaging routes/services
+- Telegraph routes/services
+- profile settings/edit profile
+- onboarding/default language logic if relevant
+
+Requirements:
+- Confirm code reads the exact profile columns now present:
+  - preferred_message_language
+  - auto_translate_messages
+  - show_original_messages
+  - translation_updated_at
+  - tag_permission
+- If UI exists for these settings, ensure it writes to these columns.
+- If no UI exists, do not build a full settings screen in this pass; report the missing UI.
+- Confirm translation fallback behavior is honest if user has no preferred language.
+- Do not build a new translation engine.
+- Do not fake auto-translation.
+
+Step 1.5 — Clean stale audit notes
+Update any audit/report/docs that still say these are missing:
+- posts.category
+- post_saves
+- profile translation columns
+
+But keep notes if backend wiring is still incomplete.
+
+Step 1.6 — Phase 1 validation
+Run:
+- API server typecheck
+- Root typecheck
+- Standalone typecheck
+- Relevant post API tests
+- Relevant post detail/feed tests
+- Relevant messaging/Telegraph tests if touched
+- Source drift check
+- Dependency drift check
+- test-sync-standalone.sh if canonical/standalone files changed
+
+Phase 1 report:
+- Confirm category works
+- Confirm post_saves schema is recognized
+- Confirm post save API/UI wiring status
+- Confirm savedByMe behavior
+- Confirm save_count behavior
+- Confirm Telegraph profile preference columns are no longer missing
+- Confirm thread_reports fix was skipped because table does not exist
+- Files changed
+- Tests passed
+- Anything left incomplete and why
+
+==================================================
+PHASE 2 — SQL-first audit/fix pass for remaining backend gaps
+==================================================
+
+Goal:
+Work through the next SQL/backend gaps from the SQL audit, but do it SQL-first. For every function, verify database support before wiring code. If SQL is missing, produce the SQL needed and stop before building the function unless the missing SQL already exists.
+
+Priority order:
+1. Safe Return schema verification
+2. Generated database types
+3. TripRow/API missing fields from migration 0077
+4. Trust score persistence decision
+5. Reports cleanup after discovering thread_reports does not exist
+6. Notification migration duplication
+7. Missing performance/integrity indexes
+8. Compass feedback table uncertainty
+
+--------------------------------------------------
+PHASE 2A — Safe Return SQL verification first
+--------------------------------------------------
+
+Inspect migrations and production/schema metadata if available for:
+- safe_return_sessions
+- safe_return_trusted_contacts
+- safe_return_events
+- safe return check-in schedules if included
+- emergency contact tables
+- SOS event/log tables
+
+Before touching Safe Return code:
+- Confirm whether Safe Return tables exist in local schema/migrations.
+- Confirm whether migration 0040_safe_return.sql exists and what it creates.
+- Confirm whether docs/migrations.md accurately tracks it.
+- If SQL is missing, do not wire Safe Return functions. Produce exact SQL/migration needed and mark the feature blocked by SQL.
+- If SQL exists, verify Safe Return API routes match the table/column names.
+- Confirm no SOS/check-in UI writes to missing tables.
+- Add tests only if schema and route already exist.
+
+--------------------------------------------------
+PHASE 2B — Generate/wire database types
+--------------------------------------------------
+
+Goal:
+Remove untyped Supabase access where safe.
+
+Steps:
+- Check whether database.types.ts now exists.
+- If absent, document the exact command needed:
+  supabase gen types typescript --project-id <project-id> > lib/database.types.ts
+- If the project can generate types locally using available config, generate them.
+- Wire createClient<Database>() only if the generated file exists and import paths are safe.
+- Do not break builds by guessing paths.
+- If generation requires credentials not available to the agent, report the command I need to run.
+
+Validation:
+- API server typecheck must pass after typing changes.
+
+--------------------------------------------------
+PHASE 2C — TripRow/API field exposure, SQL first
+--------------------------------------------------
+
+SQL audit said DB migration 0077 already added many trip fields, but API/frontend do not expose them.
+
+Before code:
+- Verify the columns exist in migrations/schema:
+  - trip_type
+  - timezone
+  - destination_lat
+  - destination_lng
+  - destination_place_id
+  - trip_notes
+  - show_on_profile
+  - show_in_discovery
+  - allow_friend_suggestions
+  - allow_trip_crew_invites
+  - allow_join_requests
+  - show_exact_dates
+  - show_destination_city
+  - delayed_posting_default
+  - precise_location_visible
+  - plan_edit_permission
+
+If columns exist:
+- Update GET /api/trips select clauses to include them.
+- Update trip detail route if needed.
+- Update frontend TripRow type/interface.
+- Update trip service mapping.
+- Ensure old trips with null values use safe defaults.
+- Do not redesign Trips UI.
+- Do not add new trip settings UI unless it already exists and was waiting for these fields.
+
+If columns do not exist:
+- Stop and report exact SQL needed instead of wiring fake fields.
+
+Tests:
+- trip API returns expanded fields
+- frontend service accepts expanded fields
+- no type errors
+
+--------------------------------------------------
+PHASE 2D — Trust score persistence decision, SQL first
+--------------------------------------------------
+
+Before code:
+- Verify whether profiles.trust_score exists now.
+- Verify whether user_trust_scores exists.
+- Verify whether trust_score_events exists.
+- Verify whether any API computes trust score dynamically.
+
+If no current-value storage exists:
+- Do not patch UI to show fake score.
+- Recommend one of two SQL options:
+
+Option A — simple profile cached score:
+ALTER TABLE profiles
+  ADD COLUMN IF NOT EXISTS trust_score integer NOT NULL DEFAULT 50,
+  ADD COLUMN IF NOT EXISTS trust_score_updated_at timestamptz;
+
+Option B — dedicated table:
+CREATE TABLE IF NOT EXISTS user_trust_scores (
+  user_id uuid PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+  score integer NOT NULL DEFAULT 50,
+  computed_at timestamptz NOT NULL DEFAULT now()
+);
+
+Report which option best matches the current codebase.
+Do not apply either unless instructed.
+If SQL already exists, wire API/profile display to real value only.
+
+--------------------------------------------------
+PHASE 2E — Reports cleanup after thread_reports discovery
+--------------------------------------------------
+
+Context:
+Production does not have thread_reports. Unified reports likely exists.
+
+Before code:
+- Verify which report tables exist in migrations/schema:
+  - reports
+  - report_evidence
+  - message_reports
+  - thread_reports
+- Confirm messaging report routes currently write to old or unified tables.
+
+Rules:
+- Do not create thread_reports.
+- Do not run UUID migration.
+- Prefer unified reports if it exists.
+- If messaging report code still writes to missing thread_reports, fix it to write to reports with target_type='thread' or equivalent existing schema.
+- If reports schema is missing fields needed for message/thread reports, report SQL needed first.
+- Ensure report creation is real and does not fake success.
+
+Tests:
+- reporting a message writes to unified reports
+- reporting a thread writes to unified reports, if thread reporting UI exists
+- non-admin users cannot see admin report data
+
+--------------------------------------------------
+PHASE 2F — Notification migration duplication
+--------------------------------------------------
+
+Audit found possible duplication:
+- artifacts/api-server/migrations/0041_notifications.sql
+- artifacts/api-server/src/migrations/0062_notifications_schema.sql
+
+Tasks:
+- Compare both files.
+- Identify authoritative schema.
+- Check docs/migrations.md.
+- Do not apply SQL.
+- If duplicate migration creates same table differently, report exact conflict and safest cleanup.
+- If one is stale, mark as stale in report/docs if project convention allows.
+- Do not break notifications.
+
+--------------------------------------------------
+PHASE 2G — Missing indexes, SQL first
+--------------------------------------------------
+
+Before proposing/applying indexes:
+- Verify existing indexes.
+- Only recommend additive indexes.
+- Do not add indexes blindly if already present.
+
+Recommended candidates from audit:
+- hashtag_usage(source_type, source_id)
+- notifications(user_id, read_at) WHERE read_at IS NULL
+- posts(author_id, post_status)
+- post_saves(post_id, created_at DESC)
+
+If missing, produce SQL:
+CREATE INDEX IF NOT EXISTS hashtag_usage_source_idx
+  ON hashtag_usage(source_type, source_id);
+
+CREATE INDEX IF NOT EXISTS notifications_user_unread_idx
+  ON notifications(user_id, read_at)
+  WHERE read_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS posts_author_status_idx
+  ON posts(author_id, post_status);
+
+CREATE INDEX IF NOT EXISTS post_saves_post_created_idx
+  ON post_saves(post_id, created_at DESC);
+
+Do not apply unless allowed by task context. If applied locally only, document clearly.
+
+--------------------------------------------------
+PHASE 2H — Compass feedback table uncertainty
+--------------------------------------------------
+
+Before code:
+- Inspect POST /api/compass/feedback.
+- Identify exact table it writes to.
+- Verify that table exists.
+- If table does not exist, do not build more Compass feedback UI.
+- Produce exact SQL needed for a compass feedback/interactions table.
+- If table exists, add/repair tests for feedback persistence.
+
+Do not start Compass rewrite.
+
+==================================================
+GLOBAL RULES
+==================================================
+
+- For every function: SQL/schema first, then backend, then UI.
+- Do not fake persistence.
+- Do not hide missing SQL by using local state.
+- Do not create production SQL automatically unless explicitly approved.
+- Do not touch unrelated UI.
+- Do not rebuild major systems.
+- Do not create payment/RAB transaction schema yet.
+- Do not create broad permissive RLS policies.
+- Do not weaken privacy, auth, safety, or location rules.
+- Keep canonical source and standalone synced through the project workflow.
+
+==================================================
+FINAL VALIDATION
+==================================================
+
+Run:
+- API server typecheck
+- Root typecheck
+- Standalone typecheck
+- Relevant API tests for touched backend routes
+- Relevant frontend tests for touched UI/services
+- Source drift check
+- Dependency drift check
+- test-sync-standalone.sh if canonical/standalone files changed
+
+==================================================
+FINAL REPORT
+==================================================
+
+Return a phased report:
+
+Phase 1:
+- SQL manually applied and verified
+- Category wiring result
+- Post save wiring result
+- savedByMe/save_count result
+- Telegraph column validation result
+- Files changed
+- Tests passed
+- Remaining gaps
+
+Phase 2:
+- Safe Return SQL status
+- Database types status
+- TripRow/API field exposure status
+- Trust score SQL decision
+- Reports cleanup status
+- Notification migration duplication status
+- Index recommendations/applied status
+- Compass feedback SQL status
+- SQL still requiring owner approval
+- Backend/UI still blocked by SQL
+- Next recommended SQL command for me to run manually
