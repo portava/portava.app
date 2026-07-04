@@ -190,19 +190,21 @@ async function fetchAgeRestrictedSet(sc: any): Promise<Set<string> | null> {
 //
 // Fetches the set of IDs (from a candidate owner/host list) that have an
 // active account. Used to exclude content from suspended/banned/deleted owners.
-// Fails open (returns all IDs) to avoid over-blocking on DB errors.
+// Fails closed (returns empty set) on DB errors to prevent leaking owner-gated content.
 
 async function fetchActiveOwnerSet(sc: any, ownerIds: string[]): Promise<Set<string>> {
   if (ownerIds.length === 0) return new Set();
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("profiles")
       .select("id")
       .in("id", ownerIds)
       .in("account_status", ["active"]);
+    // Fail-closed: unknown owner status → treat all as inactive (exclude content)
+    if (error) return new Set();
     return new Set<string>((data ?? []).map((p: any) => p.id as string));
   } catch {
-    return new Set(ownerIds);  // fail-open: prefer inclusion over false negatives
+    return new Set();  // fail-closed: prefer exclusion over leaking suspended-owner content
   }
 }
 
@@ -385,6 +387,7 @@ async function searchTrips(
       .eq("visibility", "public")
       .neq("status", "cancelled")
       .neq("status", "deleted")
+      .neq("status", "banned")
       .order("created_at", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 
@@ -462,6 +465,7 @@ async function searchPlans(
     const allowedTrips = (trips ?? []).filter(
       (t: any) =>
         ((t.visibility as string) === "public" || (t.owner_id as string) === userId) &&
+        !blockedSet.has(t.owner_id as string) &&
         !ageRestrictedSet.has(t.owner_id as string),
     );
 
