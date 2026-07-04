@@ -403,6 +403,7 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
   const [counts, setCounts] = useState<MeetupCounts | null>(null);
   const [myRsvp, setMyRsvp] = useState<RsvpStatus | null>(null);
   const [rsvping, setRsvping] = useState<RsvpAction | null>(null);
+  const rsvpingLockRef = useRef(false);
   const [isCancelled, setIsCancelled] = useState(false);
   // undefined = still loading; null = loaded but creator not found
   const [creator, setCreator] = useState<MeetupCreator | null | undefined>(undefined);
@@ -459,7 +460,8 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
   }, [payload.meetupId, refreshMeetup]);
 
   async function handleRsvp(status: RsvpAction) {
-    if (rsvping) return;
+    if (rsvpingLockRef.current) return;
+    rsvpingLockRef.current = true;
     const prev = myRsvp;
     const prevCounts = counts;
     // Optimistic update
@@ -476,17 +478,21 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
       setCounts(next);
     }
     setRsvping(status);
-    const res = await rsvpMeetup(payload.meetupId, status);
-    setRsvping(null);
-    if (res.ok && res.data) {
-      setMyRsvp(res.data.status);
-      setCounts(res.data.counts);
-      // Re-fetch full meetup to update going attendees after RSVP change
-      refreshMeetup();
-    } else {
-      setMyRsvp(prev);
-      setCounts(prevCounts);
-      Alert.alert('Error', res.message ?? 'Could not RSVP');
+    try {
+      const res = await rsvpMeetup(payload.meetupId, status);
+      if (res.ok && res.data) {
+        setMyRsvp(res.data.status);
+        setCounts(res.data.counts);
+        // Re-fetch full meetup to update going attendees after RSVP change
+        refreshMeetup();
+      } else {
+        setMyRsvp(prev);
+        setCounts(prevCounts);
+        Alert.alert('Error', res.message ?? 'Could not RSVP');
+      }
+    } finally {
+      rsvpingLockRef.current = false;
+      setRsvping(null);
     }
   }
 

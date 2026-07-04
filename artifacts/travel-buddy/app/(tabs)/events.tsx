@@ -139,6 +139,8 @@ export default function EventsTabScreen() {
 
   // ── Optimistic save state ──────────────────────────────────────────────────
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  // Per-event in-flight lock — Set so different events can be saved concurrently
+  const savingLockRef = useRef(new Set<string>());
 
   const activeFilters =
     (category !== 'All' ? 1 : 0) +
@@ -249,17 +251,23 @@ export default function EventsTabScreen() {
 
   // ── Save toggle ────────────────────────────────────────────────────────────
   async function handleSaveToggle(ev: EventListItem) {
+    if (savingLockRef.current.has(ev.id)) return;
+    savingLockRef.current.add(ev.id);
     const wasSaved = savedIds.has(ev.id);
     setSavedIds((prev) => {
       const next = new Set(prev);
       if (wasSaved) next.delete(ev.id); else next.add(ev.id);
       return next;
     });
-    if (wasSaved) {
-      await unsaveEvent(ev.id);
-      setSavedEvents((prev) => prev.filter((e) => e.id !== ev.id));
-    } else {
-      await saveEvent(ev.id);
+    try {
+      if (wasSaved) {
+        await unsaveEvent(ev.id);
+        setSavedEvents((prev) => prev.filter((e) => e.id !== ev.id));
+      } else {
+        await saveEvent(ev.id);
+      }
+    } finally {
+      savingLockRef.current.delete(ev.id);
     }
   }
 
