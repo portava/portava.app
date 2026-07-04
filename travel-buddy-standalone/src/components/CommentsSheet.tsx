@@ -49,6 +49,7 @@ import {
 import { RichText } from './RichText';
 import { useSession } from '../context/SessionContext';
 import { computeOptimisticLike } from '../lib/commentLikeLogic';
+import { createSubmitGuard } from '../lib/commentSubmitGuard';
 
 const AuthorPressCtx = React.createContext<(handle: string) => void>(() => {});
 
@@ -385,6 +386,7 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
   const [repliesLoading, setRepliesLoading] = useState<Set<string>>(new Set());
 
   const [previewHandle, setPreviewHandle] = useState<string | null>(null);
+  const submitGuardRef = useRef(createSubmitGuard());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -445,55 +447,57 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
 
   const handleSubmit = useCallback(async () => {
     const trimmed = text.trim();
-    if (!trimmed || submitting) return;
     if (trimmed.length > 1000) {
       Alert.alert('Too long', 'Comments must be 1000 characters or fewer.');
       return;
     }
-    setSubmitting(true);
-
-    if (replyingTo) {
-      const result = await addReply(postId, replyingTo.id, trimmed);
-      if (result && 'reply' in result) {
-        setText('');
-        const parentId = replyingTo.id;
-        setReplyingTo(null);
-        setRepliesMap((prev) => ({
-          ...prev,
-          [parentId]: [...(prev[parentId] ?? []), result.reply],
-        }));
-        setRepliesLoaded((prev) => new Set(prev).add(parentId));
-        setRepliesOpen((prev) => new Set(prev).add(parentId));
-      } else if (result && 'error' in result) {
-        if (result.error === 'comments_disabled') {
-          setCommentsDisabled(true);
-          Alert.alert('Comments disabled', 'The author has turned off comments on this post.');
+    await submitGuardRef.current.trySubmit(text, async (t) => {
+      setSubmitting(true);
+      try {
+        if (replyingTo) {
+          const result = await addReply(postId, replyingTo.id, t);
+          if (result && 'reply' in result) {
+            setText('');
+            const parentId = replyingTo.id;
+            setReplyingTo(null);
+            setRepliesMap((prev) => ({
+              ...prev,
+              [parentId]: [...(prev[parentId] ?? []), result.reply],
+            }));
+            setRepliesLoaded((prev) => new Set(prev).add(parentId));
+            setRepliesOpen((prev) => new Set(prev).add(parentId));
+          } else if (result && 'error' in result) {
+            if (result.error === 'comments_disabled') {
+              setCommentsDisabled(true);
+              Alert.alert('Comments disabled', 'The author has turned off comments on this post.');
+            } else {
+              Alert.alert('Comments limited', 'Only certain people can comment on this post.');
+            }
+          } else {
+            Alert.alert('Could not post reply', 'Please try again.');
+          }
         } else {
-          Alert.alert('Comments limited', 'Only certain people can comment on this post.');
+          const result = await addComment(postId, t);
+          if (result && 'comment' in result) {
+            setText('');
+            setComments((prev) => [...prev, result.comment]);
+            onCountChange(result.commentCount);
+          } else if (result && 'error' in result) {
+            if (result.error === 'comments_disabled') {
+              setCommentsDisabled(true);
+              Alert.alert('Comments disabled', 'The author has turned off comments on this post.');
+            } else {
+              Alert.alert('Comments limited', 'Only certain people can comment on this post.');
+            }
+          } else {
+            Alert.alert('Could not post comment', 'Please try again.');
+          }
         }
-      } else {
-        Alert.alert('Could not post reply', 'Please try again.');
+      } finally {
+        setSubmitting(false);
       }
-    } else {
-      const result = await addComment(postId, trimmed);
-      if (result && 'comment' in result) {
-        setText('');
-        setComments((prev) => [...prev, result.comment]);
-        onCountChange(result.commentCount);
-      } else if (result && 'error' in result) {
-        if (result.error === 'comments_disabled') {
-          setCommentsDisabled(true);
-          Alert.alert('Comments disabled', 'The author has turned off comments on this post.');
-        } else {
-          Alert.alert('Comments limited', 'Only certain people can comment on this post.');
-        }
-      } else {
-        Alert.alert('Could not post comment', 'Please try again.');
-      }
-    }
-
-    setSubmitting(false);
-  }, [text, submitting, postId, replyingTo, onCountChange]);
+    });
+  }, [text, postId, replyingTo, onCountChange]);
 
   const handleDelete = useCallback(
     async (commentId: string) => {
@@ -647,6 +651,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
   const [repliesLoading, setRepliesLoading] = useState<Set<string>>(new Set());
 
   const [previewHandle, setPreviewHandle] = useState<string | null>(null);
+  const submitGuardRef = useRef(createSubmitGuard());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -719,56 +724,58 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
 
   const handleSubmit = useCallback(async () => {
     const trimmed = text.trim();
-    if (!trimmed || submitting) return;
     if (trimmed.length > 1000) {
       Alert.alert('Too long', 'Comments must be 1000 characters or fewer.');
       return;
     }
-    setSubmitting(true);
-
-    if (replyingTo) {
-      const result = await addReply(postId, replyingTo.id, trimmed);
-      if (result && 'reply' in result) {
-        setText('');
-        const parentId = replyingTo.id;
-        setReplyingTo(null);
-        // Append new reply immediately to the thread; open the thread if needed
-        setRepliesMap((prev) => ({
-          ...prev,
-          [parentId]: [...(prev[parentId] ?? []), result.reply],
-        }));
-        setRepliesLoaded((prev) => new Set(prev).add(parentId));
-        setRepliesOpen((prev) => new Set(prev).add(parentId));
-      } else if (result && 'error' in result) {
-        if (result.error === 'comments_disabled') {
-          setCommentsDisabled(true);
-          Alert.alert('Comments disabled', 'The author has turned off comments on this post.');
+    await submitGuardRef.current.trySubmit(text, async (t) => {
+      setSubmitting(true);
+      try {
+        if (replyingTo) {
+          const result = await addReply(postId, replyingTo.id, t);
+          if (result && 'reply' in result) {
+            setText('');
+            const parentId = replyingTo.id;
+            setReplyingTo(null);
+            // Append new reply immediately to the thread; open the thread if needed
+            setRepliesMap((prev) => ({
+              ...prev,
+              [parentId]: [...(prev[parentId] ?? []), result.reply],
+            }));
+            setRepliesLoaded((prev) => new Set(prev).add(parentId));
+            setRepliesOpen((prev) => new Set(prev).add(parentId));
+          } else if (result && 'error' in result) {
+            if (result.error === 'comments_disabled') {
+              setCommentsDisabled(true);
+              Alert.alert('Comments disabled', 'The author has turned off comments on this post.');
+            } else {
+              Alert.alert('Comments limited', 'Only certain people can comment on this post.');
+            }
+          } else {
+            Alert.alert('Could not post reply', 'Please try again.');
+          }
         } else {
-          Alert.alert('Comments limited', 'Only certain people can comment on this post.');
+          const result = await addComment(postId, t);
+          if (result && 'comment' in result) {
+            setText('');
+            setComments((prev) => [...prev, result.comment]);
+            onCountChange(result.commentCount);
+          } else if (result && 'error' in result) {
+            if (result.error === 'comments_disabled') {
+              setCommentsDisabled(true);
+              Alert.alert('Comments disabled', 'The author has turned off comments on this post.');
+            } else {
+              Alert.alert('Comments limited', 'Only certain people can comment on this post.');
+            }
+          } else {
+            Alert.alert('Could not post comment', 'Please try again.');
+          }
         }
-      } else {
-        Alert.alert('Could not post reply', 'Please try again.');
+      } finally {
+        setSubmitting(false);
       }
-    } else {
-      const result = await addComment(postId, trimmed);
-      if (result && 'comment' in result) {
-        setText('');
-        setComments((prev) => [...prev, result.comment]);
-        onCountChange(result.commentCount);
-      } else if (result && 'error' in result) {
-        if (result.error === 'comments_disabled') {
-          setCommentsDisabled(true);
-          Alert.alert('Comments disabled', 'The author has turned off comments on this post.');
-        } else {
-          Alert.alert('Comments limited', 'Only certain people can comment on this post.');
-        }
-      } else {
-        Alert.alert('Could not post comment', 'Please try again.');
-      }
-    }
-
-    setSubmitting(false);
-  }, [text, submitting, postId, replyingTo, onCountChange]);
+    });
+  }, [text, postId, replyingTo, onCountChange]);
 
   const handleDelete = useCallback(
     async (commentId: string) => {
