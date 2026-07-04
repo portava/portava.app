@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
-  View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet, findNodeHandle, Animated,
+  View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet, findNodeHandle, Animated, Modal,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -262,6 +262,7 @@ export function TripPlanSection({
   const [detailStartInEditMode, setDetailStartInEditMode] = useState(false);
   const [safeReturnSetupItem, setSafeReturnSetupItem] = useState<TripPlanItem | null>(null);
   const [safeReturnSetupOpen, setSafeReturnSetupOpen] = useState(false);
+  const [safeReturnChecking, setSafeReturnChecking] = useState(false);
   const [activeSafeReturnSession, setActiveSafeReturnSession] = useState<import('../services/safeReturn').SafeReturnSession | null>(null);
   const [showMissedPrompt, setShowMissedPrompt] = useState(false);
   const [routeBuilderOpen, setRouteBuilderOpen] = useState(false);
@@ -677,6 +678,16 @@ export function TripPlanSection({
         }}
       />
 
+      {/* Loading overlay shown while Safe Return pre-check is in flight */}
+      <Modal visible={safeReturnChecking} transparent animationType="fade" statusBarTranslucent>
+        <View style={sr.overlay}>
+          <View style={sr.card}>
+            <ActivityIndicator color={color.deep} />
+            <Text style={sr.label}>Checking Safe Return…</Text>
+          </View>
+        </View>
+      </Modal>
+
       {/* Safe Return setup — shown after plan item sheet closes when suggested */}
       <SafeReturnSetupSheet
         visible={safeReturnSetupOpen}
@@ -685,6 +696,7 @@ export function TripPlanSection({
         planEndsAt={safeReturnSetupItem?.endsAt ?? null}
         onClose={handleSafeReturnClose}
         onStarted={handleSafeReturnStarted}
+        onCheckingChange={setSafeReturnChecking}
       />
 
       <AddToPlanSheet
@@ -793,4 +805,27 @@ const wf = StyleSheet.create({
   chipActive:   { backgroundColor: '#F59E0B', borderColor: '#D97706' },
   chipText:     { ...t.small, color: '#8B5E00', fontWeight: '600' as const, fontSize: 11 },
   chipTextActive: { color: '#fff' },
+});
+
+const sr = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  card: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    backgroundColor: color.paper,
+    borderRadius: radius.lg,
+    paddingVertical: space.lg,
+    paddingHorizontal: space.xl,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  label: { ...t.body, color: color.ink, fontSize: 14 },
 });
