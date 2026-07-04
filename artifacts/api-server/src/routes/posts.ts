@@ -22,6 +22,7 @@ import {
 } from "../lib/postSchemas";
 import { verifyLocation, shouldCreatePostcard } from "../lib/locationVerify";
 import { upsertCityStamp } from "../lib/stampHelper";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { awardStamp } from "../services/passport/StampAwardEngine.js";
 import { getServiceClient } from "../lib/supabase";
 import { checkRateLimit } from "../lib/rateLimit";
@@ -133,6 +134,54 @@ const PENDING_POST_COLUMNS =
  * - visibility=trip_only requires trip_id (schema + DB both enforce)
  * - service-role insert; audit fields set server-side
  */
+
+/**
+ * Awards social post-count stamps (first_post, storyteller, photographer) for a
+ * newly-published post.  Exported so the trigger path can be tested in isolation
+ * without spinning up the full HTTP server.
+ *
+ * Returns the list of slug names actually awarded (empty if none qualified or the
+ * stamp system is disabled).  The caller is responsible for dispatching the
+ * "passport.stamp_earned" push notification.
+ */
+export async function awardSocialPostStamps(
+  sc: SupabaseClient,
+  userId: string,
+  postId: string,
+  hasPhoto: boolean,
+): Promise<string[]> {
+  const [totalRes, photoRes] = await Promise.all([
+    sc.from("posts").select("id", { count: "exact", head: true })
+      .eq("author_id", userId).eq("status", "active"),
+    sc.from("posts").select("id", { count: "exact", head: true })
+      .eq("author_id", userId).eq("status", "active")
+      .not("media_urls", "eq", "{}"),
+  ]);
+
+  const totalPosts = totalRes.count ?? 0;
+  const photoPosts = photoRes.count ?? 0;
+
+  const socialAwards: Array<{ slug: string }> = [];
+  if (totalPosts >= 1)  socialAwards.push({ slug: "first_post" });
+  if (totalPosts >= 10) socialAwards.push({ slug: "storyteller" });
+  if (hasPhoto && photoPosts >= 25) socialAwards.push({ slug: "photographer" });
+
+  const settled = await Promise.allSettled(
+    socialAwards.map(({ slug }) =>
+      awardStamp(sc, {
+        userId,
+        definitionSlug: slug,
+        sourceType:     "posts",
+        sourceId:       postId,
+      }).then((r) => ({ slug, ...r })),
+    ),
+  );
+
+  return settled
+    .filter((r) => r.status === "fulfilled" && (r as any).value.awarded)
+    .map((r) => (r as any).value.slug as string);
+}
+
 router.post("/posts", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -518,43 +567,15 @@ router.post("/posts", async (req, res) => {
 
   // Fire-and-forget: social post-count stamps.
   // first_post → 1st published post; storyteller → 10 posts; photographer → 25 posts with photos.
+  // Trigger logic lives in awardSocialPostStamps() so it can be unit-tested independently.
   void (async () => {
     try {
       const stampSc = getServiceClient();
       if (!stampSc) return;
-      const postId = (data as any).id as string;
+      const postId   = (data as any).id as string;
       const hasPhoto = ((data as any).media_urls as string[] ?? []).length > 0;
 
-      const [totalRes, photoRes] = await Promise.all([
-        stampSc.from("posts").select("id", { count: "exact", head: true })
-          .eq("author_id", user.id).eq("status", "active"),
-        stampSc.from("posts").select("id", { count: "exact", head: true })
-          .eq("author_id", user.id).eq("status", "active")
-          .not("media_urls", "eq", "{}"),
-      ]);
-
-      const totalPosts = totalRes.count ?? 0;
-      const photoPosts = photoRes.count ?? 0;
-
-      const socialAwards: Array<{ slug: string }> = [];
-      if (totalPosts >= 1)  socialAwards.push({ slug: "first_post" });
-      if (totalPosts >= 10) socialAwards.push({ slug: "storyteller" });
-      if (hasPhoto && photoPosts >= 25) socialAwards.push({ slug: "photographer" });
-
-      const settled = await Promise.allSettled(
-        socialAwards.map(({ slug }) =>
-          awardStamp(stampSc, {
-            userId:         user.id,
-            definitionSlug: slug,
-            sourceType:     "posts",
-            sourceId:       postId,
-          }).then((r) => ({ slug, ...r })),
-        ),
-      );
-
-      const awardedSlugs = settled
-        .filter((r) => r.status === "fulfilled" && (r as any).value.awarded)
-        .map((r) => (r as any).value.slug as string);
+      const awardedSlugs = await awardSocialPostStamps(stampSc, user.id, postId, hasPhoto);
 
       if (awardedSlugs.length > 0) {
         const notifSvc    = new NotificationService(stampSc);
