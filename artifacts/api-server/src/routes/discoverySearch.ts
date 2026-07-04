@@ -1,7 +1,7 @@
 /**
  * GET /api/discovery/search  — Unified cross-type search
  *
- * Query params:
+ * Query params (validated via Zod):
  *   q       string  (required, min 2 chars, max 200)
  *   type    string  all | travelers | buddies | events | trips | plans |
  *                   places | hidden_gems | hashtags | posts | circles |
@@ -13,17 +13,25 @@
  * Response: { results: SearchResult[], nextCursor, hasMore, query, type }
  *
  * Privacy rules enforced server-side:
- *   - Blocked users excluded in both directions from all people/content types.
- *   - Private accounts and suspended/banned/deleted accounts never appear.
- *   - Private trips, events, and circles are filtered to public-only.
- *   - Moderation-removed content (status=deleted/banned) is excluded.
- *   - Private profile discovery opt-outs are respected for travelers.
- *   - Sensitive fields (email, phone, location coords) never included.
+ *   - Private accounts never appear (is_private=true excluded).
+ *   - Suspended/banned/deleted accounts never appear.
+ *   - Profile-discovery opt-outs respected for travelers.
+ *   - Blocked users (both directions) excluded from all people/content types.
+ *   - Private trips, events, circles restricted to public-only results.
+ *   - Plan items scoped to public trips or caller-owned trips only.
+ *   - Moderation-removed content (status=deleted/banned/cancelled) excluded.
+ *   - Private fields (email, phone, location coords) never included.
+ *
+ * actionState derived per type:
+ *   travelers/buddies → { isFollowing: boolean }
+ *   events           → { isAttending: boolean }
+ *   others           → null
  *
  * Rate limited: 30 requests/min per user.
  */
 
 import { Router } from "express";
+import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { checkRateLimit } from "../lib/rateLimit";
@@ -32,16 +40,23 @@ import { logger as rootLogger } from "../lib/logger";
 const router = Router();
 const logger = rootLogger.child({ route: "discoverySearch" });
 
-// ── Supported types ────────────────────────────────────────────────────────────
+// ── Zod contract ──────────────────────────────────────────────────────────────
 
-const SEARCH_TYPES = [
+const SEARCH_TYPE_VALUES = [
   "all", "travelers", "buddies", "events", "trips", "plans",
   "places", "hidden_gems", "hashtags", "posts", "circles",
   "stamps", "activities", "cities", "countries", "languages",
   "interests", "vibes",
 ] as const;
 
-type SearchType = typeof SEARCH_TYPES[number];
+type SearchType = typeof SEARCH_TYPE_VALUES[number];
+
+const SearchQuerySchema = z.object({
+  q:      z.string().trim().min(2, "q must be at least 2 characters").max(200, "q must be at most 200 characters"),
+  type:   z.enum(SEARCH_TYPE_VALUES).default("all"),
+  limit:  z.coerce.number().int().min(1).max(50).default(20),
+  cursor: z.string().optional(),
+});
 
 // ── Normalized result shape ────────────────────────────────────────────────────
 
@@ -133,6 +148,17 @@ async function fetchBlockedSet(sc: any, userId: string): Promise<Set<string>> {
 
 // ── Per-type search functions ──────────────────────────────────────────────────
 
+/**
+ * Travelers / Buddies
+ *
+ * Privacy rules:
+ *   - is_private=true accounts are EXCLUDED entirely.
+ *   - Suspended/banned/deleted accounts excluded (account_status filter).
+ *   - Profile-discovery opt-outs excluded.
+ *   - Blocked users excluded (both directions).
+ *
+ * actionState: { isFollowing: boolean }
+ */
 async function searchTravelers(
   sc: any, q: string, userId: string, blockedSet: Set<string>,
   offset: number, limit: number, isBuddy = false,
@@ -145,6 +171,7 @@ async function searchTravelers(
       .or(`name.ilike.${pat},handle.ilike.${pat},username.ilike.${pat}`)
       .neq("id", userId)
       .in("account_status", ["active"])
+      .eq("is_private", false)
       .order("name", { ascending: true })
       .range(offset, offset + limit - 1);
 
@@ -153,46 +180,68 @@ async function searchTravelers(
     const { data, error } = await query;
     if (error || !data) return [];
 
-    // Fetch privacy opt-outs for remaining profiles
     const rows = (data as any[]).filter((p: any) => !blockedSet.has(p.id as string));
     if (rows.length === 0) return [];
 
     const ids = rows.map((p: any) => p.id as string);
-    const { data: noDisc } = await sc
+
+    // Privacy opt-outs: fail-closed (return empty if query fails)
+    const { data: noDisc, error: noDiscErr } = await sc
       .from("profile_privacy_settings")
       .select("user_id")
       .in("user_id", ids)
       .eq("allow_profile_discovery", false);
+    if (noDiscErr) return [];
+
     const noDiscSet = new Set<string>((noDisc ?? []).map((r: any) => r.user_id as string));
+    const visible = rows.filter((p: any) => !noDiscSet.has(p.id as string));
+    if (visible.length === 0) return [];
+
+    // Derive actionState: which of these users does the caller follow?
+    const visibleIds = visible.map((p: any) => p.id as string);
+    const { data: followEdges } = await sc
+      .from("user_follows")
+      .select("following_id")
+      .eq("follower_id", userId)
+      .in("following_id", visibleIds);
+    const followingSet = new Set<string>((followEdges ?? []).map((e: any) => e.following_id as string));
 
     const type: Exclude<SearchType, "all"> = isBuddy ? "buddies" : "travelers";
-    return rows
-      .filter((p: any) => !noDiscSet.has(p.id as string))
-      .map((p: any): SearchResult => ({
-        id: p.id,
-        type,
-        title: (p.name as string) ?? (p.handle as string) ?? "",
-        subtitle: p.handle ? `@${p.handle as string}` : null,
-        avatarUrl: (p.avatar_url as string | null) ?? null,
-        imageUrl: null,
-        fallbackInitials: initials((p.name as string) ?? (p.handle as string) ?? "?"),
-        locationPreview: [(p.home_city as string | null), (p.home_country as string | null)].filter(Boolean).join(", ") || null,
-        matchedReason: null,
-        actionState: null,
-        privacyState: { isPrivate: Boolean(p.is_private) },
-        accessState: { canAccess: !p.is_private },
-        destinationRoute: p.handle
-          ? `/passport/${p.handle as string}`
-          : `/passport/${p.id as string}`,
-        metadata: null,
-        createdAt: null,
-        startsAt: null,
-      }));
+    return visible.map((p: any): SearchResult => ({
+      id: p.id,
+      type,
+      title: (p.name as string) ?? (p.handle as string) ?? "",
+      subtitle: p.handle ? `@${p.handle as string}` : null,
+      avatarUrl: (p.avatar_url as string | null) ?? null,
+      imageUrl: null,
+      fallbackInitials: initials((p.name as string) ?? (p.handle as string) ?? "?"),
+      locationPreview: [(p.home_city as string | null), (p.home_country as string | null)].filter(Boolean).join(", ") || null,
+      matchedReason: null,
+      actionState: { isFollowing: followingSet.has(p.id as string) },
+      privacyState: { isPrivate: false },
+      accessState: { canAccess: true },
+      destinationRoute: p.handle
+        ? `/passport/${p.handle as string}`
+        : `/passport/${p.id as string}`,
+      metadata: null,
+      createdAt: null,
+      startsAt: null,
+    }));
   } catch {
     return [];
   }
 }
 
+/**
+ * Events
+ *
+ * Privacy rules:
+ *   - Only visibility='public' events.
+ *   - Cancelled/deleted events excluded.
+ *   - Events from blocked hosts excluded.
+ *
+ * actionState: { isAttending: boolean }
+ */
 async function searchEvents(
   sc: any, q: string, userId: string, blockedSet: Set<string>,
   offset: number, limit: number,
@@ -211,31 +260,45 @@ async function searchEvents(
 
     if (error || !data) return [];
 
-    return (data as any[])
-      .filter((e: any) => !blockedSet.has(e.host_id as string))
-      .map((e: any): SearchResult => ({
-        id: e.id,
-        type: "events",
-        title: (e.title as string) ?? "",
-        subtitle: (e.city as string | null) ?? null,
-        avatarUrl: null,
-        imageUrl: (e.cover_image_url as string | null) ?? null,
-        fallbackInitials: initials((e.title as string) ?? ""),
-        locationPreview: [(e.city as string | null), (e.country as string | null)].filter(Boolean).join(", ") || null,
-        matchedReason: null,
-        actionState: null,
-        privacyState: { isPublic: true },
-        accessState: { canAccess: true },
-        destinationRoute: `/event/${e.id as string}`,
-        metadata: { hostId: e.host_id, status: e.status },
-        createdAt: (e.created_at as string | null) ?? null,
-        startsAt: (e.starts_at as string | null) ?? null,
-      }));
+    const rows = (data as any[]).filter((e: any) => !blockedSet.has(e.host_id as string));
+    if (rows.length === 0) return [];
+
+    // Derive actionState: which events is the caller attending?
+    const eventIds = rows.map((e: any) => e.id as string);
+    const { data: rsvpRows } = await sc
+      .from("event_rsvps")
+      .select("event_id")
+      .eq("user_id", userId)
+      .eq("status", "going")
+      .in("event_id", eventIds);
+    const attendingSet = new Set<string>((rsvpRows ?? []).map((r: any) => r.event_id as string));
+
+    return rows.map((e: any): SearchResult => ({
+      id: e.id,
+      type: "events",
+      title: (e.title as string) ?? "",
+      subtitle: (e.city as string | null) ?? null,
+      avatarUrl: null,
+      imageUrl: (e.cover_image_url as string | null) ?? null,
+      fallbackInitials: initials((e.title as string) ?? ""),
+      locationPreview: [(e.city as string | null), (e.country as string | null)].filter(Boolean).join(", ") || null,
+      matchedReason: null,
+      actionState: { isAttending: attendingSet.has(e.id as string) },
+      privacyState: { isPublic: true },
+      accessState: { canAccess: true },
+      destinationRoute: `/event/${e.id as string}`,
+      metadata: { hostId: e.host_id, status: e.status },
+      createdAt: (e.created_at as string | null) ?? null,
+      startsAt: (e.starts_at as string | null) ?? null,
+    }));
   } catch {
     return [];
   }
 }
 
+/**
+ * Trips — public only, excluded if owner is blocked.
+ */
 async function searchTrips(
   sc: any, q: string, userId: string, blockedSet: Set<string>,
   offset: number, limit: number,
@@ -248,6 +311,7 @@ async function searchTrips(
       .or(`title.ilike.${pat},destination_city.ilike.${pat},destination_country.ilike.${pat}`)
       .eq("visibility", "public")
       .neq("status", "cancelled")
+      .neq("status", "deleted")
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -278,6 +342,12 @@ async function searchTrips(
   }
 }
 
+/**
+ * Plan items
+ *
+ * Security: only items from public trips OR trips owned by the caller.
+ * Items from private trips are never exposed.
+ */
 async function searchPlans(
   sc: any, q: string, userId: string, blockedSet: Set<string>,
   offset: number, limit: number,
@@ -294,8 +364,24 @@ async function searchPlans(
 
     if (error || !data) return [];
 
-    return (data as any[])
-      .filter((p: any) => !blockedSet.has(p.creator_id as string))
+    const items = (data as any[]).filter((p: any) => !blockedSet.has(p.creator_id as string));
+    if (items.length === 0) return [];
+
+    // Enforce trip visibility: only items from public trips or caller-owned trips
+    const tripIds = [...new Set(items.map((p: any) => p.trip_id as string))];
+    const { data: trips } = await sc
+      .from("trips")
+      .select("id, visibility, owner_id")
+      .in("id", tripIds);
+
+    const visibleTripIds = new Set<string>(
+      (trips ?? [])
+        .filter((t: any) => (t.visibility as string) === "public" || (t.owner_id as string) === userId)
+        .map((t: any) => t.id as string),
+    );
+
+    return items
+      .filter((p: any) => visibleTripIds.has(p.trip_id as string))
       .map((p: any): SearchResult => ({
         id: p.id,
         type: "plans",
@@ -319,6 +405,9 @@ async function searchPlans(
   }
 }
 
+/**
+ * Discovery places — DB-backed curated places (active only).
+ */
 async function searchPlaces(
   sc: any, q: string, offset: number, limit: number,
 ): Promise<SearchResult[]> {
@@ -357,6 +446,9 @@ async function searchPlaces(
   }
 }
 
+/**
+ * Hidden gems — approved/active only; excluded if submitter is blocked.
+ */
 async function searchHiddenGems(
   sc: any, q: string, userId: string, blockedSet: Set<string>,
   offset: number, limit: number,
@@ -398,6 +490,9 @@ async function searchHiddenGems(
   }
 }
 
+/**
+ * Hashtags — non-blocked only, ordered by usage_count.
+ */
 async function searchHashtags(
   sc: any, q: string, offset: number, limit: number,
 ): Promise<SearchResult[]> {
@@ -436,6 +531,9 @@ async function searchHashtags(
   }
 }
 
+/**
+ * Posts — public only; excluded if author is blocked.
+ */
 async function searchPosts(
   sc: any, q: string, userId: string, blockedSet: Set<string>,
   offset: number, limit: number,
@@ -481,6 +579,9 @@ async function searchPosts(
   }
 }
 
+/**
+ * Circles — public only; excluded if owner is blocked.
+ */
 async function searchCircles(
   sc: any, q: string, userId: string, blockedSet: Set<string>,
   offset: number, limit: number,
@@ -522,6 +623,9 @@ async function searchCircles(
   }
 }
 
+/**
+ * Stamp definitions — active only.
+ */
 async function searchStamps(
   sc: any, q: string, offset: number, limit: number,
 ): Promise<SearchResult[]> {
@@ -560,6 +664,9 @@ async function searchStamps(
   }
 }
 
+/**
+ * Activities — discovery_places in activity categories.
+ */
 async function searchActivities(
   sc: any, q: string, offset: number, limit: number,
 ): Promise<SearchResult[]> {
@@ -599,6 +706,9 @@ async function searchActivities(
   }
 }
 
+/**
+ * Cities — aggregated from active profiles' home_city.
+ */
 async function searchCities(
   sc: any, q: string, offset: number, limit: number,
 ): Promise<SearchResult[]> {
@@ -616,13 +726,14 @@ async function searchCities(
 
     const seen = new Set<string>();
     const results: SearchResult[] = [];
+    let skipped = 0;
     for (const p of (data as any[])) {
       const city = ((p.home_city as string | null) ?? "").trim();
       if (!city) continue;
       const key = city.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      if (seen.size <= offset) continue;
+      if (skipped < offset) { skipped++; continue; }
       results.push({
         id: `city:${key}`,
         type: "cities",
@@ -649,6 +760,9 @@ async function searchCities(
   }
 }
 
+/**
+ * Countries — aggregated from active profiles' home_country.
+ */
 async function searchCountries(
   sc: any, q: string, offset: number, limit: number,
 ): Promise<SearchResult[]> {
@@ -666,13 +780,14 @@ async function searchCountries(
 
     const seen = new Set<string>();
     const results: SearchResult[] = [];
+    let skipped = 0;
     for (const p of (data as any[])) {
       const country = ((p.home_country as string | null) ?? "").trim();
       if (!country) continue;
       const key = country.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      if (seen.size <= offset) continue;
+      if (skipped < offset) { skipped++; continue; }
       results.push({
         id: `country:${key}`,
         type: "countries",
@@ -699,6 +814,9 @@ async function searchCountries(
   }
 }
 
+/**
+ * Static taxonomic lists (languages, interests, vibes) — text-match in process.
+ */
 function searchStatic<T extends Exclude<SearchType, "all">>(
   q: string, items: string[], type: T, routePrefix: string,
   offset: number, limit: number,
@@ -727,7 +845,7 @@ function searchStatic<T extends Exclude<SearchType, "all">>(
     }));
 }
 
-// ── Dispatch single type ───────────────────────────────────────────────────────
+// ── Single-type dispatch ───────────────────────────────────────────────────────
 
 async function dispatchSearch(
   sc: any,
@@ -761,26 +879,37 @@ async function dispatchSearch(
 }
 
 // ── type=all fan-out ───────────────────────────────────────────────────────────
+//
+// Runs a capped sub-query per type (FAN_LIMIT results each), interleaves the
+// results round-robin so no single type dominates the top, then slices to
+// [offset, offset+limit]. hasMore=true when the fan-out produced more items
+// than offset+limit (i.e., there are items beyond the current page).
+
+const FAN_LIMIT = 8;
 
 async function searchAll(
   sc: any, q: string, userId: string, blockedSet: Set<string>,
-): Promise<SearchResult[]> {
-  const FAN_LIMIT = 5;
+  offset: number, limit: number,
+): Promise<{ results: SearchResult[]; hasMore: boolean; nextCursor: string | null }> {
   const settled = await Promise.allSettled([
     searchTravelers(sc, q, userId, blockedSet, 0, FAN_LIMIT),
+    searchTravelers(sc, q, userId, blockedSet, 0, FAN_LIMIT, true),   // buddies
     searchEvents(sc, q, userId, blockedSet, 0, FAN_LIMIT),
     searchTrips(sc, q, userId, blockedSet, 0, FAN_LIMIT),
+    searchPlans(sc, q, userId, blockedSet, 0, FAN_LIMIT),
     searchPlaces(sc, q, 0, FAN_LIMIT),
     searchHiddenGems(sc, q, userId, blockedSet, 0, FAN_LIMIT),
     searchHashtags(sc, q, 0, FAN_LIMIT),
     searchPosts(sc, q, userId, blockedSet, 0, FAN_LIMIT),
     searchCircles(sc, q, userId, blockedSet, 0, FAN_LIMIT),
+    searchStamps(sc, q, 0, FAN_LIMIT),
+    searchActivities(sc, q, 0, FAN_LIMIT),
     Promise.resolve(searchStatic(q, COMMON_LANGUAGES, "languages", "/language", 0, FAN_LIMIT)),
     Promise.resolve(searchStatic(q, COMMON_INTERESTS, "interests", "/interest", 0, FAN_LIMIT)),
     Promise.resolve(searchStatic(q, COMMON_VIBES, "vibes", "/vibe", 0, FAN_LIMIT)),
   ]);
 
-  // Interleave round-robin: take one result from each bucket per pass
+  // Round-robin interleave: take one result from each bucket per pass
   const buckets: SearchResult[][] = settled.map((r) =>
     r.status === "fulfilled" ? r.value : [],
   );
@@ -791,7 +920,11 @@ async function searchAll(
       if (i < bucket.length) merged.push(bucket[i]!);
     }
   }
-  return merged;
+
+  const page = merged.slice(offset, offset + limit);
+  const hasMore = merged.length > offset + limit;
+  const nextCursor = hasMore ? encodeCursor(offset + limit) : null;
+  return { results: page, hasMore, nextCursor };
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -801,6 +934,22 @@ router.get("/discovery/search", async (req, res) => {
   if (!auth) return;
   const { user } = auth;
 
+  // Zod validation
+  const parsed = SearchQuerySchema.safeParse({
+    q:      req.query.q,
+    type:   req.query.type ?? "all",
+    limit:  req.query.limit ?? 20,
+    cursor: req.query.cursor,
+  });
+
+  if (!parsed.success) {
+    const first = parsed.error.errors[0];
+    sendError(res, "invalid_payload", first?.message ?? "Invalid search parameters");
+    return;
+  }
+
+  const { q, type, limit, cursor } = parsed.data;
+
   // Rate limit: 30 req/min per user
   const rl = checkRateLimit("discovery_search", user.id, 30, 60_000);
   if (!rl.allowed) {
@@ -809,30 +958,6 @@ router.get("/discovery/search", async (req, res) => {
     return;
   }
 
-  // Validate q
-  const raw = typeof req.query.q === "string" ? req.query.q.trim() : "";
-  if (raw.length < 2) {
-    sendError(res, "invalid_payload", "q must be at least 2 characters");
-    return;
-  }
-  if (raw.length > 200) {
-    sendError(res, "invalid_payload", "q must be at most 200 characters");
-    return;
-  }
-
-  // Validate type
-  const rawType = typeof req.query.type === "string" ? req.query.type.trim() : "all";
-  if (!(SEARCH_TYPES as readonly string[]).includes(rawType)) {
-    sendError(res, "invalid_payload", `type must be one of: ${SEARCH_TYPES.join(", ")}`);
-    return;
-  }
-  const type = rawType as SearchType;
-
-  // Parse limit + cursor
-  const rawLimit = parseInt(String(req.query.limit ?? "20"), 10);
-  const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 20, 1), 50);
-
-  const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
   const offset = decodeCursor(cursor);
 
   const sc = getServiceClient();
@@ -842,24 +967,20 @@ router.get("/discovery/search", async (req, res) => {
   }
 
   try {
-    const q = raw;
     const blockedSet = await fetchBlockedSet(sc, user.id);
 
-    let results: SearchResult[];
-
     if (type === "all") {
-      results = await searchAll(sc, q, user.id, blockedSet);
+      const { results, hasMore, nextCursor } = await searchAll(sc, q, user.id, blockedSet, offset, limit);
+      res.status(200).json({ results, nextCursor, hasMore, query: q, type });
     } else {
-      results = await dispatchSearch(sc, q, user.id, blockedSet, type, offset, limit);
+      const results = await dispatchSearch(sc, q, user.id, blockedSet, type, offset, limit);
+      const hasMore = results.length === limit;
+      const nextCursor = hasMore ? encodeCursor(offset + limit) : null;
+      res.status(200).json({ results, nextCursor, hasMore, query: q, type });
     }
-
-    const hasMore = type !== "all" && results.length === limit;
-    const nextCursor = hasMore ? encodeCursor(offset + limit) : null;
-
-    res.status(200).json({ results, nextCursor, hasMore, query: q, type });
   } catch (err) {
-    logger.warn({ err, q: raw, type }, "discovery/search failed");
-    res.status(200).json({ results: [], nextCursor: null, hasMore: false, query: raw, type });
+    logger.warn({ err, q, type }, "discovery/search failed");
+    res.status(200).json({ results: [], nextCursor: null, hasMore: false, query: q, type });
   }
 });
 
