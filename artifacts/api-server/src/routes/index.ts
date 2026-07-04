@@ -66,6 +66,7 @@ import adminStampsRouter from "./adminStamps";
 import emergencyContactsRouter from "./emergencyContacts";
 import crashReportRouter from "./crashReport";
 import discoverySearchRouter from "./discoverySearch";
+import searchHistoryRouter from "./searchHistory";
 
 const router: IRouter = Router();
 
@@ -136,5 +137,6 @@ router.use(adminStampsRouter);
 router.use(emergencyContactsRouter);
 router.use(crashReportRouter);
 router.use(discoverySearchRouter);
+router.use(searchHistoryRouter);
 
 export default router;

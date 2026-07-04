@@ -49,6 +49,13 @@ import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { checkRateLimit } from "../lib/rateLimit";
 import { logger as rootLogger } from "../lib/logger";
+import {
+  applyAliases,
+  rankByMatchTier,
+  parseTimeIntent,
+  haversineKm,
+  type SearchQueryContext,
+} from "./discoverySearchHelpers.js";
 
 const router = Router();
 const logger = rootLogger.child({ route: "discoverySearch" });
@@ -309,11 +316,12 @@ async function searchEvents(
   sc: any, q: string, userId: string,
   blockedSet: Set<string> | null, ageRestrictedSet: Set<string> | null,
   offset: number, fetchLimit: number,
+  ctx?: SearchQueryContext,
 ): Promise<SearchResult[]> {
   if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
     const pat = sqlPattern(q);
-    const { data, error } = await sc
+    let evQ: any = sc
       .from("events")
       .select("id, title, description, host_id, cover_image_url, city, country, starts_at, visibility, status, created_at")
       .or(`title.ilike.${pat},description.ilike.${pat},city.ilike.${pat}`)
@@ -321,8 +329,10 @@ async function searchEvents(
       .neq("status", "cancelled")
       .neq("status", "deleted")
       .neq("status", "banned")
-      .order("starts_at", { ascending: true })
-      .range(offset, offset + fetchLimit - 1);
+      .order("starts_at", { ascending: true });
+    if (ctx?.startsAfter)  evQ = evQ.gte("starts_at", ctx.startsAfter);
+    if (ctx?.startsBefore) evQ = evQ.lt("starts_at",  ctx.startsBefore);
+    const { data, error } = await evQ.range(offset, offset + fetchLimit - 1);
 
     if (error || !data) return [];
 
@@ -508,12 +518,13 @@ async function searchPlans(
  */
 async function searchPlaces(
   sc: any, q: string, offset: number, fetchLimit: number,
+  ctx?: SearchQueryContext,
 ): Promise<SearchResult[]> {
   try {
     const pat = sqlPattern(q);
     const { data, error } = await sc
       .from("discovery_places")
-      .select("id, name, city, blurb, image_url, category, primary_category, created_at")
+      .select("id, name, city, blurb, image_url, category, primary_category, lat, lng, created_at")
       .or(`name.ilike.${pat},city.ilike.${pat},blurb.ilike.${pat}`)
       .eq("status", "active")
       .order("saved_count", { ascending: false })
@@ -521,7 +532,7 @@ async function searchPlaces(
 
     if (error || !data) return [];
 
-    return (data as any[]).map((p: any): SearchResult => ({
+    const mapped = (data as any[]).map((p: any): SearchResult => ({
       id: p.id,
       type: "places",
       title: (p.name as string) ?? "",
@@ -535,10 +546,28 @@ async function searchPlaces(
       privacyState: null,
       accessState: { canAccess: true },
       destinationRoute: `/place/${p.id as string}`,
-      metadata: { category: p.primary_category ?? p.category },
+      metadata: {
+        category: p.primary_category ?? p.category,
+        lat: (p.lat as number | null) ?? null,
+        lng: (p.lng as number | null) ?? null,
+      },
       createdAt: (p.created_at as string | null) ?? null,
       startsAt: null,
     }));
+
+    // Proximity-aware sort: when user coords are known, sort nearest places first.
+    if (ctx?.lat != null && ctx?.lng != null) {
+      const uLat = ctx.lat!;
+      const uLng = ctx.lng!;
+      return [...mapped].sort((a, b) => {
+        const am = a.metadata as { lat?: number | null; lng?: number | null };
+        const bm = b.metadata as { lat?: number | null; lng?: number | null };
+        const ad = am.lat != null && am.lng != null ? haversineKm(uLat, uLng, am.lat, am.lng) : Infinity;
+        const bd = bm.lat != null && bm.lng != null ? haversineKm(uLat, uLng, bm.lat, bm.lng) : Infinity;
+        return ad - bd;
+      });
+    }
+    return rankByMatchTier(mapped, q);
   } catch {
     return [];
   }
@@ -1030,25 +1059,28 @@ async function dispatchSearch(
   type: Exclude<SearchType, "all">,
   offset: number,
   fetchLimit: number,
+  ctx?: SearchQueryContext,
 ): Promise<SearchResult[]> {
+  // searchPlaces handles its own ordering (proximity or match-tier) — do not re-sort.
+  // All other types: apply rankByMatchTier so exact title matches surface first.
   switch (type) {
-    case "travelers":   return searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, false);
-    case "buddies":     return searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, true);
-    case "events":      return searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit);
-    case "trips":       return searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit);
-    case "plans":       return searchPlans(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit);
-    case "places":      return searchPlaces(sc, q, offset, fetchLimit);
-    case "hidden_gems": return searchHiddenGems(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit);
-    case "hashtags":    return searchHashtags(sc, q, offset, fetchLimit);
-    case "posts":       return searchPosts(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit);
-    case "circles":     return searchCircles(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit);
-    case "stamps":      return searchStamps(sc, q, offset, fetchLimit);
-    case "activities":  return searchActivities(sc, q, offset, fetchLimit);
-    case "cities":      return searchCities(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit);
-    case "countries":   return searchCountries(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit);
-    case "languages":   return Promise.resolve(searchStatic(q, COMMON_LANGUAGES, "languages", "/language", offset, fetchLimit));
-    case "interests":   return Promise.resolve(searchStatic(q, COMMON_INTERESTS, "interests", "/interest", offset, fetchLimit));
-    case "vibes":       return Promise.resolve(searchStatic(q, COMMON_VIBES, "vibes", "/vibe", offset, fetchLimit));
+    case "travelers":   return rankByMatchTier(await searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, false), q);
+    case "buddies":     return rankByMatchTier(await searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, true),  q);
+    case "events":      return rankByMatchTier(await searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit, ctx),       q);
+    case "trips":       return rankByMatchTier(await searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),             q);
+    case "plans":       return rankByMatchTier(await searchPlans(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),             q);
+    case "places":      return searchPlaces(sc, q, offset, fetchLimit, ctx);
+    case "hidden_gems": return rankByMatchTier(await searchHiddenGems(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),        q);
+    case "hashtags":    return rankByMatchTier(await searchHashtags(sc, q, offset, fetchLimit),                                                q);
+    case "posts":       return rankByMatchTier(await searchPosts(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),             q);
+    case "circles":     return rankByMatchTier(await searchCircles(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),           q);
+    case "stamps":      return rankByMatchTier(await searchStamps(sc, q, offset, fetchLimit),                                                  q);
+    case "activities":  return rankByMatchTier(await searchActivities(sc, q, offset, fetchLimit),                                              q);
+    case "cities":      return rankByMatchTier(await searchCities(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit),                    q);
+    case "countries":   return rankByMatchTier(await searchCountries(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit),                 q);
+    case "languages":   return rankByMatchTier(searchStatic(q, COMMON_LANGUAGES, "languages", "/language", offset, fetchLimit),               q);
+    case "interests":   return rankByMatchTier(searchStatic(q, COMMON_INTERESTS, "interests", "/interest", offset, fetchLimit),               q);
+    case "vibes":       return rankByMatchTier(searchStatic(q, COMMON_VIBES,     "vibes",     "/vibe",     offset, fetchLimit),               q);
     default:            return [];
   }
 }
@@ -1066,34 +1098,39 @@ async function searchAll(
   sc: any, q: string, userId: string,
   blockedSet: Set<string> | null, ageRestrictedSet: Set<string> | null,
   globalOffset: number, limit: number,
+  ctx?: SearchQueryContext,
 ): Promise<{ results: SearchResult[]; hasMore: boolean; nextCursor: string | null }> {
   if (blockedSet === null || ageRestrictedSet === null) {
     return { results: [], hasMore: false, nextCursor: null };
   }
 
   const settled = await Promise.allSettled([
-    searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),       // travelers
-    searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, true), // buddies
-    searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),          // events
-    searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),           // trips
-    searchPlans(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),           // plans
-    searchPlaces(sc, q, 0, FAN_LIMIT),                                                // places
-    searchHiddenGems(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),        // hidden_gems
-    searchHashtags(sc, q, 0, FAN_LIMIT),                                              // hashtags
-    searchPosts(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),           // posts
-    searchCircles(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),         // circles
-    searchStamps(sc, q, 0, FAN_LIMIT),                                                // stamps
-    searchActivities(sc, q, 0, FAN_LIMIT),                                            // activities
-    searchCities(sc, q, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),                  // cities
-    searchCountries(sc, q, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),               // countries
+    searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),        // travelers
+    searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, true),  // buddies
+    searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, ctx),      // events
+    searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),            // trips
+    searchPlans(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),            // plans
+    searchPlaces(sc, q, 0, FAN_LIMIT, ctx),                                            // places
+    searchHiddenGems(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),       // hidden_gems
+    searchHashtags(sc, q, 0, FAN_LIMIT),                                               // hashtags
+    searchPosts(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),            // posts
+    searchCircles(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),          // circles
+    searchStamps(sc, q, 0, FAN_LIMIT),                                                 // stamps
+    searchActivities(sc, q, 0, FAN_LIMIT),                                             // activities
+    searchCities(sc, q, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),                   // cities
+    searchCountries(sc, q, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),                // countries
     Promise.resolve(searchStatic(q, COMMON_LANGUAGES, "languages", "/language", 0, FAN_LIMIT)),
     Promise.resolve(searchStatic(q, COMMON_INTERESTS, "interests", "/interest", 0, FAN_LIMIT)),
     Promise.resolve(searchStatic(q, COMMON_VIBES, "vibes", "/vibe", 0, FAN_LIMIT)),
   ]);
 
-  const buckets: SearchResult[][] = settled.map((r) =>
-    r.status === "fulfilled" ? r.value : [],
-  );
+  // Apply match-tier ranking within each bucket before the round-robin interleave.
+  // searchPlaces already handles its own ordering — re-ranking by title here is still OK for
+  // the "all" tab because diversity matters more than proximity when mixing types.
+  const buckets: SearchResult[][] = settled.map((r) => {
+    const items = r.status === "fulfilled" ? r.value : [];
+    return rankByMatchTier(items, q);
+  });
 
   // Round-robin interleave
   const merged: SearchResult[] = [];
@@ -1138,12 +1175,37 @@ router.get("/discovery/search", async (req, res) => {
     return;
   }
 
+  // Apply alias expansion (typo tolerance) before sanitization
+  let q = applyAliases(parsed.data.q);
   // Apply PostgREST injection sanitization on top of Zod validation
-  let q = sanitizeQuery(parsed.data.q);
+  q = sanitizeQuery(q);
   if (q.length < 2) {
     sendError(res, "invalid_payload", "q must be at least 2 characters after sanitization");
     return;
   }
+
+  // Parse optional location params — forwarded by the client only when permission is granted
+  const rawLat = parseFloat(String(req.query.lat ?? ""));
+  const rawLng = parseFloat(String(req.query.lng ?? ""));
+  const lat = Number.isFinite(rawLat) && rawLat >= -90  && rawLat <= 90  ? rawLat : null;
+  const lng = Number.isFinite(rawLng) && rawLng >= -180 && rawLng <= 180 ? rawLng : null;
+  const tz  = typeof req.query.tz === "string" && req.query.tz.length <= 50 ? req.query.tz : null;
+
+  // Parse time intent — strip time keywords from q and derive UTC date bounds for events
+  const timeIntentResult = parseTimeIntent(q, tz);
+  // Only use stripped query when it still meets the min-length requirement
+  const effectiveQ = timeIntentResult.strippedQuery.trim().length >= 2
+    ? timeIntentResult.strippedQuery
+    : q;
+
+  const ctx: SearchQueryContext = {
+    lat,
+    lng,
+    tz,
+    startsAfter:  timeIntentResult.intent?.startsAfter  ?? null,
+    startsBefore: timeIntentResult.intent?.startsBefore ?? null,
+    timeLabel:    timeIntentResult.intent?.label        ?? null,
+  };
 
   const type = (parsed.data.type ?? "all") as SearchType;
   const limit = parsed.data.limit ?? 20;
@@ -1173,20 +1235,20 @@ router.get("/discovery/search", async (req, res) => {
     ]);
 
     if (type === "all") {
-      const { results, hasMore, nextCursor } = await searchAll(sc, q, user.id, blockedSet, ageRestrictedSet, offset, limit);
-      res.status(200).json({ results, nextCursor, hasMore, query: q, type });
+      const { results, hasMore, nextCursor } = await searchAll(sc, effectiveQ, user.id, blockedSet, ageRestrictedSet, offset, limit, ctx);
+      res.status(200).json({ results, nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel });
     } else {
       // Fetch limit+1 to detect hasMore without false positives
       const fetchLimit = limit + 1;
-      const raw = await dispatchSearch(sc, q, user.id, blockedSet, ageRestrictedSet, type, offset, fetchLimit);
+      const raw = await dispatchSearch(sc, effectiveQ, user.id, blockedSet, ageRestrictedSet, type, offset, fetchLimit, ctx);
       const hasMore = raw.length > limit;
       const results = raw.slice(0, limit);
       const nextCursor = hasMore ? encodeCursor(offset + limit) : null;
-      res.status(200).json({ results, nextCursor, hasMore, query: q, type });
+      res.status(200).json({ results, nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel });
     }
   } catch (err) {
-    logger.warn({ err, q, type }, "discovery/search failed");
-    res.status(200).json({ results: [], nextCursor: null, hasMore: false, query: q, type });
+    logger.warn({ err, q: effectiveQ, type }, "discovery/search failed");
+    res.status(200).json({ results: [], nextCursor: null, hasMore: false, query: effectiveQ, type, timeLabel: null });
   }
 });
 

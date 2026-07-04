@@ -162,6 +162,27 @@ if (error || !data || (data as any).role !== "admin") {
 
 Role is **not** read from `auth.app_metadata` or `auth.users.raw_app_meta_data`. To grant admin access to a user: `UPDATE profiles SET role = 'admin' WHERE id = '<uuid>';`.
 
+### Migration 0101 (supabase/migrations) — `search_history` table
+
+`supabase/migrations/0101_search_history.sql` creates the `search_history` table used by the global search feature (Phases 11–18, 26).
+
+| Detail | Value |
+|--------|-------|
+| File | `supabase/migrations/0101_search_history.sql` |
+| Table | `search_history` |
+| Columns | `id UUID PK`, `user_id UUID→auth.users`, `query TEXT NOT NULL`, `search_type TEXT NOT NULL DEFAULT 'all'`, `searched_at TIMESTAMPTZ DEFAULT now()` |
+| Index | `search_history_user_idx ON search_history (user_id, searched_at DESC)` |
+| RLS | Enabled; users read/write only their own rows (`auth.uid() = user_id`) |
+| Note | The API server enforces a 50-row per-user cap (prunes oldest on POST). Apply before deploying the search intelligence update. |
+
+**Verify:**
+```sql
+SELECT to_regclass('public.search_history'), indexname
+FROM pg_indexes WHERE indexname = 'search_history_user_idx';
+```
+
+---
+
 ### `profiles.cover_photo_url` column
 
 Added by migration `0087_profiles_cover_photo_url.sql` (`ADD COLUMN IF NOT EXISTS cover_photo_url TEXT`). Used by `GET /api/me/profile`, `PATCH /api/me/profile`, passport loader, and admin media routes. Absence causes PostgREST PGRST204 errors on profile saves — apply 0087 if the Edit Profile screen shows an error banner.

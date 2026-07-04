@@ -1,14 +1,20 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, TextInput, FlatList, Pressable, StyleSheet,
-  ActivityIndicator, KeyboardAvoidingView, Platform,
+  ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
-import { Search, X } from 'lucide-react-native';
+import { Search, X, Clock, Zap } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { SearchResultCard } from '../src/components/search/SearchResultCard';
-import { searchUnified } from '../src/services/discovery';
-import type { UnifiedSearchResult } from '../src/services/discovery';
+import {
+  searchUnified,
+  getSearchHistory,
+  saveSearchHistory,
+  clearSearchHistory,
+} from '../src/services/discovery';
+import type { UnifiedSearchResult, SearchHistoryEntry } from '../src/services/discovery';
+import { useActiveLocation } from '../src/hooks/useActiveLocation';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 
 type TabKey = 'all' | 'travelers' | 'events' | 'trips' | 'places' | 'hashtags';
@@ -24,8 +30,17 @@ const TABS: { key: TabKey; label: string }[] = [
 
 const VALID_TAB_KEYS = new Set<string>(TABS.map((tb) => tb.key));
 
+const RECOVERY_CHIPS = [
+  'travelers nearby',
+  'beach events',
+  'hiking spots',
+  'food & restaurants',
+  'weekend activities',
+];
+
 export default function SearchScreen() {
   const params = useLocalSearchParams<{ q?: string; type?: string }>();
+  const { locationState } = useActiveLocation();
 
   const [query, setQuery] = useState(params.q ?? '');
   const [activeTab, setActiveTab] = useState<TabKey>(
@@ -39,10 +54,36 @@ export default function SearchScreen() {
   const [searched, setSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [recentSearches, setRecentSearches] = useState<SearchHistoryEntry[]>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<TextInput>(null);
   const activeQueryRef = useRef('');
   const activeTabRef = useRef<TabKey>('all');
+
+  // Pass user coords only when already granted — never prompt for location from the search screen.
+  const userCoords = useMemo(() => {
+    if (locationState.permissionStatus === 'granted' && locationState.coords) {
+      return { lat: locationState.coords.lat, lng: locationState.coords.lng };
+    }
+    return undefined;
+  }, [locationState.permissionStatus, locationState.coords]);
+
+  const tz = useMemo(() => {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; }
+  }, []);
+
+  // Load recent searches on mount
+  useEffect(() => {
+    let alive = true;
+    getSearchHistory(10).then((history) => {
+      if (!alive) return;
+      setRecentSearches(history);
+      setHistoryLoaded(true);
+    });
+    return () => { alive = false; };
+  }, []);
 
   const runSearch = useCallback(async (q: string, tab: TabKey, cursor?: string | null) => {
     const trimmed = q.trim();
@@ -59,8 +100,9 @@ export default function SearchScreen() {
     }
 
     try {
-      const res = await searchUnified(trimmed, tab, cursor);
+      const res = await searchUnified(trimmed, tab, cursor, { ...userCoords, tz });
 
+      // Discard stale responses when query/tab changed mid-flight
       if (trimmed !== activeQueryRef.current || tab !== activeTabRef.current) return;
 
       if (!res.ok) {
@@ -72,6 +114,22 @@ export default function SearchScreen() {
 
       if (isFirstPage) {
         setResults(newRows);
+        // Optimistically update history list + persist to API
+        if (newRows.length > 0) {
+          void saveSearchHistory(trimmed, tab);
+          const newEntry: SearchHistoryEntry = {
+            id: `local-${Date.now()}`,
+            query: trimmed,
+            search_type: tab,
+            searched_at: new Date().toISOString(),
+          };
+          setRecentSearches((prev) => {
+            const deduped = prev.filter(
+              (r) => !(r.query === trimmed && r.search_type === tab),
+            );
+            return [newEntry, ...deduped].slice(0, 10);
+          });
+        }
       } else {
         setResults((prev) => {
           const seen = new Set(prev.map((r) => `${r.type}:${r.id}`));
@@ -85,7 +143,7 @@ export default function SearchScreen() {
       if (isFirstPage) setLoading(false);
       else setLoadingMore(false);
     }
-  }, []);
+  }, [userCoords, tz]);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -143,7 +201,18 @@ export default function SearchScreen() {
     );
   }
 
+  async function handleClearOneHistory(q: string) {
+    setRecentSearches((prev) => prev.filter((r) => r.query !== q));
+    await clearSearchHistory(q);
+  }
+
+  async function handleClearAllHistory() {
+    setRecentSearches([]);
+    await clearSearchHistory();
+  }
+
   const showTabs = query.trim().length >= 2;
+  const showEmptyStart = !showTabs;
   const isEmpty = searched && !loading && !error && results.length === 0;
 
   return (
@@ -177,7 +246,12 @@ export default function SearchScreen() {
 
       {/* Filter tabs — only shown when query ≥ 2 chars */}
       {showTabs && (
-        <View style={styles.tabRow}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.tabScrollView}
+          contentContainerStyle={styles.tabRow}
+        >
           {TABS.map((tb) => (
             <Pressable
               key={tb.key}
@@ -189,7 +263,7 @@ export default function SearchScreen() {
               </Text>
             </Pressable>
           ))}
-        </View>
+        </ScrollView>
       )}
 
       {/* Content area */}
@@ -203,18 +277,80 @@ export default function SearchScreen() {
           <Text style={styles.retryHint}>Tap to retry</Text>
         </Pressable>
       ) : isEmpty ? (
-        <View style={styles.center}>
-          <Text style={styles.emptyTitle}>No results</Text>
+        /* No results — show recovery chips */
+        <ScrollView
+          contentContainerStyle={[styles.center, { justifyContent: 'flex-start', paddingTop: space.xl }]}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={styles.emptyTitle}>No results for "{query.trim()}"</Text>
           <Text style={styles.emptySub}>Try a different search term or filter.</Text>
-        </View>
-      ) : !searched ? (
-        <View style={styles.center}>
-          <Search size={36} color={color.haze} />
-          <Text style={styles.emptyTitle}>Search everything</Text>
-          <Text style={styles.emptySub}>
-            Find travelers, trips, events, places, and more
-          </Text>
-        </View>
+          <Text style={[styles.chipsLabel, { marginTop: space.xl }]}>Try searching for</Text>
+          <View style={styles.chipsRow}>
+            {RECOVERY_CHIPS.map((chip) => (
+              <Pressable
+                key={chip}
+                style={styles.chip}
+                onPress={() => setQuery(chip)}
+              >
+                <Zap size={12} color={color.signal} />
+                <Text style={styles.chipText}>{chip}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </ScrollView>
+      ) : showEmptyStart ? (
+        /* Query empty — recent searches + suggestions */
+        <ScrollView
+          contentContainerStyle={{ paddingBottom: 100 }}
+          keyboardShouldPersistTaps="handled"
+        >
+          {historyLoaded && recentSearches.length > 0 && (
+            <View style={styles.historySection}>
+              <View style={styles.historyHeader}>
+                <Text style={styles.historyTitle}>Recent</Text>
+                <Pressable onPress={handleClearAllHistory} hitSlop={8}>
+                  <Text style={styles.clearAll}>Clear all</Text>
+                </Pressable>
+              </View>
+              {recentSearches.map((item) => (
+                <Pressable
+                  key={`${item.query}:${item.search_type}`}
+                  style={styles.historyRow}
+                  onPress={() => setQuery(item.query)}
+                >
+                  <Clock size={14} color={color.mute} />
+                  <Text style={styles.historyRowText} numberOfLines={1}>{item.query}</Text>
+                  <Pressable hitSlop={8} onPress={() => handleClearOneHistory(item.query)}>
+                    <X size={14} color={color.faint} />
+                  </Pressable>
+                </Pressable>
+              ))}
+            </View>
+          )}
+
+          {(!historyLoaded || recentSearches.length === 0) && (
+            <View style={[styles.center, { paddingVertical: space.xl }]}>
+              <Search size={36} color={color.haze} />
+              <Text style={styles.emptyTitle}>Search everything</Text>
+              <Text style={styles.emptySub}>
+                Find travelers, trips, events, places, and more
+              </Text>
+            </View>
+          )}
+
+          {/* Quick suggestions */}
+          <View style={styles.historySection}>
+            <Text style={styles.historyTitle}>Try searching for</Text>
+            <View style={[styles.chipsRow, { marginTop: space.sm }]}>
+              {RECOVERY_CHIPS.map((chip) => (
+                <Pressable key={chip} style={styles.chip} onPress={() => setQuery(chip)}>
+                  <Zap size={12} color={color.signal} />
+                  <Text style={styles.chipText}>{chip}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        </ScrollView>
       ) : (
         <FlatList
           data={results}
@@ -262,12 +398,14 @@ const styles = StyleSheet.create({
     color: color.ink,
     padding: 0,
   },
+  tabScrollView: {
+    marginBottom: space.sm,
+    flexGrow: 0,
+  },
   tabRow: {
-    flexDirection: 'row',
     paddingHorizontal: space.lg,
     gap: space.xs,
-    marginBottom: space.sm,
-    flexWrap: 'nowrap',
+    flexDirection: 'row',
   },
   tab: {
     paddingHorizontal: space.md,
@@ -321,5 +459,73 @@ const styles = StyleSheet.create({
   loadingMore: {
     paddingVertical: space.xl,
     alignItems: 'center',
+  },
+  historySection: {
+    paddingHorizontal: space.lg,
+    paddingTop: space.lg,
+    paddingBottom: space.sm,
+  },
+  historyHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: space.sm,
+  },
+  historyTitle: {
+    ...t.stamp,
+    color: color.mute,
+    fontSize: 11,
+    fontWeight: '700' as const,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase' as const,
+  },
+  clearAll: {
+    ...t.small,
+    color: color.signal,
+  },
+  historyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: color.haze,
+  },
+  historyRowText: {
+    flex: 1,
+    ...t.body,
+    color: color.ink,
+  },
+  chipsLabel: {
+    ...t.stamp,
+    color: color.mute,
+    fontSize: 11,
+    fontWeight: '700' as const,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase' as const,
+    alignSelf: 'flex-start',
+    paddingHorizontal: space.lg,
+  },
+  chipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.xs,
+    paddingHorizontal: space.lg,
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: space.md,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: color.haze,
+    backgroundColor: color.paperRaised,
+  },
+  chipText: {
+    ...t.small,
+    color: color.ink,
+    fontWeight: '500' as const,
   },
 });

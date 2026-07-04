@@ -367,11 +367,16 @@ export interface UnifiedSearchResponse {
  * Search across all content types via /api/discovery/search.
  * Requires authentication — returns `{ ok: false }` when not signed in.
  * Pass `cursor` from the previous response to load the next page.
+ *
+ * @param opts.lat  User latitude (only when location permission already granted)
+ * @param opts.lng  User longitude (only when location permission already granted)
+ * @param opts.tz   IANA timezone string for time-intent parsing ("tonight" etc.)
  */
 export async function searchUnified(
   query: string,
   type = 'all',
   cursor?: string | null,
+  opts?: { lat?: number; lng?: number; tz?: string },
 ): Promise<{ ok: true; data: UnifiedSearchResponse } | { ok: false; error: string }> {
   const base = apiBase();
   if (!base) return { ok: false, error: 'API not configured' };
@@ -381,6 +386,9 @@ export async function searchUnified(
 
   const params = new URLSearchParams({ q: query, type });
   if (cursor) params.set('cursor', cursor);
+  if (opts?.lat != null) params.set('lat', String(opts.lat));
+  if (opts?.lng != null) params.set('lng', String(opts.lng));
+  if (opts?.tz)          params.set('tz',  opts.tz);
 
   try {
     const res = await fetch(`${base}/api/discovery/search?${params}`, {
@@ -394,5 +402,76 @@ export async function searchUnified(
     return { ok: true, data };
   } catch {
     return { ok: false, error: 'Network error — check your connection' };
+  }
+}
+
+// ── Search history ─────────────────────────────────────────────────────────────
+
+export interface SearchHistoryEntry {
+  id: string;
+  query: string;
+  search_type: string;
+  searched_at: string;
+}
+
+/**
+ * Fetch the current user's recent search history (up to `limit` entries).
+ * Returns an empty array on any error — fail-open so network hiccups don't break the UI.
+ */
+export async function getSearchHistory(limit = 20): Promise<SearchHistoryEntry[]> {
+  const base = apiBase();
+  if (!base) return [];
+  const token = await freshToken();
+  if (!token) return [];
+  try {
+    const res = await fetch(`${base}/api/me/search-history?limit=${limit}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { history?: SearchHistoryEntry[] };
+    return Array.isArray(data.history) ? data.history : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save a search term to history. Fire-and-forget; errors are swallowed.
+ */
+export async function saveSearchHistory(query: string, searchType = 'all'): Promise<void> {
+  const base = apiBase();
+  if (!base) return;
+  const token = await freshToken();
+  if (!token) return;
+  try {
+    await fetch(`${base}/api/me/search-history`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ query, search_type: searchType }),
+    });
+  } catch {
+    // non-fatal
+  }
+}
+
+/**
+ * Clear the current user's search history.
+ * Pass `query` to remove a single term; omit to clear all.
+ */
+export async function clearSearchHistory(query?: string): Promise<void> {
+  const base = apiBase();
+  if (!base) return;
+  const token = await freshToken();
+  if (!token) return;
+  try {
+    const url = query
+      ? `${base}/api/me/search-history?q=${encodeURIComponent(query)}`
+      : `${base}/api/me/search-history`;
+    await fetch(url, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    // non-fatal
   }
 }
