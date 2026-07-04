@@ -134,7 +134,7 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
                     </View>
                   )}
                 </View>
-                <Text style={[fb.label, { color: active ? iconActive : iconMuted }, active && fb.labelActive]}>{label}</Text>
+                <Text style={[fb.label, active && fb.labelActive, { color: active ? iconActive : iconMuted }]}>{label}</Text>
               </View>
             </Pressable>
           );
@@ -178,7 +178,7 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
                     </View>
                   )}
                 </View>
-                <Text style={[fb.label, { color: active ? iconActive : iconMuted }, active && fb.labelActive]}>{label}</Text>
+                <Text style={[fb.label, active && fb.labelActive, { color: active ? iconActive : iconMuted }]}>{label}</Text>
               </View>
             </Pressable>
           );
