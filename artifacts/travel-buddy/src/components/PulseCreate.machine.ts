@@ -1,10 +1,11 @@
 /**
- * Pure dismiss-wiring and submit-result helpers for UnifiedPostComposer (PulseCreate.tsx).
+ * Pure dismiss-wiring, submit-result, and category-picker helpers for
+ * UnifiedPostComposer (PulseCreate.tsx).
  *
- * Extracted here so both contracts can be tested with node:test without a
- * React Native renderer. The component imports `createComposerDismissHandlers`
- * and `handleSubmitResult` instead of wiring them inline — the same pattern
- * used by ReportPostSheet.tsx / ReportPostSheet.state.ts.
+ * Extracted here so all contracts can be tested with node:test without a
+ * React Native renderer. The component imports from this module instead of
+ * wiring logic inline — the same pattern used by
+ * ReportPostSheet.tsx / ReportPostSheet.state.ts.
  *
  * ## Dismiss contract (tested in PulseCreate.backdrop.test.ts)
  *
@@ -19,9 +20,16 @@
  *                                                → signOut() + navigate() + onClose()
  *   create() resolves { ok: false, errorKind: * } → setError(msg)  (onClose NOT called)
  *
+ * ## Category chip-picker contract (tested in PulseCreate.submit.test.ts)
+ *
+ *   type selected  → resolveDefaultCategory(typeId)   → selectedCategory (state)
+ *   chip tapped    → handleCategoryChipPress(value)   → selectedCategory (state)
+ *   handleSubmit() → resolveCreateCategory(selected)  → create({ category })
+ *
  * Tests import these functions directly and exercise the production code path
  * that the component depends on. If either contract changes, the tests catch it.
  */
+import type { PostCategory } from '../types/models';
 
 // ── Submit lock ───────────────────────────────────────────────────────────────
 
@@ -308,4 +316,44 @@ export function handleFilterApplyResult(
   handlers.setFilterIntensity(outcome.filterIntensity);
   handlers.setFilterEditorPending(null);
   return { continue: true };
+}
+
+// ── Category chip-picker — canonical data + helpers ───────────────────────────
+
+export const TYPE_CATEGORY: Record<string, string> = {
+  post_update: 'tip',
+  ask_question: 'question',
+  share_moment: 'activity',
+  share_postcard: 'activity',
+  share_hidden_gem: 'activity',
+  share_food_spot: 'food',
+  share_highlight: 'highlight',
+};
+
+export const CATEGORY_OPTIONS: ReadonlyArray<{ readonly value: PostCategory; readonly label: string }> = [
+  { value: 'food',      label: 'Food' },
+  { value: 'beach',     label: 'Beach' },
+  { value: 'nightlife', label: 'Nightlife' },
+  { value: 'activity',  label: 'Activity' },
+  { value: 'hotel',     label: 'Hotel' },
+  { value: 'tip',       label: 'Tip' },
+  { value: 'safety',    label: 'Safety' },
+  { value: 'transport', label: 'Transport' },
+  { value: 'airport',   label: 'Airport' },
+  { value: 'visa',      label: 'Visa' },
+  { value: 'question',  label: 'Question' },
+];
+
+export function resolveDefaultCategory(typeId: string): PostCategory | null {
+  const raw = TYPE_CATEGORY[typeId];
+  if (!raw) return null;
+  return CATEGORY_OPTIONS.find(o => o.value === raw)?.value ?? null;
+}
+
+export function handleCategoryChipPress(value: PostCategory): PostCategory {
+  return value;
+}
+
+export function resolveCreateCategory(selectedCategory: PostCategory | null): PostCategory | undefined {
+  return selectedCategory ?? undefined;
 }

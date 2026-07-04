@@ -1,10 +1,11 @@
 /**
- * Pure dismiss-wiring and submit-result helpers for UnifiedPostComposer (PulseCreate.tsx).
+ * Pure dismiss-wiring, submit-result, and category-picker helpers for
+ * UnifiedPostComposer (PulseCreate.tsx).
  *
- * Extracted here so both contracts can be tested with node:test without a
- * React Native renderer. The component imports `createComposerDismissHandlers`
- * and `handleSubmitResult` instead of wiring them inline — the same pattern
- * used by ReportPostSheet.tsx / ReportPostSheet.state.ts.
+ * Extracted here so all contracts can be tested with node:test without a
+ * React Native renderer. The component imports from this module instead of
+ * wiring logic inline — the same pattern used by
+ * ReportPostSheet.tsx / ReportPostSheet.state.ts.
  *
  * ## Dismiss contract (tested in PulseCreate.backdrop.test.ts)
  *
@@ -19,9 +20,16 @@
  *                                                → signOut() + navigate() + onClose()
  *   create() resolves { ok: false, errorKind: * } → setError(msg)  (onClose NOT called)
  *
+ * ## Category chip-picker contract (tested in PulseCreate.submit.test.ts)
+ *
+ *   type selected  → resolveDefaultCategory(typeId)   → selectedCategory (state)
+ *   chip tapped    → handleCategoryChipPress(value)   → selectedCategory (state)
+ *   handleSubmit() → resolveCreateCategory(selected)  → create({ category })
+ *
  * Tests import these functions directly and exercise the production code path
  * that the component depends on. If either contract changes, the tests catch it.
  */
+import type { PostCategory } from '../types/models.ts';
 
 // ── Submit lock ───────────────────────────────────────────────────────────────
 
@@ -310,6 +318,97 @@ export async function handleUploadResult(
 
   handlers.setError(result.message ?? 'Media upload failed.');
   return { continue: false };
+}
+
+// ── Category chip-picker — canonical data + helpers ───────────────────────────
+//
+// These are the *single source of truth* for the category system.
+// PulseCreate.tsx imports TYPE_CATEGORY and CATEGORY_OPTIONS from here
+// (not the reverse) so the machine tests always exercise the exact objects
+// the component uses in production.
+
+/**
+ * Maps every post-type ID to the raw category string it auto-defaults to.
+ *
+ * Canonical source — imported by PulseCreate.tsx. Changing a value here
+ * immediately changes both the component behavior and the test expectations.
+ */
+export const TYPE_CATEGORY: Record<string, string> = {
+  post_update: 'tip',
+  ask_question: 'question',
+  share_moment: 'activity',
+  share_postcard: 'activity',
+  share_hidden_gem: 'activity',
+  share_food_spot: 'food',
+  share_highlight: 'highlight',
+};
+
+/**
+ * Ordered list of categories rendered as chip-picker options in the composer.
+ *
+ * Canonical source — imported by PulseCreate.tsx. Note: 'highlight' is absent
+ * because it is a TYPE_CATEGORY default for the dedicated-composer type
+ * (share_highlight) where the chip picker is hidden.
+ */
+export const CATEGORY_OPTIONS: ReadonlyArray<{ readonly value: PostCategory; readonly label: string }> = [
+  { value: 'food',      label: 'Food' },
+  { value: 'beach',     label: 'Beach' },
+  { value: 'nightlife', label: 'Nightlife' },
+  { value: 'activity',  label: 'Activity' },
+  { value: 'hotel',     label: 'Hotel' },
+  { value: 'tip',       label: 'Tip' },
+  { value: 'safety',    label: 'Safety' },
+  { value: 'transport', label: 'Transport' },
+  { value: 'airport',   label: 'Airport' },
+  { value: 'visa',      label: 'Visa' },
+  { value: 'question',  label: 'Question' },
+];
+
+/**
+ * Returns the auto-default category when a post type is selected.
+ *
+ * Mirrors the useEffect in UnifiedPostComposer:
+ *
+ *   const defaultCat = TYPE_CATEGORY[selectedType];
+ *   const asCat = CATEGORY_OPTIONS.find(o => o.value === defaultCat)?.value ?? null;
+ *   setSelectedCategory(asCat);
+ *
+ * Returns `null` when the type's raw default is not in CATEGORY_OPTIONS
+ * (e.g. share_highlight → 'highlight' → null because highlight is not a
+ * picker chip and the picker is hidden for dedicated composers).
+ */
+export function resolveDefaultCategory(typeId: string): PostCategory | null {
+  const raw = TYPE_CATEGORY[typeId];
+  if (!raw) return null;
+  return CATEGORY_OPTIONS.find(o => o.value === raw)?.value ?? null;
+}
+
+/**
+ * Returns the new selectedCategory after the user taps a category chip.
+ *
+ * Mirrors the chip Pressable's onPress handler in UnifiedPostComposer:
+ *   onPress={() => setSelectedCategory(handleCategoryChipPress(value))}
+ *
+ * Named as a machine function (rather than an inline `value => value`) so:
+ *   1. Tests confirm the exact value that enters component state.
+ *   2. Future validation logic (e.g. disabling chips while submitting) can be
+ *      added here with test coverage rather than inline in JSX.
+ */
+export function handleCategoryChipPress(value: PostCategory): PostCategory {
+  return value;
+}
+
+/**
+ * Returns the `category` argument value for the `create()` call in
+ * handleSubmit().
+ *
+ * Mirrors: `category: resolveCreateCategory(selectedCategory)` in PulseCreate.tsx.
+ *
+ * Returns `undefined` (field omitted from payload) when `selectedCategory` is
+ * `null`, letting the server apply its own default.
+ */
+export function resolveCreateCategory(selectedCategory: PostCategory | null): PostCategory | undefined {
+  return selectedCategory ?? undefined;
 }
 
 // ── Filter-apply-result machine ───────────────────────────────────────────────

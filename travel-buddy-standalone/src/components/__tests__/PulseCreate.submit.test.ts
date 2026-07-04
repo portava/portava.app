@@ -27,7 +27,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSubmitLock, createOnceGuard, handleSubmitResult, handleUploadResult } from '../PulseCreate.machine.ts';
+import { createSubmitLock, createOnceGuard, handleSubmitResult, handleUploadResult, resolveDefaultCategory, handleCategoryChipPress, resolveCreateCategory, CATEGORY_OPTIONS, TYPE_CATEGORY } from '../PulseCreate.machine.ts';
 
 // ── Success path ──────────────────────────────────────────────────────────────
 
@@ -775,5 +775,209 @@ describe('upload-result — ok: true but url is null (API 200 with no url field)
       { onClose: () => {}, signOut: async () => {}, navigate: () => {}, setError: (msg) => { errorMsg = msg; } },
     );
     assert.equal(errorMsg, 'Upload succeeded but no URL returned');
+  });
+});
+
+// ── Category chip picker — machine-layer tests ────────────────────────────────
+//
+// RNTL (jest-expo + React 19) is broken in this project (multi-React dispatcher
+// crash). Machine-layer tests are the working alternative for component logic.
+//
+// The component uses three machine functions for the chip picker:
+//
+//   1. resolveDefaultCategory(typeId)
+//      → Called in the useEffect([selectedType]) to auto-set selectedCategory
+//        when a post type is tapped.
+//        Source of truth: TYPE_CATEGORY + CATEGORY_OPTIONS in machine.ts.
+//
+//   2. handleCategoryChipPress(value)
+//      → Called in the chip's onPress: setSelectedCategory(handleCategoryChipPress(value))
+//        Returns the value that enters component state.
+//
+//   3. resolveCreateCategory(selectedCategory)
+//      → Called in handleSubmit():
+//        category: resolveCreateCategory(selectedCategory)
+//        Returns the value sent to create() (undefined when null).
+//
+// Because all three machine functions are imported by the component from
+// PulseCreate.machine.ts (single source of truth), tests that exercise these
+// functions exercise the actual production code path.
+
+// ── Chip press updates selectedCategory ──────────────────────────────────────
+//
+// Verifies that handleCategoryChipPress returns the chip value unchanged, so
+// the state setter (setSelectedCategory) receives exactly the chip's category.
+
+describe('category chip picker — chip press updates selectedCategory', () => {
+  it('tapping the beach chip returns "beach" — which becomes selectedCategory', () => {
+    assert.equal(handleCategoryChipPress('beach'), 'beach');
+  });
+
+  it('tapping nightlife chip returns "nightlife"', () => {
+    assert.equal(handleCategoryChipPress('nightlife'), 'nightlife');
+  });
+
+  it('tapping food chip returns "food"', () => {
+    assert.equal(handleCategoryChipPress('food'), 'food');
+  });
+
+  it('tapping a second chip overrides the first — last-tap wins', () => {
+    const first = handleCategoryChipPress('food');
+    const second = handleCategoryChipPress('nightlife');
+    assert.notEqual(second, first, 'second chip tap must differ from first');
+    assert.equal(second, 'nightlife', 'second chip tap value must be what enters state');
+  });
+
+  it('every chip in CATEGORY_OPTIONS passes through handleCategoryChipPress unchanged', () => {
+    for (const { value } of CATEGORY_OPTIONS) {
+      assert.equal(
+        handleCategoryChipPress(value),
+        value,
+        `chip "${value}" must pass through handleCategoryChipPress unchanged into selectedCategory`,
+      );
+    }
+  });
+});
+
+// ── create() receives the correct category field ──────────────────────────────
+//
+// Verifies that resolveCreateCategory(selectedCategory) — the machine function
+// called by handleSubmit() for the `category` field — carries the chip value
+// through to the API payload unchanged.
+//
+// The full production chain is:
+//   chip tap → handleCategoryChipPress(value) → setSelectedCategory
+//   handleSubmit → resolveCreateCategory(selectedCategory) → create({ category })
+
+describe('category chip picker — create() receives the correct category', () => {
+  it('chip tap value flows into create() payload unchanged', () => {
+    // Production chain: chip tap → handleCategoryChipPress → selectedCategory
+    const selectedCategory = handleCategoryChipPress('beach');
+    // handleSubmit: category: resolveCreateCategory(selectedCategory)
+    const createCategory = resolveCreateCategory(selectedCategory);
+    assert.equal(createCategory, 'beach',
+      'create() must receive category: "beach" when the user tapped the beach chip');
+  });
+
+  it('null selectedCategory (no chip tapped) → create() omits category field (undefined)', () => {
+    const createCategory = resolveCreateCategory(null);
+    assert.equal(createCategory, undefined,
+      'null selectedCategory must produce undefined so the JSON category key is omitted');
+  });
+
+  it('every chip in CATEGORY_OPTIONS produces the matching category in the create() payload', () => {
+    for (const { value } of CATEGORY_OPTIONS) {
+      const afterChipTap = handleCategoryChipPress(value);
+      const createPayload = resolveCreateCategory(afterChipTap);
+      assert.equal(
+        createPayload,
+        value,
+        `chip "${value}": create() must receive category: "${value}"`,
+      );
+    }
+  });
+
+  it('switching chips — second chip value is what create() receives, not the first', () => {
+    // First tap: food
+    let selectedCategory = handleCategoryChipPress('food');
+    // Second tap: nightlife
+    selectedCategory = handleCategoryChipPress('nightlife');
+    assert.equal(resolveCreateCategory(selectedCategory), 'nightlife',
+      'create() must carry the last chip tapped, not the first');
+  });
+});
+
+// ── Auto-default category when post type is selected ─────────────────────────
+//
+// resolveDefaultCategory(typeId) mirrors the useEffect in UnifiedPostComposer.
+// Its inputs (TYPE_CATEGORY, CATEGORY_OPTIONS) are the same objects the
+// component imports, so a change in either constant is caught here immediately.
+
+describe('category chip picker — auto-default when post type is selected', () => {
+  it('post_update auto-defaults to "tip"', () => {
+    assert.equal(resolveDefaultCategory('post_update'), 'tip');
+  });
+
+  it('ask_question auto-defaults to "question"', () => {
+    assert.equal(resolveDefaultCategory('ask_question'), 'question');
+  });
+
+  it('share_moment auto-defaults to "activity"', () => {
+    assert.equal(resolveDefaultCategory('share_moment'), 'activity');
+  });
+
+  it('share_postcard auto-defaults to "activity"', () => {
+    assert.equal(resolveDefaultCategory('share_postcard'), 'activity');
+  });
+
+  it('share_hidden_gem auto-defaults to "activity"', () => {
+    assert.equal(resolveDefaultCategory('share_hidden_gem'), 'activity');
+  });
+
+  it('share_food_spot auto-defaults to "food"', () => {
+    assert.equal(resolveDefaultCategory('share_food_spot'), 'food');
+  });
+
+  it('share_highlight auto-defaults to null — chip picker is hidden for dedicated composers', () => {
+    assert.equal(resolveDefaultCategory('share_highlight'), null,
+      '"highlight" is in TYPE_CATEGORY but not in CATEGORY_OPTIONS, so resolveDefaultCategory returns null');
+  });
+
+  it('unknown type ID returns null', () => {
+    assert.equal(resolveDefaultCategory('unknown_type'), null);
+  });
+
+  it('every non-highlight type auto-default is present in CATEGORY_OPTIONS', () => {
+    const pickerTypeIds = Object.keys(TYPE_CATEGORY).filter(t => t !== 'share_highlight');
+    const validValues = new Set(CATEGORY_OPTIONS.map(o => o.value));
+    for (const typeId of pickerTypeIds) {
+      const cat = resolveDefaultCategory(typeId);
+      assert.notEqual(cat, null, `type "${typeId}" must resolve to a non-null category`);
+      assert.ok(validValues.has(cat as string),
+        `auto-default "${cat}" for type "${typeId}" must be a valid CATEGORY_OPTIONS value`);
+    }
+  });
+});
+
+// ── End-to-end: type select → optional chip override → create() payload ───────
+//
+// Traces the complete flow through all three machine functions, confirming that
+// the value that lands in create({ category }) matches the chip the user tapped
+// (or the auto-default when no chip was tapped).
+
+describe('category chip picker — end-to-end: type → default → optional override → create()', () => {
+  it('auto-default flows into create() when user never taps a chip (post_update → "tip")', () => {
+    // useEffect: setSelectedCategory(resolveDefaultCategory('post_update'))
+    const selectedCategory = resolveDefaultCategory('post_update');
+    // handleSubmit: category: resolveCreateCategory(selectedCategory)
+    assert.equal(resolveCreateCategory(selectedCategory), 'tip');
+  });
+
+  it('chip tap overrides auto-default — share_food_spot default is "food", beach chip wins', () => {
+    const autoDefault = resolveDefaultCategory('share_food_spot');
+    assert.equal(autoDefault, 'food', 'share_food_spot auto-default must be "food"');
+
+    // User taps beach chip → handleCategoryChipPress('beach') → state = 'beach'
+    const afterChipTap = handleCategoryChipPress('beach');
+    assert.equal(resolveCreateCategory(afterChipTap), 'beach',
+      'create() must carry the chip override, not the auto-default');
+  });
+
+  it('auto-default for each type produces the correct create() payload category', () => {
+    const expected: Record<string, string | undefined> = {
+      post_update:      'tip',
+      ask_question:     'question',
+      share_moment:     'activity',
+      share_postcard:   'activity',
+      share_hidden_gem: 'activity',
+      share_food_spot:  'food',
+      share_highlight:  undefined,
+    };
+    for (const [typeId, expectedPayload] of Object.entries(expected)) {
+      const cat = resolveDefaultCategory(typeId);          // useEffect result
+      const payload = resolveCreateCategory(cat);           // handleSubmit result
+      assert.equal(payload, expectedPayload,
+        `type "${typeId}": create() category must be ${JSON.stringify(expectedPayload)}, got ${JSON.stringify(payload)}`);
+    }
   });
 });

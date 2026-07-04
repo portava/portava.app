@@ -24,7 +24,7 @@ import { getCurrentGps, reverseGeocode } from '../services/location';
 import { HighlightComposer } from './HighlightComposer';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { createComposerDismissHandlers, createSubmitLock, createOnceGuard, handleSubmitResult, handleUploadResult, handleFilterApplyResult } from './PulseCreate.machine';
+import { createComposerDismissHandlers, createSubmitLock, createOnceGuard, handleSubmitResult, handleUploadResult, handleFilterApplyResult, TYPE_CATEGORY, CATEGORY_OPTIONS, resolveDefaultCategory, handleCategoryChipPress, resolveCreateCategory } from './PulseCreate.machine';
 import { createFilterDismissHandlers } from './PulseFilterSheet.machine';
 
 /* ── Types ── */
@@ -40,30 +40,8 @@ const POST_TYPES = [
 ] as const;
 type PostTypeId = typeof POST_TYPES[number]['id'];
 
-const TYPE_CATEGORY: Record<PostTypeId, string> = {
-  post_update: 'tip',
-  ask_question: 'question',
-  share_moment: 'activity',
-  share_postcard: 'activity',
-  share_hidden_gem: 'activity',
-  share_food_spot: 'food',
-  share_highlight: 'highlight',
-};
-
-/** Ordered list of categories shown in the chip picker. */
-const CATEGORY_OPTIONS: { value: PostCategory; label: string }[] = [
-  { value: 'food',      label: 'Food' },
-  { value: 'beach',     label: 'Beach' },
-  { value: 'nightlife', label: 'Nightlife' },
-  { value: 'activity',  label: 'Activity' },
-  { value: 'hotel',     label: 'Hotel' },
-  { value: 'tip',       label: 'Tip' },
-  { value: 'safety',    label: 'Safety' },
-  { value: 'transport', label: 'Transport' },
-  { value: 'airport',   label: 'Airport' },
-  { value: 'visa',      label: 'Visa' },
-  { value: 'question',  label: 'Question' },
-];
+// TYPE_CATEGORY and CATEGORY_OPTIONS are imported from PulseCreate.machine
+// (single source of truth — the machine tests exercise the same objects).
 
 const SUBMIT_LABEL: Record<PostTypeId, string> = {
   post_update: 'Post Update',
@@ -204,9 +182,7 @@ export function UnifiedPostComposer({
   // The user can override it via the chip picker.
   useEffect(() => {
     if (selectedType) {
-      const defaultCat = TYPE_CATEGORY[selectedType];
-      const asCat = CATEGORY_OPTIONS.find(o => o.value === defaultCat)?.value ?? null;
-      setSelectedCategory(asCat);
+      setSelectedCategory(resolveDefaultCategory(selectedType));
     }
   }, [selectedType]);
 
@@ -386,7 +362,7 @@ export function UnifiedPostComposer({
         filterIntensity,
         locationPrivacyMode: locationPrivacyMode === 'none' ? undefined : locationPrivacyMode,
         publishAfterTime: locationPrivacyMode === 'delayed_until_time' ? (scheduledTime?.toISOString() ?? null) : null,
-        category: selectedCategory ?? undefined,
+        category: resolveCreateCategory(selectedCategory),
       });
 
       await handleSubmitResult(res, {
@@ -501,7 +477,7 @@ export function UnifiedPostComposer({
                         <Pressable
                           key={value}
                           style={[uc.visChip, selectedCategory === value && uc.visChipOn]}
-                          onPress={() => setSelectedCategory(value)}
+                          onPress={() => setSelectedCategory(handleCategoryChipPress(value))}
                           disabled={submitting}
                         >
                           <Text style={[uc.visChipText, selectedCategory === value && uc.visChipTextOn]}>
