@@ -186,6 +186,25 @@ All statements are idempotent (`ADD COLUMN IF NOT EXISTS` / `CREATE TABLE IF NOT
 | `posts_author_status_idx` | `posts(author_id, post_status)` | Feed queries that filter by author + publication state |
 | `post_saves_post_created_idx` | `post_saves(post_id, created_at DESC)` | Ordered listing of saves per post |
 
+### Migration 0100 — not yet applied (manual SQL required)
+
+`artifacts/api-server/migrations/0100_backfill_display_name.sql` is a one-time data-backfill that copies `name → display_name` for every `profiles` row where `display_name IS NULL AND name IS NOT NULL`. This makes historical rows consistent with the dual-write pattern introduced in `PATCH /api/me/profile`. The statement is idempotent — rows that already have `display_name` set are untouched.
+
+Run in the Supabase SQL editor:
+
+```sql
+UPDATE public.profiles
+SET display_name = name
+WHERE display_name IS NULL
+  AND name IS NOT NULL;
+```
+
+| Effect | Detail |
+|--------|--------|
+| Rows updated | All `profiles` rows where `display_name IS NULL AND name IS NOT NULL` |
+| Rows unchanged | Rows that already have `display_name` set, or where `name` is also NULL |
+| Safe to re-run | Yes — `WHERE display_name IS NULL` makes subsequent runs a no-op |
+
 ### Stale migration file — `artifacts/api-server/migrations/0041_notifications.sql`
 
 This file is **not applied to production** and is superseded by `0062_notifications_schema.sql` (applied 2026-06-28). The 0062 file is the authoritative notification schema: it adds `push_retry_queue`, uses `public.profiles(id)` foreign keys, and has the correct RLS policy names. Do not apply `0041_notifications.sql`.
