@@ -19,6 +19,7 @@ import {
   type TrustedContact,
   type SafeReturnContactInput,
 } from '../../services/safeReturn';
+import { runOpenEffect } from './SafeReturnSetupSheet.openEffect';
 import {
   listEmergencyContacts,
   type EmergencyContact,
@@ -86,32 +87,29 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
     let cancelled = false;
 
     (async () => {
+      const { modalShouldOpen } = await runOpenEffect({
+        onStarted,
+        onClose,
+        getActiveSession,
+      });
+
+      if (cancelled) return;
+
+      if (!modalShouldOpen) return; // redirected to an active session
+
+      // No active session (or error) — open the form and load contacts.
+      setModalVisible(true);
+      setContactsLoading(true);
       try {
-        const { session } = await getActiveSession();
-        if (cancelled) return;
-        if (session) {
-          onStarted?.(session.id);
-          onClose();
-          return;
-        }
-        // No active session — now open the modal and load contacts in parallel.
-        setModalVisible(true);
-        setContactsLoading(true);
-        try {
-          const [tc, ec] = await Promise.all([getTrustedContacts(), listEmergencyContacts()]);
-          if (!cancelled) {
-            setTrustedContacts(tc);
-            setEmergencyContacts(ec.contacts);
-          }
-        } finally {
-          if (!cancelled) setContactsLoading(false);
+        const [tc, ec] = await Promise.all([getTrustedContacts(), listEmergencyContacts()]);
+        if (!cancelled) {
+          setTrustedContacts(tc);
+          setEmergencyContacts(ec.contacts);
         }
       } catch {
-        if (!cancelled) {
-          // On error, open the modal anyway so the user can still try.
-          setModalVisible(true);
-          setContactsLoading(false);
-        }
+        // Contact loading failure is non-fatal; the user can still start a session.
+      } finally {
+        if (!cancelled) setContactsLoading(false);
       }
     })();
 
