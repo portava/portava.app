@@ -129,7 +129,7 @@ export default function SearchScreen() {
     setSearched(true);
     try {
       if (tab === 'people') {
-        const res = await searchUsers(trimmed || ' ');
+        const res = await searchUsers(trimmed);
         setPeople(res.data ?? []);
       } else if (tab === 'places') {
         const res = await searchPlaces(trimmed);
@@ -150,25 +150,35 @@ export default function SearchScreen() {
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (!query.trim() && activeTab !== 'hashtags') {
+    const trimmedLen = query.trim().length;
+
+    if (activeTab === 'hashtags') {
+      // 1 char: too short to search, too long for trending — show blank prompt
+      if (trimmedLen === 1) {
+        setHashtags([]);
+        setSearched(false);
+        setLoading(false);
+        return;
+      }
+      // 0 chars → fetch trending; >= 2 chars → fetch suggestions
+      setLoading(true);
+      debounceRef.current = setTimeout(() => { runSearch(query, 'hashtags'); }, 300);
+      return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    }
+
+    // Non-hashtag tabs: minimum 2 characters before any network request
+    if (trimmedLen < 2) {
       setPeople([]);
       setPlaces([]);
       setEvents([]);
-      setHashtags([]);
       setSearched(false);
       setLoading(false);
       return;
     }
     setLoading(true);
-    debounceRef.current = setTimeout(() => {
-      runSearch(query, activeTab);
-    }, 300);
+    debounceRef.current = setTimeout(() => { runSearch(query, activeTab); }, 300);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [query, activeTab, runSearch]);
-
-  useEffect(() => {
-    if (activeTab === 'hashtags') runSearch(query, 'hashtags');
-  }, [activeTab]);
 
   function handleTabChange(tab: SearchTab) {
     setActiveTab(tab);
@@ -205,7 +215,7 @@ export default function SearchScreen() {
           style={styles.searchInput}
           value={query}
           onChangeText={setQuery}
-          placeholder={`Search ${activeTab}…`}
+          placeholder="Search travelers, trips, events, places, or hashtags"
           placeholderTextColor={color.faint}
           autoFocus
           returnKeyType="search"
@@ -246,7 +256,7 @@ export default function SearchScreen() {
           <Text style={styles.emptyTitle}>No results</Text>
           <Text style={styles.emptySub}>Try a different search term.</Text>
         </View>
-      ) : !searched && activeTab !== 'hashtags' ? (
+      ) : !searched ? (
         <View style={styles.center}>
           <Search size={32} color={color.haze} />
           <Text style={styles.emptyTitle}>Search {activeTab}</Text>
@@ -254,6 +264,7 @@ export default function SearchScreen() {
             {activeTab === 'people' && 'Find travelers by name or @handle'}
             {activeTab === 'places' && 'Find cafes, beaches, venues, and more'}
             {activeTab === 'events' && 'Find events by name, city, or category'}
+            {activeTab === 'hashtags' && 'Search hashtags'}
           </Text>
         </View>
       ) : (

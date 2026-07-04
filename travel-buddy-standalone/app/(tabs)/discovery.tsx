@@ -8,7 +8,7 @@ import { useLocalSearchParams, router } from 'expo-router';
 import {
   Compass, Sparkles, MapPin, Coffee, Moon, Activity,
   Calendar, Waves, Navigation, Plane, Users, Hash, PlusCircle,
-  SlidersHorizontal, ChevronDown, X,
+  SlidersHorizontal, ChevronDown, X, Search,
 } from 'lucide-react-native';
 import { getTrendingHashtags, type TrendingHashtag } from '../../src/services/hashtag';
 import type { DiscoveryAgeFilter } from '../../src/services/discovery';
@@ -485,6 +485,20 @@ function DiscoveryHubScreen() {
           </Pressable>
         )}
       </View>
+
+      {/* ── Search entry bar ── */}
+      <Pressable
+        style={styles.searchEntryBar}
+        onPress={() => router.push('/search')}
+        accessible
+        accessibilityRole="search"
+        accessibilityLabel="Open search"
+      >
+        <Search size={15} color={color.mute} />
+        <Text style={styles.searchEntryText} numberOfLines={1}>
+          Search travelers, trips, events, places, or hashtags
+        </Text>
+      </Pressable>
 
       {/* ── Content area: map fills edge-to-edge, chrome floats on top ── */}
       <View style={styles.contentArea}>
@@ -1176,6 +1190,24 @@ const styles = StyleSheet.create({
     fontWeight: '700' as const,
     color: color.signal,
     opacity: 0.7,
+  },
+  searchEntryBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginHorizontal: space.lg,
+    marginVertical: space.xs,
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: color.haze,
+    borderRadius: radius.md,
+    paddingHorizontal: space.md,
+    paddingVertical: 10,
+  },
+  searchEntryText: {
+    ...t.body,
+    color: color.faint,
+    flex: 1,
   },
 });
 

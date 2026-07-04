@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import {
   Compass, Sparkles, MapPin, Coffee, Moon, Activity,
-  Calendar, Waves, Navigation, Plane, Users, Hash, PlusCircle,
+  Calendar, Waves, Navigation, Plane, Users, Hash, PlusCircle, Search,
 } from 'lucide-react-native';
 import { getTrendingHashtags, type TrendingHashtag } from '../../src/services/hashtag';
 import type { DiscoveryAgeFilter } from '../../src/services/discovery';
@@ -317,6 +317,20 @@ export default function DiscoveryHub() {
           <DestinationBar destination={destination} onSelectPlace={handleSelectPlaceFromBar} />
         </View>
       </View>
+
+      {/* ── Search entry bar ── */}
+      <Pressable
+        style={styles.searchEntryBar}
+        onPress={() => router.push('/search')}
+        accessible
+        accessibilityRole="search"
+        accessibilityLabel="Open search"
+      >
+        <Search size={15} color={color.mute} />
+        <Text style={styles.searchEntryText} numberOfLines={1}>
+          Search travelers, trips, events, places, or hashtags
+        </Text>
+      </Pressable>
 
       {/* ── Context mode selector ── */}
       <ScrollView
@@ -953,5 +967,23 @@ const styles = StyleSheet.create({
   trendingChipCount: {
     fontSize: 10,
     color: color.mute,
+  },
+  searchEntryBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginHorizontal: space.lg,
+    marginVertical: space.xs,
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: color.haze,
+    borderRadius: radius.md,
+    paddingHorizontal: space.md,
+    paddingVertical: 10,
+  },
+  searchEntryText: {
+    ...t.body,
+    color: color.faint,
+    flex: 1,
   },
 });
