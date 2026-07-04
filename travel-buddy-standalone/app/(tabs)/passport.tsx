@@ -435,13 +435,8 @@ function PassportContent({
         {/* Compass active-user status (owner only, hides itself when opted out) */}
         <CompassStatusCard />
 
-        {/* Tab bar */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.tabBarWrap}
-          contentContainerStyle={styles.tabBarContent}
-        >
+        {/* Tab bar — full-width segmented control */}
+        <View style={styles.tabBarWrap}>
           {TABS.map((tb) => (
             <Pressable
               key={tb.key}
@@ -453,7 +448,7 @@ function PassportContent({
               </Text>
             </Pressable>
           ))}
-        </ScrollView>
+        </View>
 
         {/* Tab content */}
         <View style={styles.tabContent}>
@@ -629,14 +624,24 @@ const styles = StyleSheet.create({
   },
   pendingBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
 
-  tabBarWrap: { marginTop: space.md },
-  tabBarContent: { paddingHorizontal: space.lg, gap: space.xs },
-  tab: {
-    paddingHorizontal: space.md, paddingVertical: 8,
-    borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze,
+  tabBarWrap: {
+    flexDirection: 'row',
+    marginTop: space.md,
     backgroundColor: color.paperRaised,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: color.haze,
+    padding: 4,
+    overflow: 'hidden',
   },
-  tabActive: { backgroundColor: color.ink, borderColor: color.ink },
+  tab: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: radius.pill,
+  },
+  tabActive: { backgroundColor: color.ink },
   tabText: { ...t.small, color: color.mute, fontWeight: '700', fontSize: 13 },
   tabTextActive: { color: color.onInk },
 
