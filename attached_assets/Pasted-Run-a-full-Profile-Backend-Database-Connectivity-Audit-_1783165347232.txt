@@ -1,0 +1,125 @@
+Run a full Profile Backend/Database Connectivity Audit and Fix.
+
+Goal:
+Verify that every profile-facing feature is connected to the real backend/database, not local-only state, mock data, fixture data, placeholder state, or disconnected UI. Fix only confirmed gaps. Do not rebuild the profile system and do not break existing working flows.
+
+Scope:
+Audit the full profile/passport system end to end, including:
+- Profile edit page
+- Public profile/passport page
+- Own profile page
+- Username/handle selection
+- Real name/display name fields
+- Bio/about fields
+- Location/home city/home country fields
+- Languages
+- Interests
+- Travel style
+- Profile photo/passport photo
+- Backpage/background/cover photo
+- Highlights around profile photo
+- Stamps strip
+- Profile tabs such as All, Stamps, Plans, Posts/Postcards
+- Trust badge / verification badge
+- Stats row
+- Menu button/options on profile
+- Camera/attachment buttons
+- Privacy settings shown on profile
+- Any mobile and web profile variants if both exist
+
+Audit requirements:
+1. Map every profile UI field/button to its source of truth:
+   - Database table/column
+   - API route/service
+   - Client store/cache
+   - Upload/storage bucket if media
+   - Realtime/subscription behavior if applicable
+
+2. Identify anything that is:
+   - Hardcoded
+   - Mocked
+   - Fixture-based
+   - Local-only
+   - Saved only in AsyncStorage/localStorage
+   - Written to one field but read from another
+   - Read from username when it should read display name, or vice versa
+   - Using stale generated types
+   - Missing RLS/auth checks
+   - Missing optimistic update rollback
+   - Not refreshing after save
+   - Not reflected on the public profile after save
+
+3. Fix confirmed broken connections:
+   - Profile edits must persist to the database.
+   - Saved values must reload correctly after app restart/sign out/sign in.
+   - Username/handle must be separate from real name/display name.
+   - Username validation must not block display-name edits.
+   - User should be able to save a completed profile without being told they “cannot select a username” unless they are actually editing/selecting an invalid or unavailable username.
+   - Profile photo updates must upload to storage, save the URL/path to the database, and refresh the UI.
+   - Backpage/background photo must have an attachment button directly on the profile/backpage photo area and save correctly.
+   - Passport profile camera button must prompt the user to choose whether they are changing the display photo or adding/changing a highlight.
+   - Public profile/passport must read from the same persisted backend data as the edit screen.
+   - Profile menu button must be functional and visually modern/sophisticated.
+
+4. Backend/database checks:
+   - Confirm the profile table/schema has all required columns or related tables.
+   - Confirm migrations are present for any missing fields.
+   - Confirm generated database types are current.
+   - Confirm API endpoints validate ownership and only allow the authenticated user to edit their own profile.
+   - Confirm public profile endpoints return only safe public fields.
+   - Confirm private fields are not leaked on public passport/profile responses.
+   - Confirm media upload paths are user-scoped.
+   - Confirm RLS policies or server-side auth guards protect profile updates.
+
+5. Integration checks:
+   - Changes made on edit profile must appear on:
+     - Own profile/passport
+     - Public profile/passport
+     - Feed/post author cards if they show avatar/name/handle
+     - Search/discovery profile cards
+     - Trip/event/member cards if they show user info
+     - Telegraph/chat profile headers if applicable
+
+6. Testing:
+   Add or update tests proving:
+   - A user can edit and save display name without changing username.
+   - Username and display name are separate fields.
+   - Invalid username blocks only username save, not unrelated profile fields.
+   - Profile edit persists to backend/database and reloads.
+   - Public profile reads persisted data.
+   - Private fields do not leak publicly.
+   - Profile photo upload updates persisted avatar/passport photo field.
+   - Backpage/background photo upload persists and reloads.
+   - Profile menu actions render and open correctly.
+   - Camera button prompts display photo vs highlight choice.
+   - No profile screen uses mock/fixture data when authenticated backend data exists.
+
+7. Validation:
+   - Run affected profile tests.
+   - Run API/backend tests for profile routes.
+   - Run typecheck.
+   - Run database type generation or verify generated types are current.
+   - Run existing CI guards.
+   - Report exact pass/fail counts.
+
+Rules:
+- Audit first, then patch only confirmed gaps.
+- Do not rebuild working profile systems.
+- Do not remove existing backend wiring.
+- Do not replace real backend data with local-only state.
+- Do not create a second profile source of truth.
+- Do not break public/private profile separation.
+- Do not fake success after save — prove the saved data reloads from the backend.
+- Do not touch unrelated features unless they consume profile data and need wiring verification.
+
+Final report required:
+- Every profile field/button audited
+- Backend/database source of truth for each item
+- What was already working
+- What was broken
+- What was fixed
+- Files changed
+- Migrations/schema/type changes if any
+- Tests added/updated
+- Exact validation results
+- Any remaining follow-up tasks

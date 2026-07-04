@@ -144,7 +144,7 @@ router.post("/profile/ensure", async (req, res) => {
   const { error } = await sc
     .from('profiles')
     .upsert(
-      { id: user.id, handle, name },
+      { id: user.id, handle, name, display_name: name },
       { onConflict: 'id', ignoreDuplicates: true },
     );
 

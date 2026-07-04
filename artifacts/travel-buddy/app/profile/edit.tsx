@@ -143,6 +143,7 @@ export default function EditProfileScreen() {
   const [photoPhase, setPhotoPhase] = useState<PhotoPhase>('idle');
   /** Width (px) of the last cover image picked — used to avoid upscaling in renderCoverImage */
   const coverOriginalWidthRef = useRef<number>(1920);
+  const saveLockRef = useRef(false);
 
   const isDirty = originalForm !== null && (
     form.displayName !== originalForm.displayName ||
@@ -385,9 +386,11 @@ export default function EditProfileScreen() {
   const canSave = usernameStatus !== 'taken' && usernameStatus !== 'invalid' && usernameStatus !== 'checking';
 
   const handleSave = useCallback(async () => {
-    if (!canSave) return;
+    if (!canSave || saveLockRef.current) return;
+    saveLockRef.current = true;
     setSaving(true);
     setSaveError(null);
+    try {
 
     const patch: Parameters<typeof updateMyProfile>[0] = {};
 
@@ -510,6 +513,10 @@ export default function EditProfileScreen() {
 
     setOriginalForm(form);
     router.back();
+    } finally {
+      saveLockRef.current = false;
+      setSaving(false);
+    }
   }, [form, originalForm, canSave, updateLanguage]);
 
   if (loadingProfile) {
