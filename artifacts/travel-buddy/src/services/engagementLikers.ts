@@ -28,7 +28,7 @@ export interface LikerUser {
 export interface LikersPage {
   users: LikerUser[];
   nextCursor: string | null;
-  total: number;
+  hasMore: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -89,7 +89,7 @@ export async function getLikers(
     return {
       users: data.users ?? [],
       nextCursor: data.nextCursor ?? null,
-      total: data.total ?? 0,
+      hasMore: data.hasMore ?? false,
     };
   } catch {
     return null;

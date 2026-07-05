@@ -253,6 +253,7 @@ function ReplyRow({
         targetType="comment_like"
         targetId={likerReplyId}
         title="Liked by"
+        initialTotal={likeCount}
         onClose={() => setLikerReplyId(null)}
       />
     )}
@@ -390,6 +391,7 @@ function CommentItem({
         targetType="comment_like"
         targetId={likerCommentId}
         title="Liked by"
+        initialTotal={likeCount}
         onClose={() => setLikerCommentId(null)}
       />
     )}

@@ -197,6 +197,7 @@ export function PostEngagementBar({
               <Pressable
                 style={s.iconBtn}
                 onPress={handleLike}
+                onLongPress={() => setLikerSheet({})}
                 hitSlop={layout.hitSlop}
                 disabled={liking}
               >
@@ -297,6 +298,7 @@ export function PostEngagementBar({
           targetId={postId}
           reactionType={likerSheet.emoji}
           title={likerSheet.emoji ? `${likerSheet.emoji} Reactions` : 'Liked by'}
+          initialTotal={likerSheet.emoji ? undefined : localLikeCount}
           onClose={() => setLikerSheet(null)}
         />
       )}

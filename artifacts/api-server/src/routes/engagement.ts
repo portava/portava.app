@@ -12,7 +12,11 @@
  *   q           (optional) search string — filters by display_name or username
  *
  * Response:
- *   { ok: true, users: LikerUser[], nextCursor: string|null, total: number }
+ *   { ok: true, users: LikerUser[], nextCursor: string|null, hasMore: boolean }
+ *
+ * Privacy guarantee: the `total` field is intentionally omitted to avoid leaking
+ * like counts from blocked or filtered users. Callers should use the count they
+ * already hold from the parent entity (e.g. post.like_count).
  *
  * Access control per targetType:
  *   post_like / post_reaction  — post must be public OR viewer is the author
@@ -20,6 +24,9 @@
  *   comment_like               — same as the comment's parent post
  *   highlight_like             — viewer must be the highlight owner OR highlight is public
  *   memory_like                — viewer must be the memory owner OR memory is public
+ *
+ * Access denied returns 403 (forbidden) — not 404 — so callers can distinguish
+ * "content does not exist" (which should be handled upstream) from "not allowed".
  */
 
 import { Router } from "express";
@@ -113,37 +120,6 @@ async function checkAccess(
   }
 }
 
-// ── Count helper ───────────────────────────────────────────────────────────────
-
-async function getTotal(
-  sc: any,
-  targetType: TargetType,
-  targetId: string,
-  reactionType?: string,
-): Promise<number> {
-  let q: any;
-  switch (targetType) {
-    case "post_like":
-      q = sc.from("posts_likes").select("id", { count: "exact", head: true }).eq("post_id", targetId);
-      break;
-    case "post_reaction":
-      q = sc.from("post_reactions").select("id", { count: "exact", head: true }).eq("post_id", targetId);
-      if (reactionType) q = q.eq("emoji", reactionType);
-      break;
-    case "comment_like":
-      q = sc.from("comment_likes").select("id", { count: "exact", head: true }).eq("comment_id", targetId);
-      break;
-    case "highlight_like":
-      q = sc.from("highlight_likes").select("id", { count: "exact", head: true }).eq("highlight_id", targetId);
-      break;
-    case "memory_like":
-      q = sc.from("memory_likes").select("id", { count: "exact", head: true }).eq("memory_id", targetId);
-      break;
-  }
-  const { count } = await q;
-  return count ?? 0;
-}
-
 // ── Paginated liker IDs ────────────────────────────────────────────────────────
 
 async function getLikerIds(
@@ -151,7 +127,7 @@ async function getLikerIds(
   targetType: TargetType,
   targetId: string,
   opts: { reactionType?: string; cursor?: string; limit: number },
-): Promise<{ userIds: string[]; likedAts: Map<string, string>; nextCursor: string | null }> {
+): Promise<{ userIds: string[]; likedAts: Map<string, string>; nextCursor: string | null; hasMore: boolean }> {
   const { reactionType, cursor, limit } = opts;
 
   let q: any;
@@ -178,7 +154,7 @@ async function getLikerIds(
   q = q.order("created_at", { ascending: false }).limit(limit + 1);
 
   const { data: rows, error } = await q;
-  if (error) return { userIds: [], likedAts: new Map(), nextCursor: null };
+  if (error) return { userIds: [], likedAts: new Map(), nextCursor: null, hasMore: false };
 
   const all = (rows ?? []) as any[];
   const hasMore = all.length > limit;
@@ -189,7 +165,7 @@ async function getLikerIds(
 
   const nextCursor = hasMore ? (page[page.length - 1]?.created_at ?? null) : null;
 
-  return { userIds: page.map((r: any) => r.user_id), likedAts, nextCursor };
+  return { userIds: page.map((r: any) => r.user_id), likedAts, nextCursor, hasMore };
 }
 
 // ── Main route ─────────────────────────────────────────────────────────────────
@@ -216,6 +192,13 @@ router.get("/engagement/likes", async (req, res) => {
     sendError(res, "invalid_payload", "targetId must be a valid UUID");
     return;
   }
+  // Validate reactionType when provided for post_reaction
+  if (targetType === "post_reaction" && reactionType !== undefined) {
+    if (typeof reactionType !== "string" || reactionType.trim() === "") {
+      sendError(res, "invalid_payload", "reactionType must be a non-empty emoji string");
+      return;
+    }
+  }
 
   const limit = Math.min(50, Math.max(1, parseInt(rawLimit ?? "20", 10) || 20));
 
@@ -227,17 +210,20 @@ router.get("/engagement/likes", async (req, res) => {
 
   const accessible = await checkAccess(sc, user.id, targetType as TargetType, targetId);
   if (!accessible) {
-    sendError(res, "not_found", "Content not found or not accessible");
+    // Return 403 so callers can distinguish "not allowed" from "not found"
+    sendError(res, "forbidden", "Content not found or not accessible");
     return;
   }
 
-  const [total, { userIds, likedAts, nextCursor }] = await Promise.all([
-    getTotal(sc, targetType as TargetType, targetId, reactionType),
-    getLikerIds(sc, targetType as TargetType, targetId, { reactionType, cursor, limit }),
-  ]);
+  const { userIds, likedAts, nextCursor, hasMore } = await getLikerIds(
+    sc,
+    targetType as TargetType,
+    targetId,
+    { reactionType, cursor, limit },
+  );
 
   if (userIds.length === 0) {
-    res.json({ ok: true, users: [], nextCursor: null, total });
+    res.json({ ok: true, users: [], nextCursor: null, hasMore: false });
     return;
   }
 
@@ -256,17 +242,18 @@ router.get("/engagement/likes", async (req, res) => {
   const filteredIds = userIds.filter((id) => id !== user.id && !blockedSet.has(id));
 
   if (filteredIds.length === 0) {
-    res.json({ ok: true, users: [], nextCursor, total });
+    res.json({ ok: true, users: [], nextCursor, hasMore });
     return;
   }
 
-  // Profiles query — exclude deleted / banned accounts
+  // Profiles query — exclude deleted, banned, and suspended accounts
   let profileQuery = sc
     .from("profiles")
     .select("id, username, display_name, avatar_url, account_status")
     .in("id", filteredIds)
     .not("account_status", "eq", "deleted")
-    .not("account_status", "eq", "banned");
+    .not("account_status", "eq", "banned")
+    .not("account_status", "eq", "suspended");
 
   if (q && q.trim()) {
     profileQuery = profileQuery.or(`display_name.ilike.%${q.trim()}%,username.ilike.%${q.trim()}%`);
@@ -297,7 +284,7 @@ router.get("/engagement/likes", async (req, res) => {
   const followingSet = new Set<string>((followingRows ?? []).map((r: any) => r.following_id));
   const followsYouSet = new Set<string>((followsYouRows ?? []).map((r: any) => r.follower_id));
 
-  // Preserve insertion order from likedAts (most-recent-first from the DB query)
+  // Preserve insertion order from likedAts (most-recent-first)
   const users = filteredIds
     .map((id) => {
       const p = profileMap.get(id);
@@ -314,7 +301,9 @@ router.get("/engagement/likes", async (req, res) => {
     })
     .filter(Boolean);
 
-  res.json({ ok: true, users, nextCursor, total });
+  // Note: `total` is intentionally omitted — see module doc comment.
+  // Callers should display the count they already hold from the parent entity.
+  res.json({ ok: true, users, nextCursor, hasMore });
 });
 
 export default router;

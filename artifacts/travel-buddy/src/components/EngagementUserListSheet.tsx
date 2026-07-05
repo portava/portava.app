@@ -133,6 +133,9 @@ interface Props {
   targetId: string;
   title?: string;
   reactionType?: string;
+  /** Caller-provided count displayed in the sheet title (e.g. post.like_count).
+   *  Omitting it shows just the title without a count. */
+  initialTotal?: number;
   onClose: () => void;
 }
 
@@ -142,20 +145,21 @@ export function EngagementUserListSheet({
   targetId,
   title,
   reactionType,
+  initialTotal,
   onClose,
 }: Props) {
   const insets = useSafeAreaInsets();
   const [users, setUsers] = useState<LikerUser[]>([]);
-  const [total, setTotal] = useState(0);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(false);
 
   const reset = useCallback(() => {
     setUsers([]);
-    setTotal(0);
     setNextCursor(null);
+    setHasMore(false);
     setError(false);
   }, []);
 
@@ -166,8 +170,8 @@ export function EngagementUserListSheet({
     const page = await getLikers(targetType, targetId, { reactionType });
     if (page) {
       setUsers(page.users);
-      setTotal(page.total);
       setNextCursor(page.nextCursor);
+      setHasMore(page.hasMore);
     } else {
       setError(true);
     }
@@ -182,18 +186,22 @@ export function EngagementUserListSheet({
   }, [visible, targetType, targetId, reactionType]);
 
   const loadMore = useCallback(async () => {
-    if (!nextCursor || loadingMore) return;
+    if (!hasMore || !nextCursor || loadingMore) return;
     setLoadingMore(true);
     const page = await getLikers(targetType, targetId, { reactionType, cursor: nextCursor });
     if (page) {
       setUsers((prev) => [...prev, ...page.users]);
       setNextCursor(page.nextCursor);
+      setHasMore(page.hasMore);
     }
     setLoadingMore(false);
-  }, [nextCursor, loadingMore, targetType, targetId, reactionType]);
+  }, [hasMore, nextCursor, loadingMore, targetType, targetId, reactionType]);
 
   const displayTitle = title ?? (targetType === 'post_reaction' ? 'Reactions' : 'Likes');
-  const titleWithCount = total > 0 ? `${displayTitle} · ${total}` : displayTitle;
+  const titleWithCount =
+    initialTotal !== undefined && initialTotal > 0
+      ? `${displayTitle} · ${initialTotal}`
+      : displayTitle;
 
   return (
     <Modal
