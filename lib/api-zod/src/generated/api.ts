@@ -26,7 +26,8 @@ export const CleanupHealthCheckResponse = zod.object({
   "lastRunAt": zod.string().nullable().describe('ISO-8601 timestamp of the most recent purge attempt (from persistent storage), or null if no run has occurred yet.'),
   "lastOutcome": zod.union([zod.literal('success'),zod.literal('error'),zod.literal('skipped'),zod.literal(null)]).nullable().describe('Outcome of the most recent purge attempt.'),
   "lastDeletedCount": zod.number().nullable().describe('Number of rows deleted in the most recent successful purge, or null on error\/skip.'),
-  "consecutiveFailures": zod.number().describe('Number of consecutive failed purge attempts since the last success. Non-zero values should trigger an alert.')
+  "consecutiveFailures": zod.number().describe('Number of consecutive failed purge attempts since the last success. Non-zero values should trigger an alert.'),
+  "lastSeenDeletedCount": zod.number().nullable().describe('Number of suggestion-seen rows deleted in the most recent successful purge, or null on error\/skip.')
 })
 
 

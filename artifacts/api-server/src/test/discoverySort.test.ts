@@ -194,6 +194,17 @@ function makeCacheFakeClient(opts: {
       if (table === "wishlist_places")       return chain(wl);
       return chain([]);
     },
+    rpc(fnName: string, args: Record<string, unknown>) {
+      if (fnName === "decrement_discovery_place_saved_count") {
+        const row = dp.find((r) => r.id === args["p_id"]) as any;
+        if (row) {
+          const newCount = Math.max(0, ((row.saved_count as number) ?? 1) - 1);
+          row.saved_count = newCount;
+          return Promise.resolve({ data: newCount, error: null });
+        }
+      }
+      return Promise.resolve({ data: null, error: null });
+    },
     auth: {
       getUser: (_: string) =>
         Promise.resolve({ data: { user: { id: "user-cache-patch" } }, error: null }),

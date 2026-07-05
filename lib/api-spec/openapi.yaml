@@ -138,12 +138,17 @@ components:
         consecutiveFailures:
           type: integer
           description: Number of consecutive failed purge attempts since the last success. Non-zero values should trigger an alert.
+        lastSeenDeletedCount:
+          type: integer
+          nullable: true
+          description: Number of suggestion-seen rows deleted in the most recent successful purge, or null on error/skip.
       required:
         - cleanupStatus
         - lastRunAt
         - lastOutcome
         - lastDeletedCount
         - consecutiveFailures
+        - lastSeenDeletedCount
     SearchType:
       type: string
       enum:

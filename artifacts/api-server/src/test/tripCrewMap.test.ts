@@ -83,7 +83,7 @@ interface FakeState {
 
 function makeFakeClient(state: FakeState = {}) {
   function getRows(table: string): any[] {
-    if (table === "feature_flags")                  return Object.entries(state.featureFlags ?? {}).map(([key, enabled]) => ({ key, enabled }));
+    if (table === "feature_flags")                  return Object.entries(state.featureFlags ?? {}).map(([key, enabled]) => ({ flag: key, enabled }));
     if (table === "trips")                          return state.trips ?? [];
     if (table === "trip_members")                   return state.tripMembers ?? [];
     if (table === "profiles")                       return state.profiles ?? [];

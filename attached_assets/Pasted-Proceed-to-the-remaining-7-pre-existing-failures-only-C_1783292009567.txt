@@ -1,0 +1,71 @@
+Proceed to the remaining 7 pre-existing failures only.
+
+Current green status:
+- rentABuddy.test.ts: 88/88 passing
+- tripCrewLocation.test.ts: 35/35 passing
+
+Do not touch Rent a Buddy.
+Do not touch Trip Crew Location.
+Do not touch handle/username enforcement.
+Do not run SQL.
+
+Focus only on:
+
+1. src/test/tripsExpansion.test.ts — 3 failures
+Known suspected root cause:
+- invite accept handler now uses hardened DB-side slot-claim RPC
+- fake likely does not implement the new RPC
+- tests expected 201 but got 410 Gone
+
+2. src/test/cleanupHealth.test.ts — 2 failures
+Known suspected root cause:
+- /api/healthz/cleanup response contract missing `lastSeenDeletedCount`
+- expected exactly five documented fields
+
+3. src/test/discoverySort.test.ts — 1 failure
+Known suspected root cause:
+- OSM unsave cache decrement does not patch savedCount from 5 to 4
+
+4. Identify the 7th remaining failure if not already known.
+
+Process:
+- Re-run the exact failing suites first to confirm current state.
+- Do not patch until failures are reproduced.
+- For each reproduced failure, identify whether it is:
+  - stale test fake
+  - backend logic bug
+  - route contract drift
+  - cache utility bug
+  - missing RPC mock
+- Patch the smallest safe fix.
+- Re-run the specific suite after each fix.
+
+Commands:
+node --import tsx/esm --test src/test/tripsExpansion.test.ts
+node --import tsx/esm --test src/test/cleanupHealth.test.ts
+node --import tsx/esm --test src/test/discoverySort.test.ts
+
+Return:
+
+# Remaining Failure Cluster Report
+
+| Test File | Previous Count | Current Failures | Root Cause | Fix Applied | Result |
+|---|---:|---:|---|---|---|
+
+## If tripsExpansion still fails
+- Inspect invite accept route and fake RPC behavior.
+- If production code is correct and fake lacks RPC, add fake RPC mock only.
+- Do not change production route unless the route is genuinely wrong.
+
+## If cleanupHealth still fails
+- Decide whether handler or test is authoritative.
+- If the documented contract expects `lastSeenDeletedCount`, restore the field in response.
+- Otherwise update the test only if docs/handler prove the field was intentionally removed.
+
+## If discoverySort still fails
+- Fix decrement branch/cache key in the smallest utility path.
+- Do not change unrelated discovery ranking logic.
+
+Final:
+- Re-run all three suites.
+- Report remaining failures, if any.
