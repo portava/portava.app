@@ -1445,3 +1445,31 @@ describe("GET /api/me/profile — completeness score and homeCountry column", ()
     );
   });
 });
+
+// ── Handle/Username invariant (handle canonical; username mirrors; lowercase) ──
+describe("handle/username invariant", () => {
+  it("PATCH username 200: writes username AND handle, equal and lowercase", async () => {
+    const state = baseState();
+    state.profiles = state.profiles.map((p: any) => p.id === ME ? { ...p, username_updated_at: null } : p);
+    setup(state);
+    const r = await req("/me/profile", { method: "PATCH", body: { username: "NewIdentity_9" } });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const uname = body.username ?? body.profile?.username;
+    const handle = body.handle ?? body.profile?.handle;
+    assert.equal(uname, "newidentity_9", "username lowercased");
+    assert.equal(handle, "newidentity_9", "handle synced to username");
+    assert.equal(uname, handle, "invariant: username === handle");
+  });
+
+  it("mixed-case username input normalizes to lowercase in both fields", async () => {
+    const state = baseState();
+    state.profiles = state.profiles.map((p: any) => p.id === ME ? { ...p, username_updated_at: null } : p);
+    setup(state);
+    const r = await req("/me/profile", { method: "PATCH", body: { username: "MiXeDCaSe_1" } });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.equal(body.username ?? body.profile?.username, "mixedcase_1");
+    assert.equal(body.handle ?? body.profile?.handle, "mixedcase_1");
+  });
+});
