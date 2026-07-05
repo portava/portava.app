@@ -13,6 +13,7 @@ import {
   View, Text, Pressable, StyleSheet, ActivityIndicator,
   Image, Modal, Alert, ScrollView,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import { X, Link2, Trash2, Users } from 'lucide-react-native';
 import {
   getInviteLinks, revokeInviteLink,
@@ -26,21 +27,21 @@ interface Props {
   onDismiss: () => void;
 }
 
-function Avatar({ user, size = 30 }: { user: InviteLinkJoiner; size?: number }) {
-  if (user.avatarUrl) {
-    return (
-      <Image
-        source={{ uri: user.avatarUrl }}
-        style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color.haze }}
-      />
-    );
-  }
-  const initial = (user.name?.[0] ?? user.handle?.[0] ?? '?').toUpperCase();
-  return (
+function Avatar({ user, size = 30, onPress }: { user: InviteLinkJoiner; size?: number; onPress?: () => void }) {
+  const inner = user.avatarUrl ? (
+    <Image
+      source={{ uri: user.avatarUrl }}
+      style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color.haze }}
+    />
+  ) : (
     <View style={[{ width: size, height: size, borderRadius: size / 2 }, s.avatarFallback]}>
-      <Text style={s.avatarInitial}>{initial}</Text>
+      <Text style={s.avatarInitial}>{(user.name?.[0] ?? user.handle?.[0] ?? '?').toUpperCase()}</Text>
     </View>
   );
+  if (onPress) {
+    return <Pressable onPress={onPress} hitSlop={4}>{inner}</Pressable>;
+  }
+  return inner;
 }
 
 type StatusKind = 'active' | 'revoked' | 'expired' | 'exhausted';
@@ -78,10 +79,11 @@ function useCount(link: InviteLinkUsage): string {
 interface LinkRowProps {
   link: InviteLinkUsage;
   onRevoke: (link: InviteLinkUsage) => void;
+  onPressJoiner: (joiner: InviteLinkJoiner) => void;
   revoking: boolean;
 }
 
-function LinkRow({ link, onRevoke, revoking }: LinkRowProps) {
+function LinkRow({ link, onRevoke, onPressJoiner, revoking }: LinkRowProps) {
   const status = statusOf(link);
   const visible = link.joiners.slice(0, 5);
   const overflow = link.joiners.length - visible.length;
@@ -132,14 +134,30 @@ function LinkRow({ link, onRevoke, revoking }: LinkRowProps) {
           <View style={s.avatarStack}>
             {visible.map((j, i) => (
               <View key={j.id} style={[s.avatarStackItem, { zIndex: visible.length - i, marginLeft: i === 0 ? 0 : -8 }]}>
-                <Avatar user={j} size={26} />
+                <Avatar
+                  user={j}
+                  size={26}
+                  onPress={j.handle ? () => onPressJoiner(j) : undefined}
+                />
               </View>
             ))}
           </View>
-          <Text style={s.joinersLabel}>
-            {visible.map((j) => j.name ?? j.handle ?? 'Someone').join(', ')}
-            {overflow > 0 ? ` +${overflow} more` : ''}
-          </Text>
+          <View style={s.joinersLabelWrap}>
+            {visible.map((j, i) => (
+              <React.Fragment key={j.id}>
+                {i > 0 && <Text style={s.joinersLabel}>, </Text>}
+                <Pressable
+                  onPress={j.handle ? () => onPressJoiner(j) : undefined}
+                  disabled={!j.handle}
+                >
+                  <Text style={[s.joinersLabel, j.handle ? s.joinersLabelTappable : null]}>
+                    {j.name ?? j.handle ?? 'Someone'}
+                  </Text>
+                </Pressable>
+              </React.Fragment>
+            ))}
+            {overflow > 0 && <Text style={s.joinersLabel}> +{overflow} more</Text>}
+          </View>
         </View>
       ) : (
         <Text style={s.noJoinersText}>No one has joined via this link yet.</Text>
@@ -149,6 +167,7 @@ function LinkRow({ link, onRevoke, revoking }: LinkRowProps) {
 }
 
 export function TripInviteLinksSheet({ tripId, visible, onDismiss }: Props) {
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [links, setLinks] = useState<InviteLinkUsage[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -175,6 +194,12 @@ export function TripInviteLinksSheet({ tripId, visible, onDismiss }: Props) {
       setRevokingId(null);
     }
   }, [visible, load]);
+
+  function handlePressJoiner(joiner: InviteLinkJoiner) {
+    if (joiner.handle) {
+      router.push(`/profile/${joiner.handle}` as any);
+    }
+  }
 
   function handleRevoke(link: InviteLinkUsage) {
     Alert.alert(
@@ -249,6 +274,7 @@ export function TripInviteLinksSheet({ tripId, visible, onDismiss }: Props) {
                 key={link.id}
                 link={link}
                 onRevoke={handleRevoke}
+                onPressJoiner={handlePressJoiner}
                 revoking={revokingId === link.id}
               />
             ))}
@@ -371,10 +397,19 @@ const s = StyleSheet.create({
     borderColor: color.paperRaised,
     borderRadius: 999,
   },
+  joinersLabelWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    flex: 1,
+  },
   joinersLabel: {
     ...(t.small as object),
     color: color.mute,
-    flex: 1,
+  },
+  joinersLabelTappable: {
+    color: color.ink,
+    textDecorationLine: 'underline' as const,
   },
   noJoinersText: {
     ...(t.small as object),
