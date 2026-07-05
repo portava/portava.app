@@ -419,6 +419,7 @@ export interface AcceptInviteResult {
   tripId: string | null;
   alreadyMember: boolean;
   error?: string;
+  reason?: string;
 }
 
 /**
@@ -454,7 +455,7 @@ export async function acceptInviteByToken(token: string): Promise<AcceptInviteRe
         const body = await res.json().catch(() => ({})) as Record<string, unknown>;
         const errCode = (body?.error as string) ?? 'error';
         if (res.status >= 400 && res.status < 500) {
-          return { tripId: null, alreadyMember: false, error: errCode };
+          return { tripId: null, alreadyMember: false, error: errCode, reason: (body?.reason as string) ?? undefined };
         }
         lastError = errCode;
         continue;

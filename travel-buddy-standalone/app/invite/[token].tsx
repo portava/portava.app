@@ -56,6 +56,10 @@ export default function InviteLinkScreen() {
       router.replace(`/trip/${result.tripId}` as Parameters<typeof router.replace>[0]);
     } else if (result.alreadyMember) {
       router.replace(`/trip/${preview.tripId}` as Parameters<typeof router.replace>[0]);
+    } else if (result.error === 'gone' && result.reason === 'trip_full') {
+      // Trip filled up between preview and accept — re-fetch so the screen
+      // transitions to the 'full' state instead of showing a generic error.
+      load();
     } else {
       const msg =
         result.error === 'gone'

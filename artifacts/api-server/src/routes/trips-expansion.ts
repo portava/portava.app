@@ -1286,7 +1286,7 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
       .eq("trip_id", tripId)
       .eq("status", "accepted");
     if ((memberRows?.length ?? 0) >= maxMembers) {
-      res.status(410).json({ error: "gone", message: "This trip is already full" });
+      res.status(410).json({ error: "gone", reason: "trip_full", message: "This trip is already full" });
       return;
     }
   }
