@@ -656,7 +656,7 @@ router.get("/circle/contexts/:type/:id/my-presence", async (req, res) => {
   // Fetch viewer's own presence row from this context
   const { data: presenceData } = await sc
     .from("circle_presence")
-    .select("id, status, status_label, approximate_label, venue_label, checked_in, updated_at, is_stale, expires_at")
+    .select("id, status, status_label, approximate_label, venue_label, checked_in, visibility_mode, updated_at, is_stale, expires_at")
     .eq("user_id", user.id)
     .eq("context_type", type)
     .eq("context_id", id)
@@ -962,6 +962,10 @@ router.get("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
       venueLabel:       row.venue_label       ?? null,
       approximateLabel: row.approximate_label ?? null,
       description:      row.description       ?? null,
+      // V1: public_lat / public_lng columns not yet in schema — always null.
+      // V2 will expose these once the DB migration adds them.
+      lat:              (row.public_lat  as number | null) ?? null,
+      lng:              (row.public_lng  as number | null) ?? null,
       createdAt:        row.created_at,
       updatedAt:        row.updated_at,
     },

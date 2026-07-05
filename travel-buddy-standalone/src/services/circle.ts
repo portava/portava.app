@@ -43,6 +43,9 @@ export interface CircleMember {
   lastUpdatedAt: string | null;
   approximateLabel: string | null;
   venueLabel: string | null;
+  /** Broad-area coordinates for map pins. Always null in V1; populated in V2. */
+  publicLat: number | null;
+  publicLng: number | null;
   isStale: boolean;
   canMessage: boolean;
   canViewProfile: boolean;
@@ -70,6 +73,9 @@ export interface MeetingPoint {
   venueLabel: string | null;
   approximateLabel: string | null;
   description: string | null;
+  /** Coordinates for directions and map pin. Always null in V1; populated in V2. */
+  lat: number | null;
+  lng: number | null;
   createdAt: string;
   updatedAt: string;
 }

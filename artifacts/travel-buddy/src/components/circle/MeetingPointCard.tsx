@@ -60,9 +60,17 @@ export function MeetingPointCard({
 
   function openDirections() {
     if (!meetingPoint) return;
-    const query = meetingPoint.venueLabel ?? meetingPoint.approximateLabel ?? '';
-    if (!query) return;
-    Linking.openURL(`https://maps.google.com/?q=${encodeURIComponent(query)}`).catch(() =>
+    let url: string;
+    if (meetingPoint.lat !== null && meetingPoint.lng !== null) {
+      // Coordinate-based directions URL — opens routing to the exact venue pin.
+      url = `https://maps.google.com/maps?daddr=${meetingPoint.lat},${meetingPoint.lng}`;
+    } else {
+      // Fallback: text search when coordinates are not yet in the DB (V1).
+      const query = meetingPoint.venueLabel ?? meetingPoint.approximateLabel ?? '';
+      if (!query) return;
+      url = `https://maps.google.com/?q=${encodeURIComponent(query)}`;
+    }
+    Linking.openURL(url).catch(() =>
       Alert.alert('Could not open maps', 'Please open your maps app manually.'),
     );
   }

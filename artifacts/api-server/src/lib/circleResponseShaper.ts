@@ -39,6 +39,14 @@ export interface ShapedPresence {
   /** Populated only when visibility allows location info */
   approximateLabel: string | null;
   venueLabel: string | null;
+  /**
+   * Broad-area coordinates for map pins.
+   * venue_checkin and approximate_area modes may populate these once the DB
+   * schema includes public_lat / public_lng columns (deferred to V2).
+   * Always null in V1.
+   */
+  publicLat: number | null;
+  publicLng: number | null;
   isStale: boolean;
   canMessage: boolean;
   canViewProfile: boolean;
@@ -86,6 +94,8 @@ export function shapePresence(
       lastUpdatedAt: null,
       approximateLabel: null,
       venueLabel: null,
+      publicLat: null,
+      publicLng: null,
       isStale: false,
       canMessage: true,
       canViewProfile: true,
@@ -124,6 +134,10 @@ export function shapePresence(
     lastUpdatedAt,
     approximateLabel,
     venueLabel,
+    // V1: no coordinate columns in circle_presence — always null.
+    // V2 will populate from public_lat / public_lng once schema is extended.
+    publicLat: null,
+    publicLng: null,
     isStale,
     canMessage: true,
     canViewProfile: true,

@@ -26,7 +26,11 @@ import { SafeReturnSetupSheet } from '../src/components/safeReturn/SafeReturnSet
 import { CircleMemberRow } from '../src/components/circle/CircleMemberRow';
 import { CheckInActions } from '../src/components/circle/CheckInActions';
 import { MeetingPointCard } from '../src/components/circle/MeetingPointCard';
-import { CircleMapSection } from '../src/components/circle/CircleMapSection';
+import {
+  CircleMapSection,
+  type MapMember,
+  type MapMeetingPoint,
+} from '../src/components/circle/CircleMapSection';
 
 import * as Location from 'expo-location';
 
@@ -292,8 +296,29 @@ export default function CirclePresenceScreen() {
   const meetingPointLabel =
     meetingPoint?.venueLabel ?? meetingPoint?.approximateLabel ?? null;
 
-  // Map shows broad-area/venue pins when any member has location data
-  const hasLocationData = members.some((m) => m.venueLabel || m.approximateLabel);
+  // Derive map pins from members/meeting-point that have coordinates.
+  // V1: publicLat/publicLng are always null (no DB columns yet), so mapMembers
+  // stays empty and the map banner renders. V2 will populate coordinates.
+  const mapMembers: MapMember[] = members
+    .filter((m): m is typeof m & { publicLat: number; publicLng: number } =>
+      m.publicLat !== null && m.publicLng !== null,
+    )
+    .map((m) => ({
+      userId: m.userId,
+      lat: m.publicLat,
+      lng: m.publicLng,
+      isStale: m.isStale,
+    }));
+
+  const mapMeetingPoint: MapMeetingPoint | null =
+    meetingPoint?.lat !== null && meetingPoint?.lng !== null && meetingPoint !== null
+      ? {
+          lat: meetingPoint.lat!,
+          lng: meetingPoint.lng!,
+          label:
+            meetingPoint.venueLabel ?? meetingPoint.approximateLabel ?? 'Meeting point',
+        }
+      : null;
 
   // Event timing: show end time if known
   const eventEndDisplay =
@@ -361,10 +386,13 @@ export default function CirclePresenceScreen() {
         </View>
       )}
 
-      <CircleMapSection
-        hasLocationData={hasLocationData}
-        meetingPointLabel={meetingPointLabel}
-      />
+      {!locationPermBanner && (
+        <CircleMapSection
+          members={mapMembers}
+          meetingPoint={mapMeetingPoint}
+          meetingPointLabel={meetingPointLabel}
+        />
+      )}
 
       <View style={g.viewerSection}>
         {viewerMember ? (
