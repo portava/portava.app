@@ -1431,6 +1431,7 @@ export type ChecklistItem = {
   key: string;
   label: string;
   done: boolean;
+  verificationRequired?: boolean;
 };
 
 export type ProfileChecklist = {

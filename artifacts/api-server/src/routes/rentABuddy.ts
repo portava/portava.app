@@ -901,6 +901,31 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
     return res.status(409).json({ error: "self_booking", message: "You cannot book yourself as a Buddy." });
   }
 
+  // Block-table enforcement — traveler must not be blocked by, or have blocked, the buddy's user
+  const buddyUserId = (buddyProfile as any).user_id;
+  if (buddyUserId) {
+    const [blockedByBuddy, blockedByTraveler] = await Promise.all([
+      serviceClient
+        .from("blocks")
+        .select("id")
+        .eq("blocker_id", buddyUserId)
+        .eq("blocked_id", user.id)
+        .maybeSingle(),
+      serviceClient
+        .from("blocks")
+        .select("id")
+        .eq("blocker_id", user.id)
+        .eq("blocked_id", buddyUserId)
+        .maybeSingle(),
+    ]);
+    if (blockedByBuddy.data || blockedByTraveler.data) {
+      return res.status(403).json({
+        error: "blocked",
+        message: "You cannot book this Buddy.",
+      });
+    }
+  }
+
   if (buddyProfile.status !== "active" || buddyProfile.admin_status !== "active") {
     return res.status(400).json({ error: "buddy_unavailable", message: "This Buddy is not accepting bookings." });
   }

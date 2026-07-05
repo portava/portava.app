@@ -5,13 +5,13 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, ArrowRight, Check, Camera, Plus, X, BookOpen, Search } from 'lucide-react-native';
+import { ArrowLeft, ArrowRight, Check, Camera, Plus, X, BookOpen, Search, AlertCircle, CheckCircle, Circle } from 'lucide-react-native';
 import { GlobalPlacePicker } from '../../../src/components/selectors/GlobalPlacePicker';
 import { TravelButton, TravelCard, TravelChip } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
-import type { BuddyCategory, TrainingItem } from '../../../src/services/rentABuddy';
+import type { BuddyCategory, TrainingItem, ChecklistItem } from '../../../src/services/rentABuddy';
 
 const TOTAL_STEPS = 7;
 
@@ -105,13 +105,33 @@ export default function ApplyToBeBuddy() {
   const checkingLockRef = useRef(new Set<string>());
   const [showTraining, setShowTraining] = useState(false);
 
+  // Profile checklist gate — shown when user has an existing buddy profile with missing fields.
+  // Blocks re-submission until the backend reports allComplete.
+  const [profileChecklistItems, setProfileChecklistItems] = useState<ChecklistItem[]>([]);
+  const [profileComplete, setProfileComplete] = useState(false);
+  const [showProfileChecklist, setShowProfileChecklist] = useState(false);
+
   useEffect(() => {
     (async () => {
-      const [appRes, trainRes] = await Promise.all([
+      const [appRes, trainRes, profileRes] = await Promise.all([
         rentABuddy.getMyApplication(),
         rentABuddy.getTrainingChecklist(),
+        rentABuddy.getProfileChecklist(),
       ]);
       const hasExistingApplication = appRes.ok && !!appRes.data?.application;
+
+      // Profile checklist: if the user has a profile, show its completion state
+      if (profileRes.ok && profileRes.data) {
+        setProfileChecklistItems(profileRes.data.checklist);
+        setProfileComplete(profileRes.data.allComplete);
+        if (!profileRes.data.allComplete) {
+          // Show profile checklist gate so the user sees what to complete before re-submitting
+          setShowProfileChecklist(true);
+          setTrainingLoading(false);
+          return;
+        }
+      }
+
       if (trainRes.ok && trainRes.data) {
         setTrainingItems(trainRes.data.checklist);
         setTrainingComplete(trainRes.data.allComplete);
@@ -235,6 +255,30 @@ export default function ApplyToBeBuddy() {
       });
       if (result.ok) {
         setSubmitted(true);
+      } else if (result.error === 'verification_required') {
+        Alert.alert(
+          'Verification Required',
+          'ID verification is required before your nightlife buddy profile can be submitted for review. Please complete your verification first.',
+          [{ text: 'OK' }],
+        );
+      } else if (result.error === 'incomplete_profile') {
+        const missing: string[] = (result as any).missing ?? [];
+        const fieldNames: Record<string, string> = {
+          display_name: 'Display name',
+          bio: 'Bio (min 30 characters)',
+          photo: 'Profile photo',
+          categories: 'Categories',
+          services: 'Service offerings',
+          areas: 'Meetup areas',
+          languages: 'Languages',
+          pricing: 'Hourly rate',
+          availability: 'Weekly availability',
+          policy_accepted: 'Buddy policy acceptance',
+          safety_acknowledged: 'Safety guidelines confirmation',
+          boundaries_acknowledged: 'Conduct & boundaries confirmation',
+        };
+        const labels = missing.map((k) => fieldNames[k] ?? k).join('\n• ');
+        Alert.alert('Profile Incomplete', `Please complete the following before submitting:\n\n• ${labels}`);
       } else {
         Alert.alert('Could not submit', result.error ?? 'Please try again.');
       }
@@ -248,7 +292,111 @@ export default function ApplyToBeBuddy() {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: color.paper }}>
         <ActivityIndicator size="large" color={color.signal} />
-        <Text style={{ marginTop: space.md, color: color.mute, fontSize: 14 }}>Checking your training status…</Text>
+        <Text style={{ marginTop: space.md, color: color.mute, fontSize: 14 }}>Checking your profile…</Text>
+      </View>
+    );
+  }
+
+  // Profile checklist gate — shown when user has existing profile fields that are still missing.
+  // The user must complete each item before they can re-submit for review.
+  if (showProfileChecklist) {
+    const doneCount = profileChecklistItems.filter((i) => i.done).length;
+    const totalCount = profileChecklistItems.length;
+    const verificationItem = profileChecklistItems.find((i) => i.verificationRequired && !i.done);
+    return (
+      <View style={{ flex: 1, backgroundColor: color.paper }}>
+        <View style={[hdr.wrap, { paddingTop: insets.top + space.sm }]}>
+          <Pressable onPress={() => router.back()} style={hdr.back} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <ArrowLeft size={20} color={color.ink} />
+          </Pressable>
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: color.ink }}>Profile Checklist</Text>
+          </View>
+          <View style={{ width: 36 }} />
+        </View>
+        <ScrollView contentContainerStyle={{ paddingHorizontal: space.lg, paddingBottom: insets.bottom + 120 }}>
+          <View style={{ marginTop: space.xl, marginBottom: space.lg }}>
+            <Text style={{ fontSize: 22, fontWeight: '700', color: color.ink, marginBottom: space.xs }}>
+              Complete your profile
+            </Text>
+            <Text style={{ fontSize: 14, color: color.mute, lineHeight: 20 }}>
+              All required fields must be filled in before you can submit your profile for review. Tap each item to complete it.
+            </Text>
+            <View style={{ marginTop: space.md, height: 6, backgroundColor: color.haze, borderRadius: 3, overflow: 'hidden' }}>
+              <View style={{ width: `${(doneCount / Math.max(totalCount, 1)) * 100}%`, height: '100%', backgroundColor: color.signal, borderRadius: 3 }} />
+            </View>
+            <Text style={{ marginTop: space.xs, fontSize: 12, color: color.mute }}>{doneCount} of {totalCount} complete</Text>
+          </View>
+
+          {verificationItem && (
+            <View style={{ marginBottom: space.lg, padding: space.md, backgroundColor: '#FFF8E7', borderRadius: radius.md, borderWidth: 1, borderColor: '#F59E0B', flexDirection: 'row', gap: space.sm }}>
+              <AlertCircle size={18} color="#D97706" style={{ marginTop: 2 }} />
+              <Text style={{ flex: 1, fontSize: 13, color: '#92400E', lineHeight: 18 }}>
+                {verificationItem.label}. Please contact support to begin the verification process.
+              </Text>
+            </View>
+          )}
+
+          {profileChecklistItems.map((item) => (
+            <Pressable
+              key={item.key}
+              onPress={() => {
+                // Navigate to the relevant management screen for this item
+                if (item.done) return;
+                if (['services', 'pricing'].includes(item.key)) router.push('/(rent-a-buddy)/buddy-dashboard/services' as any);
+                else if (item.key === 'availability') router.push('/(rent-a-buddy)/buddy-dashboard/availability' as any);
+                else router.push('/(rent-a-buddy)/buddy-dashboard' as any);
+              }}
+              style={{
+                flexDirection: 'row', alignItems: 'center', gap: space.md,
+                paddingVertical: space.sm, paddingHorizontal: space.md,
+                backgroundColor: item.done ? color.paperRaised : color.paper,
+                borderRadius: radius.md, marginBottom: space.xs,
+                borderWidth: 1, borderColor: item.done ? color.haze : color.signal + '33',
+                opacity: item.done ? 0.7 : 1,
+              }}
+              disabled={item.done}
+            >
+              {item.done ? (
+                <CheckCircle size={20} color={color.signal} />
+              ) : (
+                <Circle size={20} color={color.mute} />
+              )}
+              <Text style={{ flex: 1, fontSize: 14, color: item.done ? color.mute : color.ink, textDecorationLine: item.done ? 'line-through' : 'none' }}>
+                {item.label}
+              </Text>
+              {!item.done && !item.verificationRequired && (
+                <ArrowRight size={14} color={color.mute} />
+              )}
+            </Pressable>
+          ))}
+        </ScrollView>
+        <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: space.lg, paddingBottom: insets.bottom + space.md, paddingTop: space.md, backgroundColor: color.paper }}>
+          <Pressable
+            onPress={profileComplete && !submitting ? handleSubmit : undefined}
+            style={[
+              {
+                borderRadius: radius.md,
+                paddingVertical: 14,
+                alignItems: 'center' as const,
+                justifyContent: 'center' as const,
+              },
+              profileComplete && !submitting
+                ? { backgroundColor: color.signal }
+                : { backgroundColor: color.haze },
+            ]}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !profileComplete || submitting }}
+          >
+            {submitting ? (
+              <ActivityIndicator size="small" color={color.paper} />
+            ) : (
+              <Text style={{ color: profileComplete ? color.onInk : color.mute, fontWeight: '700', fontSize: 15 }}>
+                {profileComplete ? 'Submit for Review' : 'Complete all items to submit'}
+              </Text>
+            )}
+          </Pressable>
+        </View>
       </View>
     );
   }

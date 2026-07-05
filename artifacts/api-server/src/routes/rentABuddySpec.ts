@@ -986,7 +986,11 @@ router.delete("/api/rent-a-buddy/buddies/:buddyId/unfavorite", async (req, res) 
 // Also accessible at /api/me/buddy-profile/checklist via app.ts URL alias
 //
 // Returns per-field completion status derived from real DB state.
-// Used by the Buddy Dashboard to drive the "Profile checklist" section.
+// Response shape: { checklist: ChecklistItem[], allComplete: boolean }
+// where ChecklistItem = { key, label, done, verificationRequired? }
+//
+// "verification" item is only present (and blocks allComplete) when one or more
+// of the buddy's categories requires ID verification to go live.
 router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -996,7 +1000,9 @@ router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
     .from("rent_buddy_profiles")
     .select(
       "id, display_name, bio, categories, languages, hourly_rate_usd, " +
-      "availability_blocks, policy_accepted, safety_acknowledged_at, boundaries_acknowledged_at"
+      "availability_blocks, policy_accepted, safety_acknowledged_at, " +
+      "boundaries_acknowledged_at, cover_photo_url, gallery_urls, " +
+      "preferred_meetup_zones, verification_status"
     )
     .eq("user_id", auth.user.id)
     .maybeSingle();
@@ -1007,17 +1013,37 @@ router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
 
   const p = profile as any;
 
-  // Check rent_buddy_availability table in addition to availability_blocks on the profile
-  const { count: availCount } = await serviceClient
-    .from("rent_buddy_availability")
-    .select("id", { count: "exact" })
-    .eq("buddy_id", p.id)
-    .limit(1);
+  // Parallel DB lookups: availability rows + active services
+  const [availResult, servicesResult] = await Promise.all([
+    serviceClient
+      .from("rent_buddy_availability")
+      .select("id", { count: "exact" })
+      .eq("buddy_id", p.id)
+      .limit(1),
+    serviceClient
+      .from("buddy_services")
+      .select("id", { count: "exact" })
+      .eq("buddy_id", p.id)
+      .eq("is_active", true)
+      .limit(1),
+  ]);
 
-  const hasAvailabilityBlocks = Array.isArray(p.availability_blocks) && p.availability_blocks.length > 0;
-  const hasAvailabilityRows = (availCount ?? 0) > 0;
+  const hasAvailability =
+    (Array.isArray(p.availability_blocks) && p.availability_blocks.length > 0) ||
+    (availResult.count ?? 0) > 0;
 
-  const checklist = [
+  const hasServices = (servicesResult.count ?? 0) > 0;
+  const hasPhoto = (typeof p.cover_photo_url === "string" && p.cover_photo_url.trim().length > 0) ||
+    (Array.isArray(p.gallery_urls) && p.gallery_urls.length > 0);
+  const hasAreas = Array.isArray(p.preferred_meetup_zones) && p.preferred_meetup_zones.length > 0;
+  const hasPricing = p.hourly_rate_usd != null && Number(p.hourly_rate_usd) > 0;
+
+  // Verification is required for restricted categories (nightlife always requires it)
+  const categories: string[] = Array.isArray(p.categories) ? p.categories : [];
+  const needsVerification = categories.includes("nightlife");
+  const isVerified = p.verification_status === "verified";
+
+  const checklist: Array<{ key: string; label: string; done: boolean; verificationRequired?: boolean }> = [
     {
       key: "display_name",
       label: "Set your display name",
@@ -1029,9 +1055,24 @@ router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
       done: typeof p.bio === "string" && p.bio.trim().length >= 30,
     },
     {
+      key: "photo",
+      label: "Add at least one profile photo",
+      done: hasPhoto,
+    },
+    {
       key: "categories",
       label: "Choose at least one category",
-      done: Array.isArray(p.categories) && p.categories.length > 0,
+      done: categories.length > 0,
+    },
+    {
+      key: "services",
+      label: "Add at least one service offering",
+      done: hasServices,
+    },
+    {
+      key: "areas",
+      label: "Set your preferred meetup areas",
+      done: hasAreas,
     },
     {
       key: "languages",
@@ -1039,14 +1080,14 @@ router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
       done: Array.isArray(p.languages) && p.languages.length > 0,
     },
     {
-      key: "hourly_rate",
+      key: "pricing",
       label: "Set your hourly rate",
-      done: p.hourly_rate_usd != null && Number(p.hourly_rate_usd) > 0,
+      done: hasPricing,
     },
     {
       key: "availability",
       label: "Set your weekly availability",
-      done: hasAvailabilityBlocks || hasAvailabilityRows,
+      done: hasAvailability,
     },
     {
       key: "policy_accepted",
@@ -1065,6 +1106,16 @@ router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
     },
   ];
 
+  // Only surface the verification item when it blocks this profile
+  if (needsVerification) {
+    checklist.push({
+      key: "verification",
+      label: "Complete ID verification (required for nightlife category)",
+      done: isVerified,
+      verificationRequired: true,
+    });
+  }
+
   const allComplete = checklist.every((i) => i.done);
 
   return res.json({ checklist, allComplete });
@@ -1079,6 +1130,8 @@ router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
 //
 // Returns 422 { error: "incomplete_profile", missing: [...] } if any required fields
 // are empty. All fields must be filled before the profile can enter review.
+// Returns 422 { error: "verification_required", verification_status } if a
+// restricted category (e.g. nightlife) requires ID verification first.
 router.post("/api/rent-a-buddy/me/profile/submit", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -1089,7 +1142,8 @@ router.post("/api/rent-a-buddy/me/profile/submit", async (req, res) => {
     .select(
       "id, status, admin_status, display_name, bio, categories, languages, " +
       "hourly_rate_usd, availability_blocks, policy_accepted, " +
-      "safety_acknowledged_at, boundaries_acknowledged_at"
+      "safety_acknowledged_at, boundaries_acknowledged_at, " +
+      "cover_photo_url, gallery_urls, preferred_meetup_zones, verification_status"
     )
     .eq("user_id", auth.user.id)
     .maybeSingle();
@@ -1107,24 +1161,39 @@ router.post("/api/rent-a-buddy/me/profile/submit", async (req, res) => {
   const safetyAck = p.safety_acknowledged_at ?? (acceptSafety ? now : null);
   const boundariesAck = p.boundaries_acknowledged_at ?? (acceptBoundaries ? now : null);
 
-  // Check rent_buddy_availability table in addition to availability_blocks on the profile
-  const { count: availCount } = await serviceClient
-    .from("rent_buddy_availability")
-    .select("id", { count: "exact" })
-    .eq("buddy_id", p.id)
-    .limit(1);
+  // Parallel DB lookups: availability rows + active services
+  const [availResult, servicesResult] = await Promise.all([
+    serviceClient
+      .from("rent_buddy_availability")
+      .select("id", { count: "exact" })
+      .eq("buddy_id", p.id)
+      .limit(1),
+    serviceClient
+      .from("buddy_services")
+      .select("id", { count: "exact" })
+      .eq("buddy_id", p.id)
+      .eq("is_active", true)
+      .limit(1),
+  ]);
 
   const hasAvailability =
     (Array.isArray(p.availability_blocks) && p.availability_blocks.length > 0) ||
-    (availCount ?? 0) > 0;
+    (availResult.count ?? 0) > 0;
+  const hasServices = (servicesResult.count ?? 0) > 0;
+  const hasPhoto = (typeof p.cover_photo_url === "string" && p.cover_photo_url.trim().length > 0) ||
+    (Array.isArray(p.gallery_urls) && p.gallery_urls.length > 0);
+  const hasAreas = Array.isArray(p.preferred_meetup_zones) && p.preferred_meetup_zones.length > 0;
 
   // 422 gate — collect all missing required fields
   const missing: string[] = [];
   if (!(typeof p.display_name === "string" && p.display_name.trim().length > 0)) missing.push("display_name");
   if (!(typeof p.bio === "string" && p.bio.trim().length >= 30)) missing.push("bio");
+  if (!hasPhoto) missing.push("photo");
   if (!(Array.isArray(p.categories) && p.categories.length > 0)) missing.push("categories");
+  if (!hasServices) missing.push("services");
+  if (!hasAreas) missing.push("areas");
   if (!(Array.isArray(p.languages) && p.languages.length > 0)) missing.push("languages");
-  if (!(p.hourly_rate_usd != null && Number(p.hourly_rate_usd) > 0)) missing.push("hourly_rate");
+  if (!(p.hourly_rate_usd != null && Number(p.hourly_rate_usd) > 0)) missing.push("pricing");
   if (!hasAvailability) missing.push("availability");
   if (!p.policy_accepted) missing.push("policy_accepted");
   if (!safetyAck) missing.push("safety_acknowledged");
@@ -1135,6 +1204,17 @@ router.post("/api/rent-a-buddy/me/profile/submit", async (req, res) => {
       error: "incomplete_profile",
       message: "Profile is missing required fields before it can be submitted for review.",
       missing,
+    });
+  }
+
+  // Verification gate — nightlife (and other restricted categories) require ID verification
+  const cats: string[] = Array.isArray(p.categories) ? p.categories : [];
+  const needsVerification = cats.includes("nightlife");
+  if (needsVerification && p.verification_status !== "verified") {
+    return res.status(422).json({
+      error: "verification_required",
+      message: "ID verification is required before a nightlife buddy profile can be submitted for review. Please complete your verification first.",
+      verification_status: p.verification_status ?? "unverified",
     });
   }
 
