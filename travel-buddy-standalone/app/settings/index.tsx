@@ -515,6 +515,17 @@ export default function Settings() {
           </View>
         )}
 
+        {/* Find Your Circle section */}
+        <View style={{ gap: space.sm }}>
+          <Text style={styles.h}>Find Your Circle</Text>
+          <Pressable
+            style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
+            onPress={() => router.push('/settings/find-your-circle' as any)}
+          >
+            <Text style={styles.item}>Find Your Circle settings</Text>
+          </Pressable>
+        </View>
+
         {/* Privacy section */}
         <View style={{ gap: space.sm }}>
           <Text style={styles.h}>Privacy</Text>

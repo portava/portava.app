@@ -347,9 +347,10 @@ router.patch("/circle/settings", async (req, res) => {
     eventSharingDefault: (data as any)?.event_sharing_default  ?? "status_only",
     isPaused:            (data as any)?.is_paused              ?? false,
     pausedUntil:         (data as any)?.paused_until           ?? null,
-    consentVersion:      (data as any)?.consent_version        ?? null,
-    consentedAt:         (data as any)?.consented_at           ?? null,
-    updatedAt:        (data as any)?.updated_at       ?? null,
+    consentVersion:        (data as any)?.consent_version        ?? null,
+    consentedAt:           (data as any)?.consented_at           ?? null,
+    updatedAt:             (data as any)?.updated_at             ?? null,
+    currentConsentVersion: CURRENT_CONSENT_VERSION,
   });
 });
 
