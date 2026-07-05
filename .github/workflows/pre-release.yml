@@ -61,6 +61,28 @@ jobs:
       - name: Test bundle-ID placeholder guard
         run: bash scripts/test-bundle-id-guard.sh
 
+      - name: Check engagement indexes (migration 0106)
+        # Verifies the five pg_indexes added by migration 0106 are present in
+        # production.  Missing indexes cause GET /api/engagement/likes to degrade
+        # to sequential scans on posts_likes, post_reactions, comment_likes,
+        # highlight_likes, and memory_likes under cursor-based pagination.
+        #
+        # SUPABASE_PROJECT_TOKEN must be stored as a repo secret:
+        #   GitHub → Settings → Secrets and variables → Actions → New repository secret
+        #   Name: SUPABASE_PROJECT_TOKEN  (Project Settings → API → Project API tokens)
+        #   See docs/eas-runbook.md → "Engagement indexes check in CI" for full setup.
+        #
+        # This step hard-fails when the secret is absent so a missing token is
+        # caught immediately rather than silently skipped.
+        env:
+          SUPABASE_PROJECT_TOKEN: ${{ secrets.SUPABASE_PROJECT_TOKEN }}
+        run: |
+          if [ -z "$SUPABASE_PROJECT_TOKEN" ]; then
+            echo "::error::SUPABASE_PROJECT_TOKEN secret is not set. Add it in GitHub → Settings → Secrets and variables → Actions (Project Settings → API → Project API tokens, Read scope). See docs/eas-runbook.md → 'Engagement indexes check in CI' for full instructions. Without this check a schema reset could silently drop the indexes and degrade GET /api/engagement/likes to sequential scans."
+            exit 1
+          fi
+          bash scripts/check-engagement-indexes.sh
+
       - name: Run pre-release checks
         env:
           SKIP_EAS_PREFLIGHT: "1"

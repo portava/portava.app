@@ -359,6 +359,73 @@ bash scripts/check-db-triggers.sh
 
 ---
 
+## Engagement indexes check in CI
+
+The `Check engagement indexes (migration 0106)` step in `.github/workflows/pre-release.yml` queries the Supabase production database to confirm the five pg_indexes added by migration 0106 are present before any push to `main` or a release branch proceeds.
+
+Missing indexes cause the `GET /api/engagement/likes` endpoint to degrade to sequential scans on `posts_likes`, `post_reactions`, `comment_likes`, `highlight_likes`, and `memory_likes` under cursor-based pagination.
+
+### Why it is a dedicated CI step (not just part of pre-release-check.sh)
+
+`scripts/pre-release-check.sh` includes the engagement index check (step 9) but **soft-skips** it (exit 0) when no token is present, to avoid blocking local developers who haven't configured Supabase credentials. The dedicated CI step adds a **hard-fail on missing token**, so the check is truly required in CI rather than silently bypassed.
+
+### Which token to use
+
+| Context | Token | Notes |
+|---------|-------|-------|
+| **CI / GitHub Actions** | `SUPABASE_PROJECT_TOKEN` | Project-scoped, read-only. Safe as a repo secret. **Preferred.** |
+| **Local developer run** | `SUPABASE_ACCESS_TOKEN` | Personal access token from https://supabase.com/dashboard/account/tokens. Never commit. |
+
+The `check-engagement-indexes.sh` script checks `SUPABASE_PROJECT_TOKEN` first; if absent it falls back to `SUPABASE_ACCESS_TOKEN`. Both reach the same Supabase Management API endpoint.
+
+### One-time setup — store the token as a GitHub Actions secret
+
+1. Go to the [Supabase dashboard](https://supabase.com/dashboard) and open this project.
+2. Navigate to **Project Settings → API → Project API tokens**.
+3. Click **Generate new token**.
+4. Give it a name (e.g. `github-ci-engagement-check`) and set the scope to **Read** — the check never writes.
+5. Copy the generated token value.
+6. In your GitHub repository, go to **Settings → Secrets and variables → Actions**.
+7. Click **New repository secret**.
+8. Name: `SUPABASE_PROJECT_TOKEN` · Value: the token you copied above.
+9. Save. (If the `db-triggers` check was already using this secret, skip steps 6–9 — it is the same secret.)
+
+### Workflow step (reference)
+
+The step is already in `.github/workflows/pre-release.yml`:
+
+```yaml
+- name: Check engagement indexes (migration 0106)
+  env:
+    SUPABASE_PROJECT_TOKEN: ${{ secrets.SUPABASE_PROJECT_TOKEN }}
+  run: |
+    if [ -z "$SUPABASE_PROJECT_TOKEN" ]; then
+      echo "::error::SUPABASE_PROJECT_TOKEN secret is not set. ..."
+      exit 1
+    fi
+    bash scripts/check-engagement-indexes.sh
+```
+
+### If the check fails in CI
+
+| Error message / symptom | Likely cause | Fix |
+|-------------------------|-------------|-----|
+| `SUPABASE_PROJECT_TOKEN secret is not set` | Secret not configured in repository secrets | Follow the one-time setup steps above |
+| `Management API returned HTTP 401` | Token invalid or revoked | Regenerate the project token and update the secret |
+| `Management API returned HTTP 403` | Token scope too narrow | Ensure the token was created with **Read** scope |
+| `MISSING index: idx_posts_likes_post_created` (or similar) | Migration 0106 not applied to production | Apply `artifacts/api-server/src/migrations/0106_engagement_indexes.sql` via the Supabase SQL editor or `psql` |
+
+### Local developer run
+
+```bash
+export SUPABASE_ACCESS_TOKEN=sbp_...   # generate at https://supabase.com/dashboard/account/tokens
+bash scripts/check-engagement-indexes.sh
+# or via the full suite:
+bash scripts/pre-release-check.sh
+```
+
+---
+
 ## TODO (owner must finalize)
 
 | Item | What to do |
