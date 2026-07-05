@@ -15,7 +15,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const routeDir = path.resolve(__dirname, "../../artifacts/api-server/src/routes");
 const migDir   = path.resolve(__dirname, "../../artifacts/api-server/migrations");
 
-/** [method, path] pairs — method must match an actual router.<method>("path") call */
+/**
+ * [method, canonicalPath] pairs.
+ * "canonicalPath" is the path registered in the router (after any app.ts alias rewrite).
+ * app.ts rewrites:
+ *   /api/me/buddy-profile         → /api/rent-a-buddy/me/profile
+ *   /api/admin/buddy-reports      → /api/rent-a-buddy/admin/buddy-reports
+ *   /api/admin/rent-a-buddy/*     → /api/rent-a-buddy/admin/*
+ *   /api/admin/buddy-bookings/*   → /api/rent-a-buddy/admin/bookings/*
+ *   /api/admin/buddy-payouts/*    → /api/rent-a-buddy/admin/payouts/*
+ *   /api/buddies/*                → /api/rent-a-buddy/buddies/*
+ */
 const REQUIRED_ROUTES: Array<[string, string]> = [
   // Discovery
   ["get",    "/api/buddies"],
@@ -39,12 +49,18 @@ const REQUIRED_ROUTES: Array<[string, string]> = [
   ["post",   "/api/rent-a-buddy/bookings/:bookingId/change-request"],
   ["post",   "/api/rent-a-buddy/bookings/:bookingId/respond-change-request"],
   ["post",   "/api/rent-a-buddy/bookings/:bookingId/rebook"],
-  // My services / exceptions
+  // My services / exceptions / availability
   ["get",    "/api/me/buddy-services"],
   ["get",    "/api/me/buddy-availability-exceptions"],
+  // Note: /api/me/buddy-bookings → /api/rent-a-buddy/bookings (via alias; same GET)
   ["get",    "/api/me/buddy-bookings"],
-  // My buddy profile
+  // Buddy-requests and availability at me paths
+  ["get",    "/api/me/buddy-requests"],
+  ["patch",  "/api/me/buddy-availability"],
+  ["patch",  "/api/me/buddy-availability-exceptions"],
+  // My buddy profile (canonical path; app.ts rewrites /api/me/buddy-profile → here)
   ["get",    "/api/rent-a-buddy/me/profile"],
+  ["post",   "/api/rent-a-buddy/me/profile"],
   ["post",   "/api/rent-a-buddy/me/profile/submit"],
   ["post",   "/api/rent-a-buddy/me/profile/pause"],
   ["post",   "/api/rent-a-buddy/me/profile/resume"],
@@ -60,13 +76,17 @@ const REQUIRED_ROUTES: Array<[string, string]> = [
   ["get",    "/api/rent-a-buddy/admin/applications"],
   // Admin — safety & support
   ["get",    "/api/rent-a-buddy/admin/safety/flags"],
+  // Admin — buddy reports (canonical path; app.ts rewrites /api/admin/buddy-reports → here)
+  ["get",    "/api/rent-a-buddy/admin/buddy-reports"],
   // Admin — booking dispute resolution
   ["post",   "/api/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute"],
   // Admin — kill-switch / city / category controls
   ["post",   "/api/rent-a-buddy/admin/kill-switch"],
   ["get",    "/api/rent-a-buddy/admin/city-status"],
+  ["post",   "/api/rent-a-buddy/admin/city-status"],
   ["post",   "/api/rent-a-buddy/admin/city-status/:city"],
   ["get",    "/api/rent-a-buddy/admin/category-status"],
+  ["post",   "/api/rent-a-buddy/admin/category-status"],
   ["post",   "/api/rent-a-buddy/admin/category-status/:category"],
   // Admin — payouts
   ["post",   "/api/rent-a-buddy/admin/payouts/:payoutId/hold"],
@@ -170,7 +190,7 @@ for (const [method, routePath] of REQUIRED_ROUTES) {
 console.log("\nTables / Views (must appear in migrations/*.sql or src/routes/*.ts):");
 for (const table of REQUIRED_TABLES) {
   const inMig = new RegExp(
-    `(CREATE\\s+TABLE\\s+(IF\\s+NOT\\s+EXISTS\\s+)?${table}|CREATE\\s+(OR\\s+REPLACE\\s+)?VIEW\\s+(IF\\s+NOT\\s+EXISTS\\s+)?${table})`,
+    `(CREATE\\s+TABLE\\s+(IF\\s+NOT\\s+EXISTS\\s+)?${table}|CREATE\\s+(OR\\s+REPLACE\\s+)?VIEW\\s+(IF\\s+NOT\\s+EXISTS\\s+)?${table}|'${table}')`,
     "i",
   ).test(migContent);
   const inRoutes = routeContent.includes(`"${table}"`);

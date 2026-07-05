@@ -1296,6 +1296,258 @@ router.post("/api/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", async
   return res.json({ dispute, resolution, bookingStatus: newBookingStatus });
 });
 
+// ── me/buddy-profile — create (initial profile setup) ─────────────────────────
+
+// POST /api/rent-a-buddy/me/profile — create (or upsert) the caller's buddy profile.
+// Spec route: POST /api/me/buddy-profile → rewritten by app.ts alias to this path.
+// Separate from /submit (which transitions an existing draft to pending_review).
+router.post("/api/rent-a-buddy/me/profile", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  const {
+    displayName, tagline, bio, city, country, categories,
+    languages, hourlyRateUsd, maxGroupSize, coverPhotoUrl,
+    galleryUrls, vibeTags,
+  } = req.body ?? {};
+  if (!displayName || !city || !country) {
+    return res.status(400).json({ error: "invalid_payload", message: "displayName, city, country are required." });
+  }
+  const { data, error } = await serviceClient
+    .from("rent_buddy_profiles")
+    .upsert(
+      {
+        user_id: auth.user.id,
+        display_name: displayName,
+        tagline: tagline ?? null,
+        bio: bio ?? null,
+        city,
+        country,
+        categories: categories ?? [],
+        languages: languages ?? [],
+        hourly_rate_usd: hourlyRateUsd ?? null,
+        max_group_size: maxGroupSize ?? 4,
+        cover_photo_url: coverPhotoUrl ?? null,
+        gallery_urls: galleryUrls ?? [],
+        vibe_tags: vibeTags ?? [],
+        status: "draft",
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" }
+    )
+    .select()
+    .single();
+  if (error) return sendError(res, "db_error", error.message);
+  return res.status(201).json({ profile: data });
+});
+
+// ── me/buddy-requests — list booking requests for me-as-buddy ──────────────────
+
+// GET /api/me/buddy-requests — list all booking requests where the caller is the buddy.
+// Also accessible at /api/rent-a-buddy/me/buddy-requests via app.ts alias.
+router.get("/api/me/buddy-requests", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  const { status } = req.query;
+
+  // Resolve the caller's buddy profile id
+  const { data: profile } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id")
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+  if (!profile) return res.status(404).json({ error: "not_found", message: "No buddy profile found." });
+
+  let query = serviceClient
+    .from("rent_buddy_bookings")
+    .select("*")
+    .eq("buddy_id", profile.id)
+    .order("created_at", { ascending: false });
+
+  if (status) query = query.eq("status", status as string);
+
+  const { data, error } = await query;
+  if (error) return sendError(res, "db_error", error.message);
+  return res.json({ requests: data ?? [] });
+});
+
+// ── me/buddy-availability — update my availability schedule ───────────────────
+
+// PATCH /api/me/buddy-availability — update (upsert) availability rows for the caller's buddy profile.
+// Also accessible at /api/rent-a-buddy/me/availability via app.ts alias.
+router.patch("/api/me/buddy-availability", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  const { slots } = req.body ?? {};
+  if (!Array.isArray(slots) || slots.length === 0) {
+    return res.status(400).json({ error: "invalid_payload", message: "slots (array) is required." });
+  }
+
+  const { data: profile } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id")
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+  if (!profile) return res.status(404).json({ error: "not_found", message: "No buddy profile found." });
+
+  const rows = (slots as Array<{ date: string; timeSlots?: unknown; isAvailable?: boolean; notes?: string }>)
+    .map(s => ({
+      buddy_id: profile.id,
+      date: s.date,
+      time_slots: s.timeSlots ?? [],
+      is_available: s.isAvailable ?? true,
+      notes: s.notes ?? null,
+    }));
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_availability")
+    .upsert(rows, { onConflict: "buddy_id,date" })
+    .select();
+  if (error) return sendError(res, "db_error", error.message);
+  return res.json({ slots: data });
+});
+
+// ── me/buddy-availability-exceptions — collection-level PATCH ─────────────────
+
+// PATCH /api/me/buddy-availability-exceptions — bulk-upsert availability exceptions.
+// (Item-level PATCH /:exceptionId already exists above.)
+router.patch("/api/me/buddy-availability-exceptions", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  const { exceptions } = req.body ?? {};
+  if (!Array.isArray(exceptions) || exceptions.length === 0) {
+    return res.status(400).json({ error: "invalid_payload", message: "exceptions (array) is required." });
+  }
+
+  const { data: profile } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id")
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+  if (!profile) return res.status(404).json({ error: "not_found", message: "No buddy profile found." });
+
+  const rows = (exceptions as Array<{
+    exceptionDate: string; endDate?: string; exceptionType?: string; startTime?: string; endTime?: string; reason?: string;
+  }>).map(e => ({
+    buddy_id: profile.id,
+    exception_date: e.exceptionDate,
+    end_date: e.endDate ?? null,
+    exception_type: (e.exceptionType ?? "blocked") as "blocked",
+    start_time: e.startTime ?? null,
+    end_time: e.endTime ?? null,
+    reason: e.reason ?? null,
+    updated_at: new Date().toISOString(),
+  }));
+
+  const { data, error } = await serviceClient
+    .from("buddy_availability_exceptions")
+    .upsert(rows, { onConflict: "buddy_id,exception_date" })
+    .select();
+  if (error) return sendError(res, "db_error", error.message);
+  return res.json({ exceptions: data });
+});
+
+// ── admin buddy-reports ────────────────────────────────────────────────────────
+
+// GET /api/admin/buddy-reports — list buddy safety/support reports for admin review.
+// Also accessible at /api/rent-a-buddy/admin/buddy-reports via app.ts alias.
+router.get("/api/rent-a-buddy/admin/buddy-reports", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  const { data: profile } = await serviceClient.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
+  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
+
+  const { status, limit = "50", offset = "0" } = req.query;
+  let query = serviceClient
+    .from("rent_buddy_disputes")
+    .select("*, booking:rent_buddy_bookings(id,city,category)")
+    .order("created_at", { ascending: false })
+    .range(Number(offset), Number(offset) + Number(limit) - 1);
+
+  if (status) query = query.eq("status", status as string);
+
+  const { data, error } = await query;
+  if (error) return sendError(res, "db_error", error.message);
+  return res.json({ reports: data ?? [] });
+});
+
+// ── admin city-status POST (collection-level, city in body) ───────────────────
+
+// POST /api/rent-a-buddy/admin/city-status — collection-level city status update.
+// Accepts { city, status, notes, buddyCap } in the request body.
+// Also accessible at /api/admin/rent-a-buddy/city-status via app.ts URL alias.
+router.post("/api/rent-a-buddy/admin/city-status", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  const { data: profile } = await serviceClient.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
+  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
+
+  const { city, status, notes, buddyCap } = req.body ?? {};
+  if (!city || !status) {
+    return res.status(400).json({ error: "invalid_payload", message: "city and status are required." });
+  }
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_city_rollouts")
+    .update({
+      status,
+      notes: notes ?? null,
+      buddy_cap: buddyCap ?? null,
+      status_changed_at: new Date().toISOString(),
+      status_changed_by: auth.user.id,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("city", city)
+    .select()
+    .single();
+
+  if (error) return sendError(res, "db_error", error.message);
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: auth.user.id, target_type: "city", target_id: city,
+    action: `city_status_set_${status}`, notes: notes ?? null,
+  });
+  return res.json({ city: data });
+});
+
+// ── admin category-status POST (collection-level, category in body) ────────────
+
+// POST /api/rent-a-buddy/admin/category-status — collection-level category status update.
+// Accepts { category, enabled, notes } in the request body.
+// Also accessible at /api/admin/rent-a-buddy/category-status via app.ts URL alias.
+router.post("/api/rent-a-buddy/admin/category-status", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  const { data: profile } = await serviceClient.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
+  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
+
+  const { category, enabled, notes } = req.body ?? {};
+  if (!category || typeof enabled !== "boolean") {
+    return res.status(400).json({ error: "invalid_payload", message: "category and enabled (boolean) are required." });
+  }
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_launch_controls")
+    .upsert(
+      { country_code: null, city: null, category, enabled, notes: notes ?? null, created_by: auth.user.id },
+      { onConflict: "country_code,city,category" }
+    )
+    .select()
+    .single();
+
+  if (error) return sendError(res, "db_error", error.message);
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: auth.user.id, target_type: "category", target_id: category,
+    action: enabled ? "category_enabled" : "category_disabled", notes: notes ?? null,
+  });
+  return res.json({ category: data });
+});
+
 // ── admin city-status POST variant ────────────────────────────────────────────
 
 // POST /api/rent-a-buddy/admin/city-status/:city
