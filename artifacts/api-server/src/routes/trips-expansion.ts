@@ -1071,6 +1071,19 @@ router.get("/trips/:tripId/invite-links", async (req, res) => {
     }
   }
 
+  // Cross-check joiners against current trip_members so removed users can be flagged
+  const currentMemberIds = new Set<string>();
+  if (allJoinerIds.length > 0) {
+    const { data: members } = await sc
+      .from("trip_members")
+      .select("user_id")
+      .eq("trip_id", tripId)
+      .in("user_id", allJoinerIds);
+    for (const m of (members ?? []) as any[]) {
+      currentMemberIds.add(m.user_id as string);
+    }
+  }
+
   const now = new Date();
   const result = (links as any[]).map((lk) => {
     const isRevoked   = Boolean(lk.revoked_at);
@@ -1088,9 +1101,10 @@ router.get("/trips/:tripId/invite-links", async (req, res) => {
       isRevoked,
       isExpired,
       isExhausted,
-      joiners:   (joinersByLink.get(lk.id as string) ?? []).map((uid) =>
-        profileMap.get(uid) ?? { id: uid, name: null, handle: null, avatarUrl: null },
-      ),
+      joiners: (joinersByLink.get(lk.id as string) ?? []).map((uid) => ({
+        ...(profileMap.get(uid) ?? { id: uid, name: null, handle: null, avatarUrl: null }),
+        removed: !currentMemberIds.has(uid),
+      })),
     };
   });
 
