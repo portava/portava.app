@@ -662,15 +662,23 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/respond-change-request", asyn
   if (!booking) return res.status(404).json({ error: "not_found" });
 
   const b = booking as any;
-  if (b.traveler_id !== auth.user.id) {
-    return res.status(403).json({ error: "forbidden", message: "Only the traveler can respond to a change request." });
+  // Both the traveler AND the buddy owner can respond to a pending change request.
+  const { data: buddyProfile } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id")
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+  const isTraveler = b.traveler_id === auth.user.id;
+  const isBuddy    = (buddyProfile as any)?.id && (buddyProfile as any).id === b.buddy_id;
+  if (!isTraveler && !isBuddy) {
+    return res.status(403).json({ error: "forbidden", message: "Only a party to this booking can respond." });
   }
 
   const now = new Date().toISOString();
   // Find the latest open (null traveler_response) change request
   const { data: cr } = await serviceClient
     .from("rent_buddy_route_change_requests")
-    .select("id")
+    .select("id, requested_by")
     .eq("booking_id", bookingId)
     .is("traveler_response", null)
     .order("created_at", { ascending: false })
@@ -679,10 +687,16 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/respond-change-request", asyn
 
   if (!cr) return res.status(404).json({ error: "no_pending_change_request" });
 
+  // Prevent the requester from responding to their own change request
+  const crRow = cr as any;
+  if (crRow.requested_by === auth.user.id) {
+    return res.status(403).json({ error: "forbidden", message: "Cannot respond to your own change request." });
+  }
+
   const { data, error } = await serviceClient
     .from("rent_buddy_route_change_requests")
     .update({ traveler_response: decision, responded_at: now })
-    .eq("id", (cr as any).id)
+    .eq("id", crRow.id)
     .select()
     .single();
 

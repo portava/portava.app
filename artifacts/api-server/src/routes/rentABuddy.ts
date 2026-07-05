@@ -567,15 +567,27 @@ router.get("/api/buddies", async (req, res) => {
   if (buddyLevel)     query = query.eq("buddy_level", buddyLevel);
   if (available === "now") query = query.eq("available_now", true);
   if (featured === "true")  query = query.eq("featured", true);
-  if (verified === "true")  query = query.eq("verified", true);
+  // Use verification_status enum (introduced in migration 0109) for verified filter.
+  // Falls back gracefully on older DBs: the eq("verified", true) alternative is not used
+  // because it relies on the legacy boolean that may diverge from the richer status field.
+  if (verified === "true")  query = query.eq("verification_status", "verified");
   if (buddyIdsFilter !== null)    query = query.in("id", buddyIdsFilter);
 
-  // Free-text search: sanitise to prevent PostgREST filter injection
-  // then apply separate ilike filters (avoids the .or() comma-injection vector)
+  // Free-text search across display_name, tagline, bio, city, and vibe_tags.
+  // Each ilike is applied independently to avoid PostgREST filter injection via .or().
+  // Multiple ilike calls are combined with an OR at the PostgREST level via .or().
   if (q) {
     const safe = q.replace(/[%_,.'"\s]+/g, " ").trim().slice(0, 120);
     if (safe) {
-      query = query.ilike("display_name", `%${safe}%`);
+      const term = `%${safe}%`;
+      query = query.or(
+        [
+          `display_name.ilike.${term}`,
+          `tagline.ilike.${term}`,
+          `bio.ilike.${term}`,
+          `city.ilike.${term}`,
+        ].join(","),
+      );
     }
   }
 

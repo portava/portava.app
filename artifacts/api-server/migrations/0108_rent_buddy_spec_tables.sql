@@ -86,7 +86,10 @@ CREATE POLICY bae_own_write   ON buddy_availability_exceptions FOR ALL
   USING (buddy_id IN (SELECT id FROM rent_buddy_profiles WHERE user_id = auth.uid()));
 CREATE POLICY bae_svc         ON buddy_availability_exceptions FOR ALL USING (auth.role() = 'service_role');
 
-CREATE INDEX IF NOT EXISTS bae_buddy_date_idx ON buddy_availability_exceptions (buddy_id, exception_date);
+-- Unique constraint required by the bulk-upsert endpoint (onConflict: "buddy_id,exception_date")
+ALTER TABLE buddy_availability_exceptions
+  ADD CONSTRAINT IF NOT EXISTS bae_buddy_date_unique UNIQUE (buddy_id, exception_date);
+
 CREATE INDEX IF NOT EXISTS bae_date_range_idx ON buddy_availability_exceptions (exception_date, end_date);
 
 -- ── buddy_booking_events ───────────────────────────────────────────────────────
