@@ -55,6 +55,8 @@ import { RichText } from '../../src/components/RichText';
 import { CompassTelegraphTray } from '../../src/components/CompassTelegraphTray';
 import { checkCompassTelegraphAvailable, type CompassTelegraphCard } from '../../src/services/compass';
 import { CompassCardMessage } from '../../src/components/CompassCardMessage';
+import { CircleStatusCardMessage } from '../../src/components/CircleStatusCardMessage';
+import { checkCircleMembership } from '../../src/services/circle';
 import { sendMessage } from '../../src/services/messaging';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
@@ -674,6 +676,7 @@ function MessageBubble({
   onRetry,
   onRetryTranslation,
   currentUserId,
+  isCircleMember,
 }: {
   item: Message;
   mine: boolean;
@@ -688,6 +691,7 @@ function MessageBubble({
   onRetry?: () => void;
   onRetryTranslation?: () => void;
   currentUserId?: string;
+  isCircleMember?: boolean | null;
 }) {
   const [pickerPayload, setPickerPayload] = useState<AddToTripPayload | null>(null);
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
@@ -747,6 +751,23 @@ function MessageBubble({
     return (
       <Pressable onLongPress={onLongPress} delayLongPress={300}>
         <CompassCardMessage body={item.body ?? ''} mine={mine} />
+      </Pressable>
+    );
+  }
+
+  // Circle status card — check-in or meeting-point update from the Circle feature
+  if (item.msgType === 'circle_status_card') {
+    const payload = (() => { try { return JSON.parse(item.body ?? ''); } catch { return null; } })();
+    return (
+      <Pressable onLongPress={onLongPress} delayLongPress={300}>
+        <CircleStatusCardMessage
+          subtype={payload?.subtype ?? item.subtype ?? null}
+          venueLabel={payload?.venueLabel ?? null}
+          approxArea={payload?.approxArea ?? null}
+          senderName={item.senderName}
+          mine={mine}
+          isCircleMember={isCircleMember}
+        />
       </Pressable>
     );
   }
@@ -1016,6 +1037,7 @@ export default function TelegraphThread() {
   const [meetupSheetCtx, setMeetupSheetCtx] = useState<MeetupSheetCtx | null>(null);
   const isDirect = threadType === 'direct' || threadType === 'rent_buddy_booking';
   const [isAcceptedMember, setIsAcceptedMember] = useState(isDirect);
+  const [isCircleMember, setIsCircleMember] = useState<boolean | null>(null);
   const [plannedByName, setPlannedByName] = useState<string | undefined>(undefined);
   const [blockingUser, setBlockingUser] = useState(false);
   const [showSafetySheet, setShowSafetySheet] = useState(false);
@@ -1100,6 +1122,22 @@ export default function TelegraphThread() {
       .catch(() => { if (!cancelled) setCompassTelegraphEnabled(false); });
     return () => { cancelled = true; };
   }, [id]);
+
+  // Circle membership — determines whether circle_status_card messages show
+  // their full content or a privacy-safe placeholder.  Relevant for trip and
+  // event threads; direct threads never contain circle cards.
+  // Fail-closed: isCircleMember stays null (→ placeholder) until confirmed true.
+  useEffect(() => {
+    const ctxType = threadType === 'trip' ? 'trip' : threadType === 'event' ? 'event' : null;
+    if (!ctxType || !contextId) return;
+    // Reset immediately so stale membership from a prior context never bleeds through.
+    setIsCircleMember(null);
+    let cancelled = false;
+    checkCircleMembership(ctxType, contextId)
+      .then((member) => { if (!cancelled) setIsCircleMember(member); })
+      .catch(() => { if (!cancelled) setIsCircleMember(false); });
+    return () => { cancelled = true; };
+  }, [threadType, contextId]);
 
   async function toggleHideAiSuggestions() {
     if (!id) return;
@@ -1518,6 +1556,7 @@ export default function TelegraphThread() {
                 onRetry={mine && m.clientId ? () => retrySend(m.clientId!) : undefined}
                 onRetryTranslation={!mine && m.id ? () => { retryTranslation(m.id).catch(() => {}); } : undefined}
                 currentUserId={userId ?? undefined}
+                isCircleMember={isCircleMember}
               />
             </View>
           );

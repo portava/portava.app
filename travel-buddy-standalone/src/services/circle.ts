@@ -109,6 +109,28 @@ async function authedFetch(path: string, opts: RequestInit = {}): Promise<Respon
   });
 }
 
+// ── Membership check ──────────────────────────────────────────────────────────
+
+/**
+ * Returns true if the current user is an accepted Circle member for the given
+ * context (trip or event).  Returns false on any error — never throws.
+ * Used by the Telegraph thread to gate circle_status_card rendering.
+ */
+export async function checkCircleMembership(
+  contextType: 'trip' | 'event',
+  contextId: string,
+): Promise<boolean> {
+  if (!isSupabaseConfigured || !apiBase()) return false;
+  try {
+    const res = await authedFetch(`/api/circle/contexts/${contextType}/${contextId}/is-member`);
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.isMember === true;
+  } catch {
+    return false;
+  }
+}
+
 // ── Global settings ───────────────────────────────────────────────────────────
 
 export async function getCircleSettings(): Promise<ServiceResult<CircleSettings>> {

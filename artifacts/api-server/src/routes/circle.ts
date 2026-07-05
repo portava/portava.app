@@ -256,6 +256,7 @@ async function postCircleStatusCard(
   contextId: string,
   actorId: string,
   cardSubtype: string,
+  extra?: { venueLabel?: string | null; approxArea?: string | null },
 ): Promise<void> {
   try {
     let threadId: string | null = null;
@@ -280,14 +281,19 @@ async function postCircleStatusCard(
 
     if (!threadId) return; // No Telegraph thread for this context — no-op.
 
-    // Body stores ONLY the subtype — no status/venue/location details.
-    // Clients fetch Circle details via the authorized Circle API after tapping the card.
+    // Body stores the subtype and, for meeting-point cards, a privacy-safe location label.
+    // No GPS, precise venues, or personally identifying location details are stored here —
+    // only the user-supplied venue/approximate label which the host deliberately shared.
+    const bodyObj: Record<string, unknown> = { subtype: cardSubtype };
+    if (extra?.venueLabel)  bodyObj["venueLabel"]  = extra.venueLabel;
+    if (extra?.approxArea)  bodyObj["approxArea"]  = extra.approxArea;
+
     await sc.from("messages").insert({
       thread_id: threadId,
       sender_id: actorId,
       msg_type:  "circle_status_card",
       subtype:   cardSubtype,
-      body:      JSON.stringify({ subtype: cardSubtype }),
+      body:      JSON.stringify(bodyObj),
     });
   } catch { /* non-fatal — card delivery must never block Circle operations */ }
 }
@@ -772,6 +778,25 @@ router.get("/circle/contexts/:type/:id/members", async (req, res) => {
     offset:     offsetParam,
     hasMore:    offsetParam + limitParam < totalCount,
   });
+});
+
+// ── GET /circle/contexts/:type/:id/is-member ──────────────────────────────────
+// Lightweight membership check — returns { isMember: boolean } without exposing
+// member lists or presence data.  Safe to call from any authenticated user.
+
+router.get("/circle/contexts/:type/:id/is-member", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { type, id } = req.params;
+  if (!validateContextType(res, type)) return;
+  if (!validateContextId(res, id)) return;
+
+  const isMember = await isAcceptedMember(sc, user.id, type as ContextType, id);
+  res.status(200).json({ isMember });
 });
 
 // ── GET /circle/contexts/:type/:id/who-can-see-me ─────────────────────────────
@@ -1320,8 +1345,11 @@ router.post("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
       await sendCircleNotifications(sc, recipients, "circle.meeting_point_updated", {
         actor: actorName, contextTitle, contextType: type, contextId: id,
       });
-      // Telegraph status card: subtype only — no venue/location data in body (server-side privacy).
-      void postCircleStatusCard(sc, type as ContextType, id, user.id, "meeting_point");
+      // Telegraph status card: includes user-supplied venue/approx label (host-chosen, not GPS).
+      void postCircleStatusCard(sc, type as ContextType, id, user.id, "meeting_point", {
+        venueLabel: (data as any)?.venue_label       ?? null,
+        approxArea: (data as any)?.approximate_label ?? null,
+      });
     } catch { /* non-fatal */ }
   })();
 
@@ -1399,7 +1427,10 @@ router.patch("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
       await sendCircleNotifications(sc, recipients, "circle.meeting_point_updated", {
         actor: actorName, contextTitle, contextType: type, contextId: id,
       });
-      void postCircleStatusCard(sc, type as ContextType, id, user.id, "meeting_point");
+      void postCircleStatusCard(sc, type as ContextType, id, user.id, "meeting_point", {
+        venueLabel: (data as any)?.venue_label       ?? null,
+        approxArea: (data as any)?.approximate_label ?? null,
+      });
     } catch { /* non-fatal */ }
   })();
 
