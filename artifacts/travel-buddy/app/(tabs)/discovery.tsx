@@ -25,7 +25,6 @@ import { getAvailableNow, type BuddyProfile } from '../../src/services/rentABudd
 import { CompassBuddyRow } from '../../src/components/compass/CompassBuddyRow';
 import { useSession } from '../../src/context/SessionContext';
 import { useLocationContext } from '../../src/context/LocationContext';
-import { LocationChip } from '../../src/components/LocationChip';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { FollowingHighlightsStrip } from '../../src/components/FollowingHighlightsStrip';
 import { useFollowingHighlights } from '../../src/hooks/useFollowingHighlights';
@@ -303,15 +302,6 @@ export default function DiscoveryHub() {
     setManualCity(place.city ?? place.name).catch(() => {});
   }, [setManualCity]);
 
-  // Derive LocationChip props from current location state (no coordinates exposed)
-  const locationChipProps = (() => {
-    if (!locationState.place.city) return null;
-    if (locationState.source === 'manual_city') {
-      return { variant: 'trip_city' as const, label: locationState.place.city };
-    }
-    return { variant: 'current_city' as const, label: locationState.place.city };
-  })();
-
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       {/* ── Search entry bar ── */}
@@ -333,22 +323,19 @@ export default function DiscoveryHub() {
         <View style={styles.headerLeft}>
           <Compass size={22} color={color.signal} />
           <Text style={styles.headerTitle}>Discover</Text>
-          {locationChipProps && (
-            <LocationChip {...locationChipProps} size="sm" muted />
-          )}
         </View>
         <View style={styles.headerRight}>
+          <DestinationBar destination={destination} onSelectPlace={handleSelectPlaceFromBar} />
           {isAuthed && (
             <Pressable
               style={styles.sharePlaceBtn}
               onPress={() => setSubmitPlaceOpen(true)}
-              hitSlop={8}
+              hitSlop={12}
+              accessibilityLabel="Share a place"
             >
-              <PlusCircle size={16} color={color.signal} />
-              <Text style={styles.sharePlaceBtnText}>Share a Place</Text>
+              <PlusCircle size={20} color={color.signal} />
             </Pressable>
           )}
-          <DestinationBar destination={destination} onSelectPlace={handleSelectPlaceFromBar} />
         </View>
       </View>
 
@@ -631,6 +618,7 @@ export default function DiscoveryHub() {
               viewMode={viewMode}
               fallbackZoom={destinationZoom}
               sortBy={activeFilters.sortBy ?? null}
+              bottomInset={insets.bottom + 100}
             />
           </View>
         ) : (
@@ -653,6 +641,7 @@ export default function DiscoveryHub() {
             userLng={locationState.coords?.lng ?? null}
             onFiltersChange={handleFiltersChange}
             fallbackZoom={destinationZoom}
+            bottomInset={insets.bottom + 100}
           />
         )}
       </View>
@@ -672,8 +661,8 @@ export default function DiscoveryHub() {
         onSelect={handlePickDestination}
       />
 
-      {/* Layover Mode floating entry */}
-      <Pressable style={styles.layoverFab} onPress={() => setLayoverOpen(true)}>
+      {/* Layover Mode floating entry — positioned above the floating tab bar */}
+      <Pressable style={[styles.layoverFab, { bottom: insets.bottom + 88 }]} onPress={() => setLayoverOpen(true)}>
         <Plane size={16} color="#fff" />
         <Text style={styles.layoverFabText}>Layover Mode</Text>
       </Pressable>
@@ -738,20 +727,14 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   sharePlaceBtn: {
-    flexDirection: 'row',
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: space.sm,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
+    justifyContent: 'center',
     backgroundColor: color.signal + '12',
     borderWidth: 1,
     borderColor: color.signal + '30',
-  },
-  sharePlaceBtnText: {
-    fontSize: 11,
-    fontWeight: '700' as const,
-    color: color.signal,
   },
   headerTitle: {
     ...t.heading,
@@ -770,8 +753,8 @@ const styles = StyleSheet.create({
   },
   tabBarContent: {
     paddingHorizontal: space.md,
-    gap: space.xs,
-    paddingVertical: space.sm,
+    gap: space.sm,
+    paddingVertical: 10,
   },
   viewToggle: {
     flexDirection: 'row',
@@ -839,26 +822,27 @@ const styles = StyleSheet.create({
   },
   modeBarContent: {
     paddingHorizontal: space.md,
-    paddingVertical: space.xs,
-    gap: space.xs,
+    paddingVertical: 6,
+    gap: space.sm,
   },
   modeChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: space.sm,
-    paddingVertical: 4,
+    gap: 5,
+    paddingHorizontal: space.md,
+    paddingVertical: 7,
     borderRadius: radius.pill,
     borderWidth: 1,
     borderColor: 'transparent',
     backgroundColor: color.haze,
+    minHeight: 34,
   },
   modeChipActive: {
     backgroundColor: color.signal + '14',
     borderColor: color.signal + '50',
   },
   modeChipLabel: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
     color: color.mute,
   },
@@ -868,7 +852,7 @@ const styles = StyleSheet.create({
   agePickerRow: {
     flexDirection: 'row',
     paddingHorizontal: space.md,
-    paddingVertical: space.xs,
+    paddingVertical: space.sm,
     borderBottomWidth: 1,
     borderBottomColor: color.haze,
     backgroundColor: color.paper,
@@ -990,7 +974,6 @@ const styles = StyleSheet.create({
   },
   layoverFab: {
     position: 'absolute',
-    bottom: 24,
     right: 20,
     flexDirection: 'row',
     alignItems: 'center',
@@ -1043,13 +1026,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: space.sm,
     marginHorizontal: space.lg,
-    marginVertical: space.xs,
+    marginTop: space.sm,
+    marginBottom: space.xs,
     backgroundColor: color.paperRaised,
     borderWidth: 1,
     borderColor: color.haze,
     borderRadius: radius.md,
     paddingHorizontal: space.md,
-    paddingVertical: 10,
+    paddingVertical: 12,
+    minHeight: 44,
   },
   searchEntryText: {
     ...t.body,

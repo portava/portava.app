@@ -227,6 +227,8 @@ interface DiscoveryCategoryTabProps {
   fallbackZoom?: number;
   /** Called whenever the user changes radius, open-now, or min-rating. */
   onFiltersChange?: (filters: DiscoveryFilters) => void;
+  /** Extra padding at the bottom of the list to clear the floating nav bar. */
+  bottomInset?: number;
 }
 
 export function DiscoveryCategoryTab({
@@ -247,6 +249,7 @@ export function DiscoveryCategoryTab({
   userLng,
   fallbackZoom,
   onFiltersChange,
+  bottomInset,
 }: DiscoveryCategoryTabProps) {
   const [places, setPlaces]         = useState<DiscoveryPlace[]>([]);
   const [loading, setLoading]       = useState(false);
@@ -362,7 +365,7 @@ export function DiscoveryCategoryTab({
               showDistance={filters.sortBy === 'nearest'}
             />
           )}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[styles.list, bottomInset != null ? { paddingBottom: bottomInset } : undefined]}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl

@@ -1,0 +1,262 @@
+Polish Discovery Screen Layout and Spacing
+
+Goal:
+Clean up the Discovery screen UI shown in preview. The screen currently looks crowded, with overlapping header controls, cramped filter chips, skeleton cards too close to the top, and the bottom nav floating over content awkwardly.
+
+Do an audit-first UI polish. Do not rebuild Discovery. Do not change backend logic. Only fix layout, spacing, safe-area handling, component sizing, and visual hierarchy.
+
+PHASE 1 — Audit Current Discovery Layout
+
+Inspect:
+- Discovery screen route/component
+- top search/header component
+- city selector
+- Share a Place button
+- filter chip row
+- category tab row
+- Compass Picks section
+- feed/skeleton loading cards
+- bottom floating nav/menu
+- safe-area padding
+- keyboard/search focus behavior
+- responsive phone preview sizing
+
+Report briefly:
+- which components are overlapping
+- which styles cause crowding
+- which elements need wrapping/removal/resizing
+- what files will be changed
+
+PHASE 2 — Fix Header Layout
+
+Current issue:
+The search bar, “Share a Place” button, and city selector are all fighting for the same horizontal space.
+
+Required layout:
+- Row 1: Search bar full width.
+- Row 2: Discovery title on the left, city selector on the right.
+- Optional action: move “Share a Place” into a compact icon/button below or into the title row only if it fits.
+
+Recommended mobile header:
+
+Row 1:
+- Search input full width
+- height 44
+- rounded
+- placeholder: “Search travelers, events, places…”
+
+Row 2:
+- Left: “Discover”
+- Right: city pill, example “Bangkok”
+- Optional: small “Share” icon button after city, not full text if crowded
+
+Rules:
+- No overlap.
+- Do not place Share a Place on top of the title.
+- City selector should not cover text.
+- Header should respect top safe area.
+- Keep padding consistent: 16px horizontal.
+- Reduce excessive vertical height.
+
+Validation:
+- Search bar is readable.
+- Discover title is readable.
+- City pill does not overlap title.
+- Share action does not overlap anything.
+
+PHASE 3 — Fix Filter Chip Rows
+
+Current issue:
+Filter chips look cramped and wrap/clip awkwardly.
+
+Required:
+- Horizontal scroll chip rows.
+- Chips should not squeeze each other.
+- First row chips:
+  - Near Me
+  - In City
+  - Going Soon
+  - Around Me
+- Second row if needed:
+  - Any age
+  - language/vibe filters if present
+
+Rules:
+- Use horizontal ScrollView.
+- Hide horizontal scrollbar.
+- Add consistent gap between chips.
+- Add left/right padding.
+- Chips should have minimum height 34–36.
+- Active chip should be visually clear.
+- No chip should be clipped by screen edge.
+
+Validation:
+- Chips scroll smoothly.
+- No clipped chip text.
+- Active states still work.
+
+PHASE 4 — Fix Category Tabs
+
+Current issue:
+The For You / Places / Food / Nightlife row is close to the filters and visually crowded.
+
+Required:
+- Give category tabs their own horizontal row.
+- Add top margin after filters.
+- Keep tabs scrollable if they do not fit.
+- Active tab should be obvious.
+- Icons and labels should align vertically.
+
+Rules:
+- Do not let tabs overlap the skeleton/feed.
+- Keep consistent spacing.
+- Category row should remain under filters and above content.
+
+Validation:
+- For You tab is clean.
+- Places/Food/Nightlife fit or scroll.
+- No overlap with Compass Picks.
+
+PHASE 5 — Fix Content Spacing
+
+Current issue:
+Compass Picks starts too close to the tabs, and skeleton cards look cramped.
+
+Required:
+- Add section padding.
+- Compass Picks title should have clear top margin.
+- Skeleton cards should have consistent card size and spacing.
+- Cards should not touch edges.
+- Feed content should have bottom padding so bottom nav does not cover it.
+
+Rules:
+- Horizontal card carousel should have padding-left 16.
+- Card gap should be 12–14.
+- Skeleton card height should be consistent.
+- Feed list/card stack should have bottom padding at least bottom nav height + safe area + 24.
+
+Validation:
+- Compass Picks has breathing room.
+- Skeleton cards align.
+- Bottom content is not hidden behind nav.
+
+PHASE 6 — Fix Bottom Navigation / Floating Menu
+
+Current issue:
+Bottom nav overlaps content and looks crowded around the center plus button. There is also visible text overlap/stray label around the right side.
+
+Required:
+- Bottom nav should sit inside safe area cleanly.
+- It should not cover feed content.
+- Center plus button should be centered and not collide with labels.
+- Labels should be short and readable.
+- Remove any stray/overlapping “layover mode” text if it is not intentionally part of nav.
+- If Layover Mode is a toggle, move it above nav as a small pill or into profile/settings, not overlapping tabs.
+
+Bottom nav tabs:
+- Pulse
+- Explore
+- Create
+- Trips
+- Passport
+
+Rules:
+- Floating menu background should be semi-transparent if desired, but readable.
+- Use blur/opacity consistently.
+- Tap targets at least 44px.
+- Active tab highlight should not distort layout.
+- Add screen bottom padding so content scrolls above nav.
+
+Validation:
+- Nav labels do not overlap.
+- Plus button is centered.
+- Content scrolls above nav.
+- Safe area respected.
+
+PHASE 7 — Fix Loading Skeletons
+
+Current issue:
+Skeleton cards appear too plain and oddly spaced.
+
+Required:
+- Skeletons should match final card dimensions.
+- Use consistent rounded corners.
+- Add spacing between skeleton title lines.
+- Keep skeletons inside card boundaries.
+- Do not show skeletons under overlapped nav/header.
+
+Validation:
+- Loading state looks intentional.
+- No skeleton overlaps.
+
+PHASE 8 — Responsive Mobile Rules
+
+Ensure layout works on:
+- iPhone small width
+- iPhone Pro width
+- Android common width
+- preview frame in Replit
+
+Rules:
+- Header actions collapse gracefully.
+- Share button becomes icon-only on narrow screens.
+- City selector truncates cleanly.
+- Chips/tabs scroll horizontally.
+- No absolute-positioned text overlaps.
+- Safe-area top and bottom are respected.
+
+Validation:
+- No overlap at 360px width.
+- No overlap at 390px width.
+- No overlap at 430px width.
+
+PHASE 9 — Keep Backend Truth Untouched
+
+Do not change:
+- Discovery API
+- Compass recommendation logic
+- search endpoint
+- filter backend
+- city selection backend
+- profile/trip/event data logic
+- auth/session logic
+
+Only change:
+- layout
+- styling
+- safe-area spacing
+- scroll behavior
+- component composition
+- loading/empty UI
+
+PHASE 10 — Tests / Checks
+
+Run:
+- typecheck
+- lint if available
+- existing tests if quick
+- app preview smoke test
+
+Manual QA:
+- Discovery loads.
+- Search bar opens search.
+- City selector still works.
+- Share a Place still works or routes correctly.
+- Filter chips still toggle.
+- Category tabs still switch.
+- Compass Picks still loads.
+- Feed still scrolls.
+- Bottom nav routes correctly.
+- No overlap on preview.
+
+Final acceptance:
+- Header is clean.
+- Search bar is full-width and readable.
+- Discover title, city selector, and share action do not overlap.
+- Filter chips are scrollable and not clipped.
+- Category tabs are spaced properly.
+- Compass Picks and skeletons have breathing room.
+- Bottom nav does not cover content.
+- Center plus button is aligned.
+- No stray overlapping text appears.
+- No backend logic was changed.
