@@ -5057,6 +5057,19 @@ router.post("/api/internal/buddy-requests/expire", async (req, res) => {
   let noShowEscalatedCount = 0;
   if (staleNoShows && staleNoShows.length > 0) {
     for (const bk of staleNoShows) {
+      // Derive the original reporter from the no_show_reported event —
+      // do NOT assume traveler; either party can file a no-show report.
+      const { data: noShowEvent } = await serviceClient
+        .from("buddy_booking_events")
+        .select("actor_user_id")
+        .eq("booking_id", bk.id as string)
+        .eq("event", "no_show_reported")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      // Fall back to traveler_id only if the event row is missing (data inconsistency)
+      const reporterUserId: string = (noShowEvent as any)?.actor_user_id ?? (bk.traveler_id as string);
+
       const { data: existingDispute } = await serviceClient
         .from("rent_buddy_disputes")
         .select("id")
@@ -5069,7 +5082,7 @@ router.post("/api/internal/buddy-requests/expire", async (req, res) => {
       if (!disputeId) {
         const { data: newDispute } = await serviceClient
           .from("rent_buddy_disputes")
-          .insert({ booking_id: bk.id, raised_by: bk.traveler_id, reason: "no_show", status: "open" })
+          .insert({ booking_id: bk.id, raised_by: reporterUserId, reason: "no_show", status: "open" })
           .select("id")
           .maybeSingle();
         disputeId = (newDispute as any)?.id ?? null;
@@ -5081,7 +5094,7 @@ router.post("/api/internal/buddy-requests/expire", async (req, res) => {
         .eq("id", bk.id as string);
 
       void serviceClient.from("buddy_booking_events").insert({
-        booking_id: bk.id, actor_user_id: bk.traveler_id, event: "no_show_escalated",
+        booking_id: bk.id, actor_user_id: reporterUserId, event: "no_show_escalated",
         from_status: "no_show_pending", to_status: "disputed",
         metadata: { reason: "grace_period_expired", dispute_id: disputeId },
       });
@@ -5218,8 +5231,12 @@ router.post("/api/buddy-bookings/:bookingId/check-in", async (req, res) => {
   const { bookingId } = req.params;
   const { status: checkinStatus, broadArea, role } = req.body ?? {};
 
-  if (!checkinStatus) {
-    return res.status(400).json({ error: "invalid_payload", message: "status is required." });
+  const validCheckinStatuses = ["arrived", "started", "could_not_find", "unsafe", "missed"];
+  if (!checkinStatus || !validCheckinStatuses.includes(checkinStatus)) {
+    return res.status(400).json({
+      error: "invalid_payload",
+      message: `status must be one of: ${validCheckinStatuses.join(", ")}`,
+    });
   }
 
   const { data: booking } = await serviceClient
@@ -5232,12 +5249,14 @@ router.post("/api/buddy-bookings/:bookingId/check-in", async (req, res) => {
   const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
   if (!party) return;
 
-  await serviceClient.from("rent_buddy_safety_checkins").insert({
+  // Fail closed: evidence row must be created or the check-in is rejected
+  const { error: checkinInsertErr } = await serviceClient.from("rent_buddy_safety_checkins").insert({
     booking_id: bookingId,
     user_id: auth.user.id,
     checkin_type: checkinStatus,
     response: broadArea ?? null,
   });
+  if (checkinInsertErr) return sendError(res, "db_error", checkinInsertErr.message);
 
   void serviceClient.from("buddy_booking_events").insert({
     booking_id: bookingId, actor_user_id: auth.user.id, event: "checkin",
