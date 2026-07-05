@@ -1,0 +1,2214 @@
+Finish Travel Buddy Rent a Buddy End-to-End
+
+Goal:
+Finish Rent a Buddy as a real, backend-wired, safety-first marketplace inside Travel Buddy.
+
+Rent a Buddy lets travelers book verified locals or experienced travelers for safe travel help, including:
+- city help
+- social exploration
+- language support
+- nightlife guidance
+- shopping help
+- arrival support
+- food / hidden-gem help
+- content / photo / video help
+- itinerary help
+- trip or event support
+- local logistics
+
+Core boundary:
+Rent a Buddy is not dating, not escorting, not adult services, not off-app cash arrangements, and not private unmoderated meetups.
+
+Use real database/backend truth only. Do not fake:
+- buddies
+- availability
+- bookings
+- prices
+- reviews
+- verification
+- payouts
+- payments
+- ratings
+- profile status
+- booking status
+- Telegraph threads
+- admin approval
+
+Do not rebuild unrelated systems.
+
+PHASE 1 — Audit Current Rent a Buddy State
+
+First inspect the current app before patching.
+
+Find:
+- Rent a Buddy screens/routes
+- Discovery buddy cards
+- Passport buddy profile sections
+- Search buddy results
+- Compass buddy recommendations
+- existing buddy database tables
+- existing booking tables
+- existing payment/deposit tables if any
+- existing review tables
+- existing verification/trust tables
+- existing availability tables
+- existing Telegraph/chat tables
+- existing notification system
+- existing report/block/safety system
+- existing admin/moderation routes
+- current placeholder/demo/local-only data
+- broken buttons/no-op actions
+- current tests
+- canonical migrations directory
+
+Report briefly before changing:
+- what is real
+- what is placeholder
+- what backend tables exist
+- what endpoints exist
+- what user actions are broken
+- what must be migrated or added
+- which files/routes/components will be touched
+
+PHASE 2 — Product Scope Lock
+
+Rent a Buddy V1 should support:
+
+Traveler side:
+- browse buddies
+- search/filter buddies
+- view buddy profile/listing
+- see services, price, languages, areas, availability, trust/verification
+- request booking
+- pay deposit or full amount only if a real payment backend exists
+- message through Telegraph after request/booking according to policy
+- cancel request/booking according to rules
+- leave review after completed booking
+- report/block buddy
+- rebook completed buddy
+- privately save/favorite buddy
+
+Buddy side:
+- apply/enable buddy profile
+- create service listings
+- set areas served
+- set languages
+- set availability
+- set pricing
+- accept/decline booking requests
+- message traveler through Telegraph
+- mark booking progress
+- complete booking
+- receive reviews
+- view earnings/payout status only if real payment backend exists
+
+Admin side:
+- approve/reject buddy applications
+- suspend/unsuspend buddy profile
+- moderate listings
+- view reports
+- resolve disputes
+- manage unsafe categories/boundaries
+- pause marketplace by city/category/global kill switch
+- hold payouts if payment exists
+
+V1 non-goals unless already built:
+- dating matching
+- adult services
+- escort-style companionship
+- instant off-app calls
+- cash-only marketplace
+- public booked-by lists
+- public saved-by lists
+- automatic payouts without provider/admin confirmation
+- real-time live GPS sharing by default
+
+PHASE 3 — Database Model
+
+Use existing tables if present. Extend rather than duplicate.
+
+Suggested core tables:
+
+buddy_profiles
+- id
+- user_id
+- display_title
+- bio
+- status: draft / pending_review / approved / rejected / suspended / disabled
+- verification_status: unverified / pending / verified / rejected
+- home_city
+- home_country
+- areas_served
+- languages
+- service_categories
+- hourly_rate
+- currency
+- minimum_hours
+- deposit_required
+- deposit_type: fixed / percent / none
+- deposit_amount
+- cancellation_policy
+- response_time_minutes
+- rating_average
+- review_count
+- completed_booking_count
+- profile_photo_url
+- cover_photo_url
+- safety_acknowledged_at
+- boundaries_acknowledged_at
+- first_booking_safety_acknowledged_at if needed
+- is_paused
+- vacation_mode_enabled
+- created_at
+- updated_at
+- deleted_at
+
+buddy_services
+- id
+- buddy_profile_id
+- title
+- description
+- included
+- not_included
+- category
+- risk_level: low / medium / high
+- price_type: hourly / fixed / package
+- price_amount
+- currency
+- duration_minutes
+- max_group_size
+- location_type: meet_in_person / remote / both
+- status: active / paused / hidden / deleted
+- created_at
+- updated_at
+
+buddy_availability
+- id
+- buddy_profile_id
+- day_of_week
+- start_time
+- end_time
+- timezone
+- is_active
+- created_at
+- updated_at
+
+buddy_availability_exceptions
+- id
+- buddy_profile_id
+- starts_at
+- ends_at
+- reason
+- is_unavailable
+- created_at
+- updated_at
+
+buddy_booking_requests
+- id
+- traveler_id
+- buddy_profile_id
+- service_id nullable
+- status:
+  - draft
+  - requested
+  - accepted
+  - declined
+  - cancelled_by_traveler
+  - cancelled_by_buddy
+  - expired
+  - scheduled
+  - in_progress
+  - completed_pending_traveler_confirmation
+  - completed
+  - traveler_no_show
+  - buddy_no_show
+  - disputed_no_show
+  - disputed
+  - refunded
+- requested_start_at
+- requested_end_at
+- timezone
+- city
+- meeting_area_text
+- meeting_location_visibility
+- traveler_notes
+- buddy_notes
+- estimated_total
+- deposit_amount
+- currency
+- payment_status:
+  - not_required
+  - pending
+  - deposit_paid
+  - paid
+  - failed
+  - refund_pending
+  - refund_approved
+  - refund_denied
+  - partial_refund
+  - credit_issued
+  - refunded
+- refund_amount
+- cancellation_policy_snapshot
+- cancellation_reason
+- decline_reason
+- accepted_at
+- declined_at
+- cancelled_at
+- started_at
+- completed_at
+- expires_at
+- created_at
+- updated_at
+
+buddy_booking_checkins
+- id
+- booking_id
+- user_id
+- role: traveler / buddy
+- status: arrived / started / could_not_find / unsafe / missed
+- broad_area_text
+- created_at
+
+buddy_disputes
+- id
+- booking_id
+- opened_by
+- reason:
+  - no_show
+  - unsafe_behavior
+  - wrong_service
+  - payment_refund_issue
+  - harassment
+  - off_app_payment_request
+  - adult_dating_service_violation
+  - location_meeting_issue
+  - cancellation_disagreement
+  - other
+- details
+- status: open / under_review / resolved / rejected
+- admin_resolution
+- resolved_by
+- resolved_at
+- created_at
+- updated_at
+
+buddy_booking_events
+- id
+- booking_id
+- actor_id nullable
+- event_type
+- metadata
+- visibility: user_timeline / admin_only
+- created_at
+
+buddy_change_requests
+- id
+- booking_id
+- requested_by
+- proposed_start_at
+- proposed_end_at
+- proposed_service_id
+- proposed_price
+- reason
+- status: pending / accepted / declined / expired
+- created_at
+- updated_at
+
+buddy_reviews
+- id
+- booking_id
+- reviewer_id
+- reviewed_user_id
+- buddy_profile_id
+- rating
+- review_text
+- tags
+- moderation_status
+- created_at
+- updated_at
+
+buddy_favorites
+- id
+- user_id
+- buddy_profile_id
+- created_at
+
+Optional if real payment exists:
+
+buddy_payments
+- id
+- booking_id
+- payer_id
+- payee_user_id
+- amount
+- currency
+- type: deposit / full / refund / payout
+- provider
+- provider_payment_id
+- status
+- created_at
+- updated_at
+
+buddy_payouts
+- id
+- booking_id
+- buddy_user_id
+- amount
+- currency
+- status: pending / available / held / paid / refunded / disputed
+- provider_payout_id nullable
+- available_at
+- paid_at
+- created_at
+- updated_at
+
+Rules:
+- Use canonical migrations directory.
+- Add RLS if Supabase uses RLS.
+- Prefer additive migrations.
+- Do not drop existing data blindly.
+- Do not expose private location/safety/payment fields.
+- Do not expose booked-by users publicly.
+- Do not expose saved/favorited-by users publicly.
+
+PHASE 4 — Backend API
+
+Create or complete real backend routes.
+
+Traveler routes:
+- GET /api/buddies
+- GET /api/buddies/:id
+- GET /api/buddies/:id/services
+- GET /api/buddies/:id/availability
+- POST /api/buddies/:id/request
+- GET /api/me/buddy-bookings
+- GET /api/buddy-bookings/:id
+- POST /api/buddy-bookings/:id/cancel
+- POST /api/buddy-bookings/:id/check-in
+- POST /api/buddy-bookings/:id/report-no-show
+- POST /api/buddy-bookings/:id/dispute
+- POST /api/buddy-bookings/:id/change-request
+- POST /api/buddy-bookings/:id/review
+- POST /api/buddy-bookings/:id/report
+- POST /api/buddies/:id/favorite
+- POST /api/buddies/:id/unfavorite
+- POST /api/buddy-bookings/:id/rebook
+
+Buddy routes:
+- GET /api/me/buddy-profile
+- POST /api/me/buddy-profile
+- PATCH /api/me/buddy-profile
+- POST /api/me/buddy-profile/submit
+- POST /api/me/buddy-profile/pause
+- POST /api/me/buddy-profile/resume
+- GET /api/me/buddy-requests
+- POST /api/buddy-bookings/:id/accept
+- POST /api/buddy-bookings/:id/decline
+- POST /api/buddy-bookings/:id/start
+- POST /api/buddy-bookings/:id/complete
+- POST /api/buddy-bookings/:id/respond-change-request
+- PATCH /api/me/buddy-services/:id
+- POST /api/me/buddy-services
+- DELETE /api/me/buddy-services/:id
+- PATCH /api/me/buddy-availability
+- PATCH /api/me/buddy-availability-exceptions
+
+Admin routes:
+- GET /api/admin/buddies/pending
+- POST /api/admin/buddies/:id/approve
+- POST /api/admin/buddies/:id/reject
+- POST /api/admin/buddies/:id/suspend
+- POST /api/admin/buddies/:id/unsuspend
+- POST /api/admin/buddy-bookings/:id/resolve-dispute
+- GET /api/admin/buddy-reports
+- POST /api/admin/rent-a-buddy/kill-switch
+- POST /api/admin/rent-a-buddy/city-status
+- POST /api/admin/rent-a-buddy/category-status
+- POST /api/admin/buddy-payouts/:id/hold
+- POST /api/admin/buddy-payouts/:id/release
+
+Rules:
+- Use existing route style if different.
+- Enforce auth.
+- Enforce ownership.
+- Enforce admin permissions.
+- Validate all request bodies.
+- Use backend truth only.
+- No local-only booking state.
+- No fake success for payments/bookings.
+- No off-app payment instructions.
+- Return public-safe fields only to normal users.
+
+PHASE 5 — Buddy Application / Onboarding Checklist
+
+Goal:
+A buddy should not go public until their profile is complete and safe.
+
+Required checklist:
+- profile photo added
+- bio completed
+- service categories selected
+- at least one service created
+- areas served added
+- languages added
+- pricing set
+- availability set
+- safety boundaries acknowledged
+- non-dating/non-adult policy acknowledged
+- verification completed if required
+- admin approval completed
+
+Rules:
+- Show progress checklist to buddy.
+- Do not allow submission if required fields are missing.
+- Do not allow public listing until approval.
+- Checklist must use backend truth, not local-only completion.
+- Pending profile is not public.
+- Rejected/suspended/disabled buddies must not appear in Discovery/Search/Compass.
+- A user cannot book themselves.
+- Buddy can pause their profile.
+- Admin can suspend.
+
+Validation:
+- Incomplete buddy cannot submit.
+- User can create buddy draft.
+- User can submit complete application.
+- Pending buddy is not public.
+- Approved buddy appears publicly.
+- Rejected/suspended buddy disappears.
+- Self-booking is blocked.
+
+PHASE 6 — Verification Gate
+
+Goal:
+Rent a Buddy should require stronger trust than normal posting.
+
+Rules:
+- Buddy must be verified before public approval if verification exists.
+- Traveler may need verified account for higher-risk categories or in-person booking.
+- Verified home country/city should not be editable casually.
+- Verification badge should display without exposing private verification documents.
+- Admin can reject buddy application for failed verification.
+- High-risk categories can require verified traveler and verified buddy.
+
+Validation:
+- Unverified buddy cannot become publicly approved if policy requires verification.
+- Verification badge displays safely.
+- Private verification data never leaks.
+- Unverified traveler is blocked from high-risk bookings where required.
+
+PHASE 7 — Service Categories and Risk Levels
+
+Controlled categories:
+- Arrival Help
+- City Guide
+- Food & Hidden Gems
+- Nightlife Guide
+- Shopping Help
+- Language Support
+- Content / Photo / Video Help
+- Event Companion
+- Trip Support
+- Itinerary Help
+- Local Logistics
+- Safety Walkthrough
+
+Risk levels:
+- low: itinerary help, remote language support, shopping planning
+- medium: city guide, food/hidden gems, content help
+- high: nightlife guide, arrival support, late-night meetups
+
+Rules:
+- No dating category.
+- No adult/escort category.
+- No vague “companionship” wording without travel context.
+- Categories should be searchable/filterable.
+- Admin can hide unsafe categories or pause high-risk categories by city.
+- High-risk categories can require:
+  - verified buddy
+  - verified traveler
+  - public meeting area
+  - stricter cancellation/no-show rules
+  - extra safety reminder
+  - Safe Return prompt
+
+Validation:
+- Categories display consistently.
+- Unsafe category wording does not appear.
+- Search/filter works.
+- High-risk category triggers stricter safety rules.
+- Admin can pause risky category.
+
+PHASE 8 — Service Quality Standards
+
+Goal:
+Keep buddy listings useful and professional.
+
+Each service should include:
+- clear title
+- clear description
+- what is included
+- what is not included
+- expected duration
+- price
+- meeting type
+- max group size
+- category-specific rules
+
+Rules:
+- Block vague listings like “hang out with me” unless framed as approved travel help.
+- Block dating/adult/escort wording.
+- Flag suspicious service descriptions for moderation.
+- Require service descriptions to be specific enough for travelers to understand.
+- Empty/vague services cannot go live.
+
+Validation:
+- Empty/vague service cannot go live.
+- Unsafe wording is blocked or sent to moderation.
+- Approved services display clearly.
+
+PHASE 9 — Public Buddy Listing UI
+
+Buddy card should show:
+- circular avatar
+- display name
+- title
+- city/country
+- languages
+- categories
+- rating/review count
+- starting price
+- verified/trust badge
+- response time if available
+- reliability label if available
+- Save/Favorite if enabled
+- Like if enabled
+- View Profile button
+- Request Booking button
+
+Rules:
+- No Add Friend.
+- Follow button may appear only if using follow-only graph.
+- Save/favorite is not booking.
+- Like is not booking.
+- Follow is not booking.
+- Do not show exact address.
+- Do not show private phone/email.
+- Do not show booked-by users.
+- Do not show saved-by users.
+- Do not show private verification details.
+- Pending/suspended/rejected buddies must not appear.
+
+Validation:
+- Buddy cards render with real backend data.
+- Buttons work.
+- Cards hide suspended/unapproved buddies.
+- No private data leaks.
+- No fake placeholder cards remain.
+
+PHASE 10 — Buddy Detail Page
+
+Buddy detail page should show:
+- profile hero
+- name/title
+- verified/trust badges
+- city/areas served
+- languages
+- services offered
+- pricing
+- availability preview
+- reviews
+- portfolio/proof section if public-safe
+- safety boundaries
+- cancellation policy
+- Request Booking CTA
+- Save/Favorite
+- Telegraph CTA only when allowed
+- Report/Block menu
+
+Rules:
+- Telegraph should not expose direct contact before allowed booking/request state unless product allows controlled pre-booking questions.
+- If pre-booking questions are allowed, create a controlled Telegraph request thread.
+- Do not show personal phone/email/social handles.
+- Do not show exact live location.
+- Booking CTA must use backend request flow.
+- Pending/rejected/suspended profiles must not show public booking CTA.
+- Owner sees management controls.
+- Visitor sees public-safe profile only.
+
+Validation:
+- Detail page loads.
+- Request Booking opens booking flow.
+- Reviews load.
+- Save/Favorite works.
+- Report/Block works.
+- No fake placeholders remain.
+- No private fields leak.
+
+PHASE 11 — Buddy Portfolio / Proof
+
+Optional public-safe buddy profile sections:
+- public Postcards from buddy
+- places/gems they recommend
+- sample itineraries
+- approved reviews
+- languages
+- completed booking count label
+- service photos/videos
+
+Rules:
+- Do not show private trip/event/customer content.
+- Do not show booked-by users.
+- Do not expose traveler names unless review is public and allowed.
+- Media must follow Postcard/media moderation rules.
+- Hidden/private media must not appear.
+
+Validation:
+- Portfolio loads public-safe content.
+- Private booking content is hidden.
+- Reviews respect moderation.
+
+PHASE 12 — Search / Discovery / Compass Integration
+
+Rent a Buddy must appear in:
+- Discovery
+- Global Search
+- Compass recommendations
+- city/destination pages if present
+- Trip planning suggestions if relevant
+- Event support suggestions if relevant
+- Hidden Gem / Place area suggestions if relevant
+
+Rules:
+- Only approved/active buddies are shown.
+- Respect block/mute/report moderation.
+- Respect user recommendation settings.
+- Search by:
+  - city
+  - country
+  - service category
+  - language
+  - price
+  - rating
+  - availability
+  - keywords
+  - verified only
+  - risk/category
+- Compass can recommend buddies but cannot bypass safety/verification/access rules.
+- Compass explanations must be privacy-safe:
+  - “Good match for Spanish support in Tokyo.”
+  - not “because you were near this buddy at 11:43 PM.”
+- Compass should not recommend Rent a Buddy in cities where marketplace is not live.
+
+Validation:
+- Approved buddy appears in Discovery/Search.
+- Suspended/pending buddy does not.
+- Compass buddy cards open real profile.
+- Filters work.
+- No private location-history leak.
+
+PHASE 13 — Filtering and Sorting
+
+Filters:
+- city
+- category
+- language
+- price
+- rating
+- availability
+- verified only
+- broad distance/area if location permission allowed
+- group size
+- remote/in-person
+- risk level if useful
+
+Sorting:
+- best match
+- highest rated
+- available soon
+- price low/high
+- response time
+- newest
+- reliability
+
+Rules:
+- Filtering must query backend.
+- Do not fake filter results client-side from partial data.
+- Compass can provide “best match,” but backend eligibility/safety filters run first.
+- Distance should use broad/permission-safe location.
+- Suspended/pending buddies never rank.
+
+Validation:
+- Filters work.
+- Sort works.
+- Private/suspended buddies excluded.
+- Location privacy respected.
+
+PHASE 14 — Availability, Calendar, and Exceptions
+
+Goal:
+Booking requests should respect buddy availability.
+
+Availability features:
+- weekly recurring windows
+- unavailable dates
+- vacation mode
+- temporary pause
+- same-day cutoff
+- minimum notice
+- max advance booking window
+- max bookings per day
+- buffer time between bookings
+- timezone handling
+- booking duration validation
+
+Rules:
+- Booking request outside availability should be blocked or clearly marked as request-only.
+- Timezone must be stored and displayed.
+- Date/time picker should use the app calendar picker everywhere date is needed.
+- Do not double-book if accepted booking conflicts.
+- Pending requests may hold time only if product chooses.
+- Buddy can edit availability.
+- Vacation mode hides or marks unavailable.
+- Paused buddy should not be penalized for response SLA.
+
+Validation:
+- Availability saves.
+- Booking form uses calendar/date picker.
+- Timezone displays correctly.
+- Conflicting accepted booking is blocked.
+- Unavailable dates block requests.
+- Buffer time prevents back-to-back conflicts.
+- Vacation mode works.
+
+PHASE 15 — Traveler Requirements
+
+Goal:
+Protect buddies from unsafe or unserious bookings.
+
+Optional traveler requirements:
+- verified account required for in-person bookings
+- minimum Trust Score for high-risk categories
+- no active suspension
+- no unresolved severe disputes
+- payment/deposit required if payment exists
+- profile completed enough for buddy to evaluate request
+
+Rules:
+- Buddy can require verified travelers only if product allows.
+- App can enforce stricter rules for nightlife/arrival help.
+- Requirements should be shown before request.
+- Blocked users cannot book.
+- Suspended users cannot book.
+
+Validation:
+- Unverified traveler blocked where required.
+- Suspended traveler cannot book.
+- Requirements display clearly.
+- Blocked user cannot request buddy.
+
+PHASE 16 — Booking Request Flow
+
+Traveler booking flow:
+1. Choose service
+2. Choose date/time
+3. Choose duration if needed
+4. Add city/meeting area
+5. Add notes
+6. Review price/deposit
+7. Acknowledge safety rules if first booking or high-risk category
+8. Confirm request
+9. Booking status becomes requested
+10. Buddy gets notification
+11. Telegraph thread can be created according to policy
+
+Rules:
+- Booking request must be real DB row.
+- Booking status must be backend truth.
+- User cannot request their own buddy profile.
+- User cannot request suspended/unapproved buddy.
+- Required fields must be validated.
+- Meeting location should default to broad area, not exact private address.
+- Exact meeting point can be shared later inside Telegraph once accepted if product allows.
+- Request must have expires_at.
+
+Validation:
+- Traveler can request buddy.
+- Required fields validate.
+- Buddy receives request.
+- Booking appears in traveler dashboard.
+- Booking appears in buddy dashboard.
+- Request status is consistent.
+- Self-booking blocked.
+
+PHASE 17 — Request Expiration
+
+Goal:
+Pending requests should not stay open forever.
+
+Rules:
+- Booking requests expire after configured time, such as 24 or 48 hours.
+- Expired requests cannot be accepted.
+- Traveler and buddy receive status update.
+- Expired request should release any held availability.
+- Expiration should not count as decline unless product chooses.
+- Expired requests remain visible in history.
+
+Validation:
+- Pending request expires.
+- Buddy cannot accept expired request.
+- Dashboard shows expired status.
+- Held availability releases if applicable.
+
+PHASE 18 — Accept / Decline Flow
+
+Buddy can:
+- accept booking
+- decline booking
+- suggest changes later if supported
+- send decline reason
+
+Rules:
+- Only the buddy owner can accept/decline.
+- Cannot accept expired/cancelled/completed request.
+- Accepting creates scheduled booking.
+- Declining sets declined status.
+- Traveler receives notification.
+- Telegraph thread is created or activated after acceptance if policy says so.
+- Accepted booking blocks availability for that time.
+- Accepting should verify no current conflict.
+
+Validation:
+- Buddy accepts request.
+- Buddy declines request.
+- Traveler sees status update.
+- Notifications fire.
+- Availability conflict prevention works.
+
+PHASE 19 — Booking Change Requests
+
+Goal:
+Allow schedule/service changes without messy manual edits.
+
+Change request fields:
+- requested_by
+- proposed_start_at
+- proposed_end_at
+- proposed_service_id
+- proposed_price
+- reason
+- status: pending / accepted / declined / expired
+
+Rules:
+- Either party can request a change before booking starts.
+- Other party must accept.
+- Accepted change updates booking.
+- Payment difference should not be faked if payment system is not ready.
+- Change requests should be visible in Telegraph booking thread.
+- Expired/cancelled/completed bookings cannot be changed normally.
+
+Validation:
+- Traveler can propose change.
+- Buddy can accept/decline.
+- Booking updates only after acceptance.
+- Telegraph shows change card.
+
+PHASE 20 — Telegraph Integration
+
+Goal:
+Rent a Buddy communication should happen inside Telegraph.
+
+Rules:
+- Create a Telegraph thread for booking/request when allowed.
+- Thread participants:
+  - traveler
+  - buddy
+  - admin/support only if dispute/escalation requires and policy allows
+- No phone/email exposure.
+- Auto-translation works based on users’ default languages.
+- Booking card should appear inside Telegraph thread.
+- Booking card should show:
+  - booking status
+  - selected service
+  - date/time
+  - meeting area
+  - safety reminder
+  - cancellation policy
+  - change request button
+  - report/unsafe button
+- AI/Compass may recommend safety reminders or itinerary ideas into the thread.
+- Deleted/cancelled bookings should not expose private future messages to unauthorized users.
+- Telegraph membership is separate from follow relationship.
+- Booking does not auto-follow.
+- Follow does not grant booking/chat access.
+- Auto-translation should not alter booking facts.
+
+Validation:
+- Booking creates/links Telegraph thread.
+- Thread opens from booking detail.
+- Auto-translation still works.
+- Booking card displays.
+- Booking card updates after accept/cancel/complete.
+- Cancelled/declined booking handles chat access according to policy.
+
+PHASE 21 — Anti-Circumvention / Off-App Solicitation Guard
+
+Goal:
+Keep users inside Travel Buddy for safety and payment.
+
+Flag phrases:
+- pay me cash
+- Cash App
+- Venmo
+- Zelle
+- WhatsApp me
+- Telegram me
+- send crypto
+- meet off app
+- escort/adult wording
+- phone number / email sharing patterns if policy supports detection
+
+Rules:
+- Do not block normal travel conversation aggressively.
+- High-risk phrases can trigger warning/moderation.
+- Repeated violations can suspend buddy.
+- Telegraph can show safety reminder:
+  “For your safety, keep booking and payment inside Travel Buddy.”
+- Warnings should be educational first.
+- Severe/repeated violations can restrict booking/chat.
+- Admin can review flagged messages where policy allows.
+
+Validation:
+- Off-app payment/contact solicitation is flagged.
+- Normal conversation still works.
+- Admin can review repeated violations.
+- Buddy suspension can follow repeated/severe violations.
+
+PHASE 22 — Payment / Deposit Handling
+
+Goal:
+Support deposit/full payment only if real payment backend exists.
+
+Rules:
+- If payment system exists:
+  - collect deposit/full payment through app
+  - store payment status
+  - block booking confirmation if payment fails
+  - support refund status
+  - admin can review disputes
+  - payout eligibility depends on completion and dispute window
+- If payment system does not exist yet:
+  - do not fake paid state
+  - show honest “Payment coming soon” only if product accepts
+  - or allow request-only bookings with payment_status = not_required
+- No off-app payment instructions.
+- No Cash App / crypto / direct wallet instructions inside app unless a compliant payment flow is intentionally built.
+- Do not mark payment as paid without provider confirmation.
+- Deposits should be clear before request/accept.
+
+Validation:
+- Payment status is honest.
+- No fake paid booking appears.
+- Deposit/full payment amount displays correctly.
+- Failed payment does not create paid booking.
+- Refund status is honest.
+
+PHASE 23 — Payout Controls
+
+Goal:
+If money is involved, payouts must be controlled and auditable.
+
+Rules:
+- Do not auto-payout without payment provider confirmation.
+- Payout should only become eligible after booking completion and dispute window.
+- Admin can hold payout during dispute.
+- Buddy earnings view should show:
+  - pending
+  - available
+  - paid
+  - held
+  - refunded/disputed
+- Traveler should never see buddy payout internals.
+- Normal users should not access payout admin data.
+- Admin payout actions should be logged.
+
+Validation:
+- Completed booking can become payout-eligible.
+- Disputed booking holds payout.
+- Buddy dashboard shows honest payout status.
+- Admin controls are permissioned.
+
+PHASE 24 — Cancellation and Refund Rules
+
+Goal:
+Make cancellations clear before payment or booking confirmation.
+
+Fields:
+- cancellation_policy
+- free_cancel_until
+- traveler_cancelled_at
+- buddy_cancelled_at
+- refund_status
+- refund_amount
+- cancellation_fee
+
+Rules:
+- Show cancellation policy before booking request.
+- Buddy cancellation should notify traveler immediately.
+- Traveler cancellation should notify buddy.
+- Refund logic should be honest; do not fake refunds.
+- If payment system does not exist, store cancellation only.
+- Repeated late cancellations can affect reliability.
+- Cancellation must stop future reminders.
+- Cancelled bookings should remain visible in history.
+
+Validation:
+- Cancellation policy displays.
+- Cancellation updates status.
+- Refund status is honest.
+- Repeated cancellation signal is tracked if trust system supports it.
+- Reminders stop.
+
+PHASE 25 — Booking Lifecycle
+
+Statuses:
+- requested
+- accepted
+- declined
+- cancelled_by_traveler
+- cancelled_by_buddy
+- expired
+- scheduled
+- in_progress
+- completed_pending_traveler_confirmation
+- completed
+- traveler_no_show
+- buddy_no_show
+- disputed_no_show
+- disputed
+- refunded
+
+Rules:
+- Status changes must be valid.
+- Cannot complete before scheduled time unless admin override or product allows.
+- Cannot review until completed.
+- Cannot edit critical fields after acceptance without change request.
+- Cancellation policy applies.
+- Dispute can pause payout/payment if payment exists.
+- Booking lifecycle should be visible to both sides.
+- Evidence log should record lifecycle events.
+
+Validation:
+- Invalid status transitions are blocked.
+- Completed bookings allow reviews.
+- Cancelled bookings do not allow normal completion.
+- Dispute status works.
+- Timeline reflects status changes.
+
+PHASE 26 — Booking Check-In / Safe Start
+
+Goal:
+Both traveler and buddy should be able to confirm the booking started safely.
+
+Requirements:
+- Traveler check-in button
+- Buddy check-in button
+- Optional “I arrived” status
+- Optional “Couldn’t find them” status
+- Optional “I feel unsafe” escalation
+- Timestamp each check-in
+- Store broad meeting area, not exact private GPS by default
+
+Rules:
+- Check-in is not required to expose live location.
+- Exact GPS should only be used if the app already has explicit permission and a safety use case.
+- Missed check-in should trigger reminder, not instant penalty.
+- Repeated missed check-ins can affect trust/reliability.
+- Safe Return prompt can appear for high-risk bookings.
+
+Validation:
+- Traveler can check in.
+- Buddy can check in.
+- Booking status updates.
+- Missed check-in reminder works.
+- No private location leaks.
+
+PHASE 27 — No-Show Handling
+
+Goal:
+Handle traveler or buddy no-shows fairly.
+
+Statuses:
+- traveler_no_show
+- buddy_no_show
+- disputed_no_show
+
+Rules:
+- No-show should require evidence or timed workflow.
+- Do not automatically punish from one tap.
+- Allow both parties to explain.
+- Admin can review disputes.
+- Repeated confirmed no-shows affect trust/reliability.
+- No-show state can affect refund/deposit if payment exists.
+- No-show should create evidence log entry.
+
+Validation:
+- Traveler can report buddy no-show.
+- Buddy can report traveler no-show.
+- Admin can review.
+- Trust/reliability updates only after confirmed rules.
+
+PHASE 28 — Dispute Center
+
+Goal:
+Create a controlled path for disputes.
+
+Dispute reasons:
+- no-show
+- unsafe behavior
+- wrong service
+- payment/refund issue
+- harassment
+- off-app payment request
+- adult/dating service violation
+- location/meeting issue
+- cancellation disagreement
+- other
+
+Rules:
+- Dispute attaches to booking.
+- Dispute can include notes and screenshots/photos if media reporting exists.
+- Dispute pauses payout if payment system exists.
+- Admin/support can resolve.
+- Resolution should be logged.
+- Normal users should not see internal admin notes.
+- Other party should not receive sensitive safety details.
+
+Validation:
+- Either party can open dispute.
+- Admin can resolve dispute.
+- Booking status updates.
+- Private/admin notes are hidden.
+- Payout hold works if payment exists.
+
+PHASE 29 — Emergency / Unsafe Booking Flow
+
+Goal:
+Give users a clear escape path.
+
+Actions:
+- I feel unsafe
+- End booking early
+- Contact support
+- Report user
+- Block user
+- Safe Return check-in link if available
+
+Rules:
+- Unsafe action should not notify the other party with dangerous details.
+- Admin/support should receive alert if escalation system exists.
+- Ending early should update booking status or open dispute depending on flow.
+- Preserve evidence/logs.
+- Do not expose emergency contact info publicly.
+- Unsafe flow should be fast and accessible from booking detail and Telegraph.
+
+Validation:
+- Unsafe flow opens quickly.
+- Support/admin alert works where supported.
+- Booking status/dispute updates safely.
+- Other party does not receive sensitive safety details.
+
+PHASE 30 — Booking Completion Confirmation
+
+Goal:
+A booking should not become completed by one side only unless policy allows it.
+
+Recommended flow:
+- Buddy marks complete.
+- Traveler has confirmation/dispute window.
+- If no dispute, booking becomes completed.
+- Review opens after completed.
+
+Rules:
+- Completion creates timeline event.
+- Traveler can dispute before final completion.
+- Review opens only after completion.
+- Payout eligibility starts only after completion and dispute window if payment exists.
+
+Validation:
+- Completion flow works.
+- Traveler can dispute before final completion.
+- Review opens only after completion.
+- Payout eligibility waits for proper state.
+
+PHASE 31 — Reviews and Ratings
+
+Goal:
+Real reviews after completed bookings.
+
+Rules:
+- Only completed bookings can be reviewed.
+- Traveler can review buddy.
+- Buddy may review traveler if product allows.
+- One review per reviewer per booking.
+- Reviews have moderation status.
+- Rating average updates from approved reviews.
+- Review helpful votes, if enabled, follow universal engagement rules.
+- Reports are never public.
+- Deleted/rejected reviews should not affect public rating.
+- Suspicious/fake reviews can be moderated.
+
+Validation:
+- Completed booking can be reviewed.
+- Incomplete booking cannot.
+- Rating average updates.
+- Review count updates.
+- Suspicious/reported reviews can be moderated.
+
+PHASE 32 — Buddy Reliability Score
+
+Goal:
+Show practical reliability without exposing private details.
+
+Signals:
+- response time
+- request acceptance time
+- acceptance rate
+- completion rate
+- cancellation rate
+- confirmed no-shows
+- review rating
+- completed bookings
+- report history, internal only
+- dispute outcomes, internal only
+
+Public labels:
+- Reliable
+- Responds quickly
+- Usually replies within a few hours
+- New Buddy
+
+Rules:
+- Do not expose raw report/dispute history publicly.
+- Compass/Discovery can use reliability as ranking signal.
+- Safety/moderation overrides popularity.
+- Paused/vacation mode should prevent unfair response penalties.
+- Suspicious or unsafe buddy is not boosted.
+
+Validation:
+- Reliability label is calculated from backend truth.
+- Suspicious or unsafe buddy is not boosted.
+- Private report/dispute data is not public.
+- Response label updates from backend truth.
+
+PHASE 33 — Booking Reminder System
+
+Goal:
+Reduce no-shows and confusion.
+
+Send reminders:
+- after request is sent
+- when buddy accepts
+- 24 hours before booking
+- 2 hours before booking
+- when check-in window opens
+- after booking ends for review
+
+Rules:
+- Respect notification preferences.
+- Do not spam.
+- Reminder opens booking detail.
+- If booking is cancelled, reminders stop.
+- If booking is completed/disputed, irrelevant reminders stop.
+
+Validation:
+- Reminders schedule correctly.
+- Cancelled booking stops reminders.
+- Review reminder appears only after completion.
+
+PHASE 34 — Booking Evidence Log
+
+Goal:
+Disputes need a clear audit trail.
+
+Log:
+- request created
+- request accepted/declined
+- payment/deposit status changes
+- cancellation
+- check-in attempts
+- no-show reports
+- unsafe flow triggers
+- dispute opened/resolved
+- completion
+- review submitted
+- admin actions
+- change request created/accepted/declined
+- payout hold/release if payment exists
+
+Rules:
+- Evidence log should be backend-only or limited to users where safe.
+- Admin can view full log.
+- Normal users see simple timeline, not internal notes.
+- Logs should not expose private safety details to the other party.
+
+Validation:
+- Timeline appears on booking detail.
+- Admin audit has full event log.
+- Internal notes are hidden.
+
+PHASE 35 — Notifications
+
+Send notifications for:
+- buddy application submitted
+- buddy approved/rejected
+- new booking request
+- request expiring soon if supported
+- booking accepted
+- booking declined
+- booking cancelled
+- booking change requested
+- booking change accepted/declined
+- booking starting soon
+- check-in window open
+- booking completed
+- review request
+- dispute/report update
+- refund/credit update if payment exists
+
+Rules:
+- Notifications use backend truth.
+- No duplicate spam.
+- Notification opens correct screen.
+- If booking is no longer accessible, show safe unavailable state.
+- Respect notification preferences if present.
+
+Validation:
+- Notifications fire.
+- Links route correctly.
+- Cancelled/deleted state is safe.
+- No duplicate notification spam.
+
+PHASE 36 — Safety Boundaries
+
+Display and enforce Rent a Buddy rules.
+
+Required boundary copy:
+- Rent a Buddy is for travel help, local guidance, and activity support only.
+- No dating, escorting, adult services, or sexual services.
+- Keep communication and payments inside Travel Buddy.
+- Meet in public places when possible.
+- Report unsafe behavior immediately.
+
+Rules:
+- Buddy must acknowledge boundaries before submit.
+- Traveler must acknowledge safety rules before first booking if needed.
+- Report/Block visible on buddy profile, booking detail, and Telegraph thread.
+- Admin can suspend buddy.
+- High-risk wording in listing/service should trigger moderation.
+- Do not allow adult-service categories.
+
+Validation:
+- Boundary copy appears.
+- Acknowledgment required.
+- Report/Block works.
+- Unsafe category/listing is blocked or sent to moderation.
+
+PHASE 37 — First Booking Safety Tutorial
+
+Goal:
+New users should understand marketplace safety.
+
+Show before first Rent a Buddy booking:
+- Keep communication in Travel Buddy.
+- Use public meeting places.
+- Do not send off-app payments.
+- Rent a Buddy is not dating or adult services.
+- Use Report / I feel unsafe if needed.
+- Confirm details in the booking card.
+
+Rules:
+- Store acknowledgment timestamp.
+- Do not show every time after acknowledged unless policy changes.
+- Re-show if safety policy updates.
+
+Validation:
+- First booking tutorial appears.
+- Acknowledgment stored.
+- Repeat booking does not show unnecessarily.
+
+PHASE 38 — Category-Specific Rules
+
+Nightlife Guide:
+- public venues only
+- no illegal substances
+- no adult-service framing
+- safety check reminder
+
+Arrival Help:
+- airport/station pickup area only unless verified policy allows more
+- no private home address exposure before acceptance
+
+Content / Photo / Video Help:
+- consent reminder for filming
+- no filming people without permission
+- respect venue rules
+
+Shopping Help:
+- no counterfeit/illegal goods
+- no financial custody unless explicitly supported
+
+Language Support:
+- translation/help only
+- no legal/medical/immigration advice unless licensed and verified
+
+Rules:
+- Category-specific rules display where relevant.
+- Unsafe descriptions are flagged.
+- High-risk categories can trigger stronger verification/safety prompts.
+
+Validation:
+- Category rules display where relevant.
+- Unsafe service descriptions are flagged.
+- High-risk prompts work.
+
+PHASE 39 — Insurance / Liability Copy
+
+Goal:
+Make the marketplace rules clear.
+
+Add policy copy:
+- Buddies are independent users, not employees.
+- Travel Buddy facilitates booking and safety tools.
+- Users should meet in public places when possible.
+- Users are responsible for following local laws.
+- Services must stay within approved travel-help categories.
+- No dating, escorting, adult, illegal, or unsafe services.
+
+Rules:
+- Show short version during booking.
+- Full policy link in booking flow and buddy onboarding.
+- Do not use scary legal language in the main UI, but make boundaries clear.
+
+Validation:
+- Policy copy appears in onboarding.
+- Policy copy appears before first booking.
+- User must acknowledge where required.
+
+PHASE 40 — Service Area and Location Privacy
+
+Goal:
+Buddy service areas should be useful without exposing exact home/work location.
+
+Rules:
+- Buddy lists broad areas served.
+- Do not show exact address by default.
+- Meeting point should be shared only after accepted booking if product allows.
+- Hidden Gems/Places recommendations should not reveal buddy’s personal movement history.
+- Distance labels should be broad:
+  - “near Shibuya”
+  - “serves Tokyo”
+  - not exact live distance unless explicitly allowed.
+- Exact GPS should not be used unless explicitly permitted for a safety flow.
+
+Validation:
+- Buddy profile shows broad service area.
+- Exact location is hidden.
+- Accepted booking can share meeting details according to policy.
+- No personal movement history leaks.
+
+PHASE 41 — Admin Moderation
+
+Admin should be able to:
+- approve buddy profile
+- reject buddy profile
+- suspend buddy profile
+- unsuspend if allowed
+- hide service listing
+- view booking reports
+- resolve dispute
+- review flagged reviews/listings
+- disable Rent a Buddy globally if needed
+- pause one city/country/category
+- hold payouts if payment exists
+
+Rules:
+- Admin routes require admin role.
+- Actions should be audit logged if audit table exists.
+- Suspended buddies disappear from public surfaces.
+- Existing bookings with suspended buddy should show safe support status.
+- Admin does not impersonate users.
+- Normal users cannot access admin notes.
+
+Validation:
+- Admin approve/reject works.
+- Suspended buddy disappears.
+- Reports are visible to admin.
+- Non-admin cannot access admin endpoints.
+- Admin actions are logged where supported.
+
+PHASE 42 — Admin Kill Switch
+
+Goal:
+Marketplace can be paused quickly.
+
+Admin controls:
+- disable all new buddy applications
+- disable new booking requests
+- hide all public buddy listings
+- pause one city/country/category
+- suspend one buddy
+- hold payouts if payment exists
+
+Rules:
+- Existing bookings should show safe status.
+- Do not delete data.
+- Admin action should be logged.
+- Normal users should see friendly message:
+  “Rent a Buddy is temporarily unavailable.”
+
+Validation:
+- Admin can pause marketplace.
+- Public listings hide.
+- Existing bookings remain viewable.
+- Data is not deleted.
+
+PHASE 43 — City Launch Readiness
+
+Goal:
+Rent a Buddy may not be ready in every city.
+
+City status:
+- not_launched
+- recruiting_buddies
+- limited_beta
+- live
+- paused
+
+Minimum supply suggestion:
+- at least 5 approved buddies
+- at least 3 categories covered
+- at least 2 languages covered where relevant
+
+Rules:
+- If city is not live, show waitlist or “coming soon.”
+- Do not show fake buddies.
+- Compass should not recommend Rent a Buddy where unavailable.
+- Admin can control city availability.
+- Empty city must not pretend to be live.
+
+Validation:
+- Live city shows real approved buddies.
+- Non-live city shows honest empty state.
+- No fake marketplace data.
+- Compass does not recommend unavailable marketplace.
+
+PHASE 44 — Buddy Ranking Quality
+
+Goal:
+Discovery should not rank buddies only by likes or price.
+
+Ranking signals:
+- verified status
+- availability match
+- category match
+- language match
+- city/area match
+- rating
+- completed bookings
+- response time
+- cancellation rate
+- no-show rate
+- report/dispute risk
+- freshness
+- traveler preferences
+
+Rules:
+- Safety and verification override popularity.
+- Likes/favorites are weak signals.
+- New buddies should get limited fair exposure without outranking proven safe buddies.
+- Suspended/pending buddies never rank.
+- Unsafe/high-like buddy is not boosted.
+- Private report/dispute data is not public.
+- Compass explanations remain privacy-safe.
+
+Validation:
+- Unsafe/high-like buddy is not boosted.
+- Verified available buddy ranks properly.
+- New Buddy label works.
+- Suspended/pending buddies excluded.
+
+PHASE 45 — Favorite Buddy Without Public Exposure
+
+Goal:
+Travelers can save buddies privately.
+
+Rules:
+- Favorite/save buddy is private by default.
+- Buddy cannot see exactly who saved them unless product explicitly approves.
+- Saved buddy appears in traveler saved list.
+- Saving is not booking.
+- Saving is not following.
+- Saving does not open Telegraph.
+- Saved-by lists are not public.
+
+Validation:
+- Traveler can save buddy.
+- Saved list works.
+- Saved-by users are not public.
+- Booking/follow states remain separate.
+
+PHASE 46 — Universal Engagement Integration
+
+If buddy profiles/listings have likes/reactions:
+- like count can open universal engagement viewer only if allowed
+- favorites/saves do not expose saved-by users by default
+- booked-by users are never exposed
+- reviews/helpful votes follow review engagement rules
+
+Rules:
+- Like is not booking.
+- Save is not booking.
+- Booking is marketplace truth.
+- No Add Friend appears.
+- Follow buttons use follow-only graph.
+- Suspicious buddy-profile engagement should not boost ranking over verification, reviews, safety, and booking quality.
+
+Validation:
+- Buddy like list works only if allowed.
+- Favorites/bookings are not exposed.
+- Follow-only buttons appear.
+
+PHASE 47 — Rebook
+
+Goal:
+Travelers should be able to book a good buddy again.
+
+Requirements:
+- Rebook button on completed booking
+- Pre-fill service, city, and notes where safe
+- Require new date/time
+- Create a new booking request
+- Do not reopen old completed booking
+
+Rules:
+- Rebook still checks availability, status, price, and suspension.
+- If buddy changed price/service, show updated terms.
+- If buddy is unavailable/suspended, block rebook.
+
+Validation:
+- Rebook creates new request.
+- Old booking remains completed.
+- Updated price/availability is respected.
+
+PHASE 48 — Dashboards
+
+Traveler dashboard:
+- upcoming bookings
+- pending requests
+- past bookings
+- cancelled bookings
+- expired requests
+- review needed
+- message buddy
+- saved buddies
+
+Buddy dashboard:
+- profile status
+- onboarding checklist
+- pending requests
+- upcoming bookings
+- completed bookings
+- cancelled bookings
+- disputes
+- reviews
+- services
+- availability
+- response SLA
+- earnings/payment status if payment exists
+
+Rules:
+- Dashboards use backend truth.
+- Empty states are helpful.
+- No fake revenue/earnings.
+- Status labels clear.
+- Private payout fields are only visible to buddy/admin where allowed.
+
+Validation:
+- Traveler sees correct bookings.
+- Buddy sees correct requests.
+- Actions work.
+- Empty states work.
+
+PHASE 49 — Passport Integration
+
+Passport should show:
+- if user is approved buddy
+- buddy services tab/section if enabled
+- reviews/ratings where allowed
+- completed booking credibility if product allows
+- “Book Buddy” button for approved public buddy profiles
+
+Rules:
+- Pending/rejected/suspended buddy profile should not show public booking CTA.
+- Owner sees management controls.
+- Visitor sees public-safe profile only.
+- No booked-by list.
+- No saved-by list.
+- No private earnings/payment info.
+
+Validation:
+- Owner can manage buddy profile from Passport.
+- Visitor can view approved buddy profile.
+- Suspended/pending profile hidden from visitors.
+
+PHASE 50 — Trips / Events Integration
+
+Rent a Buddy can support trips/events, but should not merge truths.
+
+Rules:
+- User can request buddy for a trip/event if product supports it.
+- Booking is not trip membership.
+- Trip membership is not booking.
+- Event attendance is not booking.
+- Follow is not booking.
+- Telegraph participants for trips/events remain separate from booking thread participants.
+- Buddy can be tagged as trip support only through booking/request truth.
+- Event host can recommend buddies if Compass supports it.
+- Booking a buddy does not add them to trip crew automatically.
+- Adding someone to trip/event does not create booking.
+
+Validation:
+- Booking a buddy does not add them to trip crew automatically.
+- Adding someone to trip/event does not create booking.
+- Booking thread is separate from trip/event group Telegraph unless intentionally linked.
+- Trip/event member lists do not expose booking truth.
+
+PHASE 51 — Hidden Gems / Places Integration
+
+Buddy profiles can be connected to areas/gems they know.
+
+Rules:
+- Buddy can list areas served.
+- Buddy can be recommended near places/gems.
+- Buddy cannot claim ownership of a place/gem unless product supports verified contribution.
+- Place/gem likes/saves/been-there are separate from buddy bookings.
+- Do not expose location history through buddy recommendations.
+- Hidden Gem privacy must be respected.
+
+Validation:
+- Buddy appears for relevant areas.
+- Hidden Gem privacy is respected.
+- No location-history leak.
+- Place/gem engagement remains separate from bookings.
+
+PHASE 52 — Error and Empty States
+
+Add states:
+- No buddies found
+- City not launched
+- Recruiting buddies
+- No availability
+- Booking unavailable
+- Buddy not accepting requests
+- Profile pending review
+- Profile suspended
+- Payment unavailable
+- Request expired
+- Booking cancelled
+- Booking disputed
+- Couldn’t load bookings
+- Couldn’t send request
+- Marketplace temporarily unavailable
+
+Rules:
+- Error states should not expose private data.
+- No blank screens.
+- Retry where appropriate.
+- Do not show fake buddies to fill empty states.
+
+Validation:
+- All states render cleanly.
+- No broken empty pages.
+- Non-live cities are honest.
+
+PHASE 53 — Security / Abuse Protection
+
+Protect against:
+- spam booking requests
+- harassment through requests/messages
+- off-app payment solicitation
+- adult-service wording
+- fake reviews
+- fake buddy profiles
+- identity/verification bypass
+- scraping buddy profiles
+- repeated cancellations
+- chargeback/dispute abuse
+- suspicious review helpful votes
+- fake engagement rings
+
+Rules:
+- Rate-limit requests.
+- Blocked users cannot book/message.
+- Reported/suspended users are restricted according to policy.
+- Admin can intervene.
+- Booking/chat access must honor blocks and safety restrictions.
+- Suspicious engagement should not boost ranking.
+- Scraping-friendly endpoints should be paginated/rate-limited.
+
+Validation:
+- Blocked user cannot request buddy.
+- Suspended user cannot receive bookings.
+- Spam requests limited.
+- Report flow works.
+- Suspicious engagement does not boost ranking.
+
+PHASE 54 — Performance
+
+Requirements:
+- Buddy listing loads fast.
+- Use pagination.
+- Avoid loading all buddies at once.
+- Avoid expensive N+1 queries.
+- Cache public-safe aggregates where appropriate.
+
+Index common filters:
+- status
+- city/country
+- category
+- language
+- rating
+- price
+- availability
+- verification_status
+- created_at
+
+Rules:
+- Search/filter must be backend-backed.
+- Public listing should not fetch private/admin fields.
+- Dashboards should paginate history.
+
+Validation:
+- Listing paginates.
+- Search/filter is responsive.
+- Profile/detail loads without N+1 issues.
+- Dashboards remain responsive.
+
+PHASE 55 — Buddy Tax / Earnings Disclaimer Placeholder
+
+Goal:
+Avoid giving bad payout/tax assumptions.
+
+If earnings/payouts exist, show simple copy:
+- “You are responsible for your own taxes and local legal requirements.”
+- “Payout availability depends on completed bookings, disputes, and payment processing.”
+
+Rules:
+- Do not provide personalized tax advice.
+- Do not show detailed tax forms unless intentionally built.
+- Keep payout estimates clearly labeled.
+- Do not show estimated payouts as guaranteed money.
+
+Validation:
+- Earnings disclaimer appears where payouts are shown.
+- Payout estimates are not shown as guaranteed money.
+
+PHASE 56 — Documentation
+
+Update developer/product docs for:
+- Rent a Buddy product boundaries
+- database tables
+- status lifecycle
+- booking lifecycle
+- payment/payout honesty rules
+- dispute/no-show rules
+- safety and verification requirements
+- city launch statuses
+- category risk levels
+- app integration boundaries
+- no dating/adult-service policy
+- no off-app payment/contact policy
+
+Rules:
+- Document what is complete.
+- Document anything intentionally deferred.
+- Document which systems are separate truths.
+
+Validation:
+- Docs are updated.
+- Deferred items are clearly listed.
+- No hidden fake/demo states remain undocumented.
+
+PHASE 57 — Tests
+
+Add/update tests.
+
+Backend:
+- create buddy profile draft
+- onboarding checklist blocks incomplete submit
+- submit buddy profile
+- admin approve/reject/suspend
+- approved buddy appears publicly
+- pending/rejected/suspended buddy hidden
+- create service
+- vague/unsafe service blocked or moderated
+- update service
+- save availability
+- availability exceptions block requests
+- vacation mode works
+- request booking
+- request expiration works
+- block self-booking
+- block booking suspended buddy
+- block unverified traveler where required
+- accept booking
+- decline booking
+- change request create/accept/decline
+- cancel booking
+- check-in works
+- no-show report works
+- dispute opens/resolves
+- unsafe flow creates proper state/log
+- complete booking with confirmation/dispute window
+- review completed booking
+- reject review before completion
+- block user cannot book
+- private/payment fields not exposed
+- search/filter buddies
+- Telegraph thread creation
+- Telegraph booking card state
+- notification creation
+- report buddy
+- favorite buddy private
+- rebook creates new request
+- payout hold during dispute if payment exists
+- refund/credit labels display honest status
+- city not live hides marketplace
+- admin kill switch hides listings
+
+Frontend:
+- buddy listing renders
+- filters work
+- city not launched state renders
+- buddy detail opens
+- request booking flow works
+- calendar/date picker appears
+- first booking safety tutorial appears
+- traveler dashboard works
+- buddy dashboard works
+- accept/decline actions work
+- change request flow works
+- check-in buttons work
+- no-show/dispute flow works
+- unsafe flow works
+- review form works
+- report/block menu works
+- pending/suspended states display
+- favorite buddy works
+- rebook works
+- Telegraph booking card displays
+- no dating/adult wording
+- no Add Friend appears
+- no booked-by/saved-by leak
+
+Regression:
+- Passport still loads
+- Discovery still loads
+- Search still loads
+- Compass still loads if touched
+- Telegraph still loads
+- Trips/Events still load
+- Hidden Gems/Places still load
+- Universal engagement still respects buddy privacy
+- Notifications still work
+
+PHASE 58 — Manual QA Checklist
+
+Marketplace:
+- approved buddy appears in listing
+- pending buddy does not
+- suspended buddy does not
+- filters work
+- city not launched shows honest state
+- detail page opens
+- services display
+- availability displays
+
+Application:
+- user creates buddy profile
+- incomplete profile cannot submit
+- user submits complete profile
+- admin approves/rejects
+- owner sees management tools
+- visitor sees public-safe view
+
+Booking:
+- traveler sends request
+- request expires if unanswered
+- buddy receives request
+- buddy accepts
+- buddy declines
+- traveler cancels
+- buddy cancels
+- booking status updates
+- dashboards update
+- Telegraph thread opens
+- booking card syncs
+- calendar picker works
+- self-booking blocked
+- blocked user blocked
+- unavailable dates blocked
+- conflicts blocked
+
+Safety:
+- first booking tutorial appears
+- boundary copy appears
+- no dating/adult wording
+- report works
+- block works
+- unsafe flow works
+- check-in works
+- no-show flow works
+- dispute flow works
+- off-app contact/payment warning works
+- private fields hidden
+- exact location hidden until allowed
+
+Payments:
+- no fake paid state
+- deposit/full payment honest if provider exists
+- refund/credit label honest
+- payout status hidden from traveler
+- payout held during dispute if payment exists
+
+Reviews:
+- completed booking can be reviewed
+- incomplete booking cannot
+- rating updates
+- review moderation respected
+
+Cross-app:
+- Discovery/Search/Compass open correct buddy profile
+- Passport shows buddy section correctly
+- Trips/Events do not auto-create booking
+- Hidden Gems/Places do not leak location history
+- Like/save/follow/book are separate truths
+
+Operations:
+- onboarding checklist works
+- service quality standards work
+- reminders work
+- evidence log works
+- ranking uses quality/safety
+- rebook works
+- saved buddy list private
+- response SLA label works
+- admin kill switch works
+- city launch readiness works
+- category risk levels work
+
+PHASE 59 — Final Rent a Buddy Lock Rule
+
+Lock the product meanings:
+
+- Booking = marketplace transaction/request truth.
+- Follow = social graph truth.
+- Like = public engagement if enabled.
+- Save/Favorite = private interest.
+- Telegraph = communication channel.
+- Trip member = trip access truth.
+- Event attendee = event access truth.
+- Review = post-completion feedback.
+- Report/Dispute = safety/moderation truth.
+- Payout = payment/admin truth.
+- View = passive activity, not public.
+
+Rules:
+- Do not mix these systems.
+- Booking a buddy does not auto-follow them.
+- Following a buddy does not create booking access.
+- Liking a buddy does not save or book them.
+- Saving a buddy does not expose the traveler publicly.
+- Telegraph access does not equal booking unless linked by booking truth.
+- Trip/event membership does not create a Rent a Buddy booking.
+- Rent a Buddy must remain non-dating, non-adult, privacy-safe, backend-truth-based, and safety-first.
+
+PHASE 60 — Final Acceptance Criteria
+
+Rent a Buddy is complete when:
+
+Marketplace Core:
+- Users can apply to become buddies.
+- Buddy onboarding checklist blocks incomplete public profiles.
+- Admin can approve/reject/suspend buddies.
+- Only approved active buddies appear publicly.
+- Buddy profiles have real services, prices, languages, areas, availability, ratings, reviews, and verification/trust labels.
+- Service quality standards prevent vague/unsafe listings.
+
+Booking Core:
+- Travelers can request bookings.
+- Buddies can accept/decline.
+- Pending requests expire.
+- Booking lifecycle is backend-backed.
+- Calendar/date picker is used for booking dates.
+- Availability exceptions work.
+- Conflicts are blocked.
+- Change requests are supported or intentionally deferred.
+- Booking reminders work.
+- Evidence log exists.
+- Completion confirmation is fair.
+- Rebook works.
+
+Safety Core:
+- Safety boundaries are visible and enforced.
+- First booking safety tutorial appears.
+- Verification gates are enforced.
+- Traveler requirements protect buddies.
+- No dating/adult-service wording appears.
+- No off-app payment/contact is exposed.
+- Off-app solicitation is flagged.
+- Report/Block works.
+- Check-in exists or is intentionally deferred with clear status.
+- No-show handling exists.
+- Dispute path exists.
+- Unsafe booking flow exists.
+- Location privacy is protected.
+- Category-specific safety rules exist.
+- Category risk levels apply stricter safety.
+
+Payment/Payout Honesty:
+- Payment/deposit status is honest and not faked.
+- Refund/credit outcome labels are honest.
+- Payout status is honest if payment exists.
+- Payout holds during disputes if payment exists.
+- Buddy earnings labels are clear.
+- Tax/earnings disclaimer appears if payouts exist.
+- No off-app payment instructions appear.
+
+App Integration:
+- Discovery/Search/Compass use real buddy truth.
+- Passport integration works.
+- Telegraph thread links to booking where allowed.
+- Telegraph booking card stays synced.
+- Trips/Events/Gems/Places integrations do not mix booking truth with likes/saves/follows/memberships.
+- Universal engagement respects buddy privacy.
+- Notifications work.
+- Calendar/date picker works.
+
+Operations Quality:
+- Reliability labels are backend-backed.
+- Ranking uses quality/safety, not just likes.
+- Favorite buddy is private.
+- Response SLA labels are backend-backed.
+- City launch supply rules prevent fake availability.
+- Admin kill switch exists.
+- Admin moderation works.
+- Admin actions are permissioned.
+- Tests pass.
+- No fake local-only buddy data remains.
+- No unrelated systems were rebuilt.
+
+Deliverable:
+Finish Rent a Buddy end-to-end as a real, verified, non-dating local companion marketplace. Wire backend tables, APIs, RLS/access control, profile/listing UI, booking requests, availability, request expiration, Telegraph, check-ins, disputes, no-shows, reviews, admin moderation, safety boundaries, payment/payout honesty, Discovery/Search/Compass/Passport/Trips/Events/Gems integrations, operations controls, and tests. Keep it backend-truth-based, privacy-safe, payment-honest, admin-moderated, and safety-first.
