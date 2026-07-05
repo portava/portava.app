@@ -88,6 +88,7 @@ Users sign in with Supabase Auth (email/password) to create and manage trips (de
 - After any `pnpm add` in a workspace sibling, restart the `expo` workflow — pnpm temp dirs can crash Metro.
 - `artifacts/api-server/.env` must have `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` or `/api/trips` returns 503.
 - `DAILY_BRIEF_RETENTION_DAYS` (default `60`, days) and `DAILY_BRIEF_CLEANUP_INTERVAL_HOURS` (default `24`) — set in `artifacts/api-server/.env` to tune without a deploy.
+- `INVITE_SLOT_RECONCILE_INTERVAL_HOURS` (default `1`, hours) — how often the API server calls `reconcile_invite_link_slots` to fix stranded invite-link slots. Set to `0` in `artifacts/api-server/.env` to disable. `INVITE_SLOT_RECONCILE_MIN_AGE_MINUTES` (default `5`) controls the minimum slot age before a stranded entry is fixed (must be > 0 to avoid touching in-flight requests).
 - `EXPO_PUBLIC_API_BASE_URL` in `artifacts/travel-buddy/.env` must point to the Replit dev domain (not the Expo domain).
 - Feature-flag routes in `routes/*.ts` use paths without the `/api` prefix (the router is mounted at `app.use("/api", router)`).
 - `rent_buddy_city_rollouts`: when the table has no rows at `public_mvp` or `beta_testing` status, all city-specific calls return `city_not_available`. Apply migration `0092_seed_rent_buddy_launch_cities.sql` (seeds Cebu, Manila, Davao City at `public_mvp`) or add rows via `POST /api/admin/rent-buddy/rollout/cities`. The `db-triggers` pre-release check now verifies at least one live city exists.
