@@ -1779,6 +1779,66 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
   res.json({ eventId, action, ok: true });
 });
 
+// ── Invite-link slot reconciliation ──────────────────────────────────────────
+
+/**
+ * POST /admin/trips/reconcile-invite-slots
+ *
+ * Finds stranded invite-link slots — cases where use_count was incremented by
+ * claim_invite_link_slot_for_user but the subsequent trip_members INSERT never
+ * completed — and corrects them.
+ *
+ * A slot is considered stranded when:
+ *   1. A trip_invite_link_attempts row exists for (link_id, user_id)
+ *   2. No trip_members row exists for the link's trip + that user
+ *   3. The attempt is older than minAgeMinutes (default 5) to avoid touching
+ *      in-flight legitimate requests
+ *
+ * For each stranded slot the handler decrements use_count by 1 (floors at 0)
+ * and deletes the orphaned attempt row.
+ *
+ * Body (optional):
+ *   { minAgeMinutes?: number }  — minimum slot age before it is eligible for
+ *                                 correction (integer >= 1, default 5)
+ *
+ * Response:
+ *   { fixed: number, minAgeMinutes: number, slots: Array<{ linkId, userId, tripId, claimedAt }> }
+ */
+router.post("/admin/trips/reconcile-invite-slots", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const rawAge = req.body?.minAgeMinutes;
+  const minAgeMinutes =
+    typeof rawAge === "number" && Number.isFinite(rawAge)
+      ? Math.max(1, Math.floor(rawAge))
+      : 5;
+
+  const { data, error } = await sc.rpc("reconcile_invite_link_slots", {
+    min_age_minutes: minAgeMinutes,
+  });
+
+  if (error) {
+    req.log?.error({ err: error.message }, "reconcile_invite_link_slots rpc failed");
+    sendError(res, "db_error", "Reconciliation query failed");
+    return;
+  }
+
+  const fixed = (data as any[]) ?? [];
+
+  res.json({
+    fixed: fixed.length,
+    minAgeMinutes,
+    slots: fixed.map((r: any) => ({
+      linkId:    r.link_id,
+      userId:    r.user_id,
+      tripId:    r.trip_id,
+      claimedAt: r.claimed_at,
+    })),
+  });
+});
+
 /** GET /admin/users/:userId/moderation-summary — focused moderation view for admin */
 router.get("/admin/users/:userId/moderation-summary", async (req, res) => {
   const admin = await requireAdmin(req, res);
