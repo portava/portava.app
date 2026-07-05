@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { View, Text, Image, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, Image, Pressable, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { MessageCircle, User, MoreHorizontal } from 'lucide-react-native';
 import { router } from 'expo-router';
 import type { CircleMember } from '../../services/circle';
 import { blockUser } from '../../services/blocks';
+import { openDirectThread } from '../../services/messaging';
 import { color, radius, type as t } from '../../theme/tokens';
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; textColor: string }> = {
@@ -26,6 +27,7 @@ interface Props {
 
 export function CircleMemberRow({ member, isViewerRow = false }: Props) {
   const [hidden, setHidden] = useState(false);
+  const [messaging, setMessaging] = useState(false);
 
   if (hidden) return null;
 
@@ -49,8 +51,26 @@ export function CircleMemberRow({ member, isViewerRow = false }: Props) {
     router.push(`/u/${encodeURIComponent(member.username)}` as any);
   }
 
-  function handleMessage() {
-    router.push(`/messages/dm?userId=${encodeURIComponent(member.userId)}` as any);
+  async function handleMessage() {
+    if (messaging) return;
+    setMessaging(true);
+    try {
+      const res = await openDirectThread(member.userId);
+      if (res.ok && res.data) {
+        const params = new URLSearchParams({
+          threadType: 'direct',
+          title: member.displayName || member.username,
+          otherUserId: member.userId,
+        });
+        router.push(`/messages/${res.data.threadId}?${params.toString()}` as any);
+      } else {
+        Alert.alert('Cannot open chat', res.message ?? 'Something went wrong. Please try again.');
+      }
+    } catch {
+      Alert.alert('Cannot open chat', 'Network error. Please try again.');
+    } finally {
+      setMessaging(false);
+    }
   }
 
   function handleBlock() {
@@ -134,8 +154,10 @@ export function CircleMemberRow({ member, isViewerRow = false }: Props) {
       {!isViewerRow && (
         <View style={s.actions}>
           {member.canMessage && (
-            <Pressable style={s.actionBtn} onPress={handleMessage} hitSlop={8}>
-              <MessageCircle size={18} color={color.signal} />
+            <Pressable style={s.actionBtn} onPress={handleMessage} disabled={messaging} hitSlop={8}>
+              {messaging
+                ? <ActivityIndicator size="small" color={color.signal} />
+                : <MessageCircle size={18} color={color.signal} />}
             </Pressable>
           )}
           <Pressable style={s.actionBtn} onPress={handleOverflow} hitSlop={8}>

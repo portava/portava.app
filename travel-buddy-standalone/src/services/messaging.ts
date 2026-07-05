@@ -497,6 +497,34 @@ export async function reportMessage(
   }
 }
 
+/**
+ * Get (or create) a direct Telegraph thread with another user.
+ * Uses POST /api/users/:userId/open-thread — permission-engine gated.
+ * Returns { threadId, created } on success.
+ */
+export async function openDirectThread(
+  userId: string,
+): Promise<MsgResult<{ threadId: string; created: boolean }>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api/users/${encodeURIComponent(userId)}/open-thread`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return mapApiError(res.status, body);
+    return { ok: true, data: body };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
 export async function deleteMessage(
   messageId: string,
 ): Promise<MsgResult<{ id: string; deleted: boolean }>> {

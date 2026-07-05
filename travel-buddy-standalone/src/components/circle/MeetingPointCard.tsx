@@ -13,9 +13,11 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import { MapPin, ExternalLink, Edit2, X, Check } from 'lucide-react-native';
+import { MapPin, ExternalLink, Edit2, X, Check, Search } from 'lucide-react-native';
 import type { MeetingPoint } from '../../services/circle';
 import { postMeetingPoint, patchMeetingPoint } from '../../services/circle';
+import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker';
+import type { Place } from '../../lib/location/placeTypes';
 import { color, radius, type as t } from '../../theme/tokens';
 
 interface Props {
@@ -30,6 +32,9 @@ interface EditState {
   venueLabel: string;
   approximateLabel: string;
   description: string;
+  /** Coordinates from place-picker selection; null until host picks a venue. */
+  lat: number | null;
+  lng: number | null;
 }
 
 export function MeetingPointCard({
@@ -40,11 +45,14 @@ export function MeetingPointCard({
   showUpdateAction = false,
 }: Props) {
   const [editOpen, setEditOpen] = useState(false);
+  const [placePickerOpen, setPlacePickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editState, setEditState] = useState<EditState>({
     venueLabel: '',
     approximateLabel: '',
     description: '',
+    lat: null,
+    lng: null,
   });
 
   if (!meetingPoint && !showUpdateAction) return null;
@@ -54,8 +62,20 @@ export function MeetingPointCard({
       venueLabel: meetingPoint?.venueLabel ?? '',
       approximateLabel: meetingPoint?.approximateLabel ?? '',
       description: meetingPoint?.description ?? '',
+      lat: meetingPoint?.lat ?? null,
+      lng: meetingPoint?.lng ?? null,
     });
     setEditOpen(true);
+  }
+
+  function handlePlaceSelect(place: Place) {
+    setEditState((p) => ({
+      ...p,
+      venueLabel: place.displayName ?? place.name,
+      lat: place.lat,
+      lng: place.lng,
+    }));
+    setPlacePickerOpen(false);
   }
 
   function openDirections() {
@@ -65,7 +85,7 @@ export function MeetingPointCard({
       // Coordinate-based directions URL — opens routing to the exact venue pin.
       url = `https://maps.google.com/maps?daddr=${meetingPoint.lat},${meetingPoint.lng}`;
     } else {
-      // Fallback: text search when coordinates are not yet in the DB (V1).
+      // Fallback: text search when coordinates are not yet persisted (V1 DB has no coordinate columns).
       const query = meetingPoint.venueLabel ?? meetingPoint.approximateLabel ?? '';
       if (!query) return;
       url = `https://maps.google.com/?q=${encodeURIComponent(query)}`;
@@ -88,7 +108,8 @@ export function MeetingPointCard({
         : await postMeetingPoint(contextType, contextId, payload);
 
       if (res.ok) {
-        onUpdate(res.data);
+        // Merge in local coordinates from place-picker (backend V1 cannot persist them yet).
+        onUpdate({ ...res.data, lat: editState.lat, lng: editState.lng });
         setEditOpen(false);
       } else if (res.status === 403) {
         Alert.alert('Not allowed', 'Only the host can update the meeting point.');
@@ -144,6 +165,7 @@ export function MeetingPointCard({
         </View>
       </View>
 
+      {/* Host edit sheet */}
       <Modal
         visible={editOpen}
         animationType="slide"
@@ -169,22 +191,30 @@ export function MeetingPointCard({
               )}
             </Pressable>
           </View>
+
           <ScrollView
             contentContainerStyle={m.body}
             keyboardShouldPersistTaps="handled"
           >
+            {/* Venue search — tapping opens GlobalPlacePicker */}
             <View style={m.field}>
-              <Text style={m.fieldLabel}>Venue name</Text>
-              <TextInput
-                style={m.input}
-                value={editState.venueLabel}
-                onChangeText={(v) => setEditState((p) => ({ ...p, venueLabel: v }))}
-                placeholder="e.g. Cloud 9 Bar, Gate A2"
-                placeholderTextColor={color.faint}
-              />
+              <Text style={m.fieldLabel}>Venue</Text>
+              <Pressable style={m.searchRow} onPress={() => setPlacePickerOpen(true)}>
+                <Search size={15} color={color.mute} />
+                <Text
+                  style={[m.searchText, !editState.venueLabel && m.searchPlaceholder]}
+                  numberOfLines={1}
+                >
+                  {editState.venueLabel || 'Search for a venue…'}
+                </Text>
+              </Pressable>
+              {editState.lat !== null && editState.lng !== null && (
+                <Text style={m.coordHint}>📍 Coordinates saved — directions will open to exact pin.</Text>
+              )}
             </View>
+
             <View style={m.field}>
-              <Text style={m.fieldLabel}>Area or landmark</Text>
+              <Text style={m.fieldLabel}>Area or landmark (optional)</Text>
               <TextInput
                 style={m.input}
                 value={editState.approximateLabel}
@@ -208,6 +238,17 @@ export function MeetingPointCard({
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Venue search picker */}
+      <GlobalPlacePicker
+        visible={placePickerOpen}
+        onSelect={handlePlaceSelect}
+        onClose={() => setPlacePickerOpen(false)}
+        title="Search meeting point venue"
+        allowGPS={false}
+        placeholder="Search bar, café, landmark…"
+        usedFor="circle_meeting_point"
+      />
     </>
   );
 }
@@ -263,6 +304,19 @@ const m = StyleSheet.create({
   body: { gap: 20, padding: 16 },
   field: { gap: 6 },
   fieldLabel: { ...t.small, color: color.mute, fontWeight: '600' },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: color.signal,
+    borderRadius: radius.md,
+    padding: 12,
+    backgroundColor: '#fff',
+  },
+  searchText: { ...t.body, color: color.ink, flex: 1 },
+  searchPlaceholder: { color: color.faint },
+  coordHint: { ...t.small, color: '#2E7D32', marginTop: 2 },
   input: {
     borderWidth: 1,
     borderColor: color.haze,
