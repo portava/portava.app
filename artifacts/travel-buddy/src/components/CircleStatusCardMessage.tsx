@@ -49,6 +49,8 @@ interface Props {
   senderName?:   string | null;
   mine:          boolean;
   isCircleMember?: boolean | null;
+  /** Called when the card is tapped. Parent handles navigation vs. alert logic. */
+  onPress?:      () => void;
 }
 
 export function CircleStatusCardMessage({
@@ -58,6 +60,7 @@ export function CircleStatusCardMessage({
   senderName,
   mine,
   isCircleMember,
+  onPress,
 }: Props) {
   const variant = classifySubtype(subtype);
 
@@ -120,6 +123,10 @@ export function CircleStatusCardMessage({
             {senderName}
           </Text>
         ) : null}
+
+        {onPress ? (
+          <Text style={[card.link, mine && card.linkMine]}>View Circle →</Text>
+        ) : null}
       </View>
     );
   }
@@ -148,6 +155,10 @@ export function CircleStatusCardMessage({
         <Text style={[card.meta, mine && card.metaMine]} numberOfLines={1}>
           {senderName}
         </Text>
+      ) : null}
+
+      {onPress ? (
+        <Text style={[card.link, mine && card.linkMine]}>View Circle →</Text>
       ) : null}
     </View>
   );
@@ -209,4 +220,7 @@ const card = StyleSheet.create({
 
   meta: { ...t.small, color: color.mute, fontSize: 11 },
   metaMine: { color: color.onInk + 'BB' },
+
+  link: { ...t.small, color: color.signal, fontSize: 11, fontWeight: '600', marginTop: 2 },
+  linkMine: { color: color.onInk + 'CC' },
 });

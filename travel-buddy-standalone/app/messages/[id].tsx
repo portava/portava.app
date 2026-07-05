@@ -677,6 +677,7 @@ function MessageBubble({
   onRetryTranslation,
   currentUserId,
   isCircleMember,
+  onCircleCardPress,
 }: {
   item: Message;
   mine: boolean;
@@ -692,6 +693,7 @@ function MessageBubble({
   onRetryTranslation?: () => void;
   currentUserId?: string;
   isCircleMember?: boolean | null;
+  onCircleCardPress?: () => void;
 }) {
   const [pickerPayload, setPickerPayload] = useState<AddToTripPayload | null>(null);
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
@@ -759,7 +761,7 @@ function MessageBubble({
   if (item.msgType === 'circle_status_card') {
     const payload = (() => { try { return JSON.parse(item.body ?? ''); } catch { return null; } })();
     return (
-      <Pressable onLongPress={onLongPress} delayLongPress={300}>
+      <Pressable onLongPress={onLongPress} delayLongPress={300} onPress={onCircleCardPress}>
         <CircleStatusCardMessage
           subtype={payload?.subtype ?? item.subtype ?? null}
           venueLabel={payload?.venueLabel ?? null}
@@ -767,6 +769,7 @@ function MessageBubble({
           senderName={item.senderName}
           mine={mine}
           isCircleMember={isCircleMember}
+          onPress={onCircleCardPress}
         />
       </Pressable>
     );
@@ -1138,6 +1141,30 @@ export default function TelegraphThread() {
       .catch(() => { if (!cancelled) setIsCircleMember(false); });
     return () => { cancelled = true; };
   }, [threadType, contextId]);
+
+  // Navigate to the Circle presence screen when a circle_status_card is tapped.
+  // Members → opens /circle-presence with full context params.
+  // Non-members (null or false) → informational Alert (fail-closed).
+  // No-op when the thread has no Circle context (direct threads, etc.).
+  const onCircleCardPress = useCallback(() => {
+    const ctxType = threadType === 'trip' ? 'trip' : threadType === 'event' ? 'event' : null;
+    if (!ctxType || !contextId) return;
+    if (isCircleMember === true) {
+      router.push({
+        pathname: '/circle-presence',
+        params: {
+          contextType: ctxType,
+          contextId,
+          contextLabel: (tripData as any)?.destinationCity ?? title ?? 'Circle',
+        },
+      } as any);
+    } else {
+      Alert.alert(
+        'Circle members only',
+        'Only Circle members can view the live presence for this group.',
+      );
+    }
+  }, [threadType, contextId, isCircleMember, tripData, title]);
 
   async function toggleHideAiSuggestions() {
     if (!id) return;
@@ -1557,6 +1584,7 @@ export default function TelegraphThread() {
                 onRetryTranslation={!mine && m.id ? () => { retryTranslation(m.id).catch(() => {}); } : undefined}
                 currentUserId={userId ?? undefined}
                 isCircleMember={isCircleMember}
+                onCircleCardPress={m.msgType === 'circle_status_card' ? onCircleCardPress : undefined}
               />
             </View>
           );
