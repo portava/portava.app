@@ -1,0 +1,109 @@
+TASK: Apply safe Travel Buddy storage bucket patch
+
+Apply only the confirmed 5-file storage bucket patch from the audit.
+
+Confirmed Supabase buckets:
+- post-media exists
+- profile-media exists
+- memories bucket does NOT exist
+- stories bucket does NOT exist
+
+Rules:
+- Do NOT create new buckets.
+- Do NOT run SQL.
+- Do NOT change database schema.
+- Do NOT patch unrelated upload flows.
+- Do NOT change profile avatar or cover upload paths.
+- Do NOT change working post/postcard media upload paths.
+- Patch only memories and stories bucket usage.
+- Preserve existing database records.
+- New memory/story uploads should use post-media with folder prefixes.
+
+Required patches:
+
+1. travel-buddy-standalone/src/services/memories.ts
+Change:
+supabase.storage.from('memories')
+to:
+supabase.storage.from('post-media')
+
+Also change upload path from:
+`${userId}/...`
+to:
+`memories/${userId}/...`
+
+2. artifacts/travel-buddy/src/services/memories.ts
+Mirror the same change:
+from('memories') → from('post-media')
+`${userId}/...` → `memories/${userId}/...`
+
+3. artifacts/api-server/src/routes/memories.ts
+Change delete/public URL marker:
+"/object/public/memories/"
+to:
+"/object/public/post-media/"
+
+Change remove bucket:
+sc.storage.from("memories").remove(...)
+to:
+sc.storage.from("post-media").remove(...)
+
+Make sure the derived remove path correctly strips the post-media marker and produces:
+memories/{userId}/{filename}
+
+4. travel-buddy-standalone/src/services/stories.ts
+Change:
+supabase.storage.from('stories')
+to:
+supabase.storage.from('post-media')
+
+Also change upload path from:
+`${userId}/...`
+to:
+`stories/${userId}/...`
+
+5. artifacts/travel-buddy/src/services/stories.ts
+Mirror the same change:
+from('stories') → from('post-media')
+`${userId}/...` → `stories/${userId}/...`
+
+After patching, run:
+
+npm run typecheck 2>/dev/null || true
+npm run lint 2>/dev/null || true
+npm test 2>/dev/null || true
+
+Then run verification grep:
+
+grep -RniE "from\\(['\"]memories['\"]\\)|from\\(['\"]stories['\"]\\)|object/public/memories|object/public/stories" travel-buddy-standalone artifacts app components lib services src 2>/dev/null || true
+
+Return:
+
+# Storage Bucket Patch Report
+
+| File Changed | Old Bucket | New Bucket | Path Prefix | Status |
+|---|---|---|---|---|
+
+## Verification
+- Remaining `memories` bucket references:
+- Remaining `stories` bucket references:
+- Typecheck result:
+- Lint result:
+- Test result:
+
+## Upload Surface Status After Patch
+| Surface | Status | Notes |
+|---|---|---|
+| Profile avatar | unchanged working | profile-media |
+| Cover photo | unchanged working | profile-media |
+| Post media | unchanged working | post-media |
+| Postcard media | unchanged working | post-media |
+| Memory media | patched | post-media/memories/{userId}/... |
+| Story media | patched | post-media/stories/{userId}/... |
+| Circle avatar | not implemented | separate task |
+| Buddy profile photos | not implemented | separate task |
+| Telegraph attachments | not implemented | separate task |
+| Trip media | not implemented | separate task |
+| Event media | not implemented | separate task |
+
+Do not mark circle avatar, buddy photos, Telegraph attachments, trip media, or event media as fixed. They are not implemented yet.

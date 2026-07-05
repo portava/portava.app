@@ -1,0 +1,244 @@
+TASK: Travel Buddy — Apply Confirmed Bucket Patch + Audit Missing Upload Surfaces
+
+We confirmed Supabase currently has only these buckets:
+- post-media
+- profile-media
+
+Do NOT create new buckets.
+Do NOT run SQL.
+Do NOT change database schema.
+Do NOT patch unrelated upload flows.
+Do NOT change working avatar, cover, post, or postcard upload paths.
+Use existing buckets only.
+
+PART 1 — APPLY CONFIRMED 5-FILE BUCKET PATCH
+
+Confirmed broken buckets:
+- memories bucket does NOT exist
+- stories bucket does NOT exist
+
+Confirmed safe fix:
+- memories uploads should use post-media/memories/{userId}/...
+- stories uploads should use post-media/stories/{userId}/...
+
+Patch only these files:
+
+1. travel-buddy-standalone/src/services/memories.ts
+
+Change:
+supabase.storage.from('memories')
+
+To:
+supabase.storage.from('post-media')
+
+Also change upload path from:
+`${userId}/...`
+
+To:
+`memories/${userId}/...`
+
+2. artifacts/travel-buddy/src/services/memories.ts
+
+Mirror the same change:
+from('memories') → from('post-media')
+`${userId}/...` → `memories/${userId}/...`
+
+3. artifacts/api-server/src/routes/memories.ts
+
+Change public URL marker:
+
+From:
+"/object/public/memories/"
+
+To:
+"/object/public/post-media/"
+
+Change remove bucket:
+
+From:
+sc.storage.from("memories").remove(...)
+
+To:
+sc.storage.from("post-media").remove(...)
+
+Make sure the derived remove path correctly strips the post-media marker and produces:
+memories/{userId}/{filename}
+
+4. travel-buddy-standalone/src/services/stories.ts
+
+Change:
+supabase.storage.from('stories')
+
+To:
+supabase.storage.from('post-media')
+
+Also change upload path from:
+`${userId}/...`
+
+To:
+`stories/${userId}/...`
+
+5. artifacts/travel-buddy/src/services/stories.ts
+
+Mirror the same change:
+from('stories') → from('post-media')
+`${userId}/...` → `stories/${userId}/...`
+
+After patching, run:
+
+npm run typecheck 2>/dev/null || true
+npm run lint 2>/dev/null || true
+npm test 2>/dev/null || true
+
+Then run verification grep:
+
+grep -RniE "from\\(['\"]memories['\"]\\)|from\\(['\"]stories['\"]\\)|object/public/memories|object/public/stories" travel-buddy-standalone artifacts app components lib services src 2>/dev/null || true
+
+Return this report:
+
+# Storage Bucket Patch Report
+
+| File Changed | Old Bucket | New Bucket | Path Prefix | Status |
+|---|---|---|---|---|
+
+## Verification
+- Remaining `memories` bucket references:
+- Remaining `stories` bucket references:
+- Typecheck result:
+- Lint result:
+- Test result:
+
+## Upload Surface Status After Patch
+
+| Surface | Status | Notes |
+|---|---|---|
+| Profile avatar | unchanged working | profile-media |
+| Cover photo | unchanged working | profile-media |
+| Post media | unchanged working | post-media |
+| Postcard media | unchanged working | post-media |
+| Memory media | patched | post-media/memories/{userId}/... |
+| Story media | patched | post-media/stories/{userId}/... |
+| Circle avatar | not implemented | separate audit below |
+| Buddy profile photos | not implemented | separate audit below |
+| Telegraph attachments | not implemented | separate audit below |
+| Trip media | not implemented | separate audit below |
+| Event media | not implemented | separate audit below |
+
+Do not mark circle avatar, buddy photos, Telegraph attachments, trip media, or event media as fixed. They are not implemented yet.
+
+PART 2 — AUDIT MISSING UPLOAD SURFACES
+
+After the 5-file patch is complete, audit missing upload surfaces only.
+
+Do NOT patch these yet.
+Do NOT create buckets.
+Do NOT run SQL.
+Do NOT invent columns.
+Do NOT mark anything complete unless verified.
+
+Audit what is needed to support:
+
+1. Circle avatar upload
+- Use existing bucket: profile-media
+- Preferred folder:
+  profile-media/circles/{circle_id}/avatar
+- Check if circles table has avatar_url or equivalent.
+- Check if any circle avatar upload UI exists.
+- Check if any API/service method exists.
+- Check if storage policy allows this safely.
+- Check where circle avatar should display.
+
+2. Rent a Buddy profile/gallery photos
+- Use existing bucket: profile-media
+- Preferred folder:
+  profile-media/buddies/{user_id}/photos/{file_name}
+- Check if buddy_profiles or buddy tables have photo/avatar/gallery columns.
+- Check if buddy profile create/edit UI supports photos.
+- Check if upload API/service exists.
+- Check if storage policy allows owner-only writes.
+- Check where buddy photos should display.
+
+3. Telegraph attachments
+- Use existing bucket: post-media
+- Preferred folder:
+  post-media/telegraph/{conversation_id}/{file_name}
+- Check if messages table supports attachment/media fields.
+- Check if Telegraph composer supports attachments.
+- Check if upload API/service exists.
+- Check if only conversation members can upload/read attachment metadata.
+- Check if public bucket exposure is acceptable or if metadata access must be protected.
+
+4. Trip media
+- Use existing bucket: post-media
+- Preferred folder:
+  post-media/trips/{trip_id}/{file_name}
+- Check if trips table has cover/media fields.
+- Check if create/edit trip UI supports media upload.
+- Check if upload API/service exists.
+- Check where trip media should display.
+
+5. Event media
+- Use existing bucket: post-media
+- Preferred folder:
+  post-media/events/{event_id}/{file_name}
+- Check if events table has cover/media fields.
+- Check if create/edit event UI supports media upload.
+- Check if upload API/service exists.
+- Check where event media should display.
+
+Search commands:
+
+grep -RniE "circle.*avatar|avatar.*circle|circle.*photo|avatar_url|cover_url|image_url|media_url|gallery|photos|attachments|attachment_url|trip.*cover|event.*cover|buddy.*photo|buddy.*avatar|telegraph.*attach|message.*media|message.*attachment" app components lib services src artifacts travel-buddy-standalone migrations 2>/dev/null | head -1600
+
+grep -RniE "profile-media|post-media|storage\\.from|upload\\(|getPublicUrl|createSignedUrl|remove\\(" app components lib services src artifacts travel-buddy-standalone 2>/dev/null | head -1600
+
+Return this report:
+
+# Missing Upload Surfaces Audit
+
+| Upload Surface | UI Exists | Service/API Exists | DB Column Exists | Bucket To Use | Path | SQL Needed? | Status | Fix Needed |
+|---|---:|---:|---:|---|---|---:|---|---|
+
+Rows:
+- Circle avatar
+- Rent a Buddy profile photo
+- Rent a Buddy gallery photos
+- Telegraph attachments
+- Trip cover/media
+- Event cover/media
+
+Status must be:
+- READY TO PATCH
+- NEEDS SQL FIRST
+- NEEDS UI
+- NEEDS BACKEND
+- NEEDS STORAGE POLICY REVIEW
+- UNKNOWN
+
+Then return:
+
+## Required SQL, If Any
+
+If a DB column/table is missing, provide SQL only as a manual script for owner to run.
+
+Rules:
+- Do not apply SQL.
+- Do not run migration.
+- Use additive SQL only.
+- No drops.
+- No renames.
+- No destructive changes.
+
+## Required Code Patches
+
+| Surface | Files To Edit | Exact Patch | Depends On SQL? |
+|---|---|---|---:|
+
+## Plain-English Verdict
+
+Answer:
+- Did the memory/story bucket patch succeed?
+- Are any missing bucket references left?
+- Which upload surfaces can be patched without SQL?
+- Which upload surfaces need owner-run SQL first?
+- What exact command should run next?
