@@ -811,6 +811,28 @@ export const TEMPLATES: NotificationTemplate[] = [
     actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,
   }),
   tpl({
+    // Fired when a user's presence sharing expires (e.g. past trip/event end time).
+    // Triggered by a background job or Supabase DB trigger; not by a route directly.
+    eventType: 'circle.sharing_expired',
+    category: 'trips',
+    defaultPriority: 'low',
+    defaultChannels: ['in_app', 'push'],
+    title: () => 'Your Circle sharing ended',
+    body: ({ contextTitle }) => `${contextTitle ? `In ${contextTitle} — ` : ''}Your location sharing session has ended automatically.`,
+    actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,
+  }),
+  tpl({
+    // Fired when the first member in a context starts sharing (0→1 active transition).
+    // Notifies all other accepted members that Circle is now live for this context.
+    eventType: 'circle.context_active',
+    category: 'trips',
+    defaultPriority: 'normal',
+    defaultChannels: ['in_app', 'push'],
+    title: ({ contextTitle }) => `Circle is live${contextTitle ? ` · ${contextTitle}` : ''}`,
+    body: ({ actor }) => `${actor} started sharing. Find Your Circle is now active.`,
+    actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,
+  }),
+  tpl({
     eventType: 'circle.checkin',
     category: 'trips',
     defaultPriority: 'normal',

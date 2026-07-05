@@ -936,6 +936,36 @@ router.post("/circle/contexts/:type/:id/presence", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
 
+  // Fire circle.context_active when this is the first active sharer in the context (fire-and-forget).
+  // Only fires when status transitions to active; skips if others are already sharing.
+  const requestedStatus = parsed.data.status ?? "active";
+  if (requestedStatus === "active") {
+    void (async () => {
+      try {
+        const [memberIds, actorProfile, contextTitle, otherActiveRes] = await Promise.all([
+          getAcceptedMemberIds(sc, type as ContextType, id),
+          sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
+          resolveContextTitle(sc, type as ContextType, id),
+          sc.from("circle_presence")
+            .select("user_id")
+            .eq("context_type", type)
+            .eq("context_id", id)
+            .eq("status", "active")
+            .neq("user_id", user.id),
+        ]);
+        const otherActive = (otherActiveRes.data ?? []) as any[];
+        if (otherActive.length === 0) {
+          // Caller is the first one sharing — notify all other members.
+          const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "Someone";
+          const recipients = memberIds.filter((m) => m !== user.id);
+          await sendCircleNotifications(sc, recipients, "circle.context_active", {
+            actor: actorName, contextTitle, contextType: type, contextId: id,
+          });
+        }
+      } catch { /* non-fatal */ }
+    })();
+  }
+
   res.status(200).json({
     id:           (data as any)?.id          ?? null,
     status:       (data as any)?.status      ?? "active",
@@ -1036,8 +1066,9 @@ router.post("/circle/contexts/:type/:id/check-in", async (req, res) => {
         contextType:  type,
         contextId:    id,
       });
-      // Telegraph status card: subtype only — no status/venue data in body (server-side privacy).
-      void postCircleStatusCard(sc, type as ContextType, id, user.id, "checkin");
+      // Telegraph status card: preserve checkinType subtype for distinct card variants
+      // (e.g. "arrived" vs "with_group") — body still contains only { subtype } for privacy.
+      void postCircleStatusCard(sc, type as ContextType, id, user.id, parsed.data.checkinType);
     } catch { /* non-fatal */ }
   })();
 
@@ -1317,6 +1348,26 @@ router.patch("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
     eventType:   "host_changed_meeting_point",
   });
 
+  // Notifications + Telegraph card (fire-and-forget) — same pattern as POST /meeting-point
+  void (async () => {
+    try {
+      const [memberIds, actorProfile, contextTitle] = await Promise.all([
+        getAcceptedMemberIds(sc, type as ContextType, id),
+        sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
+        resolveContextTitle(sc, type as ContextType, id),
+      ]);
+      const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "The host";
+      const safeVenue = parsed.data.venueLabel ?? null;
+      const safeArea  = parsed.data.approximateLabel ?? null;
+      const recipients = memberIds.filter((m) => m !== user.id);
+      await sendCircleNotifications(sc, recipients, "circle.meeting_point_updated", {
+        actor: actorName, contextTitle, contextType: type, contextId: id,
+        venueLabel: safeVenue ?? "", approximateLabel: safeArea ?? "",
+      });
+      void postCircleStatusCard(sc, type as ContextType, id, user.id, "meeting_point");
+    } catch { /* non-fatal */ }
+  })();
+
   const row = data as any;
   res.status(200).json({
     id:               row?.id,
@@ -1397,6 +1448,17 @@ router.post("/circle/contexts/:type/:id/need-help", async (req, res) => {
 
   const memberOk = await isAcceptedMember(sc, user.id, type as ContextType, id);
   if (!memberOk) { sendError(res, "forbidden", "Not a member of this context"); return; }
+
+  // Rate limit: generous — prioritises genuine emergencies over spam prevention.
+  // 20/min per user; admin-override is possible via env (CIRCLE_NEED_HELP_RL_LIMIT=0 disables).
+  if (CIRCLE_NEED_HELP_RL_LIMIT > 0) {
+    const needHelpRl = checkRateLimit("circle_need_help", user.id, CIRCLE_NEED_HELP_RL_LIMIT, CIRCLE_NEED_HELP_RL_WIN_MS);
+    if (!needHelpRl.allowed) {
+      res.setHeader("Retry-After", String(Math.ceil(needHelpRl.retryAfterMs / 1000)));
+      sendError(res, "rate_limited", "Too many requests. Please slow down.");
+      return;
+    }
+  }
 
   // Update presence with needs_help=true (upsert)
   await sc
@@ -1637,7 +1699,7 @@ router.get("/circle/compass-suggestions", async (req, res) => {
   const ORDER: Record<string, number> = { circle_active: 0, turn_on_circle: 1, set_meeting_point: 2 };
   cards.sort((a, b) => (ORDER[a.cardType] ?? 9) - (ORDER[b.cardType] ?? 9));
 
-  res.json({ cards: cards.slice(0, 5) });
+  res.json({ cards: cards.slice(0, 3) });
 });
 
 // ── POST /circle/pause-on-session-end ─────────────────────────────────────────
