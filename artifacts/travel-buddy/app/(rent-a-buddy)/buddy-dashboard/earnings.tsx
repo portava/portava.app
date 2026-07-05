@@ -100,7 +100,7 @@ export default function BuddyEarnings() {
   if (error) return <TravelErrorState title="Couldn't load earnings" sub={error} onRetry={() => load()} />;
 
   const completed = bookings.filter((b) => b.status === 'completed');
-  const pending = bookings.filter((b) => b.status === 'confirmed' || b.status === 'in_progress');
+  const pending = bookings.filter((b) => b.status === 'scheduled' || b.status === 'in_progress');
   const disputed = bookings.filter((b) => b.status === 'disputed');
 
   const estimatedWeek = (earnings?.thisMonthUsd ?? 0) / 4;

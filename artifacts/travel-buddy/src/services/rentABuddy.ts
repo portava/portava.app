@@ -11,7 +11,8 @@ import { supabase } from '../lib/supabase';
 
 export type BuddyStatus = 'pending' | 'active' | 'paused' | 'rejected' | 'suspended';
 export type BookingStatus =
-  | 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | 'disputed';
+  | 'requested' | 'scheduled' | 'in_progress' | 'completed' | 'cancelled' | 'disputed'
+  | 'expired' | 'no_show_pending';
 export type ApplicationStatus = 'pending' | 'under_review' | 'approved' | 'rejected';
 
 export type BuddyCategory =

@@ -69,7 +69,7 @@ export function RentABuddyThreadHeader({ bookingId, autoTranslate = true, onTran
   const statusColor = STATUS_COLORS[booking.status] ?? color.mute;
   const statusLabel = STATUS_LABELS[booking.status] ?? booking.status;
   const isActive = booking.status === 'in_progress';
-  const showSafety = booking.status === 'confirmed' || isActive;
+  const showSafety = booking.status === 'scheduled' || isActive;
 
   // Determine which linear stage index the booking is at (−1 for out-of-band statuses)
   const currentStageIdx = STAGES.findIndex((s) => s.key === booking.status);

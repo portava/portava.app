@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet, TextInput,
-  Alert,
+  Alert, Modal,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import {
@@ -22,6 +22,56 @@ import { DurationPicker, type DurationOption } from '../../src/components/select
 import {
   fromISODate, fromHHmm, formatDisplayDate, formatDisplayTime,
 } from '../../src/lib/dateTime/formatters';
+
+type AsyncStorageStub = { setItem(k: string, v: string): Promise<void>; getItem(k: string): Promise<string | null> };
+const getStorage = (): AsyncStorageStub | null => {
+  try { return require('@react-native-async-storage/async-storage').default; } catch { return null; }
+};
+const TUTORIAL_KEY = 'rab_safety_tutorial_shown';
+
+function SafetyTutorialModal({ visible, onAcknowledge }: { visible: boolean; onAcknowledge: () => void }) {
+  return (
+    <Modal visible={visible} transparent animationType="slide">
+      <View style={tut.overlay}>
+        <View style={tut.sheet}>
+          <View style={tut.iconRow}>
+            <Shield size={28} color={color.success} />
+          </View>
+          <Text style={tut.title}>Before you book</Text>
+          <Text style={tut.sub}>Please review these important safety guidelines.</Text>
+
+          <View style={tut.rule}>
+            <AlertTriangle size={14} color={color.warn} />
+            <View style={{ flex: 1 }}>
+              <Text style={tut.ruleTitle}>Not a dating service</Text>
+              <Text style={tut.ruleSub}>Rent a Buddy is a social travel companion service. Romantic or sexual expectations are strictly prohibited.</Text>
+            </View>
+          </View>
+
+          <View style={tut.rule}>
+            <AlertTriangle size={14} color={color.warn} />
+            <View style={{ flex: 1 }}>
+              <Text style={tut.ruleTitle}>Never pay off-app</Text>
+              <Text style={tut.ruleSub}>Only pay via Travel Buddy checkout. Cash should only be used for the pre-agreed cash balance at session end — never upfront.</Text>
+            </View>
+          </View>
+
+          <View style={tut.rule}>
+            <Shield size={14} color={color.success} />
+            <View style={{ flex: 1 }}>
+              <Text style={tut.ruleTitle}>Safe Return is always on</Text>
+              <Text style={tut.ruleSub}>Your session has built-in safety check-ins. Share your location with your Trusted Circle and use the SOS button if needed.</Text>
+            </View>
+          </View>
+
+          <Pressable style={tut.btn} onPress={onAcknowledge}>
+            <Text style={tut.btnText}>I understand — continue to book</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  );
+}
 
 const CATEGORIES: { key: BuddyCategory; label: string }[] = [
   { key: 'city', label: 'City Explorer' },
@@ -114,6 +164,8 @@ export default function RentABuddyCheckout() {
   const [safetyPrefs, setSafetyPrefs] = useState<Record<string, boolean>>({
     safeReturn: true, shareLocation: false, publicOnly: true,
   });
+  const [tutorialVisible, setTutorialVisible] = useState(false);
+  const [pendingBook, setPendingBook] = useState(false);
 
   const location = zoneIndex != null ? PUBLIC_ZONES[zoneIndex] : customZone;
 
@@ -135,11 +187,8 @@ export default function RentABuddyCheckout() {
 
   const hourlyRate = buddy?.hourlyRateUsd ?? 0;
 
-  const handleBook = async () => {
-    if (!buddy || !policyAccepted) return;
-    if (!date.trim()) { Alert.alert('Missing date', 'Please select a booking date.'); return; }
-    if (!location.trim()) { Alert.alert('Missing location', 'Please enter a meetup location.'); return; }
-
+  const submitBooking = async () => {
+    if (!buddy) return;
     const durationH = Math.max(1, Math.round(duration / 3600));
     setSubmitting(true);
     const res = await createBooking({
@@ -160,9 +209,25 @@ export default function RentABuddyCheckout() {
     if (!res.ok) { Alert.alert('Booking failed', res.error); return; }
     const bookingId = res.data.booking?.id;
     if (bookingId) {
-      // Thread is created only when the buddy confirms — do NOT create here.
       router.replace({ pathname: '/(rent-a-buddy)/booking/[id]' as any, params: { id: bookingId } });
     }
+  };
+
+  const handleBook = async () => {
+    if (!buddy || !policyAccepted) return;
+    if (!date.trim()) { Alert.alert('Missing date', 'Please select a booking date.'); return; }
+    if (!location.trim()) { Alert.alert('Missing location', 'Please enter a meetup location.'); return; }
+
+    const storage = getStorage();
+    if (storage) {
+      const shown = await storage.getItem(TUTORIAL_KEY).catch(() => null);
+      if (!shown) {
+        setTutorialVisible(true);
+        setPendingBook(true);
+        return;
+      }
+    }
+    await submitBooking();
   };
 
   if (loading) return <TravelLoadingState label="Loading…" />;
@@ -442,6 +507,19 @@ export default function RentABuddyCheckout() {
         onClose={() => setShowTimePicker(false)}
         title="Select start time"
       />
+
+      <SafetyTutorialModal
+        visible={tutorialVisible}
+        onAcknowledge={async () => {
+          setTutorialVisible(false);
+          const storage = getStorage();
+          if (storage) await storage.setItem(TUTORIAL_KEY, '1').catch(() => {});
+          if (pendingBook) {
+            setPendingBook(false);
+            await submitBooking();
+          }
+        }}
+      />
     </View>
   );
 }
@@ -574,6 +652,25 @@ const styles = StyleSheet.create({
   },
   confirmBtnDisabled: { backgroundColor: color.haze },
   confirmBtnText: { ...t.bodyStrong, color: color.onInk },
+});
+
+const tut = StyleSheet.create({
+  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' },
+  sheet: {
+    backgroundColor: color.paper, borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    padding: space.xl, gap: space.md,
+  },
+  iconRow: { alignItems: 'center', marginBottom: space.sm },
+  title: { ...t.title, color: color.ink, textAlign: 'center' },
+  sub: { ...t.body, color: color.mute, textAlign: 'center' },
+  rule: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md, paddingVertical: space.sm },
+  ruleTitle: { ...t.bodyStrong, color: color.ink, marginBottom: 2 },
+  ruleSub: { ...t.small, color: color.mute, lineHeight: 18 },
+  btn: {
+    backgroundColor: color.ink, borderRadius: radius.md,
+    paddingVertical: space.md, alignItems: 'center', marginTop: space.sm,
+  },
+  btnText: { ...t.bodyStrong, color: color.onInk },
 });
 
 const sec = StyleSheet.create({

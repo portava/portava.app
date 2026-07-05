@@ -21,6 +21,7 @@ import { DestinationBar } from '../../src/components/discovery/DestinationBar';
 import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { listMyTrips } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { getAvailableNow, type BuddyProfile } from '../../src/services/rentABuddy';
 import { useSession } from '../../src/context/SessionContext';
 import { useLocationContext } from '../../src/context/LocationContext';
 import { LocationChip } from '../../src/components/LocationChip';
@@ -126,6 +127,9 @@ export default function DiscoveryHub() {
   const [categoryCounts, setCategoryCounts] = useState<Partial<Record<DiscoveryCategory, number>>>({});
   const [countsLoading, setCountsLoading] = useState(false);
   const [activeFilters, setActiveFilters] = useState<DiscoveryFilters>({ radiusKm: 10, openNow: false, minRating: null });
+  const [availableBuddies, setAvailableBuddies] = useState<BuddyProfile[]>([]);
+  const [buddyStripLoading, setBuddyStripLoading] = useState(false);
+  const [buddyCityNotAvailable, setBuddyCityNotAvailable] = useState(false);
 
   const handleAddToRoute = useCallback((draft: RouteStopDraft) => {
     setRouteBuilderDraft(draft);
@@ -140,6 +144,21 @@ export default function DiscoveryHub() {
       setDestinationLng(locationState.coords?.lng ?? null);
     }
   }, [locationState.place.city]);
+
+  // Load available buddies for the current city (for_you buddy strip).
+  useEffect(() => {
+    if (!currentCity) return;
+    setBuddyStripLoading(true);
+    setBuddyCityNotAvailable(false);
+    getAvailableNow(currentCity).then(res => {
+      setBuddyStripLoading(false);
+      if (!res.ok) {
+        if (res.error?.includes('city_not_available')) setBuddyCityNotAvailable(true);
+        return;
+      }
+      setAvailableBuddies(res.data.buddies.slice(0, 8));
+    }).catch(() => setBuddyStripLoading(false));
+  }, [currentCity]);
 
   // Debounce custom age inputs (500 ms) so that each keystroke while the user
   // is typing a number doesn't fire a batch of 7 parallel API requests.
@@ -549,20 +568,68 @@ export default function DiscoveryHub() {
       {/* ── Active tab content ── */}
       <View style={{ flex: 1 }}>
         {activeTab === 'for_you' ? (
-          <ForYouTab
-            key={`${destination}-${contextMode}-${communityRefreshKey}`}
-            destination={destination}
-            onAddToPlan={handleAddToPlan}
-            onAddToRoute={handleAddToRoute}
-            contextMode={contextMode}
-            lat={destinationLat}
-            lng={destinationLng}
-            userLat={locationState.coords?.lat ?? null}
-            userLng={locationState.coords?.lng ?? null}
-            viewMode={viewMode}
-            fallbackZoom={destinationZoom}
-            sortBy={activeFilters.sortBy ?? null}
-          />
+          <View style={{ flex: 1 }}>
+            {/* Buddy strip — available-now Buddies in the current city */}
+            {(availableBuddies.length > 0 || buddyCityNotAvailable) && (
+              <View style={buddyStrip.wrap}>
+                <View style={buddyStrip.header}>
+                  <Users size={13} color={color.signal} />
+                  <Text style={buddyStrip.title}>Buddies Available Now</Text>
+                  <Pressable onPress={() => router.push('/(rent-a-buddy)/search' as any)}>
+                    <Text style={buddyStrip.seeAll}>See all</Text>
+                  </Pressable>
+                </View>
+                {buddyCityNotAvailable ? (
+                  <View style={buddyStrip.comingSoon}>
+                    <Text style={buddyStrip.comingSoonText}>Coming soon to {currentCity ?? 'your city'}</Text>
+                  </View>
+                ) : (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={buddyStrip.scroll}
+                  >
+                    {availableBuddies.map(b => (
+                      <Pressable
+                        key={b.id}
+                        style={buddyStrip.chip}
+                        onPress={() => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)}
+                      >
+                        <View style={buddyStrip.chipAvatar}>
+                          <Text style={buddyStrip.chipInitial}>{b.displayName?.[0]?.toUpperCase() ?? '?'}</Text>
+                          <View style={buddyStrip.liveDot} />
+                        </View>
+                        <Text style={buddyStrip.chipName} numberOfLines={1}>{b.displayName ?? 'Buddy'}</Text>
+                        {b.categories[0] && (
+                          <Text style={buddyStrip.chipCat} numberOfLines={1}>{b.categories[0]}</Text>
+                        )}
+                      </Pressable>
+                    ))}
+                    <Pressable
+                      style={buddyStrip.moreChip}
+                      onPress={() => router.push('/(rent-a-buddy)/' as any)}
+                    >
+                      <Text style={buddyStrip.moreText}>Browse all</Text>
+                    </Pressable>
+                  </ScrollView>
+                )}
+              </View>
+            )}
+            <ForYouTab
+              key={`${destination}-${contextMode}-${communityRefreshKey}`}
+              destination={destination}
+              onAddToPlan={handleAddToPlan}
+              onAddToRoute={handleAddToRoute}
+              contextMode={contextMode}
+              lat={destinationLat}
+              lng={destinationLng}
+              userLat={locationState.coords?.lat ?? null}
+              userLng={locationState.coords?.lng ?? null}
+              viewMode={viewMode}
+              fallbackZoom={destinationZoom}
+              sortBy={activeFilters.sortBy ?? null}
+            />
+          </View>
         ) : (
           <DiscoveryCategoryTab
             key={`${activeTab}-${destination}-${contextMode}`}
@@ -986,4 +1053,55 @@ const styles = StyleSheet.create({
     color: color.faint,
     flex: 1,
   },
+});
+
+const buddyStrip = StyleSheet.create({
+  wrap: {
+    backgroundColor: color.paperRaised,
+    borderBottomWidth: 1,
+    borderBottomColor: color.haze,
+    paddingVertical: space.sm,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    paddingHorizontal: space.lg,
+    marginBottom: space.sm,
+  },
+  title: { ...t.small, fontWeight: '700', color: color.ink, flex: 1 },
+  seeAll: { ...t.small, color: color.signal, fontWeight: '700' },
+  scroll: { paddingHorizontal: space.lg, gap: space.md },
+  chip: {
+    alignItems: 'center',
+    width: 72,
+    gap: 4,
+  },
+  chipAvatar: {
+    width: 52, height: 52, borderRadius: 26,
+    backgroundColor: color.deep,
+    alignItems: 'center', justifyContent: 'center',
+    position: 'relative',
+  },
+  chipInitial: { fontSize: 20, fontWeight: '700', color: color.onInk },
+  liveDot: {
+    position: 'absolute', bottom: 2, right: 2,
+    width: 12, height: 12, borderRadius: 6,
+    backgroundColor: color.success,
+    borderWidth: 2, borderColor: color.paperRaised,
+  },
+  chipName: { ...t.small, color: color.ink, fontWeight: '600', textAlign: 'center' },
+  chipCat: { fontSize: 9, color: color.mute, textAlign: 'center', fontFamily: 'Courier' },
+  moreChip: {
+    width: 72, height: 52, borderRadius: 26,
+    backgroundColor: color.haze,
+    alignItems: 'center', justifyContent: 'center',
+    alignSelf: 'center',
+  },
+  moreText: { fontSize: 10, fontWeight: '700', color: color.mute, textAlign: 'center' },
+  comingSoon: {
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
+  },
+  comingSoonText: { ...t.small, color: color.mute, fontStyle: 'italic' },
 });

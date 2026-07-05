@@ -35,6 +35,7 @@ import type { TripRow } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { CompassStatusCard } from '../../src/components/compass/CompassStatusCard';
 import { CompassPassportSuggestions } from '../../src/components/compass/CompassPassportSuggestions';
+import { getMyBuddyProfile, type BuddyProfile } from '../../src/services/rentABuddy';
 
 type Tab = 'postcards' | 'stamps' | 'trips' | 'map';
 const TABS: { key: Tab; label: string }[] = [
@@ -327,6 +328,7 @@ function PassportContent({
   const [pendingCount, setPendingCount] = useState(0);
   const [coverError, setCoverError] = useState(false);
   const [coverUploading, setCoverUploading] = useState(false);
+  const [buddyProfile, setBuddyProfile] = useState<BuddyProfile | null | undefined>(undefined);
 
   const handleChangeCover = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -358,6 +360,9 @@ function PassportContent({
     getPendingPosts().then((r) => {
       if (r.ok && r.data) setPendingCount(r.data.length);
     }).catch(() => {});
+    getMyBuddyProfile().then(res => {
+      setBuddyProfile(res.ok ? (res.data.profile ?? null) : null);
+    }).catch(() => setBuddyProfile(null));
   }, [reload]));
 
   return (
@@ -452,6 +457,43 @@ function PassportContent({
 
         {/* Compass "Suggested for You" — personalised recommendations (owner only) */}
         <CompassPassportSuggestions isOwner />
+
+        {/* Buddy Profile card — shown when the user has a Buddy profile */}
+        {buddyProfile != null && buddyProfile.status !== 'rejected' && (
+          <Pressable
+            style={bpCard.wrap}
+            onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard/' as any)}
+          >
+            <View style={bpCard.iconWrap}>
+              <Text style={bpCard.icon}>🤝</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={bpCard.title}>
+                {buddyProfile.status === 'active' ? 'Your Buddy Profile' :
+                  buddyProfile.status === 'paused' ? 'Buddy Profile (Paused)' : 'Buddy Application'}
+              </Text>
+              <Text style={bpCard.sub}>
+                {buddyProfile.status === 'active'
+                  ? `${buddyProfile.city} · ${buddyProfile.reviewCount} review${buddyProfile.reviewCount !== 1 ? 's' : ''}`
+                  : buddyProfile.status === 'paused'
+                    ? 'Your profile is currently hidden from search'
+                    : 'Application under review — we\'ll notify you soon'}
+              </Text>
+            </View>
+            <View style={[bpCard.badge, {
+              backgroundColor: buddyProfile.status === 'active' ? '#EEF8F3' :
+                buddyProfile.status === 'paused' ? color.haze : '#FFF8ED',
+            }]}>
+              <Text style={[bpCard.badgeText, {
+                color: buddyProfile.status === 'active' ? color.success :
+                  buddyProfile.status === 'paused' ? color.mute : color.warn,
+              }]}>
+                {buddyProfile.status === 'active' ? 'Active' :
+                  buddyProfile.status === 'paused' ? 'Paused' : 'In Review'}
+              </Text>
+            </View>
+          </Pressable>
+        )}
 
         {/* Tab bar — full-width segmented control */}
         <View style={styles.tabBarWrap}>
@@ -671,4 +713,27 @@ const styles = StyleSheet.create({
   tabTextActive: { color: color.onInk },
 
   tabContent: { marginTop: space.md },
+});
+
+const bpCard = StyleSheet.create({
+  wrap: {
+    flexDirection: 'row', alignItems: 'center', gap: space.md,
+    marginHorizontal: space.lg, marginTop: space.md,
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.md, borderWidth: 1, borderColor: color.haze,
+    padding: space.md,
+  },
+  iconWrap: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: '#EEF8F3',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  icon: { fontSize: 20 },
+  title: { ...t.bodyStrong, color: color.ink },
+  sub: { ...t.small, color: color.mute, marginTop: 2 },
+  badge: {
+    borderRadius: radius.pill,
+    paddingHorizontal: space.sm, paddingVertical: 4,
+  },
+  badgeText: { fontSize: 10, fontWeight: '800', fontFamily: 'Courier' },
 });

@@ -294,8 +294,8 @@ export default function BuddyDashboard() {
                   <Text style={s.bkDate}>{new Date(bk.bookingDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' })}</Text>
                   <Text style={s.bkCat}>{bk.category} · {bk.durationH}h · {bk.groupSize} pax</Text>
                 </View>
-                <View style={[s.statusPill, { backgroundColor: bk.status === 'confirmed' ? '#E8F5EE' : '#FFF8ED' }]}>
-                  <Text style={[s.statusText, { color: bk.status === 'confirmed' ? color.success : color.warn }]}>
+                <View style={[s.statusPill, { backgroundColor: bk.status === 'scheduled' ? '#E8F5EE' : '#FFF8ED' }]}>
+                  <Text style={[s.statusText, { color: bk.status === 'scheduled' ? color.success : color.warn }]}>
                     {bk.status.toUpperCase()}
                   </Text>
                 </View>

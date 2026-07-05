@@ -327,7 +327,7 @@ export default function BuddyRequests() {
     const res = await rentABuddy.getDashboardRequests();
     if (!silent) setLoading(false);
     if (res.ok) {
-      setRequests(res.data.requests.filter((r) => r.status === 'pending'));
+      setRequests(res.data.requests.filter((r) => r.status === 'requested'));
     } else {
       setError(res.error);
     }

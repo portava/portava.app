@@ -40,5 +40,6 @@
 - [Fake-client must return row copies not references](fake-client-row-copies.md) — select path must shallow-copy results; returning references lets later mutations silently change values the handler already captured
 - [hiddenGems admin guard](hidden-gems-admin-guard.md) — was reading profiles.is_admin (never existed); correct column is profiles.role === "admin"
 - [Sync-standalone direction](sync-standalone-direction.md) — SRC=artifacts/travel-buddy → DST=standalone; edit SRC not DST for mobile changes
+- [passport.tsx two-component structure](passport-two-components.md) — PassportScreen (line 48) loads data; PassportContent (line 302) renders UI; state/effects that drive UI must live in PassportContent, not PassportScreen
 - [Search ranking + upsert fake-client pattern](search-ranking-pattern.md) — rankCombined: tier primary + upcomingFirst tiebreak + city tiebreak in one pass; upsert() in fake client must be chainable (return builder, not { error: null }); POST search-history returns row id so UI can patch synthetic local id
 - [Telegraph surface + Pulse ranking guard](telegraph-pulse-patterns.md) — isEnabled uses like("flag","COMPASS_%"); fake client needs like(); req.log is undefined in tests → use req.log?.; pre-shape location guard must operate on raw rows (snake_case) not shaped posts

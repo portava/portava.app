@@ -9,7 +9,7 @@ import {
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState } from '../../src/components/primitives';
-import { getBooking, addExtraTime, reportBooking, type BuddyBooking } from '../../src/services/rentABuddy';
+import { getBooking, addExtraTime, reportBooking, safetyCheckin, feelUnsafe, type BuddyBooking } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 function pad(n: number) { return String(n).padStart(2, '0'); }
@@ -234,7 +234,40 @@ export default function RentABuddyActive() {
               />
             </View>
             <Pressable
-              style={styles.reportBtn}
+              style={styles.unsafeBtn}
+              onPress={() => {
+                Alert.alert(
+                  'Are you feeling unsafe?',
+                  'Our safety team will be notified immediately. If you are in immediate danger, use the SOS button.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Notify safety team',
+                      style: 'destructive',
+                      onPress: async () => {
+                        const res = await feelUnsafe(bookingId);
+                        if (res.ok) {
+                          Alert.alert(
+                            'Safety team notified',
+                            'Our team has been alerted. If in immediate danger, use the SOS button.',
+                          );
+                        } else {
+                          Alert.alert(
+                            'Could not send alert',
+                            'Please use the SOS button to call emergency services.',
+                          );
+                        }
+                      },
+                    },
+                  ],
+                );
+              }}
+            >
+              <AlertTriangle size={13} color={color.signal} />
+              <Text style={styles.unsafeBtnText}>I feel unsafe</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.reportBtn, { borderTopWidth: 1, borderTopColor: color.haze }]}
               onPress={() => {
                 Alert.alert(
                   'Report an issue',
@@ -285,6 +318,7 @@ export default function RentABuddyActive() {
       <AddTimeModal visible={addTimeVisible} onClose={() => setAddTimeVisible(false)} onAdd={async h => {
         const res = await addExtraTime(bookingId, h);
         if (res.ok) setAddedH(a => a + h);
+        else Alert.alert('Error', res.error ?? 'Could not add time');
       }} />
       <EndModal visible={endVisible} onClose={() => setEndVisible(false)} onEnd={handleEnd} />
     </View>
@@ -357,7 +391,12 @@ const styles = StyleSheet.create({
   safetyToggleRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md },
   safetyToggleLabel: { ...t.bodyStrong, color: color.ink },
   safetyToggleSub: { ...t.small, color: color.mute, marginTop: 2 },
-  reportBtn: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md, borderTopWidth: 1, borderTopColor: color.haze },
+  unsafeBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md,
+    backgroundColor: '#FFF0EE', borderTopWidth: 1, borderTopColor: color.haze,
+  },
+  unsafeBtnText: { ...t.small, color: color.signal, fontWeight: '700' },
+  reportBtn: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md },
   reportText: { ...t.small, color: color.signal, fontWeight: '600' },
   bottomBar: {
     position: 'absolute', bottom: 0, left: 0, right: 0,

@@ -18,21 +18,25 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 type BookingStatus = BuddyBooking['status'];
 
 const STATUS_LABELS: Record<BookingStatus, string> = {
-  pending: 'Pending',
-  confirmed: 'Confirmed',
+  requested: 'Requested',
+  scheduled: 'Confirmed',
   in_progress: 'Active',
   completed: 'Completed',
   cancelled: 'Cancelled',
   disputed: 'Disputed',
+  expired: 'Expired',
+  no_show_pending: 'No-Show Review',
 };
 
 const STATUS_COLORS: Record<BookingStatus, string> = {
-  pending: color.warn,
-  confirmed: color.deep,
+  requested: color.warn,
+  scheduled: color.deep,
   in_progress: color.success,
   completed: color.mute,
   cancelled: color.haze,
   disputed: color.signal,
+  expired: color.haze,
+  no_show_pending: color.signal,
 };
 
 function StatusBadge({ status }: { status: BookingStatus }) {
@@ -236,7 +240,7 @@ export default function BookingDetail() {
 
   const isActive = booking.status === 'in_progress';
   const isCompleted = booking.status === 'completed';
-  const isCancellable = booking.status === 'pending' || booking.status === 'confirmed';
+  const isCancellable = booking.status === 'requested' || booking.status === 'scheduled';
   const cashBalance = Math.round(booking.totalUsd * 0.7);
   const deposit = Math.round(booking.totalUsd * 0.3);
   const serviceFee = Math.round(booking.totalUsd * 0.12);
@@ -324,7 +328,7 @@ export default function BookingDetail() {
         </View>
 
         {/* Safety panel */}
-        {(isActive || booking.status === 'confirmed') && (
+        {(isActive || booking.status === 'scheduled') && (
           <View style={{ paddingHorizontal: space.lg, marginTop: space.lg }}>
             <SafetyPanel
               open={safetyOpen || isActive}
@@ -373,7 +377,7 @@ export default function BookingDetail() {
             </Pressable>
           )}
 
-          {(isActive || booking.status === 'confirmed') && (
+          {(isActive || booking.status === 'scheduled') && (
             <Pressable
               style={({ pressed }) => [styles.actionBtn, pressed && { opacity: layout.pressedOpacity }]}
               onPress={() => setAddTimeVisible(true)}
