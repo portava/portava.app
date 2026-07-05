@@ -145,19 +145,20 @@ FROM rent_buddy_city_rollouts \
 WHERE status IN ('public_mvp', 'beta_testing')"
 
 # ── invite-link slot functions SQL (migrations 0109–0111) ─────────────────────
-# Checks that the three SECURITY DEFINER functions and supporting table
-# introduced by migrations 0109 (claim/release slot), 0110 (idempotent claim
-# + attempt ledger table), and 0111 (reconciliation function) all exist in the
-# production database.  Without 0109/0110 the accept handler returns a DB error
-# on every invite-link join; without 0111 POST /api/admin/trips/reconcile-invite-slots
-# returns 500.
+# Checks that the SECURITY DEFINER functions and supporting table introduced by
+# migrations 0109 (claim/release slot), 0110 (idempotent claim + attempt ledger
+# table), 0111 (reconciliation function), and 0113 (stale-attempt cleanup) all
+# exist in the production database.  Without 0109/0110 the accept handler
+# returns a DB error on every invite-link join; without 0111/0113
+# POST /api/admin/trips/reconcile-invite-slots returns 500.
 INVITE_LINK_FUNCS_SQL="SELECT 'function' AS check_type, proname AS name \
 FROM pg_proc \
 WHERE proname IN (\
 'claim_invite_link_slot',\
 'release_invite_link_slot',\
 'claim_invite_link_slot_for_user',\
-'reconcile_invite_link_slots'\
+'reconcile_invite_link_slots',\
+'cleanup_stale_invite_link_attempts'\
 ) \
 UNION ALL \
 SELECT 'table' AS check_type, relname AS name \

@@ -717,7 +717,7 @@ describe("new-buddy restrictions", () => {
           admin_status: "active", buddy_level: "new", new_buddy_public_only: true,
           new_buddy_daytime_only: true, new_buddy_max_hours: 6,
           categories: ["city", "nightlife"], category_approvals: { nightlife: true },
-          nightlife_admin_approved: true,
+          nightlife_admin_approved: true, id_verified: true, phone_verified: true, verification_status: "verified",
           languages: ["English"], hourly_rate_usd: 25, max_group_size: 4,
           verified: false, review_count: 0, completed_bookings: 0,
           vibe_tags: [], safety_badges: [], gallery_urls: [],
@@ -991,7 +991,7 @@ describe("cancellation Trust Score events", () => {
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.ok, true);
     // Booking should be marked cancelled in state
-    assert.equal(state.bookings?.[BOOKING_ID]?.status, "cancelled");
+    assert.equal(state.bookings?.[BOOKING_ID]?.status, "cancelled_by_traveler");
   });
 });
 

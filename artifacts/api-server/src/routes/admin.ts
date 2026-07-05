@@ -1784,25 +1784,32 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
 /**
  * POST /admin/trips/reconcile-invite-slots
  *
- * Finds stranded invite-link slots — cases where use_count was incremented by
- * claim_invite_link_slot_for_user but the subsequent trip_members INSERT never
- * completed — and corrects them.
+ * Runs two complementary invite-link attempt cleanups in a single request:
  *
- * A slot is considered stranded when:
- *   1. A trip_invite_link_attempts row exists for (link_id, user_id)
- *   2. No trip_members row exists for the link's trip + that user
- *   3. The attempt is older than minAgeMinutes (default 5) to avoid touching
- *      in-flight legitimate requests
+ * 1. Stranded slots (reconcile_invite_link_slots — migration 0111):
+ *    use_count was incremented but the trip_members INSERT never completed.
+ *    Detected when a trip_invite_link_attempts row exists for (link_id, user_id)
+ *    with no trip_members row for the link's trip + that user, and the attempt
+ *    is older than minAgeMinutes.  Fix: decrement use_count + delete attempt row.
  *
- * For each stranded slot the handler decrements use_count by 1 (floors at 0)
- * and deletes the orphaned attempt row.
+ * 2. Stale attempts (cleanup_stale_invite_link_attempts — migration 0113):
+ *    The join succeeded but clearAttempt() failed (best-effort) so the attempt
+ *    row was not deleted.  Detected when a trip_invite_link_attempts row exists
+ *    AND a trip_members row ALSO exists for the same trip+user.  Fix: delete
+ *    the stale attempt row (no use_count adjustment needed — slot was used).
  *
  * Body (optional):
- *   { minAgeMinutes?: number }  — minimum slot age before it is eligible for
- *                                 correction (integer >= 1, default 5)
+ *   { minAgeMinutes?: number }  — minimum attempt age (integer >= 1, default 5)
+ *                                 applied only to stranded-slot detection
  *
  * Response:
- *   { fixed: number, minAgeMinutes: number, slots: Array<{ linkId, userId, tripId, claimedAt }> }
+ *   {
+ *     fixed:         number,   // stranded slots corrected
+ *     staleAttempts: number,   // stale attempt rows removed
+ *     minAgeMinutes: number,
+ *     slots:         Array<{ linkId, userId, tripId, claimedAt }>,
+ *     stale:         Array<{ linkId, userId, tripId, claimedAt }>,
+ *   }
  */
 router.post("/admin/trips/reconcile-invite-slots", async (req, res) => {
   const admin = await requireAdmin(req, res);
@@ -1815,27 +1822,45 @@ router.post("/admin/trips/reconcile-invite-slots", async (req, res) => {
       ? Math.max(1, Math.floor(rawAge))
       : 5;
 
-  const { data, error } = await sc.rpc("reconcile_invite_link_slots", {
-    min_age_minutes: minAgeMinutes,
-  });
+  const [reconcileResult, staleResult] = await Promise.all([
+    sc.rpc("reconcile_invite_link_slots", { min_age_minutes: minAgeMinutes }),
+    sc.rpc("cleanup_stale_invite_link_attempts"),
+  ]);
 
-  if (error) {
-    req.log?.error({ err: error.message }, "reconcile_invite_link_slots rpc failed");
+  if (reconcileResult.error) {
+    req.log?.error(
+      { err: reconcileResult.error.message },
+      "reconcile_invite_link_slots rpc failed"
+    );
     sendError(res, "db_error", "Reconciliation query failed");
     return;
   }
 
-  const fixed = (data as any[]) ?? [];
+  if (staleResult.error) {
+    req.log?.error(
+      { err: staleResult.error.message },
+      "cleanup_stale_invite_link_attempts rpc failed"
+    );
+    sendError(res, "db_error", "Stale-attempt cleanup query failed");
+    return;
+  }
+
+  const fixed = (reconcileResult.data as any[]) ?? [];
+  const stale = (staleResult.data as any[]) ?? [];
+
+  const shapeRow = (r: any) => ({
+    linkId:    r.link_id,
+    userId:    r.user_id,
+    tripId:    r.trip_id,
+    claimedAt: r.claimed_at,
+  });
 
   res.json({
-    fixed: fixed.length,
+    fixed:         fixed.length,
+    staleAttempts: stale.length,
     minAgeMinutes,
-    slots: fixed.map((r: any) => ({
-      linkId:    r.link_id,
-      userId:    r.user_id,
-      tripId:    r.trip_id,
-      claimedAt: r.claimed_at,
-    })),
+    slots: fixed.map(shapeRow),
+    stale: stale.map(shapeRow),
   });
 });
 
