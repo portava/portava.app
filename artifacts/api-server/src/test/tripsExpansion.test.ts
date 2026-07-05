@@ -218,6 +218,23 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
     },
     from: (tableName: string) => chain(tableName, db[tableName]?.rows ?? []),
     rpc: async (fn: string, args: Record<string, any>) => {
+      if (fn === "claim_invite_link_slot_for_user") {
+        // Combined atomic claim + attempt-row (mirrors the hardened DB function).
+        // Returns: 'claimed' | 'already_attempted' | 'limit_reached'
+        const table = db.trip_invite_links ?? { rows: [] };
+        const row = table.rows.find((r) => r.id === args.p_link_id);
+        if (!row) return { data: "limit_reached", error: null };
+        const attempts = db.trip_invite_link_attempts ?? { rows: [] };
+        const prior = attempts.rows.find((a) => a.link_id === args.p_link_id && a.user_id === args.p_user_id);
+        if (prior) return { data: "already_attempted", error: null };
+        if (row.max_uses !== null && row.max_uses !== undefined && (row.use_count ?? 0) >= row.max_uses) {
+          return { data: "limit_reached", error: null };
+        }
+        row.use_count = (row.use_count ?? 0) + 1;
+        if (!db.trip_invite_link_attempts) db.trip_invite_link_attempts = { rows: [] };
+        db.trip_invite_link_attempts.rows.push({ link_id: args.p_link_id, user_id: args.p_user_id });
+        return { data: "claimed", error: null };
+      }
       if (fn === "claim_invite_link_slot") {
         const table = db.trip_invite_links ?? { rows: [] };
         const row = table.rows.find((r) => r.id === args.link_id);
