@@ -76,8 +76,8 @@ Key transitions:
 - Duplicate guard: returns `409 already_reviewed` if reviewer already submitted
 - Fields: `rating` (required), `body`, `safetyScore`, `communicationScore`, `punctualityScore`, `photos[]`
 
-### Double-blind
-Reviews start with `is_public: false`. When both sides have submitted a review for the same booking, both are unblinded simultaneously (`is_public: true`). The `blind_until` date is set to 7 days after the booking date so neither side can see the other's review before the window closes.
+### Visibility
+Reviews start with `is_public: false` and `moderation_status: 'pending_moderation'`. A review only becomes publicly visible (`is_public: true`) after admin approval (see Moderation below). There is no automatic double-blind unblinding — `blind_until` is stored on the row but visibility is governed entirely by the moderation status, not by whether both sides have reviewed.
 
 ### Moderation
 All reviews start with `moderation_status: 'pending_moderation'`. Admins review the moderation queue at:

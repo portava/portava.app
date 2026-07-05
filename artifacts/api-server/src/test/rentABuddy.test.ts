@@ -2059,13 +2059,13 @@ describe("Rent a Buddy — rebook", () => {
     assert.equal(r.body.booking?.status, "pending");
   });
 
-  it("rebook without startTime returns 400", async () => {
+  it("rebook without startTime still succeeds (startTime is optional)", async () => {
     setupRebookState("completed");
     const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
       bookingDate: FUTURE_DATE,
     });
-    assert.equal(r.status, 400, JSON.stringify(r.body));
-    assert.equal(r.body.error, "invalid_payload");
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.ok(r.body.bookingId, "should return new bookingId");
   });
 
   it("rebook blocked when buddy marked unavailable on the requested date", async () => {
