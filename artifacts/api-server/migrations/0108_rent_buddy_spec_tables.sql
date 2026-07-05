@@ -153,6 +153,46 @@ CREATE OR REPLACE VIEW buddy_favorites AS
     created_at
   FROM rent_buddy_saved;
 
+-- Spec-name VIEW aliases for the three core tables so client code that uses
+-- the un-prefixed names resolves without changes.
+
+CREATE OR REPLACE VIEW buddy_profiles AS
+  SELECT
+    id, user_id, display_name, tagline, bio, intro_video_url, languages,
+    city, country, categories, hourly_rate_usd, status, admin_status,
+    verified, verified_at, average_rating, review_count, completed_bookings,
+    response_time_h, cover_photo_url, gallery_urls, vibe_tags, safety_badges,
+    buddy_level, category_approvals,
+    new_buddy_public_only, new_buddy_daytime_only, new_buddy_max_hours,
+    max_group_size, preferred_meetup_zones, trust_score_override, risk_hold,
+    created_at, updated_at
+  FROM rent_buddy_profiles;
+
+CREATE OR REPLACE VIEW buddy_availability AS
+  SELECT id, buddy_id, date, time_slots, is_available, notes, created_at
+  FROM rent_buddy_availability;
+
+CREATE OR REPLACE VIEW buddy_reviews AS
+  SELECT
+    id, booking_id, reviewer_id, reviewee_id, role, rating,
+    safety_score, communication_score, punctuality_score,
+    body, is_public, blind_until, photos, created_at, updated_at
+  FROM rent_buddy_reviews;
+
+-- buddy_disputes: spec-named view proxying rent_buddy_disputes
+CREATE OR REPLACE VIEW buddy_disputes AS
+  SELECT
+    id,
+    booking_id,
+    raised_by,
+    reason,
+    details,
+    status,
+    resolved_at,
+    resolution_notes,
+    created_at
+  FROM rent_buddy_disputes;
+
 CREATE OR REPLACE VIEW buddy_booking_requests AS
   SELECT
     id,

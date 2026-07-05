@@ -435,15 +435,75 @@ Every `rent_buddy_*` table has RLS enabled. Policy pattern used consistently:
 
 ---
 
-## 7. Migrations Applied by This Task
+## 7. Spec-Path Compatibility Layer (Phase 2)
+
+After initial implementation, a code review identified spec-path aliases missing and two new tables
+(`buddy_services`, `buddy_availability_exceptions`) needing CRUD endpoints.  The following work was added:
+
+### 7a. URL Alias Middleware (`src/app.ts`)
+
+A lightweight rewriting middleware (added before `app.use("/api", router)`) transparently maps five
+external spec-path families to their canonical `/api/rent-a-buddy/*` handlers:
+
+| Spec path prefix | Rewrites to |
+|-----------------|-------------|
+| `/api/buddy-bookings/*` | `/api/rent-a-buddy/bookings/*` |
+| `/api/me/buddy-profile*` | `/api/rent-a-buddy/me/profile*` |
+| `/api/admin/buddy-applications/*` | `/api/rent-a-buddy/admin/applications/*` |
+| `/api/admin/buddies/*` | `/api/rent-a-buddy/admin/buddies/*` |
+| `/api/buddy-profiles/*` | `/api/rent-a-buddy/buddies/*` |
+
+No handler duplication — the aliases share the same request pipeline.
+
+### 7b. New Routes (`src/routes/rentABuddySpec.ts`)
+
+Registered via `router.use(rentABuddySpecRouter)` in `src/routes/index.ts`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/buddies/:buddyId/services` | List a buddy's approved, active services |
+| GET | `/api/buddies/:buddyId/availability-exceptions` | Public exception calendar |
+| GET | `/api/me/buddy-services` | Own service list |
+| POST | `/api/me/buddy-services` | Create service (sets `approved: false`) |
+| PATCH | `/api/me/buddy-services/:serviceId` | Update (rate change resets approval) |
+| DELETE | `/api/me/buddy-services/:serviceId` | Soft-delete (`is_active = false`) |
+| POST | `/api/admin/rent-a-buddy/services/:serviceId/approve` | Admin approve |
+| POST | `/api/admin/rent-a-buddy/services/:serviceId/disable` | Admin disable |
+| GET | `/api/me/buddy-availability-exceptions` | Own exception list |
+| POST | `/api/me/buddy-availability-exceptions` | Create exception |
+| PATCH | `/api/me/buddy-availability-exceptions/:exceptionId` | Update exception |
+| DELETE | `/api/me/buddy-availability-exceptions/:exceptionId` | Delete exception |
+| GET | `/api/rent-a-buddy/bookings/:bookingId/events` | Booking audit-trail (events log) |
+
+### 7c. Additional VIEW alias
+
+`buddy_disputes` VIEW (in migration 0108) proxying `rent_buddy_disputes`.
+`buddy_profiles`, `buddy_availability`, and `buddy_reviews` already satisfy spec requirements
+as tables created by migration 0050.
+
+### 7d. Contract Test
+
+`scripts/src/rentBuddyContractCheck.ts` — static analysis script that verifies required route
+paths and table/view names exist in the codebase without needing a live database.
+
+```bash
+pnpm --filter @workspace/scripts run check:rent-buddy-contract
+```
+
+Checks 20 routes × 21 tables = 41 contract points.  Exits 0 on full pass, 1 if any are missing.
+
+---
+
+## 8. Migrations Applied by This Task
 
 | Migration | Purpose |
 |-----------|---------|
 | `0107_rent_buddy_admin_actions.sql` | Creates `rent_buddy_admin_actions` audit log table with RLS and indexes |
+| `0108_rent_buddy_spec_tables.sql` | Creates `buddy_services`, `buddy_availability_exceptions`, `buddy_booking_events` tables; VIEW aliases: `buddy_booking_checkins`, `buddy_change_requests`, `buddy_favorites`, `buddy_booking_requests`, `buddy_disputes` |
 
 ---
 
-## 8. Build Verification
+## 9. Build Verification
 
 ```
 > @workspace/api-server@0.0.0 build
@@ -457,4 +517,5 @@ Every `rent_buddy_*` table has RLS enabled. Policy pattern used consistently:
 ⚡ Done in ~3000ms — no errors.
 ```
 
-`pnpm --filter @workspace/api-server run build` passes with the new route and migration in place.
+`pnpm --filter @workspace/api-server run typecheck` and
+`pnpm --filter @workspace/api-server run build` both pass clean.

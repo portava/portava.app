@@ -31,6 +31,24 @@ app.use(express.urlencoded({ extended: true }));
 
 app.get("/", (_req, res) => { res.sendStatus(200); });
 
+// Spec-path compatibility aliases — rewrite before routing so the canonical
+// /api/rent-a-buddy/* handlers serve both URL families.
+app.use((req, _res, next) => {
+  const u = req.url;
+  if (/^\/api\/buddy-bookings(\/|$)/.test(u)) {
+    req.url = u.replace(/^\/api\/buddy-bookings/, "/api/rent-a-buddy/bookings");
+  } else if (/^\/api\/me\/buddy-profile(\/|$)/.test(u)) {
+    req.url = u.replace(/^\/api\/me\/buddy-profile/, "/api/rent-a-buddy/me/profile");
+  } else if (/^\/api\/admin\/buddy-applications(\/|$)/.test(u)) {
+    req.url = u.replace(/^\/api\/admin\/buddy-applications/, "/api/rent-a-buddy/admin/applications");
+  } else if (/^\/api\/admin\/buddies(\/|$)/.test(u)) {
+    req.url = u.replace(/^\/api\/admin\/buddies/, "/api/rent-a-buddy/admin/buddies");
+  } else if (/^\/api\/buddy-profiles(\/|$)/.test(u)) {
+    req.url = u.replace(/^\/api\/buddy-profiles/, "/api/rent-a-buddy/buddies");
+  }
+  next();
+});
+
 app.use("/api", router);
 
 export default app;

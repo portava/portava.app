@@ -533,17 +533,18 @@ router.get("/api/buddies", async (req, res) => {
   const perPage = Math.min(100, Math.max(1, parseInt(rawPerPage ?? "20", 10) || 20));
 
   // If availableDate is supplied, pre-fetch buddy IDs available on that date
-  let availableBuddyIds: string[] | null = null;
+  let buddyIdsFilter: string[] | null = null;
   if (availableDate && /^\d{4}-\d{2}-\d{2}$/.test(availableDate)) {
     const { data: avRows } = await serviceClient
       .from("rent_buddy_availability")
       .select("buddy_id")
       .eq("date", availableDate)
       .eq("is_available", true);
-    availableBuddyIds = (avRows ?? []).map((r: any) => r.buddy_id as string);
-    if (availableBuddyIds.length === 0) {
+    const ids: string[] = (avRows ?? []).map((r: any) => r.buddy_id as string);
+    if (ids.length === 0) {
       return res.json({ buddies: [], total: 0, page, perPage, totalPages: 0 });
     }
+    buddyIdsFilter = ids;
   }
 
   let query = serviceClient
@@ -567,7 +568,7 @@ router.get("/api/buddies", async (req, res) => {
   if (available === "now") query = query.eq("available_now", true);
   if (featured === "true")  query = query.eq("featured", true);
   if (verified === "true")  query = query.eq("verified", true);
-  if (availableBuddyIds)    query = query.in("id", availableBuddyIds);
+  if (buddyIdsFilter !== null)    query = query.in("id", buddyIdsFilter);
 
   // Free-text search: sanitise to prevent PostgREST filter injection
   // then apply separate ilike filters (avoids the .or() comma-injection vector)
