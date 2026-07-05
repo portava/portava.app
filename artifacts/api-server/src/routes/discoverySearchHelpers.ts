@@ -28,6 +28,32 @@ export interface SearchQueryContext {
    * Used to city-boost events, travelers, and places that don't have lat/lng.
    */
   userCity?: string | null;
+  /**
+   * Intent-derived category signal forwarded by the mobile client's parseSearchIntent().
+   * Used to promote matching result buckets in the fan-out ranking (type=all).
+   * Values mirror parseSearchIntent output: 'nightlife' | 'food' | 'beach' | 'adventure' | 'culture'
+   */
+  intentCategory?: string | null;
+  /**
+   * Social context signal from parseSearchIntent(): 'solo' | 'group' | 'crew'.
+   * 'solo' = prefer solo-friendly; 'group'|'crew' = prefer group events/activities.
+   */
+  intentSocial?: string | null;
+  /**
+   * Budget signal from parseSearchIntent() or a follow-up chip: 'budget' = prefer
+   * lower-cost / free venues and events.
+   */
+  intentBudget?: string | null;
+  /**
+   * Safety/verification signal from parseSearchIntent() or a follow-up chip.
+   * When 'true', prefer verified travelers and events in ranking.
+   */
+  intentSafety?: string | null;
+  /**
+   * Location hint extracted by the client's parseSearchIntent() from phrases like
+   * "in Bali" or "near Cebu". Applied as a secondary city-boost alongside userCity.
+   */
+  intentLocationHint?: string | null;
 }
 
 // ── Alias / typo-tolerance map ─────────────────────────────────────────────────

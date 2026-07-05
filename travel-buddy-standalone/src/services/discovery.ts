@@ -377,7 +377,14 @@ export async function searchUnified(
   query: string,
   type = 'all',
   cursor?: string | null,
-  opts?: { lat?: number; lng?: number; tz?: string; city?: string },
+  opts?: {
+    lat?: number;
+    lng?: number;
+    tz?: string;
+    city?: string;
+    /** Intent params forwarded from parseSearchIntent() — sent as URL query params */
+    intentParams?: Record<string, string>;
+  },
 ): Promise<{ ok: true; data: UnifiedSearchResponse } | { ok: false; error: string }> {
   const base = apiBase();
   if (!base) return { ok: false, error: 'API not configured' };
@@ -391,6 +398,11 @@ export async function searchUnified(
   if (opts?.lng != null) params.set('lng',  String(opts.lng));
   if (opts?.tz)          params.set('tz',   opts.tz);
   if (opts?.city)        params.set('city', opts.city);
+  if (opts?.intentParams) {
+    for (const [k, v] of Object.entries(opts.intentParams)) {
+      if (v) params.set(k, v);
+    }
+  }
 
   try {
     const res = await fetch(`${base}/api/discovery/search?${params}`, {

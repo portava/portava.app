@@ -170,6 +170,11 @@ STANDALONE_OWNED_FILES=(
   "src/components/__tests__/SafeReturnSetupSheet.contactLoad.test.ts"
   "src/components/__tests__/SafeReturnSetupSheet.integration.test.ts"
   "app/profile/change-password.tsx"
+  "src/lib/compassIntent.ts"
+  "src/lib/__tests__/compassIntent.test.ts"
+  "src/components/compass/CompassPicksSection.tsx"
+  "src/components/discovery/__tests__/CompassPicksSection.test.ts"
+  "app/search.tsx"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.

@@ -1,0 +1,397 @@
+/**
+ * CompassPicksSection — horizontal card strip of Compass picks.
+ *
+ * Appears inside ForYouTab above community sections. Fetches from the
+ * `compass_picks` section of the Compass feed and renders a horizontal
+ * ScrollView of cards. Self-hides when empty, Compass is disabled, or
+ * the feed call fails. A loading skeleton is shown while fetching.
+ *
+ * Each card exposes:
+ *   • Type label + title
+ *   • Reason / explanation text
+ *   • Source label + optional trust label
+ *   • Context-appropriate action button (Save / Join / Follow / View)
+ *   • "Why this?" button → CompassWhySheet
+ *   • Overflow menu → CompassFeedbackMenu (not now / hide / report …)
+ */
+import React, { useState } from 'react';
+import {
+  View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator,
+} from 'react-native';
+import { Sparkles, CheckCircle, Navigation } from 'lucide-react-native';
+import { color, space, radius, type as t } from '../../theme/tokens';
+import { useCompassFeed } from '../../hooks/compass/useCompassFeed';
+import { CompassWhySheet } from './CompassWhySheet';
+import { CompassFeedbackMenu } from './CompassFeedbackMenu';
+import type { CompassFeedItem } from '../../services/compass';
+
+// ── Action label mapping ──────────────────────────────────────────────────────
+
+const ACTION_LABELS: Record<string, string> = {
+  event:    'Join',
+  traveler: 'Follow',
+  place:    'Save',
+  trip:     'View',
+  buddy:    'Connect',
+};
+
+function actionLabel(type: string): string {
+  return ACTION_LABELS[type] ?? 'View';
+}
+
+// ── Skeleton placeholder card ─────────────────────────────────────────────────
+
+function CardSkeleton() {
+  return (
+    <View style={[s.card, s.skeletonCard]}>
+      <View style={[s.skeletonBar, { width: 54, height: 9, marginBottom: 6 }]} />
+      <View style={[s.skeletonBar, { width: 110, height: 12, marginBottom: space.sm }]} />
+      <View style={[s.skeletonBar, { width: 90, height: 9, marginBottom: space.sm }]} />
+      <View style={[s.skeletonBar, { width: 70, height: 28, borderRadius: radius.md }]} />
+    </View>
+  );
+}
+
+// ── Individual compass pick card ──────────────────────────────────────────────
+
+interface CardProps {
+  item: CompassFeedItem;
+  onWhyPress: () => void;
+  onDismiss: () => void;
+}
+
+function CompassPickCard({ item, onWhyPress, onDismiss }: CardProps) {
+  const reason = (item.data?.reason as string)
+    ?? (item.data?.description as string)
+    ?? (item.explanationKey ? 'Recommended for you' : 'Compass pick');
+  const source     = (item.data?.source as string) ?? null;
+  const trustLabel = (item.data?.trustLabel as string) ?? null;
+  const city       = (item.data?.city as string) ?? null;
+
+  return (
+    <View style={s.card}>
+      {/* Row 1: type chip + overflow menu */}
+      <View style={s.typeRow}>
+        <View style={s.typeChip}>
+          <Text style={s.typeText}>{(item.category || item.type || 'pick').toLowerCase()}</Text>
+        </View>
+        <View style={{ flex: 1 }} />
+        <CompassFeedbackMenu
+          recommendationId={item.recommendationToken ?? item.id}
+          itemType={item.type ?? 'place'}
+          category={item.category ?? undefined}
+          onWhyPress={onWhyPress}
+          onDismiss={onDismiss}
+        />
+      </View>
+
+      {/* Title */}
+      <Text style={s.cardTitle} numberOfLines={2}>
+        {item.title ?? item.type ?? 'Compass Pick'}
+      </Text>
+
+      {/* City hint */}
+      {city ? (
+        <View style={s.cityRow}>
+          <Navigation size={9} color={color.faint} />
+          <Text style={s.cityText} numberOfLines={1}>{city}</Text>
+        </View>
+      ) : null}
+
+      {/* Reason pill */}
+      <Pressable style={s.reasonPill} onPress={onWhyPress} hitSlop={4}>
+        <Sparkles size={9} color={color.signal} />
+        <Text style={s.reasonText} numberOfLines={2}>{reason}</Text>
+      </Pressable>
+
+      {/* Source + trust */}
+      {(source || trustLabel) ? (
+        <View style={s.metaRow}>
+          {source ? <Text style={s.sourceText} numberOfLines={1}>{source}</Text> : null}
+          {trustLabel ? (
+            <View style={s.trustPill}>
+              <CheckCircle size={9} color={color.success} />
+              <Text style={s.trustText}>{trustLabel}</Text>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
+      {/* Action button */}
+      <Pressable style={s.actionBtn}>
+        <Text style={s.actionText}>{actionLabel(item.type ?? '')}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+// ── Section header with optional city display ─────────────────────────────────
+
+interface SectionHeaderProps {
+  city: string | null;
+  onSwitchCity?: () => void;
+}
+
+function SectionHeader({ city, onSwitchCity }: SectionHeaderProps) {
+  return (
+    <View style={s.header}>
+      <Sparkles size={12} color={color.signal} />
+      <Text style={s.sectionTitle}>Compass Picks</Text>
+      {city ? (
+        <Pressable style={s.cityPill} onPress={onSwitchCity} hitSlop={6}>
+          <Navigation size={9} color={color.signal} />
+          <Text style={s.cityPillText}>{city}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+// ── Public component ──────────────────────────────────────────────────────────
+
+interface CompassPicksSectionProps {
+  city: string | null;
+  compassCity?: string | null;
+  enabled?: boolean;
+  onSwitchCity?: () => void;
+}
+
+export function CompassPicksSection({
+  city,
+  compassCity,
+  enabled = true,
+  onSwitchCity,
+}: CompassPicksSectionProps) {
+  const effectiveCity = compassCity ?? city;
+
+  const compass = useCompassFeed({
+    section: 'compass_picks',
+    city: effectiveCity ?? undefined,
+    enabled,
+  });
+
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [whyId, setWhyId]         = useState<string | null>(null);
+  const [whyOpen, setWhyOpen]     = useState(false);
+
+  // Never render if Compass is disabled
+  if (!enabled) return null;
+  if (!compass.compassEnabled && !compass.loading) return null;
+
+  // Extract items from sections + safe fallback
+  const sectionItems: CompassFeedItem[] = (compass.data?.sections ?? [])
+    .flatMap((sec) => sec.items ?? []);
+  const safeItems: CompassFeedItem[] = compass.data?.safeItems ?? [];
+  const raw = sectionItems.length > 0 ? sectionItems : safeItems;
+  const displayItems = raw.filter((item) => !dismissed.has(item.id));
+
+  // Loading skeleton — show while initial load is in progress
+  if (compass.loading && !compass.data) {
+    return (
+      <View style={s.container}>
+        <SectionHeader city={effectiveCity} onSwitchCity={onSwitchCity} />
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={s.row}
+        >
+          <CardSkeleton />
+          <CardSkeleton />
+          <CardSkeleton />
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // Nothing to show — hide silently (no error state)
+  if (displayItems.length === 0) return null;
+
+  return (
+    <>
+      <View style={s.container}>
+        <SectionHeader city={effectiveCity} onSwitchCity={onSwitchCity} />
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={s.row}
+        >
+          {displayItems.slice(0, 8).map((item) => (
+            <CompassPickCard
+              key={item.id}
+              item={item}
+              onWhyPress={() => {
+                setWhyId(item.recommendationToken ?? item.id);
+                setWhyOpen(true);
+              }}
+              onDismiss={() =>
+                setDismissed((prev) => {
+                  const next = new Set(prev);
+                  next.add(item.id);
+                  return next;
+                })
+              }
+            />
+          ))}
+        </ScrollView>
+      </View>
+
+      <CompassWhySheet
+        visible={whyOpen}
+        recommendationId={whyId}
+        onClose={() => { setWhyOpen(false); setWhyId(null); }}
+      />
+    </>
+  );
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const s = StyleSheet.create({
+  container: {
+    marginTop: space.xl,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    paddingHorizontal: space.lg,
+    paddingBottom: space.sm,
+  },
+  sectionTitle: {
+    ...t.stamp,
+    color: color.ink,
+    fontSize: 12,
+    fontWeight: '700' as const,
+    letterSpacing: 0.3,
+    textTransform: 'uppercase' as const,
+    flex: 1,
+  },
+  cityPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: color.signal + '12',
+    borderRadius: radius.pill,
+    paddingHorizontal: space.sm,
+    paddingVertical: 3,
+  },
+  cityPillText: {
+    ...t.small,
+    color: color.signal,
+    fontSize: 10,
+    fontWeight: '600' as const,
+  },
+  row: {
+    paddingHorizontal: space.lg,
+    gap: space.sm,
+    paddingRight: space.xl,
+  },
+  // Card
+  card: {
+    width: 168,
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: color.haze,
+    padding: space.md,
+    gap: space.xs,
+  },
+  skeletonCard: {
+    opacity: 0.55,
+  },
+  skeletonBar: {
+    backgroundColor: color.haze,
+    borderRadius: 4,
+  },
+  typeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  typeChip: {
+    backgroundColor: color.signal + '15',
+    borderRadius: radius.pill,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  typeText: {
+    ...t.small,
+    color: color.signal,
+    fontSize: 9,
+    fontWeight: '700' as const,
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.4,
+  },
+  cardTitle: {
+    ...t.bodyStrong,
+    color: color.ink,
+    fontSize: 13,
+    lineHeight: 17,
+  },
+  cityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  cityText: {
+    ...t.small,
+    color: color.faint,
+    fontSize: 10,
+  },
+  reasonPill: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 3,
+    backgroundColor: color.signal + '08',
+    borderRadius: radius.sm,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  reasonText: {
+    ...t.small,
+    color: color.signal,
+    fontSize: 10,
+    fontStyle: 'italic',
+    lineHeight: 13,
+    flex: 1,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: space.xs,
+  },
+  sourceText: {
+    ...t.small,
+    color: color.mute,
+    fontSize: 10,
+    flex: 1,
+  },
+  trustPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: color.success + '15',
+    borderRadius: radius.pill,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+  },
+  trustText: {
+    ...t.small,
+    color: color.success,
+    fontSize: 9,
+    fontWeight: '600' as const,
+  },
+  actionBtn: {
+    marginTop: 2,
+    backgroundColor: color.ink,
+    borderRadius: radius.sm,
+    paddingVertical: 7,
+    alignItems: 'center',
+  },
+  actionText: {
+    ...t.small,
+    color: color.onInk,
+    fontWeight: '700' as const,
+    fontSize: 11,
+  },
+});

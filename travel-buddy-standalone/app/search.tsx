@@ -4,7 +4,7 @@ import {
   ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
-import { Search, X, Clock, Zap, MapPin, AlertCircle } from 'lucide-react-native';
+import { Search, X, Clock, Zap, MapPin, AlertCircle, Sparkles, PlusCircle } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { SearchResultCard } from '../src/components/search/SearchResultCard';
 import {
@@ -14,7 +14,10 @@ import {
   clearSearchHistory,
 } from '../src/services/discovery';
 import type { UnifiedSearchResult, SearchHistoryEntry } from '../src/services/discovery';
+import { fetchCompassRecommendations } from '../src/services/compass';
+import type { CompassRecommendation } from '../src/services/compass';
 import { useActiveLocation } from '../src/hooks/useActiveLocation';
+import { parseSearchIntent, intentSummary } from '../src/lib/compassIntent';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 
 type TabKey = 'all' | 'travelers' | 'events' | 'trips' | 'places' | 'hashtags';
@@ -37,6 +40,45 @@ const RECOVERY_CHIPS_BASE = [
   'weekend activities',
 ];
 
+// ── Follow-up filter chips ─────────────────────────────────────────────────────
+// params are forwarded to searchUnified as intentParams (server-side application).
+
+interface FollowUpChip {
+  key: string;
+  label: string;
+  /** Extra intent params sent to the backend when this chip is active. */
+  params: Record<string, string>;
+  /** If set, switch the active tab to this value instead of sending params. */
+  switchTab?: TabKey;
+}
+
+const FOLLOW_UP_CHIPS: FollowUpChip[] = [
+  { key: 'verified',  label: 'Only verified',      params: { intentSafety: 'true' } },
+  { key: 'social',    label: 'More social',         params: { intentSocial: 'group' } },
+  { key: 'tonight',   label: 'Tonight only',        params: { intentTime: 'tonight' } },
+  { key: 'solo',      label: 'Good for solo',       params: { intentSocial: 'solo' } },
+  { key: 'cheaper',   label: 'Cheaper options',     params: { intentBudget: 'budget' } },
+  { key: 'buddies',   label: 'Show me buddies',     params: {}, switchTab: 'travelers' },
+];
+
+// Build the merged intentParams for a given detectedIntent + active chips
+function buildIntentParams(
+  intent: ReturnType<typeof parseSearchIntent>,
+  activeChips: Set<string>,
+): Record<string, string> {
+  const p: Record<string, string> = {};
+  if (intent.category)     p.intentCategory    = intent.category;
+  if (intent.social)       p.intentSocial      = intent.social;
+  if (intent.safetyBoost)  p.intentSafety      = 'true';
+  if (intent.locationHint) p.intentLocationHint = intent.locationHint;
+
+  for (const chipKey of activeChips) {
+    const chip = FOLLOW_UP_CHIPS.find((c) => c.key === chipKey);
+    if (chip) Object.assign(p, chip.params);
+  }
+  return p;
+}
+
 export default function SearchScreen() {
   const params = useLocalSearchParams<{ q?: string; type?: string }>();
   const { locationState, requestLocation } = useActiveLocation();
@@ -54,6 +96,16 @@ export default function SearchScreen() {
   const [error, setError] = useState<string | null>(null);
   const [timeLabel, setTimeLabel] = useState<string | null>(null);
 
+  // ── Intent state ────────────────────────────────────────────────────────────
+  const [detectedIntent, setDetectedIntent] = useState<ReturnType<typeof parseSearchIntent>>({});
+
+  // ── Compass no-results fallback state ───────────────────────────────────────
+  const [compassFallback, setCompassFallback] = useState<CompassRecommendation[]>([]);
+  const [compassFallbackLoading, setCompassFallbackLoading] = useState(false);
+
+  // ── Active follow-up chips — reset when query or tab changes ───────────────
+  const [activeChips, setActiveChips] = useState<Set<string>>(new Set());
+
   const [recentSearches, setRecentSearches] = useState<SearchHistoryEntry[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
 
@@ -64,7 +116,6 @@ export default function SearchScreen() {
 
   const locationGranted = locationState.permissionStatus === 'granted';
 
-  // Pass user coords only when permission already granted — never prompt from search screen
   const userCoords = useMemo(() => {
     if (locationGranted && locationState.coords) {
       return {
@@ -80,7 +131,6 @@ export default function SearchScreen() {
     try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; }
   }, []);
 
-  // Load recent searches on mount
   useEffect(() => {
     let alive = true;
     getSearchHistory(10).then((history) => {
@@ -91,7 +141,19 @@ export default function SearchScreen() {
     return () => { alive = false; };
   }, []);
 
-  const runSearch = useCallback(async (q: string, tab: TabKey, cursor?: string | null) => {
+  /**
+   * runSearch — fires the search and handles state updates.
+   * @param q        Trimmed search query
+   * @param tab      Active tab
+   * @param cursor   Pagination cursor (first page when null/undefined)
+   * @param intentOverride  Override intentParams (e.g. when a chip is toggled)
+   */
+  const runSearch = useCallback(async (
+    q: string,
+    tab: TabKey,
+    cursor?: string | null,
+    intentOverride?: Record<string, string>,
+  ) => {
     const trimmed = q.trim();
     const isFirstPage = !cursor;
 
@@ -100,6 +162,7 @@ export default function SearchScreen() {
       setError(null);
       setTimeLabel(null);
       setSearched(true);
+      setCompassFallback([]);
       activeQueryRef.current = trimmed;
       activeTabRef.current = tab;
     } else {
@@ -107,7 +170,18 @@ export default function SearchScreen() {
     }
 
     try {
-      const res = await searchUnified(trimmed, tab, cursor, { ...userCoords, tz });
+      // Compute intentParams from the current parsed intent + active chips
+      // intentOverride is used when chips trigger a re-query so the caller
+      // can pass the just-updated chip set before React re-render flushes it.
+      const currentIntent = intentOverride !== undefined
+        ? intentOverride
+        : buildIntentParams(parseSearchIntent(trimmed), activeChips);
+
+      const res = await searchUnified(trimmed, tab, cursor, {
+        ...userCoords,
+        tz,
+        intentParams: Object.keys(currentIntent).length > 0 ? currentIntent : undefined,
+      });
 
       if (trimmed !== activeQueryRef.current || tab !== activeTabRef.current) return;
 
@@ -123,8 +197,6 @@ export default function SearchScreen() {
         setTimeLabel(label ?? null);
 
         if (newRows.length > 0) {
-          // Optimistic-add with a temp id, then patch with the real server UUID
-          // once the save resolves so that per-item deletion is reliable.
           const tempId = `local-${Date.now()}`;
           const newEntry: SearchHistoryEntry = {
             id: tempId,
@@ -144,7 +216,22 @@ export default function SearchScreen() {
                 prev.map((r) => r.id === tempId ? { ...r, id: serverId } : r),
               );
             }
-          }).catch(() => {/* non-fatal */});
+          }).catch(() => {});
+        } else {
+          // No results for any query — always fire Compass fallback regardless of active intent/chips
+          const intent = parseSearchIntent(trimmed);
+          setCompassFallbackLoading(true);
+          fetchCompassRecommendations({
+            surface: 'search',
+            q: trimmed,
+            city: intent.locationHint ?? userCoords?.city,
+            limit: 6,
+          }).then((cr) => {
+            if (trimmed !== activeQueryRef.current) return;
+            setCompassFallback(cr.ok && cr.data ? cr.data.recommendations : []);
+          }).catch(() => {}).finally(() => {
+            setCompassFallbackLoading(false);
+          });
         }
       } else {
         setResults((prev) => {
@@ -159,8 +246,9 @@ export default function SearchScreen() {
       if (isFirstPage) setLoading(false);
       else setLoadingMore(false);
     }
-  }, [userCoords, tz]);
+  }, [userCoords, tz, activeChips]);
 
+  // Debounce search trigger when query or tab changes
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     const trimmedLen = query.trim().length;
@@ -172,19 +260,29 @@ export default function SearchScreen() {
       setLoading(false);
       setError(null);
       setTimeLabel(null);
+      setDetectedIntent({});
+      setCompassFallback([]);
+      setActiveChips(new Set());
       return;
     }
+
+    // Parse intent immediately (synchronous — shows pill without delay)
+    const intent = parseSearchIntent(query);
+    setDetectedIntent(intent);
+    // Reset chips when query changes
+    setActiveChips(new Set());
 
     setLoading(true);
     debounceRef.current = setTimeout(() => {
       router.setParams({ q: query.trim(), type: activeTab });
-      runSearch(query, activeTab);
+      runSearch(query, activeTab, null, buildIntentParams(intent, new Set()));
     }, 300);
 
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [query, activeTab, runSearch]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, activeTab]);
 
   function handleTabChange(tab: TabKey) {
     setActiveTab(tab);
@@ -193,6 +291,8 @@ export default function SearchScreen() {
     setSearched(false);
     setError(null);
     setTimeLabel(null);
+    setCompassFallback([]);
+    setActiveChips(new Set());
   }
 
   function clearQuery() {
@@ -202,12 +302,16 @@ export default function SearchScreen() {
     setSearched(false);
     setError(null);
     setTimeLabel(null);
+    setDetectedIntent({});
+    setCompassFallback([]);
+    setActiveChips(new Set());
     inputRef.current?.focus();
   }
 
   function handleLoadMore() {
     if (loadingMore || loading || !nextCursor) return;
-    runSearch(query, activeTab, nextCursor);
+    const currentIntent = buildIntentParams(detectedIntent, activeChips);
+    runSearch(query, activeTab, nextCursor, currentIntent);
   }
 
   function handleActionStateChange(resultId: string, updates: Record<string, boolean>) {
@@ -220,7 +324,6 @@ export default function SearchScreen() {
     );
   }
 
-  // Delete by entry id (not query string) to avoid cross-type collisions
   async function handleClearOneHistory(entryId: string) {
     setRecentSearches((prev) => prev.filter((r) => r.id !== entryId));
     await clearSearchHistory(entryId);
@@ -231,19 +334,41 @@ export default function SearchScreen() {
     await clearSearchHistory();
   }
 
-  const showTabs = query.trim().length >= 2;
-  const showEmptyStart = !showTabs;
-  const isEmpty = searched && !loading && !error && results.length === 0;
+  function handleChipToggle(chip: FollowUpChip) {
+    // Tab-switch chip — no intent params, just change the tab
+    if (chip.switchTab) {
+      handleTabChange(chip.switchTab);
+      return;
+    }
 
-  // Detect "enable location" label from the API (returned when nearby intent + no coords)
+    const nextChips = new Set(activeChips);
+    if (nextChips.has(chip.key)) {
+      nextChips.delete(chip.key);
+    } else {
+      nextChips.add(chip.key);
+    }
+    setActiveChips(nextChips);
+
+    // Re-query the backend with the updated chip set (server-side filtering)
+    if (query.trim().length >= 2) {
+      const mergedIntent = buildIntentParams(detectedIntent, nextChips);
+      runSearch(query, activeTab, null, mergedIntent);
+    }
+  }
+
+  const showTabs   = query.trim().length >= 2;
+  const showEmptyStart = !showTabs;
+  const isEmpty    = searched && !loading && !error && results.length === 0;
+
   const needsLocationForNearby = timeLabel === 'Nearby (enable location)';
 
-  // Build recovery chips — include "Search nearby" only when location is available
   const recoveryChips = useMemo(() => {
     const chips = [...RECOVERY_CHIPS_BASE];
     if (locationGranted) chips.unshift('travelers nearby');
     return chips;
   }, [locationGranted]);
+
+  const compassUnderstood = useMemo(() => intentSummary(detectedIntent), [detectedIntent]);
 
   return (
     <KeyboardAvoidingView
@@ -296,8 +421,18 @@ export default function SearchScreen() {
         </ScrollView>
       )}
 
-      {/* Time/nearby label pill — shown below tabs when a filter is active */}
-      {showTabs && timeLabel && !needsLocationForNearby && (
+      {/* "Compass understood" summary pill */}
+      {showTabs && compassUnderstood && !loading && (
+        <View style={styles.intentRow}>
+          <View style={styles.intentPill}>
+            <Sparkles size={10} color={color.signal} />
+            <Text style={styles.intentText}>Compass understood: {compassUnderstood}</Text>
+          </View>
+        </View>
+      )}
+
+      {/* Time/nearby label pill */}
+      {showTabs && timeLabel && !needsLocationForNearby && !compassUnderstood && (
         <View style={styles.timeLabelRow}>
           <View style={styles.timeLabelPill}>
             <Text style={styles.timeLabelText}>Showing · {timeLabel}</Text>
@@ -305,7 +440,7 @@ export default function SearchScreen() {
         </View>
       )}
 
-      {/* Location needed banner — shown when nearby search but no location permission */}
+      {/* Location needed banner */}
       {showTabs && needsLocationForNearby && (
         <Pressable style={styles.locationBanner} onPress={requestLocation}>
           <AlertCircle size={14} color={color.warn} />
@@ -327,7 +462,7 @@ export default function SearchScreen() {
           <Text style={styles.retryHint}>Tap to retry</Text>
         </Pressable>
       ) : isEmpty ? (
-        /* No results */
+        /* No results — show Compass fallback + recovery chips */
         <ScrollView
           contentContainerStyle={[styles.center, { justifyContent: 'flex-start', paddingTop: space.xl }]}
           keyboardShouldPersistTaps="handled"
@@ -339,47 +474,118 @@ export default function SearchScreen() {
               : `Nothing matched "${query.trim()}". Try a different search term or filter.`}
           </Text>
 
-          {/* Contextual recovery chips */}
-          <View style={[styles.chipsRow, { marginTop: space.lg }]}>
-            {locationGranted && (
-              <Pressable
-                style={[styles.chip, styles.chipPrimary]}
-                onPress={() => setQuery('travelers nearby')}
-              >
-                <MapPin size={12} color={color.onInk} />
-                <Text style={[styles.chipText, { color: color.onInk }]}>Search nearby</Text>
-              </Pressable>
-            )}
-            {!locationGranted && (
-              <Pressable
-                style={[styles.chip, styles.chipPrimary]}
-                onPress={requestLocation}
-              >
-                <MapPin size={12} color={color.onInk} />
-                <Text style={[styles.chipText, { color: color.onInk }]}>Enable location</Text>
-              </Pressable>
-            )}
-            <Pressable
-              style={styles.chip}
-              onPress={() => router.push('/(tabs)/ai' as any)}
-            >
-              <Zap size={12} color={color.signal} />
-              <Text style={styles.chipText}>Ask Compass</Text>
-            </Pressable>
-          </View>
+          {/* Compass fallback section */}
+          {(compassFallbackLoading || compassFallback.length > 0) && (
+            <View style={styles.compassFallbackSection}>
+              <View style={styles.compassFallbackHeader}>
+                <Sparkles size={13} color={color.signal} />
+                <Text style={styles.compassFallbackTitle}>Compass Suggestions</Text>
+              </View>
+              {compassFallbackLoading ? (
+                <ActivityIndicator size="small" color={color.signal} style={{ marginVertical: space.lg }} />
+              ) : (
+                compassFallback.map((rec) => (
+                  <View key={rec.id} style={styles.compassFallbackCard}>
+                    <View style={styles.compassFallbackTypeRow}>
+                      <Text style={styles.compassFallbackType}>{rec.category || rec.type}</Text>
+                    </View>
+                    <Text style={styles.compassFallbackCardTitle} numberOfLines={2}>
+                      {rec.title ?? rec.type}
+                    </Text>
+                    {rec.reason ? (
+                      <Text style={styles.compassFallbackReason} numberOfLines={2}>{rec.reason}</Text>
+                    ) : null}
+                  </View>
+                ))
+              )}
 
-          <Text style={[styles.chipsLabel, { marginTop: space.xl }]}>Try searching for</Text>
-          <View style={styles.chipsRow}>
-            {recoveryChips.slice(0, 4).map((chip) => (
+              {/* Create Instead chips */}
+              <Text style={styles.createInsteadLabel}>Create Instead</Text>
+              <View style={styles.chipsRow}>
+                <Pressable
+                  style={styles.chip}
+                  onPress={() => router.push('/create' as any)}
+                >
+                  <PlusCircle size={12} color={color.signal} />
+                  <Text style={styles.chipText}>Create Event</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.chip}
+                  onPress={() => router.push('/(tabs)/ai' as any)}
+                >
+                  <Sparkles size={12} color={color.signal} />
+                  <Text style={styles.chipText}>Post in Pulse</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.chip}
+                  onPress={() => handleTabChange('travelers')}
+                >
+                  <Zap size={12} color={color.signal} />
+                  <Text style={styles.chipText}>Find Buddies</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.chip}
+                  onPress={() => {
+                    // Strip location hint from current query and let user type a new city
+                    const stripped = query.replace(/\bin\s+[A-Z][a-z]+(\s+[A-Z][a-z]+)*/g, '').trim();
+                    setQuery(stripped.length >= 2 ? stripped : query);
+                    router.push('/(tabs)/discovery' as any);
+                  }}
+                >
+                  <MapPin size={12} color={color.signal} />
+                  <Text style={styles.chipText}>Choose Another City</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+
+          {/* Recovery chips when no Compass fallback */}
+          {compassFallback.length === 0 && !compassFallbackLoading && (
+            <View style={[styles.chipsRow, { marginTop: space.lg }]}>
+              {locationGranted && (
+                <Pressable
+                  style={[styles.chip, styles.chipPrimary]}
+                  onPress={() => setQuery('travelers nearby')}
+                >
+                  <MapPin size={12} color={color.onInk} />
+                  <Text style={[styles.chipText, { color: color.onInk }]}>Search nearby</Text>
+                </Pressable>
+              )}
+              {!locationGranted && (
+                <Pressable
+                  style={[styles.chip, styles.chipPrimary]}
+                  onPress={requestLocation}
+                >
+                  <MapPin size={12} color={color.onInk} />
+                  <Text style={[styles.chipText, { color: color.onInk }]}>Enable location</Text>
+                </Pressable>
+              )}
               <Pressable
-                key={chip}
                 style={styles.chip}
-                onPress={() => setQuery(chip)}
+                onPress={() => router.push('/(tabs)/ai' as any)}
               >
-                <Text style={styles.chipText}>{chip}</Text>
+                <Zap size={12} color={color.signal} />
+                <Text style={styles.chipText}>Ask Compass</Text>
               </Pressable>
-            ))}
-          </View>
+            </View>
+          )}
+
+          {compassFallback.length === 0 && !compassFallbackLoading && (
+            <>
+              <Text style={[styles.chipsLabel, { marginTop: space.xl }]}>Try searching for</Text>
+              <View style={styles.chipsRow}>
+                {recoveryChips.slice(0, 4).map((chip) => (
+                  <Pressable
+                    key={chip}
+                    style={styles.chip}
+                    onPress={() => setQuery(chip)}
+                  >
+                    <Text style={styles.chipText}>{chip}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </>
+          )}
         </ScrollView>
       ) : showEmptyStart ? (
         /* Pre-search — recent history + quick suggestions */
@@ -411,14 +617,12 @@ export default function SearchScreen() {
             </View>
           )}
 
-          {/* When history has loaded but is empty: show nothing (blank canvas) */}
           {historyLoaded && recentSearches.length === 0 && (
             <View style={[styles.center, { paddingVertical: space.xl }]}>
               <Search size={36} color={color.haze} />
             </View>
           )}
 
-          {/* Suggestion chips — only shown when there is history to contextualise them */}
           {recentSearches.length > 0 && (
             <View style={styles.historySection}>
               <Text style={styles.historyTitle}>Try searching for</Text>
@@ -440,6 +644,7 @@ export default function SearchScreen() {
           )}
         </ScrollView>
       ) : (
+        /* Results list */
         <FlatList
           data={results}
           keyExtractor={(item) => `${item.type}:${item.id}`}
@@ -457,6 +662,31 @@ export default function SearchScreen() {
             loadingMore ? (
               <View style={styles.loadingMore}>
                 <ActivityIndicator size="small" color={color.signal} />
+              </View>
+            ) : results.length > 0 ? (
+              /* Follow-up filter chips — re-query backend when toggled */
+              <View style={styles.followUpSection}>
+                <Text style={styles.followUpLabel}>Refine results</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.followUpRow}
+                >
+                  {FOLLOW_UP_CHIPS.map((chip) => {
+                    const isActive = activeChips.has(chip.key);
+                    return (
+                      <Pressable
+                        key={chip.key}
+                        style={[styles.chip, isActive && styles.chipActive]}
+                        onPress={() => handleChipToggle(chip)}
+                      >
+                        <Text style={[styles.chipText, isActive && styles.chipTextActive]}>
+                          {chip.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
               </View>
             ) : null
           }
@@ -515,6 +745,28 @@ const styles = StyleSheet.create({
   },
   tabTextActive: {
     color: color.onInk,
+  },
+  intentRow: {
+    paddingHorizontal: space.lg,
+    marginBottom: space.sm,
+  },
+  intentPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    alignSelf: 'flex-start',
+    backgroundColor: color.signal + '12',
+    borderRadius: radius.pill,
+    paddingHorizontal: space.md,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: color.signal + '25',
+  },
+  intentText: {
+    ...t.small,
+    color: color.signal,
+    fontWeight: '600' as const,
+    fontSize: 11,
   },
   timeLabelRow: {
     paddingHorizontal: space.lg,
@@ -582,6 +834,72 @@ const styles = StyleSheet.create({
     color: color.mute,
     textAlign: 'center',
     lineHeight: 18,
+  },
+  compassFallbackSection: {
+    width: '100%',
+    marginTop: space.xl,
+    alignItems: 'flex-start',
+  },
+  compassFallbackHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    marginBottom: space.md,
+  },
+  compassFallbackTitle: {
+    ...t.stamp,
+    color: color.ink,
+    fontSize: 12,
+    fontWeight: '700' as const,
+    letterSpacing: 0.3,
+    textTransform: 'uppercase' as const,
+  },
+  compassFallbackCard: {
+    width: '100%',
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: color.haze,
+    padding: space.md,
+    gap: space.xs,
+    marginBottom: space.sm,
+  },
+  compassFallbackTypeRow: {
+    flexDirection: 'row',
+  },
+  compassFallbackType: {
+    ...t.small,
+    color: color.signal,
+    fontSize: 9,
+    fontWeight: '700' as const,
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.4,
+    backgroundColor: color.signal + '15',
+    borderRadius: radius.pill,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    overflow: 'hidden',
+  },
+  compassFallbackCardTitle: {
+    ...t.bodyStrong,
+    color: color.ink,
+    fontSize: 13,
+  },
+  compassFallbackReason: {
+    ...t.small,
+    color: color.mute,
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
+  createInsteadLabel: {
+    ...t.stamp,
+    color: color.mute,
+    fontSize: 11,
+    fontWeight: '700' as const,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase' as const,
+    marginTop: space.lg,
+    marginBottom: space.sm,
   },
   loadingMore: {
     paddingVertical: space.xl,
@@ -654,9 +972,34 @@ const styles = StyleSheet.create({
     backgroundColor: color.signal,
     borderColor: color.signal,
   },
+  chipActive: {
+    backgroundColor: color.ink,
+    borderColor: color.ink,
+  },
   chipText: {
     ...t.small,
     color: color.ink,
     fontWeight: '500' as const,
+  },
+  chipTextActive: {
+    color: color.onInk,
+  },
+  followUpSection: {
+    paddingTop: space.lg,
+    paddingBottom: space.xl,
+  },
+  followUpLabel: {
+    ...t.stamp,
+    color: color.mute,
+    fontSize: 11,
+    fontWeight: '700' as const,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase' as const,
+    paddingHorizontal: space.lg,
+    marginBottom: space.sm,
+  },
+  followUpRow: {
+    paddingHorizontal: space.lg,
+    gap: space.xs,
   },
 });

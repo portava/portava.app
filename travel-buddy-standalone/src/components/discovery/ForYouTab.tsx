@@ -7,9 +7,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, RefreshControl, Pressable,
+  TextInput, Modal, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { Sparkles, Info, Share2 } from 'lucide-react-native';
+import { Sparkles, Info, Share2, Navigation, X } from 'lucide-react-native';
 import { DiscoveryShareSheet } from '../DiscoveryShareSheet';
 import type { DiscoverySharePayload } from '../DiscoveryShareSheet';
 import type { DiscoveryPlace } from '../../services/discovery';
@@ -26,7 +27,8 @@ import type { RouteStopDraft } from '../RouteBuilderSheet';
 import { useCompassFeed } from '../../hooks/compass/useCompassFeed';
 import { CompassFeedbackMenu } from '../compass/CompassFeedbackMenu';
 import { CompassWhySheet } from '../compass/CompassWhySheet';
-import { postCompassFrontloadEvent } from '../../services/compass';
+import { postCompassFrontloadEvent, postCompassContext } from '../../services/compass';
+import { CompassPicksSection } from '../compass/CompassPicksSection';
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -77,6 +79,11 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   const [detail, setDetail]     = useState<DiscoveryPlace | null>(null);
   const [shareItem, setShareItem] = useState<ForYouItem | null>(null);
 
+  // Compass city switcher — Compass-local context (does not update profile city)
+  const [compassCity, setCompassCity]               = useState<string | null>(null);
+  const [citySwitcherOpen, setCitySwitcherOpen]     = useState(false);
+  const [citySwitcherInput, setCitySwitcherInput]   = useState('');
+
   // Why sheet state
   const [whyId, setWhyId]         = useState<string | null>(null);
   const [whySheetOpen, setWhySheetOpen] = useState(false);
@@ -84,6 +91,15 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   // "Show more" tagged items
   const [showMoreIds, setShowMoreIds] = useState<Set<string>>(new Set());
+
+  const handleCompassCityConfirm = useCallback(() => {
+    const city = citySwitcherInput.trim();
+    if (!city) { setCitySwitcherOpen(false); return; }
+    setCompassCity(city);
+    setCitySwitcherOpen(false);
+    // Persist the override as a Compass context update (fire-and-forget)
+    postCompassContext({ city }).catch(() => {});
+  }, [citySwitcherInput]);
 
   // Compass feed — runs in background alongside OSM/Telegraph
   const compass = useCompassFeed({ section: 'for_you', city: destination, enabled: isAuthed });
@@ -339,6 +355,17 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
           </View>
         )}
 
+        {/* ── Compass Picks section — horizontal card strip ── */}
+        <CompassPicksSection
+          city={destination}
+          compassCity={compassCity}
+          enabled={isAuthed}
+          onSwitchCity={() => {
+            setCitySwitcherInput(compassCity ?? destination ?? '');
+            setCitySwitcherOpen(true);
+          }}
+        />
+
         {/* ── Community sections: traveler-submitted from Supabase ── */}
         {community.loading && community.gems.length === 0 && community.picks.length === 0 && (
           <View style={styles.communitySection}>
@@ -381,6 +408,55 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         recommendationId={whyId}
         onClose={() => { setWhySheetOpen(false); setWhyId(null); }}
       />
+
+      {/* ── Compass city switcher modal ── */}
+      <Modal
+        visible={citySwitcherOpen}
+        transparent
+        animationType={Platform.OS === 'android' ? 'fade' : 'slide'}
+        onRequestClose={() => setCitySwitcherOpen(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.citySwitcherBackdrop}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <Pressable style={{ flex: 1 }} onPress={() => setCitySwitcherOpen(false)} />
+          <View style={styles.citySwitcherSheet}>
+            <View style={styles.citySwitcherHandle} />
+            <Text style={styles.citySwitcherTitle}>Change Compass City</Text>
+            <Text style={styles.citySwitcherSub}>
+              Compass Picks will reload for this city. Your profile city stays the same.
+            </Text>
+            <View style={styles.citySwitcherInputRow}>
+              <Navigation size={14} color={color.mute} />
+              <TextInput
+                style={styles.citySwitcherInput}
+                value={citySwitcherInput}
+                onChangeText={setCitySwitcherInput}
+                placeholder="Enter a city name…"
+                placeholderTextColor={color.faint}
+                autoFocus
+                autoCapitalize="words"
+                autoCorrect={false}
+                returnKeyType="done"
+                onSubmitEditing={handleCompassCityConfirm}
+              />
+              {citySwitcherInput.length > 0 && (
+                <Pressable onPress={() => setCitySwitcherInput('')} hitSlop={8}>
+                  <X size={14} color={color.mute} />
+                </Pressable>
+              )}
+            </View>
+            <Pressable
+              style={[styles.citySwitcherConfirm, !citySwitcherInput.trim() && { opacity: 0.4 }]}
+              onPress={handleCompassCityConfirm}
+              disabled={!citySwitcherInput.trim()}
+            >
+              <Text style={styles.citySwitcherConfirmText}>Show Compass Picks</Text>
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </>
   );
 }
@@ -487,6 +563,66 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { ...t.bodyStrong, color: color.ink, textAlign: 'center' },
   emptyDesc: { ...t.small, color: color.mute, textAlign: 'center', lineHeight: 19 },
+  // ── City switcher modal ──────────────────────────────────────────────────
+  citySwitcherBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  citySwitcherSheet: {
+    backgroundColor: color.paper,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: space.lg,
+    paddingBottom: 36,
+    gap: space.md,
+  },
+  citySwitcherHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: color.haze,
+    alignSelf: 'center',
+    marginTop: space.md,
+  },
+  citySwitcherTitle: {
+    ...t.bodyStrong,
+    color: color.ink,
+    fontSize: 16,
+  },
+  citySwitcherSub: {
+    ...t.small,
+    color: color.mute,
+    lineHeight: 18,
+  },
+  citySwitcherInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    backgroundColor: color.paperRaised,
+    borderWidth: 1.5,
+    borderColor: color.haze,
+    borderRadius: radius.md,
+    paddingHorizontal: space.md,
+    paddingVertical: 10,
+  },
+  citySwitcherInput: {
+    flex: 1,
+    ...t.body,
+    color: color.ink,
+    padding: 0,
+  },
+  citySwitcherConfirm: {
+    backgroundColor: color.signal,
+    borderRadius: radius.md,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  citySwitcherConfirmText: {
+    ...t.bodyStrong,
+    color: '#fff',
+    fontSize: 15,
+  },
 });
 
 export default ForYouTab;

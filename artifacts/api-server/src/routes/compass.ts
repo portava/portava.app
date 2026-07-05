@@ -1296,6 +1296,98 @@ router.post("/compass/report", async (req, res) => {
   res.status(201).json({ ok: true });
 });
 
+// ── GET /api/compass/recommendations ─────────────────────────────────────────
+// Returns up to `limit` Compass recommendations for a given surface.
+// Used by the Search screen when results are empty (surface=search) and
+// by other surfaces that need a quick recommendation list without the full
+// feed pipeline overhead.
+//
+// Query params:
+//   surface  — "search" | "discovery" | "for_you" (default: "for_you")
+//   q        — raw search query (used for lightweight intent hint)
+//   city     — override the user's current city
+//   limit    — max items to return (default 6, max 20)
+
+const recommendationsQuerySchema = z.object({
+  surface: z.string().max(40).optional(),
+  q:       z.string().max(400).optional(),
+  city:    z.string().max(200).optional(),
+  limit:   z.coerce.number().int().min(1).max(20).default(6),
+});
+
+router.get("/compass/recommendations", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not available");
+    return;
+  }
+
+  const parsed = recommendationsQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid query");
+    return;
+  }
+
+  const { surface = "for_you", q, city, limit } = parsed.data;
+
+  // Feature-flag gate — silently return empty list when Compass is off.
+  const enabled = await isCompassEnabled(sc);
+  if (!enabled) {
+    res.json({ recommendations: [], surface });
+    return;
+  }
+
+  try {
+    const profile = await getCompassProfile(sc, user.id);
+
+    // Allow caller to override the context city (e.g. user changed city in search).
+    const effectiveProfile = city ? { ...profile, currentCity: city } : profile;
+
+    const signals = defaultSignals(effectiveProfile as typeof profile);
+    const context = buildCompassContext(effectiveProfile as typeof profile, signals);
+    const items   = await hydrateCompassItems(sc, effectiveProfile as typeof profile);
+
+    // Use compass_picks section for the search surface; for_you otherwise.
+    const sectionName: SectionName =
+      surface === "search" ? "compass_picks" : "for_you";
+
+    const { section: feedSection } = await buildSection(
+      sectionName,
+      items,
+      effectiveProfile as typeof profile,
+      context,
+      sc,
+    );
+
+    const topItems = (feedSection?.items ?? []).slice(0, limit);
+
+    const recommendations = topItems.map((fi: any) => {
+      const inner = fi.item ?? fi;
+      return {
+        id:       String(inner.id ?? fi.id ?? ""),
+        type:     String(inner.type ?? fi.type ?? ""),
+        category: String(inner.category ?? fi.category ?? ""),
+        title:    inner.title ?? fi.title ?? null,
+        reason:   fi.explanationKey
+          ? `Matched to your travel style`
+          : `Top pick${city ? ` in ${city}` : ""}`,
+        city:     city ?? profile.currentCity ?? null,
+        data:     inner.data ?? null,
+      };
+    });
+
+    res.json({ recommendations, surface });
+  } catch (err) {
+    req.log.error({ err }, "compass/recommendations: build failed");
+    // Return empty gracefully — never crash the caller
+    res.json({ recommendations: [], surface });
+  }
+});
+
 // ── GET /api/compass/debug/recommendations ────────────────────────────────────
 // Admin-only debug view of recent served recommendations.
 // Returns the last 100 rows from compass_served_recommendations for a user,

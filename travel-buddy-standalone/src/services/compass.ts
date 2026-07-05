@@ -377,6 +377,68 @@ export async function postCompassAsk(
   }
 }
 
+// ── Compass recommendations (search surface) ──────────────────────────────────
+
+export interface CompassRecommendation {
+  id: string;
+  type: string;
+  category: string;
+  title?: string;
+  reason?: string;
+  city?: string;
+  data?: Record<string, unknown>;
+}
+
+export interface CompassRecommendationsResponse {
+  recommendations: CompassRecommendation[];
+  surface: string;
+}
+
+export async function fetchCompassRecommendations(params: {
+  surface?: string;
+  q?: string;
+  city?: string;
+  limit?: number;
+} = {}): Promise<{ ok: boolean; data?: CompassRecommendationsResponse; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const qs = new URLSearchParams();
+    if (params.surface) qs.set('surface', params.surface);
+    if (params.q)       qs.set('q', params.q);
+    if (params.city)    qs.set('city', params.city);
+    if (params.limit != null) qs.set('limit', String(params.limit));
+    const r = await authedFetch(`/api/compass/recommendations?${qs.toString()}`);
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    return { ok: true, data: await r.json() };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+// ── Compass context (city switcher) ───────────────────────────────────────────
+
+export async function postCompassContext(params: {
+  city?: string;
+  country?: string;
+  contextState?: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const body: Record<string, string> = {};
+    if (params.city)         body['city']          = params.city;
+    if (params.country)      body['country']        = params.country;
+    if (params.contextState) body['context_state']  = params.contextState;
+    const r = await authedFetch('/api/compass/context', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
 // ── AsyncStorage helpers ──────────────────────────────────────────────────────
 
 const FEED_CACHE_PREFIX = 'compass_feed_cache:';

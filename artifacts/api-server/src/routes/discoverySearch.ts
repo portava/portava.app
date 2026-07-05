@@ -1183,10 +1183,35 @@ async function searchAll(
   // searchPlaces already handles its own ordering — re-ranking by title here is still
   // OK for the "all" tab because diversity matters more than proximity when mixing types.
   // upcomingFirst is a no-op for types without startsAt (travelers, places, etc.)
-  const buckets: SearchResult[][] = settled.map((r) => {
+  const rawBuckets: SearchResult[][] = settled.map((r) => {
     const items = r.status === "fulfilled" ? r.value : [];
     return rankCombined(items, q, ctx?.userCity, { upcomingFirst: true });
   });
+
+  // ── Intent-category promotion ─────────────────────────────────────────────
+  // When the client signals an intentCategory (food, beach, adventure, etc.),
+  // the places bucket (index 5) is a place-category query — move it to the front
+  // so that matching place results lead the round-robin merge instead of being
+  // interleaved 5 slots in.
+  // intentSafety: promote verified travelers/events (buckets 0 & 2) to the front.
+  const buckets = [...rawBuckets];
+  const PLACE_CATS = new Set(["food", "beach", "adventure", "culture", "nightlife"]);
+  if (ctx?.intentCategory && PLACE_CATS.has(ctx.intentCategory)) {
+    // Index 5 is the places bucket (see settled array order above)
+    const [placesBucket] = buckets.splice(5, 1);
+    if (placesBucket) buckets.unshift(placesBucket);
+  }
+  if (ctx?.intentSafety === "true") {
+    // Boost verified items to the top of their bucket by a secondary sort pass.
+    // Verification is stored in metadata.verified (boolean) for travelers and events.
+    for (let bi = 0; bi < buckets.length; bi++) {
+      buckets[bi] = [...(buckets[bi] ?? [])].sort((a, b) => {
+        const va = (a.metadata?.verified || a.metadata?.is_verified) ? 1 : 0;
+        const vb = (b.metadata?.verified || b.metadata?.is_verified) ? 1 : 0;
+        return vb - va;
+      });
+    }
+  }
 
   // Round-robin interleave
   const merged: SearchResult[] = [];
@@ -1274,15 +1299,30 @@ router.get("/discovery/search", async (req, res) => {
     ? (lat !== null && lng !== null ? "Nearby" : "Nearby (enable location)")
     : (timeIntentResult.intent?.label ?? null);
 
+  // ── Intent-boost params — forwarded by the mobile client's parseSearchIntent() ──
+  // These are soft hints: they guide ranking and type-promotion, not hard exclusion.
+  const VALID_INTENT_CATS = new Set(["nightlife", "food", "beach", "adventure", "culture"]);
+  const VALID_INTENT_SOCIAL = new Set(["solo", "group", "crew"]);
+  const rawIntentCat      = typeof req.query.intentCategory     === "string" ? req.query.intentCategory.trim()     : null;
+  const rawIntentSocial   = typeof req.query.intentSocial       === "string" ? req.query.intentSocial.trim()       : null;
+  const rawIntentBudget   = typeof req.query.intentBudget       === "string" ? req.query.intentBudget.trim()       : null;
+  const rawIntentSafety   = typeof req.query.intentSafety       === "string" ? req.query.intentSafety.trim()       : null;
+  const rawIntentLocHint  = typeof req.query.intentLocationHint === "string" ? req.query.intentLocationHint.trim() : null;
+
   const ctx: SearchQueryContext = {
     lat,
     lng,
     tz,
-    startsAfter:    timeIntentResult.intent?.startsAfter  ?? null,
-    startsBefore:   timeIntentResult.intent?.startsBefore ?? null,
-    timeLabel:      displayLabel,
-    nearbyIntent:   nearbyResult.nearbyIntent,
-    userCity:       userCity ?? null,
+    startsAfter:         timeIntentResult.intent?.startsAfter  ?? null,
+    startsBefore:        timeIntentResult.intent?.startsBefore ?? null,
+    timeLabel:           displayLabel,
+    nearbyIntent:        nearbyResult.nearbyIntent,
+    userCity:            userCity ?? null,
+    intentCategory:      rawIntentCat    && VALID_INTENT_CATS.has(rawIntentCat)      ? rawIntentCat    : null,
+    intentSocial:        rawIntentSocial && VALID_INTENT_SOCIAL.has(rawIntentSocial) ? rawIntentSocial : null,
+    intentBudget:        rawIntentBudget === "budget" ? "budget" : null,
+    intentSafety:        rawIntentSafety === "true"   ? "true"   : null,
+    intentLocationHint:  rawIntentLocHint && rawIntentLocHint.length <= 100 ? rawIntentLocHint : null,
   };
 
   const type = (parsed.data.type ?? "all") as SearchType;
