@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import {
   Compass, Sparkles, MapPin, Coffee, Moon, Activity,
-  Calendar, Waves, Navigation, Plane, Users, Hash, PlusCircle, Search,
+  Calendar, Waves, Navigation, Plane, Users, Hash, PlusCircle, Search, SlidersHorizontal,
 } from 'lucide-react-native';
 import { getTrendingHashtags, type TrendingHashtag } from '../../src/services/hashtag';
 import type { DiscoveryAgeFilter } from '../../src/services/discovery';
@@ -304,20 +304,6 @@ export default function DiscoveryHub() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* ── Search entry bar ── */}
-      <Pressable
-        style={styles.searchEntryBar}
-        onPress={() => router.push({ pathname: '/search', params: { q: '', type: 'all' } } as any)}
-        accessible
-        accessibilityRole="search"
-        accessibilityLabel="Open search"
-      >
-        <Search size={15} color={color.mute} />
-        <Text style={styles.searchEntryText} numberOfLines={1}>
-          Search travelers, trips, events, places, or hashtags
-        </Text>
-      </Pressable>
-
       {/* ── Header ── */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
@@ -337,6 +323,30 @@ export default function DiscoveryHub() {
             </Pressable>
           )}
         </View>
+      </View>
+
+      {/* ── Search bar + filter button ── */}
+      <View style={styles.searchRow}>
+        <Pressable
+          style={styles.searchEntryBar}
+          onPress={() => router.push({ pathname: '/search', params: { q: '', type: 'all' } } as any)}
+          accessible
+          accessibilityRole="search"
+          accessibilityLabel="Open search"
+        >
+          <Search size={15} color={color.mute} />
+          <Text style={styles.searchEntryText} numberOfLines={1}>
+            Search travelers, trips, events, places…
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.filterBtn, ageFilter !== 'any' && styles.filterBtnActive]}
+          onPress={() => setAgePickerOpen(true)}
+          hitSlop={8}
+          accessibilityLabel="Open filters"
+        >
+          <SlidersHorizontal size={17} color={ageFilter !== 'any' ? color.signal : color.mute} />
+        </Pressable>
       </View>
 
       {/* ── Context mode selector ── */}
@@ -1021,13 +1031,21 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: color.mute,
   },
-  searchEntryBar: {
+  searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.sm,
-    marginHorizontal: space.lg,
-    marginTop: space.sm,
-    marginBottom: space.xs,
+    paddingHorizontal: space.lg,
+    paddingTop: space.sm,
+    paddingBottom: space.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: color.haze,
+  },
+  searchEntryBar: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
     backgroundColor: color.paperRaised,
     borderWidth: 1,
     borderColor: color.haze,
@@ -1035,6 +1053,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md,
     paddingVertical: 12,
     minHeight: 44,
+  },
+  filterBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: color.haze,
+  },
+  filterBtnActive: {
+    backgroundColor: color.signal + '12',
+    borderColor: color.signal + '40',
   },
   searchEntryText: {
     ...t.body,
