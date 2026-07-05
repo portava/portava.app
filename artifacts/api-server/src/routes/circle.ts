@@ -300,7 +300,7 @@ router.patch("/circle/settings", async (req, res) => {
   if (eventSharingDefault !== undefined) upsertPayload["event_sharing_default"] = eventSharingDefault;
   if (isPaused !== undefined) {
     upsertPayload["is_paused"]    = isPaused;
-    upsertPayload["paused_until"] = isPaused ? null : null; // cleared on resume
+    upsertPayload["paused_until"] = null; // V1: no timed pause; always cleared when toggling
   }
   if (isEnabling && consentVersion) {
     upsertPayload["consent_version"] = consentVersion;

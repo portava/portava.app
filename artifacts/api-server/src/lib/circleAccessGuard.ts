@@ -112,13 +112,16 @@ export async function canViewCirclePresence(
   // 4. Target global settings + consent
   const { data: globalSettings } = await sc
     .from("circle_visibility_settings")
-    .select("global_enabled, visibility_mode, consent_version, consented_at")
+    .select("global_enabled, visibility_mode, trip_sharing_default, event_sharing_default, is_paused, consent_version, consented_at")
     .eq("user_id", targetUserId)
     .maybeSingle();
 
   const settings = globalSettings as {
     global_enabled: boolean;
-    visibility_mode: string;
+    visibility_mode: string | null;
+    trip_sharing_default: string | null;
+    event_sharing_default: string | null;
+    is_paused: boolean;
     consent_version: string | null;
     consented_at: string | null;
   } | null;
@@ -130,8 +133,23 @@ export async function canViewCirclePresence(
     return { allowed: false, reason: "target_not_consented" };
   }
 
-  // Resolve effective visibility mode
-  let effectiveVisibilityMode = settings.visibility_mode ?? "status_only";
+  // 4a. Global pause check — immediate, overrides everything
+  if (settings.is_paused) {
+    return { allowed: false, reason: "global_paused" };
+  }
+
+  // Resolve effective visibility mode: per-type default → legacy visibility_mode → fallback
+  const perTypeDefault =
+    contextType === "trip"
+      ? (settings.trip_sharing_default ?? null)
+      : (settings.event_sharing_default ?? null);
+
+  // Per-type default explicitly set to "off" means no sharing for this context type
+  if (perTypeDefault === "off") {
+    return { allowed: false, reason: "type_sharing_off" };
+  }
+
+  let effectiveVisibilityMode = perTypeDefault ?? settings.visibility_mode ?? "status_only";
 
   // 5. Context-level override / pause check
   const { data: ctxSettings } = await sc
