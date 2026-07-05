@@ -46,6 +46,8 @@ The tunnel URL is read from `$REPLIT_EXPO_DEV_DOMAIN` at runtime — it updates 
 
 Run all checks before cutting a release: `bash scripts/pre-release-check.sh`
 
+To verify the check scripts themselves are not broken (i.e. they correctly detect failures), run the self-test: `bash scripts/pre-release-check.sh --self-test`
+
 | Validation name        | Command                                          | Fix when failing |
 |------------------------|--------------------------------------------------|-----------------|
 | `typecheck`            | `pnpm run typecheck`                             | Fix TS errors in the relevant package |
@@ -56,6 +58,7 @@ Run all checks before cutting a release: `bash scripts/pre-release-check.sh`
 | `lockfile-drift`       | `bash scripts/sync-standalone.sh --check-lockfile` | Run `--fix-lockfile` to re-sync resolved versions |
 | `db-triggers`          | `export SUPABASE_PROJECT_TOKEN=<token> && bash scripts/pre-release-check.sh` | Apply migrations 0071–0074, 0090, 0092 via Supabase dashboard or psql; CI: set `SUPABASE_PROJECT_TOKEN` repo secret (Project Settings → API → Project API tokens); local: `export SUPABASE_ACCESS_TOKEN=sbp_...` from [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens); see [docs/eas-runbook.md](docs/eas-runbook.md) → "DB triggers check in CI" |
 | `engagement-indexes`   | `export SUPABASE_ACCESS_TOKEN=sbp_... && bash scripts/pre-release-check.sh` | Apply `artifacts/api-server/src/migrations/0106_engagement_indexes.sql` via Supabase SQL editor or psql; skipped (warning only) when no token is set |
+| `pre-release-self-test` | `bash scripts/pre-release-check.sh --self-test` | A verifier script exited 0 on known-bad data — fix the verifier (check-engagement-indexes.sh or check-db-triggers.sh) then re-run the self-test |
 
 ## Stack
 

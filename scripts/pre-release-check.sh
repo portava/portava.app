@@ -16,6 +16,137 @@ set -euo pipefail
 WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$WORKSPACE_ROOT"
 
+# ── Self-test mode ────────────────────────────────────────────────────────────
+# Usage: bash scripts/pre-release-check.sh --self-test
+#
+# Runs each DB-check script against a known-bad fixture (empty DB response) and
+# asserts the script exits 1.  If a verifier bug causes it to exit 0 on empty
+# data, the self-test fails — preventing the broken verifier from silently
+# passing the real pre-release gate.
+#
+# Covers:
+#   engagement-indexes  (check-engagement-indexes.sh + verify-db-engagement-indexes.mjs)
+#   db-triggers         (check-db-triggers.sh + verify-db-triggers.mjs)
+#
+# Exit 0 → every verifier correctly rejects bad data (verifiers are healthy).
+# Exit 1 → at least one verifier exited 0 on bad data (verifier is broken).
+
+if [[ "${1:-}" == "--self-test" ]]; then
+
+  sep() { printf '%s\n' "$(printf '─%.0s' {1..60})"; }
+
+  printf '\n'
+  sep
+  printf '  PRE-RELEASE SELF-TEST\n'
+  printf '  Verifies each check script correctly exits 1 on bad data.\n'
+  sep
+  printf '\n'
+
+  # ── Build a minimal temp workspace ─────────────────────────────────────────
+  # Each check script reads SUPABASE_URL from artifacts/api-server/.env.
+  # We supply a plausible URL so the project-ref extraction succeeds, then
+  # intercept the outbound curl call with a fake binary that always returns
+  # an empty result array ([]) + HTTP 200.  The verifier Node.js scripts
+  # should detect the empty response and exit 1.
+
+  SELF_TEST_TMP="$(mktemp -d)"
+  # Clean up on exit (normal, error, or signal) so no temp dirs accumulate.
+  trap 'rm -rf "$SELF_TEST_TMP"' EXIT
+
+  mkdir -p "${SELF_TEST_TMP}/artifacts/api-server" "${SELF_TEST_TMP}/bin"
+
+  printf 'SUPABASE_URL=https://testproject.supabase.co\n' \
+    > "${SELF_TEST_TMP}/artifacts/api-server/.env"
+
+  # Fake curl: always emit [] as the response body followed by 200 on the last
+  # line — the exact format the check scripts parse with head/tail:
+  #   HTTP_BODY=$(printf "%s" "$RESPONSE" | head -n -1)   → []
+  #   HTTP_CODE=$(printf "%s" "$RESPONSE" | tail -n 1)    → 200
+  # Using printf so the two values land on separate lines without a trailing
+  # newline (head -n -1 needs at least two lines to work correctly).
+  cat > "${SELF_TEST_TMP}/bin/curl" << 'FAKE_CURL'
+#!/usr/bin/env bash
+printf '[]\n200'
+FAKE_CURL
+  chmod +x "${SELF_TEST_TMP}/bin/curl"
+
+  # ── Self-test runner ────────────────────────────────────────────────────────
+  # run_self_check <label> <env-var=value>... bash <script>
+  #
+  # Runs the script with the bad-fixture environment injected.
+  # Records PASS if the script exits non-zero (correctly rejects bad data).
+  # Records FAIL if the script exits 0 (verifier is broken — should never pass
+  # an empty-result fixture).
+
+  self_results=()
+  self_overall=0   # 0 = all verifiers healthy; 1 = at least one broken
+
+  run_self_check() {
+    local name="$1"
+    shift
+    # Remaining args: optional extra VAR=value pairs, then bash <script>
+    printf '▶  self-test: %s\n' "$name"
+    local check_exit=0
+    env \
+      PATH="${SELF_TEST_TMP}/bin:${PATH}" \
+      SUPABASE_ACCESS_TOKEN="self-test-fixture-token" \
+      "$@" >/dev/null 2>&1 || check_exit=$?
+    if [[ "$check_exit" -ne 0 ]]; then
+      printf '  ✔  %s correctly exited %d on bad fixture\n\n' "$name" "$check_exit"
+      self_results+=("PASS|${name}")
+    else
+      printf '  ✘  %s exited 0 on bad fixture — verifier is BROKEN\n\n' "$name"
+      self_results+=("FAIL|${name}")
+      self_overall=1
+    fi
+  }
+
+  # ── engagement-indexes self-test ────────────────────────────────────────────
+  # check-engagement-indexes.sh uses CHECK_ENGAGEMENT_WORKSPACE_ROOT to find
+  # the .env; fake curl returns [] so verify-db-engagement-indexes.mjs should
+  # detect all five indexes as missing and exit 1.
+  run_self_check "engagement-indexes" \
+    CHECK_ENGAGEMENT_WORKSPACE_ROOT="${SELF_TEST_TMP}" \
+    bash scripts/check-engagement-indexes.sh
+
+  # ── db-triggers self-test ───────────────────────────────────────────────────
+  # check-db-triggers.sh uses CHECK_TRIGGERS_WORKSPACE_ROOT to find the .env;
+  # fake curl returns [] so verify-db-triggers.mjs should detect all triggers
+  # as missing and exit 1 (set -e in the check script propagates the exit).
+  run_self_check "db-triggers" \
+    CHECK_TRIGGERS_WORKSPACE_ROOT="${SELF_TEST_TMP}" \
+    bash scripts/check-db-triggers.sh
+
+  # ── Summary ─────────────────────────────────────────────────────────────────
+  printf '\n'
+  sep
+  printf '  SELF-TEST SUMMARY\n'
+  sep
+  for entry in "${self_results[@]}"; do
+    status="${entry%%|*}"
+    name="${entry#*|}"
+    if [[ "$status" == "PASS" ]]; then
+      printf '  ✔  %-35s correctly rejects bad fixture\n' "$name"
+    else
+      printf '  ✘  %-35s exits 0 on bad data — BROKEN VERIFIER\n' "$name"
+    fi
+  done
+  sep
+  printf '\n'
+
+  if [[ "$self_overall" -eq 0 ]]; then
+    printf 'Self-test PASSED — all verifier scripts correctly detect failures.\n'
+    printf 'The pre-release gate will not silently pass when a migration is missing.\n\n'
+    exit 0
+  else
+    printf 'Self-test FAILED — one or more verifier scripts returned exit 0 on bad data.\n'
+    printf 'A broken verifier could let the real pre-release gate pass silently.\n'
+    printf 'Fix the broken verifier and re-run:\n'
+    printf '  bash scripts/pre-release-check.sh --self-test\n\n'
+    exit 1
+  fi
+fi
+
 # ── Required-tool preflight ──────────────────────────────────────────────────
 # Shell-level prerequisites for this script and the sync helpers it calls.
 # tsc is resolved through pnpm package scripts (node_modules/.bin) and does
