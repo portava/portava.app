@@ -45,11 +45,22 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# CHECK_ENGAGEMENT_WORKSPACE_ROOT can be set by tests to point at a temp
+# directory that contains a minimal artifacts/api-server/.env, which allows
+# the test suite to run offline without touching the real Supabase project.
+if [[ -n "${CHECK_ENGAGEMENT_WORKSPACE_ROOT:-}" ]]; then
+  WORKSPACE_ROOT="$CHECK_ENGAGEMENT_WORKSPACE_ROOT"
+else
+  WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+fi
 cd "$WORKSPACE_ROOT"
 
+# ENGAGEMENT_SCHEMA_FILTER allows the test suite to point at an isolated schema
+# instead of 'public' so test indexes don't collide with production objects.
+SCHEMA_FILTER="${ENGAGEMENT_SCHEMA_FILTER:-public}"
+
 SQL="SELECT indexname FROM pg_indexes \
-WHERE schemaname = 'public' \
+WHERE schemaname = '${SCHEMA_FILTER}' \
 AND indexname IN (\
 'idx_posts_likes_post_created',\
 'idx_post_reactions_post_emoji_created',\
