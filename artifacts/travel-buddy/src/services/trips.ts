@@ -416,28 +416,52 @@ export interface AcceptInviteResult {
 /**
  * Accept a trip invite by token. The user is added as a member if not already.
  * Returns `alreadyMember: true` when the user was already on the trip (idempotent).
+ *
+ * Retries automatically on network errors and 5xx responses (up to 2 extra
+ * attempts with exponential backoff) so a momentary connection drop or proxy
+ * hiccup does not leave the user stranded on an error screen.  4xx responses
+ * (e.g. 410 Gone, 403 Forbidden) are never retried — they represent a definitive
+ * server decision.
  */
 export async function acceptInviteByToken(token: string): Promise<AcceptInviteResult> {
   const accessToken = await freshToken();
   if (!accessToken) return { tripId: null, alreadyMember: false, error: 'not_authenticated' };
   const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-  const res = await fetch(
-    `${apiBase}/api/trips/invite-link/${encodeURIComponent(token)}/accept`,
-    {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    },
-  );
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
-    return { tripId: null, alreadyMember: false, error: (body?.error as string) ?? 'error' };
+  const url = `${apiBase}/api/trips/invite-link/${encodeURIComponent(token)}/accept`;
+
+  const MAX_ATTEMPTS = 3;
+  let lastError: string = 'error';
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+        const errCode = (body?.error as string) ?? 'error';
+        if (res.status >= 400 && res.status < 500) {
+          return { tripId: null, alreadyMember: false, error: errCode };
+        }
+        lastError = errCode;
+        continue;
+      }
+      const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+      return {
+        tripId: (body.tripId as string) ?? null,
+        alreadyMember: body.status === 'already_member',
+      };
+    } catch {
+      lastError = 'network_error';
+    }
   }
-  const body = await res.json().catch(() => ({})) as Record<string, unknown>;
-  return {
-    tripId: (body.tripId as string) ?? null,
-    alreadyMember: body.status === 'already_member',
-  };
+
+  return { tripId: null, alreadyMember: false, error: lastError };
 }
 
 export interface InviteLinkJoiner {

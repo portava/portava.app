@@ -1200,11 +1200,11 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
     res.status(410).json({ error: "gone", message: "This invite link has expired" });
     return;
   }
-  if (lk.max_uses !== null && lk.use_count >= lk.max_uses) {
-    res.status(410).json({ error: "gone", message: "This invite link has reached its usage limit" });
-    return;
-  }
-
+  // Note: max_uses capacity is NOT checked here.  The claim function
+  // (claim_invite_link_slot_for_user) handles it atomically together with
+  // the per-user attempt ledger.  Checking it here would bypass the ledger
+  // for users who are retrying a partial failure — their slot is already
+  // consumed in use_count but their attempt row signals it was never completed.
   const tripId = lk.trip_id as string;
 
   // Block check against owner
@@ -1220,20 +1220,46 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
     return;
   }
 
-  // Atomically claim one slot before inserting the member.
-  // claim_invite_link_slot does a DB-side `use_count = use_count + 1` guarded by
-  // `use_count < max_uses` (or always increments when max_uses IS NULL).
-  // Because the arithmetic happens inside the DB, two concurrent requests that both
-  // pass the early check above can only both succeed when there are ≥2 slots left;
-  // the last slot is safe from double-booking.
-  const { data: claimed, error: claimErr } = await sc.rpc(
-    "claim_invite_link_slot",
-    { link_id: lk.id }
+  // Atomically claim one slot before inserting the member — or detect that a
+  // prior request already claimed a slot for this user but never completed
+  // (partial failure).  The combined function handles both in one transaction:
+  //   'claimed'           — slot consumed, attempt row recorded.
+  //   'already_attempted' — prior slot already claimed; skip re-claiming and
+  //                         retry the member insert using the dangling slot.
+  //   'limit_reached'     — no slot available.
+  //
+  // Using a single DB function closes the window that existed when claim and
+  // attempt-row-insert were two separate operations: if the process crashed
+  // between them, use_count would be stuck but there would be no attempt row
+  // to detect it on retry.  Now both operations are atomic.
+  const { data: claimResult, error: claimErr } = await sc.rpc(
+    "claim_invite_link_slot_for_user",
+    { p_link_id: lk.id, p_user_id: user.id }
   );
-  if (claimErr || !claimed) {
+
+  const isRetryAttempt = claimResult === "already_attempted";
+
+  if (claimErr || claimResult === "limit_reached") {
+    // Slot limit reached.  Re-check membership before returning 410 — the
+    // first request may have fully succeeded but its response was lost in
+    // transit and the "already_member" guard at the top ran before the commit
+    // was visible.  A concurrent request that committed between the two checks
+    // is also caught here.
+    const retryMembership = await requireTripMember(sc, tripId, user.id, { status: "any" });
+    if (retryMembership) {
+      res.json({ status: "already_member", tripId, idempotent: true });
+      return;
+    }
     res.status(410).json({ error: "gone", message: "This invite link has reached its usage limit" });
     return;
   }
+
+  // Helper: clean up the attempt row (best-effort; failure is non-fatal).
+  const clearAttempt = () =>
+    sc.from("trip_invite_link_attempts")
+      .delete()
+      .eq("link_id", lk.id)
+      .eq("user_id", user.id);
 
   // Add member
   const { error: memErr } = await sc
@@ -1241,11 +1267,30 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
     .insert({ trip_id: tripId, user_id: user.id, role: "member", status: "accepted", joined_at: new Date().toISOString() });
 
   if (memErr) {
-    // Compensate: release the slot so it can be used by a future successful join.
-    await sc.rpc("release_invite_link_slot", { link_id: lk.id });
+    // Unique-constraint violation (23505): a concurrent first attempt already
+    // committed this member row.  Release the slot only if we freshly claimed
+    // one (not when reusing a prior dangling slot), then clean up the attempt
+    // row and return idempotent success.
+    if ((memErr as { code?: string }).code === "23505") {
+      if (!isRetryAttempt) await sc.rpc("release_invite_link_slot", { link_id: lk.id });
+      await clearAttempt();
+      res.json({ status: "already_member", tripId, idempotent: true });
+      return;
+    }
+    // Any other DB error: release the slot if it was freshly claimed.  When
+    // retrying a partial failure (isRetryAttempt=true), intentionally leave the
+    // attempt row so subsequent retries can still skip the slot claim; the
+    // client's 5xx retry loop will try again.
+    if (!isRetryAttempt) {
+      await sc.rpc("release_invite_link_slot", { link_id: lk.id });
+      await clearAttempt();
+    }
     sendError(res, "db_error", memErr.message);
     return;
   }
+
+  // Success: clean up the attempt row so a future link re-use is not blocked.
+  await clearAttempt();
 
   await logActivity(sc, tripId, user.id, "joined_via_invite_link", { linkId: lk.id });
 
