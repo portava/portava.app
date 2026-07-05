@@ -408,3 +408,170 @@ describe("POST /api/trips/invite-link/:token/accept — terminal-state enforceme
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// POST /api/trips/invite-link/:token/accept — concurrent slot race (max_uses=1)
+// ---------------------------------------------------------------------------
+//
+// Verifies that claim_invite_link_slot_for_user is the single source of truth
+// for slot capacity.  When two accepts arrive concurrently against a link with
+// max_uses = 1, the first caller gets 'claimed' and joins (201); the second
+// gets 'limit_reached' and receives 410.  The pre-flight max_members check is
+// intentionally left null so both requests reach the RPC gate.
+
+const RACE_OWNER_ID   = "11aaaaaa-11aa-11aa-11aa-11aaaaaaaaaa";
+const RACE_USER_ID    = "22bbbbbb-22bb-22bb-22bb-22bbbbbbbbbb";
+const RACE_TRIP_ID    = "33cccccc-33cc-33cc-33cc-33cccccccccc";
+const RACE_LINK_ID    = "44dddddd-44dd-44dd-44dd-44dddddddddd";
+const RACE_LINK_TOKEN = "race-capacity-test-token-xxxxxxxxxx1";
+
+function makeRaceClient() {
+  let rpcCallCount = 0;
+
+  const client: any = {
+    auth: {
+      getUser: async (token: string) => {
+        if (token === "race-accept-token") {
+          return { data: { user: { id: RACE_USER_ID } }, error: null };
+        }
+        return { data: { user: null }, error: { message: "invalid" } };
+      },
+    },
+
+    rpc: async (fnName: string) => {
+      if (fnName === "claim_invite_link_slot_for_user") {
+        rpcCallCount += 1;
+        if (rpcCallCount === 1) {
+          return { data: "claimed", error: null };
+        }
+        return { data: "limit_reached", error: null };
+      }
+      return { data: null, error: null };
+    },
+
+    from: (tableName: string) => {
+      const obj: any = {
+        select() { return obj; },
+        eq()     { return obj; },
+        or()     { return obj; },
+        neq()    { return obj; },
+        delete() { return obj; },
+
+        insert() {
+          return Promise.resolve({ data: null, error: null });
+        },
+
+        // Supports `await obj` directly (used by the capacity pre-flight check
+        // and clearAttempt).  Returns an empty member list so both requests
+        // pass the pre-flight guard and reach the RPC — exactly the race we
+        // want to exercise.
+        then(resolve: (v: any) => void) {
+          if (tableName === "trip_members") {
+            resolve({ data: [], error: null });
+          } else {
+            resolve({ data: null, error: null });
+          }
+        },
+
+        maybeSingle() {
+          if (tableName === "trip_invite_links") {
+            return Promise.resolve({
+              data: {
+                id:         RACE_LINK_ID,
+                trip_id:    RACE_TRIP_ID,
+                token:      RACE_LINK_TOKEN,
+                created_by: RACE_OWNER_ID,
+                // max_uses = 1: only one slot available
+                max_uses:   1,
+                use_count:  0,
+                revoked_at: null,
+                expires_at: null,
+                created_at: "2026-01-01T00:00:00Z",
+              },
+              error: null,
+            });
+          }
+
+          if (tableName === "trips") {
+            return Promise.resolve({
+              data: {
+                id:          RACE_TRIP_ID,
+                owner_id:    RACE_OWNER_ID,
+                status:      "upcoming",
+                end_date:    "2099-12-31",
+                // max_members left null so the pre-flight check is skipped and
+                // both concurrent requests reach the RPC gate
+                max_members: null,
+              },
+              error: null,
+            });
+          }
+
+          // trip_members + blocks: neither user is a member yet, no blocks
+          return Promise.resolve({ data: null, error: null });
+        },
+      };
+
+      return obj;
+    },
+  };
+
+  return client;
+}
+
+describe("POST /api/trips/invite-link/:token/accept — concurrent slot race with max_uses=1", () => {
+  let server: Server;
+  let port: number;
+
+  beforeEach(async () => {
+    if (server) server.close();
+    ({ server, port } = await startServer());
+  });
+
+  after(() => {
+    if (server) server.close();
+  });
+
+  it("allows exactly one accept when two requests race for the last slot", async () => {
+    // A single shared fake client — its rpc() counter increments on each call,
+    // so the first caller gets 'claimed' and the second gets 'limit_reached'.
+    _setTestClient(makeRaceClient(), true);
+
+    const url = `http://127.0.0.1:${port}/api/trips/invite-link/${encodeURIComponent(RACE_LINK_TOKEN)}/accept`;
+
+    const makeRequest = () =>
+      fetch(url, {
+        method: "POST",
+        headers: { Authorization: "Bearer race-accept-token" },
+      }).then(async (res) => ({
+        status: res.status,
+        body: res.headers.get("content-type")?.includes("application/json")
+          ? await res.json()
+          : await res.text(),
+      }));
+
+    // Fire both requests concurrently.
+    const [r1, r2] = await Promise.all([makeRequest(), makeRequest()]);
+
+    const statuses = [r1.status, r2.status].sort();
+
+    // Exactly one must succeed (201 joined) and one must be rejected (410).
+    assert.deepEqual(
+      statuses,
+      [201, 410],
+      `expected one 201 and one 410 but got ${r1.status} and ${r2.status}`,
+    );
+
+    const winner  = r1.status === 201 ? r1 : r2;
+    const loser   = r1.status === 410 ? r1 : r2;
+
+    assert.equal(winner.body.status, "joined",  "winning response must have status=joined");
+    assert.equal(winner.body.tripId, RACE_TRIP_ID, "winning response must include tripId");
+
+    assert.equal(loser.body.error, "gone", "losing response must have error=gone");
+    assert.ok(
+      typeof loser.body.message === "string" && loser.body.message.length > 0,
+      "losing 410 must include a human-readable message",
+    );
+  });
+});

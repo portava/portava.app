@@ -1291,16 +1291,26 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
     }
   }
 
-  // Atomically claim one slot before inserting the member — or detect that a
-  // prior request already claimed a slot for this user but never completed
-  // (partial failure).  The combined function handles both in one transaction:
+  // ── Capacity-enforcement guarantee ────────────────────────────────────────
+  // claim_invite_link_slot_for_user is the SINGLE authoritative gate for slot
+  // capacity.  It runs entirely inside one PostgreSQL transaction and uses a
+  // conditional UPDATE (`WHERE use_count < max_uses`) which takes a row-level
+  // lock, so no two concurrent callers can both see "slot available" and both
+  // increment use_count past max_uses.  The function returns:
+  //
   //   'claimed'           — slot consumed, attempt row recorded.
   //   'already_attempted' — prior slot already claimed; skip re-claiming and
   //                         retry the member insert using the dangling slot.
-  //   'limit_reached'     — no slot available.
+  //   'limit_reached'     — no slot available (max_uses exhausted).
   //
-  // Using a single DB function closes the window that existed when claim and
-  // attempt-row-insert were two separate operations: if the process crashed
+  // The max_members pre-flight check above is an optimistic early-return that
+  // avoids consuming a slot when the trip is obviously full, but it is NOT a
+  // reliable race guard.  Two concurrent accepts can both pass the pre-flight
+  // check and only be serialized at the RPC boundary.  Never rely on the
+  // pre-flight check alone to prevent over-subscription.
+  //
+  // Using a single DB function also closes the window that existed when claim
+  // and attempt-row-insert were two separate operations: if the process crashed
   // between them, use_count would be stuck but there would be no attempt row
   // to detect it on retry.  Now both operations are atomic.
   const { data: claimResult, error: claimErr } = await sc.rpc(
