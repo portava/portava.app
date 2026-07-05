@@ -1220,18 +1220,32 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
     return;
   }
 
+  // Atomically claim one slot before inserting the member.
+  // claim_invite_link_slot does a DB-side `use_count = use_count + 1` guarded by
+  // `use_count < max_uses` (or always increments when max_uses IS NULL).
+  // Because the arithmetic happens inside the DB, two concurrent requests that both
+  // pass the early check above can only both succeed when there are ≥2 slots left;
+  // the last slot is safe from double-booking.
+  const { data: claimed, error: claimErr } = await sc.rpc(
+    "claim_invite_link_slot",
+    { link_id: lk.id }
+  );
+  if (claimErr || !claimed) {
+    res.status(410).json({ error: "gone", message: "This invite link has reached its usage limit" });
+    return;
+  }
+
   // Add member
   const { error: memErr } = await sc
     .from("trip_members")
     .insert({ trip_id: tripId, user_id: user.id, role: "member", status: "accepted", joined_at: new Date().toISOString() });
 
-  if (memErr) { sendError(res, "db_error", memErr.message); return; }
-
-  // Increment use_count
-  await sc
-    .from("trip_invite_links")
-    .update({ use_count: lk.use_count + 1 })
-    .eq("id", lk.id);
+  if (memErr) {
+    // Compensate: release the slot so it can be used by a future successful join.
+    await sc.rpc("release_invite_link_slot", { link_id: lk.id });
+    sendError(res, "db_error", memErr.message);
+    return;
+  }
 
   await logActivity(sc, tripId, user.id, "joined_via_invite_link", { linkId: lk.id });
 

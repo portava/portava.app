@@ -168,15 +168,19 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
         }
 
         if (_update !== null) {
-          let matched: Row | null = null;
+          const matched: Row[] = [];
           table.rows = table.rows.map((r) => {
             if (filters.every((f) => f(r))) {
-              matched = { ...r, ..._update };
-              return matched;
+              const updated = { ...r, ..._update };
+              matched.push({ ...updated });
+              return updated;
             }
             return r;
           });
           if (_single || _maybeSingle) {
+            return { data: matched[0] ?? null, error: null };
+          }
+          if (_selectCols !== null) {
             return { data: matched, error: null };
           }
           return { data: null, error: null };
@@ -213,6 +217,25 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
       },
     },
     from: (tableName: string) => chain(tableName, db[tableName]?.rows ?? []),
+    rpc: async (fn: string, args: Record<string, any>) => {
+      if (fn === "claim_invite_link_slot") {
+        const table = db.trip_invite_links ?? { rows: [] };
+        const row = table.rows.find((r) => r.id === args.link_id);
+        if (!row) return { data: false, error: null };
+        if (row.max_uses !== null && row.max_uses !== undefined && row.use_count >= row.max_uses) {
+          return { data: false, error: null };
+        }
+        row.use_count = (row.use_count ?? 0) + 1;
+        return { data: true, error: null };
+      }
+      if (fn === "release_invite_link_slot") {
+        const table = db.trip_invite_links ?? { rows: [] };
+        const row = table.rows.find((r) => r.id === args.link_id);
+        if (row) row.use_count = Math.max(0, (row.use_count ?? 0) - 1);
+        return { data: null, error: null };
+      }
+      return { data: null, error: { message: `Unknown rpc: ${fn}` } };
+    },
   };
 
   return { client, db };
@@ -835,6 +858,64 @@ describe("trips-expansion routes", () => {
       });
       _setTestClient(client, true);
 
+      const r = await req(port, "POST", `/trips/invite-link/${LINK_TOKEN}/accept`, { token: "other-token" });
+      assert.equal(r.status, 410);
+      assert.equal(r.body.error, "gone");
+    });
+
+    it("POST accept returns 410 when claim_invite_link_slot rpc returns false (slot taken concurrently)", async () => {
+      // Simulates a race: two requests both read use_count=0 and pass the early guard,
+      // but only one wins the atomic DB-level increment — the other gets false from the rpc.
+      // The bespoke client returns use_count=0 on SELECT (passes early guard) but false
+      // from the rpc (simulating the concurrent increment that beat this request).
+      const LINK_TOKEN = "racetokenabcdefghijklmnopqrstuvw0";
+      const linkRow = {
+        id: LINK_ID, trip_id: TRIP_ID, token: LINK_TOKEN, created_by: OWNER_ID,
+        max_uses: 1, use_count: 0, revoked_at: null, expires_at: null,
+        created_at: "2026-01-01T00:00:00Z",
+      };
+      const tripRow = {
+        id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome",
+        status: "upcoming", created_at: "2026-01-01T00:00:00Z",
+      };
+
+      const customClient: any = {
+        auth: {
+          getUser: async (token: string) => {
+            if (token === "other-token") return { data: { user: { id: OTHER_ID } }, error: null };
+            return { data: { user: null }, error: { message: "invalid" } };
+          },
+        },
+        rpc: async (fn: string) => {
+          if (fn === "claim_invite_link_slot") {
+            // Simulate the race: another request already claimed the last slot
+            return { data: false, error: null };
+          }
+          return { data: null, error: null };
+        },
+        from: (tableName: string) => {
+          const obj: any = {
+            select() { return obj; },
+            insert(_data: any) { return obj; },
+            eq() { return obj; },
+            or() { return obj; },
+            maybeSingle() {
+              if (tableName === "trip_invite_links") {
+                // Return use_count=0 so the early limit guard passes
+                return Promise.resolve({ data: { ...linkRow }, error: null });
+              }
+              if (tableName === "trips") return Promise.resolve({ data: tripRow, error: null });
+              return Promise.resolve({ data: null, error: null });
+            },
+            then(onF: any, onR: any) {
+              return Promise.resolve({ data: null, error: null }).then(onF, onR);
+            },
+          };
+          return obj;
+        },
+      };
+
+      _setTestClient(customClient, true);
       const r = await req(port, "POST", `/trips/invite-link/${LINK_TOKEN}/accept`, { token: "other-token" });
       assert.equal(r.status, 410);
       assert.equal(r.body.error, "gone");
