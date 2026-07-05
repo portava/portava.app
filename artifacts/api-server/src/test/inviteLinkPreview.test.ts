@@ -257,3 +257,154 @@ describe("GET /api/trips/invite-link/:token/preview — isTerminal code paths", 
     assert.equal(r.body.terminalReason, "This trip is no longer active.");
   });
 });
+
+// ---------------------------------------------------------------------------
+// POST /api/trips/invite-link/:token/accept — terminal-state enforcement
+// ---------------------------------------------------------------------------
+
+const ACCEPT_OWNER_ID   = "ee555555-ee55-ee55-ee55-ee5555555555";
+const ACCEPT_VIEWER_ID  = "ff666666-ff66-ff66-ff66-ff6666666666";
+const ACCEPT_TRIP_ID    = "aa777777-aa77-aa77-aa77-aa7777777777";
+const ACCEPT_LINK_ID    = "bb888888-bb88-bb88-bb88-bb8888888888";
+const ACCEPT_LINK_TOKEN = "accept-terminal-test-token-xyz9876543";
+
+function makeAcceptClient(opts: {
+  tripStatus?: string | null;
+  endDate?: string | null;
+}) {
+  const { tripStatus = "upcoming", endDate = null } = opts;
+
+  const client: any = {
+    auth: {
+      getUser: async (token: string) => {
+        if (token === "accept-viewer-token") {
+          return { data: { user: { id: ACCEPT_VIEWER_ID } }, error: null };
+        }
+        return { data: { user: null }, error: { message: "invalid" } };
+      },
+    },
+
+    from: (tableName: string) => {
+      const obj: any = {
+        select()            { return obj; },
+        eq()                { return obj; },
+        or()                { return obj; },
+        neq()               { return obj; },
+        maybeSingle() {
+          if (tableName === "trip_invite_links") {
+            return Promise.resolve({
+              data: {
+                id:         ACCEPT_LINK_ID,
+                trip_id:    ACCEPT_TRIP_ID,
+                token:      ACCEPT_LINK_TOKEN,
+                created_by: ACCEPT_OWNER_ID,
+                max_uses:   null,
+                use_count:  0,
+                revoked_at: null,
+                expires_at: null,
+                created_at: "2026-01-01T00:00:00Z",
+              },
+              error: null,
+            });
+          }
+
+          if (tableName === "trips") {
+            return Promise.resolve({
+              data: {
+                id:          ACCEPT_TRIP_ID,
+                owner_id:    ACCEPT_OWNER_ID,
+                status:      tripStatus,
+                end_date:    endDate,
+                max_members: null,
+              },
+              error: null,
+            });
+          }
+
+          if (tableName === "blocks") {
+            return Promise.resolve({ data: null, error: null });
+          }
+
+          return Promise.resolve({ data: null, error: null });
+        },
+      };
+
+      return obj;
+    },
+  };
+
+  return client;
+}
+
+async function postAccept(
+  port: number,
+  token: string,
+  authToken: string = "accept-viewer-token",
+): Promise<{ status: number; body: any }> {
+  const url = `http://127.0.0.1:${port}/api/trips/invite-link/${encodeURIComponent(token)}/accept`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  let body: any;
+  try {
+    body = res.headers.get("content-type")?.includes("application/json")
+      ? await res.json()
+      : await res.text();
+  } catch {
+    body = null;
+  }
+  return { status: res.status, body };
+}
+
+describe("POST /api/trips/invite-link/:token/accept — terminal-state enforcement", () => {
+  let server: Server;
+  let port: number;
+
+  beforeEach(async () => {
+    if (server) server.close();
+    ({ server, port } = await startServer());
+  });
+
+  after(() => {
+    if (server) server.close();
+  });
+
+  it("returns 410 gone when the trip is cancelled", async () => {
+    _setTestClient(makeAcceptClient({ tripStatus: "cancelled" }), true);
+
+    const r = await postAccept(port, ACCEPT_LINK_TOKEN);
+
+    assert.equal(r.status, 410, "cancelled trip accept must return 410");
+    assert.equal(r.body.error, "gone");
+    assert.ok(
+      typeof r.body.message === "string" && r.body.message.length > 0,
+      "410 body must include a human-readable message",
+    );
+  });
+
+  it("returns 410 gone when the trip is archived", async () => {
+    _setTestClient(makeAcceptClient({ tripStatus: "archived" }), true);
+
+    const r = await postAccept(port, ACCEPT_LINK_TOKEN);
+
+    assert.equal(r.status, 410, "archived trip accept must return 410");
+    assert.equal(r.body.error, "gone");
+  });
+
+  it("returns 410 gone when the trip end_date is in the past", async () => {
+    _setTestClient(
+      makeAcceptClient({ tripStatus: "upcoming", endDate: "2020-06-01" }),
+      true,
+    );
+
+    const r = await postAccept(port, ACCEPT_LINK_TOKEN);
+
+    assert.equal(r.status, 410, "past-end-date trip accept must return 410");
+    assert.equal(r.body.error, "gone");
+    assert.ok(
+      typeof r.body.message === "string" && r.body.message.length > 0,
+      "410 body must include a human-readable message",
+    );
+  });
+});
