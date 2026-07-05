@@ -896,6 +896,11 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
 
   if (!buddyProfile) return res.status(404).json({ error: "not_found", message: "Buddy not found." });
 
+  // Self-booking block — a buddy cannot book themselves
+  if ((buddyProfile as any).user_id === user.id) {
+    return res.status(409).json({ error: "self_booking", message: "You cannot book yourself as a Buddy." });
+  }
+
   if (buddyProfile.status !== "active" || buddyProfile.admin_status !== "active") {
     return res.status(400).json({ error: "buddy_unavailable", message: "This Buddy is not accepting bookings." });
   }

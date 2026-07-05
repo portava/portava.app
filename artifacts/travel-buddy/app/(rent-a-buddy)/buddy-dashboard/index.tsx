@@ -15,15 +15,7 @@ import {
 import { Stamp } from '../../../src/components/ui';
 import { color, space, radius, type as t, shadow } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
-import type { BuddyDashboardSummary, BuddyBooking } from '../../../src/services/rentABuddy';
-
-const CHECKLIST = [
-  { id: 'bio', label: 'Complete your bio' },
-  { id: 'photo', label: 'Add at least one profile photo' },
-  { id: 'categories', label: 'Set your categories' },
-  { id: 'availability', label: 'Set your weekly availability' },
-  { id: 'rate', label: 'Set your hourly rate' },
-];
+import type { BuddyDashboardSummary, BuddyBooking, ChecklistItem } from '../../../src/services/rentABuddy';
 
 function StatusBanner({ status }: { status: string }) {
   if (status === 'active') return null;
@@ -116,13 +108,16 @@ export default function BuddyDashboard() {
   const [availableNow, setAvailableNow] = useState(false);
   const [checklistOpen, setChecklistOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
+  const [checklistComplete, setChecklistComplete] = useState(false);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     setError(null);
-    const [dashRes, reqRes] = await Promise.all([
+    const [dashRes, reqRes, clRes] = await Promise.all([
       rentABuddy.getBuddyDashboard(),
       rentABuddy.getDashboardRequests(),
+      rentABuddy.getProfileChecklist(),
     ]);
     if (!silent) setLoading(false);
     if (dashRes.ok) {
@@ -132,6 +127,10 @@ export default function BuddyDashboard() {
     }
     if (reqRes.ok) {
       setUpcoming(reqRes.data.requests.slice(0, 3));
+    }
+    if (clRes.ok && clRes.data) {
+      setChecklist(clRes.data.checklist);
+      setChecklistComplete(clRes.data.allComplete);
     }
   }, []);
 
@@ -343,20 +342,25 @@ export default function BuddyDashboard() {
         />
       </View>
 
-      {/* Safety checklist */}
-      <TravelSectionHeader title="Profile checklist" />
+      {/* Profile checklist */}
+      <TravelSectionHeader
+        title={checklistComplete ? 'Profile complete ✓' : 'Profile checklist'}
+      />
       <TravelCard style={{ marginHorizontal: space.lg, marginBottom: space.xl }}>
-        {CHECKLIST.map((item, i) => {
-          const done = i < 2;
-          return (
-            <View key={item.id} style={[cl.row, i < CHECKLIST.length - 1 && cl.divider]}>
-              {done
+        {checklist.length === 0 ? (
+          <View style={cl.row}>
+            <Text style={[cl.label, { color: color.mute }]}>Loading checklist…</Text>
+          </View>
+        ) : (
+          checklist.map((item, i) => (
+            <View key={item.key} style={[cl.row, i < checklist.length - 1 && cl.divider]}>
+              {item.done
                 ? <CheckCircle size={18} color={color.success} />
                 : <Circle size={18} color={color.haze} />}
-              <Text style={[cl.label, done && cl.done]}>{item.label}</Text>
+              <Text style={[cl.label, item.done && cl.done]}>{item.label}</Text>
             </View>
-          );
-        })}
+          ))
+        )}
       </TravelCard>
     </ScrollView>
   );

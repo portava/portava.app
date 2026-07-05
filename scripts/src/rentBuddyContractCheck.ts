@@ -61,6 +61,7 @@ const REQUIRED_ROUTES: Array<[string, string]> = [
   // My buddy profile (canonical path; app.ts rewrites /api/me/buddy-profile → here)
   ["get",    "/api/rent-a-buddy/me/profile"],
   ["post",   "/api/rent-a-buddy/me/profile"],
+  ["get",    "/api/rent-a-buddy/me/profile/checklist"],
   ["post",   "/api/rent-a-buddy/me/profile/submit"],
   ["post",   "/api/rent-a-buddy/me/profile/pause"],
   ["post",   "/api/rent-a-buddy/me/profile/resume"],

@@ -1424,3 +1424,20 @@ export async function adminGetAuditLog(filters?: {
   const qs = q.toString();
   return apiFetch(`/api/admin/rent-buddy/audit-log${qs ? `?${qs}` : ''}`);
 }
+
+// ── Profile checklist ──────────────────────────────────────────────────────────
+
+export type ChecklistItem = {
+  key: string;
+  label: string;
+  done: boolean;
+};
+
+export type ProfileChecklist = {
+  checklist: ChecklistItem[];
+  allComplete: boolean;
+};
+
+export async function getProfileChecklist(): Promise<ApiResult<ProfileChecklist>> {
+  return apiFetch('/api/me/buddy-profile/checklist');
+}

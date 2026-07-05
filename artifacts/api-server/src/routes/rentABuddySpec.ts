@@ -982,8 +982,103 @@ router.delete("/api/rent-a-buddy/buddies/:buddyId/unfavorite", async (req, res) 
 
 // ── buddy profile lifecycle (me) ───────────────────────────────────────────────
 
+// GET /api/rent-a-buddy/me/profile/checklist
+// Also accessible at /api/me/buddy-profile/checklist via app.ts URL alias
+//
+// Returns per-field completion status derived from real DB state.
+// Used by the Buddy Dashboard to drive the "Profile checklist" section.
+router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+
+  const { data: profile } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select(
+      "id, display_name, bio, categories, languages, hourly_rate_usd, " +
+      "availability_blocks, policy_accepted, safety_acknowledged_at, boundaries_acknowledged_at"
+    )
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+
+  if (!profile) {
+    return res.status(404).json({ error: "profile_not_found", message: "No buddy profile found." });
+  }
+
+  const p = profile as any;
+
+  // Check rent_buddy_availability table in addition to availability_blocks on the profile
+  const { count: availCount } = await serviceClient
+    .from("rent_buddy_availability")
+    .select("id", { count: "exact" })
+    .eq("buddy_id", p.id)
+    .limit(1);
+
+  const hasAvailabilityBlocks = Array.isArray(p.availability_blocks) && p.availability_blocks.length > 0;
+  const hasAvailabilityRows = (availCount ?? 0) > 0;
+
+  const checklist = [
+    {
+      key: "display_name",
+      label: "Set your display name",
+      done: typeof p.display_name === "string" && p.display_name.trim().length > 0,
+    },
+    {
+      key: "bio",
+      label: "Write your bio (min 30 characters)",
+      done: typeof p.bio === "string" && p.bio.trim().length >= 30,
+    },
+    {
+      key: "categories",
+      label: "Choose at least one category",
+      done: Array.isArray(p.categories) && p.categories.length > 0,
+    },
+    {
+      key: "languages",
+      label: "Add the languages you speak",
+      done: Array.isArray(p.languages) && p.languages.length > 0,
+    },
+    {
+      key: "hourly_rate",
+      label: "Set your hourly rate",
+      done: p.hourly_rate_usd != null && Number(p.hourly_rate_usd) > 0,
+    },
+    {
+      key: "availability",
+      label: "Set your weekly availability",
+      done: hasAvailabilityBlocks || hasAvailabilityRows,
+    },
+    {
+      key: "policy_accepted",
+      label: "Accept the Buddy policy",
+      done: p.policy_accepted === true,
+    },
+    {
+      key: "safety_acknowledged",
+      label: "Read and confirm the safety guidelines",
+      done: p.safety_acknowledged_at != null,
+    },
+    {
+      key: "boundaries_acknowledged",
+      label: "Read and confirm the conduct & boundaries policy",
+      done: p.boundaries_acknowledged_at != null,
+    },
+  ];
+
+  const allComplete = checklist.every((i) => i.done);
+
+  return res.json({ checklist, allComplete });
+});
+
 // POST /api/rent-a-buddy/me/profile/submit — finalize and submit profile for review
 // Also accessible at /api/me/buddy-profile/submit via app.ts URL alias
+//
+// Body (optional):
+//   acceptSafety:     boolean — records safety_acknowledged_at on this call
+//   acceptBoundaries: boolean — records boundaries_acknowledged_at on this call
+//
+// Returns 422 { error: "incomplete_profile", missing: [...] } if any required fields
+// are empty. All fields must be filled before the profile can enter review.
 router.post("/api/rent-a-buddy/me/profile/submit", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -991,7 +1086,11 @@ router.post("/api/rent-a-buddy/me/profile/submit", async (req, res) => {
 
   const { data: profile } = await serviceClient
     .from("rent_buddy_profiles")
-    .select("id, status, admin_status")
+    .select(
+      "id, status, admin_status, display_name, bio, categories, languages, " +
+      "hourly_rate_usd, availability_blocks, policy_accepted, " +
+      "safety_acknowledged_at, boundaries_acknowledged_at"
+    )
     .eq("user_id", auth.user.id)
     .maybeSingle();
 
@@ -1002,9 +1101,54 @@ router.post("/api/rent-a-buddy/me/profile/submit", async (req, res) => {
     return res.status(409).json({ error: "invalid_state", message: `Profile in '${p.status}' state cannot be submitted.` });
   }
 
+  // Accept acknowledgments passed in the submit body
+  const { acceptSafety, acceptBoundaries } = req.body ?? {};
+  const now = new Date().toISOString();
+  const safetyAck = p.safety_acknowledged_at ?? (acceptSafety ? now : null);
+  const boundariesAck = p.boundaries_acknowledged_at ?? (acceptBoundaries ? now : null);
+
+  // Check rent_buddy_availability table in addition to availability_blocks on the profile
+  const { count: availCount } = await serviceClient
+    .from("rent_buddy_availability")
+    .select("id", { count: "exact" })
+    .eq("buddy_id", p.id)
+    .limit(1);
+
+  const hasAvailability =
+    (Array.isArray(p.availability_blocks) && p.availability_blocks.length > 0) ||
+    (availCount ?? 0) > 0;
+
+  // 422 gate — collect all missing required fields
+  const missing: string[] = [];
+  if (!(typeof p.display_name === "string" && p.display_name.trim().length > 0)) missing.push("display_name");
+  if (!(typeof p.bio === "string" && p.bio.trim().length >= 30)) missing.push("bio");
+  if (!(Array.isArray(p.categories) && p.categories.length > 0)) missing.push("categories");
+  if (!(Array.isArray(p.languages) && p.languages.length > 0)) missing.push("languages");
+  if (!(p.hourly_rate_usd != null && Number(p.hourly_rate_usd) > 0)) missing.push("hourly_rate");
+  if (!hasAvailability) missing.push("availability");
+  if (!p.policy_accepted) missing.push("policy_accepted");
+  if (!safetyAck) missing.push("safety_acknowledged");
+  if (!boundariesAck) missing.push("boundaries_acknowledged");
+
+  if (missing.length > 0) {
+    return res.status(422).json({
+      error: "incomplete_profile",
+      message: "Profile is missing required fields before it can be submitted for review.",
+      missing,
+    });
+  }
+
+  const patch: Record<string, unknown> = {
+    status: "pending",
+    admin_status: "pending_review",
+    updated_at: now,
+  };
+  if (acceptSafety && !p.safety_acknowledged_at) patch.safety_acknowledged_at = now;
+  if (acceptBoundaries && !p.boundaries_acknowledged_at) patch.boundaries_acknowledged_at = now;
+
   const { data, error } = await serviceClient
     .from("rent_buddy_profiles")
-    .update({ status: "pending", admin_status: "pending_review", updated_at: new Date().toISOString() })
+    .update(patch)
     .eq("id", p.id)
     .select()
     .single();
