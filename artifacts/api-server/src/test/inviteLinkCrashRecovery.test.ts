@@ -51,18 +51,21 @@ interface FakeDeleteCall {
  * @param opts.claimResult         — 'claimed' | 'already_attempted' | 'limit_reached'
  * @param opts.claimError          — rpc returns an error instead of a result string
  * @param opts.memberInsertError   — trip_members INSERT fails with this error
+ * @param opts.maxUses             — max_uses value for the fake invite link (null = unlimited)
  */
 function makeClient(opts: {
   isMember?: boolean;
   claimResult?: string;
   claimError?: boolean;
   memberInsertError?: { message: string; code?: string };
+  maxUses?: number | null;
 }): { client: any; rpcCalls: FakeRpcCall[]; deleteCalls: FakeDeleteCall[] } {
   const {
     isMember          = false,
     claimResult       = "claimed",
     claimError        = false,
     memberInsertError,
+    maxUses           = 5,
   } = opts;
 
   const rpcCalls: FakeRpcCall[]     = [];
@@ -138,7 +141,7 @@ function makeClient(opts: {
                 trip_id:    TRIP_ID,
                 token:      LINK_TOKEN,
                 created_by: OWNER_ID,
-                max_uses:   5,
+                max_uses:   maxUses,
                 use_count:  0,
                 revoked_at: null,
                 expires_at: null,
@@ -384,5 +387,161 @@ describe("POST /api/trips/invite-link/:token/accept — crash recovery", () => {
       0,
       "attempt row cleanup must NOT be called — there was no attempt row to clean up",
     );
+  });
+});
+
+// ── Unlimited links (max_uses = null) ─────────────────────────────────────────
+//
+// claim_invite_link_slot_for_user uses `(max_uses IS NULL OR use_count < max_uses)`
+// in its UPDATE WHERE clause.  When max_uses IS NULL the condition is always true,
+// so the function can never return 'limit_reached' for an unlimited link.
+//
+// The three scenarios below mirror Scenarios 1–3 from the capped-link suite and
+// verify that the handler code paths work identically regardless of the cap value.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("POST /api/trips/invite-link/:token/accept — crash recovery (unlimited links, max_uses = null)", () => {
+  let server: Server;
+  let port: number;
+
+  beforeEach(async () => {
+    if (server) server.close();
+    ({ server, port } = await startServer());
+  });
+
+  after(() => {
+    if (server) server.close();
+  });
+
+  // ── Scenario 5: Unlimited happy path ─────────────────────────────────────
+  it("unlimited link happy path: returns 201 joined and cleans up the attempt row", async () => {
+    const { client, rpcCalls, deleteCalls } = makeClient({
+      isMember:    false,
+      claimResult: "claimed",
+      maxUses:     null,
+    });
+    _setTestClient(client, true);
+
+    const r = await post(port, `/trips/invite-link/${LINK_TOKEN}/accept`, "joiner-token");
+
+    assert.equal(r.status, 201, "unlimited link join must return 201");
+    assert.equal(r.body.status, "joined");
+    assert.equal(r.body.role, "member");
+    assert.equal(r.body.tripId, TRIP_ID);
+
+    const claimCalls = rpcCalls.filter((c) => c.fn === "claim_invite_link_slot_for_user");
+    assert.equal(claimCalls.length, 1, "claim must be called exactly once for unlimited links");
+
+    const attemptDeletes = deleteCalls.filter((d) => d.table === "trip_invite_link_attempts");
+    assert.equal(
+      attemptDeletes.length,
+      1,
+      "attempt row must be deleted after a successful join on an unlimited link",
+    );
+    assert.equal(attemptDeletes[0].filters.link_id, LINK_ID);
+    assert.equal(attemptDeletes[0].filters.user_id, JOINER_ID);
+  });
+
+  // ── Scenario 6: Unlimited retry after crash ───────────────────────────────
+  it("unlimited link retry after crash: already_attempted skips re-claim and succeeds", async () => {
+    // The slot for an unlimited link is a logical increment of use_count, not a
+    // physical slot from a finite pool.  But the crash-recovery path is identical:
+    // 'already_attempted' means a prior increment happened, so we must not
+    // increment again — just retry the member insert.
+    const { client, rpcCalls, deleteCalls } = makeClient({
+      isMember:    false,
+      claimResult: "already_attempted",
+      maxUses:     null,
+    });
+    _setTestClient(client, true);
+
+    const r = await post(port, `/trips/invite-link/${LINK_TOKEN}/accept`, "joiner-token");
+
+    assert.equal(r.status, 201, "unlimited link retry after crash must produce 201 joined");
+    assert.equal(r.body.status, "joined");
+
+    const releaseCalls = rpcCalls.filter((c) => c.fn === "release_invite_link_slot");
+    assert.equal(
+      releaseCalls.length,
+      0,
+      "release must NOT be called on the already_attempted retry path for unlimited links",
+    );
+
+    const attemptDeletes = deleteCalls.filter((d) => d.table === "trip_invite_link_attempts");
+    assert.equal(
+      attemptDeletes.length,
+      1,
+      "attempt row must be cleaned up after a successful retry on an unlimited link",
+    );
+    assert.equal(attemptDeletes[0].filters.link_id, LINK_ID);
+    assert.equal(attemptDeletes[0].filters.user_id, JOINER_ID);
+  });
+
+  // ── Scenario 7: Unlimited duplicate-member conflict on fresh claim ─────────
+  it("unlimited link duplicate-member conflict: releases slot, cleans attempt row, returns 200 already_member", async () => {
+    // A fresh slot was claimed on an unlimited link (use_count incremented).
+    // The member INSERT hits a 23505 conflict from a concurrent request.
+    // The handler must decrement use_count via release_invite_link_slot, clean the
+    // attempt row, and return an idempotent 200 already_member — same as for capped links.
+    const { client, rpcCalls, deleteCalls } = makeClient({
+      isMember:          false,
+      claimResult:       "claimed",
+      memberInsertError: { message: "duplicate key value", code: "23505" },
+      maxUses:           null,
+    });
+    _setTestClient(client, true);
+
+    const r = await post(port, `/trips/invite-link/${LINK_TOKEN}/accept`, "joiner-token");
+
+    assert.equal(r.status, 200, "23505 conflict on unlimited link must return 200 already_member");
+    assert.equal(r.body.status, "already_member");
+    assert.equal(r.body.idempotent, true);
+
+    const releaseCalls = rpcCalls.filter((c) => c.fn === "release_invite_link_slot");
+    assert.equal(
+      releaseCalls.length,
+      1,
+      "release_invite_link_slot must be called once to undo the freshly incremented use_count",
+    );
+    assert.equal(releaseCalls[0].args.link_id, LINK_ID);
+
+    const attemptDeletes = deleteCalls.filter((d) => d.table === "trip_invite_link_attempts");
+    assert.equal(
+      attemptDeletes.length,
+      1,
+      "attempt row must be cleaned up after resolving the conflict on an unlimited link",
+    );
+    assert.equal(attemptDeletes[0].filters.link_id, LINK_ID);
+    assert.equal(attemptDeletes[0].filters.user_id, JOINER_ID);
+  });
+
+  // ── Scenario 8: Confirm limit_reached is structurally impossible ──────────
+  it("unlimited link: limit_reached is structurally impossible — DB function always claims for null max_uses", async () => {
+    // This test documents and guards the invariant: for unlimited links the DB
+    // function claim_invite_link_slot_for_user can never return 'limit_reached'
+    // because `max_uses IS NULL` makes the WHERE condition always true.
+    //
+    // We simulate a hypothetical 'limit_reached' return (which cannot actually
+    // occur for a null-capped link) to confirm the HTTP handler still returns 410.
+    // The real protection is at the DB level — this test records the invariant.
+    const { client, rpcCalls } = makeClient({
+      isMember:    false,
+      claimResult: "limit_reached",
+      maxUses:     null,
+    });
+    _setTestClient(client, true);
+
+    const r = await post(port, `/trips/invite-link/${LINK_TOKEN}/accept`, "joiner-token");
+
+    assert.equal(
+      r.status,
+      410,
+      "handler must still surface 410 even for unlimited links if limit_reached were returned — but the DB function never returns this for null max_uses",
+    );
+
+    const claimCalls = rpcCalls.filter((c) => c.fn === "claim_invite_link_slot_for_user");
+    assert.equal(claimCalls.length, 1, "claim must have been attempted");
+
+    const releaseCalls = rpcCalls.filter((c) => c.fn === "release_invite_link_slot");
+    assert.equal(releaseCalls.length, 0, "release must NOT be called when limit_reached is returned");
   });
 });
