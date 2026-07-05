@@ -5,7 +5,12 @@
  * React Native, or theme tokens.
  */
 
-// ── Types ───────────────────────────────────────────────────────────────────
+// ── Constants ────────────────────────────────────────────────────────────────
+
+/** The privacy-safe placeholder rendered for every non-member viewer. */
+export const PLACEHOLDER_TEXT = 'Shared a Circle update.' as const;
+
+// ── Types ────────────────────────────────────────────────────────────────────
 
 export type CardVariant = 'checkin' | 'meeting_point' | 'unknown';
 
@@ -16,12 +21,23 @@ export interface CircleCardPayload {
   approxArea?: string | null;
 }
 
-// ── Body parsing ────────────────────────────────────────────────────────────
+/**
+ * Typed discriminated union returned by both `resolveCardRender` and
+ * `resolveCardRenderFromProps`.  The component switches on `show` and reads
+ * the pre-computed display values (`text`, `label`, `locationText`) so the
+ * same logic that is unit-tested also drives the actual render.
+ */
+export type RenderDecision =
+  | { show: 'placeholder'; text: typeof PLACEHOLDER_TEXT }
+  | { show: 'checkin';       subtype: string; label: string; senderName: string | null | undefined }
+  | { show: 'meeting_point'; locationText: string | null;    senderName: string | null | undefined };
+
+// ── Body parsing ─────────────────────────────────────────────────────────────
 
 /**
  * Parse the raw message body string of a circle_status_card.
- * Returns null for null/empty/malformed input — callers must treat null the
- * same as a missing payload (renders the generic placeholder).
+ * Returns null for null/empty/malformed/non-object input — callers must treat
+ * null the same as a missing payload (renders the generic placeholder).
  */
 export function parseCircleCardBody(body: string | null | undefined): CircleCardPayload | null {
   try {
@@ -35,7 +51,7 @@ export function parseCircleCardBody(body: string | null | undefined): CircleCard
   }
 }
 
-// ── Subtype classification ───────────────────────────────────────────────────
+// ── Subtype classification ────────────────────────────────────────────────────
 
 /** Map a raw subtype string to one of the three card variants. */
 export function classifySubtype(subtype: string | null | undefined): CardVariant {
@@ -55,40 +71,34 @@ export function checkinLabel(subtype: string): string {
   }
 }
 
-// ── Rendering decision ───────────────────────────────────────────────────────
-
-export type RenderDecision =
-  | { show: 'placeholder' }
-  | { show: 'checkin';       subtype: string; senderName: string | null | undefined }
-  | { show: 'meeting_point'; locationText: string | null; senderName: string | null | undefined };
+// ── Rendering decisions ───────────────────────────────────────────────────────
 
 /**
- * Determine what the card should render given the raw message body string,
- * the caller's Circle membership status, and an optional senderName override.
+ * Decide what to render given already-parsed props (subtype, venueLabel,
+ * approxArea, senderName) and the Circle membership flag.
+ *
+ * This is what the component calls at render time.  The same function is also
+ * unit-tested, so the tested logic IS the runtime logic.
  *
  * Privacy rules (fail-closed):
  *   - isCircleMember !== true  → placeholder for every viewer
  *   - null/missing/unknown subtype → placeholder even for members
  *   - 'meeting_point' subtype  → meeting-point card
- *   - any other subtype        → check-in card
+ *   - any other subtype        → check-in card with a pre-computed label
  */
-export function resolveCardRender(
-  body: string | null | undefined,
+export function resolveCardRenderFromProps(
+  subtype: string | null | undefined,
+  venueLabel: string | null | undefined,
+  approxArea: string | null | undefined,
   isCircleMember: boolean | null | undefined,
   senderName: string | null | undefined,
-  subtypeOverride?: string | null,
 ): RenderDecision {
-  if (isCircleMember !== true) return { show: 'placeholder' };
+  if (isCircleMember !== true) return { show: 'placeholder', text: PLACEHOLDER_TEXT };
 
-  const payload = parseCircleCardBody(body);
-  const subtype = subtypeOverride ?? payload?.subtype ?? null;
   const variant = classifySubtype(subtype);
-
-  if (variant === 'unknown') return { show: 'placeholder' };
+  if (variant === 'unknown') return { show: 'placeholder', text: PLACEHOLDER_TEXT };
 
   if (variant === 'meeting_point') {
-    const venueLabel = payload?.venueLabel ?? null;
-    const approxArea = payload?.approxArea ?? null;
     return {
       show: 'meeting_point',
       locationText: venueLabel || approxArea || null,
@@ -96,5 +106,29 @@ export function resolveCardRender(
     };
   }
 
-  return { show: 'checkin', subtype: subtype!, senderName };
+  return {
+    show: 'checkin',
+    subtype: subtype!,
+    label: checkinLabel(subtype!),
+    senderName,
+  };
+}
+
+/**
+ * Decide what to render given a raw (unparsed) message body string.
+ * Useful for testing the full JSON-parsing → rendering pipeline end-to-end.
+ * Accepts an optional `subtypeOverride` that bypasses body parsing (mirrors
+ * the MessageBubble pattern in `[id].tsx`).
+ */
+export function resolveCardRender(
+  body: string | null | undefined,
+  isCircleMember: boolean | null | undefined,
+  senderName: string | null | undefined,
+  subtypeOverride?: string | null,
+): RenderDecision {
+  const payload = parseCircleCardBody(body);
+  const subtype = subtypeOverride ?? payload?.subtype ?? null;
+  const venueLabel = payload?.venueLabel ?? null;
+  const approxArea = payload?.approxArea ?? null;
+  return resolveCardRenderFromProps(subtype, venueLabel, approxArea, isCircleMember, senderName);
 }

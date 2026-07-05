@@ -13,12 +13,16 @@
  *   "meeting_point"          → MapPin icon + venue/approx label
  *   "arrived" | "with_group" | "leaving" | "safe" → check-in card
  *   null / unrecognised      → generic placeholder (safe for all viewers)
+ *
+ * The entire rendering decision is delegated to `resolveCardRenderFromProps`
+ * from CircleStatusCardMessage.logic.ts so the component's render path is
+ * directly covered by the logic unit tests.
  */
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Users, MapPin, CheckCircle } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
-import { classifySubtype, checkinLabel } from './CircleStatusCardMessage.logic';
+import { resolveCardRenderFromProps } from './CircleStatusCardMessage.logic';
 
 // ── Component ──────────────────────────────────────────────────────────────
 
@@ -42,12 +46,16 @@ export function CircleStatusCardMessage({
   isCircleMember,
   onPress,
 }: Props) {
-  const variant = classifySubtype(subtype);
+  const decision = resolveCardRenderFromProps(
+    subtype,
+    venueLabel ?? null,
+    approxArea ?? null,
+    isCircleMember,
+    senderName ?? null,
+  );
 
-  // ── Privacy placeholder — shown until membership is positively confirmed ──
-  // Fail-closed: null (loading) and false (non-member) both show the placeholder.
-  // Full card content is rendered only when isCircleMember === true.
-  if (isCircleMember !== true) {
+  // ── Privacy / unknown-subtype placeholder ─────────────────────────────────
+  if (decision.show === 'placeholder') {
     return (
       <View style={[card.wrap, mine && card.wrapMine]}>
         <View style={card.header}>
@@ -56,29 +64,13 @@ export function CircleStatusCardMessage({
           </View>
           <Text style={[card.brand, mine && card.brandMine]}>CIRCLE</Text>
         </View>
-        <Text style={[card.body, mine && card.bodyMine]}>Shared a Circle update.</Text>
-      </View>
-    );
-  }
-
-  // ── Generic placeholder — unrecognised subtype or null ────────────────────
-  if (variant === 'unknown') {
-    return (
-      <View style={[card.wrap, mine && card.wrapMine]}>
-        <View style={card.header}>
-          <View style={[card.badge, mine && card.badgeMine]}>
-            <Users size={10} color={color.onInk} />
-          </View>
-          <Text style={[card.brand, mine && card.brandMine]}>CIRCLE</Text>
-        </View>
-        <Text style={[card.body, mine && card.bodyMine]}>Shared a Circle update.</Text>
+        <Text style={[card.body, mine && card.bodyMine]}>{decision.text}</Text>
       </View>
     );
   }
 
   // ── Meeting-point card ────────────────────────────────────────────────────
-  if (variant === 'meeting_point') {
-    const locationText = venueLabel || approxArea || null;
+  if (decision.show === 'meeting_point') {
     return (
       <View style={[card.wrap, mine && card.wrapMine]}>
         <View style={card.header}>
@@ -94,13 +86,13 @@ export function CircleStatusCardMessage({
         <View style={card.row}>
           <MapPin size={14} color={mine ? color.onInk + 'CC' : color.signal} />
           <Text style={[card.title, mine && card.titleMine]}>
-            {locationText ?? 'Meeting point updated'}
+            {decision.locationText ?? 'Meeting point updated'}
           </Text>
         </View>
 
-        {senderName ? (
+        {decision.senderName ? (
           <Text style={[card.meta, mine && card.metaMine]} numberOfLines={1}>
-            {senderName}
+            {decision.senderName}
           </Text>
         ) : null}
 
@@ -127,13 +119,13 @@ export function CircleStatusCardMessage({
       <View style={card.row}>
         <CheckCircle size={14} color={mine ? color.onInk + 'CC' : '#22c55e'} />
         <Text style={[card.title, mine && card.titleMine]}>
-          {checkinLabel(subtype ?? '')}
+          {decision.label}
         </Text>
       </View>
 
-      {senderName ? (
+      {decision.senderName ? (
         <Text style={[card.meta, mine && card.metaMine]} numberOfLines={1}>
-          {senderName}
+          {decision.senderName}
         </Text>
       ) : null}
 
