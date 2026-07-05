@@ -612,21 +612,22 @@ router.delete("/memories/:id/items/:itemId", async (req, res) => {
   await sc.from("memory_items").delete().eq("id", itemId).eq("memory_id", id);
 
   // Delete the storage object — derive path from public URL.
-  // URL format: https://<host>/storage/v1/object/public/memories/<path>
-  // Security: only delete objects that begin with the owner's user id prefix.
+  // URL format: https://<host>/storage/v1/object/public/post-media/<path>
+  // Storage path format: memories/{userId}/{filename}
+  // Security: only delete objects that begin with the owner's path prefix.
   // media_url is a client-supplied value at insert time, so an adversary could
   // craft a URL pointing to another user's object.  Enforcing the path prefix
-  // means only files uploaded by this user (path = `${user.id}/...`) can ever
+  // means only files uploaded by this user (path = `memories/${user.id}/...`) can ever
   // be removed via this code path.
   try {
     const mediaUrl: string = (item as any).media_url ?? "";
-    const marker = "/object/public/memories/";
+    const marker = "/object/public/post-media/";
     const markerIdx = mediaUrl.indexOf(marker);
     if (markerIdx !== -1) {
       const storagePath = mediaUrl.slice(markerIdx + marker.length);
-      const ownerPrefix = `${user.id}/`;
+      const ownerPrefix = `memories/${user.id}/`;
       if (storagePath && storagePath.startsWith(ownerPrefix)) {
-        await sc.storage.from("memories").remove([storagePath]);
+        await sc.storage.from("post-media").remove([storagePath]);
       } else {
         req.log.warn({ storagePath, userId: user.id }, "memories: storage path does not match owner prefix — skipping delete");
       }

@@ -95,15 +95,15 @@ export async function uploadStoryMedia(localUri: string, mediaType: string): Pro
     const blob = await response.blob();
 
     const ext = mediaType.startsWith('video') ? 'mp4' : 'jpg';
-    const path = `${userId}/${Date.now()}.${ext}`;
+    const path = `stories/${userId}/${Date.now()}.${ext}`;
 
     const { error } = await supabase.storage
-      .from('stories')
+      .from('post-media')
       .upload(path, blob, { contentType: mediaType, upsert: false });
 
     if (error) return null;
 
-    const { data: urlData } = supabase.storage.from('stories').getPublicUrl(path);
+    const { data: urlData } = supabase.storage.from('post-media').getPublicUrl(path);
     return urlData?.publicUrl ?? null;
   } catch {
     return null;

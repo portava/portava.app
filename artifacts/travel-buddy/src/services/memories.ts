@@ -84,15 +84,15 @@ export async function uploadMemoryMedia(
     const blob = await response.blob();
 
     const ext = mediaType.startsWith('video') ? 'mp4' : 'jpg';
-    const path = `${userId}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+    const path = `memories/${userId}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
 
     const { error } = await supabase.storage
-      .from('memories')
+      .from('post-media')
       .upload(path, blob, { contentType: mediaType, upsert: false });
 
     if (error) return null;
 
-    const { data: urlData } = supabase.storage.from('memories').getPublicUrl(path);
+    const { data: urlData } = supabase.storage.from('post-media').getPublicUrl(path);
     return urlData?.publicUrl ?? null;
   } catch {
     return null;
