@@ -1068,6 +1068,33 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
   const depositUsd = paymentMode === "deposit_plus_cash" ? Math.round(totalUsd * 0.3 * 100) / 100 : totalUsd;
   const cashBalanceUsd = paymentMode === "deposit_plus_cash" ? Math.round((totalUsd - depositUsd) * 100) / 100 : 0;
 
+  // Availability exception / vacation-mode block — check before insert
+  // An exception blocks the booking date if: exception_date <= bookingDate AND (end_date IS NULL → single day, OR end_date >= bookingDate)
+  const { data: availExceptions } = await serviceClient
+    .from("buddy_availability_exceptions")
+    .select("id, exception_type, exception_date, end_date")
+    .eq("buddy_id", buddyId)
+    .lte("exception_date", bookingDate)
+    .or(`end_date.is.null,end_date.gte.${bookingDate}`);
+
+  // Single-day exceptions: filter to those that actually include bookingDate (when end_date is null, exception_date must equal bookingDate)
+  // Because .lte("exception_date", bookingDate) is correct but we need exception_date == bookingDate when end_date is null
+  // We do this client-side to avoid complex OR filters.
+  const blockingException = (availExceptions ?? []).find((ex: any) => {
+    if (ex.end_date == null) return ex.exception_date === bookingDate;
+    return true; // lte/gte already covers multi-day ranges
+  });
+
+  if (blockingException) {
+    const isVacation = (blockingException as any).exception_type === "vacation";
+    return res.status(409).json({
+      error: "buddy_unavailable",
+      message: isVacation
+        ? "This Buddy is on vacation and not accepting bookings on that date."
+        : "This Buddy is not available on the requested date.",
+    });
+  }
+
   const { data: booking, error } = await serviceClient
     .from("rent_buddy_bookings")
     .insert({
@@ -1312,7 +1339,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => 
   });
 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_cancelled", "Booking cancelled.");
-  void emitBookingCard(serviceClient, bookingId, auth.user.id, b.status as string);
+  void emitBookingCard(serviceClient, bookingId, auth.user.id, "cancelled");
 
   // Notify the other party
   const notifyUserId = isTravelerCancel ? buddyUserIdForCancel : b.traveler_id as string;
@@ -5082,12 +5109,29 @@ router.post("/api/internal/buddy-requests/expire", async (req, res) => {
       .update({ status: "completed", updated_at: now })
       .in("id", ids2);
 
+    // Resolve buddy user IDs in one batch for completion notifications
+    const buddyProfileIds = [...new Set(pendingConfirm.map((r: any) => r.buddy_id as string))];
+    const { data: buddyProfiles } = await serviceClient
+      .from("rent_buddy_profiles")
+      .select("id, user_id")
+      .in("id", buddyProfileIds);
+    const buddyUserIdMap: Record<string, string> = {};
+    for (const bp of buddyProfiles ?? []) {
+      buddyUserIdMap[(bp as any).id] = (bp as any).user_id;
+    }
+
     for (const bk of pendingConfirm) {
       void serviceClient.from("buddy_booking_events").insert({
         booking_id: bk.id, actor_user_id: bk.traveler_id, event: "auto_completed",
         from_status: "completed_pending_traveler_confirmation", to_status: "completed",
         metadata: { reason: "dispute_window_expired" },
       });
+      // Notify both parties that the booking auto-completed
+      notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_completed", bk.id as string);
+      const buddyUserId = buddyUserIdMap[bk.buddy_id as string];
+      if (buddyUserId) {
+        notifyBookingParty(serviceClient, buddyUserId, "rent_buddy.booking_completed", bk.id as string);
+      }
     }
     autoCompletedCount = pendingConfirm.length;
   }
@@ -5309,7 +5353,7 @@ router.post("/api/buddy-bookings/:bookingId/check-in", async (req, res) => {
     metadata: { checkin_status: checkinStatus, broad_area: broadArea ?? null, role: role ?? null },
   });
 
-  // If unsafe, create a safety event
+  // Distress / unsafe signals — create a safety event for moderation review
   const unsafeStatuses = ["unsafe", "could_not_find", "missed"];
   if (unsafeStatuses.includes(checkinStatus)) {
     void serviceClient.from("rent_buddy_safety_events").insert({
@@ -5318,6 +5362,23 @@ router.post("/api/buddy-bookings/:bookingId/check-in", async (req, res) => {
       event_type: "comfort_check_distress",
       event_status: "open",
       metadata: { status: checkinStatus, broad_area: broadArea ?? null },
+    });
+  }
+
+  // "unsafe" specifically: escalate safety_status on the booking + open a dedicated
+  // admin-priority alert so the moderation team is immediately notified.
+  if (checkinStatus === "unsafe") {
+    void serviceClient
+      .from("rent_buddy_bookings")
+      .update({ safety_status: "unsafe", updated_at: new Date().toISOString() })
+      .eq("id", bookingId);
+
+    void serviceClient.from("rent_buddy_safety_events").insert({
+      booking_id: bookingId,
+      actor_user_id: auth.user.id,
+      event_type: "feel_unsafe",
+      event_status: "open",
+      metadata: { source: "checkin", broad_area: broadArea ?? null, role: role ?? null },
     });
   }
 
