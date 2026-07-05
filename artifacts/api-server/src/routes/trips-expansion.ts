@@ -1271,7 +1271,7 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
   // Add member
   const { error: memErr } = await sc
     .from("trip_members")
-    .insert({ trip_id: tripId, user_id: user.id, role: "member", status: "accepted", joined_at: new Date().toISOString() });
+    .insert({ trip_id: tripId, user_id: user.id, role: "member", status: "accepted", joined_at: new Date().toISOString(), invite_link_id: lk.id });
 
   if (memErr) {
     // Unique-constraint violation (23505): a concurrent first attempt already
