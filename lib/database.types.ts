@@ -700,6 +700,120 @@ export type Database = {
           },
         ]
       }
+      compass_feedback: {
+        Row: {
+          id: string
+          user_id: string
+          item_id: string
+          item_type: string
+          action: string
+          recommendation_id: string | null
+          metadata: Json | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          item_id: string
+          item_type: string
+          action: string
+          recommendation_id?: string | null
+          metadata?: Json | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          item_id?: string
+          item_type?: string
+          action?: string
+          recommendation_id?: string | null
+          metadata?: Json | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      compass_recent_context: {
+        Row: {
+          id: string
+          user_id: string
+          context_state: string
+          intent_mode: string
+          city: string | null
+          country: string | null
+          signals: Json | null
+          client_hints: Json | null
+          expires_at: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          context_state?: string
+          intent_mode?: string
+          city?: string | null
+          country?: string | null
+          signals?: Json | null
+          client_hints?: Json | null
+          expires_at?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          context_state?: string
+          intent_mode?: string
+          city?: string | null
+          country?: string | null
+          signals?: Json | null
+          client_hints?: Json | null
+          expires_at?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      compass_settings: {
+        Row: {
+          user_id: string
+          use_location: boolean
+          use_trip_data: boolean
+          use_saved_items: boolean
+          use_history: boolean
+          show_buddy_recommendations: boolean
+          show_people_recommendations: boolean
+          allow_smart_notifications: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          user_id: string
+          use_location?: boolean
+          use_trip_data?: boolean
+          use_saved_items?: boolean
+          use_history?: boolean
+          show_buddy_recommendations?: boolean
+          show_people_recommendations?: boolean
+          allow_smart_notifications?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          user_id?: string
+          use_location?: boolean
+          use_trip_data?: boolean
+          use_saved_items?: boolean
+          use_history?: boolean
+          show_buddy_recommendations?: boolean
+          show_people_recommendations?: boolean
+          allow_smart_notifications?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       daily_briefs: {
         Row: {
           brief_date: string
@@ -3823,6 +3937,80 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "post_edits_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      post_media: {
+        Row: {
+          id: string
+          post_id: string
+          user_id: string
+          media_type: string
+          storage_bucket: string
+          storage_path: string
+          public_url: string
+          thumbnail_url: string | null
+          thumbnail_storage_path: string | null
+          mime_type: string
+          file_size_bytes: number | null
+          duration_seconds: number | null
+          width: number | null
+          height: number | null
+          processing_status: string
+          moderation_status: string
+          sort_order: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          post_id: string
+          user_id: string
+          media_type: string
+          storage_bucket?: string
+          storage_path?: string
+          public_url?: string
+          thumbnail_url?: string | null
+          thumbnail_storage_path?: string | null
+          mime_type: string
+          file_size_bytes?: number | null
+          duration_seconds?: number | null
+          width?: number | null
+          height?: number | null
+          processing_status?: string
+          moderation_status?: string
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          post_id?: string
+          user_id?: string
+          media_type?: string
+          storage_bucket?: string
+          storage_path?: string
+          public_url?: string
+          thumbnail_url?: string | null
+          thumbnail_storage_path?: string | null
+          mime_type?: string
+          file_size_bytes?: number | null
+          duration_seconds?: number | null
+          width?: number | null
+          height?: number | null
+          processing_status?: string
+          moderation_status?: string
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "post_media_post_id_fkey"
             columns: ["post_id"]
             isOneToOne: false
             referencedRelation: "posts"

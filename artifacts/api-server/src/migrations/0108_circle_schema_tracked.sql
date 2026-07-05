@@ -52,6 +52,17 @@ CREATE TABLE IF NOT EXISTS circle_visibility_settings (
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- If the table was already created without the newer columns (i.e. only
+-- migration 0115 was applied, not 0122), add them now BEFORE the constraints
+-- that reference them.  On a fresh DB the CREATE TABLE above already includes
+-- these columns, so ADD COLUMN IF NOT EXISTS is a safe no-op.
+ALTER TABLE circle_visibility_settings
+  ADD COLUMN IF NOT EXISTS trip_sharing_default  TEXT NOT NULL DEFAULT 'status_only',
+  ADD COLUMN IF NOT EXISTS event_sharing_default TEXT NOT NULL DEFAULT 'status_only',
+  ADD COLUMN IF NOT EXISTS is_paused             BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS paused_until          TIMESTAMPTZ;
+
+-- Constraints can only be added after the columns they reference exist.
 ALTER TABLE circle_visibility_settings
   DROP CONSTRAINT IF EXISTS circle_vis_trip_default_check;
 ALTER TABLE circle_visibility_settings
@@ -63,13 +74,6 @@ ALTER TABLE circle_visibility_settings
 ALTER TABLE circle_visibility_settings
   ADD CONSTRAINT circle_vis_event_default_check
     CHECK (event_sharing_default IN ('off', 'status_only', 'approximate_area', 'venue_checkin'));
-
--- If the table was already created without the newer columns, add them now.
-ALTER TABLE circle_visibility_settings
-  ADD COLUMN IF NOT EXISTS trip_sharing_default  TEXT NOT NULL DEFAULT 'status_only',
-  ADD COLUMN IF NOT EXISTS event_sharing_default TEXT NOT NULL DEFAULT 'status_only',
-  ADD COLUMN IF NOT EXISTS is_paused             BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN IF NOT EXISTS paused_until          TIMESTAMPTZ;
 
 ALTER TABLE circle_visibility_settings ENABLE ROW LEVEL SECURITY;
 
