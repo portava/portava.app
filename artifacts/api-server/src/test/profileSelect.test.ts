@@ -5,9 +5,10 @@
  * reach the API response — even when the underlying DB row contains them.
  *
  * Covered endpoints:
- *   GET /api/me/profile          — date_of_birth, dob_verified must be absent
- *   GET /api/buddies             — admin_status, risk_hold and private contact
- *                                  fields must be absent
+ *   GET /api/me/profile              — date_of_birth, dob_verified must be absent
+ *   GET /api/users/:userId           — date_of_birth, dob_verified must be absent
+ *   GET /api/buddies                 — admin_status, risk_hold and private contact
+ *                                      fields must be absent
  *   GET /api/rent-a-buddy/buddies/:id — same assertions on buddy detail
  *
  * Run: node --import tsx/esm --test src/test/profileSelect.test.ts
@@ -21,6 +22,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import profileRouter from "../routes/profile.js";
 import rentABuddyRouter from "../routes/rentABuddy.js";
+import followsRouter from "../routes/follows.js";
 
 // ── Fixed identifiers ─────────────────────────────────────────────────────────
 
@@ -64,6 +66,7 @@ const PROFILE_ROW_WITH_SENSITIVE = {
   planning_style: null,
   public_social_links: {},
   preferred_language: null,
+  account_status: "active",
   // ↓ SENSITIVE — must never appear in the API response
   date_of_birth: "1990-03-15",
   dob_verified: true,
@@ -240,6 +243,7 @@ describe("profile data-leak prevention", () => {
     const app = express();
     app.use(express.json());
     app.use("/api", profileRouter);
+    app.use("/api", followsRouter);
     app.use(rentABuddyRouter);
 
     server = http.createServer(app);
@@ -292,6 +296,38 @@ describe("profile data-leak prevention", () => {
         !("dobVerified" in body),
         `dobVerified must not appear in response — got keys: ${Object.keys(body).join(", ")}`,
       );
+    });
+  });
+
+  // ── GET /api/users/:userId — public Passport view must not expose DOB ─────────
+  // No auth token needed — the route supports optional authentication.
+
+  describe("GET /api/users/:userId", () => {
+    it("returns HTTP 200 with profile data", async () => {
+      const { status, body } = await apiReq("GET", `/api/users/${USER_ID}`);
+      assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+      assert.ok(body.id === USER_ID || body.handle != null || body.name != null,
+        "profile data should be present");
+    });
+
+    it("does not include date_of_birth (snake_case) in public profile response", async () => {
+      const { body } = await apiReq("GET", `/api/users/${USER_ID}`);
+      assert.ok(!("date_of_birth" in body), "date_of_birth must not appear in public profile");
+    });
+
+    it("does not include dateOfBirth (camelCase) in public profile response", async () => {
+      const { body } = await apiReq("GET", `/api/users/${USER_ID}`);
+      assert.ok(!("dateOfBirth" in body), "dateOfBirth must not appear in public profile");
+    });
+
+    it("does not include dob_verified (snake_case) in public profile response", async () => {
+      const { body } = await apiReq("GET", `/api/users/${USER_ID}`);
+      assert.ok(!("dob_verified" in body), "dob_verified must not appear in public profile");
+    });
+
+    it("does not include dobVerified (camelCase) in public profile response", async () => {
+      const { body } = await apiReq("GET", `/api/users/${USER_ID}`);
+      assert.ok(!("dobVerified" in body), "dobVerified must not appear in public profile");
     });
   });
 

@@ -54,8 +54,13 @@ function validateUsername(u: string): { valid: boolean; reason?: string } {
 const PROFILE_COLUMNS =
   "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language";
 
-/** Fallback: select everything that exists; mapProfile handles every field with ?? null. */
-const PROFILE_COLUMNS_FALLBACK = "*";
+/**
+ * Fallback column list for older DB schemas that may not have the full set of columns
+ * in PROFILE_COLUMNS. Must not include sensitive columns (date_of_birth, dob_verified,
+ * or any internal/admin-only field). Triggered only on error codes 42703 / PGRST204.
+ */
+const PROFILE_COLUMNS_FALLBACK =
+  "id, handle, name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, username_updated_at, created_at";
 
 /** Compute profile completeness score (0–100) from profile row + stamp/trip presence. */
 function computeCompleteness(profile: any, hasStamp: boolean, hasTrip: boolean): { score: number; missing: string[] } {
