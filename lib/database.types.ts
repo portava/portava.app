@@ -180,6 +180,237 @@ export type Database = {
         }
         Relationships: []
       }
+      circle_audit_events: {
+        Row: {
+          id: string
+          actor_user_id: string | null
+          target_user_id: string | null
+          context_type: string | null
+          context_id: string | null
+          event_type: string
+          metadata: Json | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          actor_user_id?: string | null
+          target_user_id?: string | null
+          context_type?: string | null
+          context_id?: string | null
+          event_type: string
+          metadata?: Json | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          actor_user_id?: string | null
+          target_user_id?: string | null
+          context_type?: string | null
+          context_id?: string | null
+          event_type?: string
+          metadata?: Json | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_audit_events_actor_user_id_fkey"
+            columns: ["actor_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_audit_events_target_user_id_fkey"
+            columns: ["target_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_checkins: {
+        Row: {
+          id: string
+          user_id: string
+          context_type: string
+          context_id: string
+          checkin_type: string
+          note: string | null
+          venue_label: string | null
+          approximate_label: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          context_type: string
+          context_id: string
+          checkin_type: string
+          note?: string | null
+          venue_label?: string | null
+          approximate_label?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          context_type?: string
+          context_id?: string
+          checkin_type?: string
+          note?: string | null
+          venue_label?: string | null
+          approximate_label?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_checkins_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_context_settings: {
+        Row: {
+          id: string
+          user_id: string
+          context_type: string
+          context_id: string
+          enabled: boolean
+          visibility_mode_override: string | null
+          paused: boolean
+          paused_until: string | null
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          context_type: string
+          context_id: string
+          enabled?: boolean
+          visibility_mode_override?: string | null
+          paused?: boolean
+          paused_until?: string | null
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          context_type?: string
+          context_id?: string
+          enabled?: boolean
+          visibility_mode_override?: string | null
+          paused?: boolean
+          paused_until?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_context_settings_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_meeting_points: {
+        Row: {
+          id: string
+          context_type: string
+          context_id: string
+          host_user_id: string
+          venue_label: string | null
+          approximate_label: string | null
+          description: string | null
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          context_type: string
+          context_id: string
+          host_user_id: string
+          venue_label?: string | null
+          approximate_label?: string | null
+          description?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          context_type?: string
+          context_id?: string
+          host_user_id?: string
+          venue_label?: string | null
+          approximate_label?: string | null
+          description?: string | null
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_meeting_points_host_user_id_fkey"
+            columns: ["host_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_member_visibility_overrides: {
+        Row: {
+          id: string
+          user_id: string
+          target_user_id: string
+          context_type: string
+          context_id: string
+          direction: string
+          hidden: boolean
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          target_user_id: string
+          context_type: string
+          context_id: string
+          direction: string
+          hidden?: boolean
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          target_user_id?: string
+          context_type?: string
+          context_id?: string
+          direction?: string
+          hidden?: boolean
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_member_visibility_overrides_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_member_visibility_overrides_target_user_id_fkey"
+            columns: ["target_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       circle_memberships: {
         Row: {
           created_at: string
@@ -211,6 +442,118 @@ export type Database = {
             foreignKeyName: "circle_memberships_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_presence: {
+        Row: {
+          id: string
+          user_id: string
+          context_type: string
+          context_id: string
+          status: string
+          status_label: string | null
+          approximate_label: string | null
+          venue_label: string | null
+          checked_in: boolean
+          stale_after_secs: number
+          last_seen_at: string
+          expires_at: string | null
+          is_stale: boolean
+          needs_help: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          context_type: string
+          context_id: string
+          status?: string
+          status_label?: string | null
+          approximate_label?: string | null
+          venue_label?: string | null
+          checked_in?: boolean
+          stale_after_secs?: number
+          last_seen_at?: string
+          expires_at?: string | null
+          is_stale?: boolean
+          needs_help?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          context_type?: string
+          context_id?: string
+          status?: string
+          status_label?: string | null
+          approximate_label?: string | null
+          venue_label?: string | null
+          checked_in?: boolean
+          stale_after_secs?: number
+          last_seen_at?: string
+          expires_at?: string | null
+          is_stale?: boolean
+          needs_help?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_presence_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_visibility_settings: {
+        Row: {
+          user_id: string
+          global_enabled: boolean
+          visibility_mode: string
+          trip_sharing_default: string
+          event_sharing_default: string
+          is_paused: boolean
+          paused_until: string | null
+          consent_version: string | null
+          consented_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          user_id: string
+          global_enabled?: boolean
+          visibility_mode?: string
+          trip_sharing_default?: string
+          event_sharing_default?: string
+          is_paused?: boolean
+          paused_until?: string | null
+          consent_version?: string | null
+          consented_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          user_id?: string
+          global_enabled?: boolean
+          visibility_mode?: string
+          trip_sharing_default?: string
+          event_sharing_default?: string
+          is_paused?: boolean
+          paused_until?: string | null
+          consent_version?: string | null
+          consented_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_visibility_settings_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
             referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
