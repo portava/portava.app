@@ -138,25 +138,30 @@ function PostcardCard({
 
   return (
     <View style={pc.card}>
-      {/* media */}
-      {card.mediaUrl ? (
-        <Pressable onPress={() => card.postId && router.push(`/post/${card.postId}` as any)}>
-          <Image
-            source={{ uri: card.mediaUrl }}
-            style={pc.media}
-            defaultSource={undefined}
-          />
-          {card.hasVideo && (
-            <View style={pc.videoPlayOverlay}>
-              <PlayCircle size={36} color="#fff" />
-            </View>
-          )}
-        </Pressable>
-      ) : (
-        <View style={[pc.media, pc.noMedia]}>
-          <Text style={pc.noMediaText}>📷</Text>
-        </View>
-      )}
+      {/* media — prefer thumbnail_url from structured media[], fall back to legacy mediaUrl */}
+      {(() => {
+        const firstMedia = card.media?.find((m) => m.processing_status === 'ready') ?? card.media?.[0];
+        const displayUri = firstMedia?.thumbnail_url ?? firstMedia?.url ?? card.mediaUrl;
+        const isVideo = firstMedia?.media_type === 'video' || card.hasVideo;
+        return displayUri ? (
+          <Pressable onPress={() => card.postId && router.push(`/post/${card.postId}` as any)}>
+            <Image
+              source={{ uri: displayUri }}
+              style={pc.media}
+              defaultSource={undefined}
+            />
+            {isVideo && (
+              <View style={pc.videoPlayOverlay}>
+                <PlayCircle size={36} color="#fff" />
+              </View>
+            )}
+          </Pressable>
+        ) : (
+          <View style={[pc.media, pc.noMedia]}>
+            <Text style={pc.noMediaText}>📷</Text>
+          </View>
+        );
+      })()}
 
       {/* overlays */}
       {isPinned && (

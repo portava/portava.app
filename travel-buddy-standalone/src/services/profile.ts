@@ -5,7 +5,7 @@
  * do server-side joins/filtering cleanly.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import type { OwnProfile, PublicProfile, PassportPostcard, PassportStamp } from '../types/models';
+import type { OwnProfile, PublicProfile, PassportPostcard, PassportStamp, PostcardMediaItem } from '../types/models';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -281,6 +281,23 @@ export async function getPublicPassport(username: string): Promise<ProfileResult
   }
 }
 
+/**
+ * Enrich raw API postcard objects with derived fields.
+ * The API returns `media` (snake_case PostcardMediaItem[]); we derive `hasVideo`
+ * and `primaryMediaType` from it so UI components can use them without re-computing.
+ */
+function enrichPostcard(raw: Record<string, unknown>): PassportPostcard {
+  const media = (raw['media'] ?? []) as PostcardMediaItem[];
+  const readyMedia = media.filter((m) => m.processing_status === 'ready');
+  const primary = readyMedia[0] ?? media[0];
+  return {
+    ...(raw as unknown as PassportPostcard),
+    media,
+    hasVideo: media.some((m) => m.media_type === 'video'),
+    primaryMediaType: primary?.media_type ?? (raw['mediaUrl'] ? 'image' : 'none'),
+  };
+}
+
 export async function getPublicPostcards(username: string): Promise<ProfileResult<PassportPostcard[]>> {
   if (!apiBase()) return { ok: true, data: [] };
 
@@ -290,7 +307,8 @@ export async function getPublicPostcards(username: string): Promise<ProfileResul
     );
     if (!res.ok) return { ok: true, data: [] };
     const body = await res.json();
-    return { ok: true, data: body.postcards ?? [] };
+    const raw: Record<string, unknown>[] = body.postcards ?? [];
+    return { ok: true, data: raw.map(enrichPostcard) };
   } catch {
     return { ok: true, data: [] };
   }
@@ -328,7 +346,8 @@ export async function getMyPassportPostcards(): Promise<ProfileResult<PassportPo
     });
     if (!res.ok) return { ok: true, data: [] };
     const body = await res.json();
-    return { ok: true, data: body.postcards ?? [] };
+    const raw: Record<string, unknown>[] = body.postcards ?? [];
+    return { ok: true, data: raw.map(enrichPostcard) };
   } catch {
     return { ok: true, data: [] };
   }

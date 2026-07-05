@@ -442,6 +442,8 @@ export interface PassportPostcard {
   pinnedAt: ISODate | null;
   note: string | null;
   createdAt: ISODate;
+  /** Structured media items from post_media (set by Postcards backend). */
+  media?: PostcardMediaItem[];
   /** True when the primary or any attached media item is a video. */
   hasVideo?: boolean;
   /** 'image' | 'video' | 'none' — derived from ready post_media rows. */
