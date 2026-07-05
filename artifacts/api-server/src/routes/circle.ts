@@ -211,16 +211,20 @@ router.get("/circle/settings", async (req, res) => {
 
   const { data } = await sc
     .from("circle_visibility_settings")
-    .select("global_enabled, visibility_mode, consent_version, consented_at, updated_at")
+    .select("global_enabled, visibility_mode, trip_sharing_default, event_sharing_default, is_paused, paused_until, consent_version, consented_at, updated_at")
     .eq("user_id", user.id)
     .maybeSingle();
 
   res.status(200).json({
-    globalEnabled:    (data as any)?.global_enabled  ?? false,
-    visibilityMode:   (data as any)?.visibility_mode ?? "status_only",
-    consentVersion:   (data as any)?.consent_version ?? null,
-    consentedAt:      (data as any)?.consented_at    ?? null,
-    updatedAt:        (data as any)?.updated_at       ?? null,
+    globalEnabled:        (data as any)?.global_enabled         ?? false,
+    visibilityMode:       (data as any)?.visibility_mode        ?? "status_only",
+    tripSharingDefault:   (data as any)?.trip_sharing_default   ?? "status_only",
+    eventSharingDefault:  (data as any)?.event_sharing_default  ?? "status_only",
+    isPaused:             (data as any)?.is_paused              ?? false,
+    pausedUntil:          (data as any)?.paused_until           ?? null,
+    consentVersion:       (data as any)?.consent_version        ?? null,
+    consentedAt:          (data as any)?.consented_at           ?? null,
+    updatedAt:            (data as any)?.updated_at             ?? null,
     currentConsentVersion: CURRENT_CONSENT_VERSION,
   });
 });
@@ -229,9 +233,12 @@ router.get("/circle/settings", async (req, res) => {
 
 // Accept precise_live so we can return 403 (not supported) rather than 400 (invalid payload)
 const PatchSettingsSchema = z.object({
-  globalEnabled:    z.boolean().optional(),
-  visibilityMode:   z.enum(["status_only", "approximate_area", "venue_checkin", "precise_live"]).optional(),
-  consentVersion:   z.string().optional(),
+  globalEnabled:       z.boolean().optional(),
+  visibilityMode:      z.enum(["status_only", "approximate_area", "venue_checkin", "precise_live"]).optional(),
+  tripSharingDefault:  z.enum(["off", "status_only", "approximate_area", "venue_checkin"]).optional(),
+  eventSharingDefault: z.enum(["off", "status_only", "approximate_area", "venue_checkin"]).optional(),
+  isPaused:            z.boolean().optional(),
+  consentVersion:      z.string().optional(),
 });
 
 router.patch("/circle/settings", async (req, res) => {
@@ -246,7 +253,7 @@ router.patch("/circle/settings", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
     return;
   }
-  const { globalEnabled, visibilityMode, consentVersion } = parsed.data;
+  const { globalEnabled, visibilityMode, tripSharingDefault, eventSharingDefault, isPaused, consentVersion } = parsed.data;
 
   // Fetch current state to detect enable transition
   const { data: existing } = await sc
@@ -287,8 +294,14 @@ router.patch("/circle/settings", async (req, res) => {
     user_id:    user.id,
     updated_at: new Date().toISOString(),
   };
-  if (globalEnabled !== undefined) upsertPayload["global_enabled"] = globalEnabled;
-  if (visibilityMode !== undefined) upsertPayload["visibility_mode"] = visibilityMode;
+  if (globalEnabled !== undefined)       upsertPayload["global_enabled"]        = globalEnabled;
+  if (visibilityMode !== undefined)      upsertPayload["visibility_mode"]       = visibilityMode;
+  if (tripSharingDefault !== undefined)  upsertPayload["trip_sharing_default"]  = tripSharingDefault;
+  if (eventSharingDefault !== undefined) upsertPayload["event_sharing_default"] = eventSharingDefault;
+  if (isPaused !== undefined) {
+    upsertPayload["is_paused"]    = isPaused;
+    upsertPayload["paused_until"] = isPaused ? null : null; // cleared on resume
+  }
   if (isEnabling && consentVersion) {
     upsertPayload["consent_version"] = consentVersion;
     upsertPayload["consented_at"]    = new Date().toISOString();
@@ -297,7 +310,7 @@ router.patch("/circle/settings", async (req, res) => {
   const { data, error } = await sc
     .from("circle_visibility_settings")
     .upsert(upsertPayload, { onConflict: "user_id" })
-    .select("global_enabled, visibility_mode, consent_version, consented_at, updated_at")
+    .select("global_enabled, visibility_mode, trip_sharing_default, event_sharing_default, is_paused, paused_until, consent_version, consented_at, updated_at")
     .maybeSingle();
 
   if (error) {
@@ -328,11 +341,51 @@ router.patch("/circle/settings", async (req, res) => {
   }
 
   res.status(200).json({
-    globalEnabled:    (data as any)?.global_enabled  ?? false,
-    visibilityMode:   (data as any)?.visibility_mode ?? "status_only",
-    consentVersion:   (data as any)?.consent_version ?? null,
-    consentedAt:      (data as any)?.consented_at    ?? null,
+    globalEnabled:       (data as any)?.global_enabled         ?? false,
+    visibilityMode:      (data as any)?.visibility_mode        ?? "status_only",
+    tripSharingDefault:  (data as any)?.trip_sharing_default   ?? "status_only",
+    eventSharingDefault: (data as any)?.event_sharing_default  ?? "status_only",
+    isPaused:            (data as any)?.is_paused              ?? false,
+    pausedUntil:         (data as any)?.paused_until           ?? null,
+    consentVersion:      (data as any)?.consent_version        ?? null,
+    consentedAt:         (data as any)?.consented_at           ?? null,
     updatedAt:        (data as any)?.updated_at       ?? null,
+  });
+});
+
+// ── POST /circle/pause-all ────────────────────────────────────────────────────
+
+router.post("/circle/pause-all", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data, error } = await sc
+    .from("circle_visibility_settings")
+    .upsert(
+      { user_id: user.id, is_paused: true, updated_at: new Date().toISOString() },
+      { onConflict: "user_id" },
+    )
+    .select("global_enabled, visibility_mode, trip_sharing_default, event_sharing_default, is_paused, paused_until, consent_version, consented_at, updated_at")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  void writeAuditEvent(sc, { actorUserId: user.id, eventType: "sharing_paused" });
+
+  res.status(200).json({
+    globalEnabled:       (data as any)?.global_enabled         ?? false,
+    visibilityMode:      (data as any)?.visibility_mode        ?? "status_only",
+    tripSharingDefault:  (data as any)?.trip_sharing_default   ?? "status_only",
+    eventSharingDefault: (data as any)?.event_sharing_default  ?? "status_only",
+    isPaused:            (data as any)?.is_paused              ?? true,
+    pausedUntil:         (data as any)?.paused_until           ?? null,
+    consentVersion:      (data as any)?.consent_version        ?? null,
+    consentedAt:         (data as any)?.consented_at           ?? null,
+    updatedAt:           (data as any)?.updated_at             ?? null,
+    currentConsentVersion: CURRENT_CONSENT_VERSION,
   });
 });
 

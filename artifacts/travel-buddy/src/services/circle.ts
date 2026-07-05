@@ -8,10 +8,15 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 export type VisibilityMode = 'status_only' | 'approximate_area' | 'venue_checkin';
+export type ContextSharingDefault = 'off' | VisibilityMode;
 
 export interface CircleSettings {
   globalEnabled: boolean;
   visibilityMode: VisibilityMode;
+  tripSharingDefault: ContextSharingDefault;
+  eventSharingDefault: ContextSharingDefault;
+  isPaused: boolean;
+  pausedUntil: string | null;
   consentVersion: string | null;
   consentedAt: string | null;
   currentConsentVersion: string;
@@ -94,6 +99,9 @@ export async function getCircleSettings(): Promise<ServiceResult<CircleSettings>
 export async function patchCircleSettings(patch: {
   globalEnabled?: boolean;
   visibilityMode?: VisibilityMode;
+  tripSharingDefault?: ContextSharingDefault;
+  eventSharingDefault?: ContextSharingDefault;
+  isPaused?: boolean;
   consentVersion?: string;
 }): Promise<ServiceResult<CircleSettings>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
@@ -105,6 +113,18 @@ export async function patchCircleSettings(patch: {
     const data = await res.json();
     if (res.ok) return { ok: true, data };
     return { ok: false, error: data.error ?? data.message ?? 'unknown', status: res.status };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'network_error' };
+  }
+}
+
+export async function pauseAllCircleSharing(): Promise<ServiceResult<CircleSettings>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
+  try {
+    const res = await authedFetch('/api/circle/pause-all', { method: 'POST' });
+    const data = await res.json();
+    if (res.ok) return { ok: true, data };
+    return { ok: false, error: data.error ?? 'unknown', status: res.status };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'network_error' };
   }
@@ -189,7 +209,7 @@ export async function getWhoCanSeeMe(
   }
 }
 
-// ── Pause / resume ────────────────────────────────────────────────────────────
+// ── Pause / resume per-context ────────────────────────────────────────────────
 
 export async function pauseCircleContext(
   contextType: 'trip' | 'event',

@@ -342,6 +342,16 @@ function TripDetailScreen() {
           />
         )}
 
+        {live && trip.id && (
+          <Pressable
+            style={styles.circleShareBanner}
+            onPress={() => router.push({ pathname: '/circle-context-settings', params: { contextType: 'trip', contextId: trip.id, contextLabel: trip.destinationCity ?? 'this trip' } } as any)}
+          >
+            <Users size={16} color={color.deep} />
+            <Text style={styles.circleShareBannerText}>Circle sharing settings for this trip →</Text>
+          </Pressable>
+        )}
+
         {/* Layover Mode entry — shown between TripCircle and CompassTripBrief */}
         <Pressable style={styles.layoverBanner} onPress={() => setLayoverOpen(true)}>
           <Plane size={16} color="#1565C0" />
@@ -548,6 +558,8 @@ const styles = StyleSheet.create({
   unreadDot: { position: 'absolute', top: -3, right: -3, width: 7, height: 7, borderRadius: 4, backgroundColor: color.signal },
   layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: space.lg, marginTop: space.lg, backgroundColor: '#E3F2FD', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
   layoverBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: '#1565C0' },
+  circleShareBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: space.lg, marginTop: space.md, backgroundColor: '#EAF2F4', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
+  circleShareBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: color.deep },
   safeSetupBtn: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginHorizontal: space.lg, marginTop: space.md, padding: space.md, borderRadius: radius.md, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
   safeSetupBtnText: { ...t.body, color: color.deep, fontWeight: '600' },
   markCompleteBtn: { marginHorizontal: space.lg, marginTop: space.md, padding: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: color.success, backgroundColor: '#F0FDF4', alignItems: 'center' },

@@ -272,19 +272,36 @@ export default function EventDetailScreen() {
   // ── Overflow menu ──────────────────────────────────────────────────────────
   function handleOverflow() {
     if (!event) return;
+    const goToCircleSettings = () =>
+      router.push({
+        pathname: '/circle-context-settings',
+        params: { contextType: 'event', contextId: event.id, contextLabel: event.title ?? 'this event' },
+      } as any);
     if (Platform.OS === 'ios') {
       ActionSheetIOS.showActionSheetWithOptions(
-        { options: [isSaved ? 'Remove from saved' : 'Save event', 'Share event', 'Report event', 'Cancel'], cancelButtonIndex: 3 },
+        {
+          options: [
+            isSaved ? 'Remove from saved' : 'Save event',
+            'Share event',
+            'Circle sharing settings',
+            'Report event',
+            'Cancel',
+          ],
+          cancelButtonIndex: 4,
+          destructiveButtonIndex: 3,
+        },
         (idx) => {
           if (idx === 0) handleSaveToggle();
           else if (idx === 1) handleShare();
-          else if (idx === 2) handleReport();
+          else if (idx === 2) goToCircleSettings();
+          else if (idx === 3) handleReport();
         },
       );
     } else {
       Alert.alert(event.title, undefined, [
         { text: isSaved ? 'Remove from saved' : 'Save event', onPress: handleSaveToggle },
         { text: 'Share event', onPress: handleShare },
+        { text: 'Circle sharing settings', onPress: goToCircleSettings },
         { text: 'Report event', onPress: handleReport, style: 'destructive' },
         { text: 'Cancel', style: 'cancel' },
       ]);

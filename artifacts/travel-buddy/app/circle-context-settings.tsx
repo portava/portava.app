@@ -15,7 +15,7 @@ import {
   ActivityIndicator, Alert,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, PauseCircle, PlayCircle } from 'lucide-react-native';
+import { ArrowLeft, PauseCircle } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import {
