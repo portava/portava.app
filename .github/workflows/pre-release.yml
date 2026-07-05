@@ -61,6 +61,28 @@ jobs:
       - name: Test bundle-ID placeholder guard
         run: bash scripts/test-bundle-id-guard.sh
 
+      - name: Configure engagement index check mode
+        # When a DB_URL secret is set, prefer direct psql access for the
+        # engagement-indexes check (ENGAGEMENT_QUERY_MODE=psql).  This lets CI
+        # validate index presence against a real DB clone without relying on the
+        # Supabase Management API.  When DB_URL is absent the variables are left
+        # unset and check-engagement-indexes.sh falls back to the Management API
+        # path (SUPABASE_PROJECT_TOKEN).
+        #
+        # To enable psql mode: add a DB_URL secret in GitHub → Settings →
+        # Secrets and variables → Actions.  The value is a libpq connection
+        # string, e.g. postgresql://postgres:<password>@db.<ref>.supabase.co:5432/postgres
+        run: |
+          if [ -n "$DB_URL" ]; then
+            echo "ENGAGEMENT_QUERY_MODE=psql" >> "$GITHUB_ENV"
+            echo "ENGAGEMENT_PSQL_URL=$DB_URL" >> "$GITHUB_ENV"
+            echo "  ℹ  DB_URL is set — engagement index check will use psql mode"
+          else
+            echo "  ℹ  DB_URL not set — engagement index check will use Supabase Management API (SUPABASE_PROJECT_TOKEN)"
+          fi
+        env:
+          DB_URL: ${{ secrets.DB_URL }}
+
       - name: Check engagement indexes (migrations 0106 + 0123)
         # Verifies the ten pg_indexes added by migrations 0106 and 0123 are present
         # in production.
@@ -72,18 +94,18 @@ jobs:
         #     profile-page and 'liked by me' feed queries to degrade to sequential
         #     scans as like tables grow.
         #
-        # SUPABASE_PROJECT_TOKEN must be stored as a repo secret:
-        #   GitHub → Settings → Secrets and variables → Actions → New repository secret
-        #   Name: SUPABASE_PROJECT_TOKEN  (Project Settings → API → Project API tokens)
-        #   See docs/eas-runbook.md → "Engagement indexes check in CI" for full setup.
+        # Accepts either credential (first one wins in check-engagement-indexes.sh):
+        #   DB_URL (psql mode)            — set via the Configure step above
+        #   SUPABASE_PROJECT_TOKEN        — Supabase Management API fallback
         #
-        # This step hard-fails when the secret is absent so a missing token is
-        # caught immediately rather than silently skipped.
+        # Hard-fails when neither is available so a missing credential is caught
+        # immediately rather than silently skipped.
+        # See docs/eas-runbook.md → "Engagement indexes check in CI" for setup.
         env:
           SUPABASE_PROJECT_TOKEN: ${{ secrets.SUPABASE_PROJECT_TOKEN }}
         run: |
-          if [ -z "$SUPABASE_PROJECT_TOKEN" ]; then
-            echo "::error::SUPABASE_PROJECT_TOKEN secret is not set. Add it in GitHub → Settings → Secrets and variables → Actions (Project Settings → API → Project API tokens, Read scope). See docs/eas-runbook.md → 'Engagement indexes check in CI' for full instructions. Without this check a schema reset could silently drop the indexes and degrade GET /api/engagement/likes to sequential scans."
+          if [ -z "${ENGAGEMENT_QUERY_MODE:-}" ] && [ -z "$SUPABASE_PROJECT_TOKEN" ]; then
+            echo "::error::Neither DB_URL nor SUPABASE_PROJECT_TOKEN is set. Add at least one in GitHub → Settings → Secrets and variables → Actions. DB_URL (libpq connection string) enables psql mode; SUPABASE_PROJECT_TOKEN (Project Settings → API → Project API tokens, Read scope) enables Management API mode. Without this check a schema reset could silently drop the indexes and degrade GET /api/engagement/likes to sequential scans. See docs/eas-runbook.md → 'Engagement indexes check in CI'."
             exit 1
           fi
           bash scripts/check-engagement-indexes.sh
