@@ -1150,6 +1150,48 @@ router.get("/posts/liked-by-me", async (req, res) => {
 });
 
 /* ===========================================================================
+ * GET /posts/saved-by-me  — compact list of the current user's saved post IDs
+ *
+ * Used by the client-side saved-posts cache to pre-warm on auth so bookmark
+ * indicators are correct from the first feed paint without a round-trip.
+ *
+ * Queries post_saves filtered by user_id, ordered by created_at DESC so the
+ * most-recently saved posts are included first when the result is capped.
+ *
+ * Query params:
+ *   limit  — max rows to return (default 500, capped at 500)
+ *
+ * Response: { postIds: string[] }
+ * ===========================================================================
+ */
+router.get("/posts/saved-by-me", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const rawLimit = parseInt((req.query.limit as string) ?? "500", 10);
+  const limit = isNaN(rawLimit) || rawLimit < 1 ? 500 : Math.min(rawLimit, 500);
+
+  const { data, error } = await sc
+    .from("post_saves")
+    .select("post_id")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    req.log.error({ err: error }, "Failed to fetch saved-by-me post IDs");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.status(200).json({ postIds: (data ?? []).map((r: { post_id: string }) => r.post_id) });
+});
+
+/* ===========================================================================
  * GET /posts/:postId  — single post fetch (author sees own pending; others
  * only see published posts)
  * ===========================================================================

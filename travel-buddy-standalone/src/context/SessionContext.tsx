@@ -5,8 +5,9 @@ import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { getAccountStatus } from '../services/profile';
 import type { AccountStatus } from '../services/profile';
 import { pauseOnSessionEnd } from '../services/circle';
-import { clearForUser, primeLikes } from '../services/likedPostsCache';
-import { fetchMyLikedPostIds } from '../services/postEngagement';
+import { clearForUser as clearLikedForUser, primeLikes } from '../services/likedPostsCache';
+import { clearForUser as clearSavedForUser, primeSaved } from '../services/savedPostsCache';
+import { fetchMyLikedPostIds, fetchMySavedPostIds } from '../services/postEngagement';
 
 /**
  * Session context — single source of auth truth for the app. Wraps the auth
@@ -89,14 +90,17 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     await fetchAccountStatus(userId);
   }, [userId, fetchAccountStatus]);
 
-  // Pre-warm the liked-posts cache as soon as we have a userId so heart
-  // indicators are correct from the first feed paint.  Fire-and-forget —
-  // the cache starts empty on any error and the component falls back to the
-  // feed API's likedByMe prop, which is always correct.
+  // Pre-warm the liked-posts and saved-posts caches as soon as we have a
+  // userId so heart and bookmark indicators are correct from the first feed
+  // paint.  Both are fire-and-forget — the cache starts empty on any error
+  // and components fall back to the feed API's likedByMe/savedByMe props.
   useEffect(() => {
     if (!userId) return;
     fetchMyLikedPostIds().then((postIds) => {
       if (postIds.length > 0) primeLikes(userId, postIds);
+    }).catch(() => {});
+    fetchMySavedPostIds().then((postIds) => {
+      if (postIds.length > 0) primeSaved(userId, postIds);
     }).catch(() => {});
   }, [userId]);
 
@@ -115,9 +119,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [userId]);
 
   const signOut = useCallback(async () => {
-    // Clear the liked-posts cache before wiping the userId so we can still
-    // reference the outgoing user's id inside clearForUser.
-    if (userId) clearForUser(userId);
+    // Clear per-user caches before wiping the userId so we can still
+    // reference the outgoing user's id inside the clear calls.
+    if (userId) {
+      clearLikedForUser(userId);
+      clearSavedForUser(userId);
+    }
     await svcSignOut();
     setUserId(null);
     setAccountStatus(null);

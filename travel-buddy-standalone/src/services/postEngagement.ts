@@ -135,6 +135,28 @@ export async function fetchMyLikedPostIds(limit = 500): Promise<string[]> {
   return res.ok ? (res.data.postIds ?? []) : [];
 }
 
+// ── Saved-posts preload (cache warm-up) ───────────────────────────────────────
+
+/**
+ * Fetch the current user's most-recently saved post IDs from the server.
+ *
+ * Called once on sign-in to pre-warm the savedPostsCache so feed rows render
+ * with the correct bookmark indicator from the first paint, without waiting
+ * for the feed API response.
+ *
+ * Uses GET /api/posts/saved-by-me which queries post_saves ordered by
+ * created_at DESC (fast user-scoped scan via the user_id index).
+ *
+ * Returns an empty array on any error so the caller can treat it as a no-op.
+ */
+export async function fetchMySavedPostIds(limit = 500): Promise<string[]> {
+  const res = await apiCall<{ postIds: string[] }>(
+    'GET',
+    `/api/posts/saved-by-me?limit=${limit}`,
+  );
+  return res.ok ? (res.data.postIds ?? []) : [];
+}
+
 // ── Like / Unlike ─────────────────────────────────────────────────────────────
 
 export async function likePost(postId: string): Promise<LikeResult | null> {
