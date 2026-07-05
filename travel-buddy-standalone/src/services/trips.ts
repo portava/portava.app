@@ -439,3 +439,55 @@ export async function acceptInviteByToken(token: string): Promise<AcceptInviteRe
     alreadyMember: body.status === 'already_member',
   };
 }
+
+export interface InviteLinkJoiner {
+  id: string;
+  name: string | null;
+  handle: string | null;
+  avatarUrl: string | null;
+}
+
+export interface InviteLinkUsage {
+  id: string;
+  token: string;
+  useCount: number;
+  maxUses: number | null;
+  expiresAt: string | null;
+  createdAt: string;
+  revokedAt: string | null;
+  isActive: boolean;
+  isRevoked: boolean;
+  isExpired: boolean;
+  isExhausted: boolean;
+  joiners: InviteLinkJoiner[];
+}
+
+/**
+ * Fetch all invite links for a trip (owner only).
+ * Each entry includes the list of users who joined via that link.
+ */
+export async function getInviteLinks(tripId: string): Promise<InviteLinkUsage[]> {
+  const accessToken = await freshToken();
+  if (!accessToken) return [];
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const res = await fetch(`${apiBase}/api/trips/${tripId}/invite-links`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) return [];
+  return res.json().catch(() => []);
+}
+
+/**
+ * Revoke an invite link so it can no longer be used.
+ * Only the trip owner can revoke links.
+ */
+export async function revokeInviteLink(tripId: string, linkId: string): Promise<boolean> {
+  const accessToken = await freshToken();
+  if (!accessToken) return false;
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const res = await fetch(`${apiBase}/api/trips/${tripId}/invite-link/${linkId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  return res.ok || res.status === 204;
+}

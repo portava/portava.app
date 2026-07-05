@@ -3,7 +3,7 @@ import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Share, Image, Modal, type LayoutChangeEvent } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Share2, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin, ShieldCheck, Radio } from 'lucide-react-native';
+import { ChevronLeft, Share2, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin, ShieldCheck, Radio, Link2 } from 'lucide-react-native';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import {
@@ -22,6 +22,7 @@ import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { ConciergeCommandBar, type ConciergeCommandBarHandle } from '../../src/components/ConciergeCommandBar';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { TripInviteSheet } from '../../src/components/TripInviteSheet';
+import { TripInviteLinksSheet } from '../../src/components/TripInviteLinksSheet';
 import type { TripDetail } from '../../src/types/models';
 import { useSession } from '../../src/context/SessionContext';
 import { useTrip, usePendingTripInvites } from '../../src/hooks/useBackend';
@@ -53,6 +54,7 @@ function TripDetailScreen() {
   const commandBarY      = useRef<number>(0);
   const [chatLoading, setChatLoading] = useState(false);
   const [inviteSheetOpen, setInviteSheetOpen] = useState(false);
+  const [linksSheetOpen, setLinksSheetOpen] = useState(false);
   const [crewRefreshKey, setCrewRefreshKey] = useState(0);
   const [meetupDate, setMeetupDate] = useState<string | null>(null);
   const [layoverOpen, setLayoverOpen] = useState(false);
@@ -283,6 +285,16 @@ function TripDetailScreen() {
               ? <ActivityIndicator size={14} color={color.ink} />
               : <Share2 size={15} color={color.ink} />}
             <Text style={styles.topBtnText}>Share Trip</Text>
+          </Pressable>
+        )}
+        {isAuthed && realTrip?.ownerId === userId && (
+          <Pressable
+            style={styles.topBtn}
+            hitSlop={6}
+            onPress={() => setLinksSheetOpen(true)}
+          >
+            <Link2 size={15} color={color.ink} />
+            <Text style={styles.topBtnText}>Links</Text>
           </Pressable>
         )}
         {isAuthed && realTrip?.ownerId === userId && (
@@ -528,6 +540,13 @@ function TripDetailScreen() {
         visible={inviteSheetOpen}
         onDismiss={() => setInviteSheetOpen(false)}
         onInviteSent={() => setCrewRefreshKey((k) => k + 1)}
+      />
+
+      {/* Invite links management — view usage and revoke (owner only) */}
+      <TripInviteLinksSheet
+        tripId={trip.id}
+        visible={linksSheetOpen}
+        onDismiss={() => setLinksSheetOpen(false)}
       />
     </View>
   );

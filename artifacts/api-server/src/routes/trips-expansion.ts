@@ -1014,6 +1014,89 @@ router.delete("/trips/:tripId/invite-link/:linkId", async (req, res) => {
   res.status(204).send();
 });
 
+// GET /api/trips/:tripId/invite-links  — list all invite links (owner only)
+router.get("/trips/:tripId/invite-links", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+  if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can view invite links"); return; }
+
+  const { data: links } = await sc
+    .from("trip_invite_links")
+    .select("id, token, use_count, max_uses, expires_at, created_at, revoked_at")
+    .eq("trip_id", tripId)
+    .order("created_at", { ascending: false });
+
+  if (!links || links.length === 0) { res.json([]); return; }
+
+  // Pull who joined via each link from the activity log
+  const { data: activityRows } = await sc
+    .from("trip_activity_log")
+    .select("actor_id, metadata")
+    .eq("trip_id", tripId)
+    .eq("event_type", "joined_via_invite_link");
+
+  const joinersByLink = new Map<string, string[]>();
+  for (const row of (activityRows ?? []) as any[]) {
+    const linkId = (row.metadata as any)?.linkId as string | undefined;
+    if (!linkId) continue;
+    if (!joinersByLink.has(linkId)) joinersByLink.set(linkId, []);
+    joinersByLink.get(linkId)!.push(row.actor_id as string);
+  }
+
+  const allJoinerIds = [...new Set([...joinersByLink.values()].flat())];
+  const profileMap = new Map<string, { id: string; name: string | null; handle: string | null; avatarUrl: string | null }>();
+
+  if (allJoinerIds.length > 0) {
+    const { data: profiles } = await sc
+      .from("profiles")
+      .select("id, full_name, username, avatar_url")
+      .in("id", allJoinerIds);
+    for (const p of (profiles ?? []) as any[]) {
+      profileMap.set(p.id as string, {
+        id: p.id as string,
+        name: (p.full_name as string) ?? null,
+        handle: (p.username as string) ?? null,
+        avatarUrl: (p.avatar_url as string) ?? null,
+      });
+    }
+  }
+
+  const now = new Date();
+  const result = (links as any[]).map((lk) => {
+    const isRevoked   = Boolean(lk.revoked_at);
+    const isExpired   = !isRevoked && Boolean(lk.expires_at) && new Date(lk.expires_at as string) < now;
+    const isExhausted = !isRevoked && !isExpired && lk.max_uses !== null && (lk.use_count as number) >= (lk.max_uses as number);
+    return {
+      id:        lk.id as string,
+      token:     lk.token as string,
+      useCount:  (lk.use_count as number) ?? 0,
+      maxUses:   (lk.max_uses as number) ?? null,
+      expiresAt: (lk.expires_at as string) ?? null,
+      createdAt: lk.created_at as string,
+      revokedAt: (lk.revoked_at as string) ?? null,
+      isActive:  !isRevoked && !isExpired && !isExhausted,
+      isRevoked,
+      isExpired,
+      isExhausted,
+      joiners:   (joinersByLink.get(lk.id as string) ?? []).map((uid) =>
+        profileMap.get(uid) ?? { id: uid, name: null, handle: null, avatarUrl: null },
+      ),
+    };
+  });
+
+  res.json(result);
+});
+
 // GET /api/trips/invite-link/:token/preview  — public non-sensitive preview
 router.get("/trips/invite-link/:token/preview", async (req, res) => {
   const { token } = req.params;
