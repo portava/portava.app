@@ -7,7 +7,7 @@
  * Tapping the like count opens the likers sheet (who liked this post).
  * Tapping a reaction emoji chip opens the reaction likers sheet (filtered by emoji).
  */
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
 import { Heart, MessageCircle, Share2, Smile } from 'lucide-react-native';
 import { color, space, layout } from '../theme/tokens';
@@ -55,10 +55,27 @@ export function PostEngagementBar({
 
   // Use the cache value when available — it reflects the user's explicit
   // like/unlike action from earlier in this session, overriding stale feed
-  // data that may not have refreshed yet after a re-mount.
+  // data that may not have refreshed yet after a re-mount.  Falls back to
+  // the feed-data prop (always server-authoritative) when no cache entry
+  // exists for this post.
   const cachedLiked = userId ? getLiked(userId, postId) : undefined;
   const [localLiked, setLocalLiked] = useState(cachedLiked ?? likedByMe);
   const [localLikeCount, setLocalLikeCount] = useState(likeCount);
+
+  // Track whether the user has explicitly tapped like/unlike this session so
+  // incoming prop changes (feed refresh) or async preload cache updates don't
+  // overwrite their deliberate action.
+  const hasInteracted = useRef(false);
+
+  // Sync localLiked when the feed refreshes new data (likedByMe prop changes).
+  // Prefer cache if available (user interacted earlier this session); otherwise
+  // accept the fresh server value.  Skip if the user has already tapped in
+  // the current component instance — their action takes precedence.
+  useEffect(() => {
+    if (hasInteracted.current) return;
+    const cached = userId ? getLiked(userId, postId) : undefined;
+    setLocalLiked(cached ?? likedByMe);
+  }, [likedByMe, userId, postId]);
   const [localCommentCount, setLocalCommentCount] = useState(commentCount);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -95,6 +112,7 @@ export function PostEngagementBar({
 
     // Optimistically update UI and cache so re-mounts during the API call
     // (e.g. navigation back) already show the correct state.
+    hasInteracted.current = true;
     const optimisticLiked = !wasLiked;
     setLocalLiked(optimisticLiked);
     setLocalLikeCount(wasLiked ? Math.max(0, prevCount - 1) : prevCount + 1);

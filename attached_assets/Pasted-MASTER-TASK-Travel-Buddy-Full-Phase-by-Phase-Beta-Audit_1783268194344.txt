@@ -1,0 +1,88 @@
+MASTER TASK: Travel Buddy — Full Phase-by-Phase Beta Audit, Render Audit, Backend/Database Audit, Security Audit, and P0 Fix Plan
+
+You are auditing the Travel Buddy app phase by phase.
+
+Do NOT rebuild from scratch.
+Do NOT apply huge patches.
+Do NOT guess.
+Do NOT mark anything complete unless verified in code, database schema, backend/API wiring, frontend UI, RLS, storage, realtime, and tests.
+
+This task is audit-first.
+
+The owner wants to know:
+- what was finished
+- what is partially finished
+- what is broken
+- what is missing
+- what is UI-only
+- what is backend-only
+- what is database-only
+- what database commands are needed
+- what backend is still lacking
+- what frontend is still lacking
+- what screen/render issues exist
+- what security/privacy risks exist
+- what is unsafe for beta
+- what exact P0 fixes should happen first
+
+Known project rule:
+- migrations/ is the canonical migration directory.
+- src/migrations/ is NOT canonical unless code proves it is used.
+- Do not create a second source of truth.
+- Preserve existing data.
+- Prefer additive fixes only.
+- Do not drop or rename database fields without approval.
+- No fake success states.
+- No silent no-op buttons.
+- No UI-only features pretending to work.
+
+============================================================
+PHASE 0 — DATABASE SOURCE-OF-TRUTH RECONCILIATION
+============================================================
+
+Goal:
+Prove which schema is real, which migrations are applied, whether database.types.ts matches the schema, and whether app code references tables/columns/RPC/storage buckets that do not exist.
+
+Run:
+
+```bash
+pwd
+
+echo "=== package scripts ==="
+cat package.json | sed -n '1,260p'
+
+echo "=== migration-related directories ==="
+find . -maxdepth 5 -type d | grep -Ei "migration|supabase" | sort
+
+echo "=== canonical migrations/ ==="
+find migrations -type f 2>/dev/null | sort
+
+echo "=== noncanonical src/migrations/ ==="
+find src/migrations -type f 2>/dev/null | sort
+
+echo "=== supabase directory ==="
+find supabase -type f 2>/dev/null | sort
+
+echo "=== database types ==="
+ls -lh lib/database.types.ts 2>/dev/null || true
+head -100 lib/database.types.ts 2>/dev/null || true
+
+echo "=== all app/schema files ==="
+find . -maxdepth 5 -type f $begin:math:text$ \-name \"\*\.tsx\" \-o \-name \"\*\.ts\" \-o \-name \"\*\.sql\" \-o \-name \"\*\.json\" $end:math:text$ | sort > /tmp/travel_buddy_files.txt
+wc -l /tmp/travel_buddy_files.txt
+
+echo "=== Supabase table/RPC/storage references in app code ==="
+grep -RniE "from\\(['\"]|\\.from\\(['\"]|rpc\\(['\"]|storage\\.from\\(['\"]" app components lib services src 2>/dev/null | head -1000
+
+echo "=== yesterday feature schema references ==="
+grep -RniE "buddy_profiles|buddy_bookings|buddy_reviews|buddy_availability|circles|circle_members|trip_circles|event_circles|trip_crew_members|conversations|conversation_members|messages|message_translations|privacy_settings|location_shares|user_availability|activity_events|notifications|profiles|trips|events|posts" app components lib services src migrations supabase lib/database.types.ts 2>/dev/null | head -1400
+
+echo "=== baseline typecheck/lint/tests ==="
+npm run typecheck 2>/dev/null || true
+npm run lint 2>/dev/null || true
+npm test 2>/dev/null || true
+
+echo "=== Supabase CLI if available ==="
+supabase status 2>/dev/null || true
+supabase migration list 2>/dev/null || true
+supabase db diff 2>/dev/null || true

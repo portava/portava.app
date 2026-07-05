@@ -113,6 +113,28 @@ async function apiCall<T>(
   }
 }
 
+// ── Liked-posts preload (cache warm-up) ───────────────────────────────────────
+
+/**
+ * Fetch the current user's most-recently liked post IDs from the server.
+ *
+ * Called once on sign-in to pre-warm the likedPostsCache so feed rows render
+ * with the correct heart state from the first paint, without waiting for the
+ * feed API response.
+ *
+ * Uses GET /api/posts/liked-by-me which is backed by the
+ * idx_posts_likes_user_created index from migration 0123.
+ *
+ * Returns an empty array on any error so the caller can treat it as a no-op.
+ */
+export async function fetchMyLikedPostIds(limit = 500): Promise<string[]> {
+  const res = await apiCall<{ postIds: string[] }>(
+    'GET',
+    `/api/posts/liked-by-me?limit=${limit}`,
+  );
+  return res.ok ? (res.data.postIds ?? []) : [];
+}
+
 // ── Like / Unlike ─────────────────────────────────────────────────────────────
 
 export async function likePost(postId: string): Promise<LikeResult | null> {

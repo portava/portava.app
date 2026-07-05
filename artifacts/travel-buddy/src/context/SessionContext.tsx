@@ -5,7 +5,8 @@ import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { getAccountStatus } from '../services/profile';
 import type { AccountStatus } from '../services/profile';
 import { pauseOnSessionEnd } from '../services/circle';
-import { clearForUser } from '../services/likedPostsCache';
+import { clearForUser, primeLikes } from '../services/likedPostsCache';
+import { fetchMyLikedPostIds } from '../services/postEngagement';
 
 /**
  * Session context — single source of auth truth for the app. Wraps the auth
@@ -87,6 +88,17 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const refreshAccountStatus = useCallback(async () => {
     await fetchAccountStatus(userId);
   }, [userId, fetchAccountStatus]);
+
+  // Pre-warm the liked-posts cache as soon as we have a userId so heart
+  // indicators are correct from the first feed paint.  Fire-and-forget —
+  // the cache starts empty on any error and the component falls back to the
+  // feed API's likedByMe prop, which is always correct.
+  useEffect(() => {
+    if (!userId) return;
+    fetchMyLikedPostIds().then((postIds) => {
+      if (postIds.length > 0) primeLikes(userId, postIds);
+    }).catch(() => {});
+  }, [userId]);
 
   // Pause Circle presence when the app goes to background / is suspended so
   // other members don't see a stale "active" badge after the user closes the

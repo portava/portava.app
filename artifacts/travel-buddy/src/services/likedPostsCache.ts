@@ -54,6 +54,27 @@ export function clearForUser(userId: string): void {
 }
 
 /**
+ * Bulk-seed the cache from an API preload (e.g. fetched on sign-in).
+ *
+ * Only sets entries that are NOT already in the cache so in-session explicit
+ * like/unlike actions are never overwritten by a late-arriving preload response.
+ * Posts not in `postIds` are left untouched — the caller provides the liked set,
+ * not the full universe; absent posts fall back to the feed-data prop as before.
+ */
+export function primeLikes(userId: string, postIds: string[]): void {
+  let userMap = _store.get(userId);
+  if (!userMap) {
+    userMap = new Map<string, boolean>();
+    _store.set(userId, userMap);
+  }
+  for (const postId of postIds) {
+    if (!userMap.has(postId)) {
+      userMap.set(postId, true);
+    }
+  }
+}
+
+/**
  * Remove all cache entries for all users.
  * Useful for testing or a full app reset.
  */
