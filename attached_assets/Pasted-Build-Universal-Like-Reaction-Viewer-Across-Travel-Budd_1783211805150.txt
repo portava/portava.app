@@ -1,0 +1,1288 @@
+Build Universal Like / Reaction Viewer Across Travel Buddy
+
+Goal:
+Allow users to tap any visible like/reaction count and see a privacy-safe, backend-backed list of users who liked/reacted to that content.
+
+This should work across Travel Buddy surfaces where likes/reactions are enabled:
+- Pulse posts
+- Postcards
+- video Postcards
+- comments and replies
+- Events
+- Trips
+- Hidden Gems
+- Places / Locations
+- Rent a Buddy profiles/listings where allowed
+- Telegraph messages
+- reviews / helpful votes where allowed
+
+Core rule:
+Anything with a visible like/reaction count can open a privacy-safe list of people who liked/reacted, only if the viewer has access to that content.
+
+Do not create fake local like data. Do not create separate inconsistent like systems per feature. Use one reusable engagement viewer pattern and one backend access-checked service layer.
+
+Keep these systems separate:
+- Like/reaction = social engagement
+- Save/bookmark = private or semi-private intent
+- Join/request = membership intent
+- Attending/member = event/trip access truth
+- Booking = Rent a Buddy marketplace truth
+- Telegraph reaction = thread-only engagement
+- View = passive activity, not public
+- Report = moderation/safety truth, never public
+
+Do not expose:
+- saved-by lists unless intentionally approved
+- booked-by lists
+- viewed-by lists
+- reported-by lists
+- private trip/event members through likes
+- private Telegraph reactions outside the thread
+- blocked users
+- users who blocked the viewer
+- deleted users
+- banned/suspended users
+- inaccessible/private users
+- private exact locations
+- emails, phone numbers, safety fields, verification internals, or private account settings
+
+PHASE 1 — Audit Existing Engagement Truth
+
+First inspect the current app before patching.
+
+Find:
+- existing posts/Postcards tables
+- existing video Postcard/media tables
+- existing comments/replies tables
+- existing likes table
+- existing reactions table, if any
+- existing saves/bookmarks table
+- existing event likes/saves/interested/maybe logic
+- existing trip likes/saves/join/member logic
+- existing Hidden Gem/Place likes/saves/been-there/reviews logic
+- existing Rent a Buddy favorites/likes/reviews/bookings logic
+- existing Telegraph message reaction logic
+- existing review helpful-vote logic
+- current like count source
+- current like/unlike endpoints
+- current Pulse post card component
+- current Passport post/Postcard component
+- current Postcard detail screen
+- current video player/overlay UI
+- current Event card/detail components
+- current Trip card/detail components
+- current Hidden Gem/Place components
+- current Rent a Buddy profile/listing components
+- current Telegraph message components
+- current comment/reply components
+- current notification routes for likes/reactions
+- current privacy/access rules for each target type
+- current blocked/muted filtering
+- current deleted/banned/suspended user handling
+- current shared avatar/profile preview component
+- current follow-only button component/state
+- current tests covering likes/reactions
+- canonical migrations directory if database changes are needed
+
+Report briefly before changing:
+- which content types already support likes/reactions
+- which only support saves/bookmarks
+- which have comments/reactions
+- which have no engagement yet
+- current backend tables
+- current endpoints
+- current like count source
+- whether likes are already paginated
+- current privacy/access risks
+- current gaps blocking universal like-list viewing
+
+PHASE 2 — Universal Engagement Entity Contract
+
+Goal:
+Create one consistent model for fetching like/reaction lists by content type.
+
+Suggested route:
+GET /api/engagement/likes?targetType=&targetId=&reactionType=&cursor=&limit=&q=
+
+Supported targetType values:
+- post
+- postcard
+- video_postcard
+- comment
+- reply
+- event
+- trip
+- place
+- hidden_gem
+- location
+- buddy_profile
+- telegraph_message
+- review
+
+Supported reactionType values:
+- like
+- love
+- helpful
+- fire
+- laugh
+- all
+
+Rules:
+- Use existing route style if the app already has engagement routes.
+- If current backend uses separate tables, create a service layer that normalizes them.
+- Do not force all engagement into one table if existing architecture is cleaner.
+- Frontend should have one reusable viewer, even if backend internally reads from different tables.
+- Return only viewer-visible reactions.
+- Return public-safe user previews only.
+- Use pagination.
+- Default limit: 20.
+- Validate targetType.
+- Validate reactionType.
+- Validate targetId.
+- Validate q if list search is supported.
+- Do not return every liker/reactor at once.
+- Do not expose private fields.
+
+Unified response shape:
+- targetType
+- targetId
+- reactionType
+- viewerVisibleCount
+- totalCount only if privacy-safe and already used
+- users:
+  - id
+  - avatarUrl
+  - fallbackInitials
+  - displayName
+  - username/handle
+  - basic location only if allowed
+  - verified/trust badge if public
+  - followState
+  - mutualIndicator if useful
+- nextCursor
+- hasMore
+
+Validation:
+- One reusable viewer can fetch like lists for different content types.
+- Backend validates targetType and reactionType.
+- Backend validates viewer access per target type.
+- Response shape is consistent.
+- Private fields are not returned.
+
+PHASE 3 — Universal Access Guard
+
+Goal:
+Every engagement list request must pass a target-specific backend access guard before returning any users.
+
+Access checks:
+- post access
+- Postcard access
+- video Postcard access
+- comment access
+- reply access
+- event access
+- trip access
+- place/gem visibility
+- Rent a Buddy profile/listing visibility
+- Telegraph thread membership
+- review parent access
+- parent-chain access where applicable
+
+Rules:
+- Access guard runs before returning any liker/reactor user.
+- Access guard runs on the backend.
+- Frontend hiding is not enough.
+- Check the target itself and its parent chain.
+- If any parent is private, inaccessible, deleted, hidden, rejected, or moderation-suppressed, engagement list must be blocked.
+- Do not rely only on the direct target id.
+- Unauthorized requests should return a safe error:
+  - “This content isn’t available.”
+  - or “Likes are private.”
+
+Parent-chain examples:
+- comment likes inherit comment + post access.
+- reply likes inherit reply + comment + post access.
+- review helpful votes inherit review + place/event/buddy access.
+- Telegraph message reactions inherit thread membership.
+- event-linked Postcard likes inherit event access if event-linked and restricted.
+- trip-linked Postcard likes inherit trip access if trip-only.
+- place-linked private Hidden Gem media inherits gem/place visibility.
+
+Validation:
+- Unauthorized viewer cannot fetch likes by guessing targetType/targetId.
+- Private trip Postcard likes do not leak.
+- Private event Postcard likes do not leak.
+- Hidden parent post blocks comment like lists.
+- Telegraph reactions cannot be fetched outside the thread.
+- Removed Telegraph participant cannot fetch reactions after removal if app policy blocks history.
+- Private trip/event likes cannot be fetched by non-members.
+- Hidden content engagement is protected.
+
+PHASE 4 — Post and Postcard Like Viewer
+
+Goal:
+Users can tap a post/Postcard like count and see who liked it.
+
+Update:
+- Pulse feed posts
+- Passport posts/Postcards
+- Post detail screen
+- Postcard detail screen
+- Discovery/Search post cards if present
+- Hashtag feed posts if present
+- Event/trip/place related Postcards if present
+
+Rules:
+- Like count should be tappable anywhere posts/Postcards appear.
+- Tapping count opens the universal engagement viewer.
+- If like count is 0, either do nothing or open empty state: “No likes yet.”
+- Keep heart like/unlike button behavior separate from like count tap.
+- Do not make heart button conflict with count tap.
+- Like list must use real backend like truth.
+- Like count should update after like/unlike.
+- Viewer must have access to the post before likes are returned.
+
+Validation:
+- Like count opens list on Pulse posts.
+- Like count opens list on Passport/Postcard posts.
+- Like count opens list on post detail.
+- Zero-like state is handled cleanly.
+- Heart like/unlike still works.
+- Like count tap opens the correct target’s like list.
+- Private/inaccessible posts do not expose likes.
+
+PHASE 5 — Video Postcard Likes
+
+Goal:
+Video Postcards should use the same like viewer as photo Postcards.
+
+Rules:
+- Like count on video overlay/player is tappable.
+- Tapping like count opens like list without disrupting playback badly.
+- Use the universal engagement viewer.
+- If video is private, delayed, deleted, processing, failed, or moderation-hidden, likes are not exposed.
+- If video belongs to an event/trip/place, both video privacy and parent access must be checked.
+- Like count should update after like/unlike.
+- Like list should not expose video metadata or private location.
+- Failed/rejected media should not show engagement to normal users.
+
+Validation:
+- Video like count opens liker list.
+- Playback UI remains usable.
+- Private/failed/rejected videos do not expose likes.
+- Parent event/trip/place access is enforced.
+- Like/unlike works on video without count corruption.
+
+PHASE 6 — Comment and Reply Likes
+
+Goal:
+Comment/reply like counts should use the same viewer if comments support likes now or later.
+
+Rules:
+- Comment like count opens comment liker list.
+- Reply like count opens reply liker list.
+- Viewer must have access to parent content and comment/reply.
+- Deleted/hidden/reported comments should not expose likes.
+- Comment author should not see private liker details beyond public-safe preview.
+- Comment likes should not be confused with parent post likes.
+- Post likes and comment likes must not share fake UI state.
+
+Validation:
+- Comment likes open correct liker list.
+- Reply likes open correct liker list if replies have likes.
+- Parent access is enforced.
+- Hidden comments do not expose likes.
+- Comment and post like counts remain separate.
+
+PHASE 7 — Event Likes / Reactions
+
+Goal:
+If Events can be liked, saved, interested, maybe, or reacted to, only like/reaction counts should use the engagement viewer.
+
+Event engagement types:
+- like/reaction
+- interested/maybe
+- attendees
+- saves
+- comments/reactions if supported
+
+Rules:
+- Event like/reaction count can open like/reaction list.
+- Public event like/reaction list is visible only to users who can view the event.
+- Private/invite-only/trip-only/circle-only events must not expose likes/reactions to unauthorized users.
+- Attendees list remains separate from like list.
+- “Maybe” list should only be visible if product/privacy explicitly allows it.
+- Event saves remain separate from likes.
+- Event host should not get private liker data beyond public-safe previews.
+- Blocked users must be excluded.
+- Cancelled/hidden/rejected events should not expose engagement to normal users.
+- Liking an event does not join it.
+- Saving an event does not join it.
+- Maybe/interested does not equal attending.
+
+Validation:
+- Event like count opens like list where enabled.
+- Private event likes do not leak.
+- Event attendee count does not get confused with like count.
+- Event saves/maybe remain separate truths.
+- Cancelled/hidden/rejected events do not expose engagement to normal users.
+
+PHASE 8 — Trip Likes / Reactions
+
+Goal:
+Trips may have likes/reactions, saves, interested users, join requests, members, and Postcards. Keep them separate.
+
+Definitions:
+- Like = social appreciation.
+- Save = bookmark/interest.
+- Request to Join = membership request.
+- Member list = trip access/membership truth.
+- Postcard likes = media engagement.
+
+Rules:
+- Public trip like count can open like list where enabled.
+- Private/invite-only trip likes do not expose to unauthorized viewers.
+- Trip member list is separate from like list.
+- Trip join requests are private to host/admin.
+- Trip Postcard likes use Postcard like rules.
+- Liking a trip does not request to join.
+- Saving a trip does not request to join.
+- Trip membership is never exposed through like list.
+- Hidden/cancelled/deleted trips do not expose engagement to normal viewers.
+
+Validation:
+- Trip like count opens liker list where allowed.
+- Private trip likes do not leak.
+- Like/save/join/member states remain separate.
+- Trip Postcard likes work independently.
+- Private trip member list does not leak via likes.
+
+PHASE 9 — Hidden Gem / Place / Location Likes
+
+Goal:
+Hidden Gems, Places, and Locations can have likes, saves, been-there, reviews, and helpful votes. Only public social engagement should open public-safe lists.
+
+Engagement types:
+- like
+- save
+- been_there
+- review helpful
+- photo/video likes
+- recommendation reactions
+
+Rules:
+- Like count can open liker list if place/gem is public and viewer has access.
+- Hidden or moderation-suppressed gems should not expose engagement.
+- Private/user-only saved places should not expose likes.
+- “Saved by” lists are privacy-sensitive and should not be exposed unless explicitly approved.
+- “Been there” can imply location history, so default to private or aggregate-only unless product approves list visibility.
+- Review helpful count can show users only if allowed; otherwise show aggregate only.
+- Place/gem report counts are never public.
+- Private exact location should not be shown in liker rows or engagement reasons.
+
+Validation:
+- Public place like list works.
+- Public Hidden Gem like list works.
+- Hidden Gem privacy is respected.
+- Saved-by and been-there do not leak location history.
+- Review helpful list follows privacy rules.
+
+PHASE 10 — Rent a Buddy Likes / Reactions
+
+Goal:
+Rent a Buddy profiles may have likes, saves/favorites, reviews, helpful votes, and bookings. Keep every truth separate.
+
+Buddy engagement types:
+- like
+- save/favorite
+- review helpful
+- booking count, if shown
+- profile views, internal only if any
+
+Rules:
+- Liking a buddy profile is not a booking.
+- Saving/favoriting a buddy is not a booking.
+- Booking truth must stay in Rent a Buddy backend.
+- Like list should show public-safe users only if product allows public engagement on buddy profiles.
+- If buddy engagement should be private, show count only or hide list.
+- Do not expose who booked a buddy unless explicitly designed and privacy-approved.
+- Do not expose saved/favorited-by users by default.
+- No dating/adult-service framing.
+- Report/Block should be available from liker rows where allowed.
+- Suspicious buddy-profile engagement should not boost ranking over verification, reviews, safety, and booking quality.
+
+Validation:
+- Buddy profile like count opens only if allowed.
+- Booking list is never exposed through likes.
+- Saved/favorite state remains separate.
+- Buddy profile privacy and marketplace rules are respected.
+- Non-dating marketplace boundary remains intact.
+
+PHASE 11 — Telegraph Message Reactions
+
+Goal:
+Telegraph message reactions are thread-only engagement, not public likes.
+
+Rules:
+- Telegraph message reaction counts should only be visible to members of that Telegraph thread.
+- Tapping reaction count opens a reaction list only for participants with access.
+- Users removed from a thread should not be able to view reaction lists after removal unless app policy keeps history access.
+- In group Telegraph, reaction list should show thread-safe user previews.
+- Do not expose message reactions outside the thread.
+- Do not show Telegraph reactions in public profile activity.
+- Auto-translated messages should not affect reaction truth.
+- Deleted messages should not expose reactions to normal users.
+- Message reactions should support emoji/reaction type filtering later.
+- Blocking rules must be respected according to Telegraph’s existing thread policy.
+- Telegraph reactions should not influence public Discovery/Compass ranking.
+
+Reaction display:
+- Like count or emoji count should open “Reacted.”
+- If multiple reactions exist, allow filtering by reaction type later.
+
+Validation:
+- Telegraph reaction list only opens for thread members.
+- Removed/blocked users cannot view reactions where app policy requires.
+- Deleted message reactions are hidden.
+- Reaction state is consistent across devices.
+- Telegraph reactions do not leak into public feeds.
+
+PHASE 12 — Reviews and Helpful Votes
+
+Goal:
+Events, Places, Hidden Gems, and Rent a Buddy may have reviews with helpful votes or likes.
+
+Engagement types:
+- helpful
+- like
+- report
+- reply
+
+Rules:
+- “Helpful” count can open a helpful-voters list only if product allows.
+- Helpful voters should be public-safe.
+- Reviews on private events/trips should respect parent privacy.
+- Report counts should never be public.
+- Buddy review engagement must respect marketplace privacy.
+- Deleted/rejected reviews should not expose helpful voters.
+- Anonymous/private feedback must not appear in public helpful/like lists.
+
+Validation:
+- Helpful count opens safe voter list if enabled.
+- Reports are never exposed.
+- Private parent content protects review engagement.
+- Deleted/rejected reviews do not expose voters.
+
+PHASE 13 — Universal Engagement Viewer UI
+
+Goal:
+Build one reusable viewer component for all like/reaction lists.
+
+Component:
+- EngagementUserListSheet or EngagementUserListScreen
+
+Props:
+- targetType
+- targetId
+- reactionType
+- title
+- emptyText
+- accessDeniedText
+- allowSearch
+- showReactionTabs
+
+Default titles:
+- Liked by
+- Reacted
+- Found helpful by
+- Saved by, only if product explicitly allows
+- Been there, only if product explicitly allows
+
+Rows:
+- circular avatar
+- display name
+- username/handle
+- verified/trust badge if public
+- mutual indicator if useful
+- Follow / Following / Request Sent / Follow Back button where allowed
+- safety menu if allowed
+
+Rules:
+- No Add Friend.
+- Use follow-only social graph.
+- Use shared avatar component.
+- Tapping a user opens Passport/profile.
+- Keep modal/sheet accessible.
+- Support loading, empty, error, access denied, and pagination.
+- Touch targets must be mobile-safe.
+- Should work as bottom sheet or full-screen modal based on app style.
+- Should not duplicate UI implementations per target type.
+
+Empty state:
+- “No likes yet.”
+- “No reactions yet.”
+- “No helpful votes yet.”
+
+Error state:
+- “Couldn’t load likes. Try again.”
+- “Couldn’t load reactions. Try again.”
+
+Access denied:
+- “This content isn’t available.”
+- or “Likes are private.”
+
+Validation:
+- Same component works across posts, videos, events, trips, places, buddies, Telegraph messages, comments, replies, and reviews.
+- No duplicate UI implementations.
+- Accessibility works.
+- User rows open correct profile.
+- Follow buttons use real backend truth.
+
+PHASE 14 — Like Count Tap Behavior Across Surfaces
+
+Goal:
+Any visible like/reaction count should be tappable where lists are enabled.
+
+Update surfaces where engagement exists:
+- Pulse posts
+- Passport posts/Postcards
+- Post/Postcard detail
+- video overlay/player
+- comment rows
+- reply rows
+- Event cards/details
+- Trip cards/details
+- Hidden Gem details
+- Place/Location details
+- Rent a Buddy profile/listing where allowed
+- Telegraph message reaction bubbles
+- review helpful count where allowed
+- hashtag feed cards
+- city/destination feed cards
+- event/trip/place related Postcards
+
+Rules:
+- Count tap opens the universal engagement viewer with correct targetType and targetId.
+- If count is zero, either no-op or show empty state.
+- Do not interfere with like/unlike button.
+- Do not make heart/reaction button conflict with count tap.
+- If list is hidden but count visible, tapping shows “Likes are private.”
+- If count is hidden, do not show or tap count.
+
+Validation:
+- Like count opens the correct target list on each enabled surface.
+- Like/reaction button still works.
+- Zero count state is clean.
+- Count-only/private-list state is clean.
+- No broken buttons on unsupported surfaces.
+
+PHASE 15 — Reaction Grouping UI
+
+Goal:
+If multiple reaction types exist, group them clearly.
+
+Examples:
+- All
+- Like
+- Love
+- Fire
+- Helpful
+- Laugh
+
+Rules:
+- Each tab/count must use backend truth.
+- Hidden/private reactors are excluded.
+- If only likes exist now, keep UI simple and do not show empty future reaction tabs.
+- Telegraph emoji reactions should use the same grouping pattern later.
+- “All” tab aggregates only viewer-visible reactors.
+- Tabs should be accessible and mobile-friendly.
+
+Validation:
+- Reaction tabs show correct users.
+- All tab aggregates correctly.
+- Like-only content stays simple.
+- Telegraph emoji reaction grouping works if supported.
+
+PHASE 16 — Like List Search
+
+Goal:
+For high-like content, allow searching inside liker/reactor lists.
+
+Rules:
+- Search matches display name and username/handle.
+- Minimum query length: 2 characters.
+- Search respects the same access/privacy/blocking rules.
+- Search must be paginated.
+- Do not allow scraping all users through liker search.
+- Rate-limit if app has rate limiter.
+- Search should not expose users hidden by privacy or moderation.
+
+Validation:
+- Search works inside like list.
+- Blocked/private users do not appear.
+- Endpoint remains rate-limited/paginated.
+- Empty query does not dump more than the allowed paginated set.
+
+PHASE 17 — Engagement Count Policy Per Target
+
+Goal:
+Define whether counts are visible and what they mean.
+
+Recommended:
+- Public posts/Postcards: viewer-visible like count.
+- Private posts/Postcards: count visible only to allowed viewers.
+- Public events: like count visible; attendees separate.
+- Private events: count visible only to allowed viewers.
+- Trips: public likes visible; members/join requests separate.
+- Places/Hidden Gems: likes visible if public; saves/been-there aggregate-only unless approved.
+- Rent a Buddy: likes/favorites depend on marketplace privacy; bookings never public as liker list.
+- Telegraph messages: reaction counts visible only to thread members.
+- Reviews: helpful count visible if review visible; reports never public.
+
+Rules:
+- Count and list should follow the same viewer-visible policy.
+- If total count differs from visible count, frontend should display viewerVisibleCount.
+- Do not reveal hidden users through counts.
+- Exclude blocked, deleted, banned, suspended, and moderation-hidden users from visible count if they are excluded from visible list.
+- Count should not go negative.
+- Count should not reveal inaccessible private activity.
+
+Validation:
+- Count does not reveal blocked/hidden/inaccessible user activity.
+- List and count do not disagree in confusing ways.
+- Target-specific policies are documented.
+- Like count matches visible list policy.
+
+PHASE 18 — Creator Control Over Like Visibility
+
+Goal:
+Some creators may want likes visible, hidden, or count-only where product supports it.
+
+Add optional per-content settings where appropriate:
+- show like count
+- hide like count
+- show liker list
+- hide liker list
+- show count only
+
+Rules:
+- Default can stay visible for public posts if that is current app behavior.
+- Private posts should inherit privacy from the parent post.
+- If liker list is hidden, tapping count should show “Likes are private.”
+- If count is hidden, do not show the count or make it tappable.
+- Backend must enforce this.
+- Do not add settings UI everywhere unless product scope supports it; backend should be structured safely.
+
+Validation:
+- Hidden liker list cannot be fetched directly.
+- Count-only mode shows count but not user list.
+- Hidden count does not reveal likes.
+- Backend enforces settings.
+
+PHASE 19 — “Liked by You and Others” Preview
+
+Goal:
+Where the app already shows social preview text, make it backend-backed.
+
+Examples:
+- “Liked by you”
+- “Liked by you and 3 others”
+- “Liked by Maya and 12 others”
+- “Liked by Maya, Chris, and 8 others”
+
+Rules:
+- Preview names must come from viewer-visible liker list.
+- Do not show blocked/private-inaccessible names.
+- Do not expose hidden users through preview text.
+- Preview should be optional and not required everywhere.
+- Preview should update after like/unlike.
+- Use privacy-safe names only.
+
+Validation:
+- Preview text is accurate.
+- Blocked/private users do not appear in preview.
+- Preview count matches viewer-visible count policy.
+
+PHASE 20 — Unlike Race Conditions and Count Reconciliation
+
+Goal:
+Handle rapid like/unlike and stale counts safely.
+
+Rules:
+- If user rapidly taps like/unlike, final UI state should match backend.
+- Like count should not go negative.
+- Like list should refresh or reconcile after action.
+- If like/unlike fails, rollback optimistic UI or refetch.
+- Do not duplicate the current user in the like list.
+- Current user should appear after liking.
+- Current user should disappear after unliking.
+- Backend truth wins after refresh.
+
+Validation:
+- Rapid like/unlike does not corrupt count.
+- Like list does not duplicate users.
+- Count reconciles after failed request.
+- Current user list membership is correct.
+
+PHASE 21 — Sorting
+
+Goal:
+Sort likes/reactions in a useful, stable way.
+
+Suggested sorting:
+1. Viewer’s own reaction first, if they reacted
+2. Mutual/followed users
+3. Recent reactions
+4. Verified/trusted users where useful
+5. Stable fallback
+
+Rules:
+- Sorting should not expose private signals.
+- Use backend sorting/pagination.
+- Do not load all likes client-side.
+- Sorting must be stable across pagination.
+
+Validation:
+- Viewer appears first after liking/reacting.
+- Mutual/followed users rank sensibly.
+- Pagination remains stable.
+- Sorting does not leak private info.
+
+PHASE 22 — Follow Actions From Engagement Lists
+
+Goal:
+Since liker/reactor rows include Follow buttons, keep relationship actions safe and consistent.
+
+Rules:
+- Use follow-only system.
+- No Add Friend.
+- Private account follow becomes Request Sent.
+- Public account follow becomes Following.
+- Follow Back appears where appropriate.
+- Follow action from a like list should not close the viewer unless product chooses.
+- Follow state should update row state and backend truth.
+- Following someone from a like list must not grant private content access beyond follow rules.
+- Follow buttons should be hidden if viewer cannot follow due to block/privacy/account state.
+
+Validation:
+- Follow from like list works.
+- Private follow request works.
+- Follow Back works.
+- Add Friend never appears.
+- No extra access is granted.
+- Follow state matches profile/search/discovery.
+
+PHASE 23 — Notifications Across Engagement Types
+
+Goal:
+Keep engagement notifications clear and not spammy.
+
+Notifications may include:
+- liked your post/Postcard
+- liked your video
+- reacted to your Telegraph message
+- found your review helpful
+- liked your Hidden Gem/place contribution
+- liked your event, if enabled
+- liked your trip, if enabled
+- reacted to your comment/reply
+
+Rules:
+- Do not break existing like notifications.
+- Opening a like/reaction list should not create notifications.
+- Do not create extra notifications when viewing engagement lists.
+- Notification routing should not leak private content if access changes.
+- Telegraph reaction notifications stay inside Telegraph context.
+- Do not notify for every reaction in large group chats if app policy batches/suppresses them.
+- Respect notification preferences.
+- If post/content is no longer accessible, show safe unavailable state.
+- Do not expose liker list through stale notification if viewer lost access.
+
+Validation:
+- Existing post like notifications still work.
+- Telegraph reactions do not spam.
+- Deleted/private content notification opens safe unavailable state.
+- Opening like list does not create notification spam.
+
+PHASE 24 — Moderation and Safety
+
+Goal:
+Engagement lists must respect moderation and safety systems.
+
+Rules:
+- Hidden/rejected/deleted content does not expose engagement.
+- Banned/suspended/deleted users do not appear.
+- Blocked users do not appear.
+- Users who blocked viewer do not appear.
+- Reported users may be hidden according to app policy.
+- Admin audit visibility, if any, must be separate and permissioned.
+- Report user from engagement list should connect to existing report flow.
+- Block user from engagement list should update follow/list visibility.
+- Content owner blocking a liker should hide that liker from owner’s normal visible like list according to block policy.
+- Blocked liker should not see owner’s content/likes where block rules apply.
+- Like relationship may remain in database for audit, but should be hidden from normal UI.
+
+Validation:
+- Moderation-hidden content engagement is inaccessible.
+- Banned/suspended/deleted users are excluded.
+- Blocked users are excluded.
+- Safety menu works.
+- Admin-only visibility is not exposed to normal users.
+- Owner block hides liker according to policy.
+
+PHASE 25 — Admin / Moderator Audit Separation
+
+Goal:
+Moderators may need to inspect engagement abuse, but normal users should not.
+
+Rules:
+- Normal like viewer returns public-safe visible users only.
+- Admin audit, if needed, must be a separate permissioned tool.
+- Admin audit may show hidden/deleted/reacted users only if policy allows.
+- Audit actions should be logged.
+- Do not expose admin audit data in normal API responses.
+- Do not add admin audit UI unless existing admin/moderation system supports it.
+
+Validation:
+- Normal user cannot access audit engagement data.
+- Admin audit route is permissioned.
+- Audit access is logged.
+- Normal engagement API remains privacy-safe.
+
+PHASE 26 — Engagement Abuse Detection
+
+Goal:
+Add safeguards against like/reaction spam.
+
+Signals:
+- mass liking
+- repeated like/unlike
+- bot-like reaction patterns
+- brigading a user or buddy profile
+- fake engagement rings
+- suspicious review helpful votes
+- suspicious Telegraph reaction spam
+
+Rules:
+- Use existing abuse/rate-limit system if available.
+- Rate-limit rapid repeated engagement.
+- Do not let suspicious engagement boost Compass/Discovery ranking.
+- Suspicious likes can count differently for ranking, but UI should remain consistent with backend policy.
+- Do not punish users without clear moderation rules.
+- Normal engagement should still work.
+
+Validation:
+- Rapid repeated engagement is limited.
+- Suspicious engagement does not boost ranking.
+- Normal engagement still works.
+- Engagement APIs are not scrape-friendly.
+
+PHASE 27 — Engagement Ranking Impact
+
+Goal:
+Define how likes affect ranking without making the app spammy.
+
+Rules:
+- Likes can be one ranking signal for Pulse, Discovery, Compass, Places, Events, Trips, and Gems.
+- Likes should not overpower safety, trust, freshness, relevance, or moderation.
+- Saves/bookmarks may be stronger private signals but should not be exposed publicly.
+- Telegraph reactions should not affect public Discovery ranking.
+- Buddy profile likes should not outrank booking quality, verification, safety, and reviews.
+- Suspicious engagement should not boost ranking.
+- Unsafe/high-like content should not be promoted.
+
+Validation:
+- Likes improve relevance but do not dominate ranking.
+- Unsafe/high-like content is not promoted.
+- Private reactions do not affect public explanations.
+- Compass/Discovery ranking remains safety-first.
+
+PHASE 28 — Cross-Surface Count Consistency
+
+Goal:
+The same content may appear in multiple places and should show consistent viewer-visible counts.
+
+Examples:
+- A Postcard appears in Pulse, Passport, hashtag feed, event detail, trip detail, and place detail.
+- An event appears in Discovery, Search, Compass, Passport, and Trip timeline.
+- A place appears in Discovery, Search, Compass, and Trip saved ideas.
+
+Rules:
+- Same target id must show the same viewer-visible like count everywhere.
+- Do not calculate separate counts per surface.
+- If surface-specific access changes visibility, use viewer-visible count from backend.
+- After like/unlike, all surfaces should reconcile on refresh.
+- Do not create surface-specific fake counts.
+
+Validation:
+- Same Postcard count matches across Pulse and Passport.
+- Same event count matches across Search and Event Detail.
+- Same place count matches across Discovery and place detail.
+- Counts update after refresh.
+
+PHASE 29 — Deleted / Deactivated Account Behavior
+
+Goal:
+Define what happens when a user who liked/reacted deletes or deactivates their account.
+
+Rules:
+- Deleted users should not appear in liker/reactor lists.
+- Banned/suspended users should not appear.
+- Deactivated users should follow app account policy.
+- Counts should either exclude them or use viewer-visible count that excludes them.
+- Do not show “Deleted User” rows unless product intentionally needs that.
+- Engagement records can remain for audit/aggregate only if privacy policy allows.
+
+Validation:
+- Deleted users disappear from like lists.
+- Banned/suspended users disappear from like lists.
+- Counts do not reveal deleted users unexpectedly.
+- No private/deactivated account data appears.
+
+PHASE 30 — Anonymous or Limited Reactions
+
+Goal:
+Some future features may need anonymous or limited engagement.
+
+Examples:
+- sensitive safety check feedback
+- private event safety responses
+- moderation feedback
+- anonymous helpful votes, if ever supported
+
+Rules:
+- Anonymous reactions should never appear in public liker lists.
+- Do not mix anonymous/private feedback with normal likes.
+- Aggregate-only is acceptable if product approves.
+- Keep safety feedback separate from social likes.
+- Reports are never public.
+- Private safety answers are never public.
+
+Validation:
+- Anonymous/private feedback never appears in public like viewer.
+- Social likes and safety feedback remain separate.
+- Reports are not exposed.
+
+PHASE 31 — Saved / Favorite Lists Warning
+
+Goal:
+Do not expose saves/favorites accidentally.
+
+Rules:
+- Do not automatically make save counts tappable unless product approves.
+- Saved-by lists can reveal planning intent, location interest, or private trip ideas.
+- Default for saves/bookmarks:
+  - show aggregate count if useful
+  - do not show user list unless explicitly public
+- For Rent a Buddy, saved/favorite users should likely remain private.
+- For trips, saved users should remain private unless product intentionally shows interest.
+- For places/gems, saved-by users should remain private or aggregate-only by default.
+- Save state must remain separate from like state.
+
+Validation:
+- Saved-by lists are not accidentally exposed.
+- Save and like states remain separate.
+- Booking/join/membership is not inferred from saves.
+
+PHASE 32 — Viewed-By Warning
+
+Goal:
+Do not accidentally expose passive viewing behavior.
+
+Rules:
+- Do not expose who viewed a post/video/profile/trip/event unless product intentionally designs that feature.
+- View lists are more sensitive than like lists.
+- If profile/video/story views exist later, require separate privacy review.
+- Like viewer work must not expose views.
+- View counts/lists remain separate from likes.
+
+Validation:
+- Like viewer work does not expose views.
+- Viewed-by lists do not appear accidentally.
+- Passive activity remains private.
+
+PHASE 33 — Universal Engagement Analytics
+
+Goal:
+Track safe engagement analytics if analytics infrastructure exists.
+
+Track:
+- like count tapped
+- engagement viewer opened
+- targetType
+- reactionType
+- list result count bucket
+- user clicked liker profile
+- follow action from like list
+- pagination loaded
+- access denied
+- error state shown
+
+Rules:
+- Do not store private target content.
+- Do not store private exact location.
+- Analytics is not source of truth.
+- Respect privacy policy.
+- Do not include private user fields in analytics.
+
+Validation:
+- Analytics fires where supported.
+- Analytics does not expose private data.
+- Analytics does not replace backend truth.
+
+PHASE 34 — Accessibility
+
+Goal:
+Like count and engagement viewer must be accessible.
+
+Rules:
+- Like/reaction count needs accessible label, such as:
+  - “View likes”
+  - “View reactions”
+  - “View people who found this helpful”
+- User rows should be screen-reader readable.
+- Close button/back button should be accessible.
+- Touch targets should be mobile-safe.
+- Loading/error/empty states should be readable.
+- Reaction tabs should be accessible.
+- Modal/bottom sheet should manage focus where applicable.
+
+Validation:
+- Like count is accessible.
+- Reaction count is accessible.
+- Engagement viewer is accessible.
+- Touch targets are safe.
+- Screen reader labels are useful.
+
+PHASE 35 — Backend Migration / Database Safety
+
+Goal:
+Make database changes safely if needed.
+
+Rules:
+- Confirm canonical migrations directory before adding migrations.
+- Prefer additive migrations.
+- Do not drop/rename existing likes/reactions tables unless fully audited.
+- If creating a normalized engagement table, migrate carefully and avoid duplicate counts.
+- Add indexes where needed:
+  - target_type
+  - target_id
+  - reaction_type
+  - user_id
+  - created_at
+  - target_type + target_id + reaction_type
+  - target_type + target_id + user_id unique where appropriate
+- Add RLS/policies if Supabase uses RLS.
+- Update generated database types if the project uses typed Supabase/database types.
+- Keep existing like/unlike behavior working.
+
+Validation:
+- Migration applies cleanly.
+- Existing likes remain intact.
+- Existing feeds still load.
+- Like/unlike still works.
+- Database types update if needed.
+- Tests pass.
+
+PHASE 36 — Universal Engagement Tests
+
+Add tests for each target type that supports engagement.
+
+Backend tests:
+- post like list access
+- Postcard like list access
+- video Postcard like list access
+- event like list access
+- private event blocked
+- trip like list access
+- private trip blocked
+- place like list access
+- Hidden Gem like list access
+- hidden gem moderation blocked
+- buddy profile engagement privacy
+- Telegraph message reaction requires thread membership
+- removed Telegraph member blocked if policy requires
+- comment like requires parent access
+- reply like requires parent access
+- review helpful voters require review access
+- saved-by list not exposed by default
+- viewed-by list not exposed
+- report data not exposed
+- blocked users excluded
+- users who blocked viewer excluded
+- deleted/banned/suspended users excluded
+- pagination works
+- search inside like list works
+- invalid targetType rejected
+- invalid reactionType rejected
+- hidden count/list settings enforced
+- count-only mode blocks list
+- parent-child privacy inheritance works
+
+Frontend tests:
+- universal engagement viewer renders
+- target-specific titles render
+- like count opens correct target list
+- Telegraph reaction count opens reaction list
+- video overlay count opens list
+- Event/Trip/Place counts open where enabled
+- comment/reply like counts open where enabled
+- review helpful count opens where enabled
+- zero count state works
+- access denied state works
+- hidden list state works
+- count-only state works
+- follow buttons use follow-only truth
+- no Add Friend appears
+- pagination works
+- list search works
+- reaction tabs work where multiple reactions exist
+- accessibility labels exist
+- rapid like/unlike does not corrupt UI
+
+Regression:
+- Pulse still works
+- Passport still works
+- Postcard detail still works
+- video playback still works
+- Events still work
+- Trips still work
+- Telegraph still works
+- Rent a Buddy still works
+- Hidden Gems/Places still work
+- comments/replies still work
+- notifications still work
+- Discovery/Search/Compass still work if touched
+
+PHASE 37 — Manual QA Checklist
+
+Before marking complete, verify:
+
+Posts/Postcards:
+- Like count opens list on Pulse.
+- Like count opens list on Passport.
+- Like count opens list on Postcard detail.
+- Zero likes handled cleanly.
+- Like/unlike still works.
+- Count updates correctly.
+
+Videos:
+- Video like count opens liker list.
+- Playback UI remains usable.
+- Private/failed/rejected videos do not expose likes.
+
+Comments/Replies:
+- Comment like count opens correct liker list.
+- Reply like count opens correct liker list if enabled.
+- Parent post access is enforced.
+
+Events:
+- Event like/reaction count opens list where enabled.
+- Private/invite-only/trip-only events do not leak likes.
+- Attendees/maybe/saves remain separate.
+
+Trips:
+- Public trip likes open where enabled.
+- Private trip likes do not leak.
+- Members/join requests/saves remain separate.
+
+Hidden Gems/Places:
+- Public place/gem likes open where enabled.
+- Hidden/moderated gems do not expose engagement.
+- Saved-by and been-there are not exposed unless intentionally approved.
+
+Rent a Buddy:
+- Buddy profile like count opens only if allowed.
+- Favorites/bookings are not exposed.
+- Marketplace privacy is respected.
+
+Telegraph:
+- Message reactions open only for thread members.
+- Deleted messages do not expose reactions.
+- Removed/blocked users cannot access where policy blocks them.
+- Reactions do not leak to public profile/Pulse.
+
+Reviews:
+- Helpful count opens voters only where allowed.
+- Reports are never exposed.
+- Private parent content protects review engagement.
+
+Universal UI:
+- User rows show circular avatars.
+- User rows open Passport/profile.
+- Follow buttons use Follow / Following / Request Sent / Follow Back only.
+- No Add Friend appears.
+- Loading/empty/error/access-denied states work.
+- Pagination works.
+- Search inside list works if enabled.
+- Accessibility is acceptable.
+
+Privacy/Safety:
+- Private/inaccessible/deleted/hidden content does not expose engagement.
+- Blocked users do not appear.
+- Users who blocked viewer do not appear.
+- Deleted/banned/suspended users do not appear.
+- Counts follow same privacy policy as lists.
+- Saved-by/booked-by/viewed-by/reported-by are not exposed.
+- No private exact location or private fields are returned.
+
+PHASE 38 — Final Universal Engagement Lock Rule
+
+Lock the product meanings:
+
+- Like/reaction = social engagement.
+- Save/bookmark = private or semi-private intent.
+- Join/request = membership intent.
+- Attending/member = event/trip access truth.
+- Booking = Rent a Buddy marketplace truth.
+- Telegraph reaction = thread-only engagement.
+- View = passive activity and should not be exposed as a liker list.
+- Report = moderation/safety truth and never public.
+- Safety feedback = private/moderation-facing, not social engagement.
+
+Rules:
+- Do not mix these concepts.
+- Do not expose saved-by, booked-by, joined-by, attended-by, viewed-by, or reported-by as like lists.
+- Do not expose private trip/event members through likes.
+- Do not expose private Telegraph reactions outside the thread.
+- Each system must use its own backend truth and privacy policy.
+- Engagement viewer must only show viewer-visible users who liked/reacted.
+- Backend access checks must run before returning engagement users.
+
+PHASE 39 — Final Acceptance Criteria
+
+The universal like/reaction viewer is complete when:
+
+- Post like counts open backend-backed liker lists.
+- Photo Postcard like counts open backend-backed liker lists.
+- Video Postcard like counts open backend-backed liker lists.
+- Comment/reply likes open only when parent content is accessible.
+- Event like/reaction counts open lists only where allowed.
+- Trip like/reaction counts open lists only where allowed.
+- Hidden Gem/Place like counts open lists only where allowed.
+- Rent a Buddy engagement respects marketplace privacy.
+- Telegraph message reactions open only for thread members.
+- Review helpful votes open only where allowed.
+- Save/favorite lists are not exposed unless intentionally approved.
+- Booked-by lists are not exposed.
+- Viewed-by lists are not exposed.
+- Reported-by lists are never exposed.
+- All engagement lists use backend truth.
+- All engagement lists are paginated.
+- All engagement lists use public-safe user previews.
+- All engagement lists exclude blocked, deleted, banned, suspended, and inaccessible users.
+- Counts follow the same privacy policy as lists.
+- Cross-surface counts are consistent.
+- Like/unlike/reaction state reconciles with backend truth.
+- Follow buttons in engagement lists use Follow / Following / Request Sent / Follow Back only.
+- No Add Friend appears.
+- Access is enforced backend-side.
+- Parent-child privacy inheritance works.
+- Hidden/deleted/moderated content does not expose engagement.
+- Accessibility requirements are met.
+- Tests pass.
+- No fake local engagement data.
+- No unrelated systems were rebuilt.
+
+Deliverable:
+Build one reusable, privacy-safe universal engagement viewer for likes/reactions across posts, Postcards, videos, comments, replies, events, trips, gems, places, Rent a Buddy profiles, reviews, and Telegraph messages where engagement is enabled. Keep saves, bookings, attendance, memberships, views, reports, and safety feedback separate. Use backend truth, backend access guards, paginated public-safe user previews, follow-only relationship buttons, and strict privacy filtering.

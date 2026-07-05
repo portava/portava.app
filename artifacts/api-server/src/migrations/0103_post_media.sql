@@ -66,27 +66,54 @@ CREATE POLICY "post_media_owner_write"
     )
   );
 
--- Select policy: owner always sees all their media (including pending/failed).
--- Other callers may read ready, non-rejected media for active public posts,
--- provided neither party has blocked the other.
+-- Select policy: owner always sees all their media (including pending/failed/rejected).
+-- Other callers may read ready, non-rejected/flagged media when they are permitted to
+-- see the parent post under the full visibility model (public / followers / trip-only),
+-- subject to block checks.
 DROP POLICY IF EXISTS "post_media_public_select" ON post_media;
 CREATE POLICY "post_media_public_select"
   ON post_media FOR SELECT
   USING (
+    -- Owner always sees all their own media
     user_id = auth.uid()
     OR (
-      EXISTS (
-        SELECT 1 FROM posts p
-        WHERE p.id = post_media.post_id
-          AND p.status     = 'active'
-          AND p.visibility = 'public'
-          AND post_media.processing_status = 'ready'
-          AND post_media.moderation_status NOT IN ('rejected', 'flagged')
-      )
+      -- Media must be ready and not moderated out
+      post_media.processing_status = 'ready'
+      AND post_media.moderation_status NOT IN ('rejected', 'flagged')
+      -- No block relationship between the viewer and the author
       AND NOT EXISTS (
         SELECT 1 FROM blocks b
         WHERE (b.blocker_id = auth.uid() AND b.blocked_id = post_media.user_id)
            OR (b.blocker_id = post_media.user_id AND b.blocked_id = auth.uid())
+      )
+      -- Viewer is authorized to see the parent post under the full visibility model
+      AND EXISTS (
+        SELECT 1 FROM posts p
+        WHERE p.id     = post_media.post_id
+          AND p.status = 'active'
+          AND (
+            -- public: any authenticated caller
+            p.visibility = 'public'
+            -- followers: caller follows the post author
+            OR (
+              p.visibility = 'followers'
+              AND EXISTS (
+                SELECT 1 FROM user_follows uf
+                WHERE uf.follower_id  = auth.uid()
+                  AND uf.following_id = p.author_id
+              )
+            )
+            -- trip_only: caller is a member of the parent trip
+            OR (
+              p.visibility = 'trip_only'
+              AND p.trip_id IS NOT NULL
+              AND EXISTS (
+                SELECT 1 FROM trip_members tm
+                WHERE tm.trip_id = p.trip_id
+                  AND tm.user_id = auth.uid()
+              )
+            )
+          )
       )
     )
   );
@@ -101,7 +128,14 @@ CREATE POLICY "post_media_storage_owner_insert"
   ON storage.objects FOR INSERT TO authenticated
   WITH CHECK (
     bucket_id = 'post-media'
+    -- Restrict upload to the caller's own user-prefix folder
     AND (storage.foldername(name))[1] = auth.uid()::text
+    -- Allow only supported image and video file extensions (defence-in-depth;
+    -- the API server enforces MIME type and size before issuing signed URLs)
+    AND lower(storage.extension(name)) IN (
+      'jpg', 'jpeg', 'png', 'webp', 'heic',
+      'mp4', 'mov', 'webm', '3gp'
+    )
   );
 
 DROP POLICY IF EXISTS "post_media_storage_owner_delete" ON storage.objects;

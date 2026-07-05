@@ -63,22 +63,23 @@ const POST_MEDIA_COLUMNS =
   "id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status";
 
 /** Filter and shape the post_media array for public consumption.
- *  Excludes failed/pending and rejected/flagged items; sorts by sort_order. */
+ *  Excludes failed/pending and rejected/flagged items; sorts by sort_order.
+ *  Returns snake_case keys to match post_media column names. */
 function filterPublicMedia(raw: any): Array<Record<string, unknown>> {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((m: any) => m.processing_status === 'ready' && m.moderation_status !== 'rejected' && m.moderation_status !== 'flagged')
     .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
     .map((m: any) => ({
-      id:               m.id,
-      mediaType:        m.media_type,
-      url:              m.public_url,
-      thumbnailUrl:     m.thumbnail_url ?? null,
-      durationSeconds:  m.duration_seconds ?? null,
-      width:            m.width ?? null,
-      height:           m.height ?? null,
-      sortOrder:        m.sort_order ?? 0,
-      processingStatus: m.processing_status,
+      id:                m.id,
+      media_type:        m.media_type,
+      url:               m.public_url,
+      thumbnail_url:     m.thumbnail_url ?? null,
+      duration_seconds:  m.duration_seconds ?? null,
+      width:             m.width ?? null,
+      height:            m.height ?? null,
+      sort_order:        m.sort_order ?? 0,
+      processing_status: m.processing_status,
     }));
 }
 

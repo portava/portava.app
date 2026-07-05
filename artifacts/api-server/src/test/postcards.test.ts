@@ -651,9 +651,9 @@ describe('Endpoint-level visibility and media filtering', () => {
 
     const item = body.media[0];
     assert.equal(item.id, MEDIA_ID);
-    assert.equal(item.mediaType, 'image');
+    assert.equal(item.media_type, 'image');
     assert.ok(typeof item.url === 'string', 'url should be a string');
-    assert.equal(item.processingStatus, 'ready');
+    assert.equal(item.processing_status, 'ready');
   });
 
   it('GET /posts/:postId excludes rejected media items from the media array', async () => {
