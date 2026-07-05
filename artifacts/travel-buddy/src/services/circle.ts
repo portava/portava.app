@@ -179,6 +179,22 @@ export async function pauseAllCircleSharing(): Promise<ServiceResult<CircleSetti
   }
 }
 
+/**
+ * Called when the app transitions to "background" or "inactive" (AppState).
+ * Tells the server to pause the caller's Circle presence across all active
+ * contexts so other members don't see a stale "active" badge after the app
+ * closes.  Errors are swallowed — this is best-effort and must never surface
+ * UI to the user (they may already be gone when the call fires).
+ */
+export async function pauseOnSessionEnd(): Promise<void> {
+  if (!isSupabaseConfigured || !apiBase()) return;
+  try {
+    await authedFetch('/api/circle/pause-on-session-end', { method: 'POST' });
+  } catch {
+    // Network errors on background transition are expected — swallow silently.
+  }
+}
+
 // ── Per-context settings ──────────────────────────────────────────────────────
 
 export async function getCircleContextSettings(

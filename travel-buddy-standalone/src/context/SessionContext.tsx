@@ -1,8 +1,10 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { AppState } from 'react-native';
 import { getSessionUserId, onAuthChange, signOut as svcSignOut } from '../services/auth';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { getAccountStatus } from '../services/profile';
 import type { AccountStatus } from '../services/profile';
+import { pauseOnSessionEnd } from '../services/circle';
 
 /**
  * Session context — single source of auth truth for the app. Wraps the auth
@@ -84,6 +86,20 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const refreshAccountStatus = useCallback(async () => {
     await fetchAccountStatus(userId);
   }, [userId, fetchAccountStatus]);
+
+  // Pause Circle presence when the app goes to background / is suspended so
+  // other members don't see a stale "active" badge after the user closes the
+  // app.  Only fires when the user is authenticated.  Fire-and-forget — no
+  // user-visible feedback on success or failure.
+  useEffect(() => {
+    if (!userId) return;
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'background' || nextState === 'inactive') {
+        pauseOnSessionEnd().catch(() => {});
+      }
+    });
+    return () => sub.remove();
+  }, [userId]);
 
   const signOut = useCallback(async () => {
     await svcSignOut();
