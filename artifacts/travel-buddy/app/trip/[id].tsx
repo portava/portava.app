@@ -8,7 +8,7 @@ import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import {
   TripHero, TodayNextUp, SavedIdeas, TripSavedPlacesSection,
-  CompassTripBrief, TripStamps, TripPostsSection,
+  CompassTripBrief, CompassBriefErrorBoundary, TripStamps, TripPostsSection,
   TripCrewSection, TripCircle,
 } from '../../src/components/TripPage';
 import { ActiveSafeReturnCard } from '../../src/components/safeReturn/ActiveSafeReturnCard';
@@ -359,7 +359,14 @@ function TripDetailScreen() {
           />
         )}
 
-        <CompassTripBrief />
+        <CompassBriefErrorBoundary>
+          <CompassTripBrief
+            tripId={id}
+            city={realTrip?.destinationCity ?? trip?.destinationCity ?? undefined}
+            startDate={realTrip?.startDate ?? undefined}
+            endDate={realTrip?.endDate ?? undefined}
+          />
+        </CompassBriefErrorBoundary>
         <TripStamps stamps={[]} />
         <TripMapPlaceholder />
         {live && trip.id ? (

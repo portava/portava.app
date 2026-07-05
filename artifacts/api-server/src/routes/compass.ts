@@ -57,6 +57,12 @@ import {
   buildFallbackFeed,
   isFallbackModeEnabled,
 } from "../compass/CompassFallbackFeedBuilder.js";
+import {
+  TRIP_SURFACE_TYPES,
+  PASSPORT_SURFACE_TYPES,
+  passesTripFilter,
+  passesPassportFilter,
+} from "../compass/CompassSurfaceFilters.js";
 
 const router = Router();
 
@@ -1298,21 +1304,26 @@ router.post("/compass/report", async (req, res) => {
 
 // ── GET /api/compass/recommendations ─────────────────────────────────────────
 // Returns up to `limit` Compass recommendations for a given surface.
-// Used by the Search screen when results are empty (surface=search) and
-// by other surfaces that need a quick recommendation list without the full
-// feed pipeline overhead.
+// Used by the Search screen when results are empty (surface=search), the trip
+// detail screen (surface=trip), the Passport tab (surface=passport), and other
+// surfaces that need a quick recommendation list without the full feed pipeline.
 //
 // Query params:
-//   surface  — "search" | "discovery" | "for_you" (default: "for_you")
-//   q        — raw search query (used for lightweight intent hint)
-//   city     — override the user's current city
-//   limit    — max items to return (default 6, max 20)
+//   surface   — "search" | "discovery" | "for_you" | "trip" | "passport" (default: "for_you")
+//   q         — raw search query (used for lightweight intent hint)
+//   city      — override the user's current city
+//   limit     — max items to return (default 6, max 20)
+//   startDate — ISO date string for trip surface date-range filter (inclusive)
+//   endDate   — ISO date string for trip surface date-range filter (inclusive)
 
 const recommendationsQuerySchema = z.object({
-  surface: z.string().max(40).optional(),
-  q:       z.string().max(400).optional(),
-  city:    z.string().max(200).optional(),
-  limit:   z.coerce.number().int().min(1).max(20).default(6),
+  surface:   z.string().max(40).optional(),
+  q:         z.string().max(400).optional(),
+  city:      z.string().max(200).optional(),
+  limit:     z.coerce.number().int().min(1).max(20).default(6),
+  startDate: z.string().max(30).optional(),
+  endDate:   z.string().max(30).optional(),
+  tripId:    z.string().uuid().optional(),
 });
 
 router.get("/compass/recommendations", async (req, res) => {
@@ -1332,7 +1343,7 @@ router.get("/compass/recommendations", async (req, res) => {
     return;
   }
 
-  const { surface = "for_you", q, city, limit } = parsed.data;
+  const { surface = "for_you", q, city, limit, startDate, endDate, tripId } = parsed.data;
 
   // Feature-flag gate — silently return empty list when Compass is off.
   const enabled = await isCompassEnabled(sc);
@@ -1344,14 +1355,14 @@ router.get("/compass/recommendations", async (req, res) => {
   try {
     const profile = await getCompassProfile(sc, user.id);
 
-    // Allow caller to override the context city (e.g. user changed city in search).
+    // Allow caller to override the context city.
     const effectiveProfile = city ? { ...profile, currentCity: city } : profile;
 
     const signals = defaultSignals(effectiveProfile as typeof profile);
     const context = buildCompassContext(effectiveProfile as typeof profile, signals);
     const items   = await hydrateCompassItems(sc, effectiveProfile as typeof profile);
 
-    // Use compass_picks section for the search surface; for_you otherwise.
+    // Choose section and type whitelist by surface
     const sectionName: SectionName =
       surface === "search" ? "compass_picks" : "for_you";
 
@@ -1363,30 +1374,237 @@ router.get("/compass/recommendations", async (req, res) => {
       sc,
     );
 
-    const topItems = (feedSection?.items ?? []).slice(0, limit);
+    let candidateItems: any[] = feedSection?.items ?? [];
+
+    // ── Surface-specific post-filtering ──────────────────────────────────────
+
+    if (surface === "trip") {
+      // passesTripFilter: type whitelist + visibility + date-range (see CompassSurfaceFilters.ts)
+      candidateItems = candidateItems.filter((fi: any) => passesTripFilter(fi, startDate, endDate));
+
+      // Member-list signal: when tripId is supplied, fetch trip members and boost items
+      // authored by or attended by a trip member (surface them first in the ranked list).
+      if (tripId) {
+        try {
+          const { data: memberRows } = await sc
+            .from("trip_members")
+            .select("user_id")
+            .eq("trip_id", tripId);
+
+          const memberSet = new Set<string>(
+            ((memberRows ?? []) as any[]).map((r: any) => r.user_id as string),
+          );
+
+          if (memberSet.size > 0) {
+            // Partition: member-authored items first, then the rest (stable relative order)
+            const memberItems = candidateItems.filter((fi: any) => {
+              const inner = fi.item ?? fi;
+              const authorId = inner.authorId ?? inner.data?.host_id ?? inner.data?.submitted_by;
+              return authorId && memberSet.has(authorId);
+            });
+            const otherItems = candidateItems.filter((fi: any) => {
+              const inner = fi.item ?? fi;
+              const authorId = inner.authorId ?? inner.data?.host_id ?? inner.data?.submitted_by;
+              return !(authorId && memberSet.has(authorId));
+            });
+            candidateItems = [...memberItems, ...otherItems];
+          }
+        } catch {
+          // Non-fatal: member signal is best-effort; continue without it
+        }
+      }
+    } else if (surface === "passport") {
+      // Load block list — fail-CLOSED: on any error, return empty to prevent leaking blocked users
+      let blockedIds: Set<string>;
+      try {
+        const { data: blocks, error: blocksErr } = await sc
+          .from("blocks")
+          .select("blocked_id")
+          .eq("blocker_id", user.id);
+        if (blocksErr) {
+          req.log.warn({ err: blocksErr }, "compass/recommendations: block-list fetch failed; returning empty");
+          res.json({ recommendations: [], surface });
+          return;
+        }
+        blockedIds = new Set<string>();
+        for (const b of (blocks ?? []) as any[]) {
+          if (b.blocked_id) blockedIds.add(b.blocked_id);
+        }
+      } catch (err) {
+        req.log.warn({ err }, "compass/recommendations: block-list fetch threw; returning empty");
+        res.json({ recommendations: [], surface });
+        return;
+      }
+
+      candidateItems = candidateItems.filter((fi: any) => passesPassportFilter(fi, blockedIds));
+    }
+
+    const topItems = candidateItems.slice(0, limit);
 
     const recommendations = topItems.map((fi: any) => {
       const inner = fi.item ?? fi;
+      const type  = String(inner.type ?? fi.type ?? "");
       return {
         id:       String(inner.id ?? fi.id ?? ""),
-        type:     String(inner.type ?? fi.type ?? ""),
+        type,
         category: String(inner.category ?? fi.category ?? ""),
         title:    inner.title ?? fi.title ?? null,
-        reason:   fi.explanationKey
-          ? `Matched to your travel style`
-          : `Top pick${city ? ` in ${city}` : ""}`,
-        city:     city ?? profile.currentCity ?? null,
+        reason:   buildReasonText(type, fi.explanationKey, city ?? profile.currentCity ?? null),
+        city:     inner.city ?? (inner.data?.city as string | undefined) ?? city ?? profile.currentCity ?? null,
         data:     inner.data ?? null,
       };
     });
 
+    // ── Static trip-surface items: safety note + language tip ─────────────────
+    // Appended after scored items, up to limit. Scope to trip surface only.
+    if (surface === "trip") {
+      const effectiveCity = city ?? profile.currentCity ?? null;
+      const remaining = limit - recommendations.length;
+
+      if (remaining > 0 && effectiveCity) {
+        recommendations.push({
+          id:       `static_safety_tip_${effectiveCity.toLowerCase().replace(/\s+/g, "_")}`,
+          type:     "safety_tip",
+          category: "safety",
+          title:    `Safety Note — ${effectiveCity}`,
+          reason:   `Check current travel advisories and local emergency contacts for ${effectiveCity} before you go.`,
+          city:     effectiveCity,
+          data:     null,
+        });
+      }
+
+      if (remaining > 1 && effectiveCity) {
+        // Simple city → primary language lookup for common travel destinations
+        const CITY_LANG: Record<string, string> = {
+          "tokyo": "ja",     "osaka": "ja",     "kyoto": "ja",
+          "paris": "fr",     "lyon": "fr",       "marseille": "fr",
+          "berlin": "de",    "munich": "de",     "hamburg": "de",
+          "madrid": "es",    "barcelona": "es",  "seville": "es",
+          "rome": "it",      "milan": "it",      "naples": "it",
+          "beijing": "zh",   "shanghai": "zh",   "guangzhou": "zh",
+          "seoul": "ko",     "busan": "ko",
+          "moscow": "ru",    "saint petersburg": "ru",
+          "istanbul": "tr",  "ankara": "tr",
+          "bangkok": "th",   "chiang mai": "th", "phuket": "th",
+          "jakarta": "id",   "bali": "id",       "surabaya": "id",
+          "ho chi minh city": "vi", "hanoi": "vi",
+          "mumbai": "hi",    "delhi": "hi",      "jaipur": "hi",
+          "cairo": "ar",     "dubai": "ar",      "abu dhabi": "ar", "riyadh": "ar",
+          "amsterdam": "nl", "rotterdam": "nl",
+          "warsaw": "pl",    "krakow": "pl",
+          "lisbon": "pt",    "porto": "pt",     "sao paulo": "pt", "rio de janeiro": "pt",
+          "athens": "el",    "stockholm": "sv",
+          "manila": "fil",   "cebu": "fil",
+        };
+        const LANG_NAMES: Record<string, string> = {
+          ja: "Japanese", fr: "French", de: "German", es: "Spanish",
+          it: "Italian", zh: "Chinese (Mandarin)", ko: "Korean",
+          ru: "Russian", tr: "Turkish", th: "Thai", id: "Indonesian",
+          vi: "Vietnamese", hi: "Hindi", ar: "Arabic", nl: "Dutch",
+          pl: "Polish", pt: "Portuguese", el: "Greek", sv: "Swedish",
+          fil: "Filipino (Tagalog)",
+        };
+        const destLang = CITY_LANG[effectiveCity.toLowerCase()] ?? null;
+        const userLangs = new Set(
+          ((profile as any).preferred_languages ?? []).map((l: string) => l.toLowerCase().split("-")[0]),
+        );
+        const isEnglishUser = userLangs.size === 0 || userLangs.has("en");
+        const isDestEnglish = !destLang || destLang === "en";
+
+        if (destLang && LANG_NAMES[destLang] && !userLangs.has(destLang) && !(isEnglishUser && isDestEnglish)) {
+          const langName = LANG_NAMES[destLang];
+          recommendations.push({
+            id:       `static_language_tip_${effectiveCity.toLowerCase().replace(/\s+/g, "_")}`,
+            type:     "language_tip",
+            category: "language",
+            title:    `${langName} Spoken Here`,
+            reason:   `${effectiveCity} is primarily ${langName}-speaking. A few phrases like "hello" and "thank you" go a long way!`,
+            city:     effectiveCity,
+            data:     null,
+          });
+        }
+      }
+    }
+
     res.json({ recommendations, surface });
   } catch (err) {
     req.log.error({ err }, "compass/recommendations: build failed");
-    // Return empty gracefully — never crash the caller
     res.json({ recommendations: [], surface });
   }
 });
+
+// ── POST /api/compass/create-suggestions ─────────────────────────────────────
+// Returns up to 3 category/vibe suggestions for an event being created, derived
+// from keyword matching against the draft title.
+// Used by the Create Event screen to show dismissible category chip hints.
+//
+// Body: { type: "event", titleDraft: string }
+// Response: { suggestions: Array<{ category: string; vibe: string; reason: string }> }
+
+const createSuggestionsSchema = z.object({
+  type:       z.literal("event"),
+  titleDraft: z.string().min(1).max(400),
+});
+
+// Keyword → category map (longest match wins; keywords are substrings lowercased)
+const CATEGORY_KEYWORDS: Array<{ category: string; vibe: string; keywords: string[]; reason: string }> = [
+  { category: "Hiking",        vibe: "adventure",   keywords: ["hike", "hik", "trail", "trek", "mountain", "climb", "summit", "waterfall"],        reason: "Outdoor adventure vibes from your title" },
+  { category: "Beach & Water", vibe: "chill",       keywords: ["beach", "surf", "swim", "ocean", "sea", "island", "snorkel", "dive", "boat"],      reason: "Beach or water activity detected" },
+  { category: "Food & Drinks", vibe: "social",      keywords: ["food", "eat", "dinner", "lunch", "brunch", "breakfast", "restaurant", "cafe", "coffee", "cook", "taste", "wine", "beer", "bbq", "grill", "feast"], reason: "Food or drink event vibe" },
+  { category: "Nightlife",     vibe: "party",       keywords: ["night", "party", "club", "dance", "dj", "rave", "bar hop", "pub", "drinks", "karaoke", "fiesta"], reason: "Nightlife energy in your title" },
+  { category: "Music",         vibe: "culture",     keywords: ["music", "concert", "band", "live", "show", "festival", "gig", "acoustic", "jam", "sing"], reason: "Music or performance theme" },
+  { category: "Culture",       vibe: "explore",     keywords: ["museum", "art", "gallery", "culture", "history", "heritage", "temple", "church", "tour", "exhibit", "craft"], reason: "Cultural experience theme" },
+  { category: "Sports",        vibe: "active",      keywords: ["sport", "game", "match", "football", "basketball", "volleyball", "run", "marathon", "cycling", "bike", "yoga", "fitness", "workout", "gym", "tennis", "badminton"], reason: "Active or sports theme" },
+  { category: "Photography",   vibe: "creative",    keywords: ["photo", "photoshoot", "shoot", "sunset", "sunrise", "lightroom", "golden hour", "portrait"], reason: "Photography or visual art" },
+  { category: "Adventure",     vibe: "thrill",      keywords: ["adventure", "extreme", "skydiv", "paraglid", "zipline", "rappel", "abseil", "caving", "bungee"], reason: "Thrill-seeking adventure" },
+  { category: "Wellness",      vibe: "relaxed",     keywords: ["yoga", "meditat", "spa", "wellness", "retreat", "mindful", "breathwork", "detox", "pilates"], reason: "Wellness or self-care theme" },
+  { category: "Social",        vibe: "community",   keywords: ["meetup", "network", "socializ", "hangout", "chill", "mingle", "connect", "community", "expat", "traveler meetup", "language exchange"], reason: "Social gathering vibe" },
+  { category: "Shopping",      vibe: "explore",     keywords: ["shop", "market", "bazaar", "flea", "vintage", "thrift", "swap", "mall"],            reason: "Shopping or market visit" },
+  { category: "Nature",        vibe: "chill",       keywords: ["nature", "forest", "garden", "park", "wildlife", "bird", "picnic", "scenic", "botanical"], reason: "Nature outing detected" },
+];
+
+function inferEventCategories(titleDraft: string): Array<{ category: string; vibe: string; reason: string }> {
+  const lower = titleDraft.toLowerCase();
+  const matched: Array<{ category: string; vibe: string; reason: string; score: number }> = [];
+
+  for (const entry of CATEGORY_KEYWORDS) {
+    let score = 0;
+    for (const kw of entry.keywords) {
+      if (lower.includes(kw)) score += kw.length; // longer matches score higher
+    }
+    if (score > 0) matched.push({ category: entry.category, vibe: entry.vibe, reason: entry.reason, score });
+  }
+
+  matched.sort((a, b) => b.score - a.score);
+  return matched.slice(0, 3).map(({ category, vibe, reason }) => ({ category, vibe, reason }));
+}
+
+router.post("/compass/create-suggestions", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+
+  const parsed = createSuggestionsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
+    return;
+  }
+
+  const { titleDraft } = parsed.data;
+  const suggestions = inferEventCategories(titleDraft);
+
+  res.json({ suggestions, type: "event" });
+});
+
+// ── Reason text helper ────────────────────────────────────────────────────────
+function buildReasonText(type: string, explanationKey: string | undefined, city: string | null): string {
+  if (explanationKey) {
+    if (type === "event") return "Upcoming event matching your interests";
+    if (type === "place" || type === "hidden_gem") return "Hidden gem near your destination";
+    if (type === "user" || type === "traveler") return "Traveler you may want to follow";
+  }
+  if (city) return `Top pick in ${city}`;
+  return "Recommended for you";
+}
 
 // ── GET /api/compass/debug/recommendations ────────────────────────────────────
 // Admin-only debug view of recent served recommendations.

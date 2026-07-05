@@ -18,10 +18,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem } from "./types.js";
 import type { CompassProfile } from "./types.js";
 
-const POSTS_WINDOW_HOURS = 72;
-const MAX_POSTS   = 50;
-const MAX_BUDDIES = 30;
-const MAX_PLACES  = 20;
+const POSTS_WINDOW_HOURS  = 72;
+const MAX_POSTS    = 50;
+const MAX_BUDDIES  = 30;
+const MAX_PLACES   = 20;
+const MAX_EVENTS       = 30;
+const EVENTS_WINDOW_DAYS = 30;
+const MAX_HIDDEN_GEMS  = 20;
 
 // ── Posts ─────────────────────────────────────────────────────────────────────
 
@@ -122,6 +125,98 @@ async function fetchBuddies(db: SupabaseClient): Promise<CompassItem[]> {
   }
 }
 
+// ── Events ────────────────────────────────────────────────────────────────────
+
+async function fetchEvents(
+  db: SupabaseClient,
+  profile: CompassProfile,
+): Promise<CompassItem[]> {
+  try {
+    const now        = new Date().toISOString();
+    const windowEnd  = new Date(Date.now() + EVENTS_WINDOW_DAYS * 86_400_000).toISOString();
+
+    // Fetch upcoming public events (city-biased when city is known)
+    const baseQuery = () =>
+      db
+        .from("events")
+        .select("id, host_id, title, category, starts_at, ends_at, city, max_attendees, attendee_count, visibility, status")
+        .eq("visibility", "public")
+        .eq("status", "published")
+        .gte("starts_at", now)
+        .lte("starts_at", windowEnd)
+        .limit(MAX_EVENTS);
+
+    let rawEvents: any[] = [];
+    if (profile.currentCity) {
+      const [cityRes, globalRes] = await Promise.all([
+        baseQuery().ilike("city", profile.currentCity),
+        baseQuery(),
+      ]);
+      const seen = new Set<string>();
+      for (const ev of [...(cityRes.data ?? []), ...(globalRes.data ?? [])]) {
+        if (!seen.has(ev.id)) { seen.add(ev.id); rawEvents.push(ev); }
+      }
+    } else {
+      const { data } = await baseQuery();
+      rawEvents = (data as any[]) ?? [];
+    }
+
+    if (rawEvents.length === 0) return [];
+
+    // Fetch viewer's following list to compute attendingFriendCount
+    const { data: followRows } = await db
+      .from("user_follows")
+      .select("following_id")
+      .eq("follower_id", profile.userId);
+
+    const followingSet = new Set<string>(
+      ((followRows ?? []) as any[]).map((r: any) => r.following_id as string),
+    );
+
+    // Fetch all going RSVPs for these events
+    const eventIds = rawEvents.map((e: any) => e.id as string);
+    const rsvpCount = new Map<string, number>();
+
+    if (followingSet.size > 0) {
+      const { data: rsvpRows } = await db
+        .from("event_rsvps")
+        .select("event_id, user_id")
+        .in("event_id", eventIds)
+        .eq("status", "going");
+
+      for (const rsvp of (rsvpRows ?? []) as any[]) {
+        if (followingSet.has(rsvp.user_id as string)) {
+          rsvpCount.set(rsvp.event_id, (rsvpCount.get(rsvp.event_id) ?? 0) + 1);
+        }
+      }
+    }
+
+    return rawEvents.map((event: any): CompassItem => ({
+      id:                   String(event.id),
+      type:                 "event",
+      authorId:             event.host_id ?? undefined,
+      city:                 event.city ?? null,
+      capacity:             event.max_attendees ?? undefined,
+      currentAttendees:     event.attendee_count ?? undefined,
+      visibilityScope:      "public",
+      qualityScore:         6,
+      createdAt:            event.starts_at,
+      attendingFriendCount: rsvpCount.get(event.id) ?? 0,
+      data: {
+        id:         event.id,
+        title:      event.title,
+        category:   event.category,
+        startsAt:   event.starts_at,
+        endsAt:     event.ends_at,
+        city:       event.city,
+        visibility: event.visibility,
+      },
+    }));
+  } catch {
+    return [];
+  }
+}
+
 // ── Community discovery places ────────────────────────────────────────────────
 
 async function fetchPlaces(
@@ -139,7 +234,7 @@ async function fetchPlaces(
 
     return ((data as any[]) ?? []).map((place): CompassItem => ({
       id:              `place:${place.id}`,
-      type:            "suggestion",
+      type:            "place",
       authorId:        place.submitted_by ?? undefined,
       contentBody:     place.name,
       interestTags:    [place.category].filter(Boolean),
@@ -147,6 +242,43 @@ async function fetchPlaces(
       qualityScore:    place.rating ? Math.min(10, (place.rating as number) * 2) : 5,
       visibilityScope: "public",
       createdAt:       place.created_at,
+      // Raw DB id stored in data so frontend can build the correct navigation path
+      data: { id: String(place.id), name: place.name, category: place.category, city: place.city },
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// ── Hidden gems ───────────────────────────────────────────────────────────────
+
+async function fetchHiddenGems(
+  db: SupabaseClient,
+  profile: CompassProfile,
+): Promise<CompassItem[]> {
+  if (!profile.currentCity) return [];
+  try {
+    const { data } = await db
+      .from("hidden_gems")
+      .select("id, name, description, city, country, submitted_by, category, created_at")
+      .ilike("city", profile.currentCity)
+      .in("status", ["approved", "active"])
+      .order("created_at", { ascending: false })
+      .limit(MAX_HIDDEN_GEMS);
+
+    return ((data as any[]) ?? []).map((gem): CompassItem => ({
+      id:              `gem:${gem.id}`,
+      type:            "hidden_gem",
+      authorId:        gem.submitted_by ?? undefined,
+      contentBody:     gem.name,
+      interestTags:    [gem.category].filter(Boolean),
+      city:            gem.city ?? null,
+      country:         gem.country ?? null,
+      qualityScore:    7,
+      visibilityScope: "public",
+      createdAt:       gem.created_at,
+      // Raw DB id stored in data so frontend routes to /gems/:id correctly
+      data: { id: String(gem.id), name: gem.name, category: gem.category, city: gem.city, country: gem.country },
     }));
   } catch {
     return [];
@@ -163,16 +295,20 @@ export async function hydrateCompassItems(
   db: SupabaseClient,
   profile: CompassProfile,
 ): Promise<CompassItem[]> {
-  const [posts, buddies, places] = await Promise.allSettled([
+  const [posts, buddies, places, events, hiddenGems] = await Promise.allSettled([
     fetchPosts(db, profile),
     fetchBuddies(db),
     fetchPlaces(db, profile),
+    fetchEvents(db, profile),
+    fetchHiddenGems(db, profile),
   ]);
 
   const allItems: CompassItem[] = [
-    ...(posts.status   === "fulfilled" ? posts.value   : []),
-    ...(buddies.status === "fulfilled" ? buddies.value : []),
-    ...(places.status  === "fulfilled" ? places.value  : []),
+    ...(posts.status       === "fulfilled" ? posts.value       : []),
+    ...(buddies.status     === "fulfilled" ? buddies.value     : []),
+    ...(places.status      === "fulfilled" ? places.value      : []),
+    ...(events.status      === "fulfilled" ? events.value      : []),
+    ...(hiddenGems.status  === "fulfilled" ? hiddenGems.value  : []),
   ];
 
   // Exclude blocked users

@@ -51,6 +51,8 @@ interface TypeWeights {
   safetyCompatibility:    number;
   diversityBoost:         number;
   fairExposureBoost:      number;
+  /** Boost for events where followed users or trip crew are attending. */
+  attendanceBoost:        number;
 }
 
 const TYPE_WEIGHTS: Record<string, TypeWeights> = {
@@ -62,11 +64,12 @@ const TYPE_WEIGHTS: Record<string, TypeWeights> = {
     trustBoost:             8,
     languageMatch:          7,
     qualitySignal:         10,
-    contextBoost:           5,
+    contextBoost:           3,
     socialCompatibility:    4,
-    safetyCompatibility:    3,
-    diversityBoost:         2,
-    fairExposureBoost:      1,
+    safetyCompatibility:    0,
+    diversityBoost:         0,
+    fairExposureBoost:      0,
+    attendanceBoost:        8,
   },
   post: {
     freshnessHalfLifeDays: 7,
@@ -81,6 +84,7 @@ const TYPE_WEIGHTS: Record<string, TypeWeights> = {
     safetyCompatibility:    3,
     diversityBoost:         2,
     fairExposureBoost:      3,
+    attendanceBoost:        0,
   },
   user: {
     freshnessHalfLifeDays: 90,
@@ -95,6 +99,7 @@ const TYPE_WEIGHTS: Record<string, TypeWeights> = {
     safetyCompatibility:    5,
     diversityBoost:         0,
     fairExposureBoost:      0,
+    attendanceBoost:        0,
   },
   buddy: {
     freshnessHalfLifeDays: 90,
@@ -109,6 +114,7 @@ const TYPE_WEIGHTS: Record<string, TypeWeights> = {
     safetyCompatibility:    2,
     diversityBoost:         0,
     fairExposureBoost:      0,
+    attendanceBoost:        0,
   },
   trip: {
     freshnessHalfLifeDays: 14,
@@ -123,6 +129,7 @@ const TYPE_WEIGHTS: Record<string, TypeWeights> = {
     safetyCompatibility:    2,
     diversityBoost:         0,
     fairExposureBoost:      0,
+    attendanceBoost:        0,
   },
   stamp: {
     freshnessHalfLifeDays: 30,
@@ -137,6 +144,7 @@ const TYPE_WEIGHTS: Record<string, TypeWeights> = {
     safetyCompatibility:    0,
     diversityBoost:         2,
     fairExposureBoost:      0,
+    attendanceBoost:        0,
   },
   notification: {
     freshnessHalfLifeDays: 1,
@@ -151,6 +159,7 @@ const TYPE_WEIGHTS: Record<string, TypeWeights> = {
     safetyCompatibility:    0,
     diversityBoost:         0,
     fairExposureBoost:      0,
+    attendanceBoost:        0,
   },
   suggestion: {
     freshnessHalfLifeDays: 14,
@@ -165,6 +174,7 @@ const TYPE_WEIGHTS: Record<string, TypeWeights> = {
     safetyCompatibility:    0,
     diversityBoost:         0,
     fairExposureBoost:      0,
+    attendanceBoost:        0,
   },
 };
 
@@ -182,6 +192,7 @@ const DEFAULT_WEIGHTS: TypeWeights = {
   safetyCompatibility:    3,
   diversityBoost:         1,
   fairExposureBoost:      1,
+  attendanceBoost:        0,
 };
 
 // ── Component calculation functions ──────────────────────────────────────────
@@ -325,6 +336,19 @@ function calcFairExposureBoost(fairExposureScore: number | undefined, max: numbe
   return Math.min(max, Math.max(0, fairExposureScore) * max);
 }
 
+/**
+ * Attendance boost (0–max, events only).
+ * Rewards events where followed users or trip crew members are attending.
+ * The boost scales logarithmically: 1 friend → 50%, 3+ → 75–100%.
+ * Passed in via item.attendingFriendCount (optional numeric field on the item).
+ */
+function calcAttendanceBoost(attendingFriendCount: number | undefined | null, max: number): number {
+  if (max === 0 || !attendingFriendCount || attendingFriendCount <= 0) return 0;
+  // log₂(count+1) / log₂(6) → saturates at ~5 friends
+  const ratio = Math.min(1, Math.log2(attendingFriendCount + 1) / Math.log2(6));
+  return Math.min(max, max * ratio);
+}
+
 // ── Penalty calculation functions ─────────────────────────────────────────────
 
 /** Report penalty (0–15). Scaled by report count. */
@@ -380,6 +404,7 @@ export interface ScoreComponents {
   safetyCompatibility:  number;
   diversityBoost:       number;
   fairExposureBoost:    number;
+  attendanceBoost:      number;
   reportPenalty:        number;
   repetitionPenalty:    number;
   spamPenalty:          number;
@@ -415,6 +440,7 @@ function computeComponents(
     safetyCompatibility: calcSafetyCompatibility(item.safetyTier as string | undefined, profile.safetyPreference, w.safetyCompatibility),
     diversityBoost:      calcDiversityBoost(item.diversityScore as number | undefined, w.diversityBoost),
     fairExposureBoost:   calcFairExposureBoost(item.fairExposureScore as number | undefined, w.fairExposureBoost),
+    attendanceBoost:     calcAttendanceBoost(item.attendingFriendCount as number | undefined, w.attendanceBoost),
     // Penalties
     reportPenalty:       calcReportPenalty(item.reportCount),
     repetitionPenalty:   calcRepetitionPenalty(item.repeatCount),
@@ -429,7 +455,7 @@ function finalizeScore(c: ScoreComponents): number {
     c.interestMatch + c.cityMatch + c.freshness + c.trustBoost +
     c.languageMatch + c.qualitySignal + c.contextBoost +
     c.socialCompatibility + c.safetyCompatibility +
-    c.diversityBoost + c.fairExposureBoost -
+    c.diversityBoost + c.fairExposureBoost + c.attendanceBoost -
     c.reportPenalty - c.repetitionPenalty - c.spamPenalty -
     c.expiredSoonPenalty - c.riskPenalty;
   return Math.min(100, Math.max(0, raw));
@@ -490,7 +516,7 @@ export function scoreItem(
         interestMatch: 0, cityMatch: 0, freshness: 0, trustBoost: 0,
         languageMatch: 0, qualitySignal: 0, contextBoost: 0,
         socialCompatibility: 0, safetyCompatibility: 0,
-        diversityBoost: 0, fairExposureBoost: 0,
+        diversityBoost: 0, fairExposureBoost: 0, attendanceBoost: 0,
         reportPenalty: 0, repetitionPenalty: 0, spamPenalty: 0,
         expiredSoonPenalty: 0, riskPenalty: 0,
       },

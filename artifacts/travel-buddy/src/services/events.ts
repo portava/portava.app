@@ -465,6 +465,7 @@ export interface EventDraft {
   title?: string;
   description?: string;
   category?: string;
+  vibe?: string;
   startsAt?: string;
   endsAt?: string;
   locationName?: string;

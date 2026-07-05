@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, Component, type ErrorInfo, type ReactNode } from 'react';
 import { View, Text, Image, Pressable, ScrollView, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import Svg, { Path } from 'react-native-svg';
@@ -8,6 +8,8 @@ import {
   MessageCircle, ShieldCheck, ImagePlus, Info, X,
 } from 'lucide-react-native';
 import { useTripSavedPlaces } from '../hooks/useTripSavedPlaces';
+import { fetchCompassTripBrief, type CompassRecommendation } from '../services/compass';
+import { createPlanItem } from '../services/tripPlan';
 import type { BookmarkedPlace } from '../services/discoveryBookmarks';
 import type { TripDetail, SavedIdea, TimelineDay, PassportStamp, User } from '../types/models';
 import type { TripPlan, TripPlanStatus } from '../__fixtures__/tripDetail';
@@ -539,30 +541,162 @@ export function TripCircle({ cityCount, inCity, suggested, currentUserId, tripId
 }
 
 /* ── Compass Trip Brief ── */
-export function CompassTripBrief() {
-  const prompts = ['Build tonight from saved ideas', 'Find plans that fit my availability', 'Summarize this trip', 'Suggest what to do next'];
+
+interface CompassTripBriefProps {
+  tripId?: string;
+  city?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
+const TYPE_ICONS: Record<string, string> = {
+  event: '🗓',
+  place: '📍',
+  hidden_gem: '💎',
+  stamp: '🛂',
+};
+
+// ── Error boundary for Compass Trip Brief ────────────────────────────────────
+// Prevents any unexpected render error inside the brief from crashing the whole
+// trip detail screen.
+
+export class CompassBriefErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError(_error: Error) {
+    return { hasError: true };
+  }
+
+  componentDidCatch(_error: Error, _info: ErrorInfo) {
+    // Silently suppress — brief errors should never surface to the user
+  }
+
+  render() {
+    if (this.state.hasError) return null;
+    return this.props.children;
+  }
+}
+
+function briefItemRoute(item: CompassRecommendation): string {
+  if (item.type === 'event') {
+    // event.id is a raw UUID from the hydrator
+    return `/event/${item.id}`;
+  }
+  if (item.type === 'hidden_gem') {
+    // data.id is the raw UUID; the prefixed item.id is "gem:<uuid>"
+    const rawId = (item.data?.id as string | undefined) ?? item.id.replace(/^gem:/, '');
+    return `/gems/${rawId}`;
+  }
+  if (item.type === 'place') {
+    // No standalone place detail route exists — navigate to Discovery tab
+    return '/(tabs)/discovery';
+  }
+  return '/(tabs)/discovery';
+}
+
+const CAN_ADD_TO_PLAN = new Set(['event', 'place', 'hidden_gem']);
+
+function BriefItemCard({ item, tripId }: { item: CompassRecommendation; tripId?: string }) {
+  const icon = TYPE_ICONS[item.type] ?? '✨';
+  const [adding, setAdding] = useState(false);
+  const [added, setAdded]   = useState(false);
+
+  async function handleAddToPlan() {
+    if (!tripId || added || adding) return;
+    setAdding(true);
+    try {
+      await createPlanItem(tripId, {
+        title:      item.title ?? 'Compass pick',
+        category:   item.type === 'event' ? 'activity' : 'activity',
+        sourceType: item.type === 'event' ? 'meetup' : item.type === 'place' || item.type === 'hidden_gem' ? 'place' : undefined,
+        sourceId:   item.id || undefined,
+        locationName: item.city ?? undefined,
+        notes:      item.reason ?? undefined,
+      });
+      setAdded(true);
+    } catch {
+      Alert.alert('Could not add', 'Try again in a moment.');
+    } finally {
+      setAdding(false);
+    }
+  }
+
   return (
-    <View>
-      <TravelSectionHeader title="Compass Trip Brief" />
-      <View style={cb.card}>
-        <View style={cb.head}>
-          <View style={cb.icon}><Sparkles size={18} color={color.onInk} /></View>
-          <View style={{ flex: 1 }}>
-            <Text style={cb.title}>Let Compass build your perfect night</Text>
-            <Text style={cb.sub}>Based on your trip city, dates, saved ideas, and availability.</Text>
-          </View>
-        </View>
-        <Pressable style={cb.cta} onPress={() => router.push('/(tabs)/ai')}>
-          <Sparkles size={16} color={color.onInk} /><Text style={cb.ctaText}>Ask Compass</Text>
-        </Pressable>
-        <View style={cb.chips}>
-          {prompts.map((pr) => (
-            <Pressable key={pr} style={cb.chip} onPress={() => router.push('/(tabs)/ai')}>
-              <Text style={cb.chipText}>{pr}</Text>
-            </Pressable>
-          ))}
+    <View style={cb.itemCard}>
+      <View style={cb.itemHead}>
+        <Text style={cb.itemIcon}>{icon}</Text>
+        <View style={cb.itemTypeChip}>
+          <Text style={cb.itemTypeText}>{item.type.replace('_', ' ')}</Text>
         </View>
       </View>
+      <Text style={cb.itemTitle} numberOfLines={2}>{item.title ?? 'Compass pick'}</Text>
+      {item.city ? <Text style={cb.itemCity} numberOfLines={1}>📍 {item.city}</Text> : null}
+      <Text style={cb.itemReason} numberOfLines={2}>{item.reason}</Text>
+      <View style={cb.itemBtnRow}>
+        <Pressable style={[cb.itemBtn, cb.itemBtnView]} onPress={() => router.push(briefItemRoute(item) as any)}>
+          <Text style={cb.itemBtnText}>View</Text>
+        </Pressable>
+        {tripId && CAN_ADD_TO_PLAN.has(item.type) && (
+          <Pressable
+            style={[cb.itemBtn, cb.itemBtnPlan, added && cb.itemBtnAdded]}
+            onPress={handleAddToPlan}
+            disabled={adding || added}
+          >
+            {adding ? (
+              <ActivityIndicator size="small" color={color.signal} />
+            ) : (
+              <Text style={[cb.itemBtnText, { color: added ? color.success : color.signal }]}>
+                {added ? '✓ Added' : '+ Plan'}
+              </Text>
+            )}
+          </Pressable>
+        )}
+      </View>
+    </View>
+  );
+}
+
+export function CompassTripBrief({ tripId, city, startDate, endDate }: CompassTripBriefProps) {
+  const [expanded, setExpanded]     = useState(true);
+  const [items, setItems]           = useState<CompassRecommendation[]>([]);
+  const [loading, setLoading]       = useState(false);
+  const [fetched, setFetched]       = useState(false);
+
+  useEffect(() => {
+    if (!city && !tripId) { setFetched(true); return; }
+    setLoading(true);
+    fetchCompassTripBrief({ tripId: tripId ?? '', city, startDate, endDate, limit: 6 })
+      .then((res) => {
+        if (res.ok && res.data) setItems(res.data.recommendations);
+      })
+      .catch(() => {})
+      .finally(() => { setLoading(false); setFetched(true); });
+  }, [tripId, city, startDate, endDate]);
+
+  // Hide entirely when loaded with no items (Compass disabled, no results, or no city)
+  if (fetched && items.length === 0 && !loading) return null;
+
+  return (
+    <View>
+      <TravelSectionHeader
+        title="Compass Brief"
+        onAction={() => setExpanded((v) => !v)}
+        actionLabel={expanded ? 'Collapse' : 'Expand'}
+      />
+      {loading && (
+        <View style={cb.loadingRow}>
+          <ActivityIndicator size="small" color={color.signal} />
+          <Text style={cb.loadingText}>Loading recommendations…</Text>
+        </View>
+      )}
+      {!loading && expanded && items.length > 0 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={cb.strip}>
+          {items.map((item) => <BriefItemCard key={item.id} item={item} tripId={tripId} />)}
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -818,16 +952,42 @@ const cr = StyleSheet.create({
 });
 
 const cb = StyleSheet.create({
-  card: { marginHorizontal: space.lg, backgroundColor: color.ink, borderRadius: radius.lg, padding: space.lg, gap: space.md, ...shadow.card },
-  head: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  icon: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
-  title: { ...t.bodyStrong, color: color.onInk, fontSize: 16 },
-  sub: { ...t.small, color: color.onInkMute, marginTop: 1 },
-  cta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: space.md },
-  ctaText: { ...t.bodyStrong, color: color.onInk },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
-  chip: { backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: radius.pill, paddingHorizontal: space.md, paddingVertical: space.sm },
-  chipText: { ...t.small, color: color.onInk, fontWeight: '600', fontSize: 12 },
+  card:        { marginHorizontal: space.lg, backgroundColor: color.ink, borderRadius: radius.lg, padding: space.lg, gap: space.md, ...shadow.card },
+  emptyCard:   { marginHorizontal: space.lg, backgroundColor: color.ink, borderRadius: radius.lg, padding: space.lg, gap: space.md, ...shadow.card },
+  head:        { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  icon:        { width: 40, height: 40, borderRadius: 20, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  title:       { ...t.bodyStrong, color: color.onInk, fontSize: 16 },
+  sub:         { ...t.small, color: color.onInkMute, marginTop: 1 },
+  cta:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: space.md },
+  ctaText:     { ...t.bodyStrong, color: color.onInk },
+  chips:       { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  chip:        { backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: radius.pill, paddingHorizontal: space.md, paddingVertical: space.sm },
+  chipText:    { ...t.small, color: color.onInk, fontWeight: '600' as const, fontSize: 12 },
+  loadingRow:  { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, paddingVertical: space.md },
+  loadingText: { ...t.small, color: color.mute, fontSize: 12 },
+  strip:       { gap: space.sm, paddingHorizontal: space.lg, paddingVertical: space.sm },
+  itemCard:    {
+    width: 172,
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: color.haze,
+    padding: space.md,
+    gap: space.xs,
+  },
+  itemHead:     { flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  itemIcon:     { fontSize: 16 },
+  itemTypeChip: { backgroundColor: color.signal + '15', borderRadius: radius.pill, paddingHorizontal: 6, paddingVertical: 2 },
+  itemTypeText: { ...t.small, color: color.signal, fontSize: 9, fontWeight: '700' as const, textTransform: 'uppercase' as const, letterSpacing: 0.4 },
+  itemTitle:    { ...t.bodyStrong, color: color.ink, fontSize: 13, lineHeight: 17 },
+  itemCity:     { ...t.small, color: color.faint, fontSize: 10 },
+  itemReason:   { ...t.small, color: color.mute, fontSize: 10, fontStyle: 'italic' as const, lineHeight: 13 },
+  itemBtnRow:   { marginTop: 2, flexDirection: 'row' as const, gap: 4 },
+  itemBtn:      { flex: 1, borderRadius: radius.sm, paddingVertical: 7, alignItems: 'center' as const, justifyContent: 'center' as const },
+  itemBtnView:  { backgroundColor: color.ink },
+  itemBtnPlan:  { backgroundColor: color.signal + '15', borderWidth: 1, borderColor: color.signal + '40' },
+  itemBtnAdded: { backgroundColor: color.success + '12', borderColor: color.success + '30' },
+  itemBtnText:  { ...t.small, color: color.onInk, fontWeight: '700' as const, fontSize: 11 },
 });
 
 const ts = StyleSheet.create({

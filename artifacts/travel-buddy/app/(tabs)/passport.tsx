@@ -34,6 +34,7 @@ import type { OwnProfile, PassportPostcard } from '../../src/types/models';
 import type { TripRow } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { CompassStatusCard } from '../../src/components/compass/CompassStatusCard';
+import { CompassPassportSuggestions } from '../../src/components/compass/CompassPassportSuggestions';
 
 type Tab = 'postcards' | 'stamps' | 'trips' | 'map';
 const TABS: { key: Tab; label: string }[] = [
@@ -448,6 +449,9 @@ function PassportContent({
 
         {/* Compass active-user status (owner only, hides itself when opted out) */}
         <CompassStatusCard />
+
+        {/* Compass "Suggested for You" — personalised recommendations (owner only) */}
+        <CompassPassportSuggestions isOwner />
 
         {/* Tab bar — full-width segmented control */}
         <View style={styles.tabBarWrap}>

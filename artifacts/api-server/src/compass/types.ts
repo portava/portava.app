@@ -169,7 +169,10 @@ export type CompassItemType =
   | 'trip'
   | 'stamp'
   | 'notification'
-  | 'suggestion';
+  | 'suggestion'
+  | 'place'
+  | 'hidden_gem'
+  | 'traveler';
 
 /**
  * Universal content item interface for the Compass pipeline.

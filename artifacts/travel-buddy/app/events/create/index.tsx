@@ -27,12 +27,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, ChevronRight, ChevronLeft,
   CalendarClock, MapPin, Settings2, Eye, FileEdit,
-  Users, Lock, Clock, Shield, Ticket, UserPlus, Camera, X,
+  Users, Lock, Clock, Shield, Ticket, UserPlus, Camera, X, Sparkles,
 } from 'lucide-react-native';
 import {
   createEvent, createDraft, updateDraft, publishDraft, getDraft, inviteUserToEvent,
   type EventVisibility, type EventRsvpStatus, type EventDraft,
 } from '../../../src/services/events';
+import { postCompassCreateSuggestions, type CompassCreateSuggestion } from '../../../src/services/compass';
 import { getMyCircles, type CircleRow } from '../../../src/services/circles';
 import { listMyTrips, type TripRow } from '../../../src/services/trips';
 import { searchUsers, type TravelerSearchResult } from '../../../src/services/follows';
@@ -91,6 +92,12 @@ export default function CreateEventScreen() {
   const [title, setTitle] = useState(preTitle ?? '');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
+  const [vibe, setVibe] = useState('');
+
+  // ── Compass create-suggestions (category hints) ──────────────────────────────
+  const [compassSuggestions, setCompassSuggestions] = useState<CompassCreateSuggestion[]>([]);
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<string>>(new Set());
+  const compassSuggestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Step 2: Date/Time ───────────────────────────────────────────────────────
   const [startDate, setStartDate] = useState<Date | null>(null);
@@ -151,6 +158,25 @@ export default function CreateEventScreen() {
   useEffect(() => {
     if (draftIdParam) loadDraft(draftIdParam);
   }, [draftIdParam]);
+
+  // ── Compass category hints — debounced on title change ───────────────────────
+  useEffect(() => {
+    if (compassSuggestTimer.current) clearTimeout(compassSuggestTimer.current);
+    if (title.trim().length < 3) { setCompassSuggestions([]); return; }
+    compassSuggestTimer.current = setTimeout(() => {
+      postCompassCreateSuggestions({ type: 'event', titleDraft: title.trim() })
+        .then((res) => {
+          if (res.ok && res.suggestions) {
+            setCompassSuggestions(res.suggestions);
+            setDismissedSuggestions(new Set());
+          }
+        })
+        .catch(() => {});
+    }, 600);
+    return () => {
+      if (compassSuggestTimer.current) clearTimeout(compassSuggestTimer.current);
+    };
+  }, [title]);
 
   async function loadDraft(id: string) {
     const res = await getDraft(id);
@@ -321,6 +347,7 @@ export default function CreateEventScreen() {
       title: title.trim() || undefined,
       description: description.trim() || undefined,
       category: category.trim() || undefined,
+      vibe: vibe.trim() || undefined,
       startsAt: startDate?.toISOString(),
       endsAt: endDate?.toISOString(),
       locationName: locationName.trim() || undefined,
@@ -553,6 +580,52 @@ export default function CreateEventScreen() {
                 maxLength={200}
                 autoFocus
               />
+
+              {/* ── Compass category hints ── */}
+              {compassSuggestions.filter((s) => !dismissedSuggestions.has(s.category)).length > 0 && (
+                <View style={styles.compassHintsRow}>
+                  <View style={styles.compassHintsLabel}>
+                    <Sparkles size={10} color={color.signal} />
+                    <Text style={styles.compassHintsLabelText}>Compass suggests:</Text>
+                  </View>
+                  <View style={styles.compassChips}>
+                    {compassSuggestions
+                      .filter((s) => !dismissedSuggestions.has(s.category))
+                      .map((s) => (
+                        <View key={s.category} style={styles.compassChip}>
+                          <Pressable
+                            style={styles.compassChipInner}
+                            onPress={() => {
+                              setCategory(s.category);
+                              if (s.vibe) setVibe(s.vibe);
+                              setDismissedSuggestions((prev) => {
+                                const next = new Set(prev);
+                                next.add(s.category);
+                                return next;
+                              });
+                              scheduleSave();
+                            }}
+                          >
+                            <Text style={styles.compassChipText}>{s.category}</Text>
+                          </Pressable>
+                          <Pressable
+                            hitSlop={6}
+                            onPress={() => {
+                              setDismissedSuggestions((prev) => {
+                                const next = new Set(prev);
+                                next.add(s.category);
+                                return next;
+                              });
+                            }}
+                          >
+                            <X size={10} color={color.mute} />
+                          </Pressable>
+                        </View>
+                      ))}
+                  </View>
+                </View>
+              )}
+
               <Text style={styles.label}>Description</Text>
               <TextInput
                 style={[styles.input, styles.textarea]}
@@ -1201,6 +1274,13 @@ const styles = StyleSheet.create({
   coverPickerSub:       { ...t.small, color: color.faint },
   coverUploadedRow:     { flexDirection: 'row', alignItems: 'center', gap: 6 },
   coverUploadedText:    { ...t.small, color: color.success, fontWeight: '600' },
+  compassHintsRow:      { gap: space.xs, marginTop: space.xs },
+  compassHintsLabel:    { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  compassHintsLabelText:{ ...t.small, color: color.signal, fontSize: 11, fontWeight: '600' },
+  compassChips:         { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs },
+  compassChip:          { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: color.signal + '12', borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: 5 },
+  compassChipInner:     { flexDirection: 'row', alignItems: 'center' },
+  compassChipText:      { ...t.small, color: color.signal, fontSize: 12, fontWeight: '600' },
   reviewCover:          { width: '100%', aspectRatio: 16 / 9, borderRadius: radius.md, marginBottom: space.xs },
   reviewCard:           { backgroundColor: color.paperRaised, borderRadius: radius.lg, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: space.sm, marginBottom: space.md, overflow: 'hidden' },
   reviewTitle:       { ...t.title, color: color.ink, fontWeight: '800', fontSize: 18 },

@@ -3,7 +3,6 @@
  *
  * Uses the same authedFetch / freshToken pattern as intelligence.ts.
  */
-import { Platform } from 'react-native';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 type AsyncStorageStub = {
@@ -12,13 +11,24 @@ type AsyncStorageStub = {
   removeItem(k: string): Promise<void>;
 };
 const getStorage = (): AsyncStorageStub | null => {
-  if (Platform.OS === 'web') return null;
-  return require('@react-native-async-storage/async-storage').default as AsyncStorageStub;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { Platform } = require('react-native') as { Platform: { OS: string } };
+    if (Platform.OS === 'web') return null;
+    return require('@react-native-async-storage/async-storage').default as AsyncStorageStub;
+  } catch {
+    return null;
+  }
 };
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
+let _testAuthToken: string | null = null;
+/** For tests only — override the token used by authedFetch. */
+export function _setTestAuthToken(t: string | null): void { _testAuthToken = t; }
+
 async function freshToken(): Promise<string | null> {
+  if (_testAuthToken !== null) return _testAuthToken;
   const { data: refreshed } = await supabase.auth.refreshSession();
   const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
   return session?.access_token ?? null;
@@ -377,16 +387,16 @@ export async function postCompassAsk(
   }
 }
 
-// ── Compass recommendations (search surface) ──────────────────────────────────
+// ── Compass recommendations ───────────────────────────────────────────────────
 
 export interface CompassRecommendation {
-  id: string;
-  type: string;
+  id:       string;
+  type:     string;
   category: string;
-  title?: string;
-  reason?: string;
-  city?: string;
-  data?: Record<string, unknown>;
+  title?:   string;
+  reason?:  string;
+  city?:    string;
+  data?:    Record<string, unknown>;
 }
 
 export interface CompassRecommendationsResponse {
@@ -395,21 +405,72 @@ export interface CompassRecommendationsResponse {
 }
 
 export async function fetchCompassRecommendations(params: {
-  surface?: string;
-  q?: string;
-  city?: string;
-  limit?: number;
+  surface?:   string;
+  q?:         string;
+  city?:      string;
+  limit?:     number;
+  startDate?: string;
+  endDate?:   string;
+  tripId?:    string;
 } = {}): Promise<{ ok: boolean; data?: CompassRecommendationsResponse; error?: string }> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();
   try {
     const qs = new URLSearchParams();
-    if (params.surface) qs.set('surface', params.surface);
-    if (params.q)       qs.set('q', params.q);
-    if (params.city)    qs.set('city', params.city);
+    if (params.surface)   qs.set('surface', params.surface);
+    if (params.q)         qs.set('q', params.q);
+    if (params.city)      qs.set('city', params.city);
     if (params.limit != null) qs.set('limit', String(params.limit));
+    if (params.startDate) qs.set('startDate', params.startDate);
+    if (params.endDate)   qs.set('endDate', params.endDate);
+    if (params.tripId)    qs.set('tripId', params.tripId);
     const r = await authedFetch(`/api/compass/recommendations?${qs.toString()}`);
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     return { ok: true, data: await r.json() };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+// ── Trip brief (surface=trip shorthand) ───────────────────────────────────────
+
+export async function fetchCompassTripBrief(params: {
+  tripId:     string;
+  city?:      string;
+  startDate?: string;
+  endDate?:   string;
+  limit?:     number;
+}): Promise<{ ok: boolean; data?: CompassRecommendationsResponse; error?: string }> {
+  return fetchCompassRecommendations({
+    surface:   'trip',
+    city:      params.city,
+    startDate: params.startDate,
+    endDate:   params.endDate,
+    limit:     params.limit ?? 6,
+    tripId:    params.tripId,
+  });
+}
+
+// ── Create suggestions ────────────────────────────────────────────────────────
+
+export interface CompassCreateSuggestion {
+  category: string;
+  vibe:     string;
+  reason:   string;
+}
+
+export async function postCompassCreateSuggestions(params: {
+  type: 'event';
+  titleDraft: string;
+}): Promise<{ ok: boolean; suggestions?: CompassCreateSuggestion[]; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch('/api/compass/create-suggestions', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const data = await r.json();
+    return { ok: true, suggestions: data.suggestions ?? [] };
   } catch {
     return { ok: false, error: 'network_error' };
   }
