@@ -11,16 +11,11 @@ import {
   previewInviteLink, acceptInviteByToken,
   type InvitePreview,
 } from '../../src/services/trips';
+import {
+  mapInvitePreviewToScreenState,
+  type ScreenState,
+} from '../../src/lib/invitePreviewMapper';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
-
-type ScreenState =
-  | { kind: 'loading' }
-  | { kind: 'not_authed' }
-  | { kind: 'gone'; message: string }
-  | { kind: 'error' }
-  | { kind: 'already_member'; tripId: string }
-  | { kind: 'terminal'; preview: InvitePreview; message: string }
-  | { kind: 'ready'; preview: InvitePreview };
 
 function formatDateRange(start: string | null, end: string | null): string {
   if (!start) return '';
@@ -42,23 +37,7 @@ export default function InviteLinkScreen() {
     if (!token) { setScreen({ kind: 'gone', message: 'Invalid invite link.' }); return; }
     setScreen({ kind: 'loading' });
     const result = await previewInviteLink(token);
-    if (result.error === 'not_authenticated') {
-      setScreen({ kind: 'not_authed' });
-    } else if (result.gone) {
-      setScreen({ kind: 'gone', message: 'This invite link has expired or been revoked.' });
-    } else if (!result.data) {
-      setScreen({ kind: 'error' });
-    } else if (result.data.alreadyMember) {
-      setScreen({ kind: 'already_member', tripId: result.data.tripId });
-    } else if (result.data.isTerminal) {
-      setScreen({
-        kind: 'terminal',
-        preview: result.data,
-        message: result.data.terminalReason ?? 'This trip is no longer active.',
-      });
-    } else {
-      setScreen({ kind: 'ready', preview: result.data });
-    }
+    setScreen(mapInvitePreviewToScreenState(result));
   }, [configured, isAuthed, token]);
 
   useEffect(() => { load(); }, [load]);

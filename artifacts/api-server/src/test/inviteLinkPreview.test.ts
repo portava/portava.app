@@ -1,0 +1,259 @@
+/**
+ * inviteLinkPreview.test.ts
+ *
+ * Focused tests for the isTerminal code path in:
+ *   GET /api/trips/invite-link/:token/preview
+ *
+ * Scenarios:
+ *   1. cancelled trip   → isTerminal: true,  terminalReason: "This trip is no longer active."
+ *   2. archived trip    → isTerminal: true,  terminalReason: "This trip is no longer active."
+ *   3. end_date < today → isTerminal: true,  terminalReason: "This trip has already ended."
+ *   4. active trip      → isTerminal: false, terminalReason: null
+ *   5. already a member → alreadyMember: true (isTerminal still computed but not the focus)
+ */
+import { describe, it, beforeEach, after } from "node:test";
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { Server } from "node:http";
+import app from "../app.js";
+import { _setTestClient } from "../lib/http.js";
+
+// ---------------------------------------------------------------------------
+// Fixed test IDs
+// ---------------------------------------------------------------------------
+const OWNER_ID   = "aa111111-aa11-aa11-aa11-aa1111111111";
+const VIEWER_ID  = "bb222222-bb22-bb22-bb22-bb2222222222";
+const TRIP_ID    = "cc333333-cc33-cc33-cc33-cc3333333333";
+const LINK_ID    = "dd444444-dd44-dd44-dd44-dd4444444444";
+const LINK_TOKEN = "preview-terminal-test-token-abcde12345";
+
+// ---------------------------------------------------------------------------
+// Fake-client factory
+// ---------------------------------------------------------------------------
+
+function makeClient(opts: {
+  tripStatus?: string | null;
+  endDate?: string | null;
+  viewerIsMember?: boolean;
+}) {
+  const {
+    tripStatus    = "upcoming",
+    endDate       = null,
+    viewerIsMember = false,
+  } = opts;
+
+  const client: any = {
+    auth: {
+      getUser: async (token: string) => {
+        if (token === "viewer-token") {
+          return { data: { user: { id: VIEWER_ID } }, error: null };
+        }
+        return { data: { user: null }, error: { message: "invalid" } };
+      },
+    },
+
+    from: (tableName: string) => {
+      const filters: Array<(r: any) => boolean> = [];
+
+      const obj: any = {
+        select()          { return obj; },
+        eq(col: string, val: any) {
+          filters.push((r: any) => r[col] === val);
+          return obj;
+        },
+        maybeSingle() {
+          if (tableName === "trip_invite_links") {
+            return Promise.resolve({
+              data: {
+                id:         LINK_ID,
+                trip_id:    TRIP_ID,
+                token:      LINK_TOKEN,
+                created_by: OWNER_ID,
+                max_uses:   null,
+                use_count:  0,
+                revoked_at: null,
+                expires_at: null,
+                created_at: "2026-01-01T00:00:00Z",
+              },
+              error: null,
+            });
+          }
+
+          if (tableName === "trips") {
+            return Promise.resolve({
+              data: {
+                id:                 TRIP_ID,
+                title:              "Test Trip",
+                destination_city:   "Rome",
+                destination_country: "Italy",
+                start_date:         "2099-06-01",
+                end_date:           endDate,
+                cover_url:          null,
+                owner_id:           OWNER_ID,
+                visibility:         "invite_only",
+                status:             tripStatus,
+              },
+              error: null,
+            });
+          }
+
+          if (tableName === "trip_members") {
+            const row = viewerIsMember
+              ? { trip_id: TRIP_ID, user_id: VIEWER_ID, role: "member", status: "accepted" }
+              : null;
+            return Promise.resolve({ data: row, error: null });
+          }
+
+          return Promise.resolve({ data: null, error: null });
+        },
+      };
+
+      return obj;
+    },
+  };
+
+  return client;
+}
+
+// ---------------------------------------------------------------------------
+// HTTP helper
+// ---------------------------------------------------------------------------
+async function startServer(): Promise<{ server: Server; port: number }> {
+  return new Promise((resolve) => {
+    const server = createServer(app);
+    server.listen(0, () => {
+      server.unref();
+      resolve({ server, port: (server.address() as any).port });
+    });
+  });
+}
+
+async function getPreview(
+  port: number,
+  token: string,
+  authToken: string = "viewer-token",
+): Promise<{ status: number; body: any }> {
+  const url = `http://127.0.0.1:${port}/api/trips/invite-link/${encodeURIComponent(token)}/preview`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  let body: any;
+  try {
+    body = res.headers.get("content-type")?.includes("application/json")
+      ? await res.json()
+      : await res.text();
+  } catch {
+    body = null;
+  }
+  return { status: res.status, body };
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+describe("GET /api/trips/invite-link/:token/preview — isTerminal code paths", () => {
+  let server: Server;
+  let port: number;
+
+  beforeEach(async () => {
+    if (server) server.close();
+    ({ server, port } = await startServer());
+  });
+
+  after(() => {
+    if (server) server.close();
+  });
+
+  // ── 1. cancelled trip ────────────────────────────────────────────────────
+  it("returns isTerminal:true and 'no longer active' reason for a cancelled trip", async () => {
+    _setTestClient(makeClient({ tripStatus: "cancelled" }), true);
+
+    const r = await getPreview(port, LINK_TOKEN);
+
+    assert.equal(r.status, 200, "should return 200 (not 410) for a cancelled trip preview");
+    assert.equal(r.body.isTerminal, true, "cancelled trip must be terminal");
+    assert.equal(
+      r.body.terminalReason,
+      "This trip is no longer active.",
+      "terminalReason for cancelled trip",
+    );
+    assert.equal(r.body.alreadyMember, false);
+  });
+
+  // ── 2. archived trip ─────────────────────────────────────────────────────
+  it("returns isTerminal:true and 'no longer active' reason for an archived trip", async () => {
+    _setTestClient(makeClient({ tripStatus: "archived" }), true);
+
+    const r = await getPreview(port, LINK_TOKEN);
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.isTerminal, true, "archived trip must be terminal");
+    assert.equal(
+      r.body.terminalReason,
+      "This trip is no longer active.",
+      "terminalReason for archived trip",
+    );
+  });
+
+  // ── 3. trip with end_date in the past ────────────────────────────────────
+  it("returns isTerminal:true and 'already ended' reason when end_date is in the past", async () => {
+    _setTestClient(
+      makeClient({ tripStatus: "upcoming", endDate: "2020-01-01" }),
+      true,
+    );
+
+    const r = await getPreview(port, LINK_TOKEN);
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.isTerminal, true, "past end_date must be terminal");
+    assert.equal(
+      r.body.terminalReason,
+      "This trip has already ended.",
+      "terminalReason for ended trip",
+    );
+  });
+
+  // ── 4. active upcoming trip ───────────────────────────────────────────────
+  it("returns isTerminal:false and terminalReason:null for an active trip", async () => {
+    _setTestClient(
+      makeClient({ tripStatus: "upcoming", endDate: "2099-12-31" }),
+      true,
+    );
+
+    const r = await getPreview(port, LINK_TOKEN);
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.isTerminal, false, "active upcoming trip must NOT be terminal");
+    assert.equal(r.body.terminalReason, null, "terminalReason must be null for non-terminal trip");
+    assert.equal(r.body.tripTitle, "Test Trip");
+  });
+
+  // ── 5. no end_date and active status ─────────────────────────────────────
+  it("returns isTerminal:false when there is no end_date and status is upcoming", async () => {
+    _setTestClient(
+      makeClient({ tripStatus: "upcoming", endDate: null }),
+      true,
+    );
+
+    const r = await getPreview(port, LINK_TOKEN);
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.isTerminal, false);
+    assert.equal(r.body.terminalReason, null);
+  });
+
+  // ── 6. already a member on a terminal trip ───────────────────────────────
+  it("still returns isTerminal:true when the viewer is already a member of a cancelled trip", async () => {
+    _setTestClient(
+      makeClient({ tripStatus: "cancelled", viewerIsMember: true }),
+      true,
+    );
+
+    const r = await getPreview(port, LINK_TOKEN);
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.isTerminal, true);
+    assert.equal(r.body.alreadyMember, true);
+    assert.equal(r.body.terminalReason, "This trip is no longer active.");
+  });
+});

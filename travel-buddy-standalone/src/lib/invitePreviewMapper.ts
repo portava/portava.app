@@ -1,0 +1,44 @@
+/**
+ * Pure mapping function shared by the invite-preview screen and its tests.
+ *
+ * Converts an InvitePreviewResult from the service layer into the appropriate
+ * ScreenState variant, with no React or React Native dependencies.
+ */
+import type { InvitePreview, InvitePreviewResult } from '../services/trips';
+
+export type ScreenState =
+  | { kind: 'loading' }
+  | { kind: 'not_authed' }
+  | { kind: 'gone'; message: string }
+  | { kind: 'error' }
+  | { kind: 'already_member'; tripId: string }
+  | { kind: 'terminal'; preview: InvitePreview; message: string }
+  | { kind: 'ready'; preview: InvitePreview };
+
+/**
+ * Maps an InvitePreviewResult returned by previewInviteLink() to a ScreenState.
+ * The caller is responsible for the pre-conditions (configured, isAuthed, token)
+ * that are checked before calling previewInviteLink().
+ */
+export function mapInvitePreviewToScreenState(result: InvitePreviewResult): ScreenState {
+  if (result.error === 'not_authenticated') {
+    return { kind: 'not_authed' };
+  }
+  if (result.gone) {
+    return { kind: 'gone', message: 'This invite link has expired or been revoked.' };
+  }
+  if (!result.data) {
+    return { kind: 'error' };
+  }
+  if (result.data.alreadyMember) {
+    return { kind: 'already_member', tripId: result.data.tripId };
+  }
+  if (result.data.isTerminal) {
+    return {
+      kind: 'terminal',
+      preview: result.data,
+      message: result.data.terminalReason ?? 'This trip is no longer active.',
+    };
+  }
+  return { kind: 'ready', preview: result.data };
+}
