@@ -455,6 +455,35 @@ router.patch("/circle/settings", async (req, res) => {
     });
   }
 
+  // When enabling Circle globally, notify members of every active context (fire-and-forget).
+  // This is the send path for the `circle.sharing_enabled` template.
+  if (isEnabling) {
+    void (async () => {
+      try {
+        const [membershipRows, actorProfile] = await Promise.all([
+          sc.from("circle_members").select("context_type, context_id").eq("user_id", user.id).eq("status", "accepted"),
+          sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
+        ]);
+        const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "Someone";
+        await Promise.all(
+          ((membershipRows.data ?? []) as any[]).map(async (row) => {
+            try {
+              const [memberIds, contextTitle] = await Promise.all([
+                getAcceptedMemberIds(sc, row.context_type as ContextType, row.context_id),
+                resolveContextTitle(sc, row.context_type as ContextType, row.context_id),
+              ]);
+              const recipients = memberIds.filter((m) => m !== user.id);
+              await sendCircleNotifications(sc, recipients, "circle.sharing_enabled", {
+                actor: actorName, contextTitle,
+                contextType: row.context_type, contextId: row.context_id,
+              });
+            } catch { /* non-fatal per context */ }
+          }),
+        );
+      } catch { /* non-fatal */ }
+    })();
+  }
+
   res.status(200).json({
     globalEnabled:       (data as any)?.global_enabled         ?? false,
     visibilityMode:      (data as any)?.visibility_mode        ?? "status_only",
@@ -1413,22 +1442,23 @@ router.post("/circle/contexts/:type/:id/need-help", async (req, res) => {
       ]);
       const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "Someone";
 
-      // Resolve the host for this context.
+      // Resolve the host for this context using canonical owner columns.
+      // trips: owner_id  — events: host_id  (consistent with trips.ts / admin.ts)
       let hostId: string | null = null;
       if (type === "trip") {
         const { data: trip } = await sc
           .from("trips")
-          .select("user_id")
+          .select("owner_id")
           .eq("id", id)
           .maybeSingle();
-        hostId = (trip as any)?.user_id ?? null;
+        hostId = (trip as any)?.owner_id ?? null;
       } else {
         const { data: ev } = await sc
           .from("events")
-          .select("creator_id, organizer_id")
+          .select("host_id")
           .eq("id", id)
           .maybeSingle();
-        hostId = (ev as any)?.organizer_id ?? (ev as any)?.creator_id ?? null;
+        hostId = (ev as any)?.host_id ?? null;
       }
 
       // Only notify if there is a host and they are not the caller themselves.
@@ -1449,20 +1479,26 @@ router.post("/circle/contexts/:type/:id/need-help", async (req, res) => {
 
 // ── GET /circle/compass-suggestions ──────────────────────────────────────────
 //
-// Returns a curated list of suggested users the caller could invite to their
-// active Circle contexts.  Candidates are: mutual followers who are NOT already
-// Circle members in any of the caller's active contexts.
+// Returns Circle-state suggestion cards for the caller's active Circle contexts.
+// Each card represents an actionable prompt the Compass feed can surface.
 //
-// Designed to power the "Invite someone" card in the Compass feed; intentionally
-// kept simple for V1 (no ML ranking).  The endpoint is additive — adding the
-// caller to the Compass SECTION_NAMES list would require touching 10+ Compass
-// files.  Instead, the mobile Compass screen calls this endpoint and renders the
-// card independently.
+// Card types:
+//   "circle_active"       — At least one other member is actively sharing in a
+//                           context the caller is part of.  Shows activity count.
+//   "turn_on_circle"      — Caller has an accepted Circle membership in a context
+//                           but has not yet enabled sharing (no active presence row).
+//   "set_meeting_point"   — Caller is the host of a context with no active meeting
+//                           point set.  Prompts them to add one.
+//
+// Privacy rules:
+//   - Never include GPS, needs_help, or member identities in cards.
+//   - `activeCount` is a plain integer — no user IDs.
+//   - Contexts where the caller doesn't have accepted membership are excluded.
 //
 // Response shape:
-//   { suggestions: TravelerSearchResult[] }
+//   { cards: CompassCircleCard[] }
 //
-// Capped at 10 results.  Rate-limited via the members limiter (same window).
+// Capped at 5 cards.  Rate-limited via the members limiter (same window).
 
 router.get("/circle/compass-suggestions", async (req, res) => {
   const auth = await requireUser(req, res);
@@ -1480,62 +1516,124 @@ router.get("/circle/compass-suggestions", async (req, res) => {
     return;
   }
 
-  // Step 1: collect users the caller follows and who follow back (mutual).
-  const [followingRes, followersRes] = await Promise.all([
-    sc.from("follows").select("following_id").eq("follower_id", user.id),
-    sc.from("follows").select("follower_id").eq("following_id", user.id),
-  ]);
-  const following = new Set(((followingRes.data ?? []) as any[]).map((r) => r.following_id as string));
-  const followers = new Set(((followersRes.data ?? []) as any[]).map((r) => r.follower_id as string));
-  const mutuals   = [...following].filter((id) => followers.has(id));
-
-  if (mutuals.length === 0) {
-    res.json({ suggestions: [] });
-    return;
-  }
-
-  // Step 2: find user IDs already in any of the caller's active Circle contexts.
+  // Step 1: fetch caller's accepted Circle contexts (up to 20).
   const { data: myContextsData } = await sc
     .from("circle_members")
-    .select("context_id")
+    .select("context_type, context_id")
     .eq("user_id", user.id)
-    .eq("status", "accepted");
-  const myContextIds = ((myContextsData ?? []) as any[]).map((r) => r.context_id as string);
+    .eq("status", "accepted")
+    .limit(20);
 
-  let alreadyInCircle: Set<string> = new Set();
-  if (myContextIds.length > 0) {
-    const { data: existingData } = await sc
-      .from("circle_members")
-      .select("user_id")
-      .in("context_id", myContextIds)
-      .eq("status", "accepted");
-    alreadyInCircle = new Set(((existingData ?? []) as any[]).map((r) => r.user_id as string));
-  }
-
-  const candidates = mutuals
-    .filter((id) => id !== user.id && !alreadyInCircle.has(id))
-    .slice(0, 30); // over-fetch before profile load
-
-  if (candidates.length === 0) {
-    res.json({ suggestions: [] });
+  const myContexts = (myContextsData ?? []) as { context_type: string; context_id: string }[];
+  if (myContexts.length === 0) {
+    res.json({ cards: [] });
     return;
   }
 
-  // Step 3: load public profile snippets.
-  const { data: profiles } = await sc
-    .from("profiles")
-    .select("id, display_name, name, avatar_url, username, home_city")
-    .in("id", candidates);
+  // Step 2: determine the caller's current sharing state and presence activity
+  // per context — batch DB calls in parallel for all contexts.
+  const cards: Array<{
+    cardType:     "circle_active" | "turn_on_circle" | "set_meeting_point";
+    contextType:  string;
+    contextId:    string;
+    contextTitle: string;
+    metadata:     Record<string, unknown>;
+  }> = [];
 
-  const suggestions = ((profiles ?? []) as any[]).slice(0, 10).map((p) => ({
-    userId:      p.id,
-    displayName: p.display_name ?? p.name ?? "Traveler",
-    username:    p.username     ?? null,
-    avatarUrl:   p.avatar_url   ?? null,
-    homeCity:    p.home_city    ?? null,
-  }));
+  await Promise.all(
+    myContexts.map(async ({ context_type, context_id }) => {
+      try {
+        const ct = context_type as ContextType;
 
-  res.json({ suggestions });
+        // Parallel: context title + caller's own presence row + all member presence + meeting points (if host)
+        const [contextTitle, callerPresenceRes, allPresenceRes, isHost] = await Promise.all([
+          resolveContextTitle(sc, ct, context_id),
+
+          // Caller's own active presence row
+          sc.from("circle_presence")
+            .select("status, is_stale")
+            .eq("user_id", user.id)
+            .eq("context_type", ct)
+            .eq("context_id", context_id)
+            .maybeSingle(),
+
+          // All non-stale active presence rows for this context (any member)
+          sc.from("circle_presence")
+            .select("user_id, status, is_stale")
+            .eq("context_type", ct)
+            .eq("context_id", context_id)
+            .eq("status", "active"),
+
+          // Determine if caller is host (trip: owner_id, event: host_id)
+          (async (): Promise<boolean> => {
+            if (ct === "trip") {
+              const { data } = await sc.from("trips").select("owner_id").eq("id", context_id).maybeSingle();
+              return (data as any)?.owner_id === user.id;
+            }
+            const { data } = await sc.from("events").select("host_id").eq("id", context_id).maybeSingle();
+            return (data as any)?.host_id === user.id;
+          })(),
+        ]);
+
+        const callerPresence  = callerPresenceRes.data as any;
+        const allActive       = ((allPresenceRes.data ?? []) as any[]).filter((r) => !r.is_stale);
+        const othersActive    = allActive.filter((r) => r.user_id !== user.id);
+        const callerIsSharing = callerPresence && callerPresence.status === "active" && !callerPresence.is_stale;
+
+        // Card: circle_active — caller is sharing and others are too.
+        // Does NOT early-return — set_meeting_point can co-exist for the same context.
+        if (callerIsSharing && othersActive.length > 0) {
+          cards.push({
+            cardType: "circle_active",
+            contextType: context_type,
+            contextId: context_id,
+            contextTitle,
+            metadata: { activeCount: othersActive.length },
+          });
+        }
+
+        // Card: turn_on_circle — caller is a member but not actively sharing.
+        // Mutually exclusive with circle_active and set_meeting_point.
+        if (!callerIsSharing) {
+          cards.push({
+            cardType: "turn_on_circle",
+            contextType: context_type,
+            contextId: context_id,
+            contextTitle,
+            metadata: { othersActiveCount: othersActive.length },
+          });
+          return; // nothing else relevant for this context while caller isn't sharing
+        }
+
+        // Card: set_meeting_point — caller is the host, is sharing, and no active
+        // meeting point is set yet.  Independent of circle_active — both can appear.
+        if (isHost) {
+          const { data: mpData } = await sc
+            .from("circle_meeting_points")
+            .select("id")
+            .eq("context_type", ct)
+            .eq("context_id", context_id)
+            .eq("is_active", true)
+            .maybeSingle();
+          if (!mpData) {
+            cards.push({
+              cardType: "set_meeting_point",
+              contextType: context_type,
+              contextId: context_id,
+              contextTitle,
+              metadata: {},
+            });
+          }
+        }
+      } catch { /* non-fatal per context */ }
+    }),
+  );
+
+  // Return at most 5 cards, prioritising circle_active > turn_on_circle > set_meeting_point.
+  const ORDER: Record<string, number> = { circle_active: 0, turn_on_circle: 1, set_meeting_point: 2 };
+  cards.sort((a, b) => (ORDER[a.cardType] ?? 9) - (ORDER[b.cardType] ?? 9));
+
+  res.json({ cards: cards.slice(0, 5) });
 });
 
 // ── POST /circle/pause-on-session-end ─────────────────────────────────────────

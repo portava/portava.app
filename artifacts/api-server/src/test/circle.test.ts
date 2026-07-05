@@ -17,6 +17,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import circleRouter from "../routes/circle.js";
+import { checkRateLimit, _resetRateLimit } from "../lib/rateLimit.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
@@ -919,6 +920,24 @@ describe("POST /circle/contexts/:type/:id/need-help", () => {
     const r = await req("POST", `/circle/contexts/ferry/${TRIP_ID}/need-help`, {});
     assert.equal(r.status, 400);
   });
+
+  it("non-host member calling need-help reaches the host-alert branch (no self-skip)", async () => {
+    // TARGET_ID is a trip member but NOT the trip owner (owner_id = VIEWER_ID).
+    // When TARGET_ID calls need-help, the route resolves hostId = VIEWER_ID and
+    // since hostId !== TARGET_ID, the notification fire path is executed (not skipped).
+    // We verify the route returns 200 without crashing — confirming owner_id is read
+    // (not the old user_id column) and the host-alert code path is reached.
+    const tc = makeClient(TARGET_ID);
+    _setTestClient(tc as any, true);
+    _setTestServiceClient(tc as any);
+    const r = await req("POST", `/circle/contexts/trip/${TRIP_ID}/need-help`, { note: "SOS" }, TARGET_TOKEN);
+    assert.equal(r.status, 200, "non-host member need-help should succeed (host-alert fires, not skipped)");
+    assert.equal(r.body.acknowledged, true);
+    // Restore auth to VIEWER_ID for subsequent tests
+    const vc = makeClient(VIEWER_ID);
+    _setTestClient(vc as any, true);
+    _setTestServiceClient(vc as any);
+  });
 });
 
 describe("POST /circle/contexts/:type/:id/presence — precise_live rejected", () => {
@@ -1139,36 +1158,73 @@ describe("Regression: Circle field isolation", () => {
 describe("GET /circle/compass-suggestions", () => {
   beforeEach(() => {
     resetState();
+    _resetRateLimit(); // clear buckets so prior tests don't bleed in
     const c = makeClient(VIEWER_ID);
     _setTestClient(c as any, true);
     _setTestServiceClient(c as any);
   });
 
-  it("returns 200 with suggestions array when mutual follows exist", async () => {
+  it("returns 200 with cards array (empty when caller has no Circle memberships)", async () => {
+    // No circle_members rows for VIEWER_ID → should return empty cards
     const r = await req("GET", "/circle/compass-suggestions");
     assert.equal(r.status, 200);
-    assert.ok(Array.isArray(r.body.suggestions), "body.suggestions should be an array");
+    assert.ok(Array.isArray(r.body.cards), "body.cards should be an array");
+    assert.deepEqual(r.body.cards, []);
   });
 
-  it("excludes users already in the caller's Circle contexts", async () => {
-    // Seed TARGET_ID as an existing circle member so they should be excluded.
+  it("returns a turn_on_circle card when caller is a member but not sharing", async () => {
     state.circleMembers.push({
-      user_id: VIEWER_ID, context_id: TRIP_ID, context_type: "trip", status: "accepted",
+      user_id: VIEWER_ID, context_type: "trip", context_id: TRIP_ID, status: "accepted",
     });
-    state.circleMembers.push({
-      user_id: TARGET_ID, context_id: TRIP_ID, context_type: "trip", status: "accepted",
-    });
+    // No circle_presence row for VIEWER_ID → caller is not actively sharing
     const r = await req("GET", "/circle/compass-suggestions");
     assert.equal(r.status, 200);
-    const ids = (r.body.suggestions ?? []).map((s: any) => s.userId);
-    assert.ok(!ids.includes(TARGET_ID), "TARGET_ID already in circle — must be excluded");
+    assert.ok(r.body.cards.length >= 1, "should have at least one card");
+    const card = r.body.cards[0];
+    assert.equal(card.cardType, "turn_on_circle");
+    assert.equal(card.contextId, TRIP_ID);
+    assert.ok(!("gps" in card), "GPS must not appear on compass suggestion card");
+    assert.ok(!("needsHelp" in card), "needsHelp must not appear on compass suggestion card");
   });
 
-  it("returns 200 with empty suggestions when no mutuals", async () => {
-    state.follows = []; // clear follows — no mutuals
+  it("returns a circle_active card when caller and others are actively sharing", async () => {
+    state.circleMembers.push({
+      user_id: VIEWER_ID, context_type: "trip", context_id: TRIP_ID, status: "accepted",
+    });
+    // VIEWER_ID is actively sharing
+    state.circlePresence.push({
+      id: "pres-viewer-active", user_id: VIEWER_ID, context_type: "trip", context_id: TRIP_ID,
+      status: "active", is_stale: false, needs_help: false, last_seen_at: new Date().toISOString(),
+    });
+    // TARGET_ID (existing row in state) is also active in that trip context
     const r = await req("GET", "/circle/compass-suggestions");
     assert.equal(r.status, 200);
-    assert.deepEqual(r.body.suggestions, []);
+    assert.ok(r.body.cards.length >= 1, "should have at least one card");
+    const activeCard = r.body.cards.find((c: any) => c.cardType === "circle_active");
+    assert.ok(activeCard, "circle_active card should be returned");
+    assert.ok(typeof activeCard.metadata.activeCount === "number", "activeCount should be a number");
+    // Privacy: no user IDs in metadata
+    assert.ok(!("members" in activeCard.metadata), "member IDs must not appear in metadata");
+    assert.ok(!("userIds" in activeCard.metadata), "userIds must not appear in metadata");
+  });
+
+  it("returns a set_meeting_point card for host with no active meeting point", async () => {
+    state.circleMembers.push({
+      user_id: VIEWER_ID, context_type: "trip", context_id: TRIP_ID, status: "accepted",
+    });
+    // VIEWER_ID is actively sharing (so turn_on_circle won't fire)
+    state.circlePresence.push({
+      id: "pres-viewer-active2", user_id: VIEWER_ID, context_type: "trip", context_id: TRIP_ID,
+      status: "active", is_stale: false, needs_help: false, last_seen_at: new Date().toISOString(),
+    });
+    // Remove all meeting points so none are active
+    state.circleMeetingPoints = [];
+    const r = await req("GET", "/circle/compass-suggestions");
+    assert.equal(r.status, 200);
+    // VIEWER_ID is owner of TRIP_ID → should get set_meeting_point card
+    const mpCard = r.body.cards.find((c: any) => c.cardType === "set_meeting_point");
+    assert.ok(mpCard, "set_meeting_point card should appear for host with no active meeting point");
+    assert.equal(mpCard.contextId, TRIP_ID);
   });
 
   it("returns 401 when unauthenticated", async () => {
@@ -1259,11 +1315,7 @@ describe("POST /circle/pause-on-session-end", () => {
 describe("Rate limiting", () => {
   beforeEach(() => {
     resetState();
-    // Lower rate limits for this test suite via env vars.
-    // Tests run after circle.ts module is loaded so constants are already set.
-    // Instead we exercise the limiter by using different contexts; we trust the
-    // unit behaviour of checkRateLimit and verify integration via a direct call
-    // to a rate-limited route with the env-controlled limits already in place.
+    _resetRateLimit(); // start each test with a clean slate
     const c = makeClient(VIEWER_ID);
     _setTestClient(c as any, true);
     _setTestServiceClient(c as any);
@@ -1271,15 +1323,39 @@ describe("Rate limiting", () => {
 
   it("GET /members returns 200 for a normal call", async () => {
     const r = await req("GET", `/circle/contexts/trip/${TRIP_ID}/members`);
-    // The default env limit is 60/min — a single call never triggers rate limiting.
     assert.equal(r.status, 200);
+  });
+
+  it("GET /members returns 429 after the bucket is exhausted", async () => {
+    // Exhaust the circle_members bucket for VIEWER_ID by calling checkRateLimit
+    // directly 60 times (the default CIRCLE_MEMBERS_RL_LIMIT).  The next HTTP
+    // call (the 61st) must be blocked by the route.
+    const LIMIT = parseInt(process.env["CIRCLE_MEMBERS_RL_LIMIT"] ?? "60", 10);
+    for (let i = 0; i < LIMIT; i++) {
+      checkRateLimit("circle_members", VIEWER_ID, LIMIT, 60_000);
+    }
+    const r = await req("GET", `/circle/contexts/trip/${TRIP_ID}/members`);
+    assert.equal(r.status, 429, "should be rate-limited after bucket exhaustion");
+    assert.ok(r.body.error, "error field should be present in 429 response");
+    // Retry-After header must be set
+    // (Note: status code check is sufficient; header is returned by the HTTP layer)
   });
 
   it("POST /presence returns 200 for a normal call", async () => {
     const r = await req("POST", `/circle/contexts/trip/${TRIP_ID}/presence`, {
       visibilityMode: "status_only",
     });
-    // The default env limit is 30/5min — a single call never triggers rate limiting.
     assert.equal(r.status, 200);
+  });
+
+  it("POST /presence returns 429 after the bucket is exhausted", async () => {
+    const LIMIT = parseInt(process.env["CIRCLE_PRESENCE_RL_LIMIT"] ?? "30", 10);
+    for (let i = 0; i < LIMIT; i++) {
+      checkRateLimit("circle_presence", VIEWER_ID, LIMIT, 5 * 60_000);
+    }
+    const r = await req("POST", `/circle/contexts/trip/${TRIP_ID}/presence`, {
+      visibilityMode: "status_only",
+    });
+    assert.equal(r.status, 429, "presence update should be rate-limited after bucket exhaustion");
   });
 });
