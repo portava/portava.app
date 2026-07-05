@@ -18,27 +18,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Users, MapPin, CheckCircle } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
-
-// ── Subtype classification ─────────────────────────────────────────────────
-
-type CardVariant = 'checkin' | 'meeting_point' | 'unknown';
-
-function classifySubtype(subtype: string | null | undefined): CardVariant {
-  if (!subtype) return 'unknown';
-  if (subtype === 'meeting_point') return 'meeting_point';
-  return 'checkin';
-}
-
-/** Human-readable label for a check-in subtype. */
-function checkinLabel(subtype: string): string {
-  switch (subtype) {
-    case 'arrived':    return 'Arrived at the destination';
-    case 'with_group': return 'Checked in with the group';
-    case 'leaving':    return 'Heading out';
-    case 'safe':       return 'Marked as safe';
-    default:           return 'Checked in';
-  }
-}
+import { classifySubtype, checkinLabel } from './CircleStatusCardMessage.logic';
 
 // ── Component ──────────────────────────────────────────────────────────────
 
