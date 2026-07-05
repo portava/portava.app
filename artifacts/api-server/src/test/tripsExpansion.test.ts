@@ -921,6 +921,38 @@ describe("trips-expansion routes", () => {
       assert.equal(r.body.error, "gone");
     });
 
+    it("POST accept rolls back use_count when trip_members insert fails", async () => {
+      // Scenario: claim_invite_link_slot succeeds (use_count bumped to 1), but the
+      // trip_members INSERT then fails with a DB error. The handler must call
+      // release_invite_link_slot so use_count returns to 0 — no stranded slot.
+      const LINK_TOKEN = "rollbacktokenabcdefghijklmnop12345";
+      const { client, db } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome",
+            status: "upcoming", created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_invite_links: { rows: [
+          { id: LINK_ID, trip_id: TRIP_ID, token: LINK_TOKEN, created_by: OWNER_ID,
+            max_uses: 3, use_count: 0, revoked_at: null, expires_at: null,
+            created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_members: { rows: [], nextInsertError: "duplicate key value" },
+        blocks: { rows: [] },
+        trip_activity_log: { rows: [] },
+      });
+      _setTestClient(client, true);
+
+      const r = await req(port, "POST", `/trips/invite-link/${LINK_TOKEN}/accept`, { token: "other-token" });
+
+      // Should return an error, not 201
+      assert.notEqual(r.status, 201, "should not succeed when member insert fails");
+
+      // use_count must be back at 0 — the compensating decrement fired
+      const linkRow = db.trip_invite_links.rows.find((l) => l.id === LINK_ID);
+      assert.ok(linkRow, "invite link row should still exist");
+      assert.equal(linkRow!.use_count, 0, "use_count should be rolled back to 0 after insert failure");
+    });
+
     it("POST accept returns 410 when the link has expired", async () => {
       const LINK_TOKEN = "expiredtokenabcdefghijklmnop123456";
       const { client } = makeFakeClient({
