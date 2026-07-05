@@ -26,7 +26,7 @@ async function requireAdminCtx(req: any, res: any) {
 
 // ── buddy_services ─────────────────────────────────────────────────────────────
 
-router.get("/api/buddies/:buddyId/services", async (req, res) => {
+router.get("/api/rent-a-buddy/buddies/:buddyId/services", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ services: [] });
 
@@ -43,7 +43,7 @@ router.get("/api/buddies/:buddyId/services", async (req, res) => {
   return res.json({ services: data ?? [] });
 });
 
-router.get("/api/buddies/:buddyId/availability-exceptions", async (req, res) => {
+router.get("/api/rent-a-buddy/buddies/:buddyId/availability-exceptions", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ exceptions: [] });
 
@@ -391,9 +391,9 @@ router.get("/api/rent-a-buddy/bookings/:bookingId/events", async (req, res) => {
 
 // ── booking request shorthand ──────────────────────────────────────────────────
 
-// POST /api/buddies/:buddyId/request — create a booking targeting a specific buddy
-// (spec-path shorthand for POST /api/rent-a-buddy/bookings with buddyId pre-filled)
-router.post("/api/buddies/:buddyId/request", async (req, res) => {
+// POST /api/rent-a-buddy/buddies/:buddyId/request — create a booking targeting a specific buddy
+// Also accessible at /api/buddies/:buddyId/request via app.ts URL alias
+router.post("/api/rent-a-buddy/buddies/:buddyId/request", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -829,10 +829,10 @@ router.post("/api/rent-a-buddy/admin/buddies/:buddyId/approve", async (req, res)
 
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: auth.user.id,
-    target_buddy_id: buddyId,
-    action_type: "approve",
-    reason: note ?? null,
-    created_at: new Date().toISOString(),
+    target_type: "buddy",
+    target_id: buddyId,
+    action: "approved",
+    notes: note ?? null,
   });
 
   return res.json({ buddy: data });
@@ -866,10 +866,10 @@ router.post("/api/rent-a-buddy/admin/buddies/:buddyId/reject", async (req, res) 
 
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: auth.user.id,
-    target_buddy_id: buddyId,
-    action_type: "reject",
-    reason: reason ?? null,
-    created_at: new Date().toISOString(),
+    target_type: "buddy",
+    target_id: buddyId,
+    action: "rejected",
+    notes: reason ?? null,
   });
 
   return res.json({ buddy: data });
@@ -904,10 +904,10 @@ router.post("/api/rent-a-buddy/admin/buddies/:buddyId/unsuspend", async (req, re
 
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: auth.user.id,
-    target_buddy_id: buddyId,
-    action_type: "unsuspend",
-    reason: note ?? null,
-    created_at: new Date().toISOString(),
+    target_type: "buddy",
+    target_id: buddyId,
+    action: "unsuspended",
+    notes: note ?? null,
   });
 
   return res.json({ buddy: data });
