@@ -47,7 +47,7 @@ const CIRCLE_MEMBERS_RL_LIMIT  = parseInt(process.env.CIRCLE_MEMBERS_RL_LIMIT  ?
 const CIRCLE_MEMBERS_RL_WIN_MS  = 60_000;           // 60 calls/min (scrape prevention)
 const CIRCLE_PRESENCE_RL_LIMIT  = parseInt(process.env.CIRCLE_PRESENCE_RL_LIMIT ?? "30", 10);
 const CIRCLE_PRESENCE_RL_WIN_MS = 5 * 60_000;       // 30 updates/5 min (spam prevention)
-const CIRCLE_NEED_HELP_RL_LIMIT = 20;               // generous — never block genuine emergencies
+const CIRCLE_NEED_HELP_RL_LIMIT = parseInt(process.env["CIRCLE_NEED_HELP_RL_LIMIT"] ?? "20", 10); // set to 0 to disable
 const CIRCLE_NEED_HELP_RL_WIN_MS = 60_000;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -463,17 +463,22 @@ router.patch("/circle/settings", async (req, res) => {
   if (isEnabling) {
     void (async () => {
       try {
-        // Discover caller's contexts using canonical membership tables — no circle_members
-        // (that table has no migration; trip_members / event_rsvps are the source of truth).
-        const [tripMemberRes, eventRsvpRes, actorProfile] = await Promise.all([
+        // Discover caller's contexts using canonical membership tables — no circle_members.
+        // Events require BOTH going RSVP AND event_attendees row (same gate as getAcceptedMemberIds).
+        const [tripMemberRes, eventRsvpRes, eventAttendeeRes, actorProfile] = await Promise.all([
           sc.from("trip_members").select("trip_id").eq("user_id", user.id).eq("status", "accepted"),
           sc.from("event_rsvps").select("event_id").eq("user_id", user.id).eq("status", "going"),
+          sc.from("event_attendees").select("event_id").eq("user_id", user.id),
           sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
         ]);
         const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "Someone";
+        // Intersect event_rsvps × event_attendees for canonical eligibility.
+        const rsvpEids     = new Set(((eventRsvpRes.data     ?? []) as any[]).map((r) => r.event_id as string));
+        const attendeeEids = new Set(((eventAttendeeRes.data  ?? []) as any[]).map((r) => r.event_id as string));
+        const eligibleEids = [...rsvpEids].filter((eid) => attendeeEids.has(eid));
         const contexts: { context_type: ContextType; context_id: string }[] = [
           ...((tripMemberRes.data  ?? []) as any[]).map((r) => ({ context_type: "trip"  as ContextType, context_id: r.trip_id  as string })),
-          ...((eventRsvpRes.data   ?? []) as any[]).map((r) => ({ context_type: "event" as ContextType, context_id: r.event_id as string })),
+          ...eligibleEids.map((eid) => ({ context_type: "event" as ContextType, context_id: eid })),
         ];
         await Promise.all(
           contexts.map(async ({ context_type, context_id }) => {

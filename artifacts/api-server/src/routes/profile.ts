@@ -867,6 +867,23 @@ router.post("/me/deactivate", async (req, res) => {
     .upsert({ user_id: user.id, allow_profile_discovery: false, updated_at: now }, { onConflict: "user_id" })
     .then(undefined, () => {});
 
+  // Pause Circle sharing on deactivation — server-side, not client-dependent.
+  // Sets is_paused=true on ALL circle_context_settings rows for this user so
+  // their presence is hidden even if the client never calls pause-on-session-end.
+  sc.from("circle_context_settings")
+    .update({ is_paused: true, updated_at: now })
+    .eq("user_id", user.id)
+    .then(undefined, (err) => {
+      req.log.warn({ err }, "deactivate: failed to pause circle context settings (non-fatal)");
+    });
+
+  // Also pause any active presence rows so they stop appearing on other members' maps.
+  sc.from("circle_presence")
+    .update({ status: "paused", updated_at: now })
+    .eq("user_id", user.id)
+    .eq("status", "active")
+    .then(undefined, () => {});
+
   res.status(200).json({ deactivated: true });
 });
 
