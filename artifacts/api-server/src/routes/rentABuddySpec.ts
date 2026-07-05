@@ -931,6 +931,23 @@ router.post("/api/rent-a-buddy/buddies/:buddyId/favorite", async (req, res) => {
   return res.status(201).json({ saved: true, buddyId });
 });
 
+// POST /api/rent-a-buddy/buddies/:buddyId/unfavorite — POST method alias for clients that
+// cannot issue DELETE requests (e.g. some mobile HTTP stacks).
+// Also accessible at /api/buddies/:buddyId/unfavorite via app.ts URL alias
+router.post("/api/rent-a-buddy/buddies/:buddyId/unfavorite", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  const { buddyId } = req.params;
+  const { error } = await serviceClient
+    .from("rent_buddy_saved")
+    .delete()
+    .eq("user_id", auth.user.id)
+    .eq("buddy_id", buddyId);
+  if (error) return sendError(res, "db_error", error.message);
+  return res.status(200).json({ saved: false, buddyId });
+});
+
 // DELETE /api/rent-a-buddy/buddies/:buddyId/unfavorite
 // Also accessible at /api/buddies/:buddyId/unfavorite via app.ts URL alias
 router.delete("/api/rent-a-buddy/buddies/:buddyId/unfavorite", async (req, res) => {
@@ -1277,6 +1294,156 @@ router.post("/api/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", async
   });
 
   return res.json({ dispute, resolution, bookingStatus: newBookingStatus });
+});
+
+// ── admin city-status POST variant ────────────────────────────────────────────
+
+// POST /api/rent-a-buddy/admin/city-status/:city
+// POST alias required by spec in addition to PATCH variant.
+// Also accessible at /api/admin/rent-a-buddy/city-status/:city via app.ts URL alias
+router.post("/api/rent-a-buddy/admin/city-status/:city", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  const { data: profile } = await serviceClient.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
+  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
+
+  const { city } = req.params;
+  const { status, notes, buddyCap } = req.body ?? {};
+  if (!status) return res.status(400).json({ error: "invalid_payload", message: "status is required." });
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_city_rollouts")
+    .update({
+      status,
+      notes: notes ?? null,
+      buddy_cap: buddyCap ?? null,
+      status_changed_at: new Date().toISOString(),
+      status_changed_by: auth.user.id,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("city", city)
+    .select()
+    .single();
+
+  if (error) return sendError(res, "db_error", error.message);
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: auth.user.id, target_type: "city", target_id: city,
+    action: `city_status_set_${status}`, notes: notes ?? null,
+  });
+  return res.json({ city: data });
+});
+
+// ── admin category-status POST variant ────────────────────────────────────────
+
+// POST /api/rent-a-buddy/admin/category-status/:category
+// POST alias required by spec in addition to PATCH variant.
+// Also accessible at /api/admin/rent-a-buddy/category-status/:category via app.ts URL alias
+router.post("/api/rent-a-buddy/admin/category-status/:category", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  const { data: profile } = await serviceClient.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
+  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
+
+  const { category } = req.params;
+  const { enabled, notes } = req.body ?? {};
+  if (typeof enabled !== "boolean") {
+    return res.status(400).json({ error: "invalid_payload", message: "enabled (boolean) is required." });
+  }
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_launch_controls")
+    .upsert(
+      { country_code: null, city: null, category, enabled, notes: notes ?? null, created_by: auth.user.id },
+      { onConflict: "country_code,city,category" }
+    )
+    .select()
+    .single();
+
+  if (error) return sendError(res, "db_error", error.message);
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: auth.user.id, target_type: "category", target_id: category,
+    action: enabled ? "category_enabled" : "category_disabled", notes: notes ?? null,
+  });
+  return res.json({ category: data });
+});
+
+// ── admin payout hold / release ────────────────────────────────────────────────
+
+// POST /api/rent-a-buddy/admin/payouts/:payoutId/hold
+// Also accessible at /api/admin/buddy-payouts/:payoutId/hold via app.ts URL alias
+router.post("/api/rent-a-buddy/admin/payouts/:payoutId/hold", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  const { data: profile } = await serviceClient.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
+  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
+
+  const { payoutId } = req.params;
+  const { reason } = req.body ?? {};
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_payouts")
+    .update({
+      status: "on_hold",
+      hold_reason: reason ?? null,
+      held_by: auth.user.id,
+      held_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", payoutId)
+    .select()
+    .single();
+
+  if (error || !data) return res.status(404).json({ error: "not_found", message: error?.message });
+
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: auth.user.id,
+    target_type: "payout",
+    target_id: payoutId,
+    action: "payout_held",
+    notes: reason ?? null,
+  });
+
+  return res.json({ payout: data });
+});
+
+// POST /api/rent-a-buddy/admin/payouts/:payoutId/release
+// Also accessible at /api/admin/buddy-payouts/:payoutId/release via app.ts URL alias
+router.post("/api/rent-a-buddy/admin/payouts/:payoutId/release", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  const { data: profile } = await serviceClient.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
+  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
+
+  const { payoutId } = req.params;
+  const { notes } = req.body ?? {};
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_payouts")
+    .update({
+      status: "released",
+      released_by: auth.user.id,
+      released_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", payoutId)
+    .select()
+    .single();
+
+  if (error || !data) return res.status(404).json({ error: "not_found", message: error?.message });
+
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: auth.user.id,
+    target_type: "payout",
+    target_id: payoutId,
+    action: "payout_released",
+    notes: notes ?? null,
+  });
+
+  return res.json({ payout: data });
 });
 
 export default router;

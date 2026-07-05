@@ -55,6 +55,9 @@ app.use((req, _res, next) => {
   } else if (/^\/api\/admin\/buddy-bookings(\/|$)/.test(u)) {
     // /api/admin/buddy-bookings/* → /api/rent-a-buddy/admin/bookings/*
     req.url = u.replace(/^\/api\/admin\/buddy-bookings/, "/api/rent-a-buddy/admin/bookings");
+  } else if (/^\/api\/admin\/buddy-payouts(\/|$)/.test(u)) {
+    // /api/admin/buddy-payouts/* → /api/rent-a-buddy/admin/payouts/*
+    req.url = u.replace(/^\/api\/admin\/buddy-payouts/, "/api/rent-a-buddy/admin/payouts");
   } else if (/^\/api\/me\/buddy-bookings(\/|$)/.test(u)) {
     req.url = u.replace(/^\/api\/me\/buddy-bookings/, "/api/rent-a-buddy/bookings");
   }

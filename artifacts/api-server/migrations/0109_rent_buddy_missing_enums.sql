@@ -1,6 +1,6 @@
 -- Migration 0109: Add missing spec enum types for Rent-a-Buddy
 -- Adds: rent_buddy_verification_status, rent_buddy_change_request_status,
---       rent_buddy_payment_status
+--       rent_buddy_payment_status (with not_required default for pre-integration)
 
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'rent_buddy_verification_status') THEN
@@ -28,6 +28,7 @@ END $$;
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'rent_buddy_payment_status') THEN
     CREATE TYPE rent_buddy_payment_status AS ENUM (
+      'not_required',   -- placeholder default until payment provider integration is live
       'pending',
       'authorized',
       'captured',
@@ -64,3 +65,8 @@ CREATE TRIGGER trg_sync_buddy_verification_status
 UPDATE rent_buddy_profiles
   SET verification_status = 'verified'
   WHERE verified = TRUE AND verification_status = 'unverified';
+
+-- Add payment_status to rent_buddy_bookings (defaults to not_required until provider is live)
+ALTER TABLE rent_buddy_bookings
+  ADD COLUMN IF NOT EXISTS payment_status rent_buddy_payment_status
+    NOT NULL DEFAULT 'not_required';
