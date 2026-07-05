@@ -254,14 +254,18 @@ export default function RentABuddyActive() {
                       text: 'Notify safety team',
                       style: 'destructive',
                       onPress: async () => {
-                        // Report unsafe + flag booking for dispute + trigger early end
-                        await Promise.allSettled([
+                        const [unsafeRes] = await Promise.allSettled([
                           feelUnsafe(bookingId),
                           endBookingEarly(bookingId, 'unsafe_behavior'),
                         ]);
+                        const notified =
+                          unsafeRes.status === 'fulfilled' &&
+                          (unsafeRes.value as { ok: boolean }).ok === true;
                         Alert.alert(
-                          'Safety team notified',
-                          'Our team has been alerted and this session has been flagged for review. If in immediate danger, use the SOS button to call emergency services.',
+                          notified ? 'Safety team notified' : 'Alert may not have sent',
+                          notified
+                            ? 'Our team has been alerted and this session has been flagged for review. If in immediate danger, use the SOS button to call emergency services.'
+                            : 'We could not confirm your alert reached our safety team. Please call emergency services immediately.',
                           [
                             { text: 'OK' },
                             {

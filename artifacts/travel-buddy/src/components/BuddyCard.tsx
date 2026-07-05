@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { Star, Shield, CheckCircle, Globe, Zap, Clock } from 'lucide-react-native';
+import { Star, CheckCircle, Globe, Zap, Clock } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
 import { Stamp } from './ui';
 import type { BuddyProfile } from '../services/rentABuddy';
@@ -15,13 +15,6 @@ function deriveLevel(reviewCount: number, verified: boolean): { label: string; c
   return { label: 'Elite', color: color.warn };
 }
 
-function deriveTrustScore(buddy: BuddyProfile): number {
-  let score = 0;
-  if (buddy.verified) score += 35;
-  if (buddy.averageRating != null) score += Math.round((buddy.averageRating / 5) * 35);
-  score += Math.min(buddy.reviewCount, 30);
-  return Math.min(score, 100);
-}
 
 interface BuddyCardProps {
   buddy: BuddyProfile;
@@ -48,8 +41,6 @@ export function BuddyCard({
   const level = buddy.buddyLevel
     ? { label: buddy.buddyLevel, color: buddy.buddyLevel === 'Elite' ? color.warn : buddy.buddyLevel === 'Pro' ? '#9B59B6' : buddy.buddyLevel === 'Rising' ? color.deep : color.mute }
     : deriveLevel(buddy.reviewCount, buddy.verified);
-  const trustScore = deriveTrustScore(buddy);
-
   return (
     <Pressable
       style={({ pressed }) => [styles.card, pressed && { opacity: layout.pressedOpacity }]}
@@ -105,16 +96,10 @@ export function BuddyCard({
           {buddy.city}{buddy.country ? `, ${buddy.country}` : ''}
         </Text>
 
-        {/* Level + Trust Score row */}
+        {/* Level + response time row */}
         <View style={styles.metaRow}>
           <View style={[styles.levelBadge, { borderColor: level.color }]}>
             <Text style={[styles.levelText, { color: level.color }]}>{level.label}</Text>
-          </View>
-          <View style={styles.trustPill}>
-            <Shield size={9} color={buddy.verified ? color.success : color.mute} />
-            <Text style={[styles.trustText, { color: buddy.verified ? color.success : color.mute }]}>
-              Trust {trustScore}
-            </Text>
           </View>
           {buddy.responseTimeH != null && (
             <View style={styles.responsePill}>
@@ -241,12 +226,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5, paddingVertical: 2,
   },
   levelText: { fontSize: 9, fontWeight: '800', fontFamily: 'Courier', letterSpacing: 0.5 },
-  trustPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 3,
-    backgroundColor: '#EEF8F3', borderRadius: 999,
-    paddingHorizontal: space.sm, paddingVertical: 3,
-  },
-  trustText: { fontSize: 9, fontWeight: '700', fontFamily: 'Courier', letterSpacing: 0.3 },
   responsePill: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
     backgroundColor: '#EAF2F5', borderRadius: 999,
