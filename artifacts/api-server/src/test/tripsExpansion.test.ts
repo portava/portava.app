@@ -880,7 +880,7 @@ describe("trips-expansion routes", () => {
       assert.equal(r.body.error, "gone");
     });
 
-    it("POST accept returns 410 when claim_invite_link_slot rpc returns false (slot taken concurrently)", async () => {
+    it("POST accept returns 410 when claim_invite_link_slot_for_user returns limit_reached (slot taken concurrently)", async () => {
       // Simulates a race: two requests both read use_count=0 and pass the early guard,
       // but only one wins the atomic DB-level increment — the other gets false from the rpc.
       // The bespoke client returns use_count=0 on SELECT (passes early guard) but false
@@ -904,9 +904,10 @@ describe("trips-expansion routes", () => {
           },
         },
         rpc: async (fn: string) => {
-          if (fn === "claim_invite_link_slot") {
-            // Simulate the race: another request already claimed the last slot
-            return { data: false, error: null };
+          if (fn === "claim_invite_link_slot_for_user") {
+            // Simulate the race: another request already claimed the last slot —
+            // the atomic combined function reports limit_reached.
+            return { data: "limit_reached", error: null };
           }
           return { data: null, error: null };
         },
