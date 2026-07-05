@@ -70,6 +70,7 @@ import discoverySearchRouter from "./discoverySearch";
 import searchHistoryRouter from "./searchHistory";
 import postcardsRouter from "./postcards";
 import engagementRouter from "./engagement";
+import circleRouter from "./circle";
 
 const router: IRouter = Router();
 
@@ -144,5 +145,6 @@ router.use(crashReportRouter);
 router.use(discoverySearchRouter);
 router.use(searchHistoryRouter);
 router.use(engagementRouter);
+router.use(circleRouter);
 
 export default router;
