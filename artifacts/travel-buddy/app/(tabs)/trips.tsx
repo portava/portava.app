@@ -48,6 +48,7 @@ function MeetupsShortcut({ count }: { count: number }) {
 
 function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void }) {
   const [busy, setBusy] = React.useState<'accept' | 'decline' | null>(null);
+  const [tripGone, setTripGone] = React.useState(false);
 
   async function handle(action: 'accept' | 'decline') {
     setBusy(action);
@@ -61,8 +62,13 @@ function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void
         onDone();
       }
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Something went wrong. Please try again.');
-      setBusy(null);
+      if (action === 'accept' && (e?.code === 'gone' || e?.message === 'gone')) {
+        setTripGone(true);
+        setBusy(null);
+      } else {
+        Alert.alert('Error', e?.message ?? 'Something went wrong. Please try again.');
+        setBusy(null);
+      }
     }
   }
 
@@ -122,28 +128,35 @@ function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void
             </Text>
           </View>
         )}
-        <View style={styles.inviteActions}>
-          <Pressable
-            style={[styles.inviteBtn, styles.inviteBtnDecline]}
-            onPress={() => handle('decline')}
-            disabled={busy !== null}
-          >
-            {busy === 'decline'
-              ? <ActivityIndicator size={14} color={color.mute} />
-              : <X size={14} color={color.mute} />}
-            <Text style={styles.inviteBtnDeclineText}>Decline</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.inviteBtn, styles.inviteBtnAccept]}
-            onPress={() => handle('accept')}
-            disabled={busy !== null}
-          >
-            {busy === 'accept'
-              ? <ActivityIndicator size={14} color={color.onInk} />
-              : <Check size={14} color={color.onInk} />}
-            <Text style={styles.inviteBtnAcceptText}>Accept</Text>
-          </Pressable>
-        </View>
+        {tripGone ? (
+          <View style={styles.inviteGoneBanner}>
+            <X size={14} color={color.mute} />
+            <Text style={styles.inviteGoneText}>This trip is no longer active.</Text>
+          </View>
+        ) : (
+          <View style={styles.inviteActions}>
+            <Pressable
+              style={[styles.inviteBtn, styles.inviteBtnDecline]}
+              onPress={() => handle('decline')}
+              disabled={busy !== null}
+            >
+              {busy === 'decline'
+                ? <ActivityIndicator size={14} color={color.mute} />
+                : <X size={14} color={color.mute} />}
+              <Text style={styles.inviteBtnDeclineText}>Decline</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.inviteBtn, styles.inviteBtnAccept]}
+              onPress={() => handle('accept')}
+              disabled={busy !== null}
+            >
+              {busy === 'accept'
+                ? <ActivityIndicator size={14} color={color.onInk} />
+                : <Check size={14} color={color.onInk} />}
+              <Text style={styles.inviteBtnAcceptText}>Accept</Text>
+            </Pressable>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -400,6 +413,8 @@ const styles = StyleSheet.create({
   inviteMeta: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   inviteMetaText: { ...t.small, color: color.mute },
   inviteActions: { flexDirection: 'row', gap: space.sm, marginTop: space.xs },
+  inviteGoneBanner: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.xs, paddingVertical: space.sm, paddingHorizontal: space.sm, backgroundColor: color.haze, borderRadius: radius.sm },
+  inviteGoneText: { ...(t.small as object), color: color.mute, flex: 1 },
   inviteBtn: {
     flex: 1,
     flexDirection: 'row',

@@ -60,11 +60,13 @@ export default function InviteLinkScreen() {
       // Trip filled up between preview and accept — re-fetch so the screen
       // transitions to the 'full' state instead of showing a generic error.
       load();
+    } else if (result.error === 'gone') {
+      // Trip ended or was cancelled — transition to the gone screen state
+      // with a clear, friendly message instead of a generic error toast.
+      setScreen({ kind: 'gone', message: 'This trip is no longer active.' });
     } else {
       const msg =
-        result.error === 'gone'
-          ? 'This trip is no longer accepting new members.'
-          : result.error === 'not_authenticated'
+        result.error === 'not_authenticated'
           ? 'Please sign in and try again.'
           : 'The invite link may have expired. Please ask the trip owner for a new one.';
       Alert.alert('Could not join', msg);

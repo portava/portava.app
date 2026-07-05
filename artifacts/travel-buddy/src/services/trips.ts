@@ -296,8 +296,13 @@ export async function acceptTripInvite(tripId: string): Promise<void> {
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: res.statusText }));
-    throw new Error(err.message ?? `HTTP ${res.status}`);
+    const err = await res.json().catch(() => ({}) as Record<string, unknown>);
+    if (res.status === 410 && (err as Record<string, unknown>).error === 'gone') {
+      const e = new Error('gone');
+      (e as Error & { code: string }).code = 'gone';
+      throw e;
+    }
+    throw new Error((err as Record<string, unknown>).message as string | undefined ?? `HTTP ${res.status}`);
   }
 }
 
