@@ -1507,7 +1507,7 @@ export async function openDispute(
 export async function reportNoShow(
   bookingId: string,
   note?: string,
-): Promise<ApiResult<{ ok: boolean; disputeId: string | null }>> {
+): Promise<ApiResult<{ ok: boolean; disputeId: string | null; gracePeriodExpiresAt?: string }>> {
   return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/no-show`, {
     method: 'POST',
     body: JSON.stringify({ note }),

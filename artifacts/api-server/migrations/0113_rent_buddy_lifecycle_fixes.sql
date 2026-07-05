@@ -14,7 +14,13 @@ ALTER TYPE rent_buddy_checkin_type ADD VALUE IF NOT EXISTS 'no_show';
 ALTER TYPE rent_buddy_checkin_type ADD VALUE IF NOT EXISTS 'unsafe';
 ALTER TYPE rent_buddy_checkin_type ADD VALUE IF NOT EXISTS 'missed';
 
--- ── 2. no_show_pending booking status ────────────────────────────────────────
+-- ── 2. requested booking status (initial state for new booking requests) ────
+-- Task spec requires status = requested on creation (not pending).
+-- pending is kept for backward compat with any existing rows.
+
+ALTER TYPE rent_buddy_booking_status ADD VALUE IF NOT EXISTS 'requested';
+
+-- ── 3. no_show_pending booking status ────────────────────────────────────────
 -- Booking enters no_show_pending when a party reports the other did not appear.
 -- The expiry sweeper escalates to 'disputed' after no_show_grace_expires_at.
 

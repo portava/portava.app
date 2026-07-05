@@ -434,6 +434,45 @@ async function emitBookingMilestone(
   } catch { /* non-critical — never fail the main request */ }
 }
 
+// Sends a structured booking card message into the thread.
+// Called on acceptance (initial card) and on each major status transition so
+// the UI always has a current card. The card body is a JSON string.
+async function emitBookingCard(
+  client: any,
+  bookingId: string,
+  actorId: string,
+  newStatus: string,
+): Promise<void> {
+  try {
+    const { data: bk } = await client
+      .from("rent_buddy_bookings")
+      .select("telegraph_thread_id, booking_date, start_time, duration_h, city, category, total_usd")
+      .eq("id", bookingId)
+      .maybeSingle();
+    const threadId: string | null = (bk as any)?.telegraph_thread_id ?? null;
+    if (!threadId) return;
+    const cardBody = JSON.stringify({
+      booking_id: bookingId,
+      status: newStatus,
+      booking_date: (bk as any)?.booking_date ?? null,
+      start_time: (bk as any)?.start_time ?? null,
+      duration_h: (bk as any)?.duration_h ?? null,
+      city: (bk as any)?.city ?? null,
+      category: (bk as any)?.category ?? null,
+      total_usd: (bk as any)?.total_usd ?? null,
+      cancellation_policy: "Free cancellation up to 24h before start. After that, a 50% fee may apply.",
+      safety_reminder: "Always meet in public places. Share your itinerary with someone you trust.",
+    });
+    await client.from("messages").insert({
+      thread_id: threadId,
+      sender_id: actorId,
+      body: cardBody,
+      msg_type: "booking_card",
+      subtype: `booking_status_${newStatus}`,
+    });
+  } catch { /* non-critical — never fail the main request */ }
+}
+
 // ── Booking push notification helper ──────────────────────────────────────────
 // Fire-and-forget: sends a push notification to one party of a booking.
 // eventType is a free-form string; the NotificationTemplateService renders title/body.
@@ -1049,7 +1088,7 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
       cash_balance_usd: cashBalanceUsd,
       is_test_booking: !!(req.body?.is_test_booking),
       expires_at: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
-      status: "pending",
+      status: "requested",
       safety_status: "normal",
       route_plan: [],
       updated_at: new Date().toISOString(),
@@ -1065,7 +1104,7 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
       actor_user_id: user.id,
       event: "request_created",
       from_status: null,
-      to_status: "pending",
+      to_status: "requested",
       metadata: { city, category, durationH },
     });
     notifyBookingParty(getServiceClient(), buddyUserId, "rent_buddy.booking_requested", (booking as any).id);
@@ -1273,6 +1312,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => 
   });
 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_cancelled", "Booking cancelled.");
+  void emitBookingCard(serviceClient, bookingId, auth.user.id, b.status as string);
 
   // Notify the other party
   const notifyUserId = isTravelerCancel ? buddyUserIdForCancel : b.traveler_id as string;
@@ -1320,10 +1360,10 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => 
     .maybeSingle();
 
   if (!booking) return res.status(404).json({ error: "not_found" });
-  if ((booking as any).status !== "pending") {
+  if (!["pending", "requested"].includes((booking as any).status)) {
     return res.status(409).json({
       error: "invalid_transition",
-      message: `Cannot accept a booking in status '${(booking as any).status}'. Only pending bookings can be accepted.`,
+      message: `Cannot accept a booking in status '${(booking as any).status}'. Only requested (or pending) bookings can be accepted.`,
       currentStatus: (booking as any).status,
     });
   }
@@ -1366,7 +1406,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => 
 
   void serviceClient.from("buddy_booking_events").insert({
     booking_id: bookingId, actor_user_id: auth.user.id, event: "accepted",
-    from_status: "pending", to_status: "scheduled", metadata: {},
+    from_status: (booking as any).status, to_status: "scheduled", metadata: {},
   });
 
   // Positive trust event: buddy accepted and committed to the booking
@@ -1401,6 +1441,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => 
 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_accepted", "Buddy accepted — your booking is confirmed!");
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_confirmed", "Booking confirmed — your Buddy accepted the request.");
+  void emitBookingCard(serviceClient, bookingId, auth.user.id, "scheduled");
 
   // Await invalidation for both parties before response — same-request guarantee
   const sc_ = getServiceClient();
@@ -1438,10 +1479,10 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/decline", async (req, res) =>
     .maybeSingle();
 
   if (!booking) return res.status(404).json({ error: "not_found" });
-  if ((booking as any).status !== "pending") {
+  if (!["pending", "requested"].includes((booking as any).status)) {
     return res.status(409).json({
       error: "invalid_transition",
-      message: `Cannot decline a booking in status '${(booking as any).status}'. Only pending bookings can be declined.`,
+      message: `Cannot decline a booking in status '${(booking as any).status}'. Only requested (or pending) bookings can be declined.`,
       currentStatus: (booking as any).status,
     });
   }
@@ -1454,7 +1495,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/decline", async (req, res) =>
 
   void serviceClient.from("buddy_booking_events").insert({
     booking_id: req.params.bookingId, actor_user_id: auth.user.id, event: "declined",
-    from_status: "pending", to_status: "declined", metadata: { decline_reason: decline_reason ?? null },
+    from_status: (booking as any).status, to_status: "declined", metadata: { decline_reason: decline_reason ?? null },
   });
 
   // Push notification to traveler
@@ -1517,6 +1558,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/start", async (req, res) => {
   });
 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_started", "Meetup started — enjoy your time together!");
+  void emitBookingCard(serviceClient, bookingId, auth.user.id, "in_progress");
 
   return res.json({ ok: true });
 });
@@ -1623,8 +1665,10 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
   if (isBuddyCompleting) {
     void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_pending_confirmation",
       `Session finished! Traveler has ${disputeWindowH}h to review or raise a dispute.`);
+    void emitBookingCard(serviceClient, bookingId, auth.user.id, "completed_pending_traveler_confirmation");
   } else {
     void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_completed", "Booking completed — hope you had a great time!");
+    void emitBookingCard(serviceClient, bookingId, auth.user.id, "completed");
   }
 
   // Await invalidation before response — active_booking state changed for both parties
@@ -2450,6 +2494,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) =>
 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_disputed",
     "A dispute has been opened. Our team will review and reach out within 24 hours.");
+  void emitBookingCard(serviceClient, bookingId, auth.user.id, "disputed");
 
   const notifyTargetId = party.isTraveler
     ? party.buddyUserId
@@ -2569,7 +2614,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/no-show", async (req, res) =>
     notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.no_show_reported", bookingId);
   }
 
-  return res.json({ ok: true, gracePeriodExpiresAt: graceExpiry });
+  return res.json({ ok: true, disputeId: null, gracePeriodExpiresAt: graceExpiry });
 });
 
 // ── Safety routes ─────────────────────────────────────────────────────────────
@@ -4997,11 +5042,11 @@ router.post("/api/internal/buddy-requests/expire", async (req, res) => {
 
   const now = new Date().toISOString();
 
-  // 1. Expire unanswered pending requests
+  // 1. Expire unanswered requests in requested or pending status
   const { data: staleRequests } = await serviceClient
     .from("rent_buddy_bookings")
-    .select("id, traveler_id")
-    .eq("status", "pending")
+    .select("id, traveler_id, status")
+    .in("status", ["pending", "requested"])
     .lt("expires_at", now);
 
   let expiredCount = 0;
@@ -5015,7 +5060,7 @@ router.post("/api/internal/buddy-requests/expire", async (req, res) => {
     for (const bk of staleRequests) {
       void serviceClient.from("buddy_booking_events").insert({
         booking_id: bk.id, actor_user_id: bk.traveler_id, event: "request_expired",
-        from_status: "pending", to_status: "expired", metadata: {},
+        from_status: bk.status as string, to_status: "expired", metadata: {},
       });
       notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_expired", bk.id as string);
     }
@@ -5339,7 +5384,7 @@ router.post("/api/buddy-bookings/:bookingId/report-no-show", async (req, res) =>
     notifyBookingParty(getServiceClient(), notifyId, "rent_buddy.no_show_reported", bookingId);
   }
 
-  return res.json({ ok: true, gracePeriodExpiresAt: graceExpiry });
+  return res.json({ ok: true, disputeId: null, gracePeriodExpiresAt: graceExpiry });
 });
 
 // POST /api/buddy-bookings/:id/dispute
