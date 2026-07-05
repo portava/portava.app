@@ -31,10 +31,10 @@ function Avatar({ user, size = 30, onPress }: { user: InviteLinkJoiner; size?: n
   const inner = user.avatarUrl ? (
     <Image
       source={{ uri: user.avatarUrl }}
-      style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color.haze }}
+      style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color.haze, opacity: user.removed ? 0.4 : 1 }}
     />
   ) : (
-    <View style={[{ width: size, height: size, borderRadius: size / 2 }, s.avatarFallback]}>
+    <View style={[{ width: size, height: size, borderRadius: size / 2, opacity: user.removed ? 0.4 : 1 }, s.avatarFallback]}>
       <Text style={s.avatarInitial}>{(user.name?.[0] ?? user.handle?.[0] ?? '?').toUpperCase()}</Text>
     </View>
   );
@@ -72,8 +72,8 @@ function formatDate(iso: string): string {
 }
 
 function useCount(link: InviteLinkUsage): string {
-  if (link.maxUses !== null) return `${link.useCount} / ${link.maxUses} use${link.maxUses !== 1 ? 's' : ''}`;
-  return `${link.useCount} use${link.useCount !== 1 ? 's' : ''}`;
+  if (link.maxUses !== null) return `${link.useCount} / ${link.maxUses} accepted`;
+  return `${link.useCount} accepted all-time`;
 }
 
 interface LinkRowProps {
@@ -150,10 +150,15 @@ function LinkRow({ link, onRevoke, onPressJoiner, revoking }: LinkRowProps) {
                   onPress={j.handle ? () => onPressJoiner(j) : undefined}
                   disabled={!j.handle}
                 >
-                  <Text style={[s.joinersLabel, j.handle ? s.joinersLabelTappable : null]}>
+                  <Text style={[s.joinersLabel, j.handle ? s.joinersLabelTappable : null, j.removed ? s.joinersLabelRemoved : null]}>
                     {j.name ?? j.handle ?? 'Someone'}
                   </Text>
                 </Pressable>
+                {j.removed && (
+                  <View style={s.removedBadge}>
+                    <Text style={s.removedBadgeText}>Removed</Text>
+                  </View>
+                )}
               </React.Fragment>
             ))}
             {overflow > 0 && <Text style={s.joinersLabel}> +{overflow} more</Text>}
@@ -410,6 +415,21 @@ const s = StyleSheet.create({
   joinersLabelTappable: {
     color: color.ink,
     textDecorationLine: 'underline' as const,
+  },
+  joinersLabelRemoved: {
+    color: color.faint,
+    textDecorationLine: 'line-through' as const,
+  },
+  removedBadge: {
+    backgroundColor: color.signal + '18',
+    borderRadius: radius.pill,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    marginLeft: 3,
+  },
+  removedBadgeText: {
+    ...(t.stamp as object),
+    color: color.signal,
   },
   noJoinersText: {
     ...(t.small as object),

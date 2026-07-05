@@ -445,6 +445,7 @@ export interface InviteLinkJoiner {
   name: string | null;
   handle: string | null;
   avatarUrl: string | null;
+  removed?: boolean;
 }
 
 export interface InviteLinkUsage {
