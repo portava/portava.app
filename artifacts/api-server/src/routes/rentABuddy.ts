@@ -434,6 +434,37 @@ async function emitBookingMilestone(
   } catch { /* non-critical — never fail the main request */ }
 }
 
+// ── Booking push notification helper ──────────────────────────────────────────
+// Fire-and-forget: sends a push notification to one party of a booking.
+// eventType is a free-form string; the NotificationTemplateService renders title/body.
+// Silent no-op on any error — never fails the main request.
+
+async function notifyBookingParty(
+  client: ReturnType<typeof getServiceClient>,
+  userId: string,
+  eventType: string,
+  bookingId: string,
+  params: Record<string, string> = {},
+): Promise<void> {
+  if (!client || !userId) return;
+  void (async () => {
+    try {
+      const { NotificationService } = await import("../services/notifications/NotificationService.js");
+      const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
+      const ns = new NotificationService(client);
+      const nr = new NotificationRouter(client);
+      const row = await ns.create({
+        userId,
+        eventType,
+        sourceType: "booking",
+        sourceId: bookingId,
+        params,
+      });
+      if (row) await nr.route(row);
+    } catch { /* non-critical */ }
+  })();
+}
+
 // ── City availability (public, no auth) ──────────────────────────────────────
 // GET /api/rent-a-buddy/cities/:city/available
 // Returns { available: boolean, code?: string } based on the city rollout table.
@@ -1017,6 +1048,7 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
       deposit_usd: depositUsd,
       cash_balance_usd: cashBalanceUsd,
       is_test_booking: !!(req.body?.is_test_booking),
+      expires_at: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
       status: "pending",
       safety_status: "normal",
       route_plan: [],
@@ -1026,6 +1058,18 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
     .maybeSingle();
 
   if (error) return sendError(res, "db_error", error.message);
+
+  if (booking) {
+    void serviceClient.from("buddy_booking_events").insert({
+      booking_id: (booking as any).id,
+      actor_user_id: user.id,
+      event: "request_created",
+      from_status: null,
+      to_status: "pending",
+      metadata: { city, category, durationH },
+    });
+    notifyBookingParty(getServiceClient(), buddyUserId, "rent_buddy.booking_requested", (booking as any).id);
+  }
 
   return res.status(201).json({ booking: mapBooking(booking), policyText: POLICY_TEXT });
 });
@@ -1171,8 +1215,21 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => 
   if (!booking) return res.status(404).json({ error: "not_found" });
 
   const b = booking as any;
-  if (b.traveler_id !== auth.user.id) return res.status(403).json({ error: "forbidden" });
-  if (!["pending", "confirmed"].includes(b.status)) {
+  // Resolve the buddy's user_id so both traveler and buddy can cancel
+  const { data: buddyProfForCancel } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("user_id")
+    .eq("id", b.buddy_id)
+    .maybeSingle();
+  const buddyUserIdForCancel: string = (buddyProfForCancel as any)?.user_id ?? "";
+  const isTravelerCancel = b.traveler_id === auth.user.id;
+  const isBuddyCancel   = !!buddyUserIdForCancel && buddyUserIdForCancel === auth.user.id;
+  if (!isTravelerCancel && !isBuddyCancel) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+
+  const cancellableStatuses = ["pending", "confirmed"];
+  if (!cancellableStatuses.includes(b.status)) {
     return res.status(409).json({
       error: "invalid_transition",
       message: `Cannot cancel a booking in status '${b.status}'. Only pending or confirmed bookings can be cancelled.`,
@@ -1180,24 +1237,34 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => 
     });
   }
 
+  const { cancellation_reason } = req.body ?? {};
+  const cancelStatus = isTravelerCancel ? "cancelled_by_traveler" : "cancelled_by_buddy";
   const now = new Date();
   const bookingDt = new Date(`${b.booking_date}T${b.start_time ?? "12:00"}Z`);
   const hoursUntil = (bookingDt.getTime() - now.getTime()) / 3600000;
-  const eventType = hoursUntil < 2 ? "rent_buddy_late_cancel" : "rent_buddy_abandoned_booking";
+  const trustEventType = isTravelerCancel
+    ? (hoursUntil < 2 ? "rent_buddy_late_cancel" : "rent_buddy_abandoned_booking")
+    : "rent_buddy_buddy_cancel";
 
   await serviceClient
     .from("rent_buddy_bookings")
-    .update({ status: "cancelled", cancelled_at: now.toISOString(), updated_at: now.toISOString() })
+    .update({
+      status: cancelStatus,
+      cancelled_at: now.toISOString(),
+      cancellation_reason: cancellation_reason ?? null,
+      updated_at: now.toISOString(),
+    })
     .eq("id", bookingId);
 
   void serviceClient.from("buddy_booking_events").insert({
-    booking_id: bookingId, actor_user_id: auth.user.id, event: "cancelled_by_traveler",
-    from_status: b.status, to_status: "cancelled", metadata: { hoursUntil: Math.round(hoursUntil * 10) / 10 },
+    booking_id: bookingId, actor_user_id: auth.user.id, event: cancelStatus,
+    from_status: b.status, to_status: cancelStatus,
+    metadata: { hoursUntil: Math.round(hoursUntil * 10) / 10, cancellation_reason: cancellation_reason ?? null },
   });
 
   void recordTrustEvent(serviceClient, {
     userId: auth.user.id,
-    eventType,
+    eventType: trustEventType,
     category: "communication",
     delta: hoursUntil < 2 ? -5 : -2,
     severity: "minor",
@@ -1207,8 +1274,16 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => 
 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_cancelled", "Booking cancelled.");
 
+  // Notify the other party
+  const notifyUserId = isTravelerCancel ? buddyUserIdForCancel : b.traveler_id as string;
+  const notifyEvent  = isTravelerCancel ? "rent_buddy.booking_cancelled_by_traveler" : "rent_buddy.booking_cancelled_by_buddy";
+  const sc2 = getServiceClient();
+  if (notifyUserId) {
+    notifyBookingParty(sc2, notifyUserId, notifyEvent, bookingId);
+  }
+
   // Invalidate compass cache before response so caller sees fresh active_booking state
-  await invalidateCompassCache(getServiceClient(), auth.user.id, "booking_cancel");
+  await invalidateCompassCache(sc2, auth.user.id, "booking_cancel");
 
   return res.json({ ok: true });
 });
@@ -1250,6 +1325,36 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => 
       error: "invalid_transition",
       message: `Cannot accept a booking in status '${(booking as any).status}'. Only pending bookings can be accepted.`,
       currentStatus: (booking as any).status,
+    });
+  }
+
+  // Guard: reject expired requests — buddy cannot accept after the 48-hour window
+  if ((booking as any).expires_at && new Date((booking as any).expires_at) < new Date()) {
+    return res.status(422).json({
+      error: "request_expired",
+      message: "This booking request has expired and can no longer be accepted.",
+    });
+  }
+
+  // Conflict detection: check for overlapping confirmed/in_progress bookings for this buddy
+  const { data: existingBookings } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("id, booking_date, start_time, duration_h")
+    .eq("buddy_id", (bp as any).id)
+    .in("status", ["confirmed", "in_progress"])
+    .neq("id", bookingId);
+
+  const newStart = new Date(`${(booking as any).booking_date}T${(booking as any).start_time ?? "00:00"}Z`);
+  const newEnd   = new Date(newStart.getTime() + Number((booking as any).duration_h ?? 1) * 3600 * 1000);
+  const hasConflict = (existingBookings ?? []).some((cb: any) => {
+    const cbStart = new Date(`${cb.booking_date}T${cb.start_time ?? "00:00"}Z`);
+    const cbEnd   = new Date(cbStart.getTime() + Number(cb.duration_h ?? 1) * 3600 * 1000);
+    return newStart < cbEnd && newEnd > cbStart;
+  });
+  if (hasConflict) {
+    return res.status(409).json({
+      error: "schedule_conflict",
+      message: "This booking overlaps with an existing confirmed or in-progress session. Please decline and suggest an alternative time.",
     });
   }
 
@@ -1304,6 +1409,9 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => 
     invalidateCompassCache(sc_, (booking as any).traveler_id as string, "booking_accept"),
   ]);
 
+  // Push notification to traveler
+  notifyBookingParty(sc_, (booking as any).traveler_id as string, "rent_buddy.booking_accepted", bookingId);
+
   return res.json({ ok: true });
 });
 
@@ -1324,7 +1432,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/decline", async (req, res) =>
   const now = new Date().toISOString();
   const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
-    .select("id, status")
+    .select("id, status, traveler_id")
     .eq("id", req.params.bookingId)
     .eq("buddy_id", (bp as any).id)
     .maybeSingle();
@@ -1338,15 +1446,22 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/decline", async (req, res) =>
     });
   }
 
+  const { decline_reason } = req.body ?? {};
   await serviceClient
     .from("rent_buddy_bookings")
-    .update({ status: "cancelled", cancelled_at: now, updated_at: now })
+    .update({ status: "declined", decline_reason: decline_reason ?? null, updated_at: now })
     .eq("id", req.params.bookingId);
 
   void serviceClient.from("buddy_booking_events").insert({
     booking_id: req.params.bookingId, actor_user_id: auth.user.id, event: "declined",
-    from_status: "pending", to_status: "cancelled", metadata: {},
+    from_status: "pending", to_status: "declined", metadata: { decline_reason: decline_reason ?? null },
   });
+
+  // Push notification to traveler
+  const travelerId: string = (booking as any).traveler_id ?? "";
+  if (travelerId) {
+    notifyBookingParty(getServiceClient(), travelerId, "rent_buddy.booking_declined", req.params.bookingId);
+  }
 
   return res.json({ ok: true });
 });
@@ -1441,15 +1556,31 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
     });
   }
 
+  // Buddy completing → pending traveler confirmation with a 24h dispute window.
+  // Traveler completing directly → completed (backward-compatible path).
+  const isBuddyCompleting = completingBP && (booking as any).buddy_id === (completingBP as any).id;
+  const disputeWindowH = 24;
+  const disputeWindowExpiresAt = isBuddyCompleting
+    ? new Date(Date.now() + disputeWindowH * 3600 * 1000).toISOString()
+    : null;
+  const finalStatus = isBuddyCompleting ? "completed_pending_traveler_confirmation" : "completed";
+
   const now = new Date().toISOString();
   await serviceClient
     .from("rent_buddy_bookings")
-    .update({ status: "completed", completed_at: now, updated_at: now })
+    .update({
+      status: finalStatus,
+      completed_at: now,
+      ...(disputeWindowExpiresAt ? { dispute_window_expires_at: disputeWindowExpiresAt } : {}),
+      updated_at: now,
+    })
     .eq("id", bookingId);
 
   void serviceClient.from("buddy_booking_events").insert({
-    booking_id: bookingId, actor_user_id: auth.user.id, event: "completed",
-    from_status: "in_progress", to_status: "completed", metadata: {},
+    booking_id: bookingId, actor_user_id: auth.user.id,
+    event: isBuddyCompleting ? "buddy_marked_complete" : "completed",
+    from_status: "in_progress", to_status: finalStatus,
+    metadata: isBuddyCompleting ? { disputeWindowH, disputeWindowExpiresAt } : {},
   });
 
   // Fetch current count from profile (not from booking row)
@@ -1489,7 +1620,12 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
     });
   }
 
-  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_completed", "Booking completed — hope you had a great time!");
+  if (isBuddyCompleting) {
+    void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_pending_confirmation",
+      `Session finished! Traveler has ${disputeWindowH}h to review or raise a dispute.`);
+  } else {
+    void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_completed", "Booking completed — hope you had a great time!");
+  }
 
   // Await invalidation before response — active_booking state changed for both parties
   const scComplete = getServiceClient();
@@ -1577,13 +1713,21 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
     } catch {}
   })();
 
-  // Archive the booking thread unless BOTH parties opted to stay connected.
-  // Either party may call POST /api/rent-a-buddy/bookings/:bookingId/stay-connected before or after
-  // completion to record their preference. We check both here.
-  // Read durable stay-connected opt-ins from DB (not in-memory — survives restarts).
+  // Push notification to the other party
+  if (isBuddyCompleting) {
+    notifyBookingParty(scComplete, (booking as any).traveler_id as string,
+      "rent_buddy.booking_pending_confirmation", bookingId);
+  } else {
+    if (buddyUserId) {
+      notifyBookingParty(scComplete, buddyUserId, "rent_buddy.booking_completed", bookingId);
+    }
+  }
+
+  // Archive the booking thread only when the booking is fully completed (not pending confirmation).
+  // For pending confirmation, the thread stays open so traveler can dispute or confirm.
   const bothStayConnected = !!((booking as any).stay_connected_traveler && (booking as any).stay_connected_buddy);
 
-  if (!bothStayConnected) {
+  if (finalStatus === "completed" && !bothStayConnected) {
     const telegraphThreadId2: string | null = (booking as any).telegraph_thread_id ?? null;
     if (telegraphThreadId2) {
       const archiveNow = new Date().toISOString();
@@ -1594,7 +1738,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
         .is("archived_at", null);
     }
   }
-  return res.json({ ok: true });
+  return res.json({ ok: true, status: finalStatus });
 });
 
 // ── Bookings — Telegraph thread ───────────────────────────────────────────────
@@ -2233,18 +2377,118 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/reschedule", async (req, res)
   });
 });
 
+// POST /api/rent-a-buddy/bookings/:bookingId/dispute
+// Either party files a dispute. Opens a rent_buddy_disputes row and moves booking to 'disputed'.
+// Allowed statuses: in_progress, completed_pending_traveler_confirmation, completed.
+// For completed_pending_traveler_confirmation, must be within dispute_window_expires_at.
 router.post("/api/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) => {
-  res.status(501).json({
-    error:  "pending_implementation",
-    message: "Dispute filing via this endpoint is not yet implemented. Use POST /api/rent-a-buddy/bookings/:bookingId/report to flag an issue.",
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId } = req.params;
+  const { reason } = req.body ?? {};
+
+  const VALID_REASONS = ["cash_balance_disagreement", "no_show", "harassment", "policy_violation", "route_violation", "other"];
+  if (!reason || !VALID_REASONS.includes(reason)) {
+    return res.status(400).json({
+      error: "invalid_payload",
+      message: `reason must be one of: ${VALID_REASONS.join(", ")}.`,
+    });
+  }
+
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("traveler_id, buddy_id, status, dispute_window_expires_at")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
+  if (!party) return;
+
+  const disputableStatuses = ["in_progress", "completed_pending_traveler_confirmation", "completed"];
+  if (!disputableStatuses.includes((booking as any).status)) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: `Cannot dispute a booking in status '${(booking as any).status}'.`,
+      currentStatus: (booking as any).status,
+    });
+  }
+
+  // Enforce dispute window for completed_pending_traveler_confirmation
+  if ((booking as any).status === "completed_pending_traveler_confirmation") {
+    const windowExpiry = (booking as any).dispute_window_expires_at;
+    if (windowExpiry && new Date(windowExpiry) < new Date()) {
+      return res.status(409).json({
+        error: "dispute_window_expired",
+        message: "The dispute window has closed. The booking has been automatically completed.",
+      });
+    }
+  }
+
+  const { data: dispute, error: disputeErr } = await serviceClient
+    .from("rent_buddy_disputes")
+    .insert({ booking_id: bookingId, raised_by: auth.user.id, reason, status: "open" })
+    .select("id")
+    .maybeSingle();
+
+  if (disputeErr) return sendError(res, "db_error", disputeErr.message);
+
+  const now = new Date().toISOString();
+  await serviceClient
+    .from("rent_buddy_bookings")
+    .update({ status: "disputed", updated_at: now })
+    .eq("id", bookingId);
+
+  void serviceClient.from("buddy_booking_events").insert({
+    booking_id: bookingId, actor_user_id: auth.user.id, event: "dispute_opened",
+    from_status: (booking as any).status, to_status: "disputed",
+    metadata: { reason, dispute_id: (dispute as any)?.id ?? null },
   });
+
+  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_disputed",
+    "A dispute has been opened. Our team will review and reach out within 24 hours.");
+
+  const notifyTargetId = party.isTraveler
+    ? party.buddyUserId
+    : (booking as any).traveler_id as string;
+  if (notifyTargetId) {
+    notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.dispute_opened", bookingId, { reason });
+  }
+
+  return res.json({ ok: true, disputeId: (dispute as any)?.id ?? null });
 });
 
+// GET /api/rent-a-buddy/bookings/:bookingId/dispute
+// Returns the open dispute for a booking, if any.
 router.get("/api/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) => {
-  res.status(501).json({
-    error:  "pending_implementation",
-    message: "Dispute status retrieval is not yet implemented.",
-  });
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId } = req.params;
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("traveler_id, buddy_id")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
+  if (!party) return;
+
+  const { data: dispute } = await serviceClient
+    .from("rent_buddy_disputes")
+    .select("id, reason, status, resolution_note, resolved_at, created_at")
+    .eq("booking_id", bookingId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return res.json({ dispute: dispute ?? null });
 });
 
 router.get("/api/rent-a-buddy/bookings/:bookingId/refund-eligibility", async (req, res) => {
@@ -2254,11 +2498,78 @@ router.get("/api/rent-a-buddy/bookings/:bookingId/refund-eligibility", async (re
   });
 });
 
+// POST /api/rent-a-buddy/bookings/:bookingId/no-show
+// Either party reports the other did not appear. Creates a safety checkin, opens a dispute,
+// and moves the booking to 'disputed'. Works for confirmed or in_progress bookings.
 router.post("/api/rent-a-buddy/bookings/:bookingId/no-show", async (req, res) => {
-  res.status(501).json({
-    error:  "pending_implementation",
-    message: "No-show reporting via this endpoint is not yet implemented. Use POST /api/rent-a-buddy/bookings/:bookingId/report with reportType=buddy_no_show or reportType=traveler_no_show.",
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId } = req.params;
+  const { note } = req.body ?? {};
+
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("traveler_id, buddy_id, status")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
+  if (!party) return;
+
+  const noShowAllowedStatuses = ["confirmed", "in_progress"];
+  if (!noShowAllowedStatuses.includes((booking as any).status)) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "No-show can only be reported for confirmed or in-progress bookings.",
+      currentStatus: (booking as any).status,
+    });
+  }
+
+  // Record the no-show as a safety checkin
+  void serviceClient.from("rent_buddy_safety_checkins").insert({
+    booking_id: bookingId,
+    user_id: auth.user.id,
+    checkin_type: "no_show",
+    response: note ?? null,
   });
+
+  // Open a dispute
+  const { data: dispute } = await serviceClient
+    .from("rent_buddy_disputes")
+    .insert({ booking_id: bookingId, raised_by: auth.user.id, reason: "no_show", status: "open" })
+    .select("id")
+    .maybeSingle();
+
+  const now = new Date().toISOString();
+  await serviceClient
+    .from("rent_buddy_bookings")
+    .update({ status: "disputed", updated_at: now })
+    .eq("id", bookingId);
+
+  void serviceClient.from("buddy_booking_events").insert({
+    booking_id: bookingId, actor_user_id: auth.user.id, event: "no_show_reported",
+    from_status: (booking as any).status, to_status: "disputed",
+    metadata: {
+      reported_by: party.isTraveler ? "traveler" : "buddy",
+      dispute_id: (dispute as any)?.id ?? null,
+    },
+  });
+
+  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_no_show",
+    "A no-show was reported. Our team will review and contact both parties.");
+
+  const notifyTargetId = party.isTraveler
+    ? party.buddyUserId
+    : (booking as any).traveler_id as string;
+  if (notifyTargetId) {
+    notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.no_show_reported", bookingId);
+  }
+
+  return res.json({ ok: true, disputeId: (dispute as any)?.id ?? null });
 });
 
 // ── Safety routes ─────────────────────────────────────────────────────────────
@@ -4663,6 +4974,441 @@ router.get("/api/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
     taxNote: "Tax documents are not available yet. Please keep your own records of earnings for tax purposes. A tax summary feature is planned for a future release.",
     platformFeePct: platformFeePct * 100,
   });
+});
+
+// ── Booking lifecycle — expiry sweeper ────────────────────────────────────────
+// POST /api/internal/buddy-requests/expire
+// Sweeps two sets of stale bookings:
+//   1. pending requests past expires_at → expired
+//   2. completed_pending_traveler_confirmation past dispute_window_expires_at → completed
+// Call on a schedule (cron / Supabase pg_cron / external scheduler).
+// Accessible without user auth — restrict at the infrastructure / firewall level.
+
+router.post("/api/internal/buddy-requests/expire", async (req, res) => {
+  const serviceClient = getServiceClient();
+  if (!serviceClient) return res.status(503).json({ error: "service_unavailable" });
+
+  const now = new Date().toISOString();
+
+  // 1. Expire unanswered pending requests
+  const { data: staleRequests } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("id, traveler_id")
+    .eq("status", "pending")
+    .lt("expires_at", now);
+
+  let expiredCount = 0;
+  if (staleRequests && staleRequests.length > 0) {
+    const ids = staleRequests.map((r: any) => r.id as string);
+    await serviceClient
+      .from("rent_buddy_bookings")
+      .update({ status: "expired", updated_at: now })
+      .in("id", ids);
+
+    for (const bk of staleRequests) {
+      void serviceClient.from("buddy_booking_events").insert({
+        booking_id: bk.id, actor_user_id: bk.traveler_id, event: "request_expired",
+        from_status: "pending", to_status: "expired", metadata: {},
+      });
+      notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_expired", bk.id as string);
+    }
+    expiredCount = staleRequests.length;
+  }
+
+  // 2. Auto-complete bookings whose dispute window closed without a dispute
+  const { data: pendingConfirm } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("id, traveler_id, buddy_id")
+    .eq("status", "completed_pending_traveler_confirmation")
+    .lt("dispute_window_expires_at", now);
+
+  let autoCompletedCount = 0;
+  if (pendingConfirm && pendingConfirm.length > 0) {
+    const ids2 = pendingConfirm.map((r: any) => r.id as string);
+    await serviceClient
+      .from("rent_buddy_bookings")
+      .update({ status: "completed", updated_at: now })
+      .in("id", ids2);
+
+    for (const bk of pendingConfirm) {
+      void serviceClient.from("buddy_booking_events").insert({
+        booking_id: bk.id, actor_user_id: bk.traveler_id, event: "auto_completed",
+        from_status: "completed_pending_traveler_confirmation", to_status: "completed",
+        metadata: { reason: "dispute_window_expired" },
+      });
+    }
+    autoCompletedCount = pendingConfirm.length;
+  }
+
+  return res.json({ ok: true, expired: expiredCount, autoCompleted: autoCompletedCount });
+});
+
+// ── Traveler confirm ──────────────────────────────────────────────────────────
+// POST /api/rent-a-buddy/bookings/:bookingId/traveler-confirm
+// Traveler explicitly confirms the session is complete without raising a dispute.
+// Only valid for completed_pending_traveler_confirmation status.
+// Moves to completed, archives thread, notifies buddy.
+
+router.post("/api/rent-a-buddy/bookings/:bookingId/traveler-confirm", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId } = req.params;
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("traveler_id, buddy_id, status, telegraph_thread_id, stay_connected_traveler, stay_connected_buddy")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  if ((booking as any).traveler_id !== auth.user.id) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+
+  if ((booking as any).status !== "completed_pending_traveler_confirmation") {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: `Cannot confirm a booking in status '${(booking as any).status}'.`,
+      currentStatus: (booking as any).status,
+    });
+  }
+
+  const now = new Date().toISOString();
+  await serviceClient
+    .from("rent_buddy_bookings")
+    .update({ status: "completed", updated_at: now })
+    .eq("id", bookingId);
+
+  void serviceClient.from("buddy_booking_events").insert({
+    booking_id: bookingId, actor_user_id: auth.user.id, event: "traveler_confirmed",
+    from_status: "completed_pending_traveler_confirmation", to_status: "completed", metadata: {},
+  });
+
+  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_completed",
+    "Confirmed — booking complete! Thank you for using Rent a Buddy.");
+
+  // Notify buddy
+  const { data: bProf } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("user_id")
+    .eq("id", (booking as any).buddy_id)
+    .maybeSingle();
+  const buddyUserIdConfirm: string = (bProf as any)?.user_id ?? "";
+  if (buddyUserIdConfirm) {
+    notifyBookingParty(getServiceClient(), buddyUserIdConfirm, "rent_buddy.booking_completed", bookingId);
+  }
+
+  // Archive thread
+  const bothStayConnected3 = !!((booking as any).stay_connected_traveler && (booking as any).stay_connected_buddy);
+  if (!bothStayConnected3) {
+    const threadId3: string | null = (booking as any).telegraph_thread_id ?? null;
+    if (threadId3) {
+      await serviceClient
+        .from("message_thread_members")
+        .update({ archived_at: now })
+        .eq("thread_id", threadId3)
+        .is("archived_at", null);
+    }
+  }
+
+  await invalidateCompassCache(getServiceClient(), auth.user.id, "booking_confirm");
+  return res.json({ ok: true });
+});
+
+// ── Booking events (evidence log) ─────────────────────────────────────────────
+// GET /api/rent-a-buddy/bookings/:bookingId/events
+// Returns the public event log for a booking (admin_only events excluded).
+// Both the traveler and the buddy can call this.
+
+router.get("/api/rent-a-buddy/bookings/:bookingId/events", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId } = req.params;
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("traveler_id, buddy_id")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
+  if (!party) return;
+
+  const { data: events } = await serviceClient
+    .from("buddy_booking_events")
+    .select("id, event, from_status, to_status, metadata, created_at")
+    .eq("booking_id", bookingId)
+    .order("created_at", { ascending: true });
+
+  return res.json({ events: events ?? [] });
+});
+
+// ── Spec-path aliases ─────────────────────────────────────────────────────────
+// The task spec uses path prefix /api/buddy-bookings/:id/ for the lifecycle routes.
+// These aliases delegate to the same DB logic as the /api/rent-a-buddy/bookings/:bookingId/ routes.
+
+// POST /api/buddy-bookings/:id/check-in
+// Creates a buddy_booking_checkins row (backed by rent_buddy_safety_checkins).
+// Body: { status: arrived|started|could_not_find|unsafe|missed, broadArea?: string, role?: string }
+router.post("/api/buddy-bookings/:bookingId/check-in", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId } = req.params;
+  const { status: checkinStatus, broadArea, role } = req.body ?? {};
+
+  if (!checkinStatus) {
+    return res.status(400).json({ error: "invalid_payload", message: "status is required." });
+  }
+
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("traveler_id, buddy_id, status")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
+  if (!party) return;
+
+  await serviceClient.from("rent_buddy_safety_checkins").insert({
+    booking_id: bookingId,
+    user_id: auth.user.id,
+    checkin_type: checkinStatus,
+    response: broadArea ?? null,
+  });
+
+  void serviceClient.from("buddy_booking_events").insert({
+    booking_id: bookingId, actor_user_id: auth.user.id, event: "checkin",
+    from_status: (booking as any).status, to_status: (booking as any).status,
+    metadata: { checkin_status: checkinStatus, broad_area: broadArea ?? null, role: role ?? null },
+  });
+
+  // If unsafe, create a safety event
+  const unsafeStatuses = ["unsafe", "could_not_find", "missed"];
+  if (unsafeStatuses.includes(checkinStatus)) {
+    void serviceClient.from("rent_buddy_safety_events").insert({
+      booking_id: bookingId,
+      actor_user_id: auth.user.id,
+      event_type: "comfort_check_distress",
+      event_status: "open",
+      metadata: { status: checkinStatus, broad_area: broadArea ?? null },
+    });
+  }
+
+  return res.json({ ok: true });
+});
+
+// POST /api/buddy-bookings/:id/report-no-show
+// Spec-path alias for POST /api/rent-a-buddy/bookings/:bookingId/no-show
+router.post("/api/buddy-bookings/:bookingId/report-no-show", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId } = req.params;
+  const { note } = req.body ?? {};
+
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("traveler_id, buddy_id, status")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
+  if (!party) return;
+
+  if (!["confirmed", "in_progress"].includes((booking as any).status)) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "No-show can only be reported for confirmed or in-progress bookings.",
+      currentStatus: (booking as any).status,
+    });
+  }
+
+  void serviceClient.from("rent_buddy_safety_checkins").insert({
+    booking_id: bookingId, user_id: auth.user.id,
+    checkin_type: "no_show", response: note ?? null,
+  });
+
+  const { data: dispute } = await serviceClient
+    .from("rent_buddy_disputes")
+    .insert({ booking_id: bookingId, raised_by: auth.user.id, reason: "no_show", status: "open" })
+    .select("id")
+    .maybeSingle();
+
+  const now = new Date().toISOString();
+  await serviceClient
+    .from("rent_buddy_bookings")
+    .update({ status: "disputed", updated_at: now })
+    .eq("id", bookingId);
+
+  void serviceClient.from("buddy_booking_events").insert({
+    booking_id: bookingId, actor_user_id: auth.user.id, event: "no_show_reported",
+    from_status: (booking as any).status, to_status: "disputed",
+    metadata: { reported_by: party.isTraveler ? "traveler" : "buddy", dispute_id: (dispute as any)?.id ?? null },
+  });
+
+  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_no_show",
+    "A no-show was reported. Our team will review and contact both parties.");
+
+  const notifyId = party.isTraveler ? party.buddyUserId : (booking as any).traveler_id as string;
+  if (notifyId) {
+    notifyBookingParty(getServiceClient(), notifyId, "rent_buddy.no_show_reported", bookingId);
+  }
+
+  return res.json({ ok: true, disputeId: (dispute as any)?.id ?? null });
+});
+
+// POST /api/buddy-bookings/:id/dispute
+// Spec-path alias for POST /api/rent-a-buddy/bookings/:bookingId/dispute
+router.post("/api/buddy-bookings/:bookingId/dispute", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId } = req.params;
+  const { reason } = req.body ?? {};
+
+  const VALID_REASONS = ["cash_balance_disagreement", "no_show", "harassment", "policy_violation", "route_violation", "other"];
+  if (!reason || !VALID_REASONS.includes(reason)) {
+    return res.status(400).json({ error: "invalid_payload", message: `reason must be one of: ${VALID_REASONS.join(", ")}.` });
+  }
+
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("traveler_id, buddy_id, status, dispute_window_expires_at")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
+  if (!party) return;
+
+  const disputableStatuses = ["in_progress", "completed_pending_traveler_confirmation", "completed"];
+  if (!disputableStatuses.includes((booking as any).status)) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: `Cannot dispute a booking in status '${(booking as any).status}'.`,
+    });
+  }
+
+  if ((booking as any).status === "completed_pending_traveler_confirmation") {
+    const windowExpiry = (booking as any).dispute_window_expires_at;
+    if (windowExpiry && new Date(windowExpiry) < new Date()) {
+      return res.status(409).json({ error: "dispute_window_expired", message: "The dispute window has closed." });
+    }
+  }
+
+  const { data: dispute, error: disputeErr } = await serviceClient
+    .from("rent_buddy_disputes")
+    .insert({ booking_id: bookingId, raised_by: auth.user.id, reason, status: "open" })
+    .select("id")
+    .maybeSingle();
+
+  if (disputeErr) return sendError(res, "db_error", disputeErr.message);
+
+  const now = new Date().toISOString();
+  await serviceClient.from("rent_buddy_bookings").update({ status: "disputed", updated_at: now }).eq("id", bookingId);
+
+  void serviceClient.from("buddy_booking_events").insert({
+    booking_id: bookingId, actor_user_id: auth.user.id, event: "dispute_opened",
+    from_status: (booking as any).status, to_status: "disputed",
+    metadata: { reason, dispute_id: (dispute as any)?.id ?? null },
+  });
+
+  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_disputed",
+    "A dispute has been opened. Our team will review and reach out within 24 hours.");
+
+  const notifyId2 = party.isTraveler ? party.buddyUserId : (booking as any).traveler_id as string;
+  if (notifyId2) {
+    notifyBookingParty(getServiceClient(), notifyId2, "rent_buddy.dispute_opened", bookingId, { reason });
+  }
+
+  return res.json({ ok: true, disputeId: (dispute as any)?.id ?? null });
+});
+
+// POST /api/admin/buddy-bookings/:bookingId/resolve-dispute
+// Admin resolves an open dispute. Moves booking to completed or cancelled.
+// Body: { finalStatus: "completed" | "cancelled", resolution?: string, resolutionNote?: string }
+router.post("/api/admin/buddy-bookings/:bookingId/resolve-dispute", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+
+  const { data: adminProf } = await serviceClient
+    .from("profiles")
+    .select("role")
+    .eq("id", auth.user.id)
+    .maybeSingle();
+  if (!["admin", "owner"].includes((adminProf as any)?.role ?? "")) {
+    return res.status(403).json({ error: "forbidden", message: "Admin access required." });
+  }
+
+  const { bookingId } = req.params;
+  const { finalStatus, resolutionNote } = req.body ?? {};
+
+  if (!["completed", "cancelled"].includes(finalStatus ?? "")) {
+    return res.status(400).json({ error: "invalid_payload", message: "finalStatus must be 'completed' or 'cancelled'." });
+  }
+
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("traveler_id, buddy_id, status")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  if ((booking as any).status !== "disputed") {
+    return res.status(409).json({ error: "invalid_transition", message: "Booking is not in disputed status." });
+  }
+
+  const now = new Date().toISOString();
+
+  await serviceClient
+    .from("rent_buddy_disputes")
+    .update({ status: "resolved", resolution_note: resolutionNote ?? null, resolved_at: now })
+    .eq("booking_id", bookingId)
+    .eq("status", "open");
+
+  await serviceClient
+    .from("rent_buddy_bookings")
+    .update({ status: finalStatus, updated_at: now })
+    .eq("id", bookingId);
+
+  void serviceClient.from("buddy_booking_events").insert({
+    booking_id: bookingId, actor_user_id: auth.user.id, event: "dispute_resolved",
+    from_status: "disputed", to_status: finalStatus,
+    metadata: { final_status: finalStatus, resolution_note: resolutionNote ?? null },
+  });
+
+  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_dispute_resolved",
+    "Dispute resolved by the Travel Buddy team.");
+
+  // Notify both parties
+  if ((booking as any).traveler_id) {
+    notifyBookingParty(serviceClient, (booking as any).traveler_id as string, "rent_buddy.dispute_resolved", bookingId);
+  }
+  const { data: bProf4 } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("user_id")
+    .eq("id", (booking as any).buddy_id)
+    .maybeSingle();
+  if ((bProf4 as any)?.user_id) {
+    notifyBookingParty(serviceClient, (bProf4 as any).user_id as string, "rent_buddy.dispute_resolved", bookingId);
+  }
+
+  return res.json({ ok: true });
 });
 
 export default router;

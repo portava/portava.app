@@ -1474,3 +1474,82 @@ export type ProfileChecklist = {
 export async function getProfileChecklist(): Promise<ApiResult<ProfileChecklist>> {
   return apiFetch('/api/me/buddy-profile/checklist');
 }
+
+// ── Booking lifecycle helpers ──────────────────────────────────────────────────
+
+export type DisputeReason =
+  | 'cash_balance_disagreement'
+  | 'no_show'
+  | 'harassment'
+  | 'policy_violation'
+  | 'route_violation'
+  | 'other';
+
+export type BookingEvent = {
+  id: string;
+  event: string;
+  from_status: string | null;
+  to_status: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export async function openDispute(
+  bookingId: string,
+  reason: DisputeReason,
+): Promise<ApiResult<{ ok: boolean; disputeId: string | null }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/dispute`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function reportNoShow(
+  bookingId: string,
+  note?: string,
+): Promise<ApiResult<{ ok: boolean; disputeId: string | null }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/no-show`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  });
+}
+
+export async function travelerConfirmComplete(
+  bookingId: string,
+): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/traveler-confirm`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+export async function getBookingEvents(
+  bookingId: string,
+): Promise<ApiResult<{ events: BookingEvent[] }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/events`);
+}
+
+export type CheckInStatus =
+  | 'arrived'
+  | 'started'
+  | 'could_not_find'
+  | 'unsafe'
+  | 'missed'
+  | 'no_show';
+
+export async function submitCheckIn(
+  bookingId: string,
+  status: CheckInStatus,
+  broadArea?: string,
+): Promise<ApiResult<{ ok: boolean }>> {
+  return apiFetch(`/api/buddy-bookings/${bookingId}/check-in`, {
+    method: 'POST',
+    body: JSON.stringify({ status, broadArea }),
+  });
+}
+
+export async function getOpenDispute(
+  bookingId: string,
+): Promise<ApiResult<{ dispute: Record<string, unknown> | null }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/dispute`);
+}
