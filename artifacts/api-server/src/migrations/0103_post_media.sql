@@ -68,8 +68,8 @@ CREATE POLICY "post_media_owner_write"
 
 -- Select policy: owner always sees all their media (including pending/failed/rejected).
 -- Other callers may read ready, non-rejected/flagged media when they are permitted to
--- see the parent post under the full visibility model (public / followers / trip-only),
--- subject to block checks.
+-- see the parent post under the production visibility model (public / trip_only).
+-- Note: post_visibility enum only has public, trip_only, private — no followers branch.
 DROP POLICY IF EXISTS "post_media_public_select" ON post_media;
 CREATE POLICY "post_media_public_select"
   ON post_media FOR SELECT
@@ -86,7 +86,7 @@ CREATE POLICY "post_media_public_select"
         WHERE (b.blocker_id = auth.uid() AND b.blocked_id = post_media.user_id)
            OR (b.blocker_id = post_media.user_id AND b.blocked_id = auth.uid())
       )
-      -- Viewer is authorized to see the parent post under the full visibility model
+      -- Viewer is authorized to see the parent post under the visibility model
       AND EXISTS (
         SELECT 1 FROM posts p
         WHERE p.id     = post_media.post_id
@@ -94,15 +94,6 @@ CREATE POLICY "post_media_public_select"
           AND (
             -- public: any authenticated caller
             p.visibility = 'public'
-            -- followers: caller follows the post author
-            OR (
-              p.visibility = 'followers'
-              AND EXISTS (
-                SELECT 1 FROM user_follows uf
-                WHERE uf.follower_id  = auth.uid()
-                  AND uf.following_id = p.author_id
-              )
-            )
             -- trip_only: caller is a member of the parent trip
             OR (
               p.visibility = 'trip_only'
