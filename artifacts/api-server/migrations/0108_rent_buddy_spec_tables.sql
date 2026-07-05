@@ -39,10 +39,16 @@ CREATE TABLE IF NOT EXISTS buddy_services (
 
 ALTER TABLE buddy_services ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY bs_read ON buddy_services FOR SELECT USING (TRUE);
-CREATE POLICY bs_own  ON buddy_services FOR ALL
+-- Public read: only active, admin-approved services are visible without auth
+CREATE POLICY bs_public_read ON buddy_services FOR SELECT
+  USING (is_active = TRUE AND approved = TRUE);
+-- Owner read: buddy can see all their own services (including pending approval)
+CREATE POLICY bs_own_read    ON buddy_services FOR SELECT
   USING (buddy_id IN (SELECT id FROM rent_buddy_profiles WHERE user_id = auth.uid()));
-CREATE POLICY bs_svc  ON buddy_services FOR ALL USING (auth.role() = 'service_role');
+-- Owner write (insert/update/delete restricted to own rows)
+CREATE POLICY bs_own_write   ON buddy_services FOR ALL
+  USING (buddy_id IN (SELECT id FROM rent_buddy_profiles WHERE user_id = auth.uid()));
+CREATE POLICY bs_svc         ON buddy_services FOR ALL USING (auth.role() = 'service_role');
 
 CREATE INDEX IF NOT EXISTS buddy_services_buddy_idx    ON buddy_services (buddy_id, is_active);
 CREATE INDEX IF NOT EXISTS buddy_services_category_idx ON buddy_services (category, is_active);
@@ -76,10 +82,16 @@ CREATE TABLE IF NOT EXISTS buddy_availability_exceptions (
 
 ALTER TABLE buddy_availability_exceptions ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY bae_read ON buddy_availability_exceptions FOR SELECT USING (TRUE);
-CREATE POLICY bae_own  ON buddy_availability_exceptions FOR ALL
+-- Public read: only future/current exceptions (past exceptions are private)
+CREATE POLICY bae_public_read ON buddy_availability_exceptions FOR SELECT
+  USING (exception_date >= CURRENT_DATE);
+-- Owner read: buddy can see all their own exceptions (including past)
+CREATE POLICY bae_own_read    ON buddy_availability_exceptions FOR SELECT
   USING (buddy_id IN (SELECT id FROM rent_buddy_profiles WHERE user_id = auth.uid()));
-CREATE POLICY bae_svc  ON buddy_availability_exceptions FOR ALL USING (auth.role() = 'service_role');
+-- Owner write
+CREATE POLICY bae_own_write   ON buddy_availability_exceptions FOR ALL
+  USING (buddy_id IN (SELECT id FROM rent_buddy_profiles WHERE user_id = auth.uid()));
+CREATE POLICY bae_svc         ON buddy_availability_exceptions FOR ALL USING (auth.role() = 'service_role');
 
 CREATE INDEX IF NOT EXISTS bae_buddy_date_idx ON buddy_availability_exceptions (buddy_id, exception_date);
 CREATE INDEX IF NOT EXISTS bae_date_range_idx ON buddy_availability_exceptions (exception_date, end_date);

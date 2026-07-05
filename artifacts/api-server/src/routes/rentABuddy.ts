@@ -1316,11 +1316,19 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/start", async (req, res) => {
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
+  // The buddy confirms the meetup has started (spec: buddy-triggered action)
+  const { data: buddyProfile } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id")
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+  if (!buddyProfile) return res.status(403).json({ error: "not_a_buddy" });
+
   const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
     .select("*")
     .eq("id", bookingId)
-    .eq("traveler_id", auth.user.id)
+    .eq("buddy_id", (buddyProfile as any).id)
     .maybeSingle();
 
   if (!booking) return res.status(404).json({ error: "not_found" });
@@ -1367,10 +1375,22 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
     .from("rent_buddy_bookings")
     .select("*")
     .eq("id", bookingId)
-    .eq("traveler_id", auth.user.id)
     .maybeSingle();
 
   if (!booking) return res.status(404).json({ error: "not_found" });
+
+  // Either the traveler OR the buddy can mark the session complete (spec: mutual confirmation)
+  const { data: completingBP } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id")
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+
+  const isCompletingParty =
+    (booking as any).traveler_id === auth.user.id ||
+    (completingBP && (booking as any).buddy_id === (completingBP as any).id);
+  if (!isCompletingParty) return res.status(403).json({ error: "forbidden" });
+
   if ((booking as any).status !== "in_progress") {
     return res.status(409).json({
       error: "invalid_transition",

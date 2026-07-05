@@ -45,6 +45,8 @@ app.use((req, _res, next) => {
     req.url = u.replace(/^\/api\/admin\/buddies/, "/api/rent-a-buddy/admin/buddies");
   } else if (/^\/api\/buddy-profiles(\/|$)/.test(u)) {
     req.url = u.replace(/^\/api\/buddy-profiles/, "/api/rent-a-buddy/buddies");
+  } else if (/^\/api\/me\/buddy-bookings(\/|$)/.test(u)) {
+    req.url = u.replace(/^\/api\/me\/buddy-bookings/, "/api/rent-a-buddy/bookings");
   }
   next();
 });
