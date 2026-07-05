@@ -449,7 +449,7 @@ function makeClient(userId: string, role = "user") {
           }
           // Fall back to a permissive "live" row when no explicit rollout matches,
           // so business-logic tests don't need to seed every city they touch.
-          const fallback = { id: "default-rollout", city: "default", status: "live" };
+          const fallback = { id: "default-rollout", city: "default", status: "public_mvp" };
           if (this._maybeSingle) return { data: rows[0] ?? fallback, error: null };
           return { data: rows.length ? rows : [fallback], count: rows.length || 1, error: null };
         }
@@ -571,7 +571,7 @@ function setupState(extra: Partial<FakeState> = {}) {
       force_delayed_posting: false,
     },
     cityRollouts: [
-      { id: "rollout-tokyo", city: "Tokyo", country: "Japan", status: "live" },
+      { id: "rollout-tokyo", city: "Tokyo", country: "Japan", status: "public_mvp" },
     ],
     ...restExtra,
   };

@@ -33,13 +33,23 @@ const logger = rootLogger.child({ service: "InviteSlotSweeper" });
 
 // ── Configuration ──────────────────────────────────────────────────────────────
 
+/** Requires a positive finite number; falls back to defaultVal otherwise. */
 function parseEnvFloat(raw: string | undefined, defaultVal: number): number {
   const parsed = raw !== undefined ? parseFloat(raw) : NaN;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultVal;
 }
 
+/**
+ * Allows 0 (disable signal) as well as positive finite values.
+ * Falls back to defaultVal only when the env var is absent or unparseable.
+ */
+function parseEnvNonNegativeFloat(raw: string | undefined, defaultVal: number): number {
+  const parsed = raw !== undefined ? parseFloat(raw) : NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : defaultVal;
+}
+
 const SWEEP_TTL_HOURS      = parseEnvFloat(process.env["INVITE_SLOT_SWEEP_TTL_HOURS"], 24);
-const SWEEP_INTERVAL_HOURS = parseEnvFloat(process.env["INVITE_SLOT_SWEEP_INTERVAL_HOURS"], 1);
+const SWEEP_INTERVAL_HOURS = parseEnvNonNegativeFloat(process.env["INVITE_SLOT_SWEEP_INTERVAL_HOURS"], 1);
 
 /** TTL in minutes forwarded to the Postgres function (default 1440 = 24 h). */
 export const SWEEP_TTL_MINUTES = Math.round(SWEEP_TTL_HOURS * 60);
@@ -161,6 +171,11 @@ let _timer: ReturnType<typeof setInterval> | null = null;
 
 export function startInviteSlotSweeper(): void {
   if (_timer !== null) return;
+
+  if (SWEEP_INTERVAL_HOURS === 0) {
+    logger.info("InviteSlotSweeper: disabled (INVITE_SLOT_SWEEP_INTERVAL_HOURS=0)");
+    return;
+  }
 
   logger.info(
     { ttlHours: SWEEP_TTL_HOURS, intervalHours: SWEEP_INTERVAL_HOURS },
