@@ -4,7 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import {
   MapPin, Heart, MessageCircle, Bookmark, MoreHorizontal, HelpCircle, Users,
-  Sparkles, Gem, Route, Info, Plus, ShieldCheck, Clock,
+  Sparkles, Gem, Route, Info, Plus, ShieldCheck, Clock, PlayCircle,
 } from 'lucide-react-native';
 import type { PulseFeedItem } from '../types/models';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
@@ -148,15 +148,20 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
     <View style={[s.postCard, width > 600 ? s.postCardWide : undefined]}>
       {/* ── Immersive media frame ── */}
       <View style={[s.postMedia, { height: mediaHeight }]}>
-        {item.mediaUrl && !mediaFailed ? (
+        {(item.media?.[0]?.url ?? item.mediaUrl) && !mediaFailed ? (
           <Image
-            source={{ uri: item.mediaUrl }}
+            source={{ uri: item.media?.[0]?.url ?? item.mediaUrl }}
             style={StyleSheet.absoluteFill}
             resizeMode="cover"
             onError={() => setMediaFailed(true)}
           />
         ) : (
           <PostMediaPlaceholder city={item.city} />
+        )}
+        {item.media?.[0]?.media_type === 'video' && !mediaFailed && (
+          <View style={s.videoPlayBadge} pointerEvents="none">
+            <PlayCircle size={40} color="rgba(255,255,255,0.9)" />
+          </View>
         )}
         {/* Bottom scrim for AuthorRow readability.
             End-stop 0.85 + height 60 % ensures WCAG AA contrast (≥4.5:1) for
@@ -604,6 +609,10 @@ const s = StyleSheet.create({
   postCard: { backgroundColor: color.paperRaised, overflow: 'hidden', ...shadow.card },
   postCardWide: { maxWidth: 600, alignSelf: 'center' as const, width: '100%' },
   postMedia: { overflow: 'hidden', backgroundColor: color.deep },
+  videoPlayBadge: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center', justifyContent: 'center',
+  },
   postScrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '60%' },
   postAuthorOverlay: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: space.md },
   postcardLabel: {

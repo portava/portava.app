@@ -13,6 +13,7 @@ import { usePassportShare } from '../../src/hooks/usePassportShare';
 import { useHighlightRingState, invalidateHighlightCache } from '../../src/hooks/useHighlightRingState';
 import { HighlightViewer } from '../../src/components/HighlightViewer';
 import { HighlightComposer } from '../../src/components/HighlightComposer';
+import { PostcardComposer } from '../../src/components/PostcardComposer';
 import { MemoriesTab } from '../../src/components/MemoriesTab';
 import { SuggestedMemoryModal } from '../../src/components/SuggestedMemoryModal';
 import type { PassportMemory } from '../../src/services/passportStamps';
@@ -71,6 +72,7 @@ export default function PassportScreen() {
   const allOwnHighlightsViewed = ownRingState?.allViewed ?? false;
   const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
   const [highlightComposerOpen, setHighlightComposerOpen] = useState(false);
+  const [postcardComposerOpen, setPostcardComposerOpen] = useState(false);
 
   // Tracks whether the composer was triggered from inside the viewer (vs. ring/camera)
   const composerFromViewer = useRef(false);
@@ -257,6 +259,7 @@ export default function PassportScreen() {
         allHighlightsViewed={allOwnHighlightsViewed}
         onHighlightRingPress={handleOwnRingPress}
         onNewHighlightPress={handleCameraPress}
+        onAddPostcard={() => setPostcardComposerOpen(true)}
       />
       <HighlightViewer
         visible={highlightViewerOpen}
@@ -270,6 +273,11 @@ export default function PassportScreen() {
         visible={highlightComposerOpen}
         onClose={() => setHighlightComposerOpen(false)}
         onSuccess={handleHighlightSuccess}
+      />
+      <PostcardComposer
+        visible={postcardComposerOpen}
+        onClose={() => setPostcardComposerOpen(false)}
+        onSuccess={() => { setPostcardComposerOpen(false); reload(); }}
       />
       <SuggestedMemoryModal
         suggestion={activeSuggestion}
@@ -286,7 +294,7 @@ function PassportContent({
   profile, postcards, stamps, memories, trips, tab, setTab,
   menuOpen, setMenuOpen, settingsOpen, setSettingsOpen,
   settingsSection, openSettings, actions, handleSaved, handleEditProfile, handleViewAsPublic, reload, insets,
-  hasHighlights, allHighlightsViewed, onHighlightRingPress, onNewHighlightPress,
+  hasHighlights, allHighlightsViewed, onHighlightRingPress, onNewHighlightPress, onAddPostcard,
 }: {
   profile: OwnProfile;
   postcards: PassportPostcard[];
@@ -311,6 +319,7 @@ function PassportContent({
   allHighlightsViewed?: boolean;
   onHighlightRingPress?: () => void;
   onNewHighlightPress?: () => void;
+  onAddPostcard?: () => void;
 }) {
   const verifiedStamps = stamps.filter((s) => !s.locked).length;
   const { cardRef, share, sharing } = usePassportShare(profile.username ?? null);
@@ -463,6 +472,7 @@ function PassportContent({
                 postcards={postcards}
                 isOwner
                 actions={actions}
+                onAddPostcard={onAddPostcard}
               />
               <MemoriesTab memories={memories} onReload={reload} collapsed />
             </>

@@ -4,7 +4,7 @@ import {
   Alert, StyleSheet, ScrollView,
 } from 'react-native';
 import { router } from 'expo-router';
-import { MapPin, Pin, MoreHorizontal, ShieldCheck, X } from 'lucide-react-native';
+import { MapPin, Pin, MoreHorizontal, ShieldCheck, X, Plus, PlayCircle } from 'lucide-react-native';
 import type { PassportPostcard } from '../types/models';
 import type { usePostcardActions } from '../hooks/usePostcardActions';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
@@ -146,6 +146,11 @@ function PostcardCard({
             style={pc.media}
             defaultSource={undefined}
           />
+          {card.hasVideo && (
+            <View style={pc.videoPlayOverlay}>
+              <PlayCircle size={36} color="#fff" />
+            </View>
+          )}
         </Pressable>
       ) : (
         <View style={[pc.media, pc.noMedia]}>
@@ -225,10 +230,12 @@ export function PostcardsTab({
   postcards,
   isOwner,
   actions,
+  onAddPostcard,
 }: {
   postcards: PassportPostcard[];
   isOwner: boolean;
   actions?: Actions;
+  onAddPostcard?: () => void;
 }) {
   if (postcards.length === 0) {
     return (
@@ -237,12 +244,12 @@ export function PostcardsTab({
         <Text style={pc.emptyTitle}>No postcards yet</Text>
         <Text style={pc.emptySub}>
           {isOwner
-            ? 'Create a photo post to start your Passport wall.'
+            ? 'Share a travel moment to start your Passport wall.'
             : "This traveler hasn't posted any postcards yet."}
         </Text>
         {isOwner && (
-          <Pressable style={pc.emptyBtn} onPress={() => router.push('/create' as any)}>
-            <Text style={pc.emptyBtnText}>Create first post</Text>
+          <Pressable style={pc.emptyBtn} onPress={onAddPostcard ?? (() => router.push('/create' as any))}>
+            <Text style={pc.emptyBtnText}>Add first Postcard</Text>
           </Pressable>
         )}
       </View>
@@ -254,10 +261,18 @@ export function PostcardsTab({
   const sorted = pinned ? [pinned, ...rest] : rest;
 
   return (
-    <View style={pc.list}>
-      {sorted.map((card) => (
-        <PostcardCard key={card.id} card={card} isOwner={isOwner} actions={actions} />
-      ))}
+    <View style={pc.listWrap}>
+      {isOwner && onAddPostcard && (
+        <Pressable style={pc.addBtn} onPress={onAddPostcard}>
+          <Plus size={16} color={color.onInk} />
+          <Text style={pc.addBtnText}>Add Postcard</Text>
+        </Pressable>
+      )}
+      <View style={pc.list}>
+        {sorted.map((card) => (
+          <PostcardCard key={card.id} card={card} isOwner={isOwner} actions={actions} />
+        ))}
+      </View>
     </View>
   );
 }
@@ -300,7 +315,20 @@ const pc = StyleSheet.create({
   visPublic: { backgroundColor: '#E3F1EA' },
   visPrivate: { backgroundColor: '#FCE9E4' },
   visText: { ...t.small, fontSize: 11, fontWeight: '700', color: color.ink },
+  listWrap: {},
+  addBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    alignSelf: 'flex-start', marginHorizontal: space.lg, marginTop: space.md,
+    backgroundColor: color.signal, borderRadius: radius.pill,
+    paddingHorizontal: space.lg, paddingVertical: space.sm,
+  },
+  addBtnText: { ...t.bodyStrong, color: color.onInk, fontSize: 14 },
   list: { paddingHorizontal: space.lg, paddingTop: space.md },
+  videoPlayOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.22)',
+  },
   empty: { paddingHorizontal: space.xl, paddingTop: space.xxxl, alignItems: 'center', gap: space.md },
   emptyIcon: { fontSize: 48 },
   emptyTitle: { ...t.heading, color: color.ink },

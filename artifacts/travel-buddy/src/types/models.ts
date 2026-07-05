@@ -412,6 +412,19 @@ export interface PassportData {
 export type PostcardStatus = 'active' | 'removed_from_passport' | 'deleted';
 export type PostcardVisibility = 'public' | 'private' | 'trip_only';
 
+/** Media item returned by the post_media backend (snake_case keys match API response). */
+export interface PostcardMediaItem {
+  id: string;
+  media_type: 'image' | 'video';
+  url: string;
+  thumbnail_url: string | null;
+  duration_seconds: number | null;
+  width: number | null;
+  height: number | null;
+  sort_order: number;
+  processing_status: 'pending' | 'ready' | 'failed';
+}
+
 export interface PassportPostcard {
   id: ID;
   postId: ID;
@@ -429,6 +442,10 @@ export interface PassportPostcard {
   pinnedAt: ISODate | null;
   note: string | null;
   createdAt: ISODate;
+  /** True when the primary or any attached media item is a video. */
+  hasVideo?: boolean;
+  /** 'image' | 'video' | 'none' — derived from ready post_media rows. */
+  primaryMediaType?: string;
 }
 
 /* ───────────────────────────────────────────────────────────────────────
@@ -693,6 +710,8 @@ export interface PulseFeedItem {
   visibility?: 'public' | 'circle' | 'private';
   tags: string[];
   mediaUrl?: string;
+  /** Structured media items from post_media (set by the new Postcards backend). */
+  media?: PostcardMediaItem[];
   source: PulseSource;
   isProvisional?: boolean;
   isEditorial?: boolean;
