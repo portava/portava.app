@@ -20,6 +20,8 @@ import {
   recordShare,
   type ReactionCount,
 } from '../services/postEngagement';
+import { getLiked, setLiked } from '../services/likedPostsCache';
+import { useSession } from '../context/SessionContext';
 import { CommentsSheet } from './CommentsSheet';
 import { ShareSheet, type ShareTarget } from './ShareSheet';
 import { ReactionPicker, ReactionSummary } from './ReactionPicker';
@@ -49,7 +51,13 @@ export function PostEngagementBar({
   sharingDisabled = false,
   onCommentCountChange,
 }: Props) {
-  const [localLiked, setLocalLiked] = useState(likedByMe);
+  const { userId } = useSession();
+
+  // Use the cache value when available — it reflects the user's explicit
+  // like/unlike action from earlier in this session, overriding stale feed
+  // data that may not have refreshed yet after a re-mount.
+  const cachedLiked = userId ? getLiked(userId, postId) : undefined;
+  const [localLiked, setLocalLiked] = useState(cachedLiked ?? likedByMe);
   const [localLikeCount, setLocalLikeCount] = useState(likeCount);
   const [localCommentCount, setLocalCommentCount] = useState(commentCount);
   const [commentsOpen, setCommentsOpen] = useState(false);
@@ -84,23 +92,32 @@ export function PostEngagementBar({
 
     const wasLiked = localLiked;
     const prevCount = localLikeCount;
-    setLocalLiked(!wasLiked);
+
+    // Optimistically update UI and cache so re-mounts during the API call
+    // (e.g. navigation back) already show the correct state.
+    const optimisticLiked = !wasLiked;
+    setLocalLiked(optimisticLiked);
     setLocalLikeCount(wasLiked ? Math.max(0, prevCount - 1) : prevCount + 1);
+    if (userId) setLiked(userId, postId, optimisticLiked);
 
     try {
       const result = wasLiked ? await unlikePost(postId) : await likePost(postId);
       if (result) {
         setLocalLiked(result.likedByMe);
         setLocalLikeCount(result.likeCount);
+        // Confirm the definitive server state in the cache.
+        if (userId) setLiked(userId, postId, result.likedByMe);
       } else {
         setLocalLiked(wasLiked);
         setLocalLikeCount(prevCount);
+        // Revert the cache to the pre-tap state on failure.
+        if (userId) setLiked(userId, postId, wasLiked);
         Alert.alert('Could not update like', 'Please try again.');
       }
     } finally {
       setLiking(false);
     }
-  }, [liking, localLiked, localLikeCount, postId]);
+  }, [liking, localLiked, localLikeCount, postId, userId]);
 
   const handleCommentCountChange = useCallback(
     (n: number) => {

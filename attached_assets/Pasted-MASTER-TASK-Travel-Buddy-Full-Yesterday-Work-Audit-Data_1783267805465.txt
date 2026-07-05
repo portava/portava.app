@@ -1,0 +1,1136 @@
+MASTER TASK: Travel Buddy — Full Yesterday Work Audit, Database Truth Reconciliation, Backend/Frontend Gap Report, Security Audit, Migration Plan, and Beta Readiness Verdict
+
+You are auditing the Travel Buddy app after a full day of work.
+
+Do NOT rebuild from scratch.
+Do NOT guess.
+Do NOT mark anything complete unless you verify it in code, database schema, backend/API wiring, frontend UI, RLS policies, realtime setup, storage buckets, and tests.
+
+This is an audit-first task.
+
+The owner wants to know:
+1. What was finished yesterday
+2. What is partially finished
+3. What is broken
+4. What is missing
+5. What is UI-only
+6. What is backend-only
+7. What is database-only
+8. What database commands are needed
+9. What backend is still lacking
+10. What frontend is still lacking
+11. What source-of-truth conflicts exist
+12. What is unsafe for beta
+13. What exact next commands should be run
+
+Known project rule:
+- migrations/ is the real canonical migration directory.
+- src/migrations/ is NOT canonical unless code proves it is used.
+- Do not create a second source of truth.
+- Do not rely on mock/demo/static data unless clearly marked.
+- Preserve existing data.
+- Prefer additive fixes only.
+- Do not drop or rename database fields unless explicitly approved.
+
+============================================================
+PHASE 0 — DATABASE SOURCE-OF-TRUTH RECONCILIATION
+============================================================
+
+Before auditing features, prove what schema is real.
+
+Check:
+- migrations/
+- src/migrations/
+- supabase/migrations/
+- package.json scripts
+- Supabase config files
+- generated lib/database.types.ts
+- actual Supabase/Postgres schema if accessible
+- code references to tables/columns/RPC/storage buckets
+
+Run:
+
+pwd
+
+echo "=== package scripts ==="
+cat package.json | sed -n '1,240p'
+
+echo "=== migration-related directories ==="
+find . -maxdepth 5 -type d | grep -Ei "migration|supabase" | sort
+
+echo "=== canonical migrations/ ==="
+find migrations -type f 2>/dev/null | sort
+
+echo "=== noncanonical src/migrations/ ==="
+find src/migrations -type f 2>/dev/null | sort
+
+echo "=== supabase directory ==="
+find supabase -type f 2>/dev/null | sort
+
+echo "=== database types ==="
+ls -lh lib/database.types.ts 2>/dev/null || true
+head -80 lib/database.types.ts 2>/dev/null || true
+
+echo "=== all TS/TSX/SQL files ==="
+find . -maxdepth 5 -type f \( -name "*.tsx" -o -name "*.ts" -o -name "*.sql" -o -name "*.json" \) | sort > /tmp/travel_buddy_files.txt
+wc -l /tmp/travel_buddy_files.txt
+
+echo "=== Supabase table/RPC/storage references in app code ==="
+grep -RniE "from\\(['\"]|\\.from\\(['\"]|rpc\\(['\"]|storage\\.from\\(['\"]" app components lib services src 2>/dev/null | head -800
+
+echo "=== schema references for yesterday features ==="
+grep -RniE "buddy_profiles|buddy_bookings|buddy_reviews|buddy_availability|circles|circle_members|trip_circles|event_circles|trip_crew_members|conversations|conversation_members|messages|message_translations|privacy_settings|location_shares|user_availability|activity_events|notifications|profiles|trips|events|posts" app components lib services src migrations supabase lib/database.types.ts 2>/dev/null | head -1200
+
+echo "=== baseline typecheck/lint/tests ==="
+npm run typecheck 2>/dev/null || true
+npm run lint 2>/dev/null || true
+npm test 2>/dev/null || true
+
+If Supabase CLI is available, run:
+
+supabase status || true
+supabase migration list || true
+supabase db diff || true
+
+If connected to Supabase/Postgres, run this SQL:
+
+-- Table existence
+select table_name
+from information_schema.tables
+where table_schema = 'public'
+  and table_name in (
+    'profiles',
+    'trips',
+    'events',
+    'posts',
+    'circles',
+    'circle_members',
+    'trip_circles',
+    'event_circles',
+    'trip_crew_members',
+    'conversations',
+    'conversation_members',
+    'messages',
+    'message_translations',
+    'buddy_profiles',
+    'buddy_bookings',
+    'buddy_reviews',
+    'buddy_availability',
+    'user_availability',
+    'privacy_settings',
+    'location_shares',
+    'activity_events',
+    'notifications'
+  )
+order by table_name;
+
+-- Columns
+select table_name, column_name, data_type, udt_name, is_nullable
+from information_schema.columns
+where table_schema = 'public'
+  and table_name in (
+    'profiles',
+    'trips',
+    'events',
+    'posts',
+    'circles',
+    'circle_members',
+    'trip_circles',
+    'event_circles',
+    'trip_crew_members',
+    'conversations',
+    'conversation_members',
+    'messages',
+    'message_translations',
+    'buddy_profiles',
+    'buddy_bookings',
+    'buddy_reviews',
+    'buddy_availability',
+    'user_availability',
+    'privacy_settings',
+    'location_shares',
+    'activity_events',
+    'notifications'
+  )
+order by table_name, ordinal_position;
+
+-- Enums
+select t.typname as enum_name, e.enumlabel as enum_value
+from pg_type t
+join pg_enum e on t.oid = e.enumtypid
+join pg_namespace n on n.oid = t.typnamespace
+where n.nspname = 'public'
+order by t.typname, e.enumsortorder;
+
+-- RLS enabled
+select schemaname, tablename, rowsecurity
+from pg_tables
+where schemaname = 'public'
+order by tablename;
+
+-- Policies
+select schemaname, tablename, policyname, permissive, roles, cmd, qual, with_check
+from pg_policies
+where schemaname = 'public'
+order by tablename, policyname;
+
+-- Foreign keys
+select
+  tc.table_name,
+  kcu.column_name,
+  ccu.table_name as foreign_table_name,
+  ccu.column_name as foreign_column_name,
+  tc.constraint_name
+from information_schema.table_constraints as tc
+join information_schema.key_column_usage as kcu
+  on tc.constraint_name = kcu.constraint_name
+join information_schema.constraint_column_usage as ccu
+  on ccu.constraint_name = tc.constraint_name
+where tc.constraint_type = 'FOREIGN KEY'
+  and tc.table_schema = 'public'
+order by tc.table_name, kcu.column_name;
+
+-- Indexes
+select schemaname, tablename, indexname, indexdef
+from pg_indexes
+where schemaname = 'public'
+order by tablename, indexname;
+
+-- Realtime publication
+select *
+from pg_publication_tables
+where pubname = 'supabase_realtime'
+order by schemaname, tablename;
+
+-- Storage buckets
+select id, name, public, file_size_limit, allowed_mime_types
+from storage.buckets
+order by id;
+
+Return Phase 0 report:
+
+# 0. Database Source-of-Truth Reconciliation
+
+## Canonical Migration Directory
+- Canonical:
+- Noncanonical:
+- Evidence:
+
+## Applied vs Local Migrations
+| Migration | Exists Locally | Applied Remotely | Status |
+|---|---:|---:|---|
+
+## database.types.ts Match
+| Table/Column | In Migrations | In database.types.ts | In App Code | Status |
+|---|---:|---:|---:|---|
+
+## Code References Missing From DB
+| File | Table/Column/RPC/Bucket | Exists In Schema? | Risk | Fix |
+|---|---|---:|---|---|
+
+## Duplicate/Conflicting Schema Sources
+| Source | Problem | Risk | Action |
+|---|---|---|---|
+
+## Phase 0 Verdict
+Answer plainly:
+- Is migrations/ truly canonical?
+- Is src/migrations/ safe to ignore?
+- Does lib/database.types.ts match current schema?
+- Is the real database ahead or behind local migrations?
+- Should we generate a migration, regenerate types, or patch code first?
+
+Do not apply fixes yet.
+
+============================================================
+PHASE 1 — FULL TRAVEL BUDDY YESTERDAY FEATURE AUDIT
+============================================================
+
+Audit every feature touched yesterday.
+
+Feature areas to audit:
+
+A) Rent a Buddy
+
+Verify:
+- marketplace/listing system
+- buddy profiles
+- availability
+- pricing/rates
+- use cases:
+  - city help
+  - social exploration
+  - language support
+  - nightlife support
+  - shopping help
+  - airport/arrival help
+  - content/photo help
+- non-dating boundaries
+- booking/request flow
+- deposit/full payment options
+- status lifecycle:
+  - requested
+  - accepted
+  - declined
+  - cancelled
+  - completed
+  - disputed
+- reviews/ratings
+- trust/safety gates
+- Telegraph integration
+- trip/event linking
+- backend routes/services
+- database schema
+- RLS policies
+- missing indexes
+- realtime/subscription wiring
+- tests
+
+B) Find Your Circle
+
+Verify:
+- actual “Find Your Circle” discovery logic exists
+- detects users/circles on the same trip/event
+- only works if users have privacy/location/circle settings enabled
+- does not expose users who opted out
+- points to the circle the user is actually on a trip/event with
+- no fake/demo/static data
+- connects to:
+  - trips
+  - events/plans
+  - circles
+  - trip crew
+  - Telegraph group chat
+  - location/privacy settings
+- one canonical truth source
+- backend/database support
+- tests
+
+C) Circle/Profile Identity Display
+
+Verify:
+- circle avatar/profile picture displayed everywhere with circle name
+- Telegraph group header
+- trip/event cards
+- circle cards
+- search/discovery results
+- notifications/activity center if present
+- fallback avatar/monogram
+- broken image handling
+- storage URL handling
+- database fields needed
+
+D) Profile Editing / Passport Backend
+
+Verify:
+- user can save profile edits
+- username/handle rules are consistent
+- display name
+- bio
+- languages
+- home city/country
+- travel style/interests
+- avatar/profile photo
+- cover photo
+- verified home country lock
+- profile edit errors
+- frontend patch builder
+- backend route/service
+- Supabase profiles table
+- database constraints
+- RLS update policies
+- generated database types
+- storage bucket permissions
+- failed save regression
+
+E) Calendar / Date Picker System
+
+Verify:
+- everywhere a date is needed uses calendar/date picker
+- create event
+- create trip
+- edit trip
+- Rent a Buddy booking
+- availability windows
+- profile/travel dates
+- passport stamps
+- delayed post publish timing
+- Safe Return check-ins
+- consistent component
+- date storage format
+- timezone handling
+- backend validation
+
+F) Floating Menu / Bottom Menu / Profile Menu Polish
+
+Verify:
+- floating menu opacity around 30%
+- menu visually touches screen edge where requested
+- profile menu matches count menu layout
+- button hit targets
+- safe-area behavior
+- visual consistency
+- broken overlays
+- z-index issues
+- dark/light mode compatibility
+
+G) Telegraph Messaging
+
+Verify:
+- Telegraph naming consistency
+- group chat auto-created for trips/circles/bookings
+- circle avatar/name displayed
+- auto-translation hooks if present
+- AI recommendations into Telegraph based on personal settings
+- message backend/realtime
+- database schema
+- missing policies
+- missing routes
+- broken UI buttons
+
+H) Discovery / Pulse / Trip / Passport UI Truth
+
+Audit all visible buttons and flows:
+- Join
+- Save
+- Like
+- Comment
+- Share
+- Create
+- Invite
+- Message
+- Circle
+- Rent Buddy
+- Profile edit
+- Upload photo
+- Calendar/date selection
+- Back buttons
+- Submit buttons
+
+For each button:
+- expected behavior
+- actual behavior
+- backend call
+- database dependency
+- whether it is no-op, mock, partial, broken, or working
+
+I) Database / Backend Truth Audit
+
+Compare all frontend expectations against database schema and backend services.
+
+Check:
+- missing columns
+- mismatched enum values
+- missing foreign keys
+- missing indexes
+- missing RLS policies
+- missing triggers
+- missing RPC/functions
+- missing storage buckets
+- missing realtime publication setup
+- orphaned UI models
+- dead service methods
+- services reading columns that do not exist
+- UI writing fields backend ignores
+- backend writing fields UI never reads
+
+Run feature search commands:
+
+echo "=== Rent a Buddy search ==="
+grep -RniE "rent.?a.?buddy|rentBuddy|buddy_booking|buddy_bookings|buddy_profile|buddy_profiles|buddy_availability|companion|local guide|host buddy|book buddy" app components lib services src migrations supabase 2>/dev/null | head -700
+
+echo "=== Circle search ==="
+grep -RniE "find your circle|circle|circles|circle_members|trip_circle|trip_circles|event_circle|event_circles|trip crew|trip_crew|crew|circle_id" app components lib services src migrations supabase 2>/dev/null | head -700
+
+echo "=== Telegraph search ==="
+grep -RniE "telegraph|message|messages|conversation|conversations|conversation_members|thread|translation|message_translations|chat" app components lib services src migrations supabase 2>/dev/null | head -700
+
+echo "=== Profile / Passport search ==="
+grep -RniE "profile|passport|username|handle|avatar|cover|display_name|bio|home_country|home_city|languages|travel_style|interests" app components lib services src migrations supabase 2>/dev/null | head -700
+
+echo "=== Calendar/date search ==="
+grep -RniE "DateTimePicker|Calendar|calendar|date picker|datepicker|starts_at|ends_at|start_date|end_date|availability|timezone|time_zone" app components lib services src migrations supabase 2>/dev/null | head -700
+
+echo "=== Menu/UI search ==="
+grep -RniE "floating|bottom menu|tab bar|opacity|safe.?area|profile menu|count menu|zIndex|z-index|blur|transparent" app components lib services src 2>/dev/null | head -700
+
+echo "=== Mock/demo/no-op search ==="
+grep -RniE "mock|demo|fake|stub|TODO|FIXME|coming soon|console\\.log|alert\\(|noop|no-op" app components lib services src 2>/dev/null | head -800
+
+Return Phase 1 report:
+
+# 1. Travel Buddy Yesterday Audit
+
+## Executive Summary
+- Finished:
+- Partially finished:
+- Broken:
+- Missing:
+- UI-only:
+- Backend-only:
+- Database-only:
+- Backend lacking:
+- Database lacking:
+- Beta blocker level: Green / Yellow / Red
+
+## Feature Completion Matrix
+
+Use this table:
+
+| Area | UI Present | Backend Present | DB Present | RLS Present | Realtime Present | Tests Present | Status | Evidence |
+|---|---:|---:|---:|---:|---:|---:|---|---|
+
+Rows:
+- Rent a Buddy
+- Find Your Circle
+- Circle profile/avatar display
+- Profile edit / Passport save
+- Calendar/date picker system
+- Floating menu/profile menu
+- Telegraph messaging
+- Trip/event circle linking
+- Discovery/Pulse buttons
+- Privacy/location settings
+- Reviews/ratings
+- Payments/deposits
+- Notifications/activity events
+
+Status must be one of:
+- DONE
+- PARTIAL
+- BROKEN
+- MISSING
+- UI ONLY
+- DB ONLY
+- UNKNOWN, NEEDS MANUAL VERIFY
+
+## Broken Button / Broken Flow Report
+
+Use this table:
+
+| Screen/File | Button/Flow | Expected | Actual | Backend Call | DB Dependency | Status | Fix |
+|---|---|---|---|---|---|---|---|
+
+## Database Schema Truth
+
+For every related table found, list:
+
+| Table | Exists | Purpose | Key Columns | Missing Columns | Missing Indexes | RLS Status | Realtime Status |
+|---|---:|---|---|---|---|---|---|
+
+## Backend Gaps
+
+Use this table:
+
+| Backend Need | Current File/Service | Exists? | Problem | Required Fix |
+|---|---|---:|---|---|
+
+Include:
+- Rent a Buddy create/list/update booking
+- Buddy profile create/update
+- Availability query
+- Circle discovery query
+- Telegraph group creation
+- Profile save/update
+- Avatar/cover upload
+- Calendar/date validation
+- Privacy setting enforcement
+- Activity/notification creation
+- Realtime subscription setup
+
+## Frontend Gaps
+
+Use this table:
+
+| UI Need | Current File | Exists? | Problem | Required Fix |
+|---|---|---:|---|---|
+
+## One Source of Truth Problems
+
+Find duplicate/conflicting truth systems:
+- user profile vs passport profile
+- username vs handle
+- circle vs trip crew
+- events vs plans
+- conversations vs Telegraph
+- privacy settings split across multiple places
+- mock data vs real backend data
+- local state vs Supabase truth
+
+Use this table:
+
+| Concept | Competing Sources | Correct Canonical Source | Risk | Fix |
+|---|---|---|---|---|
+
+## Phase 1 Plain-English Verdict
+
+Answer:
+- Is Rent a Buddy actually working end-to-end?
+- Is Find Your Circle actually working end-to-end?
+- Is profile editing actually fixed?
+- Is Telegraph fully connected?
+- Is the database complete?
+- Is backend complete?
+- What is the next safest command?
+
+Do not apply fixes yet.
+
+============================================================
+PHASE 2 — MISSING DATABASE COMMANDS / SAFE MIGRATION PLAN
+============================================================
+
+Based only on confirmed gaps from Phases 0 and 1, produce exact SQL migration commands.
+
+Do not apply them unless explicitly told.
+Do not invent unnecessary tables.
+Do not duplicate existing tables.
+Do not weaken RLS.
+Do not drop data.
+
+Rules:
+- Use `create table if not exists`
+- Use `alter table ... add column if not exists`
+- Use `create index if not exists`
+- Use safe enum creation with DO blocks
+- Use `create or replace function` only when safe
+- Use additive triggers
+- Use RLS policies only where confirmed needed
+- Use realtime only for tables that need live UI
+- Use comments for every section
+
+Include SQL sections:
+
+A. Rent a Buddy SQL
+Potential tables/fields only if missing:
+- buddy_profiles
+- buddy_bookings
+- buddy_reviews
+- buddy_availability
+- booking status enum
+- buddy category/use-case enum or text array
+- pricing/rate fields
+- deposit/full payment fields
+- requester_id
+- buddy_user_id
+- trip_id
+- event_id
+- conversation_id
+- starts_at
+- ends_at
+- status
+- cancellation/dispute fields
+- created_at
+- updated_at
+
+B. Find Your Circle SQL
+Potential tables/fields only if missing:
+- circles
+- circle_members
+- trip_circles
+- event_circles
+- trip_crew_members
+- visibility fields
+- membership status
+- owner/creator fields
+- avatar_url
+- privacy opt-in fields
+
+C. Telegraph SQL
+Potential tables/fields only if missing:
+- conversations
+- conversation_members
+- messages
+- message_translations
+- conversation type
+- trip_id
+- event_id
+- circle_id
+- rent_buddy_booking_id
+- last_message_at
+- translated body fields
+- language fields
+- member role/status
+
+D. Profile / Passport SQL
+Patch profiles table only for confirmed missing columns:
+- display_name
+- username or handle
+- bio
+- avatar_url
+- cover_url
+- home_city
+- home_country
+- verified_home_country
+- languages
+- travel_style
+- interests
+- updated_at
+- username uniqueness if needed
+
+E. Calendar / Availability SQL
+Potential tables/fields only if missing:
+- user_availability
+- starts_at / ends_at fields
+- weekly recurring windows
+- timezone
+- trip availability windows
+- booking availability
+
+F. Privacy / Location SQL
+Potential tables/fields only if missing:
+- privacy_settings
+- location_shares
+- circle discovery opt-in
+- trip crew opt-in
+- approximate location only
+- live location expiry
+- visibility levels
+
+G. Reviews / Ratings SQL
+Potential tables/fields only if missing:
+- buddy_reviews
+- rating
+- review text
+- reviewer_id
+- buddy_user_id
+- booking_id
+- completed-booking-only constraints where possible
+
+H. Notifications / Activity SQL
+Potential tables/fields only if missing:
+- activity_events
+- notifications
+- event type
+- actor_id
+- user_id
+- metadata
+- read_at
+
+I. Realtime SQL
+Add tables to supabase_realtime only if needed and safe.
+
+J. Storage Bucket SQL / Policy Notes
+For:
+- profile avatars
+- profile covers
+- circle avatars
+- buddy photos
+
+Return Phase 2 report:
+
+# 2. Missing Database Commands / Migration Plan
+
+## Required Migration Filename
+Suggest:
+migrations/YYYYMMDDHHMMSS_travel_buddy_yesterday_audit_fixes.sql
+
+## Full SQL
+Provide the complete SQL.
+
+## Why Each Section Exists
+| Section | Confirmed Gap | SQL Added | Risk |
+|---|---|---|---|
+
+## Manual Supabase Dashboard Actions
+List anything that cannot safely be done in SQL.
+
+## Type Regeneration Command
+Identify the correct command from package.json, or say UNKNOWN.
+
+Do not apply the migration unless explicitly told.
+
+============================================================
+PHASE 3 — BACKEND AND FRONTEND PATCH PLAN
+============================================================
+
+Based only on confirmed gaps, produce exact patch plan.
+
+Do not apply code changes unless explicitly told.
+
+Patch plan must cover:
+
+Rent a Buddy:
+- create/update buddy profile
+- browse/list buddies
+- request booking
+- accept/decline booking
+- cancel booking
+- complete booking
+- review after completion
+- connect booking to Telegraph conversation
+- show honest empty/loading/error states
+- no fake success
+
+Find Your Circle:
+- use canonical circle/trip/event membership source
+- respect privacy_settings
+- respect location/circle opt-in
+- do not expose opted-out users
+- show circle user actually belongs to or can discover
+- connect to Telegraph group
+- show honest empty/loading/error states
+
+Profile/Passport:
+- fix save regression
+- patch builder sends only valid DB columns
+- username/handle rule consistent
+- avatar upload updates profile row
+- cover upload updates profile row
+- RLS allows self-update only
+- show real save errors
+
+Circle avatar/name:
+- use real circle avatar_url/name
+- fallback monogram
+- shared component where possible
+- use in Telegraph header, trip/event cards, discovery, notifications
+
+Telegraph:
+- visible label should be Telegraph
+- group conversations tied to trip_id/event_id/circle_id/rent_buddy_booking_id
+- members-only message read/send
+- realtime subscription
+- translation hooks marked partial if provider missing
+- no UI lying about AI/translation if not connected
+
+Calendar/date picker:
+- shared calendar/date picker everywhere dates are needed
+- no raw text inputs for dates
+- validate starts_at < ends_at
+- timezone handling
+
+Floating/profile menu:
+- 30% opacity
+- edge-to-edge where requested
+- profile menu matches count menu
+- safe area preserved
+- hit targets preserved
+- z-index correct
+
+Broken buttons:
+For every broken button:
+- wire real backend action, or
+- route correctly, or
+- disable with honest coming soon state
+Never leave silent no-op.
+
+Return Phase 3 report:
+
+# 3. Backend / Frontend Patch Plan
+
+## P0 — Must Fix Before Beta
+| Item | Files To Edit | DB Dependency | Exact Fix | Test Needed |
+|---|---|---|---|---|
+
+## P1 — Should Fix Before Beta
+| Item | Files To Edit | DB Dependency | Exact Fix | Test Needed |
+|---|---|---|---|---|
+
+## P2 — Polish / Non-blocking
+| Item | Files To Edit | DB Dependency | Exact Fix | Test Needed |
+|---|---|---|---|---|
+
+## Files Likely To Change
+List exact files.
+
+## Tests To Add
+List exact test files and what each should cover.
+
+Do not patch yet unless explicitly told.
+
+============================================================
+PHASE 4 — SECURITY / RLS / PRIVACY / BETA SHIP AUDIT
+============================================================
+
+Audit security and beta readiness.
+
+Focus:
+1. RLS policies
+2. Privacy leaks
+3. Location leaks
+4. Profile edit permissions
+5. Circle visibility permissions
+6. Rent a Buddy booking permissions
+7. Telegraph message permissions
+8. Storage bucket permissions
+9. Realtime channel leaks
+10. Admin-only actions
+11. Mock/demo data still visible
+12. Beta blocker risks
+
+Security rules to verify:
+
+Profiles:
+- users can read only intended public/allowed fields
+- users can update only their own profile
+- verified home country cannot be casually overwritten if locked
+- username/handle uniqueness enforced
+- private fields not exposed in public views
+
+Circles:
+- users only see circles they are allowed to discover
+- opted-out users do not appear
+- private circles do not leak
+- circle member list respects privacy settings
+
+Find Your Circle:
+- does not expose exact live location
+- does not expose opted-out users
+- does not expose users outside shared trip/event/circle context
+- uses privacy_settings/location_shares correctly
+
+Rent a Buddy:
+- only buddy owner can edit buddy profile
+- only requester and buddy can see booking details
+- only requester can cancel own request
+- only buddy can accept/decline assigned request
+- reviews only after completed booking
+- no user can edit another user’s booking/review
+
+Telegraph:
+- only conversation members can read messages
+- only members can send messages
+- group conversations do not expose nonmembers
+- translations do not expose messages to outsiders
+- realtime subscriptions are scoped safely
+
+Storage:
+- avatar/cover/circle/buddy photo buckets are not dangerously writable
+- users cannot overwrite another user’s files
+- public buckets expose only intended assets
+- private buckets require signed URL or policy
+
+Realtime:
+- no private table is globally readable
+- messages/conversations/location_shares are not globally broadcast unsafely
+
+Run:
+
+echo "=== RLS/policy/realtime/storage grep ==="
+grep -RniE "create policy|alter table .* enable row level security|storage.buckets|storage.objects|supabase_realtime|publication|privacy_settings|location_shares" migrations supabase 2>/dev/null | head -1000
+
+echo "=== risky selects ==="
+grep -RniE "select\\(\\*\\)|from\\(['\"]messages|from\\(['\"]conversations|from\\(['\"]location_shares|from\\(['\"]profiles|from\\(['\"]buddy_bookings|from\\(['\"]circles" app components lib services src 2>/dev/null | head -1000
+
+echo "=== mock/demo/TODO scan ==="
+grep -RniE "mock|demo|fake|stub|TODO|FIXME|coming soon" app components lib services src 2>/dev/null | head -800
+
+Return Phase 4 report:
+
+# 4. Security / Beta Ship Audit
+
+## Security Verdict
+- Safe for beta?
+- Biggest risk:
+- Must-fix before beta:
+- Can ship later:
+
+## RLS Matrix
+
+| Table | RLS Enabled | Read Safe | Write Safe | Delete Safe | Issue | Fix |
+|---|---:|---:|---:|---:|---|---|
+
+## Privacy Leak Matrix
+
+| Feature | Leak Risk | Evidence | Severity | Fix |
+|---|---|---|---|---|
+
+## Storage Security
+
+| Bucket | Public | Intended Use | Risk | Fix |
+|---|---:|---|---|---|
+
+## Realtime Security
+
+| Table | In Realtime | Private Data? | Safe? | Fix |
+|---|---:|---:|---:|---|
+
+## Beta Blockers
+
+| Blocker | Severity | File/DB Area | Fix |
+|---|---|---|---|
+
+## Phase 4 Plain-English Verdict
+Answer:
+- Is Travel Buddy safe to beta test?
+- What should not be exposed to users yet?
+- What must be fixed first?
+
+============================================================
+PHASE 5 — TESTING AND MANUAL QA PLAN
+============================================================
+
+Create a complete test plan.
+
+Automated tests needed:
+- profile save
+- avatar upload
+- cover upload
+- Rent a Buddy booking lifecycle
+- Rent a Buddy review after completion
+- Find Your Circle privacy enforcement
+- Telegraph group creation
+- Telegraph members-only messages
+- circle avatar fallback
+- date picker validation
+- broken button smoke coverage
+- RLS/database tests where possible
+
+Manual QA checklist:
+
+Use this table:
+
+| Test | Steps | Expected Result | Pass/Fail |
+|---|---|---|---|
+
+Cover:
+- Profile edit save
+- Avatar upload
+- Cover upload
+- Create trip
+- Create event
+- Edit trip
+- Join event
+- Join trip
+- Find Your Circle
+- Circle privacy opt-out
+- Circle avatar display
+- Telegraph direct chat
+- Telegraph group chat
+- Telegraph trip chat
+- Telegraph circle chat
+- Telegraph Rent a Buddy booking chat
+- Rent a Buddy browse
+- Rent a Buddy booking request
+- Rent a Buddy accept/decline
+- Rent a Buddy cancel
+- Rent a Buddy complete
+- Rent a Buddy review
+- Calendar picker on all date fields
+- Floating menu layout
+- Profile menu layout
+- Pulse like/comment/save/share
+- Discovery cards
+- Passport screen
+- Trip screen
+- Empty states
+- Loading states
+- Error states
+- Dark mode
+- Small screen layout
+- iOS safe area
+- Android safe area
+
+Return Phase 5 report:
+
+# 5. Testing / Manual QA Plan
+
+## Automated Tests Needed
+| Test | File | Purpose | Priority |
+|---|---|---|---|
+
+## Manual QA Checklist
+| Test | Steps | Expected Result | Pass/Fail |
+|---|---|---|---|
+
+## QA Verdict
+- P0 blockers:
+- P1 issues:
+- Cosmetic issues:
+- Beta-ready verdict:
+
+============================================================
+PHASE 6 — FINAL CONSOLIDATED VERDICT
+============================================================
+
+After completing all audit phases, return one final consolidated answer.
+
+Use this exact format:
+
+# Travel Buddy Full Yesterday Audit — Final Report
+
+## 1. Executive Verdict
+- Overall status:
+- Beta readiness:
+- Biggest blocker:
+- Safest next step:
+
+## 2. What Was Finished
+List only proven finished items.
+
+## 3. What Is Partially Finished
+List partial items with missing pieces.
+
+## 4. What Is Broken
+List broken flows/buttons/schema/API.
+
+## 5. What Is Missing Entirely
+List missing features/tables/routes/components.
+
+## 6. UI-Only Features
+List anything visible that has no real backend/database.
+
+## 7. Backend Still Lacking
+| Feature | Backend Gap | Required Fix |
+|---|---|---|
+
+## 8. Database Still Lacking
+| Feature | DB Gap | Required SQL |
+|---|---|---|
+
+## 9. Source-of-Truth Problems
+| Concept | Conflict | Canonical Source | Fix |
+|---|---|---|---|
+
+## 10. Security / Privacy Risks
+| Risk | Severity | Fix |
+|---|---|---|
+
+## 11. Required SQL Migration
+Provide the full proposed SQL migration if needed.
+
+## 12. Required Code Patches
+| Priority | File | Fix |
+|---|---|---|
+
+## 13. Required Tests
+| Priority | Test | Why |
+|---|---|---|
+
+## 14. Final Plain-English Answers
+
+Answer clearly:
+
+- Is Rent a Buddy actually finished?
+- Is Find Your Circle actually finished?
+- Is profile editing fixed?
+- Is Telegraph fully connected?
+- Is circle avatar/name display complete?
+- Is the date/calendar system complete?
+- Is the floating/profile menu complete?
+- Is the backend complete?
+- Is the database complete?
+- Is the app safe for beta?
+- What exact command should run next?
+
+============================================================
+IMPORTANT BEHAVIOR RULES
+============================================================
+
+- Do not say “done” unless verified.
+- Do not say “working” unless end-to-end verified.
+- Do not hide failures.
+- Do not make optimistic assumptions.
+- If unknown, mark UNKNOWN and explain what command would verify it.
+- If a DB gap exists, provide SQL.
+- If a backend gap exists, provide exact service/API fix.
+- If a frontend gap exists, provide exact screen/component fix.
+- If a button is broken, name the file and action.
+- If a feature is UI-only, say UI ONLY.
+- If a feature has database but no UI, say DB ONLY.
+- If a feature has UI and DB but no RLS, say NOT SAFE.
+- If a feature has UI/backend but mock data, say MOCK / NOT REAL.
+- Preserve existing data.
+- No destructive migration.
+- No duplicate source of truth.
+- No fake success states.

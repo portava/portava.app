@@ -5,6 +5,7 @@ import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { getAccountStatus } from '../services/profile';
 import type { AccountStatus } from '../services/profile';
 import { pauseOnSessionEnd } from '../services/circle';
+import { clearForUser } from '../services/likedPostsCache';
 
 /**
  * Session context — single source of auth truth for the app. Wraps the auth
@@ -102,12 +103,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [userId]);
 
   const signOut = useCallback(async () => {
+    // Clear the liked-posts cache before wiping the userId so we can still
+    // reference the outgoing user's id inside clearForUser.
+    if (userId) clearForUser(userId);
     await svcSignOut();
     setUserId(null);
     setAccountStatus(null);
     setDeletionScheduledAt(null);
     setAccountStatusLoaded(false);
-  }, []);
+  }, [userId]);
 
   return (
     <SessionContext.Provider value={{
