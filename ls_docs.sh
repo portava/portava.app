@@ -1,0 +1,1 @@
+ls -F docs/ > docs_list.txt

@@ -243,8 +243,57 @@ Both index names should appear in the result before marking this migration appli
 | `0107_rent_buddy_admin_actions.sql` | Creates `rent_buddy_admin_actions` audit log table. This table was referenced by 20+ INSERT statements in `rentABuddy.ts` and `rentABuddyMarketplace.ts` (admin suspend/approve/feature actions) and declared in `database.types.ts`, but was absent from all prior migrations. Schema: `id UUID PK, admin_id UUID FK→profiles (nullable), target_type TEXT NOT NULL, target_id TEXT NOT NULL, action TEXT NOT NULL, notes TEXT, details JSONB, created_at TIMESTAMPTZ`; RLS enabled with service-role-only policy; indexes on `(admin_id, created_at DESC)` and `(target_type, target_id)`. **Apply:** paste `artifacts/api-server/migrations/0107_rent_buddy_admin_actions.sql` into the Supabase SQL editor and run. **Verify:** `SELECT table_name FROM information_schema.tables WHERE table_name = 'rent_buddy_admin_actions';` — the table name must appear. Also run `SELECT policyname FROM pg_policies WHERE tablename = 'rent_buddy_admin_actions';` — `rb_admin_actions_svc` must appear. | 2026-07-05 |
 | `0109_claim_invite_link_slot.sql` | Creates two SECURITY DEFINER functions used by `POST /api/trips/invite-link/:token/accept`: `claim_invite_link_slot(link_id uuid) RETURNS boolean` — increments `use_count` atomically gated on `max_uses`, returns FALSE when the cap is hit; `release_invite_link_slot(link_id uuid)` — decrements `use_count` (floors at 0) as a compensation step when the subsequent `trip_members` INSERT fails. Both functions revoke PUBLIC/anon/authenticated execute rights and grant only to `service_role`. **Apply:** paste `artifacts/api-server/src/migrations/0109_claim_invite_link_slot.sql` into the Supabase SQL editor and run (both `CREATE OR REPLACE FUNCTION` statements are idempotent). Must be applied before 0110. **Verify:** `SELECT proname FROM pg_proc WHERE proname IN ('claim_invite_link_slot', 'release_invite_link_slot');` — both names must appear. The pre-release `db-triggers` check confirms these are live before any EAS build. | 2026-07-05 |
 | `0110_invite_link_idempotency.sql` | Creates `trip_invite_link_attempts` table (PK `link_id`+`user_id`, `claimed_at`; service-role-only access) and replaces the two-step claim with `claim_invite_link_slot_for_user(link_id, user_id) RETURNS text`. The combined function atomically: inserts the attempt row + increments `use_count` (returns `'claimed'`), or returns `'already_attempted'` if a prior request already claimed a slot that never completed (so the handler can skip re-claiming and retry the INSERT), or returns `'limit_reached'` when `max_uses` is exhausted. Both table and function are SECURITY DEFINER / service-role-only. **Apply:** paste `artifacts/api-server/src/migrations/0110_invite_link_idempotency.sql` into the Supabase SQL editor and run — must be applied after 0109. **Verify:** `SELECT relname FROM pg_class WHERE relname = 'trip_invite_link_attempts' AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public');` — the table name must appear. Also `SELECT proname FROM pg_proc WHERE proname = 'claim_invite_link_slot_for_user';` — the function name must appear. | 2026-07-05 |
+| `0111_reconcile_invite_slots.sql` | Creates `reconcile_invite_link_slots(min_age_minutes integer DEFAULT 5) RETURNS TABLE (link_id, user_id, claimed_at, trip_id)` SECURITY DEFINER function. Finds stranded invite-link slots — `trip_invite_link_attempts` rows older than `min_age_minutes` with no corresponding `trip_members` row for that trip+user — and for each: decrements `use_count` (floors at 0) in `trip_invite_links` and deletes the orphaned attempt row. Uses `FOR UPDATE OF ... SKIP LOCKED` so concurrent reconciliation runs never double-fix. Called by `POST /api/admin/trips/reconcile-invite-slots` (admin-only) and by the automated `InviteSlotSweeper` background job (see below). | 2026-07-05 |
 | `0112_trip_members_invite_link_id.sql` | Adds `invite_link_id UUID REFERENCES trip_invite_links(id) ON DELETE SET NULL` (nullable) to `trip_members`. Enables per-link audit queries ("how many current members joined via link X?"). All pre-existing rows keep `NULL`; new members who join via an invite link have the column set by the `POST /api/trips/invite-link/:token/accept` handler. Also creates partial index `trip_members_invite_link_id_idx` on `(invite_link_id) WHERE invite_link_id IS NOT NULL`. `ON DELETE SET NULL` ensures deleting an invite link does not remove its members. **Apply:** paste `artifacts/api-server/src/migrations/0112_trip_members_invite_link_id.sql` into the Supabase SQL editor and run — must be applied after 0110 (requires `trip_invite_links` table). **Verify:** `SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema='public' AND table_name='trip_members' AND column_name='invite_link_id';` — one row must appear with `data_type='uuid'` and `is_nullable='YES'`. Also: `SELECT indexname FROM pg_indexes WHERE tablename='trip_members' AND indexname='trip_members_invite_link_id_idx';` — index name must appear. | 2026-07-05 |
-| `0111_reconcile_invite_slots.sql` | Creates `reconcile_invite_link_slots(min_age_minutes integer DEFAULT 5) RETURNS TABLE (link_id, user_id, claimed_at, trip_id)` SECURITY DEFINER function. Finds stranded invite-link slots — `trip_invite_link_attempts` rows older than `min_age_minutes` with no corresponding `trip_members` row for that trip+user — and for each: decrements `use_count` (floors at 0) in `trip_invite_links` and deletes the orphaned attempt row. Uses `FOR UPDATE OF ... SKIP LOCKED` so concurrent reconciliation runs never double-fix. Called by `POST /api/admin/trips/reconcile-invite-slots` (admin-only). **Apply:** paste `artifacts/api-server/src/migrations/0111_reconcile_invite_slots.sql` into the Supabase SQL editor and run — must be applied after 0110. **Verify:** `SELECT proname FROM pg_proc WHERE proname = 'reconcile_invite_link_slots';` — the function name must appear. Then call `POST /api/admin/trips/reconcile-invite-slots` (as a logged-in admin) — must return HTTP 200. The pre-release `db-triggers` check confirms this function is live before any EAS build. | 2026-07-05 |
+
+### Invite-link stranded-slot cleanup — InviteSlotSweeper background job
+
+The Postgres function added in migration 0111 (`reconcile_invite_link_slots`) is
+called automatically by the `InviteSlotSweeper` background job in
+`artifacts/api-server/src/lib/inviteSlotSweeper.ts`.  No additional migration is
+required — the cleanup runs entirely in Node.js process space using the existing
+service-role client.
+
+**What it does**
+
+On server startup (after a 60-second delay to let the service fully initialise)
+and then on every subsequent interval, the sweeper calls:
+
+```sql
+SELECT * FROM reconcile_invite_link_slots(min_age_minutes => <TTL_MINUTES>);
+```
+
+For each row returned (a stranded attempt with no matching `trip_members` row)
+the Postgres function has already:
+1. Decremented `use_count` (floored at 0) in `trip_invite_links`.
+2. Deleted the orphaned `trip_invite_link_attempts` row.
+
+The sweeper logs the number of recovered slots at `INFO` level when any are
+found, and at `DEBUG` level when the run finds nothing.  Failures are logged at
+`ERROR` and tracked in `consecutiveFailures` on `getSweeperStatus()`.
+
+**Configuration (env vars in `artifacts/api-server/.env`)**
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `INVITE_SLOT_SWEEP_TTL_HOURS` | `24` | Attempt rows older than this (with no member row) are cleaned up |
+| `INVITE_SLOT_SWEEP_INTERVAL_HOURS` | `1` | How often the sweeper runs |
+
+Lowering `INVITE_SLOT_SWEEP_TTL_HOURS` below the expected maximum request
+latency (a few seconds) is unsafe — it would age out in-flight legitimate
+requests.  The 24-hour default is deliberately generous.
+
+**Manual trigger**
+
+An on-demand reconcile is also available via:
+
+```
+POST /api/admin/trips/reconcile-invite-slots
+{ "minAgeMinutes": 5 }   // optional; defaults to 5
+```
+
+This is the admin-only HTTP endpoint wired to the same Postgres function.
+
 | `0108_rent_buddy_spec_tables.sql` | Adds three functional tables and four compatibility VIEW aliases. New tables: (1) `buddy_services` — typed service catalog per buddy (category, title, hourly/half-day/full-day rates, min/max hours, group size, approval flag); RLS: public read, owner write, service-role all. (2) `buddy_availability_exceptions` — structured per-date availability overrides with `buddy_exception_type` enum (`blocked`, `time_blocked`, `vacation`, `available_only`); RLS: public read, owner write, service-role all. (3) `buddy_booking_events` — immutable audit log of booking state transitions written by route handlers on accept/decline/start/complete/cancel; fields: `booking_id`, `actor_user_id`, `event`, `from_status`, `to_status`, `metadata JSONB`; RLS: parties to booking can read, service-role all. VIEW aliases: `buddy_booking_checkins → rent_buddy_safety_checkins`, `buddy_change_requests → rent_buddy_route_change_requests`, `buddy_favorites → rent_buddy_saved`, `buddy_booking_requests → rent_buddy_bookings`. **Apply:** paste `artifacts/api-server/migrations/0108_rent_buddy_spec_tables.sql` into the Supabase SQL editor and run. **Verify:** `SELECT table_name FROM information_schema.tables WHERE table_name IN ('buddy_services','buddy_availability_exceptions','buddy_booking_events') ORDER BY table_name;` — all three names must appear. `SELECT table_name FROM information_schema.views WHERE table_name IN ('buddy_booking_checkins','buddy_change_requests','buddy_favorites','buddy_booking_requests');` — all four view names must appear. | 2026-07-05 |
 
 | `0115_circle_visibility_settings.sql` | Non-canonical origin file for `circle_visibility_settings`. **Now tracked in canonical** `0108_circle_schema_tracked.sql` — apply that file instead. | tracked in 0108 |

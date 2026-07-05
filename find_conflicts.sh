@@ -1,0 +1,1 @@
+grep -lR "<<<<<<<" . --include="*.md"
