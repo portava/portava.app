@@ -653,14 +653,24 @@ router.get("/circle/contexts/:type/:id/my-presence", async (req, res) => {
     username:    (prof?.handle as string | null) ?? "",
   };
 
-  // Fetch viewer's own presence row from this context
-  const { data: presenceData } = await sc
+  // Fetch viewer's own presence row from this context.
+  // NOTE: circle_presence (migration 0117) has no visibility_mode column —
+  // do not select it or Supabase will return a query error.
+  // The viewer always sees their own row at "status_only" equivalent (full status,
+  // no foreign-visibility filtering needed for the self-view).
+  const { data: presenceData, error: presenceError } = await sc
     .from("circle_presence")
-    .select("id, status, status_label, approximate_label, venue_label, checked_in, visibility_mode, updated_at, is_stale, expires_at")
+    .select("id, status, status_label, approximate_label, venue_label, checked_in, updated_at, is_stale, expires_at")
     .eq("user_id", user.id)
     .eq("context_type", type)
     .eq("context_id", id)
     .maybeSingle();
+
+  if (presenceError) {
+    req.log.error({ presenceError }, "my-presence query failed");
+    sendError(res, "db_error", presenceError.message);
+    return;
+  }
 
   const presence = presenceData as any;
   const isExpired =
@@ -668,9 +678,10 @@ router.get("/circle/contexts/:type/:id/my-presence", async (req, res) => {
   const effectivePresence = !presence || isExpired ? null : presence;
   const isStale = Boolean(effectivePresence?.is_stale);
 
-  // Viewer sees their own full data — use their actual visibility mode
-  const visibilityMode =
-    (effectivePresence?.["visibility_mode"] as string | null) ?? "status_only";
+  // Viewer always sees their own row without foreign-visibility filtering.
+  // circle_presence has no visibility_mode column (migration 0117) — default
+  // to "status_only" which passes all label fields through shapePresence unchanged.
+  const visibilityMode = "status_only";
 
   const shaped = shapePresence(snippet, effectivePresence, visibilityMode, isStale);
   // Override: viewer always has full access to their own row
@@ -1037,6 +1048,9 @@ router.post("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
     venueLabel:       row?.venue_label       ?? null,
     approximateLabel: row?.approximate_label ?? null,
     description:      row?.description       ?? null,
+    // V1: coordinate columns not yet in schema — always null; V2 will populate.
+    lat:              null,
+    lng:              null,
     createdAt:        row?.created_at,
     updatedAt:        row?.updated_at,
   });
@@ -1075,7 +1089,7 @@ router.patch("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
     .eq("context_type", type)
     .eq("context_id", id)
     .eq("is_active", true)
-    .select("id, venue_label, approximate_label, description, updated_at")
+    .select("id, venue_label, approximate_label, description, created_at, updated_at")
     .maybeSingle();
 
   if (error) { sendError(res, "db_error", error.message); return; }
@@ -1094,6 +1108,10 @@ router.patch("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
     venueLabel:       row?.venue_label       ?? null,
     approximateLabel: row?.approximate_label ?? null,
     description:      row?.description       ?? null,
+    // V1: coordinate columns not yet in schema — always null; V2 will populate.
+    lat:              null,
+    lng:              null,
+    createdAt:        row?.created_at ?? null,
     updatedAt:        row?.updated_at,
   });
 });
