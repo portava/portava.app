@@ -373,106 +373,82 @@ export default function DiscoveryHub() {
         })}
       </ScrollView>
 
-      {/* ── Age filter — compact picker pill ── */}
-      {(() => {
-        const AGE_OPTIONS: { key: DiscoveryAgeFilter; label: string }[] = [
-          { key: 'any',        label: 'Any age' },
-          { key: 'open_to_me', label: 'Open to me' },
-          { key: '18_plus',    label: '18+' },
-          { key: '21_plus',    label: '21+' },
-          { key: 'under_30',   label: 'Under 30' },
-          { key: '30_plus',    label: '30+' },
-          { key: 'custom',     label: 'Custom range' },
-        ];
-        const activeLabel = ageFilter === 'custom' && (customAgeRange.min != null || customAgeRange.max != null)
-          ? `Age: ${customAgeRange.min ?? '?'}–${customAgeRange.max ?? '?'}`
-          : (AGE_OPTIONS.find((o) => o.key === ageFilter)?.label ?? 'Any age');
-        const isFiltered = ageFilter !== 'any';
-        return (
-          <>
-            <View style={styles.agePickerRow}>
+      {/* ── Age filter modal — opened via the filter button in the search row ── */}
+      <Modal
+        visible={agePickerOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setAgePickerOpen(false)}
+      >
+        <Pressable style={styles.ageModalOverlay} onPress={() => setAgePickerOpen(false)} />
+        <View style={styles.ageModalSheet}>
+          <View style={styles.ageModalHandle} />
+          <Text style={styles.ageModalTitle}>Age filter</Text>
+          {([
+            { key: 'any',        label: 'Any age' },
+            { key: 'open_to_me', label: 'Open to me' },
+            { key: '18_plus',    label: '18+' },
+            { key: '21_plus',    label: '21+' },
+            { key: 'under_30',   label: 'Under 30' },
+            { key: '30_plus',    label: '30+' },
+            { key: 'custom',     label: 'Custom range' },
+          ] as { key: DiscoveryAgeFilter; label: string }[]).map((opt) => {
+            const sel = ageFilter === opt.key;
+            return (
               <Pressable
-                style={[styles.agePickerPill, isFiltered && styles.agePickerPillActive]}
-                onPress={() => setAgePickerOpen(true)}
+                key={opt.key}
+                style={[styles.ageModalItem, sel && styles.ageModalItemActive]}
+                onPress={() => {
+                  setAgeFilter(opt.key);
+                  if (opt.key !== 'custom') {
+                    setCustomAgeRange({ min: null, max: null });
+                    setDebouncedAgeRange({ min: null, max: null });
+                    setAgePickerOpen(false);
+                  }
+                }}
               >
-                <Users size={11} color={isFiltered ? color.signal : color.mute} />
-                <Text style={[styles.agePickerLabel, isFiltered && styles.agePickerLabelActive]}>
-                  {activeLabel}
+                {opt.key === 'open_to_me' && (
+                  <Users size={14} color={sel ? color.signal : color.mute} />
+                )}
+                <Text style={[styles.ageModalItemText, sel && styles.ageModalItemTextActive]}>
+                  {opt.label}
                 </Text>
-                <Text style={[styles.agePickerChevron, isFiltered && styles.agePickerLabelActive]}>▾</Text>
+                {sel && <Text style={styles.ageModalCheck}>✓</Text>}
+              </Pressable>
+            );
+          })}
+          {ageFilter === 'custom' && (
+            <View style={styles.ageModalCustomRow}>
+              <Text style={styles.ageModalCustomLabel}>Min</Text>
+              <TextInput
+                style={styles.ageModalCustomInput}
+                value={customAgeRange.min != null ? String(customAgeRange.min) : ''}
+                onChangeText={(v) => setCustomAgeRange((prev) => ({ ...prev, min: v ? parseInt(v, 10) || null : null }))}
+                keyboardType="number-pad"
+                placeholder="18"
+                placeholderTextColor={color.mute}
+                maxLength={3}
+              />
+              <Text style={styles.ageModalCustomLabel}>Max</Text>
+              <TextInput
+                style={styles.ageModalCustomInput}
+                value={customAgeRange.max != null ? String(customAgeRange.max) : ''}
+                onChangeText={(v) => setCustomAgeRange((prev) => ({ ...prev, max: v ? parseInt(v, 10) || null : null }))}
+                keyboardType="number-pad"
+                placeholder="35"
+                placeholderTextColor={color.mute}
+                maxLength={3}
+              />
+              <Pressable
+                style={styles.ageModalDoneBtn}
+                onPress={() => setAgePickerOpen(false)}
+              >
+                <Text style={styles.ageModalDoneBtnText}>Done</Text>
               </Pressable>
             </View>
-
-            <Modal
-              visible={agePickerOpen}
-              transparent
-              animationType="slide"
-              onRequestClose={() => setAgePickerOpen(false)}
-            >
-              <Pressable style={styles.ageModalOverlay} onPress={() => setAgePickerOpen(false)} />
-              <View style={styles.ageModalSheet}>
-                <View style={styles.ageModalHandle} />
-                <Text style={styles.ageModalTitle}>Age filter</Text>
-                {AGE_OPTIONS.map((opt) => {
-                  const sel = ageFilter === opt.key;
-                  return (
-                    <Pressable
-                      key={opt.key}
-                      style={[styles.ageModalItem, sel && styles.ageModalItemActive]}
-                      onPress={() => {
-                        setAgeFilter(opt.key);
-                        if (opt.key !== 'custom') {
-                          setCustomAgeRange({ min: null, max: null });
-                          setDebouncedAgeRange({ min: null, max: null });
-                          setAgePickerOpen(false);
-                        }
-                      }}
-                    >
-                      {opt.key === 'open_to_me' && (
-                        <Users size={14} color={sel ? color.signal : color.mute} />
-                      )}
-                      <Text style={[styles.ageModalItemText, sel && styles.ageModalItemTextActive]}>
-                        {opt.label}
-                      </Text>
-                      {sel && <Text style={styles.ageModalCheck}>✓</Text>}
-                    </Pressable>
-                  );
-                })}
-                {ageFilter === 'custom' && (
-                  <View style={styles.ageModalCustomRow}>
-                    <Text style={styles.ageModalCustomLabel}>Min</Text>
-                    <TextInput
-                      style={styles.ageModalCustomInput}
-                      value={customAgeRange.min != null ? String(customAgeRange.min) : ''}
-                      onChangeText={(v) => setCustomAgeRange((prev) => ({ ...prev, min: v ? parseInt(v, 10) || null : null }))}
-                      keyboardType="number-pad"
-                      placeholder="18"
-                      placeholderTextColor={color.mute}
-                      maxLength={3}
-                    />
-                    <Text style={styles.ageModalCustomLabel}>Max</Text>
-                    <TextInput
-                      style={styles.ageModalCustomInput}
-                      value={customAgeRange.max != null ? String(customAgeRange.max) : ''}
-                      onChangeText={(v) => setCustomAgeRange((prev) => ({ ...prev, max: v ? parseInt(v, 10) || null : null }))}
-                      keyboardType="number-pad"
-                      placeholder="35"
-                      placeholderTextColor={color.mute}
-                      maxLength={3}
-                    />
-                    <Pressable
-                      style={styles.ageModalDoneBtn}
-                      onPress={() => setAgePickerOpen(false)}
-                    >
-                      <Text style={styles.ageModalDoneBtnText}>Done</Text>
-                    </Pressable>
-                  </View>
-                )}
-              </View>
-            </Modal>
-          </>
-        );
-      })()}
+          )}
+        </View>
+      </Modal>
 
       {/* ── Tab bar + list/map toggle ── */}
       <View style={styles.tabRow}>
@@ -858,42 +834,6 @@ const styles = StyleSheet.create({
   },
   modeChipLabelActive: {
     color: color.signal,
-  },
-  agePickerRow: {
-    flexDirection: 'row',
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: color.haze,
-    backgroundColor: color.paper,
-  },
-  agePickerPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: space.sm,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: color.haze,
-    backgroundColor: color.paperRaised,
-  },
-  agePickerPillActive: {
-    backgroundColor: color.signal + '14',
-    borderColor: color.signal + '50',
-  },
-  agePickerLabel: {
-    fontSize: 12,
-    fontWeight: '600' as const,
-    color: color.mute,
-  },
-  agePickerLabelActive: {
-    color: color.signal,
-  },
-  agePickerChevron: {
-    fontSize: 10,
-    color: color.mute,
-    marginTop: 1,
   },
   ageModalOverlay: {
     flex: 1,
