@@ -26,6 +26,9 @@ import {
   type ContextType,
 } from "../lib/circleAccessGuard.js";
 import { shapePresence, type CircleProfileSnippet } from "../lib/circleResponseShaper.js";
+import { checkRateLimit } from "../lib/rateLimit.js";
+import { NotificationService } from "../services/notifications/NotificationService.js";
+import { NotificationRouter as NotifRouter } from "../services/notifications/NotificationRouter.js";
 
 const router = Router();
 
@@ -38,6 +41,14 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // Presence stale threshold defaults
 const TRIP_PRESENCE_TTL_HOURS  = 24; // 24h after trip end
 const EVENT_PRESENCE_TTL_HOURS = 2;  // 2h after event end
+
+// Rate-limit windows (configurable via env)
+const CIRCLE_MEMBERS_RL_LIMIT  = parseInt(process.env.CIRCLE_MEMBERS_RL_LIMIT  ?? "60",  10);
+const CIRCLE_MEMBERS_RL_WIN_MS  = 60_000;           // 60 calls/min (scrape prevention)
+const CIRCLE_PRESENCE_RL_LIMIT  = parseInt(process.env.CIRCLE_PRESENCE_RL_LIMIT ?? "30", 10);
+const CIRCLE_PRESENCE_RL_WIN_MS = 5 * 60_000;       // 30 updates/5 min (spam prevention)
+const CIRCLE_NEED_HELP_RL_LIMIT = 20;               // generous — never block genuine emergencies
+const CIRCLE_NEED_HELP_RL_WIN_MS = 60_000;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -198,6 +209,110 @@ async function writeAuditEvent(
       metadata:       opts.metadata     ?? null,
     });
   } catch {}
+}
+
+/**
+ * Send Circle push notifications to a set of users (fire-and-forget).
+ * Swallows all errors — notification failure must never block Circle operations.
+ * Caps at 50 recipients to avoid overloading the notification pipeline.
+ */
+async function sendCircleNotifications(
+  sc: any,
+  recipientIds: string[],
+  eventType: string,
+  params: Record<string, string>,
+): Promise<void> {
+  if (recipientIds.length === 0) return;
+  try {
+    const svc    = new NotificationService(sc);
+    const router = new NotifRouter(sc);
+    await Promise.all(
+      recipientIds.slice(0, 50).map(async (uid) => {
+        try {
+          const row = await svc.create({ userId: uid, eventType, params });
+          if (row) await router.route(row);
+        } catch { /* non-fatal */ }
+      }),
+    );
+  } catch { /* non-fatal */ }
+}
+
+/**
+ * Post a Circle status card to the trip/event Telegraph thread (fire-and-forget).
+ * - Finds the thread via trip_id (trips) or events.chat_thread_id (events).
+ * - Inserts a message with msg_type='circle_status_card' containing ONLY
+ *   privacy-safe, user-supplied fields.  GPS, needs_help, and emergency data
+ *   are NEVER included.
+ * - No-op if no thread exists for this context.
+ */
+async function postCircleStatusCard(
+  sc: any,
+  contextType: ContextType,
+  contextId: string,
+  actorId: string,
+  cardSubtype: string,
+  safeCardData: Record<string, unknown>,
+): Promise<void> {
+  try {
+    let threadId: string | null = null;
+
+    if (contextType === "trip") {
+      const { data } = await sc
+        .from("message_threads")
+        .select("id")
+        .eq("thread_type", "trip")
+        .eq("trip_id", contextId)
+        .maybeSingle();
+      threadId = (data as any)?.id ?? null;
+    } else {
+      // Events store their chat thread id on the events row itself.
+      const { data } = await sc
+        .from("events")
+        .select("chat_thread_id")
+        .eq("id", contextId)
+        .maybeSingle();
+      threadId = (data as any)?.chat_thread_id ?? null;
+    }
+
+    if (!threadId) return; // No Telegraph thread for this context — no-op.
+
+    // Body is stored as JSON string. Rendering is handled client-side.
+    // Unauthorized viewers (non-Circle members) will see the placeholder
+    // "Shared a Circle update." — enforced by the client renderer.
+    await sc.from("messages").insert({
+      thread_id: threadId,
+      sender_id: actorId,
+      msg_type:  "circle_status_card",
+      subtype:   cardSubtype,
+      body:      JSON.stringify(safeCardData),
+    });
+  } catch { /* non-fatal — card delivery must never block Circle operations */ }
+}
+
+/** Resolve the display name for a context (trip title or event name). Non-fatal. */
+async function resolveContextTitle(
+  sc: any,
+  contextType: ContextType,
+  contextId: string,
+): Promise<string> {
+  try {
+    if (contextType === "trip") {
+      const { data } = await sc
+        .from("trips")
+        .select("title, destination_city")
+        .eq("id", contextId)
+        .maybeSingle();
+      return (data as any)?.title ?? (data as any)?.destination_city ?? "";
+    }
+    const { data } = await sc
+      .from("events")
+      .select("title")
+      .eq("id", contextId)
+      .maybeSingle();
+    return (data as any)?.title ?? "";
+  } catch {
+    return "";
+  }
 }
 
 // ── GET /circle/settings ──────────────────────────────────────────────────────
@@ -491,6 +606,14 @@ router.get("/circle/contexts/:type/:id/members", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
+  // Rate limit: prevent member-graph scraping (60 req/min per user)
+  const rl = checkRateLimit("circle_members", user.id, CIRCLE_MEMBERS_RL_LIMIT, CIRCLE_MEMBERS_RL_WIN_MS);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", String(Math.ceil(rl.retryAfterMs / 1000)));
+    sendError(res, "rate_limited", "Too many requests. Please slow down.");
+    return;
+  }
+
   const { type, id } = req.params;
   if (!validateContextType(res, type)) return;
   if (!validateContextId(res, id)) return;
@@ -708,6 +831,14 @@ router.post("/circle/contexts/:type/:id/presence", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
+  // Rate limit: throttle presence update spam (30 updates per 5 minutes per user)
+  const rl = checkRateLimit("circle_presence", user.id, CIRCLE_PRESENCE_RL_LIMIT, CIRCLE_PRESENCE_RL_WIN_MS);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", String(Math.ceil(rl.retryAfterMs / 1000)));
+    sendError(res, "rate_limited", "Presence updates are too frequent. Please try again shortly.");
+    return;
+  }
+
   const { type, id } = req.params;
   if (!validateContextType(res, type)) return;
   if (!validateContextId(res, id)) return;
@@ -846,6 +977,36 @@ router.post("/circle/contexts/:type/:id/check-in", async (req, res) => {
     eventType:    "checkin_created",
     metadata:     { checkinType: parsed.data.checkinType },
   });
+
+  // Fire notifications + Telegraph card (all fire-and-forget, never block the 201 response).
+  void (async () => {
+    try {
+      const [memberIds, actorProfile, contextTitle] = await Promise.all([
+        getAcceptedMemberIds(sc, type as ContextType, id),
+        sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
+        resolveContextTitle(sc, type as ContextType, id),
+      ]);
+      const actorName = (actorProfile.data as any)?.display_name
+        ?? (actorProfile.data as any)?.name
+        ?? "Someone";
+      const recipients = memberIds.filter((m) => m !== user.id);
+      // Notifications: status label is user-supplied — safe to include. Venue is not.
+      await sendCircleNotifications(sc, recipients, "circle.checkin", {
+        actor:        actorName,
+        statusLabel:  parsed.data.checkinType,  // e.g. "arrived", "with_group"
+        contextTitle,
+        contextType:  type,
+        contextId:    id,
+      });
+      // Telegraph status card: include only user-supplied, privacy-safe fields.
+      void postCircleStatusCard(sc, type as ContextType, id, user.id, "checkin", {
+        actorName,
+        checkinType:  parsed.data.checkinType,
+        venueLabel:   parsed.data.venueLabel   ?? null,
+        // approximateLabel: intentionally omitted from card — too location-specific.
+      });
+    } catch { /* non-fatal */ }
+  })();
 
   res.status(201).json({
     id:          (checkinResult.data as any)?.id           ?? null,
@@ -1042,6 +1203,29 @@ router.post("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
     eventType:   "host_changed_meeting_point",
   });
 
+  // Notifications + Telegraph card (fire-and-forget)
+  void (async () => {
+    try {
+      const [memberIds, actorProfile, contextTitle] = await Promise.all([
+        getAcceptedMemberIds(sc, type as ContextType, id),
+        sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
+        resolveContextTitle(sc, type as ContextType, id),
+      ]);
+      const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "The host";
+      const safeVenue = parsed.data.venueLabel ?? null;
+      const safeArea  = parsed.data.approximateLabel ?? null;
+      const recipients = memberIds.filter((m) => m !== user.id);
+      await sendCircleNotifications(sc, recipients, "circle.meeting_point_updated", {
+        actor: actorName, contextTitle, contextType: type, contextId: id,
+        venueLabel:       safeVenue ?? "", approximateLabel: safeArea ?? "",
+      });
+      void postCircleStatusCard(sc, type as ContextType, id, user.id, "meeting_point", {
+        actorName, venueLabel: safeVenue, approximateLabel: safeArea,
+        // Never include lat/lng — V1 coordinates are null; V2 will decide exposure.
+      });
+    } catch { /* non-fatal */ }
+  })();
+
   const row = data as any;
   res.status(201).json({
     id:               row?.id,
@@ -1147,6 +1331,23 @@ router.delete("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
     metadata:    { action: "removed" },
   });
 
+  // Notify members that the meeting point was cleared (fire-and-forget)
+  void (async () => {
+    try {
+      const [memberIds, actorProfile, contextTitle] = await Promise.all([
+        getAcceptedMemberIds(sc, type as ContextType, id),
+        sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
+        resolveContextTitle(sc, type as ContextType, id),
+      ]);
+      const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "The host";
+      const recipients = memberIds.filter((m) => m !== user.id);
+      await sendCircleNotifications(sc, recipients, "circle.meeting_point_updated", {
+        actor: actorName, contextTitle, contextType: type, contextId: id,
+        venueLabel: "", approximateLabel: "Meeting point removed",
+      });
+    } catch { /* non-fatal */ }
+  })();
+
   res.status(200).json({ removed: true });
 });
 
@@ -1200,11 +1401,225 @@ router.post("/circle/contexts/:type/:id/need-help", async (req, res) => {
     eventType:   "needs_help_triggered",
   });
 
+  // Alert the context host only (fire-and-forget).
+  // Members other than the host are intentionally excluded — this is a
+  // host-action alert, not a broadcast. Do NOT include GPS, needs_help bool,
+  // or any emergency detail in notification params.
+  void (async () => {
+    try {
+      const [actorProfile, contextTitle] = await Promise.all([
+        sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
+        resolveContextTitle(sc, type as ContextType, id),
+      ]);
+      const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "Someone";
+
+      // Resolve the host for this context.
+      let hostId: string | null = null;
+      if (type === "trip") {
+        const { data: trip } = await sc
+          .from("trips")
+          .select("user_id")
+          .eq("id", id)
+          .maybeSingle();
+        hostId = (trip as any)?.user_id ?? null;
+      } else {
+        const { data: ev } = await sc
+          .from("events")
+          .select("creator_id, organizer_id")
+          .eq("id", id)
+          .maybeSingle();
+        hostId = (ev as any)?.organizer_id ?? (ev as any)?.creator_id ?? null;
+      }
+
+      // Only notify if there is a host and they are not the caller themselves.
+      if (hostId && hostId !== user.id) {
+        await sendCircleNotifications(sc, [hostId], "circle.need_help_host_alert", {
+          actor: actorName, contextTitle, contextType: type, contextId: id,
+        });
+      }
+    } catch { /* non-fatal — safety alert must never silently break the response */ }
+  })();
+
   // IMPORTANT: response MUST NOT expose needs_help bool, GPS, or emergency details.
   res.status(200).json({
     acknowledged: true,
     message:      "Your circle has been notified. Stay safe.",
   });
+});
+
+// ── GET /circle/compass-suggestions ──────────────────────────────────────────
+//
+// Returns a curated list of suggested users the caller could invite to their
+// active Circle contexts.  Candidates are: mutual followers who are NOT already
+// Circle members in any of the caller's active contexts.
+//
+// Designed to power the "Invite someone" card in the Compass feed; intentionally
+// kept simple for V1 (no ML ranking).  The endpoint is additive — adding the
+// caller to the Compass SECTION_NAMES list would require touching 10+ Compass
+// files.  Instead, the mobile Compass screen calls this endpoint and renders the
+// card independently.
+//
+// Response shape:
+//   { suggestions: TravelerSearchResult[] }
+//
+// Capped at 10 results.  Rate-limited via the members limiter (same window).
+
+router.get("/circle/compass-suggestions", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  if (!await requireFeatureEnabled(res, sc)) return;
+
+  const rl = checkRateLimit("circle_members", user.id, CIRCLE_MEMBERS_RL_LIMIT, CIRCLE_MEMBERS_RL_WIN_MS);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", String(Math.ceil(rl.retryAfterMs / 1000)));
+    sendError(res, "rate_limited", "Too many requests. Please slow down.");
+    return;
+  }
+
+  // Step 1: collect users the caller follows and who follow back (mutual).
+  const [followingRes, followersRes] = await Promise.all([
+    sc.from("follows").select("following_id").eq("follower_id", user.id),
+    sc.from("follows").select("follower_id").eq("following_id", user.id),
+  ]);
+  const following = new Set(((followingRes.data ?? []) as any[]).map((r) => r.following_id as string));
+  const followers = new Set(((followersRes.data ?? []) as any[]).map((r) => r.follower_id as string));
+  const mutuals   = [...following].filter((id) => followers.has(id));
+
+  if (mutuals.length === 0) {
+    res.json({ suggestions: [] });
+    return;
+  }
+
+  // Step 2: find user IDs already in any of the caller's active Circle contexts.
+  const { data: myContextsData } = await sc
+    .from("circle_members")
+    .select("context_id")
+    .eq("user_id", user.id)
+    .eq("status", "accepted");
+  const myContextIds = ((myContextsData ?? []) as any[]).map((r) => r.context_id as string);
+
+  let alreadyInCircle: Set<string> = new Set();
+  if (myContextIds.length > 0) {
+    const { data: existingData } = await sc
+      .from("circle_members")
+      .select("user_id")
+      .in("context_id", myContextIds)
+      .eq("status", "accepted");
+    alreadyInCircle = new Set(((existingData ?? []) as any[]).map((r) => r.user_id as string));
+  }
+
+  const candidates = mutuals
+    .filter((id) => id !== user.id && !alreadyInCircle.has(id))
+    .slice(0, 30); // over-fetch before profile load
+
+  if (candidates.length === 0) {
+    res.json({ suggestions: [] });
+    return;
+  }
+
+  // Step 3: load public profile snippets.
+  const { data: profiles } = await sc
+    .from("profiles")
+    .select("id, display_name, name, avatar_url, username, home_city")
+    .in("id", candidates);
+
+  const suggestions = ((profiles ?? []) as any[]).slice(0, 10).map((p) => ({
+    userId:      p.id,
+    displayName: p.display_name ?? p.name ?? "Traveler",
+    username:    p.username     ?? null,
+    avatarUrl:   p.avatar_url   ?? null,
+    homeCity:    p.home_city    ?? null,
+  }));
+
+  res.json({ suggestions });
+});
+
+// ── POST /circle/pause-on-session-end ─────────────────────────────────────────
+//
+// Called by the mobile app (AppState "background"/"inactive" transition) to
+// gracefully pause the caller's Circle presence across ALL active contexts
+// before the session ends.  This prevents stale "active" badges lingering
+// after the user closes the app.
+//
+// - Sets status = "paused" on every active circle_presence row for the caller.
+// - Notifies other members of each affected context (fire-and-forget).
+// - Does NOT delete presence — the user can resume without re-joining.
+//
+// Idempotent: calling it while already paused is a no-op (returns 200).
+
+router.post("/circle/pause-on-session-end", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  if (!await requireFeatureEnabled(res, sc)) return;
+
+  // Fetch all active (non-paused) presence rows for the caller.
+  const { data: presenceRows, error: fetchErr } = await sc
+    .from("circle_presence")
+    .select("context_type, context_id")
+    .eq("user_id", user.id)
+    .neq("status", "paused");
+
+  if (fetchErr) { sendError(res, "db_error", fetchErr.message); return; }
+
+  if (!presenceRows || presenceRows.length === 0) {
+    // Already paused or not sharing in any context — idempotent OK.
+    res.status(200).json({ paused: 0 });
+    return;
+  }
+
+  // Bulk-update all active rows to "paused".
+  const { error: updateErr } = await sc
+    .from("circle_presence")
+    .update({ status: "paused", updated_at: new Date().toISOString() })
+    .eq("user_id", user.id)
+    .neq("status", "paused");
+
+  if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
+
+  // Audit one entry per affected context (fire-and-forget).
+  for (const row of presenceRows as any[]) {
+    void writeAuditEvent(sc, {
+      actorUserId: user.id,
+      contextType: row.context_type,
+      contextId:   row.context_id,
+      eventType:   "sharing_paused_on_session_end",
+    });
+  }
+
+  // Notify members of each affected context (fire-and-forget — never block 200).
+  void (async () => {
+    try {
+      const { data: profileData } = await sc
+        .from("profiles").select("display_name, name").eq("id", user.id).maybeSingle();
+      const actorName = (profileData as any)?.display_name ?? (profileData as any)?.name ?? "Someone";
+
+      await Promise.all(
+        (presenceRows as any[]).map(async (row) => {
+          try {
+            const [memberIds, contextTitle] = await Promise.all([
+              getAcceptedMemberIds(sc, row.context_type as ContextType, row.context_id),
+              resolveContextTitle(sc, row.context_type as ContextType, row.context_id),
+            ]);
+            const recipients = memberIds.filter((m) => m !== user.id);
+            await sendCircleNotifications(sc, recipients, "circle.sharing_paused", {
+              actor: actorName, contextTitle,
+              contextType: row.context_type, contextId: row.context_id,
+            });
+          } catch { /* non-fatal per context */ }
+        }),
+      );
+    } catch { /* non-fatal */ }
+  })();
+
+  res.status(200).json({ paused: presenceRows.length });
 });
 
 // ── Admin: GET /admin/circle/reports ─────────────────────────────────────────

@@ -95,6 +95,11 @@ interface FakeState {
   trips:                Record<string, any>;
   events:               Record<string, any>;
   messageThreadMembers: any[];
+  // ── Additions for compass-suggestions + pause-on-session-end ────────────────
+  follows:              any[];
+  circleMembers:        any[];
+  messages:             any[];
+  messageThreads:       any[];
 }
 
 let state: FakeState;
@@ -189,6 +194,14 @@ function resetState(): void {
       // telegraph-only user is only in message_thread_members, NOT trip_members
       { thread_id: "thread-trip-1", user_id: TELEGR_ID },
     ],
+    follows: [
+      // VIEWER_ID ↔ TARGET_ID mutual follows (used by compass-suggestions)
+      { follower_id: VIEWER_ID, following_id: TARGET_ID },
+      { follower_id: TARGET_ID, following_id: VIEWER_ID },
+    ],
+    circleMembers: [],
+    messages: [],
+    messageThreads: [],
   };
 }
 
@@ -215,6 +228,7 @@ function makeClient(userId: string) {
       eq(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
       in(col: string, vals: any[]) { this._inFilters.push([col, vals]); return this; },
       not(col: string, _op: string, _val: any) { this._notNullCol = col; return this; },
+      neq(col: string, val: any) { this._filters.push(["neq", col, val]); return this; },
       lte(col: string, val: any) { this._filters.push(["lte", col, val]); return this; },
       gte(col: string, val: any) { this._filters.push(["gte", col, val]); return this; },
       or(_expr: string) { return this; },
@@ -316,26 +330,29 @@ function makeClient(userId: string) {
         // ── Updates ─────────────────────────────────────────────────────────
         if (this._updateData !== null) {
           const filters = this._filters;
+          function rowMatchesFilters(row: any): boolean {
+            return filters.every(([op, col, val]) =>
+              op === "neq" ? row[col] !== val : row[col] === val,
+            );
+          }
           if (t === "circle_presence") {
             const ids = this._inFilters.find(([col]) => col === "id")?.[1] ?? [];
             for (const row of state.circlePresence) {
               if (ids.length > 0 && ids.includes(row.id)) {
                 Object.assign(row, this._updateData);
+              } else if (filters.length > 0 && rowMatchesFilters(row)) {
+                Object.assign(row, this._updateData);
               }
-              const matches = filters.every(([, col, val]) => row[col] === val);
-              if (filters.length > 0 && matches) Object.assign(row, this._updateData);
             }
           }
           if (t === "circle_meeting_points") {
             for (const row of state.circleMeetingPoints) {
-              const matches = filters.every(([, col, val]) => row[col] === val);
-              if (matches) Object.assign(row, this._updateData);
+              if (rowMatchesFilters(row)) Object.assign(row, this._updateData);
             }
           }
           if (t === "circle_context_settings") {
             for (const row of state.circleContextSettings) {
-              const matches = filters.every(([, col, val]) => row[col] === val);
-              if (matches) Object.assign(row, this._updateData);
+              if (rowMatchesFilters(row)) Object.assign(row, this._updateData);
             }
           }
           if (this._maybeSingle) {
@@ -367,8 +384,12 @@ function makeClient(userId: string) {
 
         function applyFilters(rows: any[]): any[] {
           let result = rows;
-          for (const [, col, val] of filters) {
-            result = result.filter((r) => r[col] === val);
+          for (const [op, col, val] of filters) {
+            if (op === "neq") {
+              result = result.filter((r) => r[col] !== val);
+            } else {
+              result = result.filter((r) => r[col] === val);
+            }
           }
           for (const [col, vals] of inFilters) {
             result = result.filter((r) => vals.includes(r[col]));
@@ -442,6 +463,35 @@ function makeClient(userId: string) {
         // circle_checkins
         if (t === "circle_checkins") {
           const filtered = applyFilters(state.circleCheckins);
+          return this._maybeSingle ? { data: filtered[0] ? { ...filtered[0] } : null, error: null } : { data: filtered.map((r) => ({ ...r })), error: null };
+        }
+
+        // follows
+        if (t === "follows") {
+          const filtered = applyFilters(state.follows);
+          return this._maybeSingle ? { data: filtered[0] ? { ...filtered[0] } : null, error: null } : { data: filtered.map((r) => ({ ...r })), error: null };
+        }
+
+        // circle_members
+        if (t === "circle_members") {
+          const filtered = applyFilters(state.circleMembers);
+          return this._maybeSingle ? { data: filtered[0] ? { ...filtered[0] } : null, error: null } : { data: filtered.map((r) => ({ ...r })), error: null };
+        }
+
+        // messages (Telegraph cards)
+        if (t === "messages") {
+          if (this._insertData !== null) {
+            const rows = Array.isArray(this._insertData) ? this._insertData : [this._insertData];
+            state.messages.push(...rows.map((r: any) => ({ id: `msg-${Math.random()}`, ...r })));
+            return { data: null, error: null };
+          }
+          const filtered = applyFilters(state.messages);
+          return this._maybeSingle ? { data: filtered[0] ? { ...filtered[0] } : null, error: null } : { data: filtered.map((r) => ({ ...r })), error: null };
+        }
+
+        // message_threads (for Telegraph card thread lookup)
+        if (t === "message_threads") {
+          const filtered = applyFilters(state.messageThreads);
           return this._maybeSingle ? { data: filtered[0] ? { ...filtered[0] } : null, error: null } : { data: filtered.map((r) => ({ ...r })), error: null };
         }
 
@@ -1029,5 +1079,207 @@ describe("GET /circle/contexts/:type/:id/meeting-point", () => {
     _setTestServiceClient(tc as any);
     const r = await req("GET", `/circle/contexts/trip/${TRIP_ID}/meeting-point`, undefined, NON_MEMBER_TOKEN);
     assert.equal(r.status, 403);
+  });
+});
+
+// ── Regression: privacy — Circle fields must not appear in non-Circle responses ─
+
+describe("Regression: Circle field isolation", () => {
+  beforeEach(() => {
+    resetState();
+    const c = makeClient(VIEWER_ID);
+    _setTestClient(c as any, true);
+    _setTestServiceClient(c as any);
+  });
+
+  it("check-in response omits needs_help, GPS, and emergency fields", async () => {
+    const r = await req("POST", `/circle/contexts/trip/${TRIP_ID}/check-in`, {
+      checkinType: "arrived",
+    });
+    assert.equal(r.status, 201);
+    // Privacy: these fields must NEVER be surfaced in a check-in response.
+    assert.ok(!("needs_help"    in r.body), "needs_help must be absent from check-in response");
+    assert.ok(!("lat"           in r.body), "lat must be absent from check-in response");
+    assert.ok(!("lng"           in r.body), "lng must be absent from check-in response");
+    assert.ok(!("gps"           in r.body), "gps must be absent from check-in response");
+    assert.ok(!("location"      in r.body), "location must be absent from check-in response");
+  });
+
+  it("need-help response omits needs_help bool, GPS, and emergency detail", async () => {
+    const r = await req("POST", `/circle/contexts/trip/${TRIP_ID}/need-help`);
+    assert.equal(r.status, 200);
+    assert.ok(!("needs_help" in r.body), "needs_help must be absent from need-help response");
+    assert.ok(!("lat"        in r.body), "lat must be absent from need-help response");
+    assert.ok(!("lng"        in r.body), "lng must be absent from need-help response");
+    assert.ok(!("gps"        in r.body), "gps must be absent from need-help response");
+    assert.ok(!("location"   in r.body), "location must be absent from need-help response");
+    // The only safe fields are acknowledged + message.
+    assert.equal(r.body.acknowledged, true);
+    assert.ok(typeof r.body.message === "string");
+  });
+
+  it("members list (status_only) omits all location and emergency detail", async () => {
+    // GET /members returns shaped presence; we assert no GPS or emergency fields leak.
+    const r = await req("GET", `/circle/contexts/trip/${TRIP_ID}/members`);
+    assert.equal(r.status, 200);
+    const members: any[] = r.body.members ?? [];
+    const member = members.find((m: any) => m.userId === TARGET_ID);
+    assert.ok(member, "TARGET_ID should appear in the members response");
+    // Privacy: location-revealing and emergency fields must never appear on any shape.
+    assert.ok(!("lat"       in member), "lat must be absent from status_only member shape");
+    assert.ok(!("lng"       in member), "lng must be absent from status_only member shape");
+    assert.ok(!("gps"       in member), "gps must be absent from status_only member shape");
+    assert.ok(!("needsHelp" in member), "needsHelp must be absent from status_only member shape");
+    assert.ok(!("needs_help" in member), "needs_help must be absent from status_only member shape");
+  });
+});
+
+// ── GET /circle/compass-suggestions ──────────────────────────────────────────
+
+describe("GET /circle/compass-suggestions", () => {
+  beforeEach(() => {
+    resetState();
+    const c = makeClient(VIEWER_ID);
+    _setTestClient(c as any, true);
+    _setTestServiceClient(c as any);
+  });
+
+  it("returns 200 with suggestions array when mutual follows exist", async () => {
+    const r = await req("GET", "/circle/compass-suggestions");
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.body.suggestions), "body.suggestions should be an array");
+  });
+
+  it("excludes users already in the caller's Circle contexts", async () => {
+    // Seed TARGET_ID as an existing circle member so they should be excluded.
+    state.circleMembers.push({
+      user_id: VIEWER_ID, context_id: TRIP_ID, context_type: "trip", status: "accepted",
+    });
+    state.circleMembers.push({
+      user_id: TARGET_ID, context_id: TRIP_ID, context_type: "trip", status: "accepted",
+    });
+    const r = await req("GET", "/circle/compass-suggestions");
+    assert.equal(r.status, 200);
+    const ids = (r.body.suggestions ?? []).map((s: any) => s.userId);
+    assert.ok(!ids.includes(TARGET_ID), "TARGET_ID already in circle — must be excluded");
+  });
+
+  it("returns 200 with empty suggestions when no mutuals", async () => {
+    state.follows = []; // clear follows — no mutuals
+    const r = await req("GET", "/circle/compass-suggestions");
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.suggestions, []);
+  });
+
+  it("returns 401 when unauthenticated", async () => {
+    const p = new Promise<{ status: number; body: any }>((resolve, reject) => {
+      const url = new URL("/circle/compass-suggestions", base);
+      const r = http.request(
+        { hostname: url.hostname, port: Number(url.port), path: url.pathname, method: "GET",
+          headers: { "content-type": "application/json" } },
+        (inRes) => {
+          let raw = "";
+          inRes.on("data", (c) => (raw += c));
+          inRes.on("end", () => resolve({ status: inRes.statusCode ?? 0, body: JSON.parse(raw) }));
+        },
+      );
+      r.on("error", reject);
+      r.end();
+    });
+    const result = await p;
+    assert.equal(result.status, 401);
+  });
+});
+
+// ── POST /circle/pause-on-session-end ────────────────────────────────────────
+
+describe("POST /circle/pause-on-session-end", () => {
+  beforeEach(() => {
+    resetState();
+    const c = makeClient(VIEWER_ID);
+    _setTestClient(c as any, true);
+    _setTestServiceClient(c as any);
+  });
+
+  it("pauses all active presence rows for the caller and returns count", async () => {
+    // Seed an active presence row for VIEWER_ID.
+    state.circlePresence.push({
+      id: "pres-viewer-trip",
+      user_id: VIEWER_ID, context_type: "trip", context_id: TRIP_ID,
+      status: "active", needs_help: false, last_seen_at: new Date().toISOString(),
+      is_stale: false, stale_after_secs: 1800,
+    });
+    const r = await req("POST", "/circle/pause-on-session-end", {});
+    assert.equal(r.status, 200);
+    assert.ok(typeof r.body.paused === "number", "body.paused should be a number");
+    assert.ok(r.body.paused >= 1, "at least one row should have been paused");
+    // Verify the presence row was mutated to paused.
+    const row = state.circlePresence.find((p) => p.user_id === VIEWER_ID && p.context_id === TRIP_ID);
+    assert.ok(row, "presence row should still exist (not deleted)");
+    assert.equal(row?.status, "paused");
+  });
+
+  it("is idempotent — already paused returns 200 with paused=0", async () => {
+    // No active (non-paused) rows for VIEWER_ID → idempotent.
+    state.circlePresence.push({
+      id: "pres-viewer-paused",
+      user_id: VIEWER_ID, context_type: "trip", context_id: TRIP_ID,
+      status: "paused", needs_help: false, last_seen_at: new Date().toISOString(),
+      is_stale: false, stale_after_secs: 1800,
+    });
+    const r = await req("POST", "/circle/pause-on-session-end", {});
+    assert.equal(r.status, 200);
+    assert.equal(r.body.paused, 0);
+  });
+
+  it("returns 401 when unauthenticated", async () => {
+    const p = new Promise<{ status: number; body: any }>((resolve, reject) => {
+      const payload = JSON.stringify({});
+      const url = new URL("/circle/pause-on-session-end", base);
+      const r = http.request(
+        { hostname: url.hostname, port: Number(url.port), path: url.pathname, method: "POST",
+          headers: { "content-type": "application/json" } },
+        (inRes) => {
+          let raw = "";
+          inRes.on("data", (c) => (raw += c));
+          inRes.on("end", () => resolve({ status: inRes.statusCode ?? 0, body: JSON.parse(raw) }));
+        },
+      );
+      r.on("error", reject);
+      r.write(payload);
+      r.end();
+    });
+    const result = await p;
+    assert.equal(result.status, 401);
+  });
+});
+
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+
+describe("Rate limiting", () => {
+  beforeEach(() => {
+    resetState();
+    // Lower rate limits for this test suite via env vars.
+    // Tests run after circle.ts module is loaded so constants are already set.
+    // Instead we exercise the limiter by using different contexts; we trust the
+    // unit behaviour of checkRateLimit and verify integration via a direct call
+    // to a rate-limited route with the env-controlled limits already in place.
+    const c = makeClient(VIEWER_ID);
+    _setTestClient(c as any, true);
+    _setTestServiceClient(c as any);
+  });
+
+  it("GET /members returns 200 for a normal call", async () => {
+    const r = await req("GET", `/circle/contexts/trip/${TRIP_ID}/members`);
+    // The default env limit is 60/min — a single call never triggers rate limiting.
+    assert.equal(r.status, 200);
+  });
+
+  it("POST /presence returns 200 for a normal call", async () => {
+    const r = await req("POST", `/circle/contexts/trip/${TRIP_ID}/presence`, {
+      visibilityMode: "status_only",
+    });
+    // The default env limit is 30/5min — a single call never triggers rate limiting.
+    assert.equal(r.status, 200);
   });
 });

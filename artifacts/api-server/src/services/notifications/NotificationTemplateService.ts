@@ -790,6 +790,62 @@ export const TEMPLATES: NotificationTemplate[] = [
     title: () => 'Travel Buddy update',
     body: ({ message }) => message ?? 'New features and improvements are available.',
   }),
+
+  // ── Find Your Circle ────────────────────────────────────────────────────────
+  tpl({
+    eventType: 'circle.sharing_enabled',
+    category: 'trips',
+    defaultPriority: 'normal',
+    defaultChannels: ['in_app', 'push'],
+    title: ({ actor }) => `${actor} joined your Circle`,
+    body: ({ contextTitle }) => `${contextTitle ? `In ${contextTitle} — ` : ''}Find Your Circle is now active.`,
+    actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,
+  }),
+  tpl({
+    eventType: 'circle.sharing_paused',
+    category: 'trips',
+    defaultPriority: 'low',
+    defaultChannels: ['in_app'],
+    title: ({ actor }) => `${actor} paused their Circle`,
+    body: ({ contextTitle }) => `${contextTitle ? `In ${contextTitle} — ` : ''}They won't be visible until they resume.`,
+    actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,
+  }),
+  tpl({
+    eventType: 'circle.checkin',
+    category: 'trips',
+    defaultPriority: 'normal',
+    defaultChannels: ['in_app', 'push'],
+    title: ({ actor }) => `${actor} checked in`,
+    body: ({ statusLabel, contextTitle }) =>
+      statusLabel
+        ? `${statusLabel}${contextTitle ? ` · ${contextTitle}` : ''}`
+        : `New check-in${contextTitle ? ` in ${contextTitle}` : ''}`,
+    actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,
+  }),
+  tpl({
+    eventType: 'circle.meeting_point_updated',
+    category: 'trips',
+    defaultPriority: 'important',
+    defaultChannels: ['in_app', 'push'],
+    title: ({ contextTitle }) => `Meeting point updated${contextTitle ? ` · ${contextTitle}` : ''}`,
+    body: ({ venueLabel, approximateLabel }) =>
+      venueLabel
+        ? `Head to: ${venueLabel}${approximateLabel ? ` (${approximateLabel})` : ''}`
+        : approximateLabel
+          ? `Head to: ${approximateLabel}`
+          : 'The host updated the meeting point. Tap to see details.',
+    actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,
+  }),
+  tpl({
+    eventType: 'circle.need_help_host_alert',
+    category: 'safe_return',
+    defaultPriority: 'urgent',
+    defaultChannels: ['in_app', 'push'],
+    title: () => 'Circle safety alert',
+    body: ({ actor, contextTitle }) =>
+      `${actor} may need assistance${contextTitle ? ` during ${contextTitle}` : ''}. Tap to check in with them.`,
+    actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,
+  }),
 ];
 
 const TEMPLATE_MAP = new Map<string, NotificationTemplate>(
