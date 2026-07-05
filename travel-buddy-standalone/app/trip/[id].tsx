@@ -28,7 +28,7 @@ import { useTrip, usePendingTripInvites } from '../../src/hooks/useBackend';
 import { openTripChat } from '../../src/services/messaging';
 import { getTripMemory, createTripMemory, type Memory } from '../../src/services/memories';
 import { getEventsNearTrip, type EventSummary } from '../../src/services/events';
-import { updateTrip } from '../../src/services/trips';
+import { updateTrip, createInviteLink } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
 
@@ -63,6 +63,7 @@ function TripDetailScreen() {
   const [safeReturnChecking, setSafeReturnChecking] = useState(false);
   const [showMissedPrompt, setShowMissedPrompt] = useState(false);
   const [completingTrip, setCompletingTrip] = useState(false);
+  const [shareLoading, setShareLoading] = useState(false);
   const handleGapDays = useCallback((days: string[], dest: string) => {
     setGapDays(days);
     setGapDestination(dest);
@@ -131,6 +132,28 @@ function TripDetailScreen() {
         },
       ],
     );
+  }
+
+  async function handleShareTrip() {
+    if (!live || !id || !realTrip || shareLoading) return;
+    setShareLoading(true);
+    try {
+      const link = await createInviteLink(id);
+      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+      const inviteUrl = link
+        ? `${apiBase}/api/trips/invite-link/${link.token}/preview`
+        : `https://travelbuddy.app/trips/${id}`;
+      const tripName = realTrip.title ?? realTrip.destinationCity ?? 'a trip';
+      await Share.share({
+        title: `Join my trip${realTrip.title ? ` — ${realTrip.title}` : ''}!`,
+        message: `I'm planning ${tripName} and I'd love for you to join!\n${inviteUrl}`,
+        url: inviteUrl,
+      });
+    } catch {
+      Alert.alert('Could not share', 'Sharing is not available right now. Try again.');
+    } finally {
+      setShareLoading(false);
+    }
   }
 
   if (!configured) {
@@ -250,19 +273,19 @@ function TripDetailScreen() {
             <Users size={15} color={color.ink} /><Text style={styles.topBtnText}>Rent a Buddy</Text>
           </Pressable>
         )}
-        <Pressable
-          style={styles.topBtn}
-          hitSlop={6}
-          onPress={() => {
-            Share.share({
-              message: `Check out my trip${trip.title ? ` — ${trip.title}` : ''}!\nhttps://travelbuddy.app/trips/${trip.id}`,
-            }).catch(() => {
-              Alert.alert('Could not share', 'Sharing is not available on this device right now.');
-            });
-          }}
-        >
-          <Share2 size={15} color={color.ink} /><Text style={styles.topBtnText}>Share Trip</Text>
-        </Pressable>
+        {isAuthed && realTrip?.ownerId === userId && (
+          <Pressable
+            style={[styles.topBtn, shareLoading && { opacity: 0.5 }]}
+            hitSlop={6}
+            disabled={shareLoading}
+            onPress={handleShareTrip}
+          >
+            {shareLoading
+              ? <ActivityIndicator size={14} color={color.ink} />
+              : <Share2 size={15} color={color.ink} />}
+            <Text style={styles.topBtnText}>Share Trip</Text>
+          </Pressable>
+        )}
         {isAuthed && realTrip?.ownerId === userId && (
           <Pressable
             style={styles.topBtn}

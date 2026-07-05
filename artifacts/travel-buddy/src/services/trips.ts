@@ -341,3 +341,31 @@ export async function removeMember(tripId: string, userId: string): Promise<bool
   });
   return res.ok;
 }
+
+export interface TripInviteLink {
+  id: string;
+  token: string;
+  maxUses: number | null;
+  expiresAt: string | null;
+  createdAt: string;
+  /** Relative path returned by the server — build full URL with EXPO_PUBLIC_API_BASE_URL. */
+  url: string;
+}
+
+/**
+ * Create a single-use invite link for the given trip.
+ * Requires the caller to be the trip owner (enforced by the API server).
+ * Returns null on error (e.g. not authenticated, not owner, network failure).
+ */
+export async function createInviteLink(tripId: string): Promise<TripInviteLink | null> {
+  const token = await freshToken();
+  if (!token) return null;
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const res = await fetch(`${apiBase}/api/trips/${tripId}/invite-link`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) return null;
+  return res.json().catch(() => null);
+}
