@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { Star, CheckCircle, Globe, Zap, Clock } from 'lucide-react-native';
+import { Star, CheckCircle, Globe, Zap, Clock, Bookmark, BookmarkCheck } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
 import { Stamp } from './ui';
 import type { BuddyProfile } from '../services/rentABuddy';
+import { saveBuddy, unsaveBuddy } from '../services/rentABuddy';
 import { CompassFeedbackMenu } from './compass/CompassFeedbackMenu';
 import { CompassWhySheet } from './compass/CompassWhySheet';
 
@@ -15,36 +16,65 @@ function deriveLevel(reviewCount: number, verified: boolean): { label: string; c
   return { label: 'Elite', color: color.warn };
 }
 
-
 interface BuddyCardProps {
   buddy: BuddyProfile;
   compatibilityScore?: number;
   whyMatched?: string;
   compact?: boolean;
   availableNow?: boolean;
+  /** If passed, used as the primary booking CTA handler; if omitted, navigates to request-buddy with buddyId. */
   onBook?: () => void;
   onPress?: () => void;
   onDismiss?: () => void;
+  /** Initial saved state — passed from parent when known (e.g. saved list). */
+  savedInitial?: boolean;
   /** Signed Compass recommendation token — enables "Why am I seeing this?" when set. */
   recommendationId?: string;
 }
 
 export function BuddyCard({
   buddy, compatibilityScore, whyMatched, compact, availableNow, onBook, onPress, onDismiss,
-  recommendationId,
+  savedInitial = false, recommendationId,
 }: BuddyCardProps) {
   const [dismissed, setDismissed] = useState(false);
   const [whyOpen, setWhyOpen] = useState(false);
+  const [saved, setSaved] = useState(savedInitial);
+  const [savingInProgress, setSavingInProgress] = useState(false);
+
   if (dismissed) return null;
+
   const rating = buddy.averageRating ?? 0;
   const stars = rating > 0 ? rating.toFixed(1) : '—';
   const level = buddy.buddyLevel
     ? { label: buddy.buddyLevel, color: buddy.buddyLevel === 'Elite' ? color.warn : buddy.buddyLevel === 'Pro' ? '#9B59B6' : buddy.buddyLevel === 'Rising' ? color.deep : color.mute }
     : deriveLevel(buddy.reviewCount, buddy.verified);
+
+  const handleSave = async () => {
+    if (savingInProgress) return;
+    setSavingInProgress(true);
+    const next = !saved;
+    setSaved(next);
+    const res = next ? await saveBuddy(buddy.id) : await unsaveBuddy(buddy.id);
+    if (!res.ok) setSaved(!next);
+    setSavingInProgress(false);
+  };
+
+  const handleViewProfile = () => {
+    router.push(`/(rent-a-buddy)/buddy/${buddy.id}` as any);
+  };
+
+  const handleBook = () => {
+    if (onBook) {
+      onBook();
+    } else {
+      router.push({ pathname: '/(rent-a-buddy)/request-buddy' as any, params: { buddyId: buddy.id } });
+    }
+  };
+
   return (
     <Pressable
       style={({ pressed }) => [styles.card, pressed && { opacity: layout.pressedOpacity }]}
-      onPress={onPress ?? (() => router.push(`/(rent-a-buddy)/buddy/${buddy.id}` as any))}
+      onPress={onPress ?? handleViewProfile}
     >
       {/* Image */}
       <View style={styles.imageWrap}>
@@ -55,19 +85,16 @@ export function BuddyCard({
             <Text style={styles.imageFallbackText}>{buddy.displayName?.[0]?.toUpperCase() ?? '?'}</Text>
           </View>
         )}
-        {/* Verified badge */}
         {buddy.verified && (
           <View style={styles.verifiedBadge}>
             <CheckCircle size={11} color="#fff" />
           </View>
         )}
-        {/* Match score pill */}
         {compatibilityScore != null && (
           <View style={styles.scorePill}>
             <Text style={styles.scoreText}>{compatibilityScore}% match</Text>
           </View>
         )}
-        {/* Availability chip */}
         <View style={[styles.availChip, availableNow ? styles.availChipLive : styles.availChipSoon]}>
           {availableNow
             ? <Zap size={9} color="#fff" fill="#fff" />
@@ -81,7 +108,6 @@ export function BuddyCard({
 
       {/* Body */}
       <View style={styles.body}>
-        {/* Name + rating */}
         <View style={styles.nameRow}>
           <Text style={styles.name} numberOfLines={1}>{buddy.displayName ?? 'Local Buddy'}</Text>
           <View style={styles.ratingRow}>
@@ -91,12 +117,10 @@ export function BuddyCard({
           </View>
         </View>
 
-        {/* City */}
         <Text style={styles.city} numberOfLines={1}>
           {buddy.city}{buddy.country ? `, ${buddy.country}` : ''}
         </Text>
 
-        {/* Level + response time row */}
         <View style={styles.metaRow}>
           <View style={[styles.levelBadge, { borderColor: level.color }]}>
             <Text style={[styles.levelText, { color: level.color }]}>{level.label}</Text>
@@ -109,7 +133,6 @@ export function BuddyCard({
           )}
         </View>
 
-        {/* Categories */}
         {!compact && buddy.categories.length > 0 && (
           <View style={styles.tags}>
             {buddy.categories.slice(0, 3).map(cat => (
@@ -118,7 +141,6 @@ export function BuddyCard({
           </View>
         )}
 
-        {/* Languages */}
         {!compact && buddy.languages.length > 0 && (
           <View style={styles.langRow}>
             <Globe size={11} color={color.mute} />
@@ -126,27 +148,47 @@ export function BuddyCard({
           </View>
         )}
 
-        {/* Price */}
         <View style={styles.footer}>
           <Text style={styles.price}>
             {buddy.hourlyRateUsd != null ? `From $${buddy.hourlyRateUsd}/hr` : 'Price on request'}
           </Text>
         </View>
 
-        {/* Why matched */}
         {whyMatched && <Text style={styles.whyMatched} numberOfLines={2}>✦ {whyMatched}</Text>}
 
-        {/* Book button */}
-        {onBook && (
+        {/* ── Consistent CTA row: Save · View Profile · Request Booking ── */}
+        <View style={styles.ctaRow}>
+          {/* Save / Favorite */}
           <Pressable
-            style={({ pressed }) => [styles.bookBtn, pressed && { opacity: layout.pressedOpacity }]}
-            onPress={onBook}
+            style={({ pressed }) => [styles.saveBtn, pressed && { opacity: 0.7 }]}
+            onPress={handleSave}
+            hitSlop={8}
+            accessibilityLabel={saved ? 'Unsave buddy' : 'Save buddy'}
           >
-            <Text style={styles.bookBtnText}>Book Now</Text>
+            {saved
+              ? <BookmarkCheck size={16} color={color.signal} fill={`${color.signal}30`} />
+              : <Bookmark size={16} color={color.mute} />
+            }
           </Pressable>
-        )}
 
-        {/* Compass feedback menu — not-interested / show-more / why */}
+          {/* View Profile */}
+          <Pressable
+            style={({ pressed }) => [styles.profileBtn, pressed && { opacity: 0.7 }]}
+            onPress={handleViewProfile}
+          >
+            <Text style={styles.profileBtnText}>View Profile</Text>
+          </Pressable>
+
+          {/* Request Booking */}
+          <Pressable
+            style={({ pressed }) => [styles.bookBtn, pressed && { opacity: 0.7 }]}
+            onPress={handleBook}
+          >
+            <Text style={styles.bookBtnText}>Book</Text>
+          </Pressable>
+        </View>
+
+        {/* Compass feedback menu */}
         <View style={styles.feedbackRow}>
           <CompassFeedbackMenu
             recommendationId={buddy.id}
@@ -157,6 +199,7 @@ export function BuddyCard({
           />
         </View>
       </View>
+
       <CompassWhySheet
         visible={whyOpen}
         recommendationId={recommendationId ?? null}
@@ -221,10 +264,7 @@ const styles = StyleSheet.create({
   ratingCount: { ...t.small, color: color.mute },
   city: { ...t.small, color: color.mute },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexWrap: 'wrap', marginTop: 2 },
-  levelBadge: {
-    borderRadius: 4, borderWidth: 1,
-    paddingHorizontal: 5, paddingVertical: 2,
-  },
+  levelBadge: { borderRadius: 4, borderWidth: 1, paddingHorizontal: 5, paddingVertical: 2 },
   levelText: { fontSize: 9, fontWeight: '800', fontFamily: 'Courier', letterSpacing: 0.5 },
   responsePill: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
@@ -238,10 +278,23 @@ const styles = StyleSheet.create({
   footer: { flexDirection: 'row', alignItems: 'center', marginTop: space.sm },
   price: { ...t.small, fontWeight: '700', color: color.ink },
   whyMatched: { ...t.small, color: color.deep, fontStyle: 'italic', marginTop: space.xs },
-  bookBtn: {
-    backgroundColor: color.signal, borderRadius: radius.sm,
-    paddingVertical: space.sm, alignItems: 'center', marginTop: space.sm,
+
+  ctaRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: space.sm },
+  saveBtn: {
+    width: 36, height: 36, borderRadius: radius.sm,
+    borderWidth: 1.5, borderColor: color.haze,
+    alignItems: 'center', justifyContent: 'center',
   },
-  bookBtnText: { ...t.bodyStrong, color: color.onInk },
+  profileBtn: {
+    flex: 1, borderRadius: radius.sm, borderWidth: 1.5, borderColor: color.haze,
+    paddingVertical: 8, alignItems: 'center',
+  },
+  profileBtnText: { ...t.small, color: color.ink, fontWeight: '600' },
+  bookBtn: {
+    flex: 1, borderRadius: radius.sm, backgroundColor: color.signal,
+    paddingVertical: 8, alignItems: 'center',
+  },
+  bookBtnText: { ...t.small, color: color.onInk, fontWeight: '700' },
+
   feedbackRow: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: space.xs },
 });
