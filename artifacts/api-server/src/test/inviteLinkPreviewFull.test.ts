@@ -31,11 +31,19 @@ const LINK_TOKEN = "full-check-test-token-abcde1234567890";
 function makeClient(opts: {
   maxMembers: number | null;
   acceptedMemberCount?: number;
+  /** Rows that exist in trip_members but carry a non-"accepted" status.
+   *  The fake client serves these only when the status filter is NOT "accepted",
+   *  mirroring the DB behaviour that a WHERE status='accepted' clause would give.
+   *  This lets us assert that stale/pending/removed rows never inflate isFull. */
+  nonAcceptedMemberCount?: number;
 }) {
-  const { maxMembers, acceptedMemberCount = 0 } = opts;
+  const { maxMembers, acceptedMemberCount = 0, nonAcceptedMemberCount = 0 } = opts;
 
   // Track direct-await calls on trip_members (the isFull path, not maybeSingle).
   let memberCountQueryFired = false;
+  // Track exactly which status value was passed to .eq("status", ...) so tests
+  // can assert the query always filters by "accepted".
+  let capturedStatusFilter: string | null = null;
 
   const client: any = {
     auth: {
@@ -48,9 +56,18 @@ function makeClient(opts: {
     },
 
     from: (tableName: string) => {
+      // Per-builder state: accumulate eq filters so then() can respect them.
+      let statusFilter: string | null = null;
+
       const obj: any = {
-        select()                { return obj; },
-        eq(_col: string, _val: any) { return obj; },
+        select() { return obj; },
+        eq(col: string, val: any) {
+          if (tableName === "trip_members" && col === "status") {
+            statusFilter = String(val);
+            capturedStatusFilter = statusFilter;
+          }
+          return obj;
+        },
 
         // Used by requireTripMember (membership check) and link/trip lookups.
         maybeSingle() {
@@ -99,12 +116,21 @@ function makeClient(opts: {
         },
 
         // Used by the isFull member-count query (direct await, no maybeSingle).
+        // Honour the status filter so non-"accepted" rows are not included when
+        // the query correctly asks for status="accepted" only.
         then(onFulfilled: any, onRejected: any) {
           if (tableName === "trip_members") {
             memberCountQueryFired = true;
+            // Return only the rows that match the requested status filter.
+            // If the filter is "accepted" (the correct contract), return accepted rows.
+            // Any other filter value gets the non-accepted rows — this surfaces
+            // a bug if the production code ever asks for the wrong status.
+            const count =
+              statusFilter === "accepted" ? acceptedMemberCount : nonAcceptedMemberCount;
+            const prefix = statusFilter === "accepted" ? "accepted" : "other";
             const rows = Array.from(
-              { length: acceptedMemberCount },
-              (_, i) => ({ id: `member-accepted-${i}` }),
+              { length: count },
+              (_, i) => ({ id: `member-${prefix}-${i}` }),
             );
             return Promise.resolve({ data: rows, error: null }).then(onFulfilled, onRejected);
           }
@@ -117,6 +143,7 @@ function makeClient(opts: {
 
     // Expose for assertions.
     get memberCountQueryFired() { return memberCountQueryFired; },
+    get capturedStatusFilter()  { return capturedStatusFilter; },
   };
 
   return client;
@@ -238,5 +265,57 @@ describe("GET /api/trips/invite-link/:token/preview — isFull code paths", () =
 
     assert.equal(r.status, 200);
     assert.equal(r.body.isFull, false, "isFull must be false when no accepted members");
+  });
+
+  // ── 4. Stale/non-accepted rows must not inflate the count ─────────────────
+  // Scenario: max_members=3, accepted=2, non-accepted=4 (e.g. pending/removed).
+  // Total rows in trip_members would be 6, but only 2 are accepted.
+  // The endpoint must count only accepted rows → isFull:false.
+  it("does not count non-accepted rows (pending/removed) when checking isFull", async () => {
+    const fakeClient = makeClient({
+      maxMembers: 3,
+      acceptedMemberCount: 2,
+      nonAcceptedMemberCount: 4,
+    });
+    _setTestClient(fakeClient, true);
+
+    const r = await getPreview(port, LINK_TOKEN);
+
+    assert.equal(r.status, 200, "should return 200");
+    assert.equal(
+      r.body.isFull,
+      false,
+      "isFull must be false: only 2 accepted members, not 6 total rows",
+    );
+    assert.equal(
+      fakeClient.capturedStatusFilter,
+      "accepted",
+      "isFull query must filter trip_members by status='accepted'",
+    );
+  });
+
+  // Variant: if every non-accepted row were counted, the trip would look full
+  // (4 stale rows >= max_members=3), but accepted-only count (1) is under cap.
+  it("does not report full when stale rows alone would exceed max_members", async () => {
+    const fakeClient = makeClient({
+      maxMembers: 3,
+      acceptedMemberCount: 1,
+      nonAcceptedMemberCount: 5,
+    });
+    _setTestClient(fakeClient, true);
+
+    const r = await getPreview(port, LINK_TOKEN);
+
+    assert.equal(r.status, 200);
+    assert.equal(
+      r.body.isFull,
+      false,
+      "stale rows alone must not trigger isFull",
+    );
+    assert.equal(
+      fakeClient.capturedStatusFilter,
+      "accepted",
+      "query must always use status='accepted' filter",
+    );
   });
 });
