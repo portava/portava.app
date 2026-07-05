@@ -543,20 +543,31 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/report-no-show", async (req, 
   if (!booking) return res.status(404).json({ error: "not_found" });
 
   const b = booking as any;
-  const { data: bp } = await serviceClient
+
+  // Resolve caller's buddy profile (if they are a buddy)
+  const { data: callerBp } = await serviceClient
     .from("rent_buddy_profiles")
-    .select("id, user_id")
+    .select("id")
     .eq("user_id", auth.user.id)
     .maybeSingle();
 
-  const isParty = b.traveler_id === auth.user.id || (bp && b.buddy_id === (bp as any).id);
+  const isParty = b.traveler_id === auth.user.id || (callerBp && b.buddy_id === (callerBp as any).id);
   if (!isParty) return res.status(403).json({ error: "forbidden" });
 
-  // Determine who the no-show target is (the other party)
-  const targetUserId: string | null =
-    auth.user.id === b.traveler_id
-      ? (bp ? null : b.buddy_id) // if traveler reports, target is buddy
-      : b.traveler_id;            // if buddy reports, target is traveler
+  // Resolve the no-show target's user_id:
+  //   traveler reports → target is the buddy's user_id (looked up via rent_buddy_profiles)
+  //   buddy reports    → target is traveler_id (already a profiles.id)
+  let targetUserId: string | null = null;
+  if (auth.user.id === b.traveler_id) {
+    const { data: buddyProfile } = await serviceClient
+      .from("rent_buddy_profiles")
+      .select("user_id")
+      .eq("id", b.buddy_id)
+      .maybeSingle();
+    targetUserId = (buddyProfile as any)?.user_id ?? null;
+  } else {
+    targetUserId = b.traveler_id;
+  }
 
   const { data, error } = await serviceClient
     .from("rent_buddy_safety_events")
@@ -755,6 +766,151 @@ router.get("/api/me/buddy-bookings", async (req, res) => {
   const { data, error, count } = await query;
   if (error) return sendError(res, "db_error", error.message);
   return res.json({ bookings: data ?? [], total: count ?? 0, page: pageNum, pageSize });
+});
+
+// ── admin spec routes ───────────────────────────────────────────────────────────
+
+// GET /api/rent-a-buddy/admin/buddies/pending
+// Also accessible at /api/admin/buddies/pending via URL alias
+// Must be registered before the parameterized /:buddyId routes in this router.
+router.get("/api/rent-a-buddy/admin/buddies/pending", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+
+  const { data: profile } = await serviceClient
+    .from("profiles")
+    .select("role")
+    .eq("id", auth.user.id)
+    .maybeSingle();
+  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
+
+  const { page = "1", limit = "20" } = req.query as Record<string, string | undefined>;
+  const pageNum = Math.max(1, parseInt(page ?? "1", 10));
+  const pageSize = Math.min(50, Math.max(1, parseInt(limit ?? "20", 10)));
+  const offset = (pageNum - 1) * pageSize;
+
+  const { data, error, count } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("*", { count: "exact" })
+    .eq("admin_status", "pending_review")
+    .order("created_at", { ascending: true })
+    .range(offset, offset + pageSize - 1);
+
+  if (error) return sendError(res, "db_error", error.message);
+  return res.json({ buddies: data ?? [], total: count ?? 0, page: pageNum, pageSize });
+});
+
+// POST /api/rent-a-buddy/admin/buddies/:buddyId/approve
+// Also accessible at /api/admin/buddies/:buddyId/approve via URL alias
+router.post("/api/rent-a-buddy/admin/buddies/:buddyId/approve", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+
+  const { data: profile } = await serviceClient
+    .from("profiles")
+    .select("role")
+    .eq("id", auth.user.id)
+    .maybeSingle();
+  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
+
+  const { buddyId } = req.params;
+  const { note } = req.body ?? {};
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_profiles")
+    .update({ admin_status: "active", status: "active", updated_at: new Date().toISOString() })
+    .eq("id", buddyId)
+    .select()
+    .single();
+
+  if (error) return sendError(res, "db_error", error.message);
+
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: auth.user.id,
+    target_buddy_id: buddyId,
+    action_type: "approve",
+    reason: note ?? null,
+    created_at: new Date().toISOString(),
+  });
+
+  return res.json({ buddy: data });
+});
+
+// POST /api/rent-a-buddy/admin/buddies/:buddyId/reject
+// Also accessible at /api/admin/buddies/:buddyId/reject via URL alias
+router.post("/api/rent-a-buddy/admin/buddies/:buddyId/reject", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+
+  const { data: profile } = await serviceClient
+    .from("profiles")
+    .select("role")
+    .eq("id", auth.user.id)
+    .maybeSingle();
+  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
+
+  const { buddyId } = req.params;
+  const { reason } = req.body ?? {};
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_profiles")
+    .update({ admin_status: "rejected", updated_at: new Date().toISOString() })
+    .eq("id", buddyId)
+    .select()
+    .single();
+
+  if (error) return sendError(res, "db_error", error.message);
+
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: auth.user.id,
+    target_buddy_id: buddyId,
+    action_type: "reject",
+    reason: reason ?? null,
+    created_at: new Date().toISOString(),
+  });
+
+  return res.json({ buddy: data });
+});
+
+// POST /api/rent-a-buddy/admin/buddies/:buddyId/unsuspend
+// Also accessible at /api/admin/buddies/:buddyId/unsuspend via URL alias
+// Semantic alias for reactivate (both set admin_status → active).
+router.post("/api/rent-a-buddy/admin/buddies/:buddyId/unsuspend", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+
+  const { data: profile } = await serviceClient
+    .from("profiles")
+    .select("role")
+    .eq("id", auth.user.id)
+    .maybeSingle();
+  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
+
+  const { buddyId } = req.params;
+  const { note } = req.body ?? {};
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_profiles")
+    .update({ admin_status: "active", status: "active", updated_at: new Date().toISOString() })
+    .eq("id", buddyId)
+    .select()
+    .single();
+
+  if (error) return sendError(res, "db_error", error.message);
+
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: auth.user.id,
+    target_buddy_id: buddyId,
+    action_type: "unsuspend",
+    reason: note ?? null,
+    created_at: new Date().toISOString(),
+  });
+
+  return res.json({ buddy: data });
 });
 
 export default router;
