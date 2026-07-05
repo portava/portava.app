@@ -723,6 +723,13 @@ describe("new-buddy restrictions", () => {
           vibe_tags: [], safety_badges: [], gallery_urls: [],
           risk_hold: false, updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
         },
+        "bp-traveler": {
+          id: "bp-traveler", user_id: USER_ID,
+          verification_status: "verified",
+          id_verified: true,
+          phone_verified: true,
+          date_of_birth: "1995-01-01",
+        },
       },
     } as any);
     const r = await req("POST", "/api/rent-a-buddy/bookings", {
