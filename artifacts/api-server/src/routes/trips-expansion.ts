@@ -1272,7 +1272,15 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
     // one (not when reusing a prior dangling slot), then clean up the attempt
     // row and return idempotent success.
     if ((memErr as { code?: string }).code === "23505") {
-      if (!isRetryAttempt) await sc.rpc("release_invite_link_slot", { link_id: lk.id });
+      if (!isRetryAttempt) {
+        const { error: releaseErr } = await sc.rpc("release_invite_link_slot", { link_id: lk.id });
+        if (releaseErr) {
+          req.log.error(
+            { linkId: lk.id, userId: user.id, releaseError: releaseErr.message },
+            "release_invite_link_slot failed after duplicate-member conflict — slot may be stranded"
+          );
+        }
+      }
       await clearAttempt();
       res.json({ status: "already_member", tripId, idempotent: true });
       return;
@@ -1282,7 +1290,13 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
     // attempt row so subsequent retries can still skip the slot claim; the
     // client's 5xx retry loop will try again.
     if (!isRetryAttempt) {
-      await sc.rpc("release_invite_link_slot", { link_id: lk.id });
+      const { error: releaseErr } = await sc.rpc("release_invite_link_slot", { link_id: lk.id });
+      if (releaseErr) {
+        req.log.error(
+          { linkId: lk.id, userId: user.id, releaseError: releaseErr.message },
+          "release_invite_link_slot failed after member-insert error — slot may be stranded"
+        );
+      }
       await clearAttempt();
     }
     sendError(res, "db_error", memErr.message);
