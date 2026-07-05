@@ -15,8 +15,15 @@ const routeDir = path.resolve(__dirname, "../../artifacts/api-server/src/routes"
 const migDir   = path.resolve(__dirname, "../../artifacts/api-server/migrations");
 
 const REQUIRED_ROUTES: string[] = [
+  // Discovery
   "/api/buddies",
   "/api/rent-a-buddy/buddies/:buddyId",
+  "/api/rent-a-buddy/buddies/:buddyId/services",
+  "/api/rent-a-buddy/buddies/:buddyId/availability-exceptions",
+  "/api/rent-a-buddy/buddies/:buddyId/favorite",
+  "/api/rent-a-buddy/buddies/:buddyId/unfavorite",
+  "/api/rent-a-buddy/buddies/:buddyId/request",
+  // Bookings
   "/api/rent-a-buddy/bookings",
   "/api/rent-a-buddy/bookings/:bookingId",
   "/api/rent-a-buddy/bookings/:bookingId/accept",
@@ -25,16 +32,39 @@ const REQUIRED_ROUTES: string[] = [
   "/api/rent-a-buddy/bookings/:bookingId/complete",
   "/api/rent-a-buddy/bookings/:bookingId/cancel",
   "/api/rent-a-buddy/bookings/:bookingId/events",
+  "/api/rent-a-buddy/bookings/:bookingId/check-in",
+  "/api/rent-a-buddy/bookings/:bookingId/report-no-show",
+  "/api/rent-a-buddy/bookings/:bookingId/change-request",
+  "/api/rent-a-buddy/bookings/:bookingId/respond-change-request",
+  "/api/rent-a-buddy/bookings/:bookingId/rebook",
+  // My services / exceptions
   "/api/me/buddy-services",
   "/api/me/buddy-availability-exceptions",
-  "/api/rent-a-buddy/buddies/:buddyId/services",
-  "/api/rent-a-buddy/buddies/:buddyId/availability-exceptions",
+  "/api/me/buddy-bookings",
+  // My profile
   "/api/rent-a-buddy/me/profile",
+  "/api/rent-a-buddy/me/profile/submit",
+  "/api/rent-a-buddy/me/profile/pause",
+  "/api/rent-a-buddy/me/profile/resume",
+  // Application
+  "/api/rent-a-buddy/apply",
+  // Admin — buddies
   "/api/rent-a-buddy/admin/buddies",
+  "/api/rent-a-buddy/admin/buddies/pending",
+  "/api/rent-a-buddy/admin/buddies/:buddyId/approve",
+  "/api/rent-a-buddy/admin/buddies/:buddyId/reject",
+  "/api/rent-a-buddy/admin/buddies/:buddyId/unsuspend",
+  // Admin — applications
   "/api/rent-a-buddy/admin/applications",
+  // Admin — safety & support
   "/api/rent-a-buddy/admin/safety/flags",
   "/api/rent-a-buddy/admin/support/reports",
-  "/api/rent-a-buddy/apply",
+  // Admin — booking dispute resolution
+  "/api/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute",
+  // Admin — kill-switch / city / category controls
+  "/api/rent-a-buddy/admin/kill-switch",
+  "/api/rent-a-buddy/admin/city-status",
+  "/api/rent-a-buddy/admin/category-status",
 ];
 
 const REQUIRED_TABLES: string[] = [
@@ -48,6 +78,8 @@ const REQUIRED_TABLES: string[] = [
   "rent_buddy_route_change_requests",
   "rent_buddy_saved",
   "rent_buddy_admin_actions",
+  "rent_buddy_city_rollouts",
+  "rent_buddy_launch_controls",
   "buddy_services",
   "buddy_availability_exceptions",
   "buddy_booking_events",
@@ -59,6 +91,21 @@ const REQUIRED_TABLES: string[] = [
   "buddy_profiles",
   "buddy_availability",
   "buddy_reviews",
+];
+
+const REQUIRED_ENUMS: string[] = [
+  "rent_buddy_status",
+  "rent_buddy_application_status",
+  "rent_buddy_booking_status",
+  "rent_buddy_payment_mode",
+  "rent_buddy_safety_status",
+  "rent_buddy_dispute_reason",
+  "rent_buddy_dispute_status",
+  "rent_buddy_checkin_type",
+  "rent_buddy_safety_event_type",
+  "rent_buddy_verification_status",
+  "rent_buddy_change_request_status",
+  "rent_buddy_payment_status",
 ];
 
 // Read all route files
@@ -103,6 +150,11 @@ for (const table of REQUIRED_TABLES) {
   ).test(migContent);
   const inRoutes = routeContent.includes(`"${table}"`);
   check(table, inMig || inRoutes);
+}
+
+console.log("\nEnum types (must appear in migrations/*.sql):");
+for (const enumType of REQUIRED_ENUMS) {
+  check(enumType, migContent.includes(enumType));
 }
 
 console.log(`\nResult: ${passed} passed, ${failed} failed\n`);

@@ -913,4 +913,370 @@ router.post("/api/rent-a-buddy/admin/buddies/:buddyId/unsuspend", async (req, re
   return res.json({ buddy: data });
 });
 
+// ── favorite / unfavorite ──────────────────────────────────────────────────────
+
+// POST /api/rent-a-buddy/buddies/:buddyId/favorite
+// Also accessible at /api/buddies/:buddyId/favorite via app.ts URL alias
+router.post("/api/rent-a-buddy/buddies/:buddyId/favorite", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  const { buddyId } = req.params;
+
+  const { error } = await serviceClient
+    .from("rent_buddy_saved")
+    .upsert({ user_id: auth.user.id, buddy_id: buddyId }, { onConflict: "user_id,buddy_id" });
+
+  if (error) return sendError(res, "db_error", error.message);
+  return res.status(201).json({ saved: true, buddyId });
+});
+
+// DELETE /api/rent-a-buddy/buddies/:buddyId/unfavorite
+// Also accessible at /api/buddies/:buddyId/unfavorite via app.ts URL alias
+router.delete("/api/rent-a-buddy/buddies/:buddyId/unfavorite", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  const { buddyId } = req.params;
+
+  const { error } = await serviceClient
+    .from("rent_buddy_saved")
+    .delete()
+    .eq("user_id", auth.user.id)
+    .eq("buddy_id", buddyId);
+
+  if (error) return sendError(res, "db_error", error.message);
+  return res.status(200).json({ saved: false, buddyId });
+});
+
+// ── buddy profile lifecycle (me) ───────────────────────────────────────────────
+
+// POST /api/rent-a-buddy/me/profile/submit — finalize and submit profile for review
+// Also accessible at /api/me/buddy-profile/submit via app.ts URL alias
+router.post("/api/rent-a-buddy/me/profile/submit", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+
+  const { data: profile } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id, status, admin_status")
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+
+  if (!profile) return res.status(404).json({ error: "profile_not_found", message: "No buddy profile found. Apply first." });
+
+  const p = profile as any;
+  if (!["pending", "paused"].includes(p.status)) {
+    return res.status(409).json({ error: "invalid_state", message: `Profile in '${p.status}' state cannot be submitted.` });
+  }
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_profiles")
+    .update({ status: "pending", admin_status: "pending_review", updated_at: new Date().toISOString() })
+    .eq("id", p.id)
+    .select()
+    .single();
+
+  if (error) return sendError(res, "db_error", error.message);
+  return res.json({ profile: data });
+});
+
+// POST /api/rent-a-buddy/me/profile/pause — pause an active buddy profile
+// Also accessible at /api/me/buddy-profile/pause via app.ts URL alias
+router.post("/api/rent-a-buddy/me/profile/pause", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+
+  const { data: profile } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id, status")
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+
+  if (!profile) return res.status(404).json({ error: "profile_not_found" });
+
+  const p = profile as any;
+  if (p.status !== "active") {
+    return res.status(409).json({ error: "invalid_state", message: `Cannot pause a profile in '${p.status}' state.` });
+  }
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_profiles")
+    .update({ status: "paused", updated_at: new Date().toISOString() })
+    .eq("id", p.id)
+    .select()
+    .single();
+
+  if (error) return sendError(res, "db_error", error.message);
+  return res.json({ profile: data });
+});
+
+// POST /api/rent-a-buddy/me/profile/resume — resume a paused buddy profile
+// Also accessible at /api/me/buddy-profile/resume via app.ts URL alias
+router.post("/api/rent-a-buddy/me/profile/resume", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+
+  const { data: profile } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id, status, admin_status")
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+
+  if (!profile) return res.status(404).json({ error: "profile_not_found" });
+
+  const p = profile as any;
+  if (p.status !== "paused") {
+    return res.status(409).json({ error: "invalid_state", message: `Cannot resume a profile in '${p.status}' state.` });
+  }
+  if (p.admin_status !== "active") {
+    return res.status(403).json({ error: "admin_hold", message: "Profile is under admin review and cannot be self-resumed." });
+  }
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_profiles")
+    .update({ status: "active", updated_at: new Date().toISOString() })
+    .eq("id", p.id)
+    .select()
+    .single();
+
+  if (error) return sendError(res, "db_error", error.message);
+  return res.json({ profile: data });
+});
+
+// ── admin kill-switch ──────────────────────────────────────────────────────────
+
+// POST /api/rent-a-buddy/admin/kill-switch
+// Also accessible at /api/admin/rent-a-buddy/kill-switch via app.ts URL alias
+// Toggles or sets the global rent-a-buddy kill switch (disables all bookings globally).
+router.post("/api/rent-a-buddy/admin/kill-switch", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+
+  const { data: profile } = await serviceClient.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
+  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
+
+  const { enabled } = req.body ?? {};
+  if (typeof enabled !== "boolean") {
+    return res.status(400).json({ error: "invalid_payload", message: "enabled (boolean) is required." });
+  }
+
+  // Upsert the global launch control (country_code=NULL, city=NULL, category=NULL)
+  const { data, error } = await serviceClient
+    .from("rent_buddy_launch_controls")
+    .upsert(
+      {
+        country_code: null,
+        city: null,
+        category: null,
+        enabled,
+        notes: enabled ? "Kill switch lifted by admin" : "Kill switch activated by admin",
+        created_by: auth.user.id,
+      },
+      { onConflict: "country_code,city,category" }
+    )
+    .select()
+    .single();
+
+  if (error) return sendError(res, "db_error", error.message);
+
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: auth.user.id,
+    target_type: "launch_control",
+    target_id: "global",
+    action: enabled ? "kill_switch_lifted" : "kill_switch_activated",
+    notes: null,
+  });
+
+  return res.json({ killSwitch: { enabled, record: data } });
+});
+
+// ── admin city-status ──────────────────────────────────────────────────────────
+
+// GET /api/rent-a-buddy/admin/city-status
+// Also accessible at /api/admin/rent-a-buddy/city-status via app.ts URL alias
+router.get("/api/rent-a-buddy/admin/city-status", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+
+  const { data: profile } = await serviceClient.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
+  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_city_rollouts")
+    .select("*")
+    .order("city", { ascending: true });
+
+  if (error) return sendError(res, "db_error", error.message);
+  return res.json({ cities: data ?? [] });
+});
+
+// PATCH /api/rent-a-buddy/admin/city-status/:city
+// Also accessible at /api/admin/rent-a-buddy/city-status/:city via app.ts URL alias
+router.patch("/api/rent-a-buddy/admin/city-status/:city", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+
+  const { data: profile } = await serviceClient.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
+  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
+
+  const { city } = req.params;
+  const { status, notes, buddyCap } = req.body ?? {};
+
+  if (!status) return res.status(400).json({ error: "invalid_payload", message: "status is required." });
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_city_rollouts")
+    .update({
+      status,
+      notes: notes ?? null,
+      buddy_cap: buddyCap ?? null,
+      status_changed_at: new Date().toISOString(),
+      status_changed_by: auth.user.id,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("city", city)
+    .select()
+    .single();
+
+  if (error) return sendError(res, "db_error", error.message);
+
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: auth.user.id,
+    target_type: "city",
+    target_id: city,
+    action: `city_status_set_${status}`,
+    notes: notes ?? null,
+  });
+
+  return res.json({ city: data });
+});
+
+// ── admin category-status ──────────────────────────────────────────────────────
+
+// GET /api/rent-a-buddy/admin/category-status
+// Also accessible at /api/admin/rent-a-buddy/category-status via app.ts URL alias
+router.get("/api/rent-a-buddy/admin/category-status", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+
+  const { data: profile } = await serviceClient.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
+  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
+
+  // Category-level controls live in rent_buddy_launch_controls where category IS NOT NULL
+  const { data, error } = await serviceClient
+    .from("rent_buddy_launch_controls")
+    .select("*")
+    .not("category", "is", null)
+    .order("category", { ascending: true });
+
+  if (error) return sendError(res, "db_error", error.message);
+  return res.json({ categories: data ?? [] });
+});
+
+// PATCH /api/rent-a-buddy/admin/category-status/:category
+// Also accessible at /api/admin/rent-a-buddy/category-status/:category via app.ts URL alias
+router.patch("/api/rent-a-buddy/admin/category-status/:category", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+
+  const { data: profile } = await serviceClient.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
+  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
+
+  const { category } = req.params;
+  const { enabled, notes } = req.body ?? {};
+  if (typeof enabled !== "boolean") {
+    return res.status(400).json({ error: "invalid_payload", message: "enabled (boolean) is required." });
+  }
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_launch_controls")
+    .upsert(
+      {
+        country_code: null,
+        city: null,
+        category,
+        enabled,
+        notes: notes ?? null,
+        created_by: auth.user.id,
+      },
+      { onConflict: "country_code,city,category" }
+    )
+    .select()
+    .single();
+
+  if (error) return sendError(res, "db_error", error.message);
+
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: auth.user.id,
+    target_type: "category",
+    target_id: category,
+    action: enabled ? `category_enabled` : `category_disabled`,
+    notes: notes ?? null,
+  });
+
+  return res.json({ category: data });
+});
+
+// ── admin dispute resolution ───────────────────────────────────────────────────
+
+// POST /api/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute
+// Also accessible at /api/admin/buddy-bookings/:bookingId/resolve-dispute via app.ts URL alias
+router.post("/api/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+
+  const { data: profile } = await serviceClient.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
+  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
+
+  const { bookingId } = req.params;
+  const { resolution, note, favorTraveler } = req.body ?? {};
+
+  if (!resolution) {
+    return res.status(400).json({ error: "invalid_payload", message: "resolution is required." });
+  }
+
+  // Resolve the dispute row
+  const { data: dispute, error: dErr } = await serviceClient
+    .from("rent_buddy_disputes")
+    .update({
+      status: "resolved",
+      resolution_note: note ?? resolution,
+      resolved_at: new Date().toISOString(),
+    })
+    .eq("booking_id", bookingId)
+    .in("status", ["open", "reviewing"])
+    .select()
+    .single();
+
+  if (dErr || !dispute) return res.status(404).json({ error: "dispute_not_found", message: dErr?.message });
+
+  // Update booking status based on resolution
+  const newBookingStatus = favorTraveler === true ? "cancelled" : "completed";
+  await serviceClient
+    .from("rent_buddy_bookings")
+    .update({ status: newBookingStatus, updated_at: new Date().toISOString() })
+    .eq("id", bookingId);
+
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: auth.user.id,
+    target_type: "dispute",
+    target_id: (dispute as any).id,
+    action: "dispute_resolved",
+    notes: note ?? resolution,
+    details: { bookingId, favorTraveler: favorTraveler ?? null },
+  });
+
+  return res.json({ dispute, resolution, bookingStatus: newBookingStatus });
+});
+
 export default router;

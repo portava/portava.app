@@ -49,6 +49,12 @@ app.use((req, _res, next) => {
     // /api/buddies/:id* → /api/rent-a-buddy/buddies/:id*
     // Note: /api/buddies (no trailing slash) is the list endpoint and is NOT rewritten.
     req.url = u.replace(/^\/api\/buddies\//, "/api/rent-a-buddy/buddies/");
+  } else if (/^\/api\/admin\/rent-a-buddy(\/|$)/.test(u)) {
+    // /api/admin/rent-a-buddy/* → /api/rent-a-buddy/admin/*
+    req.url = u.replace(/^\/api\/admin\/rent-a-buddy/, "/api/rent-a-buddy/admin");
+  } else if (/^\/api\/admin\/buddy-bookings(\/|$)/.test(u)) {
+    // /api/admin/buddy-bookings/* → /api/rent-a-buddy/admin/bookings/*
+    req.url = u.replace(/^\/api\/admin\/buddy-bookings/, "/api/rent-a-buddy/admin/bookings");
   } else if (/^\/api\/me\/buddy-bookings(\/|$)/.test(u)) {
     req.url = u.replace(/^\/api\/me\/buddy-bookings/, "/api/rent-a-buddy/bookings");
   }
