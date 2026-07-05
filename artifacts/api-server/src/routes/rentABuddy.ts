@@ -642,15 +642,39 @@ router.get("/api/buddies", async (req, res) => {
     buddyIdsFilter = ids;
   }
 
+  // Weighted ranking: fetch a candidate pool larger than one page, score in-app,
+  // then slice the requested page. This keeps accurate total counts while producing
+  // a best-match ranked first page without needing a custom DB function.
+  // Scoring factors:
+  //   featured     +25   (manually surfaced by admin)
+  //   verified     +15   (id_verified + phone_verified = higher trust)
+  //   avg_rating   ×3    (0–5 → 0–15 pts)
+  //   review_count log×2 (logarithmic — prevents count gaming)
+  //   new_buddy    +5    (review_count=0 gets exposure boost so new buddies appear)
+  //   cancel_count –3/ea (cancellation reliability penalty)
+  //   no_show_count –10/ea (no-show is a severe trust signal)
+  const CANDIDATE_LIMIT = Math.min(200, perPage * 10);
+
+  const scoreProfile = (p: Record<string, unknown>): number => {
+    const featPts    = (p.featured as boolean) ? 25 : 0;
+    const verPts     = (p.verification_status as string) === "verified" ? 15 : 0;
+    const ratingPts  = Number(p.average_rating ?? 0) * 3;
+    const reviewPts  = Math.log(Number(p.review_count ?? 0) + 1) * 2;
+    const newBuddy   = Number(p.review_count ?? 0) === 0 ? 5 : 0;
+    const cancelPen  = Number((p as any).cancel_count ?? 0) * -3;
+    const noShowPen  = Number((p as any).no_show_count ?? 0) * -10;
+    return featPts + verPts + ratingPts + reviewPts + newBuddy + cancelPen + noShowPen;
+  };
+
   let query = serviceClient
     .from("rent_buddy_profiles")
     .select("*", { count: "exact" })
     .eq("status", "active")
     .eq("admin_status", "active")
+    // Pre-sort at DB level ensures featured buddies are always in the candidate pool
     .order("featured", { ascending: false })
     .order("average_rating", { ascending: false })
-    .order("review_count", { ascending: false })
-    .range((page - 1) * perPage, page * perPage - 1);
+    .limit(CANDIDATE_LIMIT);
 
   if (city)           query = query.ilike("city", `%${city}%`);
   if (country)        query = query.ilike("country", `%${country}%`);
@@ -669,8 +693,6 @@ router.get("/api/buddies", async (req, res) => {
   if (buddyIdsFilter !== null)    query = query.in("id", buddyIdsFilter);
 
   // Free-text search across display_name, tagline, bio, city, and vibe_tags.
-  // Each ilike is applied independently to avoid PostgREST filter injection via .or().
-  // Multiple ilike calls are combined with an OR at the PostgREST level via .or().
   if (q) {
     const safe = q.replace(/[%_,.'"\s]+/g, " ").trim().slice(0, 120);
     if (safe) {
@@ -689,8 +711,14 @@ router.get("/api/buddies", async (req, res) => {
   const { data, count, error } = await query;
   if (error) return sendError(res, "db_error", error.message);
 
+  // Score and sort the candidate pool, then slice the requested page
+  const candidates = (data ?? []) as Record<string, unknown>[];
+  candidates.sort((a, b) => scoreProfile(b) - scoreProfile(a));
+  const pageStart = (page - 1) * perPage;
+  const pageData  = candidates.slice(pageStart, pageStart + perPage);
+
   return res.json({
-    buddies: (data ?? []).map((p: Record<string, unknown>) => mapProfile(stripBuddyPrivateFields(p, false))),
+    buddies: pageData.map((p: Record<string, unknown>) => mapProfile(stripBuddyPrivateFields(p, false))),
     total: count ?? 0,
     page,
     perPage,
@@ -728,6 +756,7 @@ router.get("/api/rent-a-buddy/buddies/:buddyId", async (req, res) => {
         .select("*")
         .eq("reviewee_id", buddyUserIdForReviews)
         .eq("is_public", true)
+        .in("moderation_status", ["approved", "auto_approved"])
         .order("created_at", { ascending: false })
         .limit(5)
     : { data: [] };
@@ -827,6 +856,7 @@ router.get("/api/rent-a-buddy/buddies/:buddyId/reviews", async (req, res) => {
     .select("*", { count: "exact" })
     .eq("reviewee_id", buddyUserId)
     .eq("is_public", true)
+    .in("moderation_status", ["approved", "auto_approved"])
     .order("created_at", { ascending: false })
     .range((page - 1) * limit, page * limit - 1);
 
@@ -2388,7 +2418,9 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/review", async (req, res) => 
   // Compass activity ingestion — reviewer earns review_posted credit
   recordActivityEvent(serviceClient, auth.user.id, "review_posted", { category: "buddy_session" });
 
-  // Unblind if both sides have submitted
+  // Unblind if both sides have submitted — lift the inter-party blind only.
+  // Do NOT set is_public here: reviews stay private until admin approves them.
+  // Only the admin approve route sets is_public=true.
   const { count } = await serviceClient
     .from("rent_buddy_reviews")
     .select("id", { count: "exact" })
@@ -2397,7 +2429,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/review", async (req, res) => 
   let unblinded = false;
   if ((count ?? 0) >= 2) {
     await serviceClient.from("rent_buddy_reviews")
-      .update({ is_public: true, blind_until: new Date().toISOString() })
+      .update({ blind_until: new Date().toISOString() })
       .eq("booking_id", bookingId);
     unblinded = true;
 
@@ -3699,22 +3731,29 @@ router.post("/api/rent-a-buddy/admin/reviews/:reviewId/approve", async (req, res
     .select("rating")
     .eq("reviewee_id", revieweeId)
     .eq("role", "traveler")
-    .eq("is_public", true);
+    .in("moderation_status", ["approved", "auto_approved"]);
 
-  if (approvedRows && approvedRows.length > 0) {
-    const sum = approvedRows.reduce((acc: number, r: any) => acc + Number(r.rating), 0);
-    const avg = Math.round((sum / approvedRows.length) * 100) / 100;
-    // Find buddy profile by user_id (reviewee_id is a profiles.id = user_id)
-    const { data: buddyProfile } = await serviceClient
-      .from("rent_buddy_profiles")
-      .select("id")
-      .eq("user_id", revieweeId)
-      .maybeSingle();
-    if (buddyProfile) {
+  // Recalculate even when count is zero (e.g. first ever approve after all were rejected)
+  const { data: buddyProfileForApprove } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id")
+    .eq("user_id", revieweeId)
+    .maybeSingle();
+
+  if (buddyProfileForApprove) {
+    if (approvedRows && approvedRows.length > 0) {
+      const sum = approvedRows.reduce((acc: number, r: any) => acc + Number(r.rating), 0);
+      const avg = Math.round((sum / approvedRows.length) * 100) / 100;
       await serviceClient
         .from("rent_buddy_profiles")
         .update({ average_rating: avg, review_count: approvedRows.length, updated_at: new Date().toISOString() })
-        .eq("id", (buddyProfile as any).id);
+        .eq("id", (buddyProfileForApprove as any).id);
+    } else {
+      // Zero approved traveler reviews — reset aggregates
+      await serviceClient
+        .from("rent_buddy_profiles")
+        .update({ average_rating: 0, review_count: 0, updated_at: new Date().toISOString() })
+        .eq("id", (buddyProfileForApprove as any).id);
     }
   }
 
@@ -3735,7 +3774,7 @@ router.post("/api/rent-a-buddy/admin/reviews/:reviewId/reject", async (req, res)
 
   const { data: review } = await serviceClient
     .from("rent_buddy_reviews")
-    .select("id")
+    .select("id, reviewee_id")
     .eq("id", reviewId)
     .maybeSingle();
   if (!review) return res.status(404).json({ error: "not_found" });
@@ -3744,6 +3783,37 @@ router.post("/api/rent-a-buddy/admin/reviews/:reviewId/reject", async (req, res)
     .from("rent_buddy_reviews")
     .update({ is_public: false, moderation_status: "rejected", updated_at: new Date().toISOString() })
     .eq("id", reviewId);
+
+  // Recalculate buddy rating after rejection — the rejected review may have been public
+  const rejectedRevieweeId = (review as any).reviewee_id as string;
+  const { data: remainingRows } = await serviceClient
+    .from("rent_buddy_reviews")
+    .select("rating")
+    .eq("reviewee_id", rejectedRevieweeId)
+    .eq("role", "traveler")
+    .in("moderation_status", ["approved", "auto_approved"]);
+
+  const { data: buddyProfileForReject } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id")
+    .eq("user_id", rejectedRevieweeId)
+    .maybeSingle();
+
+  if (buddyProfileForReject) {
+    if (remainingRows && remainingRows.length > 0) {
+      const sum = remainingRows.reduce((acc: number, r: any) => acc + Number(r.rating), 0);
+      const avg = Math.round((sum / remainingRows.length) * 100) / 100;
+      await serviceClient
+        .from("rent_buddy_profiles")
+        .update({ average_rating: avg, review_count: remainingRows.length, updated_at: new Date().toISOString() })
+        .eq("id", (buddyProfileForReject as any).id);
+    } else {
+      await serviceClient
+        .from("rent_buddy_profiles")
+        .update({ average_rating: 0, review_count: 0, updated_at: new Date().toISOString() })
+        .eq("id", (buddyProfileForReject as any).id);
+    }
+  }
 
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: userId, target_type: "review", target_id: reviewId,
