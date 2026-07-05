@@ -56,15 +56,17 @@ async function isAcceptedContextMember(
     return true;
   }
 
-  // Event: only going RSVPs qualify
-  const { data, error } = await sc
-    .from("event_rsvps")
-    .select("status")
-    .eq("event_id", contextId)
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (error || !data) return false;
-  return (data as { status: string }).status === "going";
+  // Event: require both RSVP going AND a confirmed event_attendees row.
+  // event_attendees is upserted on going/maybe/interested RSVPs and deleted on
+  // cant_go/remove, so checking both ensures the user is a confirmed participant.
+  const [rsvpResult, attendeeResult] = await Promise.all([
+    sc.from("event_rsvps").select("status").eq("event_id", contextId).eq("user_id", userId).maybeSingle(),
+    sc.from("event_attendees").select("user_id").eq("event_id", contextId).eq("user_id", userId).maybeSingle(),
+  ]);
+  if (rsvpResult.error || !rsvpResult.data) return false;
+  if ((rsvpResult.data as { status: string }).status !== "going") return false;
+  if (attendeeResult.error || !attendeeResult.data) return false;
+  return true;
 }
 
 async function isUserBannedOrSuspended(sc: any, userId: string): Promise<boolean> {

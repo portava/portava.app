@@ -20,11 +20,11 @@ CREATE INDEX IF NOT EXISTS cmp_context_active_idx
 
 ALTER TABLE circle_meeting_points ENABLE ROW LEVEL SECURITY;
 
--- Members read; service role writes (host check enforced at API layer).
+-- All DB-level access is service-role only.
+-- Circle membership + activity status are enforced at the API layer, which
+-- uses the service-role client.  No direct user read access is granted at
+-- the RLS level to avoid bypassing the membership gate.
 DROP POLICY IF EXISTS cmp_public_read ON circle_meeting_points;
-CREATE POLICY cmp_public_read ON circle_meeting_points
-  FOR SELECT
-  USING (true);
 
 DROP POLICY IF EXISTS cmp_service_all ON circle_meeting_points;
 CREATE POLICY cmp_service_all ON circle_meeting_points

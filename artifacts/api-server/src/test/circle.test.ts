@@ -82,6 +82,7 @@ interface FakeState {
   featureFlags:         Record<string, { flag: string; enabled: boolean }>;
   tripMembers:          any[];
   eventRsvps:           any[];
+  eventAttendees:       any[]; // mirrors event_rsvps for going/maybe/interested
   circleVisibility:     Record<string, any>; // keyed by user_id
   circleContextSettings: any[];              // array with (user_id, context_type, context_id) composite
   circlePresence:       any[];
@@ -116,6 +117,11 @@ function resetState(): void {
       { event_id: EVENT_ID, user_id: VIEWER_ID, status: "going" },
       // target goes to EVENT_ID
       { event_id: EVENT_ID, user_id: TARGET_ID, status: "going" },
+    ],
+    eventAttendees: [
+      // synced from event_rsvps (going → upserted into event_attendees)
+      { event_id: EVENT_ID, user_id: VIEWER_ID },
+      { event_id: EVENT_ID, user_id: TARGET_ID },
     ],
     circleVisibility: {
       [TARGET_ID]: {
@@ -396,6 +402,12 @@ function makeClient(userId: string) {
           return this._maybeSingle ? { data: filtered[0] ? { ...filtered[0] } : null, error: null } : { data: filtered.map((r) => ({ ...r })), error: null };
         }
 
+        // event_attendees
+        if (t === "event_attendees") {
+          const filtered = applyFilters(state.eventAttendees);
+          return this._maybeSingle ? { data: filtered[0] ? { ...filtered[0] } : null, error: null } : { data: filtered.map((r) => ({ ...r })), error: null };
+        }
+
         // circle_visibility_settings
         if (t === "circle_visibility_settings") {
           const rows = Object.values(state.circleVisibility);
@@ -572,10 +584,16 @@ describe("PATCH /circle/settings — consent flow", () => {
 });
 
 describe("GET /circle/contexts/:type/:id/members — access guard", () => {
-  it("same-trip accepted member sees eligible presence", async () => {
+  it("same-trip accepted member sees eligible presence and pagination fields", async () => {
     const r = await req("GET", `/circle/contexts/trip/${TRIP_ID}/members`);
     assert.equal(r.status, 200);
     assert.ok(Array.isArray(r.body.members));
+    // Pagination envelope
+    assert.ok(typeof r.body.totalCount === "number", "totalCount required");
+    assert.ok(typeof r.body.limit      === "number", "limit required");
+    assert.ok(typeof r.body.offset     === "number", "offset required");
+    assert.ok(typeof r.body.hasMore    === "boolean", "hasMore required");
+    assert.equal(r.body.offset, 0);
     const member = r.body.members.find((m: any) => m.userId === TARGET_ID);
     assert.ok(member, "target should be in members");
     assert.equal(member.status, "active");
@@ -613,6 +631,13 @@ describe("GET /circle/contexts/:type/:id/members — access guard", () => {
     state.eventRsvps = state.eventRsvps.map((r) =>
       r.user_id === VIEWER_ID ? { ...r, status: "maybe" } : r,
     );
+    const r = await req("GET", `/circle/contexts/event/${EVENT_ID}/members`);
+    assert.equal(r.status, 403);
+  });
+
+  it("event going RSVP but missing event_attendees row cannot view presence", async () => {
+    // Viewer has RSVP going but their event_attendees row was deleted (e.g. cant_go flow)
+    state.eventAttendees = state.eventAttendees.filter((a) => a.user_id !== VIEWER_ID);
     const r = await req("GET", `/circle/contexts/event/${EVENT_ID}/members`);
     assert.equal(r.status, 403);
   });
@@ -852,6 +877,16 @@ describe("POST /circle/contexts/:type/:id/presence — precise_live rejected", (
       visibilityMode: "precise_live",
     });
     assert.equal(r.status, 403);
+  });
+});
+
+describe("PATCH /circle/contexts/:type/:id/settings — precise_live rejected", () => {
+  it("returns 403 (not 400) when visibilityModeOverride is precise_live", async () => {
+    const r = await req("PATCH", `/circle/contexts/trip/${TRIP_ID}/settings`, {
+      visibilityModeOverride: "precise_live",
+    });
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error, "not_supported");
   });
 });
 

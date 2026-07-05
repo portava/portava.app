@@ -139,14 +139,15 @@ async function isAcceptedMember(
     if (row.status != null && row.status !== "accepted") return false;
     return true;
   }
-  const { data, error } = await sc
-    .from("event_rsvps")
-    .select("status")
-    .eq("event_id", contextId)
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (error || !data) return false;
-  return (data as any).status === "going";
+  // Event: require both RSVP going AND a confirmed event_attendees row.
+  const [rsvpResult, attendeeResult] = await Promise.all([
+    sc.from("event_rsvps").select("status").eq("event_id", contextId).eq("user_id", userId).maybeSingle(),
+    sc.from("event_attendees").select("user_id").eq("event_id", contextId).eq("user_id", userId).maybeSingle(),
+  ]);
+  if (rsvpResult.error || !rsvpResult.data) return false;
+  if ((rsvpResult.data as any).status !== "going") return false;
+  if (attendeeResult.error || !attendeeResult.data) return false;
+  return true;
 }
 
 /** Fetch accepted member user_ids for a context. */
@@ -165,12 +166,14 @@ async function getAcceptedMemberIds(
       .filter((r) => r.status == null || r.status === "accepted")
       .map((r) => r.user_id as string);
   }
-  const { data } = await sc
-    .from("event_rsvps")
-    .select("user_id")
-    .eq("event_id", contextId)
-    .eq("status", "going");
-  return ((data ?? []) as any[]).map((r) => r.user_id as string);
+  // Event: intersection of going RSVPs and event_attendees (both required)
+  const [rsvpResult, attendeeResult] = await Promise.all([
+    sc.from("event_rsvps").select("user_id").eq("event_id", contextId).eq("status", "going"),
+    sc.from("event_attendees").select("user_id").eq("event_id", contextId),
+  ]);
+  const goingIds = new Set(((rsvpResult.data ?? []) as any[]).map((r) => r.user_id as string));
+  const attendeeIds = new Set(((attendeeResult.data ?? []) as any[]).map((r) => r.user_id as string));
+  return [...goingIds].filter((id) => attendeeIds.has(id));
 }
 
 /** Write a circle_audit_events row. Non-fatal — swallows errors. */
@@ -365,9 +368,10 @@ router.get("/circle/contexts/:type/:id/settings", async (req, res) => {
 
 // ── PATCH /circle/contexts/:type/:id/settings ─────────────────────────────────
 
+// Include precise_live so the schema accepts it and we can return 403 (not 400)
 const PatchContextSettingsSchema = z.object({
   enabled:               z.boolean().optional(),
-  visibilityModeOverride: z.enum(["status_only", "approximate_area", "venue_checkin"]).nullable().optional(),
+  visibilityModeOverride: z.enum(["status_only", "approximate_area", "venue_checkin", "precise_live"]).nullable().optional(),
   pausedUntil:           z.string().nullable().optional(),
 });
 
@@ -399,6 +403,10 @@ router.patch("/circle/contexts/:type/:id/settings", async (req, res) => {
   };
   if (parsed.data.enabled !== undefined) payload["enabled"] = parsed.data.enabled;
   if (parsed.data.visibilityModeOverride !== undefined) {
+    if (parsed.data.visibilityModeOverride === "precise_live") {
+      res.status(403).json({ error: "not_supported", message: "Precise live mode is not available in V1." });
+      return;
+    }
     payload["visibility_mode_override"] = parsed.data.visibilityModeOverride;
   }
   if (parsed.data.pausedUntil !== undefined) payload["paused_until"] = parsed.data.pausedUntil;
@@ -455,6 +463,9 @@ router.get("/circle/contexts/:type/:id/members", async (req, res) => {
     profileMap.set(p.id as string, p);
   }
 
+  const limitParam  = Math.min(Math.max(Number((req.query as any).limit  ?? 50), 1), 200);
+  const offsetParam = Math.max(Number((req.query as any).offset ?? 0), 0);
+
   // Run access guard per member (excluding self)
   const results: any[] = [];
   await Promise.all(
@@ -469,6 +480,10 @@ router.get("/circle/contexts/:type/:id/members", async (req, res) => {
           id,
         );
         if (!guardResult.allowed) return;
+
+        // Defensive: precise_live is not supported in V1 — skip this member
+        // rather than exposing an unsupported mode.
+        if (guardResult.visibilityMode === "precise_live") return;
 
         const prof = profileMap.get(targetId);
         const snippet: CircleProfileSnippet = {
@@ -489,7 +504,20 @@ router.get("/circle/contexts/:type/:id/members", async (req, res) => {
       }),
   );
 
-  res.status(200).json({ members: results });
+  // Sort deterministically (displayName asc) then apply offset/limit
+  results.sort((a, b) =>
+    (a.displayName as string).localeCompare(b.displayName as string),
+  );
+  const totalCount  = results.length;
+  const pageResults = results.slice(offsetParam, offsetParam + limitParam);
+
+  res.status(200).json({
+    members:    pageResults,
+    totalCount,
+    limit:      limitParam,
+    offset:     offsetParam,
+    hasMore:    offsetParam + limitParam < totalCount,
+  });
 });
 
 // ── GET /circle/contexts/:type/:id/who-can-see-me ─────────────────────────────
