@@ -1,0 +1,1951 @@
+Finish Travel Buddy Events System End-to-End
+
+Goal:
+Complete the Events feature so users can create, draft, publish, discover, search, join/request, manage, attend, review, and interact with events using real backend/database truth.
+
+Events must connect cleanly to:
+- Discovery
+- Global Search
+- Pulse
+- Passport
+- Trips
+- Telegraph
+- Notifications
+- Location/GPS
+- Hashtags
+- Postcards/media
+- Trust Score
+- Safety
+- Admin moderation
+
+Core rules:
+- Events are real backend/database objects.
+- No fake local event data.
+- No mock production events.
+- Event join/request/attending/maybe/save states must use one backend truth everywhere.
+- Public events can be discovered.
+- Private/invite-only/trip-only/circle-only events only appear to users with access.
+- Age-restricted, verified-only, or trust-gated events only appear/action correctly for eligible users.
+- Blocked users and users who blocked the viewer must be respected.
+- Events should support location, time, host, cohosts, attendees, tags, comments/Q&A, media, reviews, check-ins, reminders, and Telegraph group chat where applicable.
+- Do not rebuild unrelated systems.
+- Audit first, then patch only confirmed gaps.
+
+PHASE 1 — Audit Current Events Truth
+
+First inspect the current implementation before changing anything.
+
+Find:
+- event database tables
+- event attendee/join/request tables
+- event invite tables
+- event comments/posts tables if any
+- event media/Postcard links
+- event API routes
+- event creation screen
+- event detail screen
+- Discovery event cards
+- Search event result support
+- Trip/event relationship
+- Telegraph group chat relationship
+- notification hooks
+- privacy/visibility fields
+- age restriction fields
+- verification/trust gate fields
+- moderation/reporting fields
+- tests covering events
+- existing migrations directory and migration convention
+
+Report briefly before patching:
+- current event tables
+- current event endpoints
+- current frontend screens
+- current missing/broken pieces
+- current backend truth for Join/Maybe/Attending/Requested/Saved
+- current privacy/access model
+- confirmed canonical migrations directory
+
+PHASE 2 — Event Database Foundation
+
+Goal:
+Make sure events have a complete database model.
+
+Events table should support, either already or through safe additive migration:
+- id
+- host_user_id
+- title
+- description
+- category
+- vibe
+- starts_at
+- ends_at
+- timezone
+- city
+- country
+- location_name
+- address_text nullable
+- latitude nullable
+- longitude nullable
+- location_visibility
+- visibility
+  - public
+  - followers
+  - private
+  - invite_only
+  - trip_only
+  - circle_only
+- join_policy
+  - open
+  - request_required
+  - invite_only
+- max_attendees nullable
+- min_age nullable
+- max_age nullable
+- verified_only boolean default false
+- min_trust_score nullable
+- language
+- price_type
+  - free
+  - paid
+  - deposit
+- price_amount nullable
+- currency nullable
+- cover_image_url nullable
+- status
+  - draft
+  - published
+  - happening_now
+  - cancelled
+  - completed
+  - hidden
+- moderation_status
+  - pending
+  - approved
+  - flagged
+  - rejected
+- cancellation_reason nullable
+- cancelled_at nullable
+- cancelled_by nullable
+- is_featured boolean default false
+- featured_until nullable
+- featured_reason nullable
+- created_at
+- updated_at
+- deleted_at nullable if app uses soft delete
+
+If fields already exist, do not duplicate them.
+
+Indexes:
+- host_user_id
+- starts_at
+- ends_at
+- city
+- country
+- category
+- visibility
+- status
+- moderation_status
+- created_at
+- deleted_at if soft delete exists
+- optional location/geospatial index if geospatial search exists
+
+Validation:
+- Migration runs cleanly.
+- Existing events still load.
+- Existing event cards do not break.
+- Existing feeds do not break.
+
+PHASE 3 — Event Attendance / Join Truth
+
+Goal:
+Create one source of truth for all event user states.
+
+Use or create event_participants table.
+
+Suggested fields:
+- id
+- event_id
+- user_id
+- role
+  - host
+  - cohost
+  - attendee
+  - invited
+  - requested
+  - buddy
+  - guide
+  - photographer
+  - translator
+  - driver
+- status
+  - attending
+  - maybe
+  - requested
+  - invited
+  - waitlisted
+  - declined
+  - removed
+  - cancelled
+  - checked_in
+  - no_show
+- requested_at
+- approved_at
+- declined_at
+- joined_at
+- invited_at
+- checked_in_at
+- no_show_at
+- removed_at
+- created_at
+- updated_at
+
+Rules:
+- Host should be represented as host/cohost.
+- Public open events: Join creates attending.
+- Request-required events: Join creates requested.
+- Invite-only events: only invited users can attend or request if app policy allows.
+- Maybe state should be saved in backend.
+- Waitlist state should be saved in backend if capacity is full and waitlist is enabled.
+- Leaving event should update or remove participant record according to existing app pattern.
+- Search, Discovery, Event Detail, Passport, Trips, and notifications must all read the same participant truth.
+
+Validation:
+- Join state is consistent everywhere.
+- Maybe state is consistent everywhere.
+- Request Sent state is consistent everywhere.
+- Invited state is consistent everywhere.
+- Waitlist state is consistent everywhere.
+- Host/cohost state is consistent everywhere.
+- User cannot join over capacity unless waitlist is intentionally used.
+- User cannot join cancelled/hidden/rejected/completed event.
+
+PHASE 4 — Event API Routes
+
+Goal:
+Finish backend event endpoints using the existing route style if available.
+
+Required endpoints:
+- GET /api/events
+  - list/discover events
+- GET /api/events/:id
+  - event detail
+- POST /api/events
+  - create event or draft
+- PATCH /api/events/:id
+  - update event by host/cohost/admin
+- DELETE /api/events/:id
+  - cancel/delete/soft-delete event
+- POST /api/events/:id/publish
+  - publish draft event
+- POST /api/events/:id/join
+  - join, request, or waitlist depending on join_policy/capacity
+- POST /api/events/:id/maybe
+  - mark maybe
+- POST /api/events/:id/save
+  - save/bookmark event if save system exists
+- POST /api/events/:id/leave
+  - leave/cancel attendance
+- POST /api/events/:id/approve
+  - host approves request
+- POST /api/events/:id/decline
+  - host declines request
+- POST /api/events/:id/invite
+  - invite user
+- POST /api/events/:id/check-in
+  - attendee check-in
+- GET /api/events/:id/participants
+  - public-safe attendee list based on privacy/access rules
+- GET /api/events/:id/requests
+  - host/cohost/admin only
+- POST /api/events/:id/cancel
+  - cancel event with reason
+- POST /api/events/:id/duplicate
+  - duplicate event without attendees/messages/reports/reviews
+- POST /api/events/:id/report
+  - report event
+- GET /api/events/:id/comments
+  - get event comments/Q&A if allowed
+- POST /api/events/:id/comments
+  - create event comment/Q&A if allowed
+
+Rules:
+- Auth required for create/join/maybe/save/leave/invite/manage/check-in/report/comment.
+- Event list/detail must enforce visibility and access.
+- Backend must validate required fields.
+- Backend must validate dates.
+- Backend must validate timezone.
+- Backend must validate capacity.
+- Backend must validate age restrictions.
+- Backend must validate verified-only and trust-gated rules.
+- Backend must validate blocked-user relationships.
+- Backend must not trust frontend to enforce permissions.
+- Do not expose private participant/request data to non-hosts.
+
+Validation:
+- All routes return consistent event shape.
+- Unauthorized updates fail.
+- Invalid event data fails.
+- Private/invite-only events do not leak.
+- Join/request/waitlist/maybe/save/leave flows work.
+- Host approval/decline works.
+- Cancel with reason works.
+
+PHASE 5 — Unified Event Response Shape
+
+Goal:
+All screens should receive the same event truth.
+
+Event response should include:
+- id
+- title
+- description
+- category
+- vibe
+- startsAt
+- endsAt
+- timezone
+- city
+- country
+- locationName
+- locationPreview
+- locationVisibility
+- visibility
+- joinPolicy
+- maxAttendees
+- attendeeCount
+- maybeCount
+- waitlistCount if visible
+- requestCount if viewer is host/cohost/admin
+- viewerState
+  - none
+  - host
+  - cohost
+  - attending
+  - maybe
+  - requested
+  - invited
+  - waitlisted
+  - declined
+  - checked_in
+  - no_show
+- canJoin
+- canRequest
+- canMaybe
+- canSave
+- canInvite
+- canEdit
+- canCancel
+- canCheckIn
+- canReview
+- canComment
+- canSeeTelegraph
+- isFull
+- isPast
+- isHappeningNow
+- isCancelled
+- isDraft
+- isCompleted
+- statusLabel
+- blockedReason if viewer cannot act
+- host preview
+- cohosts preview
+- attached buddy preview if any
+- coverImageUrl
+- tags
+- hashtags
+- media preview
+- rules/house rules
+- arrivalInstructions only if viewer is approved/attending/host/cohost
+- createdAt
+- updatedAt
+
+Rules:
+- Use public-safe host previews only.
+- Do not expose private location if not allowed.
+- Do not expose arrival instructions publicly.
+- Do not expose join request answers publicly.
+- Do not expose request lists to non-hosts.
+- Do not expose attendee details if event privacy hides them.
+
+Validation:
+- Discovery event cards, Search results, Event Detail, Passport, Trips, and Pulse use same shape.
+- Viewer action buttons match viewerState.
+- Private fields are not returned.
+
+PHASE 6 — Event Creation Flow
+
+Goal:
+Users can create complete events.
+
+Creation screen should support:
+- title
+- description
+- category
+- vibe
+- date
+- start time
+- end time
+- timezone
+- city
+- country
+- location name
+- optional address/map location
+- location visibility
+- cover image/media
+- hashtags/tags
+- language
+- max attendees
+- public/private/invite-only/trip-only/circle-only visibility
+- join policy: open/request/invite-only
+- age limits if app supports them
+- verified-only toggle
+- minimum Trust Score if app supports it
+- event rules/house rules
+- optional join request questions
+- attendee-only arrival instructions
+- price/free/deposit fields as future hooks
+- save as draft
+- publish
+
+Rules:
+- Required fields should be clear.
+- Date/time picker should use the global calendar/date picker rule.
+- Location picker should use the global location/GPS library if available.
+- Hashtags should be extracted from title/description/caption where appropriate.
+- Creation should save to backend.
+- Draft events should only be visible to host/cohost/admin.
+- Publishing validates required fields.
+- No local-only events.
+
+Validation:
+- User can create event draft.
+- User can publish event.
+- Created event appears in Discovery/Search where allowed.
+- Created event appears on host Passport where allowed.
+- Invalid event fails gracefully.
+- Past start date is rejected unless app policy allows past events.
+
+PHASE 7 — Event Drafts and Publishing
+
+Goal:
+Events should support draft state.
+
+Rules:
+- Host can save event as draft.
+- Draft events are only visible to host/cohost/admin.
+- Publishing makes event discoverable based on visibility/access rules.
+- Required fields must be validated before publishing.
+- Drafts should not appear in public Discovery/Search/Pulse.
+- Drafts should be editable.
+
+Validation:
+- Draft event remains private to host/cohost/admin.
+- Published event appears correctly.
+- Required fields are enforced before publish.
+
+PHASE 8 — Event Detail Screen
+
+Goal:
+Event Detail should be fully functional.
+
+Event detail should show:
+- cover image/media
+- title
+- host
+- cohosts
+- attached buddy if any
+- date/time
+- city/location preview
+- description
+- category/vibe
+- language
+- tags/hashtags
+- attendee/maybe/waitlist counts
+- capacity
+- privacy/join policy indicator
+- verified/trust gate if relevant
+- event rules/house rules
+- attendee-only arrival instructions for approved users
+- action button
+  - Join
+  - Request to Join
+  - Request Sent
+  - Invited
+  - Attending
+  - Maybe
+  - Waitlist
+  - Full
+  - Leave
+  - Check In
+  - Review
+  - Edit if host/cohost
+  - Cancel if host/cohost
+- attendee preview if allowed
+- comments/Q&A section if allowed
+- related posts/Postcards
+- related trip/place if connected
+- Telegraph group chat entry if user has access
+- Share action
+- Report action
+
+Validation:
+- Event detail loads by ID.
+- Action button state is correct.
+- Host/cohost controls only show to host/cohost/admin.
+- Non-authorized viewers cannot see private details.
+- Cancelled events show correct status.
+- Completed events stop accepting joins.
+
+PHASE 9 — Event Cards Across App
+
+Goal:
+Events should render consistently everywhere.
+
+Update event cards in:
+- Discovery
+- Global Search results
+- Pulse
+- Passport
+- Trip detail/timeline
+- City/Destination pages
+- Hashtag feed
+- Notifications/activity center if applicable
+
+Event card should show:
+- title
+- date/time
+- city/location preview
+- host preview
+- attendee count
+- maybe count if useful
+- capacity/full/waitlist label if relevant
+- category/vibe
+- cover image
+- status/action state
+- join/request/maybe/save action where appropriate
+
+Validation:
+- Same event status appears everywhere.
+- Same action state appears everywhere.
+- Cards navigate to Event Detail.
+- Cards do not use fake counts/states.
+
+PHASE 10 — Discovery and Search Integration
+
+Goal:
+Events must be discoverable and searchable.
+
+Discovery:
+- Show upcoming public/joinable events.
+- Rank by location, date, interests, vibes, trust, event quality, and user availability where supported.
+- Hide private/ineligible events.
+- Group events into real collections where safe:
+  - Tonight near you
+  - This weekend
+  - Best for solo travelers
+  - Food events
+  - Beach plans
+  - Hosted by verified travelers
+  - Open to join
+
+Search:
+Events should match by:
+- title
+- description
+- city
+- country
+- venue/location
+- category
+- tags
+- hashtags
+- host
+- date/time phrase
+- vibe
+- language
+- buddy host if attached
+
+Support queries like:
+- events tonight
+- events in Siargao
+- food crawl
+- nightlife Manila
+- beach tomorrow
+- Spanish events in Tokyo
+- verified events in Cebu
+- buddy-hosted events
+
+Validation:
+- Events appear in Discovery.
+- Events appear in Global Search.
+- Private/invite-only/age-restricted/verified-only/trust-gated events are filtered correctly.
+- Past events do not dominate results.
+- Collections use real events only.
+
+PHASE 11 — Event Hashtags and Pulse/Postcards
+
+Goal:
+Events should connect with Pulse and Postcards.
+
+Rules:
+- Event descriptions/captions can contain hashtags.
+- Hashtags should be extracted and linked.
+- Event detail can show related public Postcards/posts.
+- Users attending an event can post a Postcard tied to the event.
+- Video Postcards should attach to events once video backend is ready.
+- Delayed posting/location privacy should still apply.
+- Event hashtag feeds should include public event-related posts only.
+- Private event posts do not leak publicly.
+
+Validation:
+- Event hashtags save correctly.
+- Tapping hashtag opens hashtag feed.
+- Event-related Postcards appear where allowed.
+- Private event posts do not leak publicly.
+
+PHASE 12 — Telegraph Event Group Chat
+
+Goal:
+Events should connect to Telegraph when appropriate.
+
+Rules:
+- When a user joins or is approved for an event, they should gain access to the event Telegraph thread/group if this app pattern exists.
+- For request-required events, do not add user to Telegraph until approved.
+- For waitlisted users, do not add user to Telegraph until approved/attending.
+- Leaving/removal should remove or restrict access according to app rules.
+- Host/cohosts should always have access.
+- Event chat should use Telegraph naming and translation rules.
+
+Suggested Telegraph title:
+- Telegraph · {Event Title}
+- Example: Telegraph · Siargao Food Crawl
+
+Validation:
+- Attendee can access event Telegraph.
+- Requested user cannot access until approved.
+- Waitlisted user cannot access until promoted/approved.
+- Removed/left user loses access if app rules require it.
+- Telegraph uses real event participant truth.
+
+PHASE 13 — Notifications / Activity Center
+
+Goal:
+Event actions should notify the right users.
+
+Create notifications for:
+- user joined host’s event
+- user requested to join host’s event
+- host approved request
+- host declined request
+- user was invited
+- user was waitlisted
+- waitlisted user was promoted/approved
+- event updated significantly
+- event cancelled
+- event starting soon if scheduler exists
+- 1 day before reminder if scheduler exists
+- 2 hours before reminder if scheduler exists
+- new event Telegraph message if Telegraph notifications exist
+- comment/Q&A reply if comments exist
+
+Rules:
+- Do not notify blocked users.
+- Respect notification preferences if present.
+- Do not spam duplicate notifications.
+- Cancelled events should stop future reminders.
+- Users who left should not receive event reminders.
+
+Validation:
+- Host receives join/request notification.
+- User receives approval/decline notification.
+- Invite notification works.
+- Cancel/update notifications work where supported.
+- Reminder notifications stop after cancellation.
+
+PHASE 14 — Event Privacy, Safety, and Access
+
+Goal:
+Events must respect app safety rules.
+
+Enforce:
+- private events hidden from unauthorized users
+- invite-only events hidden or limited preview based on rules
+- trip-only/circle-only events only visible to members
+- blocked users hidden
+- users who blocked viewer hidden
+- muted/hidden users if app rules require it
+- age-restricted events hidden from ineligible users
+- verified-only events blocked for unverified users
+- trust-gated events blocked for low-trust users
+- banned/deleted/suspended host events hidden
+- reported/removed/moderation-hidden events hidden
+- exact/private locations hidden unless allowed
+- arrival instructions hidden from non-attendees
+- join request answers hidden from public
+- delayed posting/location privacy still applies to event posts
+
+Validation:
+- Private event cannot be opened by unauthorized user.
+- Blocked user cannot see/join event.
+- Age-ineligible user cannot see/join restricted event.
+- Unverified user cannot join verified-only event.
+- Low-trust user cannot join trust-gated event.
+- Exact location is hidden when location visibility requires it.
+- Invite-only event does not leak participant list.
+
+PHASE 15 — Host Management Tools
+
+Goal:
+Hosts can manage their events.
+
+Host/cohost actions:
+- edit event
+- publish draft
+- cancel event
+- duplicate event
+- approve join request
+- decline join request
+- remove attendee
+- invite user
+- promote waitlisted user if waitlist exists
+- add/remove cohost
+- view request list
+- view attendee list
+- view join request answers
+- copy/share event link
+- open event Telegraph
+- delete/moderate comments if allowed
+- report/ban from event if moderation system supports it
+
+Rules:
+- Only host/cohost/admin can manage.
+- Normal attendees cannot edit event.
+- Host can control cohost permissions if app supports it.
+- Cancelled event should remain visible to attendees with cancelled status if app uses history.
+- Cancelling should notify attendees.
+
+Validation:
+- Host can manage.
+- Cohost permissions work.
+- Non-host cannot manage.
+- Request approval updates user state everywhere.
+- Remove attendee updates access everywhere.
+- Duplicate event does not copy attendees/messages/reports/reviews.
+
+PHASE 16 — Co-hosts and Event Roles
+
+Goal:
+Events should support more than one organizer and role-based participation.
+
+Roles:
+- host
+- cohost
+- attendee
+- invited
+- requested
+- buddy
+- guide
+- photographer
+- translator
+- driver
+
+Rules:
+- Host can add/remove cohosts.
+- Cohosts can manage requests if allowed.
+- Normal attendees cannot edit event.
+- Roles should be stored in backend truth, not local UI state.
+- Buddy/guide/photographer/translator/driver roles should be public only if safe.
+
+Validation:
+- Cohost can manage allowed actions.
+- Removed cohost loses management rights.
+- Roles show correctly where intended.
+
+PHASE 17 — Event Capacity and Waitlist
+
+Goal:
+Capacity should be honest.
+
+Rules:
+- If max_attendees is set, do not allow joining beyond capacity.
+- If event is full, show Full.
+- If waitlist is enabled, show Join Waitlist.
+- Waitlist should use backend truth.
+- When a spot opens, next waitlisted user can be notified or auto-promoted depending on app policy.
+- Do not overbook.
+- Leaving opens a spot if app rules allow.
+
+Validation:
+- Full event blocks new joins or sends to waitlist.
+- Attendee count is accurate.
+- Waitlist count is accurate where shown.
+- Button state changes from Join to Full or Waitlist appropriately.
+
+PHASE 18 — Event Save / Maybe / Calendar Hooks
+
+Goal:
+Users should be able to save or maybe events.
+
+Rules:
+- Maybe should be stored in backend event_participants or event_saves table.
+- Save should use existing saved/bookmark truth if available.
+- Maybe and Save should not conflict with Attending.
+- Attending overrides Maybe if user joins.
+- Event date should be usable with app calendar/date system.
+- Calendar export can be built later, but schema/timezone should not block it.
+
+Validation:
+- Maybe persists after app restart.
+- Save persists after app restart.
+- Attending overrides maybe if user joins.
+- States match across Event Detail, Discovery, Search, and Passport.
+
+PHASE 19 — Event Media / Cover / Video Postcards
+
+Goal:
+Events support media cleanly.
+
+Rules:
+- Event cover image should be stored through existing media/storage system.
+- Event-related Postcards can include image or video once video backend is ready.
+- Do not create separate event-only media truth if Postcards/media already exists.
+- Event media should respect event privacy.
+- Failed/rejected media should not appear publicly.
+- Private event media should not leak through public URLs.
+
+Validation:
+- Event cover loads.
+- Event-related media appears on Event Detail.
+- Unauthorized viewers cannot see private event media.
+- Existing photo/Postcard flow does not break.
+
+PHASE 20 — Recurring Events
+
+Goal:
+Support recurring events where safe.
+
+Supported recurrence:
+- one-time event
+- daily
+- weekly
+- monthly
+- custom recurrence later
+
+Examples:
+- weekly language exchange
+- Friday nightlife crawl
+- Sunday brunch meetup
+
+Rules:
+- Use recurrence fields only if the app can support them safely.
+- Do not fake recurring events on the frontend.
+- Each occurrence should have clear date/time truth.
+- Cancelling one occurrence should not necessarily cancel the whole series unless host chooses that.
+- Duplicate/spam protection should not falsely block legitimate recurring events.
+- If full recurring support is too large, add schema/interface safely and hide incomplete UI.
+
+Validation:
+- Recurring event behavior works or is safely deferred with no broken UI.
+- One-time events still work.
+
+PHASE 21 — Event Check-In
+
+Goal:
+Add event check-in support.
+
+Rules:
+- Attendees can check in during an allowed event window.
+- Check-in can use location/GPS if permission exists.
+- Do not expose exact live location publicly.
+- Check-in can award Passport Stamp or Trust activity credit if app rules allow.
+- Check-in should help confirm real attendance.
+- User can check in only for events they are attending.
+- User cannot check in too early or too late unless host/admin allows.
+
+Validation:
+- Attending user can check in during valid window.
+- Non-attendee cannot check in.
+- Check-in truth persists.
+- Check-in does not leak exact location.
+
+PHASE 22 — No-Show and Attendance Reliability
+
+Goal:
+Track event attendance honestly.
+
+Rules:
+- Attending users who do not check in may be marked no-show if app policy supports it.
+- No-show should affect reliability/trust only through the app’s Trust Score rules.
+- Host can mark attendance only if allowed.
+- Avoid harsh penalties without clear evidence.
+- Do not create false penalties from weak signals.
+
+Validation:
+- No-show logic is safe.
+- Trust system can read attendance signals if available.
+- User state remains auditable.
+
+PHASE 23 — Event Reviews
+
+Goal:
+After an event ends, eligible attendees can review.
+
+Review targets:
+- event
+- host
+- buddy/guide if attached
+- place/venue if attached
+
+Rules:
+- Only real attendees can review.
+- Reviews should open after completed event.
+- Reviews should respect moderation rules.
+- Prevent duplicate reviews from same user for same event target.
+- Reviews can affect host reliability/trust where app rules allow.
+- Reviews should not expose private event details publicly if event is private.
+
+Validation:
+- Only attendees can review.
+- Review opens after event completion.
+- Duplicate review is blocked.
+- Review visibility respects privacy.
+
+PHASE 24 — Host Reliability
+
+Goal:
+Events should feed into host trust/reliability.
+
+Signals:
+- successful completed events
+- attendee check-ins
+- positive reviews
+- repeated cancellations
+- late cancellations
+- safety reports
+- no-show host behavior
+- misleading event reports
+- low report rate
+- good attendee ratio
+
+Rules:
+- Use existing Trust Score system if available.
+- Do not create a separate fake host score.
+- Keep trust updates auditable.
+- Avoid penalties for weather/safety-related cancellations unless abused.
+
+Validation:
+- Host reliability connects to Trust Score truth.
+- Cancellation/check-in/review signals are auditable.
+- No separate fake score is created.
+
+PHASE 25 — Event Reminders
+
+Goal:
+Add notification hooks for event reminders.
+
+Reminder examples:
+- 1 day before
+- 2 hours before
+- starting soon
+
+Rules:
+- Respect notification preferences.
+- Do not notify users who left the event.
+- Cancelled events should stop reminders.
+- Reminder time should respect event timezone.
+- Arrival instructions can be included only for approved/attending users if safe.
+
+Validation:
+- Reminder hooks exist where supported.
+- Cancelled events stop reminders.
+- Private attendee-only info does not leak.
+
+PHASE 26 — Duplicate Event
+
+Goal:
+Allow hosts to duplicate an existing event.
+
+Rules:
+- Duplicate should copy title, description, category, vibe, location, tags, visibility, rules, join questions, and join policy.
+- Duplicate should not copy attendees, requests, chat messages, comments, reviews, reports, check-ins, or moderation history.
+- Host must choose a new date/time before publishing.
+- Duplicated event can start as draft.
+
+Validation:
+- Duplicate creates editable draft/new event.
+- Attendees/messages/reports/reviews are not copied.
+- New event can be published.
+
+PHASE 27 — Event Templates
+
+Goal:
+Prepare for event templates.
+
+Template examples:
+- Food Crawl
+- Beach Day
+- Nightlife
+- Hike
+- Coffee Meetup
+- Language Exchange
+- Arrival Support
+- Content Walk
+- Shopping Help
+- Local Tour
+
+Rules:
+- Templates should prefill fields but still save as normal events.
+- Do not create fake template events.
+- Templates can be frontend presets or backend-managed later.
+- If not fully implemented now, leave clean structure without broken UI.
+
+Validation:
+- Templates do not create production fake data.
+- Normal event creation still works.
+
+PHASE 28 — Weather Awareness
+
+Goal:
+Outdoor events should be able to show weather risk later.
+
+Rules:
+- Do not block events based on weather.
+- Show weather only when reliable weather integration exists.
+- Weather should be informational only unless host chooses to cancel/update.
+- Weather risk can suggest host update/cancellation but not auto-cancel.
+
+Validation:
+- Weather feature is either safely integrated or cleanly deferred.
+- No fake weather is shown.
+
+PHASE 29 — Cancellation Reason
+
+Goal:
+When host cancels event, collect a cancellation reason.
+
+Reasons:
+- weather
+- low attendance
+- host unavailable
+- safety issue
+- venue issue
+- other
+
+Rules:
+- Store cancellation reason.
+- Store cancellation time and cancelled_by.
+- Notify attendees when event is cancelled.
+- Cancelled event should not remain joinable.
+- Cancellation can feed host reliability through Trust Score if available.
+
+Validation:
+- Cancellation reason saves.
+- Event status updates everywhere.
+- Attendees are notified where supported.
+- Join buttons disable after cancellation.
+
+PHASE 30 — Payment and Refund Hooks
+
+Goal:
+Prepare event schema for paid/deposit events later.
+
+Rules:
+- Keep price_type, price_amount, currency, and payment_status hooks where needed.
+- Do not process payments unless payment system is already approved and built.
+- Future refunds should connect to event cancellation and attendee status.
+- Free events should continue working normally.
+- Paid/deposit UI should not show active broken payment buttons if payments are not ready.
+
+Validation:
+- Free events work normally.
+- Payment fields do not break event creation/detail.
+- No fake payment flow is exposed.
+
+PHASE 31 — Passport Event Visibility
+
+Goal:
+Passport should show event-related identity.
+
+Sections:
+- Hosting
+- Attending
+- Maybe
+- Past Events
+- Event Stamps
+- Event Reviews if public
+- Buddy-hosted events if user is a buddy
+
+Rules:
+- Respect privacy.
+- Private event attendance should not appear publicly unless allowed.
+- Past events can support credibility/trust where allowed.
+- Viewer should see their own private event history where appropriate.
+
+Validation:
+- Hosting events show correctly.
+- Attending/Maybe show correctly where allowed.
+- Private event attendance does not leak on Passport.
+- Past events connect to stamps/reviews where allowed.
+
+PHASE 32 — Event Lifecycle Automation
+
+Goal:
+Events should move through lifecycle states.
+
+Lifecycle:
+- draft
+- published/upcoming
+- happening_now
+- completed
+- cancelled
+- hidden
+
+Rules:
+- Use starts_at and ends_at to determine current lifecycle.
+- Completed events should stop accepting joins.
+- Happening-now events can allow check-in.
+- Cancelled events should stop reminders and join actions.
+- Hidden events should not appear in Discovery/Search/Pulse.
+- Do not rely only on frontend time checks.
+
+Validation:
+- Lifecycle state updates correctly.
+- Happening Now label appears correctly.
+- Completed events stop joins.
+- Cancelled events stop reminders.
+
+PHASE 33 — Event Invite and Share Links
+
+Goal:
+Events should support sharing.
+
+Rules:
+- Public events can be shared normally.
+- Private/invite-only event links must still enforce access.
+- Shared links should not bypass privacy.
+- Invite links should expire or require approval if app policy requires it.
+- Deep links should open Event Detail if viewer has access or show safe blocked state if not.
+
+Validation:
+- Share links open correct event.
+- Private links do not bypass permissions.
+- Invite-only access is enforced.
+
+PHASE 34 — Admin Event Moderation
+
+Goal:
+Admins should be able to manage unsafe events.
+
+Admin actions:
+- hide event
+- remove event
+- review reported event
+- suppress from Discovery/Search
+- remove attendee if safety issue
+- view reports
+- audit event state
+- freeze event
+- cancel for safety
+- disable event Telegraph
+- notify attendees
+- review join/participant abuse
+
+Rules:
+- Use existing admin/moderation system.
+- Do not create separate moderation truth for events.
+- Hidden/rejected events should not appear in Discovery/Search/Pulse.
+- Emergency admin actions should be auditable.
+
+Validation:
+- Admin can hide/freeze unsafe event.
+- Hidden event disappears from Discovery/Search.
+- Attendees can be notified if event is cancelled for safety.
+- Admin actions are recorded.
+
+PHASE 35 — Event Comments and Q&A
+
+Goal:
+Events should support a lightweight comments/Q&A area.
+
+Rules:
+- Comments are visible based on event visibility/access rules.
+- Public event comments can be visible to viewers if allowed.
+- Private/invite-only event comments should only be visible to users with access.
+- Hosts/cohosts/admin can delete inappropriate comments.
+- Comments should not replace Telegraph.
+- Telegraph remains the attendee chat after joining/approval.
+- Comments should support reporting/moderation if existing system supports it.
+
+Validation:
+- User can comment where allowed.
+- Unauthorized user cannot see private event comments.
+- Host/admin moderation works where supported.
+
+PHASE 36 — Join Request Questions
+
+Goal:
+Request-required events should support host-defined approval questions.
+
+Examples:
+- Are you coming solo or with friends?
+- What language do you speak?
+- Have you done this activity before?
+- What vibe are you looking for?
+
+Rules:
+- Questions are optional.
+- Questions can be marked required.
+- Answers are visible only to host/cohosts/admin.
+- Answers should not appear publicly.
+- Requests cannot be submitted without required answers.
+- Answers should be removed/hidden if request is deleted according to app policy.
+
+Validation:
+- Host can add questions.
+- User answers questions when requesting.
+- Host sees answers while approving/declining.
+- Answers are private.
+
+PHASE 37 — Event Rules / House Rules
+
+Goal:
+Hosts should be able to add event rules.
+
+Examples:
+- No dating behavior
+- Bring ID
+- Respect local culture
+- Beginner friendly
+- Verified users only
+- No outside alcohol
+- Be on time
+
+Rules:
+- Rules show on Event Detail.
+- Users should see rules before joining/requesting.
+- Rules should be saved in backend.
+- Rules should be editable by host/cohost.
+- Rules must not conflict with app safety policy.
+
+Validation:
+- Rules save.
+- Rules display.
+- Rules remain visible before join/request.
+
+PHASE 38 — Verified-Only and Trust-Gated Events
+
+Goal:
+Events should support optional eligibility gates.
+
+Possible gates:
+- verified users only
+- minimum Trust Score
+- minimum age
+- language requirement
+- buddy-only or traveler-only where appropriate
+
+Rules:
+- Gates must be enforced by backend.
+- Frontend should explain why user cannot join.
+- Do not expose sensitive verification details.
+- Admin/host settings should not bypass safety policy.
+
+Validation:
+- Unverified user cannot join verified-only event.
+- Low-trust user cannot join trust-gated event.
+- Ineligible user sees clear blocked reason.
+- Eligible user can join/request normally.
+
+PHASE 39 — Buddy-Hosted Events
+
+Goal:
+Rent a Buddy should connect to Events.
+
+Rules:
+- Verified buddies can host or be attached to events.
+- Event can show attached buddy/local companion preview.
+- Buddy-hosted events can link to Rent a Buddy profile.
+- Buddy availability should be respected where available.
+- Non-dating/non-adult-service boundaries still apply.
+- Buddy-hosted events should not create a separate event type unless necessary.
+
+Validation:
+- Buddy-hosted event displays buddy preview.
+- Event links to buddy profile.
+- Buddy-hosted events respect marketplace boundaries.
+
+PHASE 40 — Trip-Linked Events
+
+Goal:
+Trips should be able to contain events.
+
+Rules:
+- Trip hosts or crew can create trip-linked events if permissions allow.
+- Trip-only events are visible only to trip members unless made public.
+- Trip event should appear in Trip timeline.
+- Joining a trip-linked event should respect trip membership/access.
+- Trip-linked event Telegraph access should respect both trip and event rules.
+
+Validation:
+- Trip event appears in trip detail/timeline.
+- Non-trip member cannot see private trip-only event.
+- Trip member can join/request based on event policy.
+
+PHASE 41 — Event Collections
+
+Goal:
+Discovery can group events into real collections.
+
+Examples:
+- Tonight near you
+- This weekend
+- Best for solo travelers
+- Food events
+- Beach plans
+- Hosted by verified travelers
+- Open to join
+- Buddy-hosted events
+
+Rules:
+- Collections must use real event data.
+- No fake events.
+- Collections must respect privacy/access/blocked users.
+- Collections should be backend-driven or use safe filtered queries.
+
+Validation:
+- Collections show real events.
+- Private/ineligible events do not appear.
+- Tapping event opens Event Detail.
+
+PHASE 42 — Event Conflict Detection
+
+Goal:
+Warn users if joining overlapping events.
+
+Rules:
+- If user is attending another event during the same time window, show a warning.
+- Do not hard-block unless product policy says so.
+- Conflict check should use backend attendance truth.
+- Maybe events can optionally be included in softer warnings.
+
+Validation:
+- Overlap warning appears.
+- User can still proceed if allowed.
+- Non-overlapping events do not warn.
+
+PHASE 43 — Arrival Instructions
+
+Goal:
+Hosts can add attendee-only arrival instructions.
+
+Examples:
+- Meet at the front entrance.
+- Ask for Mike’s table.
+- Message in Telegraph when you arrive.
+- Look for the blue umbrella.
+
+Rules:
+- Arrival instructions only show to approved/attending users.
+- Do not show arrival instructions publicly.
+- Host/cohost can edit.
+- Instructions can be included in reminder notifications if safe.
+
+Validation:
+- Attendee can see arrival instructions.
+- Non-attendee cannot see arrival instructions.
+- Host can edit instructions.
+
+PHASE 44 — Post-Event Safety Check
+
+Goal:
+After an event, ask eligible attendees basic safety questions.
+
+Examples:
+- Did you feel safe?
+- Did the host show up?
+- Was the event as described?
+- Did anything need reporting?
+
+Rules:
+- Keep this separate from public reviews.
+- Safety answers are private/moderation-facing.
+- Use answers only through existing safety/trust systems.
+- Do not create harsh penalties from one weak signal.
+- Only attendees can submit safety check.
+
+Validation:
+- Only attendees can submit safety check.
+- Answers are private.
+- Safety concerns can create report/moderation signal where supported.
+
+PHASE 45 — Host Cancellation Limits
+
+Goal:
+Track repeated host cancellations.
+
+Rules:
+- Store cancellation reason and cancellation timing.
+- Late cancellations can affect host reliability if Trust Score supports it.
+- Avoid penalties for weather/safety-related cancellations unless abused.
+- Use existing trust system, not a separate fake score.
+
+Validation:
+- Cancellation history is stored.
+- Host reliability can read cancellation signals.
+- Attendees are notified.
+
+PHASE 46 — Event Feature / Boost Hooks
+
+Goal:
+Prepare for featured events.
+
+Fields if needed:
+- is_featured
+- featured_until
+- featured_reason
+- featured_by_admin_id
+
+Rules:
+- Do not build paid boosts unless payments are ready.
+- Admin-featured events can rank higher.
+- Featured events must still respect privacy/access rules.
+- Unsafe/reported events cannot be featured.
+
+Validation:
+- Featured field does not break event list.
+- Featured public event can rank higher if enabled.
+- Private/ineligible featured event does not leak.
+
+PHASE 47 — Duplicate and Spam Protection
+
+Goal:
+Prevent obvious event spam.
+
+Rules:
+- Detect duplicate events from same host with same/similar title, city, and time window.
+- Rate-limit event creation if app has rate limiter.
+- Flag suspicious duplicate events for review if moderation exists.
+- Do not block legitimate recurring events.
+
+Validation:
+- Exact duplicate is blocked or warned.
+- Recurring event is not falsely blocked.
+- Spammy event creation is rate-limited where supported.
+
+PHASE 48 — Event Report Categories
+
+Goal:
+Reports should use clear categories.
+
+Categories:
+- scam
+- unsafe
+- misleading
+- harassment
+- no_show_host
+- wrong_location
+- adult_dating_behavior
+- spam
+- other
+
+Rules:
+- Reports connect to existing moderation system.
+- Reported events can be hidden/suppressed according to moderation rules.
+- Reporter privacy should be protected.
+
+Validation:
+- User can report event.
+- Report reason saves.
+- Moderation can see report.
+- Reported/hidden events stop appearing where required.
+
+PHASE 49 — Emergency Admin Event Controls
+
+Goal:
+Admins need safety controls.
+
+Admin actions:
+- freeze event
+- hide from Discovery/Search
+- cancel for safety
+- disable event Telegraph
+- notify attendees
+- remove attendee
+- review reports
+- audit event state
+
+Rules:
+- Use existing admin permission system.
+- All emergency actions should be auditable.
+- Emergency controls should not create separate event truth.
+
+Validation:
+- Admin can hide/freeze unsafe event.
+- Hidden event disappears from Discovery/Search.
+- Attendees can be notified if event is cancelled for safety.
+
+PHASE 50 — Offline / Poor Connection Handling
+
+Goal:
+Event screens should fail safely.
+
+Rules:
+- If event detail fails, show a safe retry state.
+- Cached basic info can be shown only if already available.
+- Never fake join/attending state from stale cache.
+- Action buttons should be disabled when current backend truth is unavailable.
+- Do not allow local-only joins.
+
+Validation:
+- Event detail failure does not crash.
+- Retry works.
+- Stale join state is not shown as current truth.
+- Actions require current backend truth.
+
+PHASE 51 — Event Status Labels
+
+Goal:
+Use clear status labels across UI.
+
+Labels:
+- Draft
+- Open
+- Request Required
+- Invite Only
+- Full
+- Waitlist
+- Happening Now
+- Completed
+- Cancelled
+- Hidden
+
+Rules:
+- Labels must derive from backend truth.
+- Do not create local-only status labels.
+- Same event should show same label everywhere.
+
+Validation:
+- Status label is consistent on Discovery, Search, Event Detail, Passport, and Trips.
+
+PHASE 52 — Event Quality Score for Ranking
+
+Goal:
+Add backend ranking signals if safe.
+
+Signals:
+- verified host
+- complete host Passport
+- clear title/description
+- real cover image
+- clear location
+- upcoming date
+- healthy attendee ratio
+- low report rate
+- successful past host events
+- attendee reviews/check-ins
+- event safety record
+
+Rules:
+- Quality score can be backend-only.
+- Do not expose internal score unless intentionally designed.
+- Do not rank unsafe/private/ineligible events.
+- Use existing Trust Score where relevant.
+
+Validation:
+- Higher-quality events rank better.
+- Reported/unsafe events do not get promoted.
+- Ranking remains privacy-safe.
+
+PHASE 53 — Calendar Export / Add to Calendar
+
+Goal:
+Events should support calendar integration later.
+
+Rules:
+- Attending users should be able to add the event to their device calendar.
+- Export should include title, date/time, timezone, location preview, and safe description.
+- Private arrival instructions should only be included if the viewer is approved/attending.
+- Cancelled events should update or remove calendar reminders if app supports that later.
+- If full calendar export is not ready, leave safe hooks and no broken button.
+
+Validation:
+- Event time exports correctly if implemented.
+- Timezone is correct.
+- Private info does not leak through calendar export.
+
+PHASE 54 — Localization and Timezones
+
+Goal:
+Events must work for travelers across countries.
+
+Rules:
+- Store event timestamps in a reliable timezone-aware format.
+- Display event time in local event timezone and/or viewer timezone where appropriate.
+- Avoid ambiguous dates like “tomorrow” without timezone context.
+- Support translated labels later through the app’s localization system.
+- Event language field should be separate from app UI language.
+
+Validation:
+- Event in Tokyo shows correct time for user in New York.
+- Event date does not shift incorrectly.
+- Event language filters work separately from UI language.
+
+PHASE 55 — Accessibility
+
+Goal:
+Event screens should be usable by everyone.
+
+Rules:
+- Buttons need accessible labels.
+- Event cards should be readable by screen readers.
+- Color-only status indicators are not enough.
+- Touch targets should be mobile-safe.
+- Text should scale without breaking layout.
+- Video/media controls should be accessible where applicable.
+
+Validation:
+- Join/Request/Maybe buttons have accessible names.
+- Status labels are text-based, not color-only.
+- Event detail remains usable with larger text.
+
+PHASE 56 — Audit Logs
+
+Goal:
+Important event actions should be auditable.
+
+Track audit logs for:
+- event created
+- event published
+- event edited
+- event cancelled
+- cancellation reason
+- host/cohost added or removed
+- attendee approved/declined/removed
+- event hidden by admin
+- event reported
+- emergency admin action
+- visibility/privacy changes
+- trust/eligibility gate changes
+- attendee check-in/no-show changes
+
+Rules:
+- Use existing audit system if available.
+- Do not expose audit logs publicly.
+- Admin-only where appropriate.
+- Audit logs should not create separate event truth.
+
+Validation:
+- Important state changes are traceable.
+- Admin can investigate unsafe or disputed events.
+
+PHASE 57 — Data Cleanup and Retention
+
+Goal:
+Events should not leave messy old data forever.
+
+Rules:
+- Completed events remain available where useful for Passport history, reviews, stamps, and trust.
+- Drafts abandoned for a long time can be cleaned later if policy allows.
+- Cancelled events should remain visible to attendees if needed for history/support.
+- Deleted events should follow the app’s soft-delete/hard-delete convention.
+- Media, Telegraph threads, comments, reviews, and reports should not be accidentally orphaned.
+- Hard deletion should not remove evidence needed for moderation/safety unless policy allows.
+
+Validation:
+- Cancelling/deleting an event does not break related records.
+- Past events still support reviews/stamps where allowed.
+- Old drafts can be managed later.
+
+PHASE 58 — Migration Safety
+
+Goal:
+All database changes must be safe.
+
+Rules:
+- Confirm canonical migrations directory before adding migrations.
+- Migrations should be additive when possible.
+- Do not rename/drop existing columns unless absolutely necessary.
+- Backfill new fields safely.
+- Add constraints only after data is compatible.
+- Include rollback notes if the project uses rollback procedures.
+- Keep generated database types in sync if the project uses typed Supabase/database types.
+
+Validation:
+- Migration applies cleanly.
+- Existing event data still works.
+- Existing tests still pass.
+- Database types are updated if required.
+
+PHASE 59 — Feature Flags / Safe Rollout
+
+Goal:
+If Events changes are large, support safe rollout.
+
+Rules:
+- Use existing feature flag/config pattern if available.
+- Backend can support Events before UI exposes everything.
+- Admin-only/beta-only rollout is acceptable if the app uses beta flags.
+- Do not hide broken functionality behind fake UI.
+- Disabled features should not show active buttons.
+
+Validation:
+- Existing users are not forced into broken event flows.
+- Disabled features do not show active broken UI.
+
+PHASE 60 — Analytics for Event Funnel
+
+Goal:
+Track safe analytics to improve Events.
+
+Track:
+- event viewed
+- event searched
+- event joined
+- event requested
+- event approved
+- event declined
+- event cancelled
+- event shared
+- event saved/maybe
+- event check-in
+- no-show
+- review submitted
+- report submitted
+
+Rules:
+- Avoid storing sensitive personal data unnecessarily.
+- Respect privacy settings and analytics policy.
+- Analytics should not be the source of truth for attendance.
+- Analytics should never bypass privacy/access rules.
+
+Validation:
+- Funnel events fire where supported.
+- Analytics do not replace database truth.
+- Analytics do not expose private data.
+
+PHASE 61 — Seed / Test Data Only for Development
+
+Goal:
+If needed, add realistic development seed data.
+
+Rules:
+- Seed data must be clearly dev/test only.
+- No fake events should appear in production.
+- Do not hardcode fake events into the app.
+- Dev seed events should cover public, private, invite-only, full, waitlist, cancelled, completed, draft, verified-only, trust-gated, and trip-only states.
+
+Validation:
+- Dev can test all event states.
+- Production has no fake event data.
+
+PHASE 62 — Performance
+
+Goal:
+Event discovery should be fast.
+
+Tasks:
+- Add/use indexes for:
+  - starts_at
+  - ends_at
+  - city
+  - country
+  - category
+  - visibility
+  - status
+  - moderation_status
+  - host_user_id
+  - created_at
+- Paginate event lists.
+- Do not load all events client-side.
+- Do not fetch full participant lists for every card.
+- Use aggregate counts for attendee/maybe/request/waitlist counts.
+- Avoid per-card N+1 backend requests.
+- Search/discovery should not full-table scan where avoidable.
+
+Validation:
+- Event list loads quickly.
+- Search/discovery does not full-table scan where avoidable.
+- Cards do not trigger excessive per-card API calls.
+- Pagination works.
+
+PHASE 63 — Tests
+
+Add or update tests for:
+
+Database:
+- event migration works
+- event participant states work
+- event role states work
+- capacity logic works
+- waitlist logic works if implemented
+- status/lifecycle logic works
+- indexes exist where testable
+
+API:
+- create draft event
+- publish event
+- create published event
+- update event
+- cancel/delete event
+- duplicate event
+- list events
+- get event detail
+- join open event
+- request request-required event
+- approve request
+- decline request
+- maybe event
+- save event
+- leave event
+- invite user
+- check in
+- report event
+- participant list privacy
+- request questions privacy
+- arrival instructions privacy
+- comments/Q&A visibility
+
+Privacy:
+- private event hidden
+- invite-only event restricted
+- trip-only/circle-only event restricted
+- blocked user hidden
+- user who blocked viewer hidden
+- age-restricted event hidden
+- verified-only event blocked for unverified user
+- trust-gated event blocked for low-trust user
+- banned/deleted/suspended host hidden
+- exact location hidden when required
+- arrival instructions hidden from non-attendees
+- request answers hidden from public
+
+Frontend:
+- Discovery event card renders
+- Search event result renders
+- Event Detail renders
+- Join button state correct
+- Request Sent state correct
+- Attending state correct
+- Maybe state correct
+- Saved state correct
+- Full state correct
+- Waitlist state correct
+- Host controls visible only to host/cohost
+- Search result opens event detail
+- Back navigation preserves search where applicable
+- Status labels consistent
+
+Regression:
+- existing Discovery still loads
+- existing Global Search still loads
+- existing Pulse still loads
+- existing Passport still loads
+- existing Trip pages still load
+- existing Telegraph still works
+- existing Notifications still work
+- existing media/Postcards still work
+
+PHASE 64 — Final Manual QA
+
+Before marking complete, manually verify:
+
+Creation:
+- user can create event draft
+- user can publish event
+- event saves to database
+- event appears in Discovery/Search where allowed
+- invalid event fails gracefully
+
+Discovery/Search:
+- public upcoming events appear
+- private/invite-only events do not leak
+- trip-only events respect trip access
+- event search works by title, city, category, hashtag, host, and time phrase
+- event collections use real events only
+
+Detail:
+- event detail loads
+- event action button is correct
+- host/cohost controls work
+- attendee/request/waitlist counts are accurate
+- status label is accurate
+
+Join Flow:
+- open event: Join → Attending
+- request event: Request to Join → Request Sent
+- host approve → Attending
+- host decline → Declined or none based on app pattern
+- full event → Full or Waitlist
+- Leave works
+- Maybe works
+- Save works
+
+Privacy:
+- blocked users cannot see/join
+- users who blocked viewer are hidden
+- age-ineligible users cannot see/join
+- unverified users cannot join verified-only events
+- low-trust users cannot join trust-gated events
+- exact location is protected
+- participant list respects privacy
+- arrival instructions are attendee-only
+- request answers are host-only
+
+Connections:
+- event can connect to hashtags
+- event can connect to Pulse/Postcards
+- event can connect to Trips
+- event can connect to Telegraph for attendees
+- event can connect to notifications/reminders
+- event can connect to Passport history/stamps/reviews
+- event can connect to Buddy-hosted events
+
+Safety:
+- check-in works
+- safety check works or is safely deferred
+- reports work
+- admin moderation works
+- emergency controls work if implemented
+- cancellation reason saves
+- no-show/reliability signals are safe and auditable
+
+Performance:
+- no client-side all-event loading
+- event lists are paginated
+- event cards do not spam backend requests
+- indexes are in place where needed
+
+Release:
+- migrations are safe
+- database types are updated if needed
+- tests pass
+- no fake production events
+- no private data leaks
+- no broken buttons are exposed
+
+PHASE 65 — Final Release Gate
+
+Before marking Events complete, confirm:
+
+- Backend event truth is unified.
+- Event participant state is unified.
+- Discovery/Search/Event Detail/Passport/Trips all show the same event state.
+- Join/Request/Maybe/Save/Leave works.
+- Host/cohost management works.
+- Privacy/access rules work.
+- Blocked users are respected.
+- Age/verification/trust gates work where enabled.
+- Telegraph event chat uses participant truth.
+- Notifications/reminders do not spam.
+- Check-ins/reviews/stamps connect safely.
+- Admin moderation works.
+- Recurring/drafts/cohosts/waitlist are either implemented or clearly deferred without broken UI.
+- Comments/Q&A are access-controlled.
+- Request questions and arrival instructions are private.
+- Migrations are safe.
+- Tests pass.
+- No fake events.
+- No private data leaks.
+- No unrelated systems were rebuilt.
+
+Deliverable:
+Finish the Events system end-to-end using the existing app architecture. Keep one backend truth for events and event participant states. Do not add fake data. Do not weaken privacy. Do not break Discovery, Search, Pulse, Passport, Trips, Telegraph, Notifications, media/Postcards, or Trust Score.

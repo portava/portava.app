@@ -103,7 +103,7 @@ const POST_COLUMNS =
   "location_privacy_mode, post_status, " +
   "public_lat, public_lng, public_location_label, geofence_radius_meters, " +
   "publish_after_exit, publish_after_time, publish_eligible_at, published_at, location_sensitivity_level, " +
-  "category, save_count";
+  "category, save_count, media_count, has_video, primary_media_type";
 
 /**
  * Author-only column set for GET /posts/pending.  Extends POST_COLUMNS with
@@ -1063,10 +1063,25 @@ router.get("/posts/:postId", async (req, res) => {
     return;
   }
 
-  const [{ data: likedRow }, { data: savedRow }] = await Promise.all([
+  const [{ data: likedRow }, { data: savedRow }, { data: rawMedia }] = await Promise.all([
     sc.from("posts_likes").select("post_id").eq("post_id", postId).eq("user_id", user.id).maybeSingle(),
     sc.from("post_saves").select("post_id").eq("post_id", postId).eq("user_id", user.id).maybeSingle(),
+    sc.from("post_media")
+      .select("id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status")
+      .eq("post_id", postId)
+      .eq("processing_status", "ready")
+      .order("sort_order", { ascending: true }),
   ]);
+
+  // Filter out moderated items; preserve backward-compat mediaUrls field on the base object
+  const media = ((rawMedia ?? []) as any[])
+    .filter((m: any) => m.moderation_status !== "rejected" && m.moderation_status !== "flagged")
+    .map((m: any) => ({
+      id: m.id, mediaType: m.media_type, url: m.public_url,
+      thumbnailUrl: m.thumbnail_url ?? null, durationSeconds: m.duration_seconds ?? null,
+      width: m.width ?? null, height: m.height ?? null,
+      sortOrder: m.sort_order ?? 0, processingStatus: m.processing_status,
+    }));
 
   const base = isAuthor ? post : mapPublicPost(post);
   res.status(200).json({
@@ -1076,6 +1091,7 @@ router.get("/posts/:postId", async (req, res) => {
     saveCount: post.save_count ?? 0,
     likedByMe: !!likedRow,
     savedByMe: !!savedRow,
+    media,
     canLike: true,
     canComment: true,
     canShare: true,

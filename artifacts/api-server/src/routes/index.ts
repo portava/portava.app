@@ -67,6 +67,7 @@ import emergencyContactsRouter from "./emergencyContacts";
 import crashReportRouter from "./crashReport";
 import discoverySearchRouter from "./discoverySearch";
 import searchHistoryRouter from "./searchHistory";
+import postcardsRouter from "./postcards";
 
 const router: IRouter = Router();
 
@@ -132,6 +133,7 @@ router.use(collectionsRouter);
 router.use(wishlistRouter);
 router.use(profileTabsRouter);
 router.use(tripsExpansionRouter);
+router.use(postcardsRouter);
 router.use(stampsRouter);
 router.use(adminStampsRouter);
 router.use(emergencyContactsRouter);

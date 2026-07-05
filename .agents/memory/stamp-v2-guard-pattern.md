@@ -9,6 +9,9 @@ description: stamps.ts uses fail-closed middleware guard; isFlagEnabled is fail-
 ## Why
 `isFlagEnabled` in `lib/featureFlags.ts` is **fail-open**: if the flag row is missing, it returns `true` (treat as enabled). This is correct for mature features whose flag was seeded in an early migration. But `stamp_system_v2_enabled` is seeded by migration 0081 itself — if 0081 hasn't been applied yet, the flag row doesn't exist, `isFlagEnabled` returns `true`, and the route crashes with "relation stamp_definitions does not exist" (500).
 
+## Critical routing order constraint
+`stampsRouter` is registered with `router.use(stampsRouter)` (no path prefix). Its internal `router.use(middleware)` therefore intercepts ALL routes that reach it — not just `/stamps/*`. Any new router registered AFTER `stampsRouter` in `routes/index.ts` will have every request intercepted by the stamp feature-flag check and get 503 when the flag is not set. **Always register new routers BEFORE `router.use(stampsRouter)` in `routes/index.ts`.**
+
 ## How to apply
 Any route file whose underlying tables come from a migration that also seeds the feature flag needs a **fail-closed** check (`data?.enabled === true`) rather than the shared `isFlagEnabled` helper. Place it as a `router.use()` middleware before all route handlers in the file so no handler can bypass it.
 

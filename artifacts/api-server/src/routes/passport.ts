@@ -66,6 +66,25 @@ function mapPostcard(r: any, includePrivate = false) {
   return base;
 }
 
+/** Shape a post_media array for the postcard feed — excludes rejected/flagged items, sorts by sort_order. */
+function buildMediaArray(items: any[]): Array<Record<string, unknown>> {
+  if (!Array.isArray(items)) return [];
+  return items
+    .filter((m: any) => m.moderation_status !== "rejected" && m.moderation_status !== "flagged")
+    .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    .map((m: any) => ({
+      id:               m.id,
+      mediaType:        m.media_type,
+      url:              m.public_url,
+      thumbnailUrl:     m.thumbnail_url ?? null,
+      durationSeconds:  m.duration_seconds ?? null,
+      width:            m.width ?? null,
+      height:           m.height ?? null,
+      sortOrder:        m.sort_order ?? 0,
+      processingStatus: m.processing_status,
+    }));
+}
+
 /** Extract optional viewer ID from Authorization header without failing on missing/invalid tokens. */
 async function getOptionalViewerId(
   sc: any,
@@ -340,7 +359,30 @@ router.get("/users/:username/passport/postcards", async (req, res) => {
     return;
   }
 
-  res.status(200).json({ postcards: (postcards ?? []).map((r) => mapPostcard(r, false)) });
+  // Batch-fetch structured media for all returned postcards (fail-open)
+  const postIds = (postcards ?? []).map((r: any) => r.post_id).filter(Boolean) as string[];
+  let publicMediaByPostId: Record<string, any[]> = {};
+  if (postIds.length > 0) {
+    try {
+      const { data: mediaRows } = await sc
+        .from("post_media")
+        .select("post_id, id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status")
+        .in("post_id", postIds)
+        .eq("processing_status", "ready")
+        .neq("moderation_status", "rejected");
+      for (const m of (mediaRows ?? []) as any[]) {
+        if (!publicMediaByPostId[m.post_id]) publicMediaByPostId[m.post_id] = [];
+        publicMediaByPostId[m.post_id].push(m);
+      }
+    } catch { /* fail-open: missing media is better than a 500 */ }
+  }
+
+  res.status(200).json({
+    postcards: (postcards ?? []).map((r) => ({
+      ...mapPostcard(r, false),
+      media: buildMediaArray(publicMediaByPostId[r.post_id] ?? []),
+    })),
+  });
 });
 
 /* ===========================================================================
@@ -385,6 +427,26 @@ router.get("/me/passport/postcards", async (req, res) => {
     return;
   }
 
+  // Batch-fetch structured media for owner's postcards (fail-open)
+  const ownerPostIds = (data ?? []).map((r: any) => r.post_id).filter(Boolean) as string[];
+  let ownerMediaByPostId: Record<string, any[]> = {};
+  if (ownerPostIds.length > 0) {
+    const sc = getServiceClient();
+    if (sc) {
+      try {
+        const { data: mediaRows } = await sc
+          .from("post_media")
+          .select("post_id, id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status")
+          .in("post_id", ownerPostIds)
+          .eq("processing_status", "ready");
+        for (const m of (mediaRows ?? []) as any[]) {
+          if (!ownerMediaByPostId[m.post_id]) ownerMediaByPostId[m.post_id] = [];
+          ownerMediaByPostId[m.post_id].push(m);
+        }
+      } catch { /* fail-open */ }
+    }
+  }
+
   res.status(200).json({
     postcards: (data ?? []).map((r) => ({
       id: r.id,
@@ -403,6 +465,7 @@ router.get("/me/passport/postcards", async (req, res) => {
       pinnedAt: r.pinned_at ?? null,
       note: r.note ?? null,
       createdAt: r.created_at ?? null,
+      media: buildMediaArray(ownerMediaByPostId[r.post_id] ?? []),
     })),
   });
 });

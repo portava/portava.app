@@ -1,0 +1,2563 @@
+Full Build-Out: Compass Intelligence Engine for Travel Buddy
+
+Goal:
+Build Compass as Travel Buddy’s app-wide intelligence engine. Compass should power personalized discovery, smart search, event/trip/place recommendations, buddy matching, itinerary suggestions, Telegraph recommendations, safety-aware suggestions, Pulse/Postcard ranking, and contextual travel guidance.
+
+Compass must not be a fake chatbot layer. Compass must use real backend/database truth, respect privacy, and connect to existing Travel Buddy systems.
+
+Core Compass rules:
+- No fake recommendations.
+- No hardcoded demo content.
+- No local-only intelligence truth.
+- Compass must use real backend/database data.
+- Compass must respect privacy, blocked users, muted users, invite-only access, age restrictions, verification gates, trust gates, moderation, and location privacy.
+- Compass should explain why it recommends something when useful.
+- Compass should never expose private user data.
+- Compass should never reveal exact live location unless the user intentionally shares it and app policy allows it.
+- Compass should work across Discovery, Search, Trips, Events, Passport, Telegraph, Pulse, Rent a Buddy, Hidden Gems, Places, City pages, and Safety.
+- Build in phases.
+- Audit first, then patch only confirmed gaps.
+- Keep Compass V1 deterministic, privacy-safe, explainable, and connected to real app data.
+- AI can enhance intent/explanations later, but database truth controls eligibility, access, ranking candidates, and actions.
+
+PHASE 1 — Audit Existing Compass / AI / Discovery Truth
+
+First inspect the current codebase before changing anything.
+
+Find:
+- existing Compass files/components
+- existing AI assistant files
+- existing recommendation endpoints
+- Discovery ranking logic
+- Search logic
+- event recommendation logic
+- trip recommendation logic
+- place/hidden gem recommendation logic
+- user/buddy matching logic
+- Telegraph AI recommendation hooks
+- notification/activity recommendation hooks
+- user preference tables
+- profile/interests/language/vibe fields
+- location/GPS permission model
+- delayed posting/location privacy system
+- Trust Score fields
+- verification fields
+- blocked/muted user fields
+- saved/bookmark/attending/maybe/join data
+- Postcards/Pulse activity fields
+- Rent a Buddy tables
+- admin/moderation fields
+- existing AI provider integration
+- existing server route style
+- existing tests
+- existing feature flag/config pattern
+- canonical migrations directory
+
+Report briefly before patching:
+- current Compass/AI implementation
+- current recommendation data sources
+- current user preference data
+- current missing/broken pieces
+- current privacy/access controls
+- current backend routes available
+- whether Compass is currently fake/local or real-backed
+- confirmed canonical migrations directory
+
+PHASE 2 — Define Compass Product Scope
+
+Goal:
+Compass should become the app intelligence layer, not just one screen.
+
+Compass should power:
+- Discovery recommendations
+- Global Search interpretation
+- Events recommendations
+- Trips recommendations
+- Places/Hidden Gems recommendations
+- Rent a Buddy matching
+- Traveler/user matching
+- Pulse/Postcard ranking
+- Telegraph activity recommendations
+- Destination/city suggestions
+- Itinerary ideas
+- Safety-aware suggestions
+- Availability-aware suggestions
+- Language-aware suggestions
+- Trust-aware suggestions
+- Nearby suggestions
+- Time-based suggestions
+- Saved search alerts later
+- Notification suggestions later
+
+Compass surfaces:
+- Discovery “Compass Picks”
+- Search “Ask Compass” fallback
+- Trip “Compass Brief”
+- Event suggestions
+- Place/Hidden Gem suggestions
+- Telegraph recommendation cards
+- Passport “Suggested for you”
+- City/Destination pages
+- Create screen smart suggestions
+- Notifications/activity center where appropriate
+
+Validation:
+- Compass scope is documented in code or implementation notes.
+- Existing screens do not break.
+- Compass does not replace existing backend truth.
+- Compass is clearly separated from normal static content.
+
+PHASE 3 — Compass Data Contract
+
+Goal:
+Create a consistent backend contract for Compass recommendations.
+
+Suggested core route:
+GET /api/compass/recommendations?surface=&city=&country=&lat=&lng=&timeframe=&mode=&limit=&cursor=
+
+Suggested route for intent:
+POST /api/compass/intent
+
+Suggested route for explain:
+GET /api/compass/recommendations/:id/explain
+
+Supported surfaces:
+- discovery
+- search
+- trip
+- event
+- place
+- buddy
+- telegraph
+- passport
+- city
+- pulse
+- create
+- safety
+
+Supported modes:
+- explore
+- plan
+- match
+- safety
+- local_lens
+- night
+- budget
+- solo
+- crew
+
+Recommendation result shape:
+- id
+- type
+  - event
+  - trip
+  - place
+  - hidden_gem
+  - buddy
+  - traveler
+  - user
+  - post
+  - postcard
+  - circle
+  - hashtag
+  - activity
+  - city
+  - safety_tip
+  - compass_action
+- title
+- subtitle
+- description nullable
+- imageUrl/avatarUrl nullable
+- fallbackIcon/fallbackInitials nullable
+- locationPreview nullable
+- startsAt nullable
+- distanceLabel nullable
+- priceLabel nullable
+- trustLabel nullable
+- languageLabel nullable
+- vibeLabel nullable
+- actionLabel nullable
+- actionState nullable
+- destinationRoute nullable
+- reason
+- reasonCodes
+- sourceLabel nullable
+- confidence
+  - high
+  - medium
+  - low
+- privacyState
+- accessState
+- metadata safe for frontend rendering
+- createdAt/updatedAt where relevant
+
+Reason codes:
+- nearby
+- matches_interests
+- matches_language
+- matches_vibe
+- upcoming
+- saved_similar
+- attending_similar
+- friend_attending
+- trusted_host
+- verified_buddy
+- trending_nearby
+- hidden_gem
+- open_to_join
+- fits_availability
+- weather_safe
+- safety_relevant
+- trip_relevant
+- search_intent_match
+- compass_pick
+- budget_friendly
+- solo_friendly
+- group_friendly
+- local_recommended
+
+Rules:
+- Frontend should not need to understand every database table.
+- Backend should return render-ready, public-safe recommendation cards.
+- Every recommendation must include a destinationRoute or a safe action.
+- Recommendations must not include private fields.
+- Score can exist backend-only but should not be exposed to normal users.
+
+Validation:
+- All surfaces can render same result shape.
+- Missing optional fields do not crash UI.
+- Compass result shape works for events, trips, users, buddies, places, posts, hashtags, and actions.
+
+PHASE 4 — Compass Profile / Preference Inputs
+
+Goal:
+Compass should personalize using real user preferences.
+
+Inputs to use where available:
+- onboarding interests
+- user interests
+- travel style
+- vibes
+- languages
+- home country
+- current city
+- chosen Compass city
+- upcoming trips
+- saved places
+- saved events
+- joined events
+- maybe events
+- followed users
+- buddy preferences
+- Rent a Buddy categories
+- availability windows
+- age eligibility
+- verification status
+- Trust Score
+- blocked users
+- muted/hidden users
+- past Postcards/Pulse activity
+- hidden gem saves
+- trip memberships
+- circles/groups
+- safety settings
+- notification preferences
+- location permission status
+
+Rules:
+- Use only data the app is allowed to use.
+- Do not infer or expose sensitive attributes.
+- Do not use private exact location unless permission/policy allows.
+- Do not recommend blocked users or users who blocked the viewer.
+- Do not recommend private content the viewer cannot access.
+- Do not recommend age-ineligible, verification-ineligible, or trust-ineligible events.
+- Compass should still work for new users with limited preferences.
+
+Validation:
+- Compass personalizes using existing profile fields.
+- Compass works for new users with limited data.
+- Compass does not crash when preferences are missing.
+- Blocked/private content is excluded.
+
+PHASE 5 — Compass Onboarding Preferences
+
+Goal:
+Compass should collect lightweight cold-start preferences.
+
+Questions can include:
+- What are you usually looking for?
+- Do you prefer solo plans, groups, or both?
+- Are you more nightlife, food, culture, beach, adventure, or chill?
+- Do you want buddy/local companion suggestions?
+- What languages do you prefer?
+- Do you want safer verified-only suggestions?
+- Do you prefer free/budget, mid-range, or premium options?
+- Do you want people recommendations?
+
+Rules:
+- Preferences should be editable later.
+- Do not infer sensitive traits.
+- Do not force users to answer everything.
+- Users can skip.
+- Use existing onboarding/preferences storage if available.
+- Do not create duplicate preference truth if profile already has these fields.
+
+Validation:
+- Preferences save.
+- Preferences affect Compass ranking.
+- Skipping onboarding still allows Compass to function.
+
+PHASE 6 — Compass Data Sources
+
+Goal:
+Compass should use real app content.
+
+Compass should rank and recommend from:
+- public/joinable events
+- user-accessible trips
+- public/open plans
+- public places
+- hidden gems
+- public Postcards/Pulse posts
+- hashtags
+- public circles/groups
+- Rent a Buddy profiles
+- travelers/users public previews
+- city/destination data
+- activities
+- user saved/bookmarked items
+- attendance/maybe/join state
+- review/check-in/trust signals
+- admin-featured content
+- safety/verified signals
+- moderation status
+- availability data where present
+
+Rules:
+- Do not recommend deleted, banned, suspended, rejected, hidden, or unsafe content.
+- Do not recommend stale events/trips as upcoming.
+- Do not recommend users with incomplete onboarding unless app intentionally allows it.
+- Do not recommend private trip/circle/event unless viewer has access.
+- Do not pull entire tables client-side.
+- Do not use hardcoded production content.
+
+Validation:
+- Compass pulls from real database queries.
+- Compass excludes hidden/rejected/private content.
+- Compass does not use hardcoded data.
+
+PHASE 7 — Compass Recommendation Engine V1
+
+Goal:
+Build the first reliable recommendation engine with deterministic scoring.
+
+Start with backend scoring, not AI hallucination.
+
+Recommended score inputs:
+- exact context match
+- location relevance
+- time relevance
+- category match
+- interest/vibe match
+- language match
+- availability match
+- open/joinable status
+- verification/trust compatibility
+- host/user trust
+- popularity
+- freshness
+- saved/attending history
+- mutual connections
+- friend/crew activity
+- admin-featured boost
+- quality score
+- safety/moderation penalty
+- user feedback history
+- seen/repeat suppression
+- diversity mix
+
+Hard filters:
+- privacy/access
+- blocked users
+- muted/hidden if app rules require hiding
+- age restrictions
+- verification gates
+- trust gates
+- deleted/banned/suspended accounts
+- moderation rejected/hidden
+- capacity/full where action is join
+- past/cancelled events for upcoming surfaces
+- private exact location restrictions
+- invite-only access restrictions
+
+Rules:
+- Hard filters run before scoring.
+- Scoring should be explainable.
+- AI may help interpret intent later, but database truth decides what can be shown.
+- Keep ranking logic in backend/service, not scattered across UI.
+- Moderation and safety must override popularity.
+- Raw activity alone should not dominate ranking.
+
+Validation:
+- Recommendations are stable and explainable.
+- Unsafe/private content never appears.
+- Score reasons map to reasonCodes.
+- Results are not random.
+
+PHASE 8 — Compass Modes
+
+Goal:
+Compass should support named modes so users understand what kind of help they are getting.
+
+Modes:
+- Explore
+  - find events, places, buddies, trips, hidden gems
+- Plan
+  - build itinerary ideas and trip schedules
+- Match
+  - find travelers, buddies, groups, and events that fit the user
+- Safety
+  - suggest safer options, verified hosts, public meetups
+- Local Lens
+  - show what locals/buddies recommend nearby
+- Night Mode
+  - nightlife, bars, late events, safety-aware
+- Budget Mode
+  - free/cheap things to do
+- Solo Mode
+  - good for solo travelers
+- Crew Mode
+  - best options for a group/trip crew
+
+Rules:
+- Modes should guide ranking and UI language.
+- Modes must not bypass privacy/access filters.
+- If mode support is not fully built now, structure the API so mode can be passed later.
+- Do not expose unfinished mode buttons.
+
+Validation:
+- Mode parameter is accepted or safely ignored.
+- Active modes influence recommendations when implemented.
+- Privacy filters remain mandatory.
+
+PHASE 9 — Discovery Compass Picks
+
+Goal:
+Add Compass Picks to Discovery.
+
+Discovery sections:
+- Compass Picks
+- Near You
+- Tonight / This Weekend
+- Open to Join
+- Hidden Gems
+- People You May Vibe With
+- Buddy Matches
+- Trips You Might Like
+- Events You Might Like
+- Places Saved by Similar Travelers
+- Trending Nearby if real data exists
+
+Rules:
+- Discovery should use real Compass endpoint.
+- No fake picks.
+- If Compass has no results, hide section or show safe empty state.
+- Existing Discovery content should still load.
+- Recommendations must include reason text.
+- Discovery must not break if Compass endpoint fails.
+
+Example reason text:
+- “Because you like nightlife and you’re viewing Siargao.”
+- “Open event tonight near General Luna.”
+- “Buddy speaks English and Tagalog.”
+- “Saved by travelers with similar beach interests.”
+- “Trip is open to join this weekend.”
+
+Validation:
+- Compass Picks appear on Discovery.
+- Cards open correct destination.
+- Recommendations respect privacy/access.
+- Existing Discovery does not break.
+- Empty/error states are honest.
+
+PHASE 10 — Search + Compass Intent Layer
+
+Goal:
+Compass should improve Search without replacing backend search truth.
+
+Use Compass for:
+- natural-language query parsing
+- broad intent fallback
+- typo/alias support
+- category inference
+- time inference
+- location inference
+- language/vibe inference
+- “Ask Compass” no-results recovery
+
+Examples:
+- something fun tonight
+- people who speak Spanish in Tokyo
+- beach plans tomorrow
+- nightlife in Manila
+- solo travelers going to Siargao
+- buddy for shopping in Tokyo
+- safe things to do near me
+
+Rules:
+- Search results must still come from real backend data.
+- Compass can translate query intent into filters.
+- Compass must not invent results.
+- If no results exist, show suggestions/actions, not fake cards.
+- Nearby intent should only use location if permission exists or user chooses a city.
+- Search screen still stays blank before typing.
+- Compass should not call AI for every keystroke if deterministic parsing is enough.
+- Debounced search rules remain unchanged.
+
+Validation:
+- Natural search maps to correct filters.
+- No-results fallback shows useful actions.
+- No fake results appear.
+- Privacy/access rules still apply.
+- Search remains blank before typing.
+
+PHASE 11 — Trip Compass Brief
+
+Goal:
+Trips should include a Compass Brief.
+
+Trip Compass Brief should show:
+- next best activity
+- nearby hidden gems
+- upcoming events during trip dates
+- trip crew availability suggestions
+- safety notes
+- weather-aware notes if reliable weather integration exists
+- language tips
+- route/time suggestions if map integration exists
+- saved ideas relevant to trip
+- missing itinerary gaps
+- buddy/local companion suggestions if allowed
+
+Rules:
+- Use trip city/dates/members/preferences.
+- Do not expose private member data.
+- Do not reveal exact user location.
+- Respect trip privacy.
+- Suggestions should be real app content or safe generated guidance clearly labeled.
+- Add-to-trip actions must use real trip backend.
+
+Validation:
+- Trip Compass Brief appears on Trip detail.
+- Suggestions match trip destination/dates.
+- Private trip data does not leak.
+- Tapping suggestions opens correct app pages.
+
+PHASE 12 — Event Compass Suggestions
+
+Goal:
+Compass should help users find and create events.
+
+For event discovery:
+- recommend events based on user interests, language, city, time, availability, trust eligibility, and friends/crew activity
+
+For event creation:
+- suggest event title/category/vibe/tags based on user inputs
+- suggest best time based on availability if data exists
+- suggest location/place if user selected city
+- suggest house rules templates
+- suggest invitees/buddies if allowed
+- suggest safety reminders
+
+Rules:
+- Do not auto-create events without user confirmation.
+- Do not invite users automatically.
+- Do not expose private availability details.
+- Suggested invitees must respect privacy/blocking.
+- Event suggestions must use real event data.
+- Event creation suggestions are optional.
+
+Validation:
+- Event recommendations are relevant.
+- Event creation suggestions are optional.
+- No private data leaks.
+- No auto-invites or auto-published events.
+
+PHASE 13 — Places / Hidden Gems Compass
+
+Goal:
+Compass should recommend places and hidden gems.
+
+Inputs:
+- city
+- current trip
+- interests/vibes
+- saved places
+- time of day
+- event/trip context
+- popularity/trust
+- buddy/local recommendations
+- user safety settings
+- map/location permission
+
+Recommendation types:
+- food
+- nightlife
+- beach
+- shopping
+- landmarks
+- photo spots
+- coworking
+- wellness
+- local favorites
+- arrival support places
+- safe meeting spots
+
+Rules:
+- Use real place/hidden gem data.
+- Do not show unsafe/hidden/reported places.
+- Respect location privacy.
+- If maps/provider data is unavailable, show only database-known places and honest empty state.
+- Do not claim hours/prices unless real data exists.
+
+Validation:
+- Place recommendations appear where needed.
+- Hidden gems open correct detail.
+- Unsafe/hidden places do not appear.
+- Unknown facts are not fabricated.
+
+PHASE 14 — Rent a Buddy Matching
+
+Goal:
+Compass should recommend buddies/local companions safely.
+
+Inputs:
+- user city/destination
+- buddy categories
+- language
+- availability
+- ratings/reviews
+- verification
+- Trust Score
+- response time
+- safety/report status
+- non-dating marketplace boundaries
+- user preferences
+- trip/event context
+
+Buddy recommendation reasons:
+- “Available near Cebu today.”
+- “Speaks English and Tagalog.”
+- “Verified buddy for nightlife.”
+- “Good fit for arrival support.”
+- “Highly rated for shopping help.”
+
+Rules:
+- Only verified/eligible buddies should appear if marketplace requires verification.
+- Do not recommend banned/suspended/reported unsafe buddies.
+- No dating/adult-service framing.
+- Do not expose buddy private schedule beyond availability status.
+- Booking/payment truth must come from marketplace backend, not Compass.
+- Buddy-hosted event recommendations should respect event and marketplace rules.
+
+Validation:
+- Buddy recommendations show real eligible buddies.
+- Recommendations respect non-dating boundaries.
+- Tapping buddy opens Rent a Buddy profile/detail.
+- Booking state is not faked by Compass.
+
+PHASE 15 — Traveler / User Matching
+
+Goal:
+Compass should recommend travelers/users to follow or connect with.
+
+Inputs:
+- shared interests
+- city/trip overlap
+- language match
+- mutual connections
+- shared events/trips/circles
+- Trust Score/verified status
+- recent activity
+- privacy settings
+- blocked/muted status
+
+Rules:
+- Use public-safe profile previews only.
+- Private users can show limited preview only if app policy allows.
+- Respect follow/request truth.
+- Do not recommend users who blocked viewer or are blocked by viewer.
+- Do not expose exact location or private trip membership.
+- Exact reason text must not reveal private saves/trips/attendance.
+
+Validation:
+- Suggested users are relevant.
+- Follow/request button state is real.
+- Private data is not exposed.
+- Blocked users never appear.
+
+PHASE 16 — Telegraph Compass Recommendations
+
+Goal:
+Compass should recommend activities inside Telegraph based on context.
+
+Use cases:
+- user asks friend/group “what should we do?”
+- group is in a trip Telegraph
+- event Telegraph needs nearby places
+- buddy conversation needs suggested activity
+- solo user wants a recommendation sent into Telegraph
+
+Recommendation cards in Telegraph can include:
+- event
+- place
+- hidden gem
+- trip activity
+- buddy
+- safety tip
+- itinerary idea
+- poll suggestion later
+
+Rules:
+- Suggestions must respect participants’ access and privacy.
+- In a group Telegraph, do not recommend content private to only one participant unless sharing is allowed.
+- Auto-translation should apply to Compass messages/cards where Telegraph supports it.
+- Compass should not message users automatically without product-approved trigger.
+- User should confirm before sending recommendations into a chat unless auto-suggestions are intentionally enabled.
+- Private Telegraph content should not be sent to AI outside the current allowed thread context.
+
+Validation:
+- Telegraph can show Compass recommendation cards.
+- Cards open correct pages.
+- Group privacy is respected.
+- No unauthorized private content appears in group chat.
+- Translation does not break.
+
+PHASE 17 — Pulse / Postcard Ranking
+
+Goal:
+Compass should help rank Pulse/Postcard content.
+
+Ranking signals:
+- location relevance
+- hashtags
+- user interests
+- followed users
+- trip/event relevance
+- freshness
+- quality
+- delayed-posting safety
+- engagement
+- trust/verified status
+- moderation status
+
+Rules:
+- Delayed posting/location privacy must be respected.
+- Do not show posts from blocked users.
+- Do not show private posts.
+- Do not expose real-time location from posts.
+- Compass should rank, not fabricate.
+- Rejected/failed media should not be promoted.
+
+Validation:
+- Pulse ranking uses safe signals.
+- Private/delayed/blocked content does not appear incorrectly.
+- Existing Pulse still loads.
+
+PHASE 18 — Safety-Aware Compass
+
+Goal:
+Compass should avoid unsafe recommendations and offer safety-aware guidance.
+
+Safety inputs:
+- app safety flags
+- event/place moderation status
+- blocked users
+- Trust Score
+- verification
+- age restrictions
+- location privacy
+- Safe Return context if available
+- emergency settings
+- report history
+- nighttime/outdoor context when available
+- user trip context
+
+Safety behavior:
+- Avoid recommending unsafe/reported events, places, buddies, users.
+- Prioritize verified hosts/buddies when safety-sensitive.
+- Add safety reminders where appropriate.
+- Suggest public meeting places for first-time buddy meetups.
+- Avoid sharing exact live location.
+- Support “safe things to do near me” with safety-aware filtering.
+- Do not create panic or legal/medical claims.
+- Do not guarantee that something is safe.
+
+Validation:
+- Unsafe/reported content is filtered.
+- Safety tips are helpful and not alarmist.
+- Exact location is not leaked.
+- Compass does not bypass app safety rules.
+
+PHASE 19 — Availability-Aware Compass
+
+Goal:
+Compass should respect user availability.
+
+Inputs:
+- weekly recurring availability
+- trip windows
+- event attendance
+- maybe events
+- conflicts
+- timezone
+- city
+
+Behavior:
+- Recommend events/plans during available windows.
+- Dim or avoid events outside availability.
+- Warn on time conflicts.
+- Suggest best times for event creation.
+- Suggest trip activities that fit open schedule gaps.
+
+Rules:
+- Do not expose availability to other users without permission.
+- Availability should guide ranking, not leak private schedule.
+- Timezone handling must be consistent.
+
+Validation:
+- Recommendations prefer available times.
+- Conflict warnings use backend truth.
+- Private availability is not exposed.
+
+PHASE 20 — Compass Context Memory / Session State
+
+Goal:
+Compass should remember context inside a session without creating unsafe long-term assumptions.
+
+Examples:
+- user searched “Siargao nightlife”
+- user is viewing a trip to Tokyo
+- user is in event creation
+- user is chatting in Telegraph group
+- user is viewing a place
+- user switched Compass city to Cebu
+
+Rules:
+- Session context can improve suggestions.
+- Long-term saved preferences should use explicit profile/preference fields.
+- Do not silently store sensitive inferred preferences.
+- Clearing context/search should reset temporary recommendations.
+- Do not store exact location context longer than needed.
+
+Validation:
+- Compass suggestions adapt to current screen.
+- Sensitive inferred data is not permanently stored.
+- Clearing context works.
+
+PHASE 21 — Compass Explanation Layer / Why This?
+
+Goal:
+Recommendations should feel trustworthy.
+
+Each recommendation should support short privacy-safe explanations.
+
+Examples:
+- “Matches your nightlife vibe.”
+- “Open event tonight near Cebu.”
+- “Your trip crew saved similar places.”
+- “Verified buddy who speaks English.”
+- “Popular with solo travelers this weekend.”
+- “Fits your available time tonight.”
+- “From your selected city.”
+- “From verified buddies.”
+
+Rules:
+- Reasons must be based on real signals.
+- Do not expose private signals from other users.
+- Avoid creepy explanations like exact tracking.
+- Do not say “because you were near this place at 11:43 PM.”
+- Do not reveal private saves, private trips, private attendance, or hidden preferences.
+- Explanations should be short and friendly.
+- “Why this?” should show a little more detail when tapped.
+
+Validation:
+- Recommendation reason appears.
+- Reasons are accurate.
+- Reasons do not reveal private data.
+- Why This is available where useful.
+
+PHASE 22 — Compass Source Labels
+
+Goal:
+Compass should show where a recommendation came from when useful.
+
+Examples:
+- From your saved places
+- From your trip dates
+- From nearby events
+- From verified buddies
+- From travelers with similar interests
+- From trending hashtags
+- From your selected city
+
+Rules:
+- Source labels must be privacy-safe.
+- Do not expose another user’s private activity.
+- Do not say exact tracking-based phrases.
+- Keep source labels short.
+
+Validation:
+- Source labels are useful.
+- Source labels do not leak private behavior.
+- Labels come from real data.
+
+PHASE 23 — Compass Confidence and Uncertainty
+
+Goal:
+Compass should be honest when it is not sure.
+
+Rules:
+- Add confidence levels internally:
+  - high
+  - medium
+  - low
+- Low-confidence suggestions should be phrased carefully.
+- Compass should not overpromise.
+- Avoid:
+  - “best”
+  - “safest”
+  - “guaranteed”
+- Use:
+  - “A good match”
+  - “Worth checking out”
+  - “Might fit your vibe”
+  - “Popular with similar travelers”
+- If there is not enough data, say so honestly.
+
+Validation:
+- Compass does not make fake certainty claims.
+- Low-data users receive honest recommendations.
+- No-result states are honest.
+
+PHASE 24 — Compass Actions
+
+Goal:
+Compass recommendations should be actionable.
+
+Possible actions:
+- Save
+- Join
+- Request to Join
+- Maybe
+- Follow
+- Request Follow
+- Open Telegraph
+- Ask Compass
+- Add to Trip
+- Add to Itinerary
+- Share
+- Book Buddy
+- View Place
+- View Event
+- View Trip
+- Create Event
+- Create Plan
+- Search Nearby
+
+Rules:
+- Action states come from backend truth.
+- Compass must not create fake local state.
+- Private/request-required content uses correct action.
+- Action failures should show safe inline error.
+- Action state must match destination detail pages.
+- Disable live actions when current backend truth is unavailable.
+
+Validation:
+- Actions work from Compass cards.
+- State matches detail page.
+- Failed actions do not corrupt UI.
+- No stale cached action state is treated as current truth.
+
+PHASE 25 — Compass Save for Later
+
+Goal:
+Users should be able to save Compass recommendations.
+
+Actions:
+- Save place
+- Save event
+- Save trip
+- Save buddy
+- Add to trip ideas
+- Add to itinerary
+- Save search/intent later
+
+Rules:
+- Save state must use existing backend truth.
+- Saved Compass items should appear in existing Saved/Trips/Passport areas where appropriate.
+- Do not create a separate Compass-only saved truth unless necessary.
+- Saved state should persist after app restart.
+
+Validation:
+- Saved state persists.
+- Saved state matches detail pages.
+- Saved items are not duplicated.
+
+PHASE 26 — Compass Feedback Loop
+
+Goal:
+Let users improve Compass.
+
+Feedback options:
+- Not Now
+- Not Interested
+- More Like This
+- Hide This
+- Wrong City
+- Already Went
+- Not Safe
+- Too Expensive
+- Wrong Vibe
+- Report
+
+Rules:
+- Not Now hides temporarily.
+- Not Interested reduces similar suggestions longer-term.
+- More Like This increases similar recommendations.
+- Hide This suppresses this exact item.
+- Report routes to moderation/safety if needed.
+- Feedback should affect future ranking.
+- Feedback should not globally punish a host/place unless moderation/reporting is used.
+- Feedback should be private to the user unless it becomes a report.
+
+Validation:
+- User feedback saves.
+- Dismissed recommendations appear less.
+- Feedback does not leak publicly.
+- Not Now and Not Interested behave differently.
+
+PHASE 27 — Compass Personalization Settings
+
+Goal:
+Users should control personalization.
+
+Settings/actions:
+- use current location for recommendations
+- use chosen city for recommendations
+- use trip data for recommendations
+- use saved items for recommendations
+- use event/trip history for recommendations
+- show buddy recommendations
+- show people recommendations
+- allow smart notifications
+- clear Compass preference signals
+- clear Compass feedback history
+- clear recent Compass context
+- reset Compass suggestions
+- stop using location for Compass
+- stop using trip history for Compass
+- stop using saves for Compass
+- stop people recommendations
+- stop buddy recommendations
+- stop smart notifications
+
+Rules:
+- Default should be privacy-safe.
+- Turning off a signal should stop using it.
+- Search and basic app function should still work.
+- Reset should not delete real app content like saved places or trips.
+- Reset only affects Compass personalization signals.
+
+Validation:
+- Settings update successfully.
+- Disabled signals are no longer used.
+- Reset does not delete core app data.
+- Compass still returns general recommendations.
+
+PHASE 28 — Compass Cold Start
+
+Goal:
+Compass should work for brand-new users.
+
+Cold-start signals:
+- selected onboarding interests
+- selected travel style
+- current city/destination
+- manual city choice
+- popular safe public content
+- verified hosts/buddies
+- upcoming public events
+- high-quality hidden gems
+- trending hashtags if real data exists
+
+Rules:
+- No fake results.
+- If no data exists, show helpful empty state.
+- Ask user to set interests or choose destination if needed.
+- Do not force location permission.
+
+Validation:
+- New user gets safe recommendations where data exists.
+- No-data state is clean.
+- No fake data appears.
+
+PHASE 29 — Compass Error / Empty States
+
+Goal:
+Compass should fail gracefully.
+
+States:
+- loading
+- no recommendations yet
+- no location permission
+- no results for this city
+- login required
+- private content unavailable
+- error/retry
+- Compass disabled by feature flag
+
+Copy examples:
+- “No Compass Picks yet.”
+- “Choose a city to get better picks.”
+- “Try saving a few places to personalize Compass.”
+- “Couldn’t load Compass right now. Try again.”
+- “Compass has limited picks here right now. Try events, travelers, or hashtags.”
+
+Rules:
+- Do not show scary errors.
+- Do not show fake placeholders.
+- Keep screen usable if Compass fails.
+- Existing pages should still function without Compass.
+
+Validation:
+- Compass failure does not break Discovery/Search/Trips.
+- Retry works.
+- Empty state is honest.
+- Feature flag off state is clean.
+
+PHASE 30 — City Readiness and Data Quality
+
+Goal:
+Compass should understand when a city has limited content.
+
+Track city readiness signals:
+- number of public events
+- number of active buddies
+- number of places/hidden gems
+- recent Pulse/Postcard activity
+- trusted hosts
+- safe recommendations available
+- number of public trips/plans
+- hashtag activity
+
+City readiness levels:
+- strong city data
+- limited city data
+- no city data yet
+
+Rules:
+- If city data is limited, show honest empty or limited-state messaging.
+- Do not fill gaps with fake content.
+- City readiness can help admin decide where to add content.
+
+Validation:
+- Limited cities show honest messaging.
+- No fake results appear.
+- Compass can still suggest adjacent actions.
+
+PHASE 31 — Create Instead Flow
+
+Goal:
+When Compass cannot find enough results, help users create activity.
+
+Actions:
+- Create Event
+- Start Plan
+- Post in Pulse
+- Find Buddies
+- Search Nearby
+- Ask Compass
+- Choose Another City
+- Start a Trip
+- Invite friends
+
+Rules:
+- Actions should open real app flows.
+- Do not create fake results.
+- No action should auto-publish or auto-message without user confirmation.
+
+Validation:
+- Create Instead actions route correctly.
+- Empty states are useful.
+- No fake content appears.
+
+PHASE 32 — Compass Trust Labels
+
+Goal:
+Compass cards should show subtle public-safe trust labels where useful.
+
+Examples:
+- Verified host
+- Verified buddy
+- Open to join
+- Public meeting place
+- Popular with solo travelers
+- Good for groups
+- Attendees checked in before
+- Trusted host
+- Hosted by verified traveler
+
+Rules:
+- Labels must come from real backend truth.
+- Do not expose internal/private trust details.
+- Do not show sensitive verification details.
+- Do not overstate safety.
+
+Validation:
+- Trust labels are accurate.
+- Labels do not reveal private data.
+- Labels match detail pages.
+
+PHASE 33 — Compass Result Freshness
+
+Goal:
+Compass should avoid old/stale recommendations.
+
+Rules:
+- Events must be upcoming unless user asks for past events.
+- Trips must be upcoming/open unless user asks for history.
+- Posts/Postcards should prefer fresh content.
+- Closed/full/cancelled events should rank lower or be hidden depending on context.
+- Stale places can still show if they are still valid.
+- Compass should refresh results when city, trip, or user context changes.
+- Past/cancelled events should not appear in “Tonight” or “This Weekend.”
+
+Validation:
+- Cancelled events are not recommended as active.
+- Old events do not appear in “Tonight” or “This Weekend.”
+- Results update when the user switches city.
+- Fresh content rotates in.
+
+PHASE 34 — Compass Seen Already Control
+
+Goal:
+Compass should avoid repeating the same cards too often.
+
+Rules:
+- Track recommendations already shown to the user where safe.
+- Reduce repeat frequency.
+- Allow repeat if the item becomes newly relevant, such as an event starting soon.
+- Do not hide critical safety reminders just because they were seen before.
+- Do not store sensitive context unnecessarily.
+
+Validation:
+- Same event/place/user does not dominate Compass Picks.
+- Fresh content rotates in.
+- Critical safety reminders still appear when needed.
+
+PHASE 35 — Compass Diversity Rules
+
+Goal:
+Compass should not show the same kind of recommendation over and over.
+
+Rules:
+- Mix result types when appropriate:
+  - events
+  - trips
+  - places
+  - buddies
+  - travelers
+  - hidden gems
+  - hashtags
+  - posts
+- Avoid showing 10 nightlife cards if the user also likes food, beaches, and culture.
+- Avoid repeating the same place/event too frequently.
+- Avoid over-promoting one host or buddy.
+- Keep recommendations fresh across sessions.
+- New users/content can get limited exposure without bypassing safety.
+
+Validation:
+- Compass feed has healthy variety.
+- Same content does not repeat too often.
+- One host/user cannot dominate recommendations unfairly.
+- Safe new content can still appear.
+
+PHASE 36 — Compass Fairness and Anti-Spam
+
+Goal:
+Compass should not become pay-to-win, spammy, or easily gamed.
+
+Rules:
+- Do not let raw activity alone dominate ranking.
+- Trust, safety, quality, and moderation must override popularity.
+- Repeated spam posts/events should be penalized.
+- New users/content can get limited exposure without bypassing safety.
+- Admin-featured content must still pass safety/privacy filters.
+- Boost hooks must not promote unsafe content.
+- Spammy users/events should not dominate.
+
+Validation:
+- Spammy users/events do not dominate.
+- Safe new content can still appear.
+- Featured content still respects access and safety.
+
+PHASE 37 — Compass Multi-Person Context
+
+Goal:
+Compass should support group/trip crew recommendations.
+
+Use cases:
+- “What should our trip crew do tonight?”
+- “Find something for everyone.”
+- “Suggest a place for this Telegraph group.”
+- “Plan for me and my buddy.”
+
+Rules:
+- Use only group/shared context that participants are allowed to share.
+- Do not expose one member’s private preferences to others.
+- Rank options that fit the group overall.
+- If preferences conflict, explain generally:
+  - “This balances food and nightlife.”
+  - “Good option for a mixed group.”
+- Do not reveal private reasons like “because Sarah saved this place privately.”
+- Group suggestions in Telegraph must respect every participant’s access.
+
+Validation:
+- Group recommendations respect member privacy.
+- Telegraph group suggestions do not leak private data.
+- Shared recommendations are accessible to the group.
+
+PHASE 38 — Compass Compare View Later
+
+Goal:
+Compass can help compare options.
+
+Examples:
+- Compare two events tonight
+- Compare buddies in Cebu
+- Compare nightlife vs food crawl
+- Compare places for a first meetup
+
+Comparison fields:
+- distance/location preview
+- time
+- cost
+- trust/verified labels
+- group fit
+- availability
+- popularity
+- safety-friendly notes
+
+Rules:
+- Do not overstate safety.
+- Do not rank private/inaccessible options.
+- Comparison must use real fields only.
+- If comparison is not built in V1, do not expose broken UI.
+
+Validation:
+- Compare view uses real accessible content.
+- Private content is excluded.
+- Unknown facts are not fabricated.
+
+PHASE 39 — Compass Ask Follow-Up Flow
+
+Goal:
+Compass should support lightweight follow-up questions.
+
+Examples:
+- “More social”
+- “Cheaper”
+- “Closer”
+- “Only verified”
+- “Tonight only”
+- “Less nightlife”
+- “Good for solo”
+- “Show me buddies instead”
+
+Rules:
+- Follow-ups should modify filters/ranking.
+- Do not reset the whole context unless user clears it.
+- Do not store follow-up preferences permanently unless user explicitly saves them.
+- Follow-up context should be session-based unless saved.
+
+Validation:
+- Follow-up changes results.
+- User can reset or clear context.
+- Follow-up does not leak private data.
+
+PHASE 40 — Compass Notification Suggestions
+
+Goal:
+Compass can power smart notifications later.
+
+Possible notifications:
+- event you may like tonight
+- trip activity suggestion
+- buddy available near your destination
+- hidden gem near saved place
+- safety reminder for event
+- itinerary gap reminder
+- saved search alert
+
+Rules:
+- Do not spam.
+- Respect notification preferences.
+- Use real data only.
+- No private data leaks.
+- Do not notify blocked users or about blocked users.
+- Saved search alerts should require explicit user opt-in.
+- Smart notifications can be deferred if not ready.
+
+Validation:
+- Notification hooks are safe.
+- No automatic spam is introduced.
+- Preferences are respected.
+
+PHASE 41 — Compass Admin Controls
+
+Goal:
+Admins should be able to control what Compass can promote.
+
+Compass must respect:
+- hidden events
+- suppressed users
+- banned hashtags
+- reported places
+- rejected media
+- moderation-hidden posts
+- suspended accounts
+- unsafe Rent a Buddy profiles
+- admin-featured content
+- admin-suppressed content
+
+Admin controls later:
+- suppress recommendation
+- feature recommendation
+- hide unsafe category
+- review Compass-ranked content
+- audit why something was promoted
+- featured cities
+- suppressed categories
+- boost verified hosts
+- boost Rent a Buddy
+- suppress unsafe hashtags
+- city launch priorities
+- minimum quality threshold
+- recommendation mix percentages
+
+Rules:
+- Use existing moderation/admin truth.
+- Do not create separate moderation truth.
+- Admin actions should be auditable.
+- Admin boosts must still respect privacy, safety, and moderation filters.
+- Unsafe content can never be promoted.
+
+Validation:
+- Hidden/suppressed content does not appear.
+- Featured safe content can rank higher.
+- Unsafe content is never promoted.
+- Admin actions do not create separate truth.
+
+PHASE 42 — Compass Ranking Audit Mode
+
+Goal:
+Developers/admins should be able to inspect why Compass recommended something.
+
+For internal/admin/debug use only, expose:
+- candidate type
+- candidate id
+- score components
+- hard filters applied
+- reason codes
+- excluded reason if filtered
+- privacy/access decision
+- moderation decision
+- final rank
+- engine version
+- ranking version
+
+Rules:
+- Debug details are not visible to normal users.
+- Do not expose private user data in debug logs.
+- Use existing admin/debug permission system.
+- This should help diagnose “why did Compass show this?” issues.
+
+Validation:
+- Admin/debug can inspect recommendation logic.
+- Normal users cannot access internal ranking details.
+- Debug mode does not leak private fields.
+
+PHASE 43 — Compass Analytics
+
+Goal:
+Track safe analytics to improve recommendations.
+
+Track:
+- recommendation viewed
+- recommendation clicked
+- recommendation dismissed
+- save/join/follow/book action
+- surface
+- result type
+- reason code
+- no-result fallback
+- Compass query intent
+- search-to-click flow
+- mode used
+- engine version
+- ranking version
+
+Rules:
+- Avoid storing sensitive data unnecessarily.
+- Analytics must not be source of truth.
+- Respect privacy settings/policy.
+- Do not store private exact location in analytics unless app policy explicitly permits.
+- Analytics should not override real backend state.
+
+Validation:
+- Analytics events fire where supported.
+- Analytics do not expose private fields.
+- Analytics do not replace real backend state.
+
+PHASE 44 — Compass Versioning
+
+Goal:
+Compass ranking logic should be trackable as it evolves.
+
+Add:
+- compass_engine_version
+- ranking_version
+- reason_code_version if needed
+
+Rules:
+- Store version in analytics/debug logs.
+- Use versioning to compare recommendation quality over time.
+- Do not expose internal versions to normal users unless needed.
+
+Validation:
+- Recommendation events can be tied to engine version.
+- Debugging can identify which ranking logic was used.
+
+PHASE 45 — Compass A/B Testing Hooks Later
+
+Goal:
+Prepare for future recommendation experiments.
+
+Rules:
+- Do not overbuild experiments now.
+- Leave clean hooks for testing ranking strategies later.
+- Experiment assignment must not bypass privacy/access filters.
+- Experiments should never expose unsafe content.
+- All variants must use the same hard privacy filters.
+
+Validation:
+- Future ranking experiments have a safe path.
+- Privacy filters remain mandatory.
+
+PHASE 46 — Compass AI Provider Layer
+
+Goal:
+If AI is used, isolate it safely.
+
+Use AI for:
+- intent parsing
+- natural-language explanation polishing
+- itinerary text generation
+- search query expansion
+- safe suggestion phrasing
+
+Do not use AI for:
+- privacy/access decisions
+- eligibility decisions
+- payment truth
+- booking truth
+- attendance truth
+- verification truth
+- Trust Score truth
+- location truth
+- moderation truth
+
+Rules:
+- Database filters must run before AI-generated phrasing.
+- AI must only receive minimal safe context.
+- Do not send private fields unnecessarily.
+- Do not send exact locations unless required and permitted.
+- AI output must be grounded in returned database candidates.
+- If AI fails, deterministic recommendations still work.
+- Add provider timeout/fallback.
+- AI must not invent events, users, places, prices, hours, or safety claims.
+- AI output should be validated against real candidate IDs before display.
+
+Validation:
+- AI failure does not break Compass.
+- AI does not invent unavailable recommendations.
+- AI prompts do not include private/sensitive fields unnecessarily.
+- AI output maps back to real records.
+
+PHASE 47 — Compass Cost Controls
+
+Goal:
+AI usage should not become expensive or slow.
+
+Rules:
+- Use deterministic backend ranking by default.
+- Use AI only for intent parsing, summaries, explanations, and itinerary text.
+- Cache AI intent parsing where safe.
+- Rate-limit AI endpoints.
+- Add timeouts and fallbacks.
+- Do not call AI for every card.
+- Do not call AI for every feed refresh if deterministic results are enough.
+
+Validation:
+- Compass works when AI provider is down.
+- AI usage is bounded.
+- Compass remains fast.
+
+PHASE 48 — Compass Prompt Safety
+
+Goal:
+If Compass uses AI prompts, keep prompts safe and grounded.
+
+Rules:
+- Send minimal safe context only.
+- Do not send private fields unless explicitly needed and permitted.
+- Do not send exact location unless policy allows.
+- Do not send private Telegraph messages outside the current allowed thread context.
+- Tell AI to only summarize or explain provided candidates.
+- AI must not invent events, users, places, prices, hours, or safety claims.
+- AI output should be validated against real candidate IDs before display.
+
+Validation:
+- AI cannot create fake recommendation cards.
+- AI explanations match real data.
+- Private data is not included in prompts unnecessarily.
+
+PHASE 49 — Compass Itinerary Builder
+
+Goal:
+Compass should suggest itinerary ideas without replacing Trips.
+
+Use cases:
+- “Plan my day in Cebu”
+- “What should I do tonight in Manila?”
+- “Build a beach day in Siargao”
+- “Fill my free afternoon in Tokyo”
+- “Suggest a 3-hour food crawl”
+
+Inputs:
+- user destination
+- time window
+- interests
+- saved places
+- events
+- hidden gems
+- buddy availability
+- map/route data if available
+- opening hours if available
+- safety signals
+
+Output:
+- suggested timeline
+- places/events
+- estimated time blocks
+- optional buddy suggestion
+- safety note
+- save/add to trip actions
+
+Rules:
+- Itinerary items must be real app places/events where shown as cards.
+- Generated text guidance should be clearly generic if not tied to a real listing.
+- Do not claim opening hours/prices unless real data exists.
+- Add to Trip should use real trip backend.
+- If itinerary builder is V2, do not expose broken V1 UI.
+
+Validation:
+- Itinerary suggestions are useful.
+- Cards open real content.
+- Add to Trip works where supported.
+- Unknown facts are not fabricated.
+
+PHASE 50 — Compass Create Assistant
+
+Goal:
+Compass should assist users creating content.
+
+Support:
+- event title suggestions
+- event category/vibe suggestions
+- event rules templates
+- hashtag suggestions
+- trip title/itinerary suggestions
+- Postcard caption suggestions
+- place/hidden gem description polish
+- Telegraph message suggestion if user asks
+
+Rules:
+- User must approve before publishing/sending.
+- Do not auto-post.
+- Do not auto-message.
+- Do not overwrite user content without confirmation.
+- Suggestions should match app tone.
+- Suggested hashtags/categories must not bypass moderation.
+
+Validation:
+- Suggestions appear where useful.
+- User approval is required.
+- No content is published automatically.
+
+PHASE 51 — Compass Safety Boundaries
+
+Goal:
+Compass should avoid risky outputs.
+
+Compass must not:
+- encourage unsafe meetups
+- reveal private locations
+- bypass age/verification/trust gates
+- recommend blocked users
+- promote adult/dating services through Rent a Buddy
+- recommend reported unsafe events/places/buddies
+- provide emergency/legal/medical certainty beyond app scope
+- create fake guarantees like “this place is safe”
+- expose internal Trust Score details if not public
+- present sensitive assumptions as facts
+
+Compass should:
+- recommend public meeting spots when appropriate
+- encourage using in-app Telegraph for coordination
+- suggest verified buddies/hosts for safety-sensitive use cases
+- point to emergency/safety features when needed
+- use calm, helpful language
+
+Validation:
+- Safety-sensitive queries are handled appropriately.
+- Compass does not bypass app rules.
+- Unsafe content is not promoted.
+
+PHASE 52 — Compass Data Privacy / Permissions
+
+Goal:
+Compass must be privacy-safe.
+
+Rules:
+- Use viewer-specific access control on every query.
+- Do not include unauthorized private content in candidate sets.
+- Do not store sensitive inferred traits.
+- Do not expose other users’ private preferences.
+- Do not expose exact live location.
+- Do not expose private trip/circle membership.
+- Do not expose join request answers or arrival instructions.
+- Do not expose private Telegraph content to Compass unless explicitly used in that thread and permitted.
+- Respect user personalization settings.
+- Respect delete/account privacy state.
+- If location is needed, ask only when useful and always offer manual city choice.
+
+Validation:
+- Privacy tests pass.
+- Blocked/private content is excluded at query level.
+- Compass prompts do not contain private fields.
+- Location prompt behavior is not aggressive.
+
+PHASE 53 — Location Permission and City Switcher
+
+Goal:
+Compass should support both current-location and chosen-city discovery.
+
+Rules:
+- Do not request location automatically.
+- Ask for location only when useful.
+- Always allow manual city selection.
+- User can switch Compass context to another city or trip destination.
+- Compass should clearly show which city/context it is using.
+- Compass should not assume the user only wants their current city.
+
+Examples:
+- Show me Tokyo.
+- Switch to Cebu.
+- Plan for Manila next week.
+
+Validation:
+- Manual city works without GPS.
+- Location prompt appears only when needed.
+- Results update when city context changes.
+
+PHASE 54 — Compass Database Tables
+
+Goal:
+Add storage only where needed.
+
+Suggested tables if not already present:
+
+compass_feedback:
+- id
+- user_id
+- recommendation_type
+- recommendation_id
+- feedback_type
+  - not_now
+  - not_interested
+  - more_like_this
+  - hide
+  - wrong_city
+  - already_went
+  - not_safe
+  - wrong_vibe
+  - too_expensive
+  - report
+- surface
+- reason_codes jsonb nullable
+- created_at
+
+compass_recent_context:
+- id
+- user_id
+- surface
+- context_type
+- context_id nullable
+- query_text nullable
+- city nullable
+- country nullable
+- mode nullable
+- expires_at
+- created_at
+
+compass_saved_searches later:
+- id
+- user_id
+- query_text
+- filters jsonb
+- alert_enabled boolean default false
+- created_at
+- updated_at
+
+compass_analytics_events if app lacks analytics:
+- id
+- user_id nullable
+- surface
+- event_type
+- result_type nullable
+- result_id nullable
+- reason_codes jsonb nullable
+- metadata jsonb nullable
+- compass_engine_version nullable
+- ranking_version nullable
+- created_at
+
+compass_settings if app lacks preference settings:
+- id
+- user_id
+- use_location boolean
+- use_trip_data boolean
+- use_saved_items boolean
+- use_history boolean
+- show_buddy_recommendations boolean
+- show_people_recommendations boolean
+- allow_smart_notifications boolean
+- created_at
+- updated_at
+
+Rules:
+- Do not duplicate existing analytics/preferences tables.
+- Use existing tables if already present.
+- Keep migrations additive.
+- Add RLS/policies if Supabase uses RLS.
+- Do not store sensitive inferred traits.
+
+Validation:
+- Migrations apply cleanly.
+- RLS blocks cross-user feedback/context/settings reads.
+- Existing database types updated if needed.
+
+PHASE 55 — Compass API Endpoints
+
+Goal:
+Expose backend Compass services cleanly.
+
+Suggested endpoints:
+- GET /api/compass/recommendations
+- POST /api/compass/intent
+- POST /api/compass/feedback
+- GET /api/compass/context
+- POST /api/compass/context
+- DELETE /api/compass/context
+- GET /api/compass/settings
+- PATCH /api/compass/settings
+- POST /api/compass/itinerary
+- POST /api/compass/create-suggestions
+- GET /api/compass/explain
+- POST /api/compass/report
+- GET /api/compass/debug/recommendations only if admin/debug tools exist
+
+Rules:
+- Auth where personalization is needed.
+- Public-safe limited recommendations can be allowed for unauthenticated users only if app supports guest mode.
+- Validate all inputs.
+- Rate-limit AI/intent/itinerary endpoints.
+- Never return private data.
+- Debug routes must be admin-only.
+
+Validation:
+- Endpoints validate input.
+- Unauthorized requests fail where needed.
+- Responses use consistent result shape.
+- Rate limits apply where app pattern supports it.
+- Debug route is not available to normal users.
+
+PHASE 56 — Compass UI Components
+
+Goal:
+Build reusable Compass UI.
+
+Components:
+- CompassCard
+- CompassSection
+- CompassReasonPill
+- CompassSourceLabel
+- CompassTrustLabel
+- CompassActionButton
+- CompassEmptyState
+- CompassLoadingState
+- CompassErrorState
+- CompassInlineSuggestion
+- CompassBrief
+- CompassItineraryBlock
+- CompassFeedbackMenu
+- AskCompassButton
+- WhyThisButton
+- CompassModeSelector
+- CompassCitySwitcher
+
+Rules:
+- Use existing app design system.
+- Mobile-first.
+- Do not overcrowd screens.
+- Cards should clearly show type and reason.
+- Actions should use backend truth.
+- Accessibility labels required.
+- UI tone should be helpful, travel-savvy, friendly, safety-aware, not pushy, not creepy, and not robotic.
+
+Validation:
+- Components render all result types.
+- Loading/error/empty states work.
+- Touch targets are safe.
+- UI matches app style.
+- Accessibility labels exist.
+
+PHASE 57 — Compass in Discovery UI
+
+Goal:
+Integrate Compass into Discovery cleanly.
+
+Add:
+- Compass Picks section
+- reason text
+- type labels
+- source labels where useful
+- direct action buttons where safe
+- “Ask Compass” entry
+- feedback menu
+- Why This button
+- city switcher if useful
+
+Rules:
+- Hide empty Compass sections.
+- Do not block Discovery if Compass fails.
+- Existing Discovery content remains visible.
+- No fake recommendations.
+
+Validation:
+- Discovery still loads without Compass.
+- Compass cards work.
+- Feedback works.
+- Why This works.
+- Existing Discovery sections still load.
+
+PHASE 58 — Compass in Search UI
+
+Goal:
+Integrate Compass into dedicated Search screen.
+
+Add:
+- natural language intent parsing for 2+ character query
+- “Compass understood: events tonight in Cebu” optional summary
+- no-results recovery actions
+- Ask Compass button
+- query suggestions based on real content
+- typo/alias help where supported
+- follow-up chips:
+  - More social
+  - Cheaper
+  - Closer
+  - Only verified
+  - Tonight only
+  - Less nightlife
+  - Good for solo
+  - Show me buddies instead
+
+Rules:
+- Search screen remains blank before typing.
+- Compass does not create fake results.
+- Search results still use unified search backend.
+- Follow-ups modify filters/ranking without permanently saving preferences unless user asks.
+
+Validation:
+- Blank state remains blank.
+- Compass fallback works after valid query.
+- No fake results appear.
+- Follow-ups work.
+
+PHASE 59 — Compass in Trips UI
+
+Goal:
+Add Trip Compass Brief.
+
+Show:
+- top recommendations for trip
+- itinerary gaps
+- events during trip
+- hidden gems
+- safety note
+- buddy suggestions if allowed
+- add-to-trip actions
+- crew-friendly suggestions if group context is available
+
+Rules:
+- Respect trip privacy.
+- Do not expose member private data.
+- Add-to-trip uses real backend.
+- Group recommendations must not reveal private member signals.
+
+Validation:
+- Trip Compass Brief works.
+- Actions work.
+- Privacy is respected.
+- Group suggestions are safe.
+
+PHASE 60 — Compass in Telegraph UI
+
+Goal:
+Add Compass recommendation cards to Telegraph.
+
+Add:
+- Ask Compass in chat
+- Suggest activity
+- Share recommendation into chat
+- Poll suggestion later
+- Translation support where available
+
+Rules:
+- User confirms before sending card/message.
+- Group privacy/access rules enforced.
+- No private one-user-only recommendation shared to group unless allowed.
+- Auto-translation should still work.
+
+Validation:
+- Telegraph recommendation card works.
+- Translation does not break.
+- Private content is not shared incorrectly.
+
+PHASE 61 — Compass in Events UI
+
+Goal:
+Add Compass event intelligence.
+
+Add:
+- event recommendations
+- similar events
+- people/buddies who match event context if allowed
+- host creation suggestions
+- rule templates
+- time/location suggestions
+- safety reminders
+- compare similar events later if safe
+
+Rules:
+- No auto-invites.
+- No private availability leaks.
+- Suggestions are optional.
+- Actions use event backend truth.
+
+Validation:
+- Event suggestions appear.
+- Creation suggestions require user approval.
+- Private data does not leak.
+
+PHASE 62 — Compass in Passport UI
+
+Goal:
+Add Compass personalization to Passport.
+
+Show to owner:
+- suggested events
+- suggested trips
+- suggested buddies
+- suggested travelers
+- suggested profile improvements
+- suggested Passport Stamps to complete
+- hidden gems near trips
+
+Public viewer:
+- only public-safe suggestions if any
+- do not reveal owner private preferences
+
+Rules:
+- Owner-only suggestions must not appear to public viewers.
+- Profile improvement suggestions should be private to owner.
+- Follow/request states use backend truth.
+
+Validation:
+- Owner sees private suggestions.
+- Public viewer does not see private suggestions.
+- Suggested users/buddies respect privacy.
+
+PHASE 63 — Compass in Create Flow
+
+Goal:
+Compass should help create events/trips/posts.
+
+Add:
+- title suggestions
+- caption polish
+- hashtag suggestions
+- category/vibe suggestions
+- location suggestions
+- safety/rule templates
+- trip itinerary prompts
+
+Rules:
+- User approves before applying/publishing.
+- No auto-posting.
+- No fake data.
+- Suggestions should not bypass moderation or policy.
+
+Validation:
+- Suggestions work.
+- User approval required.
+- No content publishes automatically.
+
+PHASE 64 — Compass City Packs Later
+
+Goal:
+Prepare for curated city packs.
+
+Examples:
+- First Night in Tokyo
+- Solo Weekend in Cebu
+- Siargao Nightlife Starter Pack
+- Manila Food Crawl
+- Da Nang Hidden Gems
+- Rainy Day Plans
+
+Rules:
+- Packs should use real app content where cards are shown.
+- Generated guidance must be clearly generic if not tied to real listings.
+- No fake events/places/buddies.
+- Do not expose City Packs UI until there is real content or honest generic guidance.
+
+Validation:
+- City pack structure does not create fake production data.
+- Real cards open correct pages.
+
+PHASE 65 — Compass Monetization Hooks Later
+
+Goal:
+Prepare Compass for future monetization without making it spammy.
+
+Possible future hooks:
+- featured verified buddy
+- featured public event
+- promoted hidden gem
+- partner place
+- premium itinerary planning
+
+Rules:
+- Paid/promoted results must be clearly labeled.
+- Sponsored/boosted content must still pass safety, privacy, moderation, and quality filters.
+- Paid placement must not override blocked/private/ineligible rules.
+- Do not build paid Compass placements until monetization system is ready.
+
+Validation:
+- No unlabeled promoted content.
+- Sponsored content cannot bypass safety.
+- No broken monetization buttons appear.
+
+PHASE 66 — Compass Legal / Safety Copy
+
+Goal:
+Compass should have small safety language where needed.
+
+Examples:
+- “Use your judgment and meet in public places.”
+- “Check details with the host before going.”
+- “Travel times and availability may change.”
+- “Compass suggestions are based on available app data.”
+
+Rules:
+- Do not overload the UI with warnings.
+- Use light, practical safety copy.
+- Avoid legal/medical/emergency certainty.
+- Do not overpromise.
+
+Validation:
+- Safety copy is present where useful.
+- UI is not cluttered.
+- Copy is calm and practical.
+
+PHASE 67 — Compass User Reporting
+
+Goal:
+Users should be able to report bad Compass recommendations.
+
+Report reasons:
+- irrelevant
+- wrong city
+- unsafe
+- spam
+- offensive
+- misleading
+- private info concern
+- adult/dating behavior
+- other
+
+Rules:
+- Reporting a recommendation should connect to existing moderation if the target is content/user/event/place.
+- Reporting Compass itself should help improve ranking.
+- “Unsafe” should route to safety/moderation flow where needed.
+- Reporter privacy should be protected.
+
+Validation:
+- User can report bad recommendation.
+- Report reaches moderation where appropriate.
+- Recommendation can be suppressed.
+
+PHASE 68 — Compass Offline and Poor Connection Behavior
+
+Goal:
+Compass should fail safely when network is weak.
+
+Rules:
+- Do not show fake recommendations.
+- If cached recommendations exist, label them as previously loaded if necessary.
+- Disable live actions when backend truth is unavailable.
+- Show retry state when Compass cannot refresh.
+- Never let cached state override current join/save/follow truth.
+- Existing screens should continue to work.
+
+Validation:
+- Compass failure does not crash app.
+- Cached cards do not fake current action states.
+- Retry works.
+
+PHASE 69 — Compass Performance
+
+Goal:
+Compass should stay fast.
+
+Tasks:
+- Use backend queries with indexes.
+- Paginate recommendations.
+- Cache safe recommendation results where appropriate.
+- Avoid N+1 queries.
+- Do not compute heavy AI prompts for every feed load.
+- Use deterministic scoring first.
+- AI intent parsing should be rate-limited and cached when safe.
+- Cards should not make per-card permission requests if avoidable.
+- Use aggregate fields for counts/popularity.
+
+Potential indexes:
+- events: city, starts_at, status, visibility, category
+- trips: destination, starts_at, visibility, status
+- places: city, category, moderation_status
+- posts: city, created_at, visibility, moderation_status
+- users/profiles: city, languages, interests, verification_status
+- buddies: city, categories, availability, verification_status
+- hashtags: tag, usage_count
+- saves/attendance: user_id, content_type, content_id
+- blocks/mutes: blocker_id, blocked_id
+- compass_feedback: user_id, recommendation_type, recommendation_id
+- compass_recent_context: user_id, expires_at
+
+Validation:
+- Compass loads quickly.
+- No giant client-side table loads.
+- Pagination works.
+- No obvious N+1 request spam.
+- AI calls are bounded.
+
+PHASE 70 — Compass Kill Switch
+
+Goal:
+Admins should be able to disable Compass surfaces if something goes wrong.
+
+Controls:
+- disable all Compass recommendations
+- disable Compass in Discovery
+- disable Compass in Search
+- disable Compass in Telegraph
+- disable AI-powered intent parsing
+- disable smart notifications
+- disable buddy recommendations
+- disable people recommendations
+- disable itinerary builder
+- disable create suggestions
+
+Rules:
+- Use existing feature flag/config system.
+- Disabled Compass should fail gracefully.
+- App should still work without Compass.
+- Disabled surfaces should hide buttons/cards cleanly.
+
+Validation:
+- Compass can be turned off without breaking Discovery/Search/Trips.
+- Disabled surfaces hide buttons/cards cleanly.
+- No broken UI remains visible.
+
+PHASE 71 — Compass Documentation
+
+Goal:
+Future developers should understand Compass.
+
+Document:
+- what Compass is
+- where Compass appears
+- recommendation result shape
+- hard filters
+- ranking signals
+- reason codes
+- privacy rules
+- AI provider boundaries
+- feedback behavior
+- settings behavior
+- city readiness
+- kill switch
+- testing strategy
+- known deferred features
+- V1 vs V2 scope
+
+Validation:
+- Compass architecture is documented.
+- Future patches do not create separate recommendation truths.
+
+PHASE 72 — Testing
+
+Add tests for:
+
+Backend:
+- recommendations endpoint returns safe shape
+- privacy filtering
+- blocked users filtering
+- muted/hidden filtering
+- age restriction filtering
+- verification gate filtering
+- trust gate filtering
+- deleted/banned/suspended content hidden
+- moderation-hidden content hidden
+- event/trip/place/user/buddy/hashtag/post result types
+- reason codes are accurate
+- source labels are safe
+- confidence exists and is valid
+- pagination works
+- feedback saves
+- feedback affects future ranking where implemented
+- Not Now differs from Not Interested
+- intent parsing maps query to filters
+- AI failure fallback
+- rate limiting where implemented
+- city readiness limited state
+- kill switch disables surfaces
+- debug route admin-only
+
+Frontend:
+- CompassCard renders all types
+- Compass Picks render on Discovery
+- Search Compass fallback appears after query
+- Trip Compass Brief renders
+- Telegraph recommendation card renders
+- action buttons use backend truth
+- empty/loading/error states work
+- feedback menu works
+- Why This works
+- city switcher works
+- mode selector works if exposed
+- no fake placeholders
+- accessibility labels exist
+
+Privacy:
+- private trip not recommended to unauthorized user
+- private event not recommended
+- blocked user not recommended
+- user who blocked viewer not recommended
+- private location not exposed
+- private saves/trips/attendance not revealed in reasons
+- group Telegraph does not expose private content
+- AI prompt does not include unauthorized private fields
+
+Regression:
+- Discovery still loads
+- Search still works
+- Trips still load
+- Events still load
+- Passport still loads
+- Telegraph still works
+- Pulse still loads
+- Rent a Buddy still works where present
+- Places/Hidden Gems still work
+- Notifications still work if touched
+
+PHASE 73 — Manual QA
+
+Before marking complete, manually verify:
+
+Discovery:
+- Compass Picks show real data
+- reasons are accurate
+- source labels are safe
+- cards open correct pages
+- feedback works
+- Why This works
+- empty/error states are honest
+
+Search:
+- blank before typing
+- query intent works
+- no-results fallback works
+- follow-up chips work if implemented
+- no fake results
+
+Trips:
+- Trip Compass Brief uses trip city/dates
+- suggestions open real content
+- add-to-trip works if implemented
+- group privacy is respected
+
+Events:
+- Compass suggests relevant events
+- creation suggestions are optional
+- privacy gates respected
+- join/request/maybe actions match detail page
+
+Telegraph:
+- recommendation card can be shared safely
+- group privacy is respected
+- translation still works
+- user confirms before sending
+
+Places/Hidden Gems:
+- recommendations open correct detail
+- hidden/reported places excluded
+- unknown hours/prices are not fabricated
+
+Rent a Buddy:
+- buddy recommendations are verified/eligible where required
+- non-dating boundaries respected
+- booking truth is not faked
+
+Passport:
+- owner suggestions remain private
+- public viewer does not see private suggestions
+- follow/request state is real
+
+Privacy/Safety:
+- blocked users excluded
+- private content excluded
+- exact location not leaked
+- unsafe/reported content not promoted
+- personalization settings respected
+- Compass reasons are not creepy
+
+Performance:
+- no giant client-side loads
+- no N+1 request spam
+- pagination works
+- AI failures fall back safely
+- kill switch works
+
+PHASE 74 — Compass Launch Scope
+
+Goal:
+Define what is actually exposed in V1 versus later.
+
+Compass V1 should include:
+- Discovery Compass Picks
+- Search intent fallback
+- Trip Compass Brief
+- Event recommendations
+- Place/hidden gem recommendations
+- Buddy suggestions
+- privacy-safe explanations
+- source labels
+- Why This
+- feedback controls
+- deterministic backend ranking
+- empty/error states
+- kill switch
+- tests
+
+Compass V2 can add:
+- full itinerary builder
+- smart notifications
+- saved search alerts
+- city packs
+- advanced AI explanations
+- admin tuning dashboard
+- A/B testing
+- compare view
+- monetization/promoted placements
+- advanced group planning
+
+Rules:
+- Do not expose unfinished V2 buttons.
+- V1 must be stable, real-data-backed, and privacy-safe.
+- Deferred features should be structured cleanly without broken UI.
+
+Validation:
+- V1 surfaces work.
+- V2 features are not exposed as broken buttons.
+- Code has clean extension points.
+
+PHASE 75 — Compass Acceptance Criteria
+
+Compass V1 is complete only when:
+- Discovery Compass Picks use real backend data.
+- Search fallback understands basic intent without fake results.
+- Trip Compass Brief works from real trip context.
+- Events/places/buddies recommendations use real records.
+- Recommendation actions use backend truth.
+- Privacy/access filters run before ranking.
+- Blocked/private/unsafe content is excluded.
+- Reasons are accurate and not creepy.
+- Source labels are privacy-safe.
+- Feedback works.
+- Why This works.
+- Empty/error states are honest.
+- Compass can be disabled safely.
+- AI failures do not break Compass.
+- Tests pass.
+- Existing app features still work.
+- No unrelated systems are rebuilt.
+
+PHASE 76 — Final Release Gate
+
+Before marking Compass complete, confirm:
+- Compass uses real backend/database candidates.
+- Compass hard-filters access/privacy before ranking.
+- Compass never recommends blocked/private/unsafe content.
+- Compass does not expose exact live location.
+- Compass does not invent fake recommendations.
+- Compass action states match backend truth.
+- Compass has honest reasons and confidence behavior.
+- Compass feedback/settings work where implemented.
+- Compass fails safely offline.
+- Compass AI usage is bounded and grounded.
+- Compass debug/audit tools are admin-only.
+- Compass is documented.
+- Compass kill switch works.
+- Tests pass.
+- Existing Discovery, Search, Trips, Events, Passport, Telegraph, Pulse, Places, and Rent a Buddy still work.
+- No fake production recommendations.
+- No private data leaks.
+- No unrelated systems were rebuilt.
+
+Deliverable:
+Build Compass as Travel Buddy’s app-wide intelligence engine using existing architecture and real backend truth. Keep V1 deterministic, privacy-safe, explainable, fast, and deeply connected to Discovery, Search, Trips, Events, Telegraph, Pulse, Places, Passport, and Rent a Buddy. AI can enhance intent and explanations, but database truth controls eligibility, access, ranking candidates, and actions.

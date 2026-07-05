@@ -59,6 +59,29 @@ const POST_SAFE_COLUMNS =
 const GEO_TAG_COLUMNS =
   "location_visibility, city, district, country, country_code, venue_name, hotel_blur_applied";
 
+const POST_MEDIA_COLUMNS =
+  "id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status";
+
+/** Filter and shape the post_media array for public consumption.
+ *  Excludes failed/pending and rejected/flagged items; sorts by sort_order. */
+function filterPublicMedia(raw: any): Array<Record<string, unknown>> {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((m: any) => m.processing_status === 'ready' && m.moderation_status !== 'rejected' && m.moderation_status !== 'flagged')
+    .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    .map((m: any) => ({
+      id:               m.id,
+      mediaType:        m.media_type,
+      url:              m.public_url,
+      thumbnailUrl:     m.thumbnail_url ?? null,
+      durationSeconds:  m.duration_seconds ?? null,
+      width:            m.width ?? null,
+      height:           m.height ?? null,
+      sortOrder:        m.sort_order ?? 0,
+      processingStatus: m.processing_status,
+    }));
+}
+
 /* ===========================================================================
  * GET /api/pulse
  * =========================================================================*/
@@ -98,7 +121,7 @@ router.get("/pulse", async (req, res) => {
 
   let query = sc
     .from("posts")
-    .select(`${POST_SAFE_COLUMNS}, pulse_geo_tags(${GEO_TAG_COLUMNS}), profiles!author_id(id, username, full_name, avatar_url)`)
+    .select(`${POST_SAFE_COLUMNS}, post_media(${POST_MEDIA_COLUMNS}), pulse_geo_tags(${GEO_TAG_COLUMNS}), profiles!author_id(id, username, full_name, avatar_url)`)
     .eq("status", "active")
     .eq("visibility", "public")
     .order("created_at", { ascending: false })
@@ -176,6 +199,8 @@ router.get("/pulse", async (req, res) => {
         name:      profile.full_name ?? profile.username,
         avatarUrl: profile.avatar_url ?? null,
       } : null,
+      // Structured media items (photo + video); legacy mediaUrls preserved for backward compat
+      media: filterPublicMedia(row.post_media),
       // Rich-text span whitelists
       spanTags:         spans.tags,
       spanHashtags:     spans.hashtagUsages,
