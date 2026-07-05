@@ -422,7 +422,7 @@ router.post("/api/rent-a-buddy/buddies/:buddyId/request", async (req, res) => {
   // Verify buddy exists and is active
   const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
-    .select("id, status, admin_status, verified, categories")
+    .select("id, user_id, status, admin_status, verified, categories")
     .eq("id", buddyId)
     .maybeSingle();
 
@@ -432,6 +432,34 @@ router.post("/api/rent-a-buddy/buddies/:buddyId/request", async (req, res) => {
   }
   if ((bp as any).admin_status !== "active") {
     return res.status(422).json({ error: "buddy_suspended" });
+  }
+
+  // Self-booking guard (user_id level) — catches the case where the traveler has no profile
+  // of their own but still matches the buddy's underlying user account.
+  const buddyUserId: string | null = (bp as any).user_id ?? null;
+  if (buddyUserId && buddyUserId === auth.user.id) {
+    return res.status(409).json({ error: "self_booking_not_allowed", message: "You cannot book yourself as a Buddy." });
+  }
+
+  // Block-table enforcement — traveler must not be blocked by, or have blocked, the buddy's user.
+  if (buddyUserId) {
+    const [blockedByBuddy, blockedByTraveler] = await Promise.all([
+      serviceClient
+        .from("blocks")
+        .select("id")
+        .eq("blocker_id", buddyUserId)
+        .eq("blocked_id", auth.user.id)
+        .maybeSingle(),
+      serviceClient
+        .from("blocks")
+        .select("id")
+        .eq("blocker_id", auth.user.id)
+        .eq("blocked_id", buddyUserId)
+        .maybeSingle(),
+    ]);
+    if (blockedByBuddy.data || blockedByTraveler.data) {
+      return res.status(403).json({ error: "blocked", message: "You cannot book this Buddy." });
+    }
   }
 
   // Category availability check
@@ -1175,8 +1203,10 @@ router.post("/api/rent-a-buddy/me/profile/submit", async (req, res) => {
   if (!profile) return res.status(404).json({ error: "profile_not_found", message: "No buddy profile found. Apply first." });
 
   const p = profile as any;
-  if (!["pending", "paused"].includes(p.status)) {
-    return res.status(409).json({ error: "invalid_state", message: `Profile in '${p.status}' state cannot be submitted.` });
+  // draft, pending, and paused profiles can all be submitted/re-submitted for review.
+  // approved/rejected/suspended are terminal states that require an admin action first.
+  if (!["draft", "pending", "paused"].includes(p.status)) {
+    return res.status(409).json({ error: "invalid_state", message: `Profile in '${p.status}' state cannot be submitted for review.` });
   }
 
   // Accept acknowledgments passed in the submit body
