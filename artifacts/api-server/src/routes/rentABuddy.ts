@@ -1109,7 +1109,7 @@ router.get("/api/rent-a-buddy/bookings/:bookingId", async (req, res) => {
 
   // Strip private fields: traveler details hidden from buddy until booking is confirmed;
   // buddy details stripped if not confirmed (first meetup/pending)
-  const isConfirmed = ["confirmed", "in_progress", "completed"].includes((data as any).status);
+  const isConfirmed = ["confirmed", "scheduled", "in_progress", "completed"].includes((data as any).status);
   return res.json({
     booking: mapBooking(stripTravelerPrivateFields(data)),
     buddyPrivateVisible: isConfirmed,
@@ -1139,7 +1139,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/pay-deposit", async (req, res
   if (b.payment_mode !== "deposit_plus_cash") {
     return res.status(400).json({ error: "invalid_payload", message: "This booking uses full in-app payment. Use /pay-full." });
   }
-  if (!["pending", "confirmed"].includes(b.status)) {
+  if (!["pending", "confirmed", "scheduled"].includes(b.status)) {
     return res.status(400).json({ error: "invalid_payload", message: "Deposit can only be paid for pending or confirmed bookings." });
   }
 
@@ -1179,7 +1179,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/pay-full", async (req, res) =
   if (b.payment_mode !== "full_in_app") {
     return res.status(400).json({ error: "invalid_payload", message: "This booking uses deposit+cash. Use /pay-deposit." });
   }
-  if (!["pending", "confirmed"].includes(b.status)) {
+  if (!["pending", "confirmed", "scheduled"].includes(b.status)) {
     return res.status(400).json({ error: "invalid_payload", message: "Full payment can only be made for pending or confirmed bookings." });
   }
 
@@ -1228,7 +1228,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => 
     return res.status(403).json({ error: "forbidden" });
   }
 
-  const cancellableStatuses = ["pending", "confirmed"];
+  const cancellableStatuses = ["pending", "confirmed", "scheduled"];
   if (!cancellableStatuses.includes(b.status)) {
     return res.status(409).json({
       error: "invalid_transition",
@@ -1336,12 +1336,12 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => 
     });
   }
 
-  // Conflict detection: check for overlapping confirmed/in_progress bookings for this buddy
+  // Conflict detection: check for overlapping scheduled/in_progress bookings for this buddy
   const { data: existingBookings } = await serviceClient
     .from("rent_buddy_bookings")
     .select("id, booking_date, start_time, duration_h")
     .eq("buddy_id", (bp as any).id)
-    .in("status", ["confirmed", "in_progress"])
+    .in("status", ["scheduled", "confirmed", "in_progress"])
     .neq("id", bookingId);
 
   const newStart = new Date(`${(booking as any).booking_date}T${(booking as any).start_time ?? "00:00"}Z`);
@@ -1361,12 +1361,12 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => 
   const now = new Date().toISOString();
   await serviceClient
     .from("rent_buddy_bookings")
-    .update({ status: "confirmed", confirmed_at: now, updated_at: now })
+    .update({ status: "scheduled", confirmed_at: now, updated_at: now })
     .eq("id", bookingId);
 
   void serviceClient.from("buddy_booking_events").insert({
     booking_id: bookingId, actor_user_id: auth.user.id, event: "accepted",
-    from_status: "pending", to_status: "confirmed", metadata: {},
+    from_status: "pending", to_status: "scheduled", metadata: {},
   });
 
   // Positive trust event: buddy accepted and committed to the booking
@@ -1489,10 +1489,10 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/start", async (req, res) => {
     .maybeSingle();
 
   if (!booking) return res.status(404).json({ error: "not_found" });
-  if ((booking as any).status !== "confirmed") {
+  if (!["confirmed", "scheduled"].includes((booking as any).status)) {
     return res.status(409).json({
       error: "invalid_transition",
-      message: `Cannot start a booking in status '${(booking as any).status}'. Only confirmed bookings can be started.`,
+      message: `Cannot start a booking in status '${(booking as any).status}'. Only confirmed or scheduled bookings can be started.`,
       currentStatus: (booking as any).status,
     });
   }
@@ -1505,7 +1505,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/start", async (req, res) => {
 
   void serviceClient.from("buddy_booking_events").insert({
     booking_id: bookingId, actor_user_id: auth.user.id, event: "started",
-    from_status: "confirmed", to_status: "in_progress", metadata: {},
+    from_status: (booking as any).status, to_status: "in_progress", metadata: {},
   });
 
   await serviceClient.from("rent_buddy_emergency_contacts_snapshot").insert({
@@ -1779,7 +1779,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/add-time", async (req, res) =
   if (!isTraveler && !isBuddy) return res.status(403).json({ error: "forbidden" });
 
   // Add-time is only valid while the booking is active; reject all other states.
-  const addTimeAllowedStatuses = ["confirmed", "in_progress"];
+  const addTimeAllowedStatuses = ["confirmed", "scheduled", "in_progress"];
   if (!addTimeAllowedStatuses.includes((booking as any).status)) {
     return res.status(409).json({
       error: "invalid_booking_status",
@@ -1876,7 +1876,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/thread", async (req, res) => 
 
   // Enforce lifecycle: thread may only be created once the booking is confirmed or later.
   // Pending and cancelled bookings have no chat thread yet.
-  const threadAllowedStatuses = ["confirmed", "in_progress", "completed", "disputed"];
+  const threadAllowedStatuses = ["confirmed", "scheduled", "in_progress", "completed", "disputed"];
   if (!threadAllowedStatuses.includes((booking as any).status)) {
     return res.status(409).json({
       error: "thread_not_available",
@@ -2520,7 +2520,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/no-show", async (req, res) =>
   const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
   if (!party) return;
 
-  const noShowAllowedStatuses = ["confirmed", "in_progress"];
+  const noShowAllowedStatuses = ["confirmed", "scheduled", "in_progress"];
   if (!noShowAllowedStatuses.includes((booking as any).status)) {
     return res.status(409).json({
       error: "invalid_transition",
@@ -2529,13 +2529,14 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/no-show", async (req, res) =>
     });
   }
 
-  // Record the no-show as a safety checkin
-  void serviceClient.from("rent_buddy_safety_checkins").insert({
+  // Record the no-show as a safety checkin — fail closed: return an error if the row is not created
+  const { error: noShowCheckinErr } = await serviceClient.from("rent_buddy_safety_checkins").insert({
     booking_id: bookingId,
     user_id: auth.user.id,
     checkin_type: "no_show",
     response: note ?? null,
   });
+  if (noShowCheckinErr) return sendError(res, "db_error", noShowCheckinErr.message);
 
   // Open a dispute
   const { data: dispute } = await serviceClient
@@ -4985,6 +4986,13 @@ router.get("/api/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
 // Accessible without user auth — restrict at the infrastructure / firewall level.
 
 router.post("/api/internal/buddy-requests/expire", async (req, res) => {
+  // Require a shared secret (SESSION_SECRET) to prevent unauthenticated callers from
+  // triggering mass state transitions. Callers must set X-Internal-Key: <SESSION_SECRET>.
+  const internalKey = req.headers["x-internal-key"];
+  if (!internalKey || internalKey !== process.env.SESSION_SECRET) {
+    return res.status(401).json({ error: "unauthorized", message: "Missing or invalid internal key." });
+  }
+
   const serviceClient = getServiceClient();
   if (!serviceClient) return res.status(503).json({ error: "service_unavailable" });
 
@@ -5145,7 +5153,12 @@ router.get("/api/rent-a-buddy/bookings/:bookingId/events", async (req, res) => {
     .eq("booking_id", bookingId)
     .order("created_at", { ascending: true });
 
-  return res.json({ events: events ?? [] });
+  // Exclude admin-only events from public timeline responses (spec §9)
+  const publicEvents = (events ?? []).filter(
+    (e: any) => !(e.metadata as any)?.visibility || (e.metadata as any).visibility !== "admin_only"
+  );
+
+  return res.json({ events: publicEvents });
 });
 
 // ── Spec-path aliases ─────────────────────────────────────────────────────────
@@ -5227,7 +5240,7 @@ router.post("/api/buddy-bookings/:bookingId/report-no-show", async (req, res) =>
   const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
   if (!party) return;
 
-  if (!["confirmed", "in_progress"].includes((booking as any).status)) {
+  if (!["confirmed", "scheduled", "in_progress"].includes((booking as any).status)) {
     return res.status(409).json({
       error: "invalid_transition",
       message: "No-show can only be reported for confirmed or in-progress bookings.",
@@ -5235,10 +5248,12 @@ router.post("/api/buddy-bookings/:bookingId/report-no-show", async (req, res) =>
     });
   }
 
-  void serviceClient.from("rent_buddy_safety_checkins").insert({
+  // Fail closed: if the checkin row is not created, report the error immediately
+  const { error: reportNoShowCheckinErr } = await serviceClient.from("rent_buddy_safety_checkins").insert({
     booking_id: bookingId, user_id: auth.user.id,
     checkin_type: "no_show", response: note ?? null,
   });
+  if (reportNoShowCheckinErr) return sendError(res, "db_error", reportNoShowCheckinErr.message);
 
   const { data: dispute } = await serviceClient
     .from("rent_buddy_disputes")
