@@ -1030,7 +1030,7 @@ router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
       "id, display_name, bio, categories, languages, hourly_rate_usd, " +
       "availability_blocks, policy_accepted, safety_acknowledged_at, " +
       "boundaries_acknowledged_at, cover_photo_url, gallery_urls, " +
-      "preferred_meetup_zones, verification_status"
+      "preferred_meetup_zones, verification_status, city, country"
     )
     .eq("user_id", auth.user.id)
     .maybeSingle();
@@ -1041,8 +1041,8 @@ router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
 
   const p = profile as any;
 
-  // Parallel DB lookups: availability rows + active services
-  const [availResult, servicesResult] = await Promise.all([
+  // Parallel DB lookups: availability rows + active services + verification controls
+  const [availResult, servicesResult, controlsResult] = await Promise.all([
     serviceClient
       .from("rent_buddy_availability")
       .select("id", { count: "exact" })
@@ -1054,6 +1054,9 @@ router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
       .eq("buddy_id", p.id)
       .eq("is_active", true)
       .limit(1),
+    serviceClient
+      .from("rent_buddy_launch_controls")
+      .select("city, country_code, category, require_id_verification"),
   ]);
 
   const hasAvailability =
@@ -1068,19 +1071,22 @@ router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
 
   const categories: string[] = Array.isArray(p.categories) ? p.categories : [];
 
-  // Verify via city policy: query launch controls to see if any of the buddy's
-  // categories requires ID verification (require_id_verification = TRUE).
-  // Falls back to false (no verification required) if the table is empty or query fails.
-  let needsVerification = false;
-  if (categories.length > 0) {
-    const { data: verifyControls } = await serviceClient
-      .from("rent_buddy_launch_controls")
-      .select("id")
-      .eq("require_id_verification", true)
-      .in("category", categories)
-      .limit(1);
-    needsVerification = (verifyControls?.length ?? 0) > 0;
-  }
+  // Verification policy — scoped to the buddy's city, country AND categories.
+  // A control is applicable when all three dimensions match (NULL = wildcard):
+  //   city match: control.city === null OR control.city === profile.city
+  //   country match: control.country_code === null OR control.country_code === profile.country
+  //   category match: control.category === null OR control.category is in profile.categories
+  // If any applicable control has require_id_verification=true, verification is required.
+  // Falls back gracefully when the table is empty or query fails.
+  const buddyCity: string | null = p.city ?? null;
+  const buddyCountry: string | null = p.country ?? null;
+  const needsVerification = (controlsResult.data ?? []).some((c: any) => {
+    if (!c.require_id_verification) return false;
+    const cityMatch = c.city === null || c.city === buddyCity;
+    const countryMatch = c.country_code === null || c.country_code === buddyCountry;
+    const catMatch = c.category === null || categories.includes(c.category);
+    return cityMatch && countryMatch && catMatch;
+  });
   const isVerified = p.verification_status === "verified";
 
   const checklist: Array<{ key: string; label: string; done: boolean; verificationRequired?: boolean }> = [
@@ -1158,17 +1164,20 @@ router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
 
   const allComplete = checklist.every((i) => i.done);
 
-  // Object-style per-field completion — matches the contract defined in the task spec.
-  // The `checklist` array is kept for UI display; `fields` is the canonical shape.
+  // Object-style per-field completion — stable contract shape; all keys always present.
+  // `checklist` is kept for UI rendering; `fields` is the canonical machine-readable map.
   const fields: Record<string, boolean> = {};
   for (const item of checklist) {
     fields[item.key] = item.done;
   }
-  // Normalise key names to match spec (safety_ack / policy_ack / boundaries_ack)
+  // Normalise key names to match spec (safety_ack / policy_ack)
   fields.safety_ack = fields.safety_acknowledged ?? false;
   fields.policy_ack = fields.policy_accepted ?? false;
   delete fields.safety_acknowledged;
   delete fields.policy_accepted;
+  // `verification` is always present: false when not required (no-op for clients in those cities),
+  // true only when the policy requires AND the buddy has passed verification.
+  fields.verification = needsVerification ? isVerified : true;
 
   return res.json({ checklist, allComplete, fields });
 });
@@ -1195,7 +1204,8 @@ router.post("/api/rent-a-buddy/me/profile/submit", async (req, res) => {
       "id, status, admin_status, display_name, bio, categories, languages, " +
       "hourly_rate_usd, availability_blocks, policy_accepted, " +
       "safety_acknowledged_at, boundaries_acknowledged_at, " +
-      "cover_photo_url, gallery_urls, preferred_meetup_zones, verification_status"
+      "cover_photo_url, gallery_urls, preferred_meetup_zones, verification_status, " +
+      "city, country"
     )
     .eq("user_id", auth.user.id)
     .maybeSingle();
@@ -1261,18 +1271,25 @@ router.post("/api/rent-a-buddy/me/profile/submit", async (req, res) => {
     });
   }
 
-  // Verification gate — check city/category policy via rent_buddy_launch_controls
+  // Verification gate — scoped to the buddy's city, country AND categories.
+  // Uses the same NULL-wildcard logic as the checklist endpoint:
+  //   city match: control.city === null OR control.city === profile.city
+  //   country match: control.country_code === null OR control.country_code === profile.country
+  //   category match: control.category === null OR control.category is in profile.categories
+  // Falls back to false when the table is empty or query fails.
   const cats: string[] = Array.isArray(p.categories) ? p.categories : [];
-  let needsVerification = false;
-  if (cats.length > 0) {
-    const { data: verifyControls } = await serviceClient
-      .from("rent_buddy_launch_controls")
-      .select("id")
-      .eq("require_id_verification", true)
-      .in("category", cats)
-      .limit(1);
-    needsVerification = (verifyControls?.length ?? 0) > 0;
-  }
+  const submitCity: string | null = p.city ?? null;
+  const submitCountry: string | null = p.country ?? null;
+  const { data: allControls } = await serviceClient
+    .from("rent_buddy_launch_controls")
+    .select("city, country_code, category, require_id_verification");
+  const needsVerification = (allControls ?? []).some((c: any) => {
+    if (!c.require_id_verification) return false;
+    const cityMatch = c.city === null || c.city === submitCity;
+    const countryMatch = c.country_code === null || c.country_code === submitCountry;
+    const catMatch = c.category === null || cats.includes(c.category);
+    return cityMatch && countryMatch && catMatch;
+  });
   if (needsVerification && p.verification_status !== "verified") {
     return res.status(422).json({
       error: "verification_required",
