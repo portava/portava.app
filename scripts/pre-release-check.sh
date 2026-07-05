@@ -180,7 +180,20 @@ run_check "db-triggers" \
   "DB protection triggers + schema presence (migrations 0040, 0041, 0071–0074, 0076, 0090)" \
   bash scripts/check-db-triggers.sh
 
-# ── 9. Version / build-number floor guard ────────────────────────────────────
+# ── 9. Engagement index presence check ───────────────────────────────────────
+# Confirms the five engagement indexes added by migration 0106 are present in
+# pg_indexes.  Missing indexes cause the GET /api/engagement/likes endpoint to
+# degrade to sequential scans on posts_likes, post_reactions, comment_likes,
+# highlight_likes, and memory_likes tables under cursor-based pagination.
+#
+# Skipped gracefully (warning only, not failure) when neither
+# SUPABASE_PROJECT_TOKEN nor SUPABASE_ACCESS_TOKEN is set, so developers
+# without Supabase credentials configured locally are not blocked.
+run_check "engagement-indexes" \
+  "Engagement index presence (migration 0106 — five pg_indexes)" \
+  bash scripts/check-engagement-indexes.sh
+
+# ── 10. Version / build-number floor guard ────────────────────────────────────
 # Fails if ios.buildNumber or android.versionCode still equal 1, which is the
 # first-submission default that Apple and Google have already seen.  Both
 # stores reject a binary whose build number is not strictly greater than the
@@ -260,6 +273,15 @@ for entry in "${results[@]}"; do
         ;;
       version-bump)
         printf '     fix: increment ios.buildNumber and android.versionCode in travel-buddy-standalone/app.json\n'
+        ;;
+      engagement-indexes)
+        printf '     fix: apply the engagement index migration via the Supabase SQL editor or psql:\n'
+        printf '            artifacts/api-server/src/migrations/0106_engagement_indexes.sql\n'
+        printf '          (0106 creates five pg_indexes for cursor-based pagination on like tables;\n'
+        printf '           without them GET /api/engagement/likes degrades to sequential scans)\n'
+        printf '          To enable the check locally:\n'
+        printf '            export SUPABASE_ACCESS_TOKEN=sbp_...\n'
+        printf '            Generate at: https://supabase.com/dashboard/account/tokens\n'
         ;;
       db-triggers)
         printf '     fix: apply missing migrations via Supabase dashboard or psql:\n'

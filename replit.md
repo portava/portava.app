@@ -55,6 +55,7 @@ Run all checks before cutting a release: `bash scripts/pre-release-check.sh`
 | `api-server-build`     | `pnpm --filter @workspace/api-server run build`  | Fix esbuild errors in `artifacts/api-server/src/` |
 | `lockfile-drift`       | `bash scripts/sync-standalone.sh --check-lockfile` | Run `--fix-lockfile` to re-sync resolved versions |
 | `db-triggers`          | `export SUPABASE_PROJECT_TOKEN=<token> && bash scripts/pre-release-check.sh` | Apply migrations 0071–0074, 0090, 0092 via Supabase dashboard or psql; CI: set `SUPABASE_PROJECT_TOKEN` repo secret (Project Settings → API → Project API tokens); local: `export SUPABASE_ACCESS_TOKEN=sbp_...` from [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens); see [docs/eas-runbook.md](docs/eas-runbook.md) → "DB triggers check in CI" |
+| `engagement-indexes`   | `export SUPABASE_ACCESS_TOKEN=sbp_... && bash scripts/pre-release-check.sh` | Apply `artifacts/api-server/src/migrations/0106_engagement_indexes.sql` via Supabase SQL editor or psql; skipped (warning only) when no token is set |
 
 ## Stack
 
