@@ -784,6 +784,28 @@ describe("trips-expansion routes", () => {
       assert.ok(memberRow, "member row should be created");
     });
 
+    it("POST accept returns 410 when max-use limit is reached", async () => {
+      const LINK_TOKEN = "maxusedtokenabcdefghijklmnop123456";
+      const { client } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome",
+            status: "upcoming", created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_invite_links: { rows: [
+          { id: LINK_ID, trip_id: TRIP_ID, token: LINK_TOKEN, created_by: OWNER_ID,
+            max_uses: 2, use_count: 2, revoked_at: null, expires_at: null,
+            created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_members: { rows: [] },
+        blocks: { rows: [] },
+      });
+      _setTestClient(client, true);
+
+      const r = await req(port, "POST", `/trips/invite-link/${LINK_TOKEN}/accept`, { token: "other-token" });
+      assert.equal(r.status, 410);
+      assert.equal(r.body.error, "gone");
+    });
+
     it("DELETE /invite-link/:linkId revokes the link (204)", async () => {
       const { client } = makeFakeClient({
         trips: { rows: [
