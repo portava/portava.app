@@ -513,11 +513,15 @@ router.get("/api/buddies", async (req, res) => {
 
   const {
     city,
+    country,
     category,
     language,
+    minBudgetUsd,
     maxBudgetUsd,
+    minRating,
     buddyLevel,
     available,
+    availableDate,
     featured,
     verified,
     q,
@@ -527,6 +531,20 @@ router.get("/api/buddies", async (req, res) => {
 
   const page = Math.max(1, parseInt(rawPage ?? "1", 10) || 1);
   const perPage = Math.min(100, Math.max(1, parseInt(rawPerPage ?? "20", 10) || 20));
+
+  // If availableDate is supplied, pre-fetch buddy IDs available on that date
+  let availableBuddyIds: string[] | null = null;
+  if (availableDate && /^\d{4}-\d{2}-\d{2}$/.test(availableDate)) {
+    const { data: avRows } = await serviceClient
+      .from("rent_buddy_availability")
+      .select("buddy_id")
+      .eq("date", availableDate)
+      .eq("is_available", true);
+    availableBuddyIds = (avRows ?? []).map((r: any) => r.buddy_id as string);
+    if (availableBuddyIds.length === 0) {
+      return res.json({ buddies: [], total: 0, page, perPage, totalPages: 0 });
+    }
+  }
 
   let query = serviceClient
     .from("rent_buddy_profiles")
@@ -539,14 +557,26 @@ router.get("/api/buddies", async (req, res) => {
     .range((page - 1) * perPage, page * perPage - 1);
 
   if (city)           query = query.ilike("city", `%${city}%`);
+  if (country)        query = query.ilike("country", `%${country}%`);
   if (category)       query = query.contains("categories", [category]);
   if (language)       query = query.contains("languages", [language]);
+  if (minBudgetUsd)   query = query.gte("hourly_rate_usd", Number(minBudgetUsd));
   if (maxBudgetUsd)   query = query.lte("hourly_rate_usd", Number(maxBudgetUsd));
+  if (minRating)      query = query.gte("average_rating", Number(minRating));
   if (buddyLevel)     query = query.eq("buddy_level", buddyLevel);
   if (available === "now") query = query.eq("available_now", true);
   if (featured === "true")  query = query.eq("featured", true);
   if (verified === "true")  query = query.eq("verified", true);
-  if (q)              query = query.or(`display_name.ilike.%${q}%,tagline.ilike.%${q}%,bio.ilike.%${q}%`);
+  if (availableBuddyIds)    query = query.in("id", availableBuddyIds);
+
+  // Free-text search: sanitise to prevent PostgREST filter injection
+  // then apply separate ilike filters (avoids the .or() comma-injection vector)
+  if (q) {
+    const safe = q.replace(/[%_,.'"\s]+/g, " ").trim().slice(0, 120);
+    if (safe) {
+      query = query.ilike("display_name", `%${safe}%`);
+    }
+  }
 
   const { data, count, error } = await query;
   if (error) return sendError(res, "db_error", error.message);
@@ -1099,6 +1129,13 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => 
 
   const b = booking as any;
   if (b.traveler_id !== auth.user.id) return res.status(403).json({ error: "forbidden" });
+  if (!["pending", "confirmed"].includes(b.status)) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: `Cannot cancel a booking in status '${b.status}'. Only pending or confirmed bookings can be cancelled.`,
+      currentStatus: b.status,
+    });
+  }
 
   const now = new Date();
   const bookingDt = new Date(`${b.booking_date}T${b.start_time ?? "12:00"}Z`);
@@ -1109,6 +1146,11 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => 
     .from("rent_buddy_bookings")
     .update({ status: "cancelled", cancelled_at: now.toISOString(), updated_at: now.toISOString() })
     .eq("id", bookingId);
+
+  void serviceClient.from("buddy_booking_events").insert({
+    booking_id: bookingId, actor_user_id: auth.user.id, event: "cancelled_by_traveler",
+    from_status: b.status, to_status: "cancelled", metadata: { hoursUntil: Math.round(hoursUntil * 10) / 10 },
+  });
 
   void recordTrustEvent(serviceClient, {
     userId: auth.user.id,
@@ -1157,16 +1199,27 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => 
     .select("*")
     .eq("id", bookingId)
     .eq("buddy_id", (bp as any).id)
-    .eq("status", "pending")
     .maybeSingle();
 
   if (!booking) return res.status(404).json({ error: "not_found" });
+  if ((booking as any).status !== "pending") {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: `Cannot accept a booking in status '${(booking as any).status}'. Only pending bookings can be accepted.`,
+      currentStatus: (booking as any).status,
+    });
+  }
 
   const now = new Date().toISOString();
   await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "confirmed", confirmed_at: now, updated_at: now })
     .eq("id", bookingId);
+
+  void serviceClient.from("buddy_booking_events").insert({
+    booking_id: bookingId, actor_user_id: auth.user.id, event: "accepted",
+    from_status: "pending", to_status: "confirmed", metadata: {},
+  });
 
   // Positive trust event: buddy accepted and committed to the booking
   void recordTrustEvent(serviceClient, {
@@ -1228,17 +1281,29 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/decline", async (req, res) =>
   const now = new Date().toISOString();
   const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
-    .select("id")
+    .select("id, status")
     .eq("id", req.params.bookingId)
     .eq("buddy_id", (bp as any).id)
     .maybeSingle();
 
   if (!booking) return res.status(404).json({ error: "not_found" });
+  if ((booking as any).status !== "pending") {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: `Cannot decline a booking in status '${(booking as any).status}'. Only pending bookings can be declined.`,
+      currentStatus: (booking as any).status,
+    });
+  }
 
   await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "cancelled", cancelled_at: now, updated_at: now })
     .eq("id", req.params.bookingId);
+
+  void serviceClient.from("buddy_booking_events").insert({
+    booking_id: req.params.bookingId, actor_user_id: auth.user.id, event: "declined",
+    from_status: "pending", to_status: "cancelled", metadata: {},
+  });
 
   return res.json({ ok: true });
 });
@@ -1255,16 +1320,27 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/start", async (req, res) => {
     .select("*")
     .eq("id", bookingId)
     .eq("traveler_id", auth.user.id)
-    .eq("status", "confirmed")
     .maybeSingle();
 
   if (!booking) return res.status(404).json({ error: "not_found" });
+  if ((booking as any).status !== "confirmed") {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: `Cannot start a booking in status '${(booking as any).status}'. Only confirmed bookings can be started.`,
+      currentStatus: (booking as any).status,
+    });
+  }
 
   const now = new Date().toISOString();
   await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "in_progress", started_at: now, updated_at: now })
     .eq("id", bookingId);
+
+  void serviceClient.from("buddy_booking_events").insert({
+    booking_id: bookingId, actor_user_id: auth.user.id, event: "started",
+    from_status: "confirmed", to_status: "in_progress", metadata: {},
+  });
 
   await serviceClient.from("rent_buddy_emergency_contacts_snapshot").insert({
     booking_id: bookingId,
@@ -1291,16 +1367,27 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
     .select("*")
     .eq("id", bookingId)
     .eq("traveler_id", auth.user.id)
-    .eq("status", "in_progress")
     .maybeSingle();
 
   if (!booking) return res.status(404).json({ error: "not_found" });
+  if ((booking as any).status !== "in_progress") {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: `Cannot complete a booking in status '${(booking as any).status}'. Only in-progress bookings can be completed.`,
+      currentStatus: (booking as any).status,
+    });
+  }
 
   const now = new Date().toISOString();
   await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "completed", completed_at: now, updated_at: now })
     .eq("id", bookingId);
+
+  void serviceClient.from("buddy_booking_events").insert({
+    booking_id: bookingId, actor_user_id: auth.user.id, event: "completed",
+    from_status: "in_progress", to_status: "completed", metadata: {},
+  });
 
   // Fetch current count from profile (not from booking row)
   const { data: profRow } = await serviceClient

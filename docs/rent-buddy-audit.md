@@ -357,6 +357,22 @@ All enums are created idempotently (`DO $$ BEGIN ... EXCEPTION WHEN duplicate_ob
 
 ---
 
+## 3.x Status-Transition Guards (added by this task)
+
+All five booking lifecycle routes now enforce correct status preconditions with HTTP 409 (`invalid_transition`) responses, not silent 404s. The response body carries `currentStatus` so mobile clients can react without a follow-up fetch.
+
+| Route | Required status | Wrong status → | `buddy_booking_events` written |
+|-------|----------------|----------------|-------------------------------|
+| `POST /bookings/:id/accept` | `pending` | 409 | `event: "accepted"`, from `pending` → `confirmed` |
+| `POST /bookings/:id/decline` | `pending` | 409 | `event: "declined"`, from `pending` → `cancelled` |
+| `POST /bookings/:id/start` | `confirmed` | 409 | `event: "started"`, from `confirmed` → `in_progress` |
+| `POST /bookings/:id/complete` | `in_progress` | 409 | `event: "completed"`, from `in_progress` → `completed` |
+| `POST /bookings/:id/cancel` | `pending` or `confirmed` | 409 | `event: "cancelled_by_traveler"` with `hoursUntil` metadata |
+
+Note: `cancel` also keeps the trust-event logic (late cancel delta −5, normal cancel delta −2).
+
+---
+
 ## 4. Honesty Assessment
 
 ### 4.1 Payment processing (not yet integrated)
