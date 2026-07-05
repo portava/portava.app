@@ -71,30 +71,39 @@ export function ReactionPicker({ visible, myReaction, onSelect, onRemove, onClos
   );
 }
 
-/** Compact row showing grouped reaction counts (e.g. "❤️ 3  👍 2"). */
+/**
+ * Compact row showing grouped reaction counts (e.g. "❤️ 3  👍 2").
+ *
+ * When `onChipPress` is provided, tapping a specific emoji chip calls it with that emoji
+ * (e.g. to open the likers sheet filtered to that reaction).
+ * Otherwise, tapping any chip falls back to `onPress` (e.g. opens the reaction picker).
+ */
 export function ReactionSummary({
   reactions,
   myReaction,
   onPress,
+  onChipPress,
 }: {
   reactions: ReactionCount[];
   myReaction: string | null;
   onPress: () => void;
+  onChipPress?: (emoji: string) => void;
 }) {
   if (reactions.length === 0) return null;
   const sorted = [...reactions].sort((a, b) => b.count - a.count).slice(0, 4);
   return (
-    <Pressable style={s.summary} onPress={onPress}>
+    <View style={s.summary}>
       {sorted.map(({ emoji, count }) => (
-        <View
+        <Pressable
           key={emoji}
           style={[s.reactionChip, myReaction === emoji && s.reactionChipActive]}
+          onPress={() => (onChipPress ? onChipPress(emoji) : onPress())}
         >
           <Text style={s.reactionEmoji}>{emoji}</Text>
           {count > 1 && <Text style={[s.reactionCount, myReaction === emoji && s.reactionCountActive]}>{count}</Text>}
-        </View>
+        </Pressable>
       ))}
-    </Pressable>
+    </View>
   );
 }
 

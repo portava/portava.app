@@ -2,7 +2,10 @@
  * PostEngagementBar — Like / Reaction / Comment / Share actions for a post card.
  *
  * Manages its own like and reaction state.
- * Opens CommentsSheet, ShareSheet, and ReactionPicker as local Modals.
+ * Opens CommentsSheet, ShareSheet, ReactionPicker, and EngagementUserListSheet as local Modals.
+ *
+ * Tapping the like count opens the likers sheet (who liked this post).
+ * Tapping a reaction emoji chip opens the reaction likers sheet (filtered by emoji).
  */
 import React, { useState, useCallback, useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
@@ -20,6 +23,7 @@ import {
 import { CommentsSheet } from './CommentsSheet';
 import { ShareSheet, type ShareTarget } from './ShareSheet';
 import { ReactionPicker, ReactionSummary } from './ReactionPicker';
+import { EngagementUserListSheet } from './EngagementUserListSheet';
 
 interface Props {
   postId: string;
@@ -56,6 +60,9 @@ export function PostEngagementBar({
   const [reactions, setReactions] = useState<ReactionCount[]>([]);
   const [myReaction, setMyReaction] = useState<string | null>(null);
   const [reactionsFetched, setReactionsFetched] = useState(false);
+
+  // likerSheet: null = closed, { emoji: undefined } = post likes, { emoji: '❤️' } = specific reaction
+  const [likerSheet, setLikerSheet] = useState<{ emoji?: string } | null>(null);
 
   const fetchReactions = useCallback(async () => {
     if (reactionsFetched) return;
@@ -186,21 +193,31 @@ export function PostEngagementBar({
       <View style={s.container}>
         <View style={s.bar}>
           {canLike && (
-            <Pressable
-              style={s.action}
-              onPress={handleLike}
-              hitSlop={layout.hitSlop}
-              disabled={liking}
-            >
-              <Heart
-                size={17}
-                color={localLiked ? color.signal : color.mute}
-                fill={localLiked ? color.signal : 'transparent'}
-              />
-              <Text style={[s.count, localLiked && s.countActive]}>
-                {localLikeCount > 0 ? localLikeCount : ''}
-              </Text>
-            </Pressable>
+            <View style={s.likeGroup}>
+              <Pressable
+                style={s.iconBtn}
+                onPress={handleLike}
+                hitSlop={layout.hitSlop}
+                disabled={liking}
+              >
+                <Heart
+                  size={17}
+                  color={localLiked ? color.signal : color.mute}
+                  fill={localLiked ? color.signal : 'transparent'}
+                />
+              </Pressable>
+              {localLikeCount > 0 ? (
+                <Pressable
+                  onPress={() => setLikerSheet({})}
+                  hitSlop={6}
+                  style={s.countBtn}
+                >
+                  <Text style={[s.count, localLiked && s.countActive]}>
+                    {localLikeCount}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
           )}
 
           <Pressable
@@ -248,6 +265,7 @@ export function PostEngagementBar({
             reactions={reactions}
             myReaction={myReaction}
             onPress={handleOpenPicker}
+            onChipPress={(emoji) => setLikerSheet({ emoji })}
           />
         )}
       </View>
@@ -271,6 +289,17 @@ export function PostEngagementBar({
         onRemove={handleRemoveReaction}
         onClose={() => setPickerOpen(false)}
       />
+
+      {likerSheet !== null && (
+        <EngagementUserListSheet
+          visible
+          targetType={likerSheet.emoji ? 'post_reaction' : 'post_like'}
+          targetId={postId}
+          reactionType={likerSheet.emoji}
+          title={likerSheet.emoji ? `${likerSheet.emoji} Reactions` : 'Liked by'}
+          onClose={() => setLikerSheet(null)}
+        />
+      )}
     </>
   );
 }
@@ -284,6 +313,23 @@ const s = StyleSheet.create({
     alignItems: 'center',
     gap: space.lg,
     paddingTop: 2,
+  },
+  likeGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    minHeight: 44,
+  },
+  iconBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 24,
+    minHeight: 36,
+  },
+  countBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 36,
   },
   action: {
     flexDirection: 'row',

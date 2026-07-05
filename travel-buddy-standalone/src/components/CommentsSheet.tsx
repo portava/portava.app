@@ -51,6 +51,7 @@ import { useSession } from '../context/SessionContext';
 import { computeOptimisticLike } from '../lib/commentLikeLogic';
 import { createSubmitGuard } from '../lib/commentSubmitGuard';
 import { createLikeToggleGuard } from '../lib/likeToggleGuard';
+import { EngagementUserListSheet } from './EngagementUserListSheet';
 
 const AuthorPressCtx = React.createContext<(handle: string) => void>(() => {});
 
@@ -179,6 +180,7 @@ function ReplyRow({
   const likedByMe = reply.likedByMe ?? false;
   const likeCount = reply.likeCount ?? 0;
   const likeGuardRef = useRef(createLikeToggleGuard());
+  const [likerReplyId, setLikerReplyId] = useState<string | null>(null);
 
   const handleLike = useCallback(async () => {
     if (likeGuardRef.current.isToggling()) return;
@@ -201,6 +203,7 @@ function ReplyRow({
   }, [likedByMe, likeCount, reply.id, postId, onLikeChange]);
 
   return (
+    <>
     <View style={s.replyRow}>
       <CornerDownRight size={12} color={color.faint} style={s.replyIcon} />
       <CommentAvatar uri={reply.author.avatarUrl} name={reply.author.name} size={24} />
@@ -222,8 +225,12 @@ function ReplyRow({
       <View style={s.commentActions}>
         <Pressable hitSlop={likeHitSlop} onPress={handleLike} disabled={liking} style={s.likeBtn}>
           <Heart size={12} color={likedByMe ? color.signal : color.faint} fill={likedByMe ? color.signal : 'transparent'} />
-          {likeCount > 0 && <Text style={[s.likeCount, likedByMe && s.likeCountActive]}>{likeCount}</Text>}
         </Pressable>
+        {likeCount > 0 && (
+          <Pressable onPress={() => setLikerReplyId(reply.id)} hitSlop={5} style={s.likeCountBtn}>
+            <Text style={[s.likeCount, likedByMe && s.likeCountActive]}>{likeCount}</Text>
+          </Pressable>
+        )}
         {reply.canDelete && (
           <Pressable
             hitSlop={8}
@@ -240,6 +247,16 @@ function ReplyRow({
         )}
       </View>
     </View>
+    {likerReplyId !== null && (
+      <EngagementUserListSheet
+        visible
+        targetType="comment_like"
+        targetId={likerReplyId}
+        title="Liked by"
+        onClose={() => setLikerReplyId(null)}
+      />
+    )}
+    </>
   );
 }
 
@@ -279,6 +296,7 @@ function CommentItem({
   const likedByMe = comment.likedByMe ?? false;
   const likeCount = comment.likeCount ?? 0;
   const likeGuardRef = useRef(createLikeToggleGuard());
+  const [likerCommentId, setLikerCommentId] = useState<string | null>(null);
 
   const handleLike = useCallback(async () => {
     if (likeGuardRef.current.isToggling()) return;
@@ -333,8 +351,12 @@ function CommentItem({
         <View style={s.commentActions}>
           <Pressable hitSlop={likeHitSlop} onPress={handleLike} disabled={liking} style={s.likeBtn}>
             <Heart size={13} color={likedByMe ? color.signal : color.faint} fill={likedByMe ? color.signal : 'transparent'} />
-            {likeCount > 0 && <Text style={[s.likeCount, likedByMe && s.likeCountActive]}>{likeCount}</Text>}
           </Pressable>
+          {likeCount > 0 && (
+            <Pressable onPress={() => setLikerCommentId(comment.id)} hitSlop={5} style={s.likeCountBtn}>
+              <Text style={[s.likeCount, likedByMe && s.likeCountActive]}>{likeCount}</Text>
+            </Pressable>
+          )}
           {comment.canDelete && (
             <Pressable
               hitSlop={8}
@@ -362,6 +384,15 @@ function CommentItem({
         onDelete={(replyId) => onReplyDelete(comment.id, replyId)}
         onLikeChange={(replyId, liked, count) => onReplyLikeChange(comment.id, replyId, liked, count)}
       />
+    {likerCommentId !== null && (
+      <EngagementUserListSheet
+        visible
+        targetType="comment_like"
+        targetId={likerCommentId}
+        title="Liked by"
+        onClose={() => setLikerCommentId(null)}
+      />
+    )}
     </View>
   );
 }
@@ -1013,6 +1044,7 @@ const s = StyleSheet.create({
   replyBtnText: { fontSize: 12, fontWeight: '600', color: color.faint },
   commentActions: { flexDirection: 'column', alignItems: 'center', gap: 6, paddingTop: 2 },
   likeBtn: { alignItems: 'center', gap: 2, paddingHorizontal: 4 },
+  likeCountBtn: { alignItems: 'center', paddingHorizontal: 4 },
   likeCount: { fontSize: 10, fontWeight: '700', color: color.faint },
   likeCountActive: { color: color.signal },
   deleteBtn: { paddingLeft: space.xs },
