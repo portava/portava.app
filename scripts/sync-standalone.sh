@@ -172,6 +172,7 @@ STANDALONE_OWNED_FILES=(
   "app/profile/change-password.tsx"
   "src/lib/compassIntent.ts"
   "src/lib/__tests__/compassIntent.test.ts"
+  "src/lib/__tests__/invitePreviewMapper.test.ts"
   "src/components/compass/CompassPicksSection.tsx"
   "src/components/discovery/__tests__/CompassPicksSection.test.ts"
   "src/components/compass/CompassBuddyRow.tsx"
