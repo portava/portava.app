@@ -308,7 +308,7 @@ run_check "bundle-id-placeholder" \
 # If SUPABASE_ACCESS_TOKEN is not set the check exits non-zero so that a
 # release never ships without confirming the guards are live.
 run_check "db-triggers" \
-  "DB protection triggers + schema presence (migrations 0040, 0041, 0071–0074, 0076, 0090)" \
+  "DB protection triggers + schema presence (migrations 0040, 0041, 0071–0074, 0076, 0090, 0109–0111)" \
   bash scripts/check-db-triggers.sh
 
 # ── 9. Engagement index presence check ───────────────────────────────────────
@@ -432,6 +432,15 @@ for entry in "${results[@]}"; do
         printf '            artifacts/api-server/src/migrations/0092_seed_rent_buddy_launch_cities.sql\n'
         printf '          (0092 seeds Cebu, Manila, Davao City at public_mvp status;\n'
         printf '           without live cities the feature is deployed but invisible to all users)\n'
+        printf '            artifacts/api-server/src/migrations/0109_claim_invite_link_slot.sql\n'
+        printf '          (0109 creates claim_invite_link_slot + release_invite_link_slot;\n'
+        printf '           without these the invite-link accept endpoint returns a DB error on every join)\n'
+        printf '            artifacts/api-server/src/migrations/0110_invite_link_idempotency.sql\n'
+        printf '          (0110 creates trip_invite_link_attempts table + claim_invite_link_slot_for_user;\n'
+        printf '           without these the idempotent retry path is unavailable and users can be locked out)\n'
+        printf '            artifacts/api-server/src/migrations/0111_reconcile_invite_slots.sql\n'
+        printf '          (0111 creates reconcile_invite_link_slots;\n'
+        printf '           without this POST /api/admin/trips/reconcile-invite-slots returns 500)\n'
         printf '          Token required to query the Supabase Management API:\n'
         printf '            CI (preferred):  export SUPABASE_PROJECT_TOKEN=<project-scoped token>\n'
         printf '                             See docs/eas-runbook.md → "DB triggers check in CI"\n'

@@ -144,6 +144,27 @@ SELECT 'live_city_count' AS check_type, COUNT(*)::text AS name, 'public_mvp,beta
 FROM rent_buddy_city_rollouts \
 WHERE status IN ('public_mvp', 'beta_testing')"
 
+# ── invite-link slot functions SQL (migrations 0109–0111) ─────────────────────
+# Checks that the three SECURITY DEFINER functions and supporting table
+# introduced by migrations 0109 (claim/release slot), 0110 (idempotent claim
+# + attempt ledger table), and 0111 (reconciliation function) all exist in the
+# production database.  Without 0109/0110 the accept handler returns a DB error
+# on every invite-link join; without 0111 POST /api/admin/trips/reconcile-invite-slots
+# returns 500.
+INVITE_LINK_FUNCS_SQL="SELECT 'function' AS check_type, proname AS name \
+FROM pg_proc \
+WHERE proname IN (\
+'claim_invite_link_slot',\
+'release_invite_link_slot',\
+'claim_invite_link_slot_for_user',\
+'reconcile_invite_link_slots'\
+) \
+UNION ALL \
+SELECT 'table' AS check_type, relname AS name \
+FROM pg_class \
+WHERE relname = 'trip_invite_link_attempts' \
+AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')"
+
 # ── local psql mode (testing / CI with direct DB access) ─────────────────────
 if [[ "${TRIGGER_QUERY_MODE:-api}" == "psql" ]]; then
   PSQL_URL="${TRIGGER_PSQL_URL:-}"
@@ -225,7 +246,20 @@ if [[ "${TRIGGER_QUERY_MODE:-api}" == "psql" ]]; then
   RENT_BUDDY_ROLLOUT_RESPONSE="$RBR_JSON" node "${SCRIPT_DIR}/src/verify-db-rent-buddy-rollout.mjs"
   RBR_EXIT=$?
 
-  [[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 && $PT_EXIT -eq 0 && $RBR_EXIT -eq 0 ]] && exit 0 || exit 1
+  # ── Invite-link slot functions check (psql) ───────────────────────────────────
+  printf "  ℹ  Checking invite-link slot functions (migrations 0109–0111) (psql)\n"
+  ILF_JSON_SQL="SELECT COALESCE(json_agg(row_to_json(q)), '[]'::json) FROM (${INVITE_LINK_FUNCS_SQL}) q"
+  ILF_JSON=$(psql "$PSQL_URL" -t -A -c "$ILF_JSON_SQL" 2>&1)
+  ILF_PSQL_EXIT=$?
+  if [[ $ILF_PSQL_EXIT -ne 0 ]]; then
+    printf "  ✘  psql invite-link funcs query failed (exit %d):\n" "$ILF_PSQL_EXIT"
+    printf "     %s\n" "$ILF_JSON"
+    exit 1
+  fi
+  INVITE_LINK_FUNCS_RESPONSE="$ILF_JSON" node "${SCRIPT_DIR}/src/verify-db-invite-link-funcs.mjs"
+  ILF_EXIT=$?
+
+  [[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 && $PT_EXIT -eq 0 && $RBR_EXIT -eq 0 && $ILF_EXIT -eq 0 ]] && exit 0 || exit 1
 fi
 
 # ── Supabase Management API mode (production / normal CI) ────────────────────
@@ -387,4 +421,24 @@ fi
 RENT_BUDDY_ROLLOUT_RESPONSE="$RBR_HTTP_BODY" node "${SCRIPT_DIR}/src/verify-db-rent-buddy-rollout.mjs"
 RBR_EXIT=$?
 
-[[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 && $PT_EXIT -eq 0 && $RBR_EXIT -eq 0 ]] && exit 0 || exit 1
+# ── Invite-link slot functions check — claim/release/reconcile (migrations 0109–0111) ──
+printf "  ℹ  Checking invite-link slot functions (migrations 0109–0111)\n"
+ILF_CURL_RESPONSE=$(curl -s -w "\n%{http_code}" \
+  -X POST "$API_URL" \
+  -H "Authorization: Bearer ${MGMT_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data-raw "{\"query\":\"${INVITE_LINK_FUNCS_SQL}\"}")
+
+ILF_HTTP_BODY=$(printf "%s" "$ILF_CURL_RESPONSE" | head -n -1)
+ILF_HTTP_CODE=$(printf "%s" "$ILF_CURL_RESPONSE" | tail -n 1)
+
+if [[ "$ILF_HTTP_CODE" != "200" && "$ILF_HTTP_CODE" != "201" ]]; then
+  printf "  ✘  Supabase Management API returned HTTP %s for invite-link funcs check\n" "$ILF_HTTP_CODE"
+  printf "     Response: %s\n" "$ILF_HTTP_BODY"
+  exit 1
+fi
+
+INVITE_LINK_FUNCS_RESPONSE="$ILF_HTTP_BODY" node "${SCRIPT_DIR}/src/verify-db-invite-link-funcs.mjs"
+ILF_EXIT=$?
+
+[[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 && $PT_EXIT -eq 0 && $RBR_EXIT -eq 0 && $ILF_EXIT -eq 0 ]] && exit 0 || exit 1
