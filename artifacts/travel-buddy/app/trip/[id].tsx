@@ -139,9 +139,8 @@ function TripDetailScreen() {
     setShareLoading(true);
     try {
       const link = await createInviteLink(id);
-      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
       const inviteUrl = link
-        ? `${apiBase}/api/trips/invite-link/${link.token}/preview`
+        ? `travelbuddy://invite/${link.token}`
         : `https://travelbuddy.app/trips/${id}`;
       const tripName = realTrip.title ?? realTrip.destinationCity ?? 'a trip';
       await Share.share({

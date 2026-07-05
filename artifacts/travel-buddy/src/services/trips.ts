@@ -369,3 +369,73 @@ export async function createInviteLink(tripId: string): Promise<TripInviteLink |
   if (!res.ok) return null;
   return res.json().catch(() => null);
 }
+
+export interface InvitePreview {
+  tripId: string;
+  tripTitle: string | null;
+  destinationCity: string | null;
+  destinationCountry: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  coverUrl: string | null;
+  alreadyMember: boolean;
+  linkId: string;
+  expiresAt: string | null;
+}
+
+export interface InvitePreviewResult {
+  data: InvitePreview | null;
+  gone?: boolean;
+  error?: string;
+}
+
+/**
+ * Fetch a non-sensitive preview of the trip for a given invite token.
+ * Requires the caller to be authenticated; returns `error: 'not_authenticated'` if not.
+ * Returns `gone: true` when the link is expired, revoked, or exhausted.
+ */
+export async function previewInviteLink(token: string): Promise<InvitePreviewResult> {
+  const accessToken = await freshToken();
+  if (!accessToken) return { data: null, error: 'not_authenticated' };
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const res = await fetch(
+    `${apiBase}/api/trips/invite-link/${encodeURIComponent(token)}/preview`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (res.status === 410) return { data: null, gone: true };
+  if (!res.ok) return { data: null };
+  return { data: await res.json().catch(() => null) };
+}
+
+export interface AcceptInviteResult {
+  tripId: string | null;
+  alreadyMember: boolean;
+  error?: string;
+}
+
+/**
+ * Accept a trip invite by token. The user is added as a member if not already.
+ * Returns `alreadyMember: true` when the user was already on the trip (idempotent).
+ */
+export async function acceptInviteByToken(token: string): Promise<AcceptInviteResult> {
+  const accessToken = await freshToken();
+  if (!accessToken) return { tripId: null, alreadyMember: false, error: 'not_authenticated' };
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const res = await fetch(
+    `${apiBase}/api/trips/invite-link/${encodeURIComponent(token)}/accept`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+    return { tripId: null, alreadyMember: false, error: (body?.error as string) ?? 'error' };
+  }
+  const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+  return {
+    tripId: (body.tripId as string) ?? null,
+    alreadyMember: body.status === 'already_member',
+  };
+}
