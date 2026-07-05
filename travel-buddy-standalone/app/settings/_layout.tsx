@@ -7,6 +7,8 @@ export default function SettingsLayout() {
       <Stack.Screen name="location" />
       <Stack.Screen name="notifications" />
       <Stack.Screen name="emergency-contacts" />
+      <Stack.Screen name="find-your-circle" />
+      <Stack.Screen name="who-can-see-me" />
     </Stack>
   );
 }
