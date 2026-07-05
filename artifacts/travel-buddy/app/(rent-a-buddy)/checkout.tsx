@@ -187,7 +187,7 @@ export default function RentABuddyCheckout() {
 
   const hourlyRate = buddy?.hourlyRateUsd ?? 0;
 
-  const submitBooking = async () => {
+  const submitBooking = async (acceptSafety = false) => {
     if (!buddy) return;
     const durationH = Math.max(1, Math.round(duration / 3600));
     setSubmitting(true);
@@ -203,6 +203,7 @@ export default function RentABuddyCheckout() {
       meetupLocation: location || undefined,
       category,
       notes: notes || undefined,
+      acceptSafety,
     });
     setSubmitting(false);
 
@@ -227,7 +228,7 @@ export default function RentABuddyCheckout() {
         return;
       }
     }
-    await submitBooking();
+    await submitBooking(false);
   };
 
   if (loading) return <TravelLoadingState label="Loading…" />;
@@ -516,7 +517,8 @@ export default function RentABuddyCheckout() {
           if (storage) await storage.setItem(TUTORIAL_KEY, '1').catch(() => {});
           if (pendingBook) {
             setPendingBook(false);
-            await submitBooking();
+            // acceptSafety=true records first_booking_safety_acknowledged_at server-side
+            await submitBooking(true);
           }
         }}
       />

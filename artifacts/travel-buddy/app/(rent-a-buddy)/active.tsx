@@ -216,7 +216,16 @@ export default function RentABuddyActive() {
               </View>
               <Switch
                 value={safeReturn}
-                onValueChange={setSafeReturn}
+                onValueChange={async (v) => {
+                  setSafeReturn(v);
+                  if (v && bookingId) {
+                    // Broad-area check-in (city only, no GPS) so safety team knows you are OK
+                    await safetyCheckin(bookingId, {
+                      checkinType: 'safe_return_enabled',
+                      response: 'ok',
+                    }).catch(() => {});
+                  }
+                }}
                 trackColor={{ true: color.success, false: color.haze }}
                 thumbColor={color.paperRaised}
               />

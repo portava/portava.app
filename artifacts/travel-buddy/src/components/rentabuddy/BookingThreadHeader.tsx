@@ -13,29 +13,33 @@ import { getBooking, type BuddyBooking } from '../../services/rentABuddy';
 
 // Ordered lifecycle stages used by the status progress bar
 const STAGES: Array<{ key: string; label: string }> = [
-  { key: 'pending',     label: 'Pending' },
-  { key: 'confirmed',   label: 'Confirmed' },
+  { key: 'requested',   label: 'Requested' },
+  { key: 'scheduled',   label: 'Scheduled' },
   { key: 'in_progress', label: 'Active' },
   { key: 'completed',   label: 'Done' },
 ];
 
 // Statuses that fall outside the linear lifecycle get a special badge colour
 const STATUS_COLORS: Record<string, string> = {
-  pending:     '#F59E0B',
-  confirmed:   '#3B82F6',
-  in_progress: '#8B5CF6',
-  completed:   '#10B981',
-  cancelled:   '#9CA3AF',
-  disputed:    '#EF4444',
+  requested:        '#F59E0B',
+  scheduled:        '#3B82F6',
+  in_progress:      '#8B5CF6',
+  completed:        '#10B981',
+  cancelled:        '#9CA3AF',
+  disputed:         '#EF4444',
+  expired:          '#9CA3AF',
+  no_show_pending:  '#F59E0B',
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  pending:     'Pending',
-  confirmed:   'Confirmed',
-  in_progress: 'In Progress',
-  completed:   'Completed',
-  cancelled:   'Cancelled',
-  disputed:    'Disputed',
+  requested:        'Requested',
+  scheduled:        'Scheduled',
+  in_progress:      'In Progress',
+  completed:        'Completed',
+  cancelled:        'Cancelled',
+  disputed:         'Disputed',
+  expired:          'Expired',
+  no_show_pending:  'No-show Pending',
 };
 
 interface Props {

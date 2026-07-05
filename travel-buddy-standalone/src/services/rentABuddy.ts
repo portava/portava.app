@@ -264,6 +264,7 @@ export async function createBooking(payload: {
   category: BuddyCategory;
   notes?: string;
   addonIds?: string[];
+  acceptSafety?: boolean;
 }): Promise<ApiResult<{ booking: BuddyBooking | null }>> {
   return apiFetch('/api/rent-a-buddy/bookings', {
     method: 'POST',
