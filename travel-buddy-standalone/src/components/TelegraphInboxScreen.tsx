@@ -15,6 +15,7 @@ import { HighlightViewer } from './HighlightViewer';
 import { useHighlightRingState } from '../hooks/useHighlightRingState';
 import { color, space, radius, type as t } from '../theme/tokens';
 import type { ThreadSummary, MessageRequest } from '../services/messaging';
+import { circleCardInboxPreview } from './CircleStatusCardMessage.logic';
 
 type FilterKey = 'all' | 'direct' | 'trips' | 'circles' | 'unread' | 'requests';
 
@@ -142,7 +143,11 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
 
   const lmp = item.lastMessagePreview;
   const isMine = lmp?.senderId === userId;
-  const previewText = lmp ? (isMine ? lmp.body : (lmp.displayBody ?? lmp.body)) : '';
+  const previewText = lmp
+    ? lmp.msgType === 'circle_status_card'
+      ? circleCardInboxPreview(lmp.body)
+      : isMine ? lmp.body : (lmp.displayBody ?? lmp.body)
+    : '';
   const lastAt = lmp?.createdAt;
   const isMuted = !!item.mutedAt;
   const unread = item.unreadCount ?? 0;

@@ -30,6 +30,7 @@ import {
   checkinLabel,
   resolveCardRenderFromProps,
   resolveCardRender,
+  circleCardInboxPreview,
 } from '../CircleStatusCardMessage.logic.ts';
 
 // ── PLACEHOLDER_TEXT constant ─────────────────────────────────────────────────
@@ -292,5 +293,56 @@ describe('resolveCardRender — valid body produces correct card and text', () =
     assert.equal(r.show, 'checkin');
     assert.equal((r as any).label, 'Marked as safe');
     assert.equal((r as any).senderName, 'Alice');
+  });
+});
+
+// ── circleCardInboxPreview ────────────────────────────────────────────────────
+
+describe('circleCardInboxPreview — thread-list preview text for circle cards', () => {
+  it('null body → fallback text', () => {
+    assert.equal(circleCardInboxPreview(null), 'Circle update');
+  });
+
+  it('empty string body → fallback text', () => {
+    assert.equal(circleCardInboxPreview(''), 'Circle update');
+  });
+
+  it('malformed JSON body → fallback text', () => {
+    assert.equal(circleCardInboxPreview('{bad json}'), 'Circle update');
+  });
+
+  it('unknown subtype → fallback text', () => {
+    assert.equal(circleCardInboxPreview('{"subtype":"future_unknown_value"}'), 'Circle update');
+  });
+
+  it('missing subtype field → fallback text', () => {
+    assert.equal(circleCardInboxPreview('{"venueLabel":"Park"}'), 'Circle update');
+  });
+
+  it('arrived subtype → check-in label', () => {
+    assert.equal(circleCardInboxPreview('{"subtype":"arrived"}'), '✓ Circle check-in');
+  });
+
+  it('with_group subtype → check-in label', () => {
+    assert.equal(circleCardInboxPreview('{"subtype":"with_group"}'), '✓ Circle check-in');
+  });
+
+  it('leaving subtype → check-in label', () => {
+    assert.equal(circleCardInboxPreview('{"subtype":"leaving"}'), '✓ Circle check-in');
+  });
+
+  it('safe subtype → check-in label', () => {
+    assert.equal(circleCardInboxPreview('{"subtype":"safe"}'), '✓ Circle check-in');
+  });
+
+  it('meeting_point subtype → meeting-point label', () => {
+    assert.equal(circleCardInboxPreview('{"subtype":"meeting_point"}'), '📍 Meeting point updated');
+  });
+
+  it('meeting_point with venueLabel → same meeting-point label (venueLabel ignored for preview)', () => {
+    assert.equal(
+      circleCardInboxPreview('{"subtype":"meeting_point","venueLabel":"Cafe Luna"}'),
+      '📍 Meeting point updated',
+    );
   });
 });

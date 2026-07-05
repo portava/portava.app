@@ -123,6 +123,24 @@ export function resolveCardRenderFromProps(
 }
 
 /**
+ * Short human-readable preview string for a circle_status_card in the thread
+ * list inbox (TelegraphInboxScreen / ThreadRow).
+ *
+ * Does NOT apply privacy gating — the caller is already a member of the thread
+ * (it appears in their inbox).  Returns one of three strings:
+ *   '✓ Circle check-in'      — for any known check-in subtype
+ *   '📍 Meeting point updated' — for meeting_point subtype
+ *   'Circle update'           — for null / malformed / unknown body
+ */
+export function circleCardInboxPreview(body: string | null | undefined): string {
+  const payload = parseCircleCardBody(body);
+  const variant = classifySubtype(payload?.subtype);
+  if (variant === 'meeting_point') return '📍 Meeting point updated';
+  if (variant === 'checkin') return '✓ Circle check-in';
+  return 'Circle update';
+}
+
+/**
  * Decide what to render given a raw (unparsed) message body string.
  * Useful for testing the full JSON-parsing → rendering pipeline end-to-end.
  * Accepts an optional `subtypeOverride` that bypasses body parsing (mirrors
