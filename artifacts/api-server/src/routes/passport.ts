@@ -159,14 +159,14 @@ router.get("/users/:username/passport", async (req, res) => {
   let { data, error } = await sc
     .from("profiles")
     .select(PUBLIC_PROFILE_COLUMNS)
-    .or(`username.eq.${username},handle.eq.${username}`)
+    .eq("handle", username)
     .maybeSingle();
 
   if (error && (error as any).code === "42703") {
     ({ data, error } = await sc
       .from("profiles")
       .select(PUBLIC_PROFILE_COLUMNS_FALLBACK)
-      .or(`username.eq.${username},handle.eq.${username}`)
+      .eq("handle", username)
       .maybeSingle());
   }
 
@@ -319,7 +319,7 @@ router.get("/users/:username/passport/postcards", async (req, res) => {
   const { data: profile, error: profileErr } = await sc
     .from("profiles")
     .select("id, passport_visibility")
-    .or(`username.eq.${username},handle.eq.${username}`)
+    .eq("handle", username)
     .maybeSingle();
 
   if (profileErr || !profile) {
@@ -599,7 +599,7 @@ router.get("/users/:username/profile", async (req, res) => {
   const { data: profile, error: profileErr } = await sc
     .from("profiles")
     .select("id, username, display_name, name, avatar_url, cover_photo_url, passport_visibility, bio, is_private")
-    .or(`username.eq.${username},handle.eq.${username}`)
+    .eq("handle", username)
     .maybeSingle();
 
   if (profileErr || !profile) {

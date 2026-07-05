@@ -378,6 +378,8 @@ router.patch("/me/profile", async (req, res) => {
   if (p.isPrivate !== undefined) row.is_private = p.isPrivate;
 
   if (p.username !== undefined) {
+    // Invariant: handle is canonical, username mirrors it; both lowercase.
+    p.username = p.username.toLowerCase().trim();
     const v = validateUsername(p.username);
     if (!v.valid) {
       sendError(res, "invalid_payload", v.reason ?? "Invalid username");
@@ -413,6 +415,7 @@ router.patch("/me/profile", async (req, res) => {
       return;
     }
     row.username = p.username;
+    row.handle = p.username; // invariant: username === handle (handle canonical)
     row.username_updated_at = new Date().toISOString();
   }
 

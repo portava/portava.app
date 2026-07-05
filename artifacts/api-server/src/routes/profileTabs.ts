@@ -51,7 +51,7 @@ async function resolveTarget(sc: any, username: string) {
   const { data, error } = await sc
     .from("profiles")
     .select("id, username, is_private, passport_visibility")
-    .or(`username.eq.${username},handle.eq.${username}`)
+    .eq("handle", username)
     .maybeSingle();
   if (error || !data) return null;
   return data as { id: string; username: string; is_private: boolean; passport_visibility: string };

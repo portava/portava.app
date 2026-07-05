@@ -228,12 +228,12 @@ function baseState(): FakeState {
       "tok-dan":   { id: DAN },
     },
     profiles: [
-      { id: ME,    username: "me_user",    display_name: "Me",    is_private: false, passport_visibility: "public", avatar_url: null },
-      { id: ALICE, username: "alice_user", display_name: "Alice", is_private: false, passport_visibility: "public", avatar_url: null },
-      { id: BOB,   username: "bob_user",   display_name: "Bob",   is_private: true,  passport_visibility: "public", avatar_url: null },
-      { id: CARL,  username: "carl_user",  display_name: "Carl",  is_private: false, passport_visibility: "public", avatar_url: null },
-      { id: DAN,   username: "dan_user",   display_name: "Dan",   is_private: false, passport_visibility: "public", avatar_url: null },
-      { id: EVE,   username: "eve_user",   display_name: "Eve",   is_private: false, passport_visibility: "public", avatar_url: null },
+      { id: ME,    username: "me_user", handle: "me_user",    display_name: "Me",    is_private: false, passport_visibility: "public", avatar_url: null },
+      { id: ALICE, username: "alice_user", handle: "alice_user", display_name: "Alice", is_private: false, passport_visibility: "public", avatar_url: null },
+      { id: BOB,   username: "bob_user", handle: "bob_user",   display_name: "Bob",   is_private: true,  passport_visibility: "public", avatar_url: null },
+      { id: CARL,  username: "carl_user", handle: "carl_user",  display_name: "Carl",  is_private: false, passport_visibility: "public", avatar_url: null },
+      { id: DAN,   username: "dan_user", handle: "dan_user",   display_name: "Dan",   is_private: false, passport_visibility: "public", avatar_url: null },
+      { id: EVE,   username: "eve_user", handle: "eve_user",   display_name: "Eve",   is_private: false, passport_visibility: "public", avatar_url: null },
     ],
     user_account_states: [],
     blocks: [
