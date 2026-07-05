@@ -2,9 +2,9 @@
  * request-buddy.tsx — dual-mode screen.
  *
  * Mode A (per-buddy booking request): opened with `buddyId` param from a
- * buddy detail screen. Shows service picker, date/time, duration, group size,
- * city/meeting area, notes, and safety acknowledgement. Submits via
- * createBooking() → navigates to booking/[id].
+ * buddy detail screen. Shows package picker, date/time pickers, duration,
+ * group size, city/meeting area, notes, price preview, and a first-booking-only
+ * safety tutorial modal. Submits via createBooking() → navigates to booking/[id].
  *
  * Mode B (open marketplace request): opened without `buddyId`. Lets the
  * traveller post an open request that any eligible buddy can respond to.
@@ -16,35 +16,76 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Send, Calendar, Users, Clock } from 'lucide-react-native';
-import { color, space, radius, type as t, layout } from '../../src/theme/tokens';
+import {
+  ArrowLeft, Send, Users, Clock, Shield, AlertTriangle,
+} from 'lucide-react-native';
+import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { TravelChip } from '../../src/components/primitives';
 import { DatePickerField } from '../../src/components/DatePickerField';
+import { DatePickerField as NativeTimePicker } from '../../src/components/DateTimePickerField';
 import {
   createRequest, createBooking, getBuddyPackages, getBuddyProfile,
   type BuddyCategory, type MarketplacePackage, type BuddyProfile,
 } from '../../src/services/rentABuddy';
 
-// ── Safety tutorial modal (first-booking only) ─────────────────────────────
+// ── AsyncStorage helper (lazy-require so module load never crashes) ─────────
+
+type StorageStub = { setItem(k: string, v: string): Promise<void>; getItem(k: string): Promise<string | null> };
+const getStorage = (): StorageStub | null => {
+  try { return require('@react-native-async-storage/async-storage').default; } catch { return null; }
+};
+const TUTORIAL_KEY = 'rab_safety_tutorial_shown';
+
+async function hasSeenTutorial(): Promise<boolean> {
+  const s = getStorage();
+  if (!s) return false;
+  const v = await s.getItem(TUTORIAL_KEY);
+  return v === 'true';
+}
+
+async function markTutorialSeen(): Promise<void> {
+  const s = getStorage();
+  if (!s) return;
+  await s.setItem(TUTORIAL_KEY, 'true');
+}
+
+// ── Safety tutorial modal (first booking only) ────────────────────────────
 
 function SafetyModal({ visible, onAcknowledge }: { visible: boolean; onAcknowledge: () => void }) {
   return (
-    <Modal visible={visible} transparent animationType="fade">
+    <Modal visible={visible} transparent animationType="slide">
       <View style={sm.overlay}>
         <View style={sm.sheet}>
+          <View style={sm.iconRow}>
+            <Shield size={28} color={color.success} />
+          </View>
           <Text style={sm.title}>Before you book</Text>
-          <View style={sm.item}>
-            <Text style={sm.bullet}>🚫</Text>
-            <Text style={sm.body}>Buddies provide legitimate travel services only. Romantic, adult, or escort requests are not allowed and will result in a permanent ban.</Text>
+          <Text style={sm.sub}>Please review these important safety guidelines.</Text>
+
+          <View style={sm.rule}>
+            <AlertTriangle size={14} color={color.warn} />
+            <View style={{ flex: 1 }}>
+              <Text style={sm.ruleTitle}>Not a dating service</Text>
+              <Text style={sm.ruleSub}>Rent a Buddy is a social travel companion service. Romantic or sexual expectations are strictly prohibited.</Text>
+            </View>
           </View>
-          <View style={sm.item}>
-            <Text style={sm.bullet}>💳</Text>
-            <Text style={sm.body}>Never pay outside the Travel Buddy app. Off-app payments are not covered by our safety guarantee.</Text>
+
+          <View style={sm.rule}>
+            <AlertTriangle size={14} color={color.warn} />
+            <View style={{ flex: 1 }}>
+              <Text style={sm.ruleTitle}>Never pay off-app</Text>
+              <Text style={sm.ruleSub}>Only pay via Travel Buddy. Cash should only cover the pre-agreed balance at session end — never upfront.</Text>
+            </View>
           </View>
-          <View style={sm.item}>
-            <Text style={sm.bullet}>🛡️</Text>
-            <Text style={sm.body}>Enable Safe Return in your active session so we can check you made it home safely.</Text>
+
+          <View style={sm.rule}>
+            <Shield size={14} color={color.success} />
+            <View style={{ flex: 1 }}>
+              <Text style={sm.ruleTitle}>Safe Return is always on</Text>
+              <Text style={sm.ruleSub}>Your session has built-in check-ins. Share your location with your Trusted Circle and use the SOS button if needed.</Text>
+            </View>
           </View>
+
           <Pressable style={sm.btn} onPress={onAcknowledge}>
             <Text style={sm.btnText}>I understand — continue</Text>
           </Pressable>
@@ -57,21 +98,29 @@ function SafetyModal({ visible, onAcknowledge }: { visible: boolean; onAcknowled
 // ── Open-request form (Mode B) ─────────────────────────────────────────────
 
 const OPEN_CATEGORIES = ['city', 'nightlife', 'language', 'arrival', 'content', 'shopping', 'food', 'adventure', 'other'];
-const DURATIONS = [{ label: '1h', value: 60 }, { label: '2h', value: 120 }, { label: '3h', value: 180 }, { label: 'Half day', value: 240 }, { label: 'Full day', value: 480 }];
-const BUDGET_OPTS = [{ label: 'Under $20/hr', min: 0, max: 20 }, { label: '$20–$40/hr', min: 20, max: 40 }, { label: '$40–$70/hr', min: 40, max: 70 }, { label: 'Open budget', min: null, max: null }];
-const POLICY_TEXT = "Requests must be for legitimate travel services only. Escort, adult, romantic, or illegal service requests are not permitted.";
+const DURATIONS = [
+  { label: '1h', value: 60 }, { label: '2h', value: 120 }, { label: '3h', value: 180 },
+  { label: 'Half day', value: 240 }, { label: 'Full day', value: 480 },
+];
+const BUDGET_OPTS = [
+  { label: 'Under $20/hr', min: 0,   max: 20   },
+  { label: '$20–$40/hr',  min: 20,  max: 40   },
+  { label: '$40–$70/hr',  min: 40,  max: 70   },
+  { label: 'Open budget', min: null, max: null  },
+];
+const POLICY_TEXT = "Requests must be for legitimate travel services only. Escort, adult, romantic, or illegal service requests are not permitted and result in a permanent ban.";
 
 function OpenRequestForm() {
   const insets = useSafeAreaInsets();
-  const [city, setCity]                   = useState('');
-  const [category, setCategory]           = useState('city');
+  const [city, setCity]                       = useState('');
+  const [category, setCategory]               = useState('city');
   const [durationMinutes, setDurationMinutes] = useState(120);
-  const [budgetIdx, setBudgetIdx]         = useState(1);
-  const [language, setLanguage]           = useState('');
-  const [groupSize, setGroupSize]         = useState(1);
-  const [notes, setNotes]                 = useState('');
-  const [publicOnly, setPublicOnly]       = useState(false);
-  const [loading, setLoading]             = useState(false);
+  const [budgetIdx, setBudgetIdx]             = useState(1);
+  const [language, setLanguage]               = useState('');
+  const [groupSize, setGroupSize]             = useState(1);
+  const [notes, setNotes]                     = useState('');
+  const [publicOnly, setPublicOnly]           = useState(false);
+  const [loading, setLoading]                 = useState(false);
 
   const budget = BUDGET_OPTS[budgetIdx];
 
@@ -91,7 +140,7 @@ function OpenRequestForm() {
     Alert.alert(
       'Request Posted!',
       'Eligible Buddies in your city will see your request and can send you offers.',
-      [{ text: 'View Offers', onPress: () => router.replace({ pathname: '/(rent-a-buddy)/offers', params: { requestId: result.data.request.id } } as any) }]
+      [{ text: 'View Offers', onPress: () => router.replace({ pathname: '/(rent-a-buddy)/offers' as any, params: { requestId: result.data.request.id } }) }]
     );
   }, [city, category, durationMinutes, groupSize, budget, language, publicOnly, notes]);
 
@@ -134,7 +183,7 @@ function OpenRequestForm() {
         <View style={s.row}>
           {[1, 2, 3, 4, 5, 6].map((n) => (
             <Pressable key={n} style={[s.numBtn, groupSize === n && s.numBtnSel]} onPress={() => setGroupSize(n)}>
-              <Text style={[s.numLabel, groupSize === n && s.numLabelSel]}>{n < 6 ? n : '6+'}</Text>
+              <Text style={[s.numLabel, groupSize === n && s.numLabelSel]}>{n < 6 ? String(n) : '6+'}</Text>
             </Pressable>
           ))}
         </View>
@@ -167,23 +216,21 @@ function OpenRequestForm() {
 function BookingRequestForm({ buddyId }: { buddyId: string }) {
   const insets = useSafeAreaInsets();
 
-  const [buddy, setBuddy]             = useState<BuddyProfile | null>(null);
-  const [packages, setPackages]       = useState<MarketplacePackage[]>([]);
-  const [pkgIdx, setPkgIdx]           = useState<number | null>(null);
-  const [bookingDate, setBookingDate] = useState('');
-  const [groupSize, setGroupSize]     = useState(1);
-  const [city, setCity]               = useState('');
-  const [notes, setNotes]             = useState('');
-  const [loading, setLoading]         = useState(false);
-  const [safetyVisible, setSafetyVisible] = useState(false);
-  const [initLoading, setInitLoading] = useState(true);
+  const [buddy, setBuddy]                   = useState<BuddyProfile | null>(null);
+  const [packages, setPackages]             = useState<MarketplacePackage[]>([]);
+  const [pkgIdx, setPkgIdx]                 = useState<number | null>(null);
+  const [bookingDate, setBookingDate]       = useState('');
+  const [startTime, setStartTime]           = useState<Date | null>(null);
+  const [groupSize, setGroupSize]           = useState(1);
+  const [city, setCity]                     = useState('');
+  const [notes, setNotes]                   = useState('');
+  const [loading, setLoading]               = useState(false);
+  const [initLoading, setInitLoading]       = useState(true);
+  const [safetyVisible, setSafetyVisible]   = useState(false);
 
   useEffect(() => {
     let alive = true;
-    Promise.all([
-      getBuddyProfile(buddyId),
-      getBuddyPackages(buddyId),
-    ]).then(([bRes, pRes]) => {
+    Promise.all([getBuddyProfile(buddyId), getBuddyPackages(buddyId)]).then(([bRes, pRes]) => {
       if (!alive) return;
       if (bRes.ok && bRes.data.buddy) {
         setBuddy(bRes.data.buddy);
@@ -199,7 +246,7 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
     return () => { alive = false; };
   }, [buddyId]);
 
-  const selectedPkg = pkgIdx != null ? packages[pkgIdx] ?? null : null;
+  const selectedPkg = pkgIdx != null ? (packages[pkgIdx] ?? null) : null;
 
   const validate = (): string | null => {
     if (!bookingDate) return 'Please select a booking date.';
@@ -207,20 +254,22 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
     return null;
   };
 
-  const submit = useCallback(async (acceptSafety: boolean) => {
-    const err = validate();
-    if (err) { Alert.alert('Missing info', err); return; }
+  const doSubmit = useCallback(async () => {
     setLoading(true);
+    const timeStr = startTime
+      ? startTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+      : undefined;
     const res = await createBooking({
       buddyId,
       packageId: selectedPkg?.id,
       bookingDate,
+      startTime: timeStr,
       durationH: selectedPkg?.durationH ?? 2,
       groupSize,
       city: city.trim(),
       category: (selectedPkg?.category as BuddyCategory | undefined) ?? 'city',
       notes: notes.trim() || undefined,
-      acceptSafety,
+      acceptSafety: true,
     });
     setLoading(false);
     if (!res.ok) { Alert.alert('Error', res.error); return; }
@@ -230,12 +279,23 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
     } else {
       router.back();
     }
-  }, [buddyId, selectedPkg, bookingDate, groupSize, city, notes]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [buddyId, selectedPkg, bookingDate, startTime, groupSize, city, notes]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const onPressSubmit = () => {
+  const onPressSubmit = async () => {
     const err = validate();
     if (err) { Alert.alert('Missing info', err); return; }
-    setSafetyVisible(true);
+    const seen = await hasSeenTutorial();
+    if (seen) {
+      doSubmit();
+    } else {
+      setSafetyVisible(true);
+    }
+  };
+
+  const handleSafetyAck = async () => {
+    await markTutorialSeen();
+    setSafetyVisible(false);
+    doSubmit();
   };
 
   if (initLoading) {
@@ -248,10 +308,7 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
-      <SafetyModal
-        visible={safetyVisible}
-        onAcknowledge={() => { setSafetyVisible(false); submit(true); }}
-      />
+      <SafetyModal visible={safetyVisible} onAcknowledge={handleSafetyAck} />
 
       <View style={s.header}>
         <Pressable onPress={() => router.back()} style={s.backBtn}>
@@ -259,9 +316,7 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
         </Pressable>
         <View style={{ flex: 1 }}>
           <Text style={s.title}>Request Booking</Text>
-          {buddy && (
-            <Text style={s.subtitle}>{buddy.displayName ?? 'Buddy'} · {buddy.city}</Text>
-          )}
+          {buddy && <Text style={s.subtitle}>{buddy.displayName ?? 'Buddy'} · {buddy.city}</Text>}
         </View>
       </View>
 
@@ -273,11 +328,7 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
           <>
             <Text style={s.label}>Select a service *</Text>
             {packages.map((pkg, i) => (
-              <Pressable
-                key={pkg.id}
-                style={[s.pkgCard, pkgIdx === i && s.pkgCardSel]}
-                onPress={() => setPkgIdx(i)}
-              >
+              <Pressable key={pkg.id} style={[s.pkgCard, pkgIdx === i && s.pkgCardSel]} onPress={() => setPkgIdx(i)}>
                 <View style={{ flex: 1 }}>
                   <Text style={s.pkgTitle}>{pkg.title}</Text>
                   {pkg.description && <Text style={s.pkgDesc} numberOfLines={2}>{pkg.description}</Text>}
@@ -294,12 +345,18 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
           </>
         )}
 
-        {/* Date picker */}
+        {/* Date */}
         <Text style={s.label}>Booking date *</Text>
-        <DatePickerField
-          value={bookingDate}
-          onChange={setBookingDate}
-          placeholder="Select date"
+        <DatePickerField value={bookingDate} onChange={setBookingDate} placeholder="Select date" />
+
+        {/* Time */}
+        <Text style={s.label}>Start time (optional)</Text>
+        <NativeTimePicker
+          value={startTime}
+          onChange={setStartTime}
+          onClear={() => setStartTime(null)}
+          placeholder="Pick a start time"
+          mode="time"
         />
 
         {/* Group size */}
@@ -307,23 +364,20 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
         <View style={s.row}>
           {[1, 2, 3, 4, 5, 6].map((n) => (
             <Pressable key={n} style={[s.numBtn, groupSize === n && s.numBtnSel]} onPress={() => setGroupSize(n)}>
-              <Text style={[s.numLabel, groupSize === n && s.numLabelSel]}>{n < 6 ? n : '6+'}</Text>
+              <Text style={[s.numLabel, groupSize === n && s.numLabelSel]}>{n < 6 ? String(n) : '6+'}</Text>
             </Pressable>
           ))}
         </View>
 
         {/* City / meeting area */}
         <Text style={s.label}>Meeting city / area *</Text>
-        <View style={s.inputRow}>
-          <Calendar size={14} color={color.mute} />
-          <TextInput
-            style={[s.input, { flex: 1, marginBottom: 0 }]}
-            placeholder="e.g. Cebu City, BGC, Old Town…"
-            placeholderTextColor={color.mute}
-            value={city}
-            onChangeText={setCity}
-          />
-        </View>
+        <TextInput
+          style={s.input}
+          placeholder="e.g. Cebu City, BGC, Old Town…"
+          placeholderTextColor={color.mute}
+          value={city}
+          onChangeText={setCity}
+        />
 
         {/* Notes */}
         <Text style={s.label}>Additional notes</Text>
@@ -337,7 +391,7 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
             {selectedPkg.depositRequired && (
               <Text style={s.priceSub}>Deposit ({selectedPkg.depositPercent}%) collected at confirmation</Text>
             )}
-            <Text style={s.priceSub}>Cash balance may apply — settle directly with your Buddy at the end of the session.</Text>
+            <Text style={s.priceSub}>Cash balance settled directly with your Buddy at session end.</Text>
           </View>
         )}
 
@@ -354,7 +408,7 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
   );
 }
 
-// ── Entry point — dispatch to correct mode ─────────────────────────────────
+// ── Entry point ───────────────────────────────────────────────────────────
 
 export default function RequestBuddy() {
   const { buddyId } = useLocalSearchParams<{ buddyId?: string }>();
@@ -365,50 +419,51 @@ export default function RequestBuddy() {
 // ── Styles ────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
-  root:            { flex: 1, backgroundColor: color.paper },
-  header:          { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.lg, borderBottomWidth: 1, borderBottomColor: color.haze },
-  backBtn:         { padding: space.xs },
-  title:           { ...t.heading, color: color.ink },
-  subtitle:        { ...t.small, color: color.mute },
-  body:            { flex: 1 },
-  content:         { padding: space.lg, paddingBottom: 60 },
-  notice:          { ...t.small, color: color.mute, backgroundColor: color.haze, padding: space.md, borderRadius: radius.sm, marginBottom: space.lg, lineHeight: 18 },
-  label:           { ...t.small, color: color.mute, fontWeight: '600', marginBottom: space.sm, marginTop: space.lg },
-  input:           { ...t.body, color: color.ink, backgroundColor: color.haze, borderRadius: radius.md, padding: space.md, borderWidth: 1, borderColor: color.haze, marginBottom: space.sm },
-  inputRow:        { flexDirection: 'row', alignItems: 'center', gap: space.sm, backgroundColor: color.haze, borderRadius: radius.md, paddingHorizontal: space.md, borderWidth: 1, borderColor: color.haze, marginBottom: space.sm },
-  textarea:        { minHeight: 72 },
-  chips:           { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
-  row:             { flexDirection: 'row', gap: space.sm },
-  numBtn:          { width: 44, height: 44, borderRadius: radius.sm, borderWidth: 1.5, borderColor: color.haze, alignItems: 'center', justifyContent: 'center' },
-  numBtnSel:       { borderColor: color.deep, backgroundColor: `${color.deep}12` },
-  numLabel:        { ...t.body, color: color.ink },
-  numLabelSel:     { color: color.deep, fontWeight: '700' },
-  toggleRow:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: space.lg, padding: space.lg, backgroundColor: color.haze, borderRadius: radius.md },
-  toggleLabel:     { ...t.body, color: color.ink, fontWeight: '600' },
-  toggleSub:       { ...t.small, color: color.mute },
-  submitBtn:       { marginTop: space.xl, backgroundColor: color.deep, borderRadius: radius.md, paddingVertical: space.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.sm },
+  root:              { flex: 1, backgroundColor: color.paper },
+  header:            { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.lg, borderBottomWidth: 1, borderBottomColor: color.haze },
+  backBtn:           { padding: space.xs },
+  title:             { ...t.heading, color: color.ink },
+  subtitle:          { ...t.small, color: color.mute },
+  body:              { flex: 1 },
+  content:           { padding: space.lg, paddingBottom: 60 },
+  notice:            { ...t.small, color: color.mute, backgroundColor: color.haze, padding: space.md, borderRadius: radius.sm, marginBottom: space.lg, lineHeight: 18 },
+  label:             { ...t.small, color: color.mute, fontWeight: '600', marginBottom: space.sm, marginTop: space.lg },
+  input:             { ...t.body, color: color.ink, backgroundColor: color.haze, borderRadius: radius.md, padding: space.md, borderWidth: 1, borderColor: color.haze, marginBottom: space.sm },
+  textarea:          { minHeight: 72 },
+  chips:             { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  row:               { flexDirection: 'row', gap: space.sm },
+  numBtn:            { width: 44, height: 44, borderRadius: radius.sm, borderWidth: 1.5, borderColor: color.haze, alignItems: 'center', justifyContent: 'center' },
+  numBtnSel:         { borderColor: color.deep, backgroundColor: `${color.deep}12` },
+  numLabel:          { ...t.body, color: color.ink },
+  numLabelSel:       { color: color.deep, fontWeight: '700' },
+  toggleRow:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: space.lg, padding: space.lg, backgroundColor: color.haze, borderRadius: radius.md },
+  toggleLabel:       { ...t.body, color: color.ink, fontWeight: '600' },
+  toggleSub:         { ...t.small, color: color.mute },
+  submitBtn:         { marginTop: space.xl, backgroundColor: color.deep, borderRadius: radius.md, paddingVertical: space.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.sm },
   submitBtnDisabled: { opacity: 0.4 },
-  submitBtnLabel:  { ...t.body, color: '#fff', fontWeight: '700' },
-  pkgCard:         { borderRadius: radius.md, borderWidth: 1.5, borderColor: color.haze, padding: space.md, marginBottom: space.sm, flexDirection: 'row', alignItems: 'center', gap: space.md },
-  pkgCardSel:      { borderColor: color.deep, backgroundColor: `${color.deep}08` },
-  pkgTitle:        { ...t.bodyStrong, color: color.ink, marginBottom: 2 },
-  pkgDesc:         { ...t.small, color: color.mute, lineHeight: 16 },
-  pkgMeta:         { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: space.xs },
-  pkgMetaText:     { ...t.small, color: color.mute },
-  pkgPrice:        { ...t.bodyStrong, color: color.signal, fontSize: 16 },
-  priceBox:        { backgroundColor: `${color.success}12`, borderRadius: radius.md, padding: space.md, borderWidth: 1, borderColor: `${color.success}30`, marginTop: space.lg },
-  priceLabel:      { ...t.small, color: color.mute, marginBottom: 2 },
-  priceVal:        { ...t.heading, color: color.ink, marginBottom: 4 },
-  priceSub:        { ...t.small, color: color.mute, lineHeight: 16, marginTop: 2 },
+  submitBtnLabel:    { ...t.body, color: '#fff', fontWeight: '700' },
+  pkgCard:           { borderRadius: radius.md, borderWidth: 1.5, borderColor: color.haze, padding: space.md, marginBottom: space.sm, flexDirection: 'row', alignItems: 'center', gap: space.md },
+  pkgCardSel:        { borderColor: color.deep, backgroundColor: `${color.deep}08` },
+  pkgTitle:          { ...t.bodyStrong, color: color.ink, marginBottom: 2 },
+  pkgDesc:           { ...t.small, color: color.mute, lineHeight: 16 },
+  pkgMeta:           { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: space.xs },
+  pkgMetaText:       { ...t.small, color: color.mute },
+  pkgPrice:          { ...t.bodyStrong, color: color.signal, fontSize: 16 },
+  priceBox:          { backgroundColor: `${color.success}12`, borderRadius: radius.md, padding: space.md, borderWidth: 1, borderColor: `${color.success}30`, marginTop: space.lg },
+  priceLabel:        { ...t.small, color: color.mute, marginBottom: 2 },
+  priceVal:          { ...t.heading, color: color.ink, marginBottom: 4 },
+  priceSub:          { ...t.small, color: color.mute, lineHeight: 16, marginTop: 2 },
 });
 
 const sm = StyleSheet.create({
-  overlay:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', padding: space.xl },
-  sheet:    { backgroundColor: color.paper, borderRadius: radius.lg, padding: space.xl, width: '100%', maxWidth: 380 },
-  title:    { ...t.heading, color: color.ink, marginBottom: space.lg },
-  item:     { flexDirection: 'row', gap: space.md, marginBottom: space.md },
-  bullet:   { fontSize: 18 },
-  body:     { ...t.body, color: color.ink, flex: 1, lineHeight: 20 },
-  btn:      { backgroundColor: color.deep, borderRadius: radius.md, paddingVertical: space.md, alignItems: 'center', marginTop: space.lg },
-  btnText:  { ...t.body, color: '#fff', fontWeight: '700' },
+  overlay:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', padding: space.xl },
+  sheet:     { backgroundColor: color.paper, borderRadius: radius.lg, padding: space.xl, width: '100%', maxWidth: 380 },
+  iconRow:   { alignItems: 'center', marginBottom: space.md },
+  title:     { ...t.heading, color: color.ink, marginBottom: space.xs, textAlign: 'center' },
+  sub:       { ...t.small, color: color.mute, marginBottom: space.lg, textAlign: 'center' },
+  rule:      { flexDirection: 'row', gap: space.md, marginBottom: space.md, alignItems: 'flex-start' },
+  ruleTitle: { ...t.bodyStrong, color: color.ink, marginBottom: 2 },
+  ruleSub:   { ...t.small, color: color.mute, lineHeight: 16 },
+  btn:       { backgroundColor: color.deep, borderRadius: radius.md, paddingVertical: space.md, alignItems: 'center', marginTop: space.lg },
+  btnText:   { ...t.body, color: '#fff', fontWeight: '700' },
 });

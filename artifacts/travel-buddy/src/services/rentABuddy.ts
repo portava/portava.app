@@ -149,6 +149,7 @@ export interface BuddySearchParams {
   sortBy?: BuddySortBy;
   verifiedOnly?: boolean;
   minRating?: number;
+  sessionMode?: 'any' | 'in_person' | 'remote';
   page?: number;
   perPage?: number;
 }

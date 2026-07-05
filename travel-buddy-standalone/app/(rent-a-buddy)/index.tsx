@@ -263,7 +263,7 @@ export default function RentABuddyLanding() {
                 buddy={b}
                 compact
                 availableNow
-                onBook={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: b.id } })}
+                onBook={() => router.push({ pathname: '/(rent-a-buddy)/request-buddy' as any, params: { buddyId: b.id } })}
               />
             </Pressable>
           ))}
@@ -309,7 +309,7 @@ export default function RentABuddyLanding() {
                 <BuddyCard
                   key={b.id}
                   buddy={b}
-                  onBook={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: b.id } })}
+                  onBook={() => router.push({ pathname: '/(rent-a-buddy)/request-buddy' as any, params: { buddyId: b.id } })}
                 />
               ))
             ) : (

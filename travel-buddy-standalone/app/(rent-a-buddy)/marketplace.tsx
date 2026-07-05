@@ -13,6 +13,8 @@ import {
   searchBuddies, type BuddyProfile, type BuddyCategory, type BuddySortBy,
 } from '../../src/services/rentABuddy';
 
+type SessionMode = 'any' | 'in_person' | 'remote';
+
 const CATEGORIES: { key: BuddyCategory | 'all'; label: string }[] = [
   { key: 'all',       label: 'All' },
   { key: 'city',      label: 'City Tour' },
@@ -40,6 +42,18 @@ const BUDGET_OPTS: { label: string; max: number | undefined }[] = [
   { label: '≤$70/hr', max: 70 },
 ];
 
+const RATING_OPTS: { label: string; min: number | undefined }[] = [
+  { label: 'Any rating', min: undefined },
+  { label: '4.0+ ⭐',    min: 4.0 },
+  { label: '4.5+ ⭐',    min: 4.5 },
+];
+
+const SESSION_MODES: { key: SessionMode; label: string }[] = [
+  { key: 'any',       label: 'Any' },
+  { key: 'in_person', label: 'In-person' },
+  { key: 'remote',    label: 'Remote' },
+];
+
 const PER_PAGE = 10;
 
 export default function Marketplace() {
@@ -52,6 +66,8 @@ export default function Marketplace() {
   const [language, setLanguage]               = useState('');
   const [verifiedOnly, setVerifiedOnly]       = useState(false);
   const [budgetIdx, setBudgetIdx]             = useState(0);
+  const [ratingIdx, setRatingIdx]             = useState(0);
+  const [sessionMode, setSessionMode]         = useState<SessionMode>('any');
   const [filtersOpen, setFiltersOpen]         = useState(false);
 
   const [buddies, setBuddies]                 = useState<BuddyProfile[]>([]);
@@ -64,6 +80,7 @@ export default function Marketplace() {
   const [cityNotLaunched, setCityNotLaunched] = useState(false);
 
   const budget = BUDGET_OPTS[budgetIdx];
+  const rating = RATING_OPTS[ratingIdx];
 
   const load = useCallback(async (pg: number, silent = false) => {
     if (!city.trim()) return;
@@ -81,6 +98,8 @@ export default function Marketplace() {
       verifiedOnly: verifiedOnly || undefined,
       ...(language.trim() ? { language: language.trim() } : {}),
       ...(budget.max != null ? { maxBudgetUsd: budget.max } : {}),
+      ...(rating.min != null ? { minRating: rating.min } : {}),
+      ...(sessionMode !== 'any' ? { sessionMode } : {}),
       page: pg,
       perPage: PER_PAGE,
     });
@@ -110,7 +129,7 @@ export default function Marketplace() {
 
   useEffect(() => {
     if (city.trim().length > 1) load(1);
-  }, [category, sortBy, verifiedOnly, budget]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [category, sortBy, verifiedOnly, budget, rating, sessionMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onSearch   = () => load(1);
   const onLoadMore = () => load(page + 1);
@@ -200,6 +219,34 @@ export default function Marketplace() {
               returnKeyType="search"
               onSubmitEditing={onSearch}
             />
+
+            {/* Rating */}
+            <Text style={s.filterLabel}>Minimum rating</Text>
+            <View style={s.budgetRow}>
+              {RATING_OPTS.map((r, i) => (
+                <Pressable
+                  key={i}
+                  style={[s.budgetChip, ratingIdx === i && s.budgetChipActive]}
+                  onPress={() => setRatingIdx(i)}
+                >
+                  <Text style={[s.budgetText, ratingIdx === i && s.budgetTextActive]}>{r.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            {/* Session mode */}
+            <Text style={s.filterLabel}>Session type</Text>
+            <View style={s.budgetRow}>
+              {SESSION_MODES.map((m) => (
+                <Pressable
+                  key={m.key}
+                  style={[s.budgetChip, sessionMode === m.key && s.budgetChipActive]}
+                  onPress={() => setSessionMode(m.key)}
+                >
+                  <Text style={[s.budgetText, sessionMode === m.key && s.budgetTextActive]}>{m.label}</Text>
+                </Pressable>
+              ))}
+            </View>
 
             {/* Budget */}
             <Text style={s.filterLabel}>Max budget</Text>

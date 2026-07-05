@@ -519,7 +519,7 @@ function BuddySection({ userId }: { userId: string }) {
         </Pressable>
         <Pressable
           style={({ pressed }) => [buddyCardStyles.btn, buddyCardStyles.bookBtn, { flex: 1 }, pressed && { opacity: 0.75 }]}
-          onPress={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: buddy.id } })}
+          onPress={() => router.push({ pathname: '/(rent-a-buddy)/request-buddy' as any, params: { buddyId: buddy.id } })}
         >
           <Text style={buddyCardStyles.btnText}>Book {buddy.displayName?.split(' ')[0] ?? 'Buddy'}</Text>
         </Pressable>
