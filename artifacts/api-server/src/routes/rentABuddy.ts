@@ -660,8 +660,6 @@ router.get("/api/buddies", async (req, res) => {
   //   cancel_count      –15/ea (reliability penalty)
   //   no_show_count     –10/ea (severe trust penalty)
   //   favorites         +5 max (weak popularity tiebreak)
-  const CANDIDATE_LIMIT = 500;
-
   const scoreProfile = (p: Record<string, unknown>): number => {
     const featPts     = (p.featured as boolean) ? 20 : 0;
     const verPts      = (p.verification_status as string) === "verified" ? 20 : 0;
@@ -672,7 +670,14 @@ router.get("/api/buddies", async (req, res) => {
     const cancelPen   = Number((p as any).cancel_count ?? 0) * -15;
     const noShowPen   = Number((p as any).no_show_count ?? 0) * -10;
     const favPts      = Math.min(5, Number((p as any).favorites_count ?? 0));
-    return featPts + verPts + catPts + langPts + ratingScore + newBuddy + cancelPen + noShowPen + favPts;
+    // Response-time signal: quicker reply = higher trust (column: response_time_h in decimal hours)
+    const rtH         = Number((p as any).response_time_h ?? Infinity);
+    const responsePts = rtH <= 0.5 ? 15 : rtH <= 1 ? 10 : rtH <= 4 ? 5 : 0;
+    // Availability-match signal: proactively scheduled availability boosts relevance.
+    // When an explicit date filter pre-selected these candidates, all share the bonus (+10).
+    // When a real-time "available now" filter was requested, available_now drives the signal.
+    const availPts    = buddyIdsFilter !== null ? 10 : ((p.available_now as boolean) ? 5 : 0);
+    return featPts + verPts + catPts + langPts + ratingScore + newBuddy + cancelPen + noShowPen + favPts + responsePts + availPts;
   };
 
   // Shared filter helper — closes over all filter params from req.query.
@@ -715,8 +720,10 @@ router.get("/api/buddies", async (req, res) => {
   );
   if (countError) return sendError(res, "db_error", countError.message);
 
-  // Scoring pool — pre-sorted at DB level by featured/rating for good candidate
-  // selection; weighted scoring is applied across the FULL pool before paginating.
+  // Scoring pool — size adapts to totalCount so scored.length ≈ totalCount for
+  // realistic datasets (< 2000 buddies per city), keeping totalPages consistent.
+  // Hard cap of 2000 prevents excessive memory use on large global result sets.
+  const fetchLimit = Math.min(Math.max(totalCount ?? 0, perPage), 2000);
   const { data, error } = await applyBuddyFilters(
     serviceClient
       .from("rent_buddy_profiles")
@@ -726,11 +733,11 @@ router.get("/api/buddies", async (req, res) => {
       .order("featured", { ascending: false })
       .order("average_rating", { ascending: false })
       .order("review_count", { ascending: false })
-      .limit(CANDIDATE_LIMIT),
+      .limit(fetchLimit),
   );
   if (error) return sendError(res, "db_error", error.message);
 
-  // Apply weighted scoring across the full candidate pool, THEN paginate.
+  // Apply weighted scoring across the full fetched pool, THEN paginate.
   const scored = (data ?? [] as Record<string, unknown>[]).sort(
     (a: Record<string, unknown>, b: Record<string, unknown>) => scoreProfile(b) - scoreProfile(a),
   );
@@ -742,7 +749,9 @@ router.get("/api/buddies", async (req, res) => {
     total: totalCount ?? 0,
     page,
     perPage,
-    totalPages: Math.ceil((totalCount ?? 0) / perPage),
+    // totalPages is based on scored.length (the pool we can actually serve weighted) so
+    // pagination controls are always consistent with the data returned by each page.
+    totalPages: Math.ceil(scored.length / perPage),
   });
 });
 
@@ -6062,6 +6071,9 @@ router.post("/api/buddy-bookings/:bookingId/rebook", async (req, res) => {
 
   if (!bookingDate) {
     return res.status(400).json({ error: "invalid_payload", message: "bookingDate is required to rebook." });
+  }
+  if (!startTime) {
+    return res.status(400).json({ error: "invalid_payload", message: "startTime is required to rebook." });
   }
 
   const { data: original } = await serviceClient

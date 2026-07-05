@@ -1,10 +1,9 @@
 /**
  * Off-app solicitation detection — messaging route integration tests.
  *
- * Verifies that POST /api/threads/:threadId/messages scans message bodies
- * for off-platform payment phrases and logs buddy_booking_events warnings.
- * After OFF_APP_SUSPENSION_THRESHOLD cumulative offenses the buddy profile
- * is suspended and an auto-suspension event is logged.
+ * Offenses are only attributed when the MESSAGE SENDER is the buddy account for
+ * that booking. A traveler can write flagged phrases without triggering buddy
+ * suspension (the system only polices the service provider, not the customer).
  *
  * Run: node --import tsx/esm --test src/test/messagingOffApp.test.ts
  */
@@ -16,12 +15,13 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import messagingRouter from "../routes/messaging.js";
 
-const FAKE_TOKEN  = "msg-offapp-user-token";
-const USER_ID     = "traveler-offapp-1";
-const BUDDY_USER  = "buddy-offapp-user-1";
-const BUDDY_PROF  = "buddy-offapp-profile-1";
-const BOOKING_ID  = "booking-offapp-1";
-const THREAD_ID   = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+const BUDDY_TOKEN    = "msg-offapp-buddy-token";
+const TRAVELER_TOKEN = "msg-offapp-traveler-token";
+const BUDDY_USER     = "buddy-offapp-user-1";
+const TRAVELER_ID    = "traveler-offapp-1";
+const BUDDY_PROF     = "buddy-offapp-profile-1";
+const BOOKING_ID     = "booking-offapp-1";
+const THREAD_ID      = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 
 let server: http.Server;
 let base: string;
@@ -62,9 +62,9 @@ function makeClient() {
       is(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
       maybeSingle() { this._maybeSingle = true; return this; },
       single() { this._maybeSingle = true; return this; },
-      order(col: string, opts?: any) { return this; },
-      limit(n: number) { return this; },
-      range(f: number, t: number) { return this; },
+      order() { return this; },
+      limit() { return this; },
+      range() { return this; },
 
       async then(resolve: (v: any) => void) {
         const result = await this._resolve();
@@ -153,7 +153,8 @@ function makeClient() {
     from: (table: string) => fakeTable(table),
     auth: {
       getUser: async (token: string) => {
-        if (token === FAKE_TOKEN) return { data: { user: { id: USER_ID } }, error: null };
+        if (token === BUDDY_TOKEN)    return { data: { user: { id: BUDDY_USER } }, error: null };
+        if (token === TRAVELER_TOKEN) return { data: { user: { id: TRAVELER_ID } }, error: null };
         return { data: { user: null }, error: { message: "invalid token" } };
       },
     },
@@ -162,31 +163,35 @@ function makeClient() {
 
 function setupState() {
   state = {
-    profiles: { [USER_ID]: { id: USER_ID, preferred_language: "en" } },
+    profiles: {
+      [BUDDY_USER]:  { id: BUDDY_USER,  preferred_language: "en" },
+      [TRAVELER_ID]: { id: TRAVELER_ID, preferred_language: "en" },
+    },
     buddyProfiles: {
       [BUDDY_PROF]: { id: BUDDY_PROF, user_id: BUDDY_USER, status: "active", admin_status: "active" },
     },
     bookings: {
       [BOOKING_ID]: {
         id: BOOKING_ID,
-        traveler_id: USER_ID,
+        traveler_id: TRAVELER_ID,
         buddy_id: BUDDY_PROF,
         telegraph_thread_id: THREAD_ID,
         status: "accepted",
       },
     },
     threadMembers: [
-      { thread_id: THREAD_ID, user_id: USER_ID, left_at: null },
+      { thread_id: THREAD_ID, user_id: BUDDY_USER,  left_at: null },
+      { thread_id: THREAD_ID, user_id: TRAVELER_ID, left_at: null },
     ],
     bookingEvents: [],
-    messages: [],
+    messages:      [],
   };
   const client = makeClient();
   _setTestClient(client as any, true);
   _setTestServiceClient(client as any);
 }
 
-function sendMessage(body: string): Promise<{ status: number; body: any }> {
+function sendMessageWith(token: string, body: string): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify({ body });
     const r = http.request(
@@ -197,7 +202,7 @@ function sendMessage(body: string): Promise<{ status: number; body: any }> {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "authorization": `Bearer ${FAKE_TOKEN}`,
+          "authorization": `Bearer ${token}`,
         },
       },
       (res) => {
@@ -215,6 +220,9 @@ function sendMessage(body: string): Promise<{ status: number; body: any }> {
     r.end();
   });
 }
+
+const sendBuddyMessage    = (body: string) => sendMessageWith(BUDDY_TOKEN, body);
+const sendTravelerMessage = (body: string) => sendMessageWith(TRAVELER_TOKEN, body);
 
 before(async () => {
   const app = express();
@@ -237,40 +245,47 @@ after(() => {
 beforeEach(() => setupState());
 
 describe("Off-app solicitation detection — messaging route", () => {
-  it("clean travel message does not create a solicitation warning event", async () => {
-    const r = await sendMessage("What time should we meet at the train station?");
+  it("buddy sends clean travel message — no warning event created", async () => {
+    const r = await sendBuddyMessage("What time should we meet at the train station?");
     assert.equal(r.status, 201, JSON.stringify(r.body));
     await new Promise((res) => setTimeout(res, 80));
     const warnings = state.bookingEvents.filter((e) => e.event === "off_app_solicitation_warning");
     assert.equal(warnings.length, 0, "no warning for normal travel message");
   });
 
-  it("off-app payment phrase creates an off_app_solicitation_warning event", async () => {
-    const r = await sendMessage("Hey, just pay me directly via venmo me instead of through the app.");
+  it("buddy sends off-app phrase — warning event is created", async () => {
+    const r = await sendBuddyMessage("Hey, just pay me directly via venmo instead of through the app.");
     assert.equal(r.status, 201, JSON.stringify(r.body));
     await new Promise((res) => setTimeout(res, 80));
     const warnings = state.bookingEvents.filter((e) => e.event === "off_app_solicitation_warning");
-    assert.equal(warnings.length, 1, "should log one solicitation warning");
+    assert.equal(warnings.length, 1, "one solicitation warning expected");
     assert.ok(warnings[0]?.metadata?.excerpt, "warning should include an excerpt");
   });
 
-  it("off-app solicitation warning does not block the message (still returns 201)", async () => {
-    const r = await sendMessage("Pay outside the app and I can give you a discount.");
+  it("off-app solicitation does not block the message (still returns 201)", async () => {
+    const r = await sendBuddyMessage("Pay outside the app and I can give you a discount.");
     assert.equal(r.status, 201, JSON.stringify(r.body));
     assert.ok(r.body.id ?? r.body.message, "response should include the saved message");
   });
 
+  it("traveler sends off-app phrase — no warning (sender is not the buddy)", async () => {
+    const r = await sendTravelerMessage("Can I cashapp you directly? Would prefer off-app payment.");
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    await new Promise((res) => setTimeout(res, 80));
+    const warnings = state.bookingEvents.filter((e) => e.event === "off_app_solicitation_warning");
+    assert.equal(warnings.length, 0, "traveler off-app phrase must NOT create a buddy warning");
+  });
+
   it("buddy is suspended after reaching the offense threshold", async () => {
-    const bookingIds = [BOOKING_ID, "booking-offapp-2", "booking-offapp-3"];
     state.bookings["booking-offapp-2"] = { id: "booking-offapp-2", buddy_id: BUDDY_PROF, telegraph_thread_id: null };
     state.bookings["booking-offapp-3"] = { id: "booking-offapp-3", buddy_id: BUDDY_PROF, telegraph_thread_id: null };
-    state.bookingEvents = bookingIds.slice(0, 2).map((bid) => ({
+    state.bookingEvents = [BOOKING_ID, "booking-offapp-2"].map((bid) => ({
       id: `prior-${bid}`,
       booking_id: bid,
       event: "off_app_solicitation_warning",
     }));
 
-    const r = await sendMessage("My telegram handle is @somehandle — message me there to arrange payment.");
+    const r = await sendBuddyMessage("My telegram handle is @somehandle — message me there to arrange payment.");
     assert.equal(r.status, 201, JSON.stringify(r.body));
     await new Promise((res) => setTimeout(res, 120));
 
@@ -279,25 +294,25 @@ describe("Off-app solicitation detection — messaging route", () => {
     assert.ok(autoSuspend, "auto-suspension event should be logged");
   });
 
-  it("off_app pattern matching: 'off-app' phrase triggers detection", async () => {
-    const r = await sendMessage("Let's go off-app for this payment.");
+  it("off-app pattern: 'off-app' phrase triggers warning when buddy sends", async () => {
+    const r = await sendBuddyMessage("Let's go off-app for this payment.");
     assert.equal(r.status, 201, JSON.stringify(r.body));
     await new Promise((res) => setTimeout(res, 80));
     const warnings = state.bookingEvents.filter((e) => e.event === "off_app_solicitation_warning");
     assert.ok(warnings.length >= 1, "off-app phrase should trigger warning");
   });
 
-  it("off_app pattern matching: 'pay me directly' phrase triggers detection", async () => {
-    const r = await sendMessage("Please pay me directly and I'll confirm the booking.");
+  it("off-app pattern: 'pay me directly' phrase triggers warning when buddy sends", async () => {
+    const r = await sendBuddyMessage("Please pay me directly and I'll confirm the booking.");
     assert.equal(r.status, 201, JSON.stringify(r.body));
     await new Promise((res) => setTimeout(res, 80));
     const warnings = state.bookingEvents.filter((e) => e.event === "off_app_solicitation_warning");
     assert.ok(warnings.length >= 1, "'pay me directly' should trigger warning");
   });
 
-  it("solicitation warning is not created when thread has no linked buddy booking", async () => {
+  it("no warning when thread has no linked buddy booking", async () => {
     state.bookings = {};
-    const r = await sendMessage("I can cashapp you the payment, no app needed.");
+    const r = await sendBuddyMessage("I can cashapp you the payment, no app needed.");
     assert.equal(r.status, 201, JSON.stringify(r.body));
     await new Promise((res) => setTimeout(res, 80));
     const warnings = state.bookingEvents.filter((e) => e.event === "off_app_solicitation_warning");

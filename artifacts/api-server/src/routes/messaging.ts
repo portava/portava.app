@@ -1549,6 +1549,14 @@ router.post('/threads/:threadId/messages', async (req, res) => {
         if (!booking) return;
         const bookingId = (booking as any).id as string;
         const buddyProfileId = (booking as any).buddy_id as string;
+        // Only attribute the offense when the sender IS the buddy account.
+        // A traveler can write off-app phrases without triggering buddy suspension.
+        const { data: buddySenderProfile } = await svcClient
+          .from('rent_buddy_profiles')
+          .select('id, user_id')
+          .eq('id', buddyProfileId)
+          .maybeSingle();
+        if (!buddySenderProfile || (buddySenderProfile as any).user_id !== user.id) return;
         await svcClient.from('buddy_booking_events').insert({
           booking_id: bookingId,
           actor_user_id: user.id,

@@ -170,15 +170,18 @@ function AddTimeModal({ visible, onClose, onAdd }: { visible: boolean; onClose: 
   );
 }
 
-function RebookModal({ visible, onClose, onRebook }: { visible: boolean; onClose: () => void; onRebook: (date: string) => void }) {
+function RebookModal({ visible, onClose, onRebook }: { visible: boolean; onClose: () => void; onRebook: (date: string, time: string) => void }) {
   const [date, setDate] = useState('');
+  const [time, setTime] = useState('');
   const today = new Date().toISOString().slice(0, 10);
+  const dateValid = /^\d{4}-\d{2}-\d{2}$/.test(date);
+  const timeValid = /^\d{1,2}:\d{2}$/.test(time);
   return (
     <Modal visible={visible} transparent animationType="slide">
       <View style={modal.overlay}>
         <View style={modal.sheet}>
           <Text style={modal.title}>Book again?</Text>
-          <Text style={modal.sub}>Same Buddy, same service. Enter a new date to get started.</Text>
+          <Text style={modal.sub}>Same Buddy, same service. Choose a new date and start time.</Text>
           <TextInput
             style={modal.input}
             value={date}
@@ -188,14 +191,23 @@ function RebookModal({ visible, onClose, onRebook }: { visible: boolean; onClose
             autoCapitalize="none"
             keyboardType="numbers-and-punctuation"
           />
+          <TextInput
+            style={[modal.input, { marginTop: 8 }]}
+            value={time}
+            onChangeText={setTime}
+            placeholder="Start time (HH:MM), e.g. 09:00"
+            placeholderTextColor={color.haze}
+            autoCapitalize="none"
+            keyboardType="numbers-and-punctuation"
+          />
           <View style={modal.actions}>
             <Pressable style={modal.cancelBtn} onPress={onClose}>
               <Text style={modal.cancelBtnText}>Never mind</Text>
             </Pressable>
             <Pressable
-              style={[modal.confirmBtn, !date.match(/^\d{4}-\d{2}-\d{2}$/) && { opacity: 0.4 }]}
+              style={[modal.confirmBtn, !(dateValid && timeValid) && { opacity: 0.4 }]}
               onPress={() => {
-                if (date.match(/^\d{4}-\d{2}-\d{2}$/)) { onRebook(date); onClose(); }
+                if (dateValid && timeValid) { onRebook(date, time); onClose(); }
               }}
             >
               <Text style={modal.confirmBtnText}>Book</Text>
@@ -517,8 +529,8 @@ export default function BookingDetail() {
       <RebookModal
         visible={rebookVisible}
         onClose={() => setRebookVisible(false)}
-        onRebook={async (date) => {
-          const res = await rebookBooking(id as string, { bookingDate: date });
+        onRebook={async (date, time) => {
+          const res = await rebookBooking(id as string, { bookingDate: date, startTime: time });
           if (!res.ok) {
             Alert.alert('Could not rebook', res.error ?? 'Please try again.');
           } else if (res.data?.bookingId) {
