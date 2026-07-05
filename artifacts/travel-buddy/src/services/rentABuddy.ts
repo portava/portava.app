@@ -130,6 +130,15 @@ export interface BuddyApplication {
   updatedAt: string;
 }
 
+export type BuddySortBy =
+  | 'best_match'
+  | 'highest_rated'
+  | 'available_soon'
+  | 'price_low'
+  | 'price_high'
+  | 'response_time'
+  | 'newest';
+
 export interface BuddySearchParams {
   city: string;
   category?: BuddyCategory;
@@ -137,6 +146,9 @@ export interface BuddySearchParams {
   groupSize?: number;
   language?: string;
   maxBudgetUsd?: number;
+  sortBy?: BuddySortBy;
+  verifiedOnly?: boolean;
+  minRating?: number;
   page?: number;
   perPage?: number;
 }

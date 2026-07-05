@@ -18,15 +18,16 @@ import { useActiveLocation } from '../src/hooks/useActiveLocation';
 import { CompassTravelerRow } from '../src/components/compass/CompassTravelerRow';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 
-type TabKey = 'all' | 'travelers' | 'events' | 'trips' | 'places' | 'hashtags';
+type TabKey = 'all' | 'travelers' | 'events' | 'trips' | 'places' | 'hashtags' | 'buddies';
 
 const TABS: { key: TabKey; label: string }[] = [
-  { key: 'all', label: 'All' },
+  { key: 'all',       label: 'All' },
   { key: 'travelers', label: 'Travelers' },
-  { key: 'events', label: 'Events' },
-  { key: 'trips', label: 'Trips' },
-  { key: 'places', label: 'Places' },
-  { key: 'hashtags', label: 'Hashtags' },
+  { key: 'events',    label: 'Events' },
+  { key: 'trips',     label: 'Trips' },
+  { key: 'places',    label: 'Places' },
+  { key: 'buddies',   label: 'Buddies' },
+  { key: 'hashtags',  label: 'Hashtags' },
 ];
 
 const VALID_TAB_KEYS = new Set<string>(TABS.map((tb) => tb.key));

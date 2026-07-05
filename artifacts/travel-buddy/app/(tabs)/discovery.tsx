@@ -22,6 +22,7 @@ import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { listMyTrips } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { getAvailableNow, type BuddyProfile } from '../../src/services/rentABuddy';
+import { CompassBuddyRow } from '../../src/components/compass/CompassBuddyRow';
 import { useSession } from '../../src/context/SessionContext';
 import { useLocationContext } from '../../src/context/LocationContext';
 import { LocationChip } from '../../src/components/LocationChip';
@@ -615,6 +616,8 @@ export default function DiscoveryHub() {
                 )}
               </View>
             )}
+            {/* Compass buddy recommendations — privacy-safe, city-matched */}
+            <CompassBuddyRow city={currentCity} />
             <ForYouTab
               key={`${destination}-${contextMode}-${communityRefreshKey}`}
               destination={destination}

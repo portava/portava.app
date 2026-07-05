@@ -1,16 +1,16 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, TextInput, ScrollView, Pressable, StyleSheet,
-  ActivityIndicator, RefreshControl,
+  ActivityIndicator, RefreshControl, Switch,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Search, Sparkles, MapPin } from 'lucide-react-native';
+import { Search, Sparkles, MapPin, SlidersHorizontal } from 'lucide-react-native';
 import { color, space, radius, type as t, layout } from '../../src/theme/tokens';
 import { TravelErrorState, TravelLoadingState } from '../../src/components/primitives';
 import { BuddyCard } from '../../src/components/BuddyCard';
 import {
-  searchBuddies, type BuddyProfile, type BuddyCategory,
+  searchBuddies, type BuddyProfile, type BuddyCategory, type BuddySortBy,
 } from '../../src/services/rentABuddy';
 
 const CATEGORIES: { key: BuddyCategory | 'all'; label: string }[] = [
@@ -23,22 +23,47 @@ const CATEGORIES: { key: BuddyCategory | 'all'; label: string }[] = [
   { key: 'content',   label: 'Content' },
 ];
 
+const SORT_OPTIONS: { key: BuddySortBy; label: string }[] = [
+  { key: 'best_match',    label: 'Best Match' },
+  { key: 'highest_rated', label: 'Top Rated' },
+  { key: 'available_soon', label: 'Available Soon' },
+  { key: 'price_low',     label: 'Price ↑' },
+  { key: 'price_high',    label: 'Price ↓' },
+  { key: 'response_time', label: 'Fastest Reply' },
+  { key: 'newest',        label: 'Newest' },
+];
+
+const BUDGET_OPTS: { label: string; max: number | undefined }[] = [
+  { label: 'Any',     max: undefined },
+  { label: '≤$20/hr', max: 20 },
+  { label: '≤$40/hr', max: 40 },
+  { label: '≤$70/hr', max: 70 },
+];
+
 const PER_PAGE = 10;
 
 export default function Marketplace() {
   const insets = useSafeAreaInsets();
   const { fromQuiz, city: cityParam } = useLocalSearchParams<{ fromQuiz?: string; city?: string }>();
 
-  const [city, setCity]                   = useState(cityParam ?? '');
-  const [category, setCategory]           = useState<BuddyCategory | 'all'>('all');
-  const [buddies, setBuddies]             = useState<BuddyProfile[]>([]);
-  const [page, setPage]                   = useState(1);
-  const [total, setTotal]                 = useState(0);
-  const [loading, setLoading]             = useState(false);
-  const [loadingMore, setLoadingMore]     = useState(false);
-  const [refreshing, setRefreshing]       = useState(false);
-  const [error, setError]                 = useState<string | null>(null);
+  const [city, setCity]                       = useState(cityParam ?? '');
+  const [category, setCategory]               = useState<BuddyCategory | 'all'>('all');
+  const [sortBy, setSortBy]                   = useState<BuddySortBy>('best_match');
+  const [language, setLanguage]               = useState('');
+  const [verifiedOnly, setVerifiedOnly]       = useState(false);
+  const [budgetIdx, setBudgetIdx]             = useState(0);
+  const [filtersOpen, setFiltersOpen]         = useState(false);
+
+  const [buddies, setBuddies]                 = useState<BuddyProfile[]>([]);
+  const [page, setPage]                       = useState(1);
+  const [total, setTotal]                     = useState(0);
+  const [loading, setLoading]                 = useState(false);
+  const [loadingMore, setLoadingMore]         = useState(false);
+  const [refreshing, setRefreshing]           = useState(false);
+  const [error, setError]                     = useState<string | null>(null);
   const [cityNotLaunched, setCityNotLaunched] = useState(false);
+
+  const budget = BUDGET_OPTS[budgetIdx];
 
   const load = useCallback(async (pg: number, silent = false) => {
     if (!city.trim()) return;
@@ -52,6 +77,10 @@ export default function Marketplace() {
     const res = await searchBuddies({
       city: city.trim(),
       ...(category !== 'all' ? { category: category as BuddyCategory } : {}),
+      sortBy,
+      verifiedOnly: verifiedOnly || undefined,
+      ...(language.trim() ? { language: language.trim() } : {}),
+      ...(budget.max != null ? { maxBudgetUsd: budget.max } : {}),
       page: pg,
       perPage: PER_PAGE,
     });
@@ -77,11 +106,11 @@ export default function Marketplace() {
     }
     setTotal(res.data.total);
     setPage(pg);
-  }, [city, category]);
+  }, [city, category, sortBy, verifiedOnly, language, budget]);
 
   useEffect(() => {
     if (city.trim().length > 1) load(1);
-  }, [category]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [category, sortBy, verifiedOnly, budget]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onSearch   = () => load(1);
   const onLoadMore = () => load(page + 1);
@@ -117,10 +146,8 @@ export default function Marketplace() {
 
         {/* Category filter chips */}
         <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={s.chipsScroll}
-          contentContainerStyle={s.chipsContent}
+          horizontal showsHorizontalScrollIndicator={false}
+          style={s.chipsScroll} contentContainerStyle={s.chipsContent}
         >
           {CATEGORIES.map(c => (
             <Pressable
@@ -132,6 +159,74 @@ export default function Marketplace() {
             </Pressable>
           ))}
         </ScrollView>
+
+        {/* Sort + filter row */}
+        <ScrollView
+          horizontal showsHorizontalScrollIndicator={false}
+          style={s.sortScroll} contentContainerStyle={s.sortContent}
+        >
+          {SORT_OPTIONS.map(opt => (
+            <Pressable
+              key={opt.key}
+              style={[s.sortChip, sortBy === opt.key && s.sortChipActive]}
+              onPress={() => setSortBy(opt.key)}
+            >
+              <Text style={[s.sortText, sortBy === opt.key && s.sortTextActive]}>{opt.label}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+
+        {/* Advanced filter toggle */}
+        <Pressable
+          style={s.filterToggleBtn}
+          onPress={() => setFiltersOpen(o => !o)}
+        >
+          <SlidersHorizontal size={13} color={filtersOpen ? color.signal : color.mute} />
+          <Text style={[s.filterToggleText, filtersOpen && { color: color.signal }]}>
+            {filtersOpen ? 'Hide filters' : 'More filters'}
+          </Text>
+        </Pressable>
+
+        {filtersOpen && (
+          <View style={s.filterPanel}>
+            {/* Language */}
+            <Text style={s.filterLabel}>Language needed</Text>
+            <TextInput
+              style={s.filterInput}
+              placeholder="e.g. English, Spanish…"
+              placeholderTextColor={color.mute}
+              value={language}
+              onChangeText={setLanguage}
+              returnKeyType="search"
+              onSubmitEditing={onSearch}
+            />
+
+            {/* Budget */}
+            <Text style={s.filterLabel}>Max budget</Text>
+            <View style={s.budgetRow}>
+              {BUDGET_OPTS.map((b, i) => (
+                <Pressable
+                  key={i}
+                  style={[s.budgetChip, budgetIdx === i && s.budgetChipActive]}
+                  onPress={() => setBudgetIdx(i)}
+                >
+                  <Text style={[s.budgetText, budgetIdx === i && s.budgetTextActive]}>{b.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            {/* Verified only */}
+            <View style={s.verifiedRow}>
+              <Text style={s.filterLabel}>Verified buddies only</Text>
+              <Switch
+                value={verifiedOnly}
+                onValueChange={setVerifiedOnly}
+                trackColor={{ true: color.success, false: color.haze }}
+                thumbColor={color.paperRaised}
+              />
+            </View>
+          </View>
+        )}
 
         {/* Quick actions */}
         <View style={s.quickActions}>
@@ -234,7 +329,46 @@ const s = StyleSheet.create({
   chipText: { ...t.small, color: color.mute, fontWeight: '600' },
   chipTextActive: { color: color.onInk },
 
-  quickActions: { flexDirection: 'row', gap: space.sm, marginBottom: space.xs },
+  sortScroll: { marginBottom: space.xs },
+  sortContent: { gap: space.xs, paddingRight: space.md },
+  sortChip: {
+    borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze,
+    paddingHorizontal: space.sm, paddingVertical: 4, backgroundColor: color.paperRaised,
+  },
+  sortChipActive: { backgroundColor: color.signal, borderColor: color.signal },
+  sortText: { fontSize: 10, color: color.mute, fontWeight: '600', fontFamily: 'Courier' },
+  sortTextActive: { color: '#fff' },
+
+  filterToggleBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: space.xs,
+    paddingVertical: space.xs, marginBottom: space.xs,
+  },
+  filterToggleText: { ...t.small, color: color.mute, fontWeight: '600' },
+
+  filterPanel: {
+    backgroundColor: color.paperRaised, borderRadius: radius.md,
+    padding: space.md, marginBottom: space.sm,
+    borderWidth: 1, borderColor: color.haze,
+  },
+  filterLabel: { ...t.small, color: color.mute, fontWeight: '600', marginBottom: space.xs, marginTop: space.sm },
+  filterInput: {
+    ...t.body, color: color.ink, backgroundColor: color.haze,
+    borderRadius: radius.sm, padding: space.sm,
+  },
+  budgetRow: { flexDirection: 'row', gap: space.xs },
+  budgetChip: {
+    borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze,
+    paddingHorizontal: space.sm, paddingVertical: 4, backgroundColor: color.paperRaised,
+  },
+  budgetChipActive: { backgroundColor: color.deep, borderColor: color.deep },
+  budgetText: { fontSize: 10, color: color.mute, fontWeight: '600' },
+  budgetTextActive: { color: '#fff' },
+  verifiedRow: {
+    flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between', marginTop: space.sm,
+  },
+
+  quickActions: { flexDirection: 'row', gap: space.sm, marginTop: space.xs, marginBottom: space.xs },
   qaBtn: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: space.sm, padding: space.sm, backgroundColor: `${color.deep}12`,
