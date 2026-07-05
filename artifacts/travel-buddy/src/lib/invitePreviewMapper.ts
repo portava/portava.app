@@ -13,6 +13,7 @@ export type ScreenState =
   | { kind: 'error' }
   | { kind: 'already_member'; tripId: string }
   | { kind: 'terminal'; preview: InvitePreview; message: string }
+  | { kind: 'full'; preview: InvitePreview }
   | { kind: 'ready'; preview: InvitePreview };
 
 /**
@@ -39,6 +40,9 @@ export function mapInvitePreviewToScreenState(result: InvitePreviewResult): Scre
       preview: result.data,
       message: result.data.terminalReason ?? 'This trip is no longer active.',
     };
+  }
+  if (result.data.isFull) {
+    return { kind: 'full', preview: result.data };
   }
   return { kind: 'ready', preview: result.data };
 }

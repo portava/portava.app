@@ -387,6 +387,8 @@ export interface InvitePreview {
   isTerminal: boolean;
   /** Human-readable explanation for isTerminal, or null when not terminal. */
   terminalReason: string | null;
+  /** True when accepted member count >= max_members (and max_members is set). */
+  isFull: boolean;
 }
 
 export interface InvitePreviewResult {

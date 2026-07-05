@@ -1148,7 +1148,7 @@ router.get("/trips/invite-link/:token/preview", async (req, res) => {
 
   const { data: trip } = await sc
     .from("trips")
-    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id, visibility, status")
+    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id, visibility, status, max_members")
     .eq("id", lk.trip_id)
     .maybeSingle();
 
@@ -1175,6 +1175,19 @@ router.get("/trips/invite-link/:token/preview", async (req, res) => {
         : "This trip has already ended.")
     : null;
 
+  // Compute isFull so the client can show a warning before the user taps Accept.
+  // Only meaningful when max_members is set; counts accepted members only.
+  const maxMembers = (trip as any).max_members as number | null;
+  let isFull = false;
+  if (maxMembers != null) {
+    const { data: memberRows } = await sc
+      .from("trip_members")
+      .select("id")
+      .eq("trip_id", lk.trip_id)
+      .eq("status", "accepted");
+    isFull = (memberRows?.length ?? 0) >= maxMembers;
+  }
+
   res.json({
     tripId:             (trip as any).id,
     tripTitle:          (trip as any).title,
@@ -1189,6 +1202,7 @@ router.get("/trips/invite-link/:token/preview", async (req, res) => {
     tripStatus:         tripStatus,
     isTerminal:         isTerminal,
     terminalReason:     terminalReason,
+    isFull:             isFull,
   });
 });
 
