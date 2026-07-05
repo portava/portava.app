@@ -48,24 +48,74 @@ CREATE INDEX IF NOT EXISTS post_media_post_status_idx
 
 ALTER TABLE post_media ENABLE ROW LEVEL SECURITY;
 
+-- ── Row-level access for post_media ──────────────────────────────────────────
+--
+-- Write policy: the inserting/updating user must own both the media row AND
+-- the parent post.  This prevents an authenticated client from attaching media
+-- rows to another user's post via a direct Supabase client call.
 DROP POLICY IF EXISTS "post_media_owner_write" ON post_media;
 CREATE POLICY "post_media_owner_write"
   ON post_media FOR ALL
   USING  (user_id = auth.uid())
-  WITH CHECK (user_id = auth.uid());
+  WITH CHECK (
+    user_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM posts
+      WHERE posts.id = post_media.post_id
+        AND posts.author_id = auth.uid()
+    )
+  );
 
+-- Select policy: owner always sees all their media (including pending/failed).
+-- Other callers may read ready, non-rejected media for active public posts,
+-- provided neither party has blocked the other.
 DROP POLICY IF EXISTS "post_media_public_select" ON post_media;
 CREATE POLICY "post_media_public_select"
   ON post_media FOR SELECT
   USING (
     user_id = auth.uid()
-    OR EXISTS (
-      SELECT 1 FROM posts p
-      WHERE p.id = post_media.post_id
-        AND p.status = 'active'
-        AND p.visibility = 'public'
+    OR (
+      EXISTS (
+        SELECT 1 FROM posts p
+        WHERE p.id = post_media.post_id
+          AND p.status     = 'active'
+          AND p.visibility = 'public'
+          AND post_media.processing_status = 'ready'
+          AND post_media.moderation_status NOT IN ('rejected', 'flagged')
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM blocks b
+        WHERE (b.blocker_id = auth.uid() AND b.blocked_id = post_media.user_id)
+           OR (b.blocker_id = post_media.user_id AND b.blocked_id = auth.uid())
+      )
     )
   );
+
+-- ── Storage bucket policies: post-media ───────────────────────────────────────
+-- Path convention enforced by the API server: post-media/{userId}/{postId}/{mediaId}.{ext}
+-- These policies restrict direct (non-signed-URL) storage access.  Signed
+-- upload URLs issued by the API server bypass RLS — these policies are
+-- defence-in-depth for clients that attempt direct bucket access.
+DROP POLICY IF EXISTS "post_media_storage_owner_insert" ON storage.objects;
+CREATE POLICY "post_media_storage_owner_insert"
+  ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id = 'post-media'
+    AND (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+DROP POLICY IF EXISTS "post_media_storage_owner_delete" ON storage.objects;
+CREATE POLICY "post_media_storage_owner_delete"
+  ON storage.objects FOR DELETE TO authenticated
+  USING (
+    bucket_id = 'post-media'
+    AND (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+DROP POLICY IF EXISTS "post_media_storage_public_read" ON storage.objects;
+CREATE POLICY "post_media_storage_public_read"
+  ON storage.objects FOR SELECT TO public
+  USING (bucket_id = 'post-media');
 
 -- ── Extend posts ────────────────────────────────────────────────────────────────
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS primary_media_type TEXT;

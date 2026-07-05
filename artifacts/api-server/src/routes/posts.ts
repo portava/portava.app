@@ -105,6 +105,29 @@ const POST_COLUMNS =
   "publish_after_exit, publish_after_time, publish_eligible_at, published_at, location_sensitivity_level, " +
   "category, save_count, media_count, has_video, primary_media_type";
 
+const POST_MEDIA_FEED_COLUMNS =
+  "post_id, id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status";
+
+/** Filter and shape post_media rows for public feed consumption.
+ *  Excludes non-ready and rejected/flagged items; sorts by sort_order. */
+function filterPostMedia(items: any[]): Array<Record<string, unknown>> {
+  if (!Array.isArray(items)) return [];
+  return items
+    .filter((m: any) => m.processing_status === "ready" && m.moderation_status !== "rejected" && m.moderation_status !== "flagged")
+    .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    .map((m: any) => ({
+      id:               m.id,
+      mediaType:        m.media_type,
+      url:              m.public_url,
+      thumbnailUrl:     m.thumbnail_url ?? null,
+      durationSeconds:  m.duration_seconds ?? null,
+      width:            m.width ?? null,
+      height:           m.height ?? null,
+      sortOrder:        m.sort_order ?? 0,
+      processingStatus: m.processing_status,
+    }));
+}
+
 /**
  * Author-only column set for GET /posts/pending.  Extends POST_COLUMNS with
  * private fields safe to serve exclusively to the post owner:
@@ -748,7 +771,24 @@ router.get("/posts", async (req, res) => {
       ? await enrichSpans(sc, 'post', posts.map((p) => ({ id: p.id as string, content: (p.content ?? '') as string })), user.id)
       : {};
 
-    // Step 6: merge author + engagement + spans into each post.
+    // Step 5.5: batch-fetch structured media for posts that carry video/images.
+    const followingMediaByPost: Record<string, any[]> = {};
+    if (postIds.length > 0) {
+      try {
+        const { data: mediaRows } = await sc
+          .from("post_media")
+          .select(POST_MEDIA_FEED_COLUMNS)
+          .in("post_id", postIds)
+          .eq("processing_status", "ready")
+          .neq("moderation_status", "rejected");
+        for (const m of (mediaRows ?? []) as any[]) {
+          if (!followingMediaByPost[m.post_id]) followingMediaByPost[m.post_id] = [];
+          followingMediaByPost[m.post_id].push(m);
+        }
+      } catch { /* fail-open: missing media must not break the feed */ }
+    }
+
+    // Step 6: merge author + engagement + spans + media into each post.
     const merged = posts.map((p) => {
       const safe = mapPublicPost(p);
       const pr = profileMap[p.author_id];
@@ -769,6 +809,7 @@ router.get("/posts", async (req, res) => {
         canShare: true,
         tags: spans.tags,
         hashtagUsages: spans.hashtagUsages,
+        media: filterPostMedia(followingMediaByPost[p.id] ?? []),
       };
     });
 
@@ -837,6 +878,23 @@ router.get("/posts", async (req, res) => {
     ? await enrichSpans(svc, 'post', globalPosts.map((p) => ({ id: p.id as string, content: (p.content ?? '') as string })), user.id)
     : {};
 
+  // Batch-fetch structured media for global feed posts (fail-open)
+  const globalMediaByPost: Record<string, any[]> = {};
+  if (globalPostIds.length > 0) {
+    try {
+      const { data: mediaRows } = await svc
+        .from("post_media")
+        .select(POST_MEDIA_FEED_COLUMNS)
+        .in("post_id", globalPostIds)
+        .eq("processing_status", "ready")
+        .neq("moderation_status", "rejected");
+      for (const m of (mediaRows ?? []) as any[]) {
+        if (!globalMediaByPost[m.post_id]) globalMediaByPost[m.post_id] = [];
+        globalMediaByPost[m.post_id].push(m);
+      }
+    } catch { /* fail-open */ }
+  }
+
   const mergedGlobal = globalPosts.map((p) => {
     const safe = mapPublicPost(p);
     const pr = globalProfileMap[p.author_id];
@@ -855,6 +913,7 @@ router.get("/posts", async (req, res) => {
       canShare: true,
       tags: spans.tags,
       hashtagUsages: spans.hashtagUsages,
+      media: filterPostMedia(globalMediaByPost[p.id] ?? []),
     };
   });
 
@@ -974,6 +1033,23 @@ router.get("/trips/:tripId/posts", async (req, res) => {
     ? await enrichSpans(tripSvc, 'post', tripPosts.map((p) => ({ id: p.id as string, content: (p.content ?? '') as string })), user.id)
     : {};
 
+  // Batch-fetch structured media for trip posts (fail-open)
+  const tripMediaByPost: Record<string, any[]> = {};
+  if (tripSvc && tripPostIds.length > 0) {
+    try {
+      const { data: mediaRows } = await tripSvc
+        .from("post_media")
+        .select(POST_MEDIA_FEED_COLUMNS)
+        .in("post_id", tripPostIds)
+        .eq("processing_status", "ready")
+        .neq("moderation_status", "rejected");
+      for (const m of (mediaRows ?? []) as any[]) {
+        if (!tripMediaByPost[m.post_id]) tripMediaByPost[m.post_id] = [];
+        tripMediaByPost[m.post_id].push(m);
+      }
+    } catch { /* fail-open */ }
+  }
+
   const mergedTrip = tripPosts.map((p) => {
     const pr = tripProfileMap[p.author_id];
     const eng = tripEngMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false, saveCount: 0, savedByMe: false };
@@ -993,6 +1069,7 @@ router.get("/trips/:tripId/posts", async (req, res) => {
       canShare: canEngage,
       tags: spans.tags,
       hashtagUsages: spans.hashtagUsages,
+      media: filterPostMedia(tripMediaByPost[p.id] ?? []),
     };
   });
 

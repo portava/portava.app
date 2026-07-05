@@ -616,3 +616,103 @@ describe('Feed regression — existing photo posts', () => {
     assert.equal(readyAndApproved[0].id, MEDIA_ID);
   });
 });
+
+// ── Endpoint-level visibility and media filtering ─────────────────────────────
+//
+// These tests call real HTTP endpoints and verify that the server enforces
+// visibility rules and correctly filters the media array in the response —
+// not just as in-memory logic, but as part of the actual request/response cycle.
+
+describe('Endpoint-level visibility and media filtering', () => {
+  it('upload-url returns 404 when post is soft-deleted (status=deleted)', async () => {
+    // Simulate a soft-delete — mark the post as inactive
+    posts[POST_ID].status = 'deleted';
+    const { status } = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/upload-url`,
+      { mimeType: 'image/jpeg', fileSizeBytes: 500_000 },
+      TOKEN_OWNER,
+    );
+    assert.equal(status, 404, 'soft-deleted post should return 404, not 403 or 200');
+  });
+
+  it('GET /posts/:postId includes populated media array for ready items', async () => {
+    // Seed a ready, approved image so the handler has something to return
+    allPostMedia.push({
+      id: MEDIA_ID, post_id: POST_ID, user_id: OWNER_ID,
+      media_type: 'image', processing_status: 'ready', moderation_status: 'approved',
+      public_url: 'https://cdn.test/ready.jpg', thumbnail_url: null,
+      duration_seconds: null, width: 1920, height: 1080, sort_order: 0,
+    });
+
+    const { status, body } = await apiReq('GET', `/posts/${POST_ID}`, undefined, TOKEN_OWNER);
+    assert.equal(status, 200, 'owner should be able to fetch the post detail');
+    assert.ok(Array.isArray(body.media), 'response should include a media array');
+    assert.equal(body.media.length, 1, 'one ready item should be present in media array');
+
+    const item = body.media[0];
+    assert.equal(item.id, MEDIA_ID);
+    assert.equal(item.mediaType, 'image');
+    assert.ok(typeof item.url === 'string', 'url should be a string');
+    assert.equal(item.processingStatus, 'ready');
+  });
+
+  it('GET /posts/:postId excludes rejected media items from the media array', async () => {
+    const REJECTED_ID = '20000000-0000-0000-0000-000000000c03';
+    // Seed one approved and one rejected item
+    allPostMedia.push(
+      {
+        id: MEDIA_ID, post_id: POST_ID, user_id: OWNER_ID,
+        media_type: 'image', processing_status: 'ready', moderation_status: 'approved',
+        public_url: 'https://cdn.test/ok.jpg', thumbnail_url: null,
+        duration_seconds: null, width: 800, height: 600, sort_order: 0,
+      },
+      {
+        id: REJECTED_ID, post_id: POST_ID, user_id: OWNER_ID,
+        media_type: 'video', processing_status: 'ready', moderation_status: 'rejected',
+        public_url: 'https://cdn.test/bad.mp4', thumbnail_url: null,
+        duration_seconds: 15, width: 1080, height: 1920, sort_order: 1,
+      },
+    );
+
+    const { status, body } = await apiReq('GET', `/posts/${POST_ID}`, undefined, TOKEN_OWNER);
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(body.media), 'response should include a media array');
+    assert.equal(body.media.length, 1, 'rejected item must be excluded server-side');
+    assert.equal(body.media[0].id, MEDIA_ID, 'only the approved item should appear');
+  });
+
+  it('GET /posts/:postId excludes flagged media items from the media array', async () => {
+    const FLAGGED_ID = '20000000-0000-0000-0000-000000000c04';
+    allPostMedia.push(
+      {
+        id: MEDIA_ID, post_id: POST_ID, user_id: OWNER_ID,
+        media_type: 'image', processing_status: 'ready', moderation_status: 'approved',
+        public_url: 'https://cdn.test/ok2.jpg', thumbnail_url: null,
+        duration_seconds: null, width: 800, height: 600, sort_order: 0,
+      },
+      {
+        id: FLAGGED_ID, post_id: POST_ID, user_id: OWNER_ID,
+        media_type: 'video', processing_status: 'ready', moderation_status: 'flagged',
+        public_url: 'https://cdn.test/flagged.mp4', thumbnail_url: null,
+        duration_seconds: 8, width: 1280, height: 720, sort_order: 1,
+      },
+    );
+
+    const { status, body } = await apiReq('GET', `/posts/${POST_ID}`, undefined, TOKEN_OTHER);
+    assert.equal(status, 200);
+    assert.equal(body.media.length, 1, 'flagged item must be excluded server-side');
+    assert.equal(body.media[0].id, MEDIA_ID);
+  });
+
+  it('non-owner cannot access upload-url for a private post (ownership enforced)', async () => {
+    // A private-visibility post still belongs to OWNER — OTHER should get 403
+    posts[POST_ID].visibility = 'private';
+    const { status, body } = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/upload-url`,
+      { mimeType: 'image/jpeg', fileSizeBytes: 100_000 },
+      TOKEN_OTHER,
+    );
+    assert.equal(status, 403, 'private post should return 403 for non-owner');
+    assert.match(body.error ?? '', /forbidden/i);
+  });
+});
