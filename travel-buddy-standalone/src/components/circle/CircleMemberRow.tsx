@@ -3,15 +3,21 @@ import { View, Text, Image, Pressable, StyleSheet, Alert } from 'react-native';
 import { MessageCircle, User, MoreHorizontal } from 'lucide-react-native';
 import { router } from 'expo-router';
 import type { CircleMember } from '../../services/circle';
+import { blockUser } from '../../services/blocks';
 import { color, radius, type as t } from '../../theme/tokens';
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; textColor: string }> = {
-  active:     { label: 'Active',      bg: '#E8F5E9', textColor: '#2E7D32' },
-  arrived:    { label: 'Arrived',     bg: '#E3F2FD', textColor: '#1565C0' },
+  active:     { label: 'Available',   bg: '#E8F5E9', textColor: '#2E7D32' },
+  arrived:    { label: 'Checked in',  bg: '#E3F2FD', textColor: '#1565C0' },
   with_group: { label: 'With group',  bg: '#E0F2F1', textColor: '#00695C' },
   leaving:    { label: 'Leaving',     bg: '#FFF3E0', textColor: '#E65100' },
   safe:       { label: 'Safe',        bg: '#E8F5E9', textColor: '#2E7D32' },
+  paused:     { label: 'Paused',      bg: '#F5F5F5', textColor: '#9E9E9E' },
+  offline:    { label: 'Offline',     bg: '#F5F5F5', textColor: '#9E9E9E' },
+  unknown:    { label: 'Not sharing', bg: '#F5F5F5', textColor: '#9E9E9E' },
 };
+
+const STALE_CHIP = { label: 'Stale', bg: '#FFF8E1', textColor: '#FF8F00' };
 
 interface Props {
   member: CircleMember;
@@ -23,8 +29,20 @@ export function CircleMemberRow({ member, isViewerRow = false }: Props) {
 
   if (hidden) return null;
 
-  const statusCfg = STATUS_CONFIG[member.status] ?? null;
-  const locationLabel = member.venueLabel ?? member.approximateLabel ?? null;
+  // Stale overrides the status chip with an amber "Stale" indicator
+  const statusCfg = member.isStale
+    ? STALE_CHIP
+    : member.presenceAbsent
+    ? STATUS_CONFIG['unknown']
+    : STATUS_CONFIG[member.status] ?? null;
+
+  // Visibility-aware location label
+  let locationLabel: string | null = null;
+  if (member.venueLabel) {
+    locationLabel = `At ${member.venueLabel}`;
+  } else if (member.approximateLabel) {
+    locationLabel = member.approximateLabel;
+  }
 
   function handleProfile() {
     if (!member.canViewProfile && !isViewerRow) return;
@@ -33,6 +51,24 @@ export function CircleMemberRow({ member, isViewerRow = false }: Props) {
 
   function handleMessage() {
     router.push(`/messages/dm?userId=${encodeURIComponent(member.userId)}` as any);
+  }
+
+  function handleBlock() {
+    Alert.alert(
+      `Block ${member.displayName || member.username}?`,
+      'They won\'t be able to message you or see your content.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Block',
+          style: 'destructive',
+          onPress: async () => {
+            await blockUser(member.userId);
+            setHidden(true);
+          },
+        },
+      ],
+    );
   }
 
   function handleOverflow() {
@@ -47,7 +83,7 @@ export function CircleMemberRow({ member, isViewerRow = false }: Props) {
             params: { targetUserId: member.userId, targetType: 'user' },
           } as any),
       },
-      { text: 'Block', style: 'destructive', onPress: () => Alert.alert('Block', 'Block feature available from their profile.') },
+      { text: 'Block', style: 'destructive', onPress: handleBlock },
       { text: 'Cancel', style: 'cancel' },
     ]);
   }
@@ -73,24 +109,26 @@ export function CircleMemberRow({ member, isViewerRow = false }: Props) {
             {member.displayName || member.username}
           </Text>
           {isViewerRow && <Text style={s.youBadge}> (you)</Text>}
-          {statusCfg ? (
+          {statusCfg && (
             <View style={[s.chip, { backgroundColor: statusCfg.bg }]}>
               <Text style={[s.chipText, { color: statusCfg.textColor }]}>{statusCfg.label}</Text>
             </View>
-          ) : member.presenceAbsent ? (
-            <View style={[s.chip, { backgroundColor: color.haze }]}>
-              <Text style={[s.chipText, { color: color.mute }]}>Not sharing</Text>
-            </View>
-          ) : null}
+          )}
         </View>
+
+        {member.username ? (
+          <Text style={s.username} numberOfLines={1}>@{member.username}</Text>
+        ) : null}
 
         {locationLabel ? (
           <Text style={s.locationLabel} numberOfLines={1}>{locationLabel}</Text>
         ) : null}
 
-        <Text style={[s.freshness, member.isStale && s.freshStale]}>
-          {member.isStale ? '⚠ ' : ''}{member.freshnessLabel}
-        </Text>
+        {!member.presenceAbsent && (
+          <Text style={[s.freshness, member.isStale && s.freshStale]}>
+            {member.isStale ? '⚠ ' : ''}{member.freshnessLabel}
+          </Text>
+        )}
       </View>
 
       {!isViewerRow && (
@@ -154,6 +192,7 @@ const s = StyleSheet.create({
   youBadge: { ...t.small, color: color.mute },
   chip: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 20 },
   chipText: { fontSize: 11, fontWeight: '600' },
+  username: { ...t.small, color: color.faint },
   locationLabel: { ...t.small, color: color.mute },
   freshness: { ...t.small, color: color.faint },
   freshStale: { color: '#FF8F00' },

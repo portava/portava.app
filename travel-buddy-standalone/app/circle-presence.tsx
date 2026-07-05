@@ -28,10 +28,13 @@ import { CheckInActions } from '../src/components/circle/CheckInActions';
 import { MeetingPointCard } from '../src/components/circle/MeetingPointCard';
 import { CircleMapSection } from '../src/components/circle/CircleMapSection';
 
+import * as Location from 'expo-location';
+
 import {
   getCircleSettings,
   getCircleContextSettings,
   getCircleMembers,
+  getMyPresence,
   getMeetingPoint,
   type CircleMember,
   type MeetingPoint,
@@ -67,6 +70,7 @@ export default function CirclePresenceScreen() {
 
   const [screenState, setScreenState] = useState<ScreenState>('loading');
   const [members, setMembers] = useState<CircleMember[]>([]);
+  const [viewerPresence, setViewerPresence] = useState<CircleMember | null>(null);
   const [meetingPoint, setMeetingPoint] = useState<MeetingPoint | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [globalPaused, setGlobalPaused] = useState(false);
@@ -92,12 +96,15 @@ export default function CirclePresenceScreen() {
       }
 
       try {
-        const [settingsRes, ctxSettingsRes, membersRes, mpRes] = await Promise.all([
-          getCircleSettings(),
-          getCircleContextSettings(contextType, contextId),
-          getCircleMembers(contextType, contextId, { limit: 100 }),
-          getMeetingPoint(contextType, contextId),
-        ]);
+        const [settingsRes, ctxSettingsRes, membersRes, myPresenceRes, mpRes, locPerm] =
+          await Promise.all([
+            getCircleSettings(),
+            getCircleContextSettings(contextType, contextId),
+            getCircleMembers(contextType, contextId, { limit: 100 }),
+            getMyPresence(contextType, contextId),
+            getMeetingPoint(contextType, contextId),
+            Location.getForegroundPermissionsAsync().catch(() => ({ status: 'granted' as const })),
+          ]);
 
         if (
           !membersRes.ok &&
@@ -132,13 +139,11 @@ export default function CirclePresenceScreen() {
         setGlobalPaused(isPaused);
         setContextPaused(isCtxPaused);
         setMembers(membersRes.data.members ?? []);
+        setViewerPresence(myPresenceRes.ok ? myPresenceRes.data : null);
         setMeetingPoint(mpRes.ok ? (mpRes.data.meetingPoint ?? null) : null);
 
-        // Show location permission banner when nothing has precise data
-        const anyLocationData = (membersRes.data.members ?? []).some(
-          (m) => m.venueLabel || m.approximateLabel,
-        );
-        setLocationPermBanner(!anyLocationData);
+        // Show banner when OS location permission is not granted
+        setLocationPermBanner(locPerm.status !== 'granted');
 
         setScreenState('ok');
       } catch {
@@ -281,10 +286,29 @@ export default function CirclePresenceScreen() {
 
   // ── Main screen ──────────────────────────────────────────────────────────────
 
-  const viewerMember = userId ? members.find((m) => m.userId === userId) ?? null : null;
-  const otherMembers = userId ? members.filter((m) => m.userId !== userId) : members;
+  // Viewer's own presence comes from a dedicated endpoint (self is excluded from /members)
+  const viewerMember = viewerPresence;
+  const otherMembers = members;
   const meetingPointLabel =
     meetingPoint?.venueLabel ?? meetingPoint?.approximateLabel ?? null;
+
+  // Map shows broad-area/venue pins when any member has location data
+  const hasLocationData = members.some((m) => m.venueLabel || m.approximateLabel);
+
+  // Event timing: show end time if known
+  const eventEndDisplay =
+    contextType === 'event' && contextEndDate
+      ? (() => {
+          const d = new Date(contextEndDate);
+          if (Number.isNaN(d.getTime())) return null;
+          return d.toLocaleDateString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+        })()
+      : null;
 
   const listHeader = (
     <View style={g.headerArea}>
@@ -330,8 +354,15 @@ export default function CirclePresenceScreen() {
         />
       )}
 
+      {eventEndDisplay && (
+        <View style={g.eventTimingRow}>
+          <MapPin size={13} color={color.mute} />
+          <Text style={g.eventTimingText}>Event ends {eventEndDisplay}</Text>
+        </View>
+      )}
+
       <CircleMapSection
-        hasLocationData={false}
+        hasLocationData={hasLocationData}
         meetingPointLabel={meetingPointLabel}
       />
 
@@ -483,6 +514,15 @@ const g = StyleSheet.create({
   },
   emptyTitle: { ...t.body, fontWeight: '600', color: color.ink, textAlign: 'center' },
   emptyBody: { ...t.small, color: color.mute, textAlign: 'center', maxWidth: 260 },
+
+  eventTimingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingBottom: 4,
+  },
+  eventTimingText: { ...t.small, color: color.mute },
 
   listContent: { paddingBottom: 40 },
   separator: { height: 1, backgroundColor: color.haze, marginHorizontal: 16 },

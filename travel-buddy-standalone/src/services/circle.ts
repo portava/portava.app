@@ -262,6 +262,25 @@ export async function resumeCircleContext(
   }
 }
 
+// ── My own presence ───────────────────────────────────────────────────────────
+// The /members endpoint excludes the current user. Use this to fetch the
+// viewer's own presence row for the pinned self-row at the top of Circle.
+
+export async function getMyPresence(
+  contextType: 'trip' | 'event',
+  contextId: string,
+): Promise<ServiceResult<CircleMember>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
+  try {
+    const res = await authedFetch(`/api/circle/contexts/${contextType}/${contextId}/my-presence`);
+    const data = await res.json();
+    if (res.ok) return { ok: true, data };
+    return { ok: false, error: data.error ?? 'unknown', status: res.status };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'network_error' };
+  }
+}
+
 // ── Check-in ──────────────────────────────────────────────────────────────────
 
 export async function postCheckIn(

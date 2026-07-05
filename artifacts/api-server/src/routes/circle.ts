@@ -618,6 +618,68 @@ router.get("/circle/contexts/:type/:id/who-can-see-me", async (req, res) => {
   res.status(200).json({ members });
 });
 
+// ── GET /circle/contexts/:type/:id/my-presence ────────────────────────────────
+// Returns the viewer's own presence row, shaped the same way as member rows.
+// Self is excluded from the /members list, so callers use this endpoint to
+// render the pinned viewer row at the top of the Circle screen.
+
+router.get("/circle/contexts/:type/:id/my-presence", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { type, id } = req.params;
+  if (!validateContextType(res, type)) return;
+  if (!validateContextId(res, id)) return;
+  if (!await requireFeatureEnabled(res, sc)) return;
+
+  const viewerIsMember = await isAcceptedMember(sc, user.id, type as ContextType, id);
+  if (!viewerIsMember) { sendError(res, "forbidden", "Not a member of this context"); return; }
+
+  // Fetch viewer's own profile
+  const { data: profData } = await sc
+    .from("profiles")
+    .select("id, handle, display_name, name, avatar_url")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const prof = profData as any;
+  const snippet: CircleProfileSnippet = {
+    userId:      user.id,
+    avatarUrl:   (prof?.avatar_url as string | null) ?? null,
+    displayName: (prof?.display_name as string | null) ?? (prof?.name as string | null) ?? "",
+    username:    (prof?.handle as string | null) ?? "",
+  };
+
+  // Fetch viewer's own presence row from this context
+  const { data: presenceData } = await sc
+    .from("circle_presence")
+    .select("id, status, status_label, approximate_label, venue_label, checked_in, updated_at, is_stale, expires_at")
+    .eq("user_id", user.id)
+    .eq("context_type", type)
+    .eq("context_id", id)
+    .maybeSingle();
+
+  const presence = presenceData as any;
+  const isExpired =
+    presence?.expires_at && new Date(presence.expires_at) < new Date();
+  const effectivePresence = !presence || isExpired ? null : presence;
+  const isStale = Boolean(effectivePresence?.is_stale);
+
+  // Viewer sees their own full data — use their actual visibility mode
+  const visibilityMode =
+    (effectivePresence?.["visibility_mode"] as string | null) ?? "status_only";
+
+  const shaped = shapePresence(snippet, effectivePresence, visibilityMode, isStale);
+  // Override: viewer always has full access to their own row
+  shaped.canMessage = false;
+  shaped.canViewProfile = true;
+
+  res.status(200).json(shaped);
+});
+
 // ── POST /circle/contexts/:type/:id/presence ──────────────────────────────────
 
 const PostPresenceSchema = z.object({
