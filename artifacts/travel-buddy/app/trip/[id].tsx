@@ -3,7 +3,7 @@ import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Share, Image, Modal, type LayoutChangeEvent } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Share2, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin, ShieldCheck } from 'lucide-react-native';
+import { ChevronLeft, Share2, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin, ShieldCheck, Radio } from 'lucide-react-native';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import {
@@ -344,6 +344,27 @@ function TripDetailScreen() {
 
         {live && trip.id && (
           <Pressable
+            style={styles.circleFindBanner}
+            onPress={() =>
+              router.push({
+                pathname: '/circle-presence',
+                params: {
+                  contextType: 'trip',
+                  contextId: trip.id,
+                  contextLabel: trip.destinationCity ?? 'Trip Circle',
+                  ...(realTrip?.endDate ? { contextEndDate: realTrip.endDate } : {}),
+                  ...(realTrip?.ownerId === userId ? { isHost: 'true' } : {}),
+                },
+              } as any)
+            }
+          >
+            <Radio size={16} color="#2E7D32" />
+            <Text style={styles.circleFindBannerText}>Find Your Circle →</Text>
+          </Pressable>
+        )}
+
+        {live && trip.id && (
+          <Pressable
             style={styles.circleShareBanner}
             onPress={() => router.push({ pathname: '/circle-context-settings', params: { contextType: 'trip', contextId: trip.id, contextLabel: trip.destinationCity ?? 'this trip' } } as any)}
           >
@@ -558,6 +579,8 @@ const styles = StyleSheet.create({
   unreadDot: { position: 'absolute', top: -3, right: -3, width: 7, height: 7, borderRadius: 4, backgroundColor: color.signal },
   layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: space.lg, marginTop: space.lg, backgroundColor: '#E3F2FD', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
   layoverBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: '#1565C0' },
+  circleFindBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: space.lg, marginTop: space.md, backgroundColor: '#E8F5E9', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
+  circleFindBannerText: { flex: 1, fontSize: 13, fontWeight: '600', color: '#2E7D32' },
   circleShareBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: space.lg, marginTop: space.md, backgroundColor: '#EAF2F4', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
   circleShareBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: color.deep },
   safeSetupBtn: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginHorizontal: space.lg, marginTop: space.md, padding: space.md, borderRadius: radius.md, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },

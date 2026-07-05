@@ -36,12 +36,18 @@ export interface CircleMember {
   username: string;
   displayName: string;
   avatarUrl: string | null;
-  status: string | null;
+  status: string;
   statusLabel: string | null;
+  visibilityMode: string;
+  freshnessLabel: string;
+  lastUpdatedAt: string | null;
   approximateLabel: string | null;
   venueLabel: string | null;
   isStale: boolean;
-  lastSeenAt: string | null;
+  canMessage: boolean;
+  canViewProfile: boolean;
+  safetyActionsAllowed: boolean;
+  presenceAbsent: boolean;
 }
 
 export interface CircleWatcher {
@@ -57,6 +63,21 @@ export interface CircleMembersPage {
   limit: number;
   offset: number;
   hasMore: boolean;
+}
+
+export interface MeetingPoint {
+  id: string;
+  venueLabel: string | null;
+  approximateLabel: string | null;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CheckInResult {
+  id: string | null;
+  checkinType: string | null;
+  createdAt: string | null;
 }
 
 type ServiceResult<T> = { ok: true; data: T } | { ok: false; error: string; status?: number };
@@ -236,6 +257,95 @@ export async function resumeCircleContext(
     const data = await res.json();
     if (res.ok) return { ok: true, data };
     return { ok: false, error: data.error ?? 'unknown', status: res.status };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'network_error' };
+  }
+}
+
+// ── Check-in ──────────────────────────────────────────────────────────────────
+
+export async function postCheckIn(
+  contextType: 'trip' | 'event',
+  contextId: string,
+  payload: {
+    checkinType: 'arrived' | 'with_group' | 'leaving' | 'safe';
+    note?: string | null;
+    venueLabel?: string | null;
+    approximateLabel?: string | null;
+  },
+): Promise<ServiceResult<CheckInResult>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
+  try {
+    const res = await authedFetch(`/api/circle/contexts/${contextType}/${contextId}/check-in`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (res.ok) return { ok: true, data };
+    return { ok: false, error: data.error ?? data.message ?? 'unknown', status: res.status };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'network_error' };
+  }
+}
+
+// ── Meeting point ─────────────────────────────────────────────────────────────
+
+export async function getMeetingPoint(
+  contextType: 'trip' | 'event',
+  contextId: string,
+): Promise<ServiceResult<{ meetingPoint: MeetingPoint | null }>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
+  try {
+    const res = await authedFetch(`/api/circle/contexts/${contextType}/${contextId}/meeting-point`);
+    const data = await res.json();
+    if (res.ok) return { ok: true, data };
+    return { ok: false, error: data.error ?? 'unknown', status: res.status };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'network_error' };
+  }
+}
+
+export async function postMeetingPoint(
+  contextType: 'trip' | 'event',
+  contextId: string,
+  payload: {
+    venueLabel?: string | null;
+    approximateLabel?: string | null;
+    description?: string | null;
+  },
+): Promise<ServiceResult<MeetingPoint>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
+  try {
+    const res = await authedFetch(`/api/circle/contexts/${contextType}/${contextId}/meeting-point`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (res.ok) return { ok: true, data };
+    return { ok: false, error: data.error ?? data.message ?? 'unknown', status: res.status };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'network_error' };
+  }
+}
+
+export async function patchMeetingPoint(
+  contextType: 'trip' | 'event',
+  contextId: string,
+  payload: {
+    venueLabel?: string | null;
+    approximateLabel?: string | null;
+    description?: string | null;
+  },
+): Promise<ServiceResult<MeetingPoint>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
+  try {
+    const res = await authedFetch(`/api/circle/contexts/${contextType}/${contextId}/meeting-point`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (res.ok) return { ok: true, data };
+    return { ok: false, error: data.error ?? data.message ?? 'unknown', status: res.status };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'network_error' };
   }
