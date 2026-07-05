@@ -179,6 +179,11 @@ STANDALONE_OWNED_FILES=(
   "src/components/compass/__tests__/CompassBuddyRow.hide.test.ts"
   "src/components/compass/__tests__/CompassTravelerRow.followState.test.ts"
   "app/search.tsx"
+  # Compass Feedback Loop — Phase 5
+  "src/components/compass/CompassFeedbackMenu.tsx"
+  "src/components/compass/CompassOnboardingCard.tsx"
+  "src/hooks/compass/useCompassSettings.ts"
+  "app/compass-settings.tsx"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.

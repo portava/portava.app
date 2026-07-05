@@ -49,6 +49,12 @@ export const FEEDBACK_ACTIONS = [
   "hide_user",
   "mute_topic",
   "mute_hashtag",
+  // Phase 5 additions — task-specified feedback loop actions
+  "not_now",
+  "hide_this",
+  "wrong_city",
+  "already_went",
+  "not_safe",
 ] as const;
 
 export type FeedbackAction = typeof FEEDBACK_ACTIONS[number];
@@ -180,8 +186,17 @@ export async function processFeedback(
   const update: PrefsUpdate = {};
 
   switch (req.action) {
-    // ── show_more / show_less / not_my_vibe / report / block / hide_user ──────
-    case "show_more":
+    // ── show_more — explicit positive ranking signal for this type/category ───
+    case "show_more": {
+      const existing: Record<string, number> =
+        (currentPrefs.category_weights as Record<string, number>) ?? {};
+      const key = req.category ?? req.itemType;
+      existing[key] = Math.min(10, (existing[key] ?? 0) + 2);
+      update.category_weights = existing;
+      break;
+    }
+
+    // ── show_less / not_my_vibe / report / block / hide_user ─────────────────
     case "show_less":
     case "not_my_vibe":
     case "report":
@@ -208,7 +223,7 @@ export async function processFeedback(
       break;
     }
 
-    // ── not_interested — add to ignored list ──────────────────────────────────
+    // ── not_interested — item suppression + type/category penalty ────────────
     case "not_interested": {
       const itemId = (() => {
         try {
@@ -218,9 +233,16 @@ export async function processFeedback(
           return req.recommendationId;
         }
       })();
+      // Suppress this specific item permanently
       const ignored: string[] = (currentPrefs.ignored_item_ids as string[]) ?? [];
       if (!ignored.includes(itemId)) ignored.push(itemId);
-      update.ignored_item_ids = ignored.slice(-500); // cap at 500
+      update.ignored_item_ids = ignored.slice(-500);
+      // Apply a mild type/category penalty so fewer similar items surface
+      const weights: Record<string, number> =
+        (currentPrefs.category_weights as Record<string, number>) ?? {};
+      const penaltyKey = req.category ?? req.itemType;
+      weights[penaltyKey] = Math.max(-10, (weights[penaltyKey] ?? 0) - 1);
+      update.category_weights = weights;
       break;
     }
 
@@ -286,6 +308,97 @@ export async function processFeedback(
         if (!existing.includes(slug)) existing.push(slug);
         update.muted_topics = existing.slice(-200);
       }
+      break;
+    }
+
+    // ── not_now — session-scoped suppression written to compass_recent_context ─
+    // The item is appended to signals.session_suppressed_ids so the feed
+    // builder can filter it out during the current session without permanently
+    // affecting the user's long-term preferences.
+    case "not_now": {
+      try {
+        // Decode the recommendation token to get the raw item ID — the feed
+        // route filters session_suppressed_ids against item.id, so we must
+        // store the entity ID (not the signed token) for the check to match.
+        const notNowItemId = (() => {
+          try {
+            const d = JSON.parse(Buffer.from(req.recommendationId, "base64url").toString("utf8"));
+            return (d.itemId as string) ?? req.recommendationId;
+          } catch {
+            return req.recommendationId;
+          }
+        })();
+        const { data: ctxRow } = await db
+          .from("compass_recent_context")
+          .select("signals")
+          .eq("user_id", userId)
+          .maybeSingle();
+        const sigs = ((ctxRow?.signals ?? {}) as Record<string, unknown>);
+        const suppressed: string[] = (sigs.session_suppressed_ids as string[]) ?? [];
+        if (!suppressed.includes(notNowItemId)) suppressed.push(notNowItemId);
+        sigs.session_suppressed_ids = suppressed.slice(-100);
+        await db
+          .from("compass_recent_context")
+          .upsert(
+            {
+              user_id:    userId,
+              signals:    sigs,
+              expires_at: new Date(Date.now() + 4 * 3600 * 1000).toISOString(),
+            },
+            { onConflict: "user_id" },
+          );
+      } catch { /* best-effort — non-blocking */ }
+      break;
+    }
+
+    // ── hide_this — permanently suppress this specific item ───────────────────
+    case "hide_this": {
+      const itemId = (() => {
+        try {
+          const d = JSON.parse(Buffer.from(req.recommendationId, "base64url").toString("utf8"));
+          return (d.itemId as string) ?? req.recommendationId;
+        } catch {
+          return req.recommendationId;
+        }
+      })();
+      const ignored: string[] = (currentPrefs.ignored_item_ids as string[]) ?? [];
+      if (!ignored.includes(itemId)) ignored.push(itemId);
+      update.ignored_item_ids = ignored.slice(-500);
+      break;
+    }
+
+    // ── wrong_city — reduce weight for the item's city ────────────────────────
+    case "wrong_city": {
+      const existing: Record<string, number> =
+        (currentPrefs.category_weights as Record<string, number>) ?? {};
+      const cityKey = `city:${req.category ?? "unknown"}`;
+      existing[cityKey] = Math.max(-10, (existing[cityKey] ?? 0) - 3);
+      update.category_weights = existing;
+      break;
+    }
+
+    // ── already_went — treat as stronger not_interested for this item ─────────
+    case "already_went": {
+      const itemId = (() => {
+        try {
+          const d = JSON.parse(Buffer.from(req.recommendationId, "base64url").toString("utf8"));
+          return (d.itemId as string) ?? req.recommendationId;
+        } catch {
+          return req.recommendationId;
+        }
+      })();
+      const ignored: string[] = (currentPrefs.ignored_item_ids as string[]) ?? [];
+      if (!ignored.includes(itemId)) ignored.push(itemId);
+      update.ignored_item_ids = ignored.slice(-500);
+      break;
+    }
+
+    // ── not_safe — increase safety preference signal ──────────────────────────
+    case "not_safe": {
+      const existing: Record<string, number> =
+        (currentPrefs.category_weights as Record<string, number>) ?? {};
+      existing["unsafe"] = Math.max(-10, (existing["unsafe"] ?? 0) - 4);
+      update.category_weights = existing;
       break;
     }
   }

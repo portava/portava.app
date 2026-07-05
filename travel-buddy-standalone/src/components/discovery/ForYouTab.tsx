@@ -30,6 +30,7 @@ import { CompassWhySheet } from '../compass/CompassWhySheet';
 import { postCompassFrontloadEvent, postCompassContext } from '../../services/compass';
 import { CompassPicksSection } from '../compass/CompassPicksSection';
 import { CompassTravelerRow } from '../compass/CompassTravelerRow';
+import { CompassOnboardingCard } from '../compass/CompassOnboardingCard';
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -358,6 +359,11 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
             </Text>
           </View>
         )}
+
+        {/* ── Compass Onboarding Card — shown once for new users ──
+            Card is self-managing: it checks onboarding_completed on mount
+            and hides itself when already done. Gate is auth-only. */}
+        {isAuthed && <CompassOnboardingCard />}
 
         {/* ── Compass Picks section — horizontal card strip ── */}
         <CompassPicksSection

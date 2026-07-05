@@ -194,7 +194,16 @@ export type CompassFeedbackAction =
   | 'hide_user'
   | 'mute_topic'
   | 'report'
-  | 'block';
+  | 'block'
+  | 'too_expensive'
+  | 'not_my_vibe'
+  | 'save'
+  // Phase 5 — feedback loop actions
+  | 'not_now'
+  | 'hide_this'
+  | 'wrong_city'
+  | 'already_went'
+  | 'not_safe';
 
 export async function postCompassFeedback(body: {
   recommendationId: string;
@@ -504,12 +513,16 @@ export async function postCompassContext(params: {
 
 export interface CompassSettings {
   use_location?: boolean;
+  use_chosen_city?: boolean;
   use_trip_data?: boolean;
   use_saved_items?: boolean;
   use_history?: boolean;
   show_buddy_recommendations?: boolean;
   show_people_recommendations?: boolean;
   allow_smart_notifications?: boolean;
+  onboarding_completed?: boolean;
+  onboarding_completed_at?: string;
+  updated_at?: string;
 }
 
 export interface CompassSettingsResult {
@@ -527,6 +540,75 @@ export async function fetchCompassSettings(): Promise<CompassSettingsResult> {
     return { ok: true, data: body.settings ?? {} };
   } catch {
     return { ok: false, error: 'network_error' };
+  }
+}
+
+export async function patchCompassSettings(
+  patch: Partial<CompassSettings>,
+): Promise<CompassSettingsResult> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch('/api/compass/settings', {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    });
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    return { ok: true, data: body.settings ?? {} };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+export async function deleteCompassContext(): Promise<{ ok: boolean; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch('/api/compass/context', { method: 'DELETE' });
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+/** Semantic version of the Compass ranking engine used in analytics events. */
+export const COMPASS_ENGINE_VERSION = '1.0';
+
+// ── Analytics ─────────────────────────────────────────────────────────────────
+
+export type CompassAnalyticsEventName =
+  | 'compass_card_viewed'
+  | 'compass_card_tapped'
+  | 'compass_feedback_submitted'
+  | 'compass_settings_changed'
+  | 'compass_onboarding_completed'
+  | 'compass_onboarding_skipped';
+
+export interface CompassAnalyticsEvent {
+  event_name: CompassAnalyticsEventName;
+  compass_engine_version?: string;
+  item_id?: string;
+  item_type?: string;
+  section_name?: string;
+  city?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Fire-and-forget analytics event write.
+ * Never throws. No private fields or coordinates.
+ */
+export async function postCompassAnalyticsEvent(
+  event: CompassAnalyticsEvent,
+): Promise<void> {
+  if (!isSupabaseConfigured || !apiBase()) return;
+  try {
+    await authedFetch('/api/compass/analytics', {
+      method: 'POST',
+      body: JSON.stringify(event),
+    });
+  } catch {
+    // fire-and-forget
   }
 }
 

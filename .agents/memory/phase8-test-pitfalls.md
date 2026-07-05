@@ -29,6 +29,19 @@ description: Gotchas found during Phase 8 full verification — fake client data
 - `setupState()` now merges featureFlags via destructured `extraFlags` so `RENT_BUDDY_NIGHTLIFE_ENABLED` is always in the default set.
 - `setupBookingEnforcement()` (assigns `state` directly, bypasses `setupState`) must also include `RENT_BUDDY_NIGHTLIFE_ENABLED` in its featureFlags literal.
 
+## Fire-and-forget `.then(undefined, handler)` crashes fake-client insert
+
+Routes that write to a table fire-and-forget use `.then(undefined, onRejected)`. Fake client `insert` returning `{ then: (res: Function) => res(result) }` calls `undefined(result)` — throwing a TypeError that Express catches and returns 500.
+
+**Why:** Two-arg `.then(onFulfilled, onRejected)` — when onFulfilled is `undefined`, calling it throws.
+
+**How to apply:** Fake client `insert` result's `then` must guard:
+```ts
+then: (onFulfilled?: Function | null, _onRejected?: Function | null) => {
+  if (typeof onFulfilled === 'function') onFulfilled(result);
+}
+```
+
 ## Geofence — late check-in (window_closed) should succeed with ok=true
 
 The check-in route had an early return for `window_closed` that made the `isLate` / `late_check_in` event logic at line 537 dead code. The test expects late check-ins to be admitted (ok=true) but logged as late. Fix: remove the early return; the `isLate` flag handles the trust event correctly.

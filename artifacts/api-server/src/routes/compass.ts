@@ -252,11 +252,53 @@ router.get("/compass/feed", async (req, res) => {
     const cached = await getCachedFeed(sc, user.id, cacheKey, "feed");
     if (cached) { res.json(cached); return; }
 
-    const profile  = await getCompassProfile(sc, user.id);
-    const signals  = defaultSignals(profile);
+    // Load profile + settings + recent context in parallel
+    const [profile, settingsRow, recentCtxRow] = await Promise.all([
+      getCompassProfile(sc, user.id),
+      sc.from("compass_settings").select("*").eq("user_id", user.id).maybeSingle(),
+      sc.from("compass_recent_context").select("signals").eq("user_id", user.id).maybeSingle(),
+    ]);
+
+    // Apply compass_settings toggles to signals so disabled data sources are
+    // not used in the ranking pipeline for this request.
+    const settings = (settingsRow.data ?? {}) as Record<string, boolean>;
+    const rawSignals = defaultSignals(profile);
+    // Gate trip-data signals when user has disabled trip-data personalisation
+    if (settings.use_trip_data === false) {
+      rawSignals.activeTripNow           = false;
+      rawSignals.upcomingTripWithin48h   = false;
+      rawSignals.hasFutureTripScheduled  = false;
+      rawSignals.activeBooking           = false;
+    }
+    const signals  = rawSignals;
     const context  = buildCompassContext(profile, signals);
-    const items    = await hydrateCompassItems(sc, profile);
-    const feed = await buildFeed(items, profile, context, sc, cursor ?? null);
+
+    // Hydrate candidates, applying settings gates that affect candidate selection:
+    //   use_location=false + use_chosen_city=false → skip city-biased fetching
+    //   (pass a profile copy with currentCity=null so the hydrator fetches globally)
+    const hydrateProfile =
+      settings.use_location === false && settings.use_chosen_city === false
+        ? { ...profile, currentCity: null as string | null }
+        : profile;
+    const items = await hydrateCompassItems(sc, hydrateProfile);
+
+    // Apply type-based candidate gates driven by settings toggles.
+    const excludeTypes = new Set<string>();
+    if (settings.show_buddy_recommendations === false)  excludeTypes.add("buddy");
+    if (settings.show_people_recommendations === false) excludeTypes.add("user");
+
+    // Filter out session-suppressed items (not_now actions written to
+    // compass_recent_context.signals.session_suppressed_ids as raw item IDs).
+    const sessionSuppressedIds = new Set<string>(
+      ((recentCtxRow.data?.signals as any)?.session_suppressed_ids as string[]) ?? [],
+    );
+    const candidateItems = items.filter(
+      (item) =>
+        !sessionSuppressedIds.has(item.id) &&
+        (excludeTypes.size === 0 || !excludeTypes.has(item.type ?? "")),
+    );
+
+    const feed = await buildFeed(candidateItems, profile, context, sc, cursor ?? null);
 
     // Enrich feed with signed recommendationId tokens per item.
     // The client uses these tokens to call GET /api/compass/why/:recommendationId.
@@ -334,14 +376,46 @@ router.get("/compass/feed/section/:section", async (req, res) => {
     const cached = await getCachedFeed(sc, user.id, cacheKey, "section");
     if (cached) { res.json(cached); return; }
 
-    const profile  = await getCompassProfile(sc, user.id);
-    const signals  = defaultSignals(profile);
+    // Load profile + settings + recent context in parallel (same gates as /feed)
+    const [profile, sectionSettingsRow, sectionCtxRow] = await Promise.all([
+      getCompassProfile(sc, user.id),
+      sc.from("compass_settings").select("*").eq("user_id", user.id).maybeSingle(),
+      sc.from("compass_recent_context").select("signals").eq("user_id", user.id).maybeSingle(),
+    ]);
+
+    const sectionSettings = (sectionSettingsRow.data ?? {}) as Record<string, boolean>;
+    const sectionRawSignals = defaultSignals(profile);
+    if (sectionSettings.use_trip_data === false) {
+      sectionRawSignals.activeTripNow          = false;
+      sectionRawSignals.upcomingTripWithin48h  = false;
+      sectionRawSignals.hasFutureTripScheduled = false;
+      sectionRawSignals.activeBooking          = false;
+    }
+    const signals  = sectionRawSignals;
     const context  = buildCompassContext(profile, signals);
-    const items    = await hydrateCompassItems(sc, profile);
+
+    const sectionHydrateProfile =
+      sectionSettings.use_location === false && sectionSettings.use_chosen_city === false
+        ? { ...profile, currentCity: null as string | null }
+        : profile;
+    const items = await hydrateCompassItems(sc, sectionHydrateProfile);
+
+    // Apply type-gate and session-suppression filters (same logic as /feed)
+    const sectionExcludeTypes = new Set<string>();
+    if (sectionSettings.show_buddy_recommendations === false)  sectionExcludeTypes.add("buddy");
+    if (sectionSettings.show_people_recommendations === false) sectionExcludeTypes.add("user");
+    const sectionSuppressedIds = new Set<string>(
+      ((sectionCtxRow.data?.signals as any)?.session_suppressed_ids as string[]) ?? [],
+    );
+    const candidateItems = items.filter(
+      (item) =>
+        !sectionSuppressedIds.has(item.id) &&
+        (sectionExcludeTypes.size === 0 || !sectionExcludeTypes.has(item.type ?? "")),
+    );
 
     const result = await buildSection(
       sectionParam as SectionName,
-      items,
+      candidateItems,
       profile,
       context,
       sc,
@@ -870,6 +944,11 @@ router.post("/compass/feedback", async (req, res) => {
       too_expensive:   "too_expensive",
       hide_user:       "hide",
       not_my_vibe:     "wrong_vibe",
+      hide_this:       "hide",
+      wrong_city:      "wrong_city",
+      already_went:    "already_went",
+      not_safe:        "not_safe",
+      not_now:         "not_now",
     };
     const { action, recommendationId, itemType, targetUserId } = parsed.data;
     const mappedAction = COMPASS_FEEDBACK_ACTION_MAP[action];
@@ -1145,6 +1224,14 @@ router.delete("/compass/context", async (req, res) => {
     return;
   }
 
+  // Also reset feedback-derived ranking signals (category weights + ignored items)
+  // so the feed starts fresh. Interests and travel style (user-authored) are
+  // preserved — only machine-learned penalty/boost signals are cleared.
+  await sc
+    .from("compass_user_preferences")
+    .update({ category_weights: {}, ignored_item_ids: [] })
+    .eq("user_id", user.id);
+
   res.status(200).json({ ok: true });
 });
 
@@ -1154,13 +1241,20 @@ router.delete("/compass/context", async (req, res) => {
 
 const DEFAULT_COMPASS_SETTINGS = {
   use_location:                true,
+  use_chosen_city:             true,
   use_trip_data:               true,
   use_saved_items:             true,
   use_history:                 true,
   show_buddy_recommendations:  true,
   show_people_recommendations: true,
   allow_smart_notifications:   true,
+  onboarding_completed:        false,
 };
+
+const SETTINGS_SELECT_COLS =
+  "use_location, use_chosen_city, use_trip_data, use_saved_items, use_history, " +
+  "show_buddy_recommendations, show_people_recommendations, allow_smart_notifications, " +
+  "onboarding_completed, onboarding_completed_at, updated_at";
 
 router.get("/compass/settings", async (req, res) => {
   const auth = await requireUser(req, res);
@@ -1170,11 +1264,11 @@ router.get("/compass/settings", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
-  const { data, error } = await sc
-    .from("compass_settings")
-    .select("use_location, use_trip_data, use_saved_items, use_history, show_buddy_recommendations, show_people_recommendations, allow_smart_notifications, updated_at")
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const [settingsResult, locResult] = await Promise.all([
+    sc.from("compass_settings").select(SETTINGS_SELECT_COLS).eq("user_id", user.id).maybeSingle(),
+    sc.from("user_location_state").select("city").eq("user_id", user.id).maybeSingle(),
+  ]);
+  const { data, error } = settingsResult;
 
   if (error) {
     req.log.warn({ err: error, userId: user.id }, "compass/settings GET: read failed");
@@ -1182,7 +1276,14 @@ router.get("/compass/settings", async (req, res) => {
     return;
   }
 
-  res.json({ settings: data ?? { user_id: user.id, ...DEFAULT_COMPASS_SETTINGS } });
+  // Include current_city (from user_location_state) so mobile clients can
+  // use it as a real city signal (e.g., cold-start onboarding gate).
+  const settingsBase = (data ?? { user_id: user.id, ...DEFAULT_COMPASS_SETTINGS }) as Record<string, unknown>;
+  const settingsPayload = {
+    ...settingsBase,
+    current_city: locResult.data?.city ?? null,
+  };
+  res.json({ settings: settingsPayload });
 });
 
 // ── PATCH /api/compass/settings ───────────────────────────────────────────────
@@ -1190,12 +1291,14 @@ router.get("/compass/settings", async (req, res) => {
 
 const patchSettingsSchema = z.object({
   use_location:                z.boolean().optional(),
+  use_chosen_city:             z.boolean().optional(),
   use_trip_data:               z.boolean().optional(),
   use_saved_items:             z.boolean().optional(),
   use_history:                 z.boolean().optional(),
   show_buddy_recommendations:  z.boolean().optional(),
   show_people_recommendations: z.boolean().optional(),
   allow_smart_notifications:   z.boolean().optional(),
+  onboarding_completed:        z.boolean().optional(),
 });
 
 router.patch("/compass/settings", async (req, res) => {
@@ -1217,12 +1320,20 @@ router.patch("/compass/settings", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
+  const upsertData: Record<string, unknown> = {
+    user_id:    user.id,
+    ...parsed.data,
+    updated_at: new Date().toISOString(),
+  };
+
+  // When marking onboarding complete, stamp the timestamp
+  if (parsed.data.onboarding_completed === true) {
+    upsertData["onboarding_completed_at"] = new Date().toISOString();
+  }
+
   const { error } = await sc
     .from("compass_settings")
-    .upsert(
-      { user_id: user.id, ...parsed.data, updated_at: new Date().toISOString() },
-      { onConflict: "user_id" },
-    );
+    .upsert(upsertData, { onConflict: "user_id" });
 
   if (error) {
     req.log.warn({ err: error, userId: user.id }, "compass/settings PATCH: upsert failed");
@@ -1232,11 +1343,81 @@ router.patch("/compass/settings", async (req, res) => {
 
   const { data: updated } = await sc
     .from("compass_settings")
-    .select("use_location, use_trip_data, use_saved_items, use_history, show_buddy_recommendations, show_people_recommendations, allow_smart_notifications, updated_at")
+    .select(SETTINGS_SELECT_COLS)
     .eq("user_id", user.id)
     .maybeSingle();
 
   res.json({ settings: updated ?? { user_id: user.id, ...DEFAULT_COMPASS_SETTINGS, ...parsed.data } });
+});
+
+// ── POST /api/compass/analytics ───────────────────────────────────────────────
+// Writes a lightweight client-side analytics event to compass_analytics_events.
+// Accepted events: compass_card_viewed, compass_card_tapped,
+//   compass_feedback_submitted, compass_settings_changed,
+//   compass_onboarding_completed, compass_onboarding_skipped.
+// Private fields (coordinates, PII) are stripped before write.
+
+const ALLOWED_ANALYTICS_EVENTS = [
+  "compass_card_viewed",
+  "compass_card_tapped",
+  "compass_feedback_submitted",
+  "compass_settings_changed",
+  "compass_onboarding_completed",
+  "compass_onboarding_skipped",
+] as const;
+
+const analyticsBodySchema = z.object({
+  event_name:             z.enum(ALLOWED_ANALYTICS_EVENTS),
+  compass_engine_version: z.string().max(40).optional(),
+  item_id:                z.string().max(255).optional(),
+  item_type:              z.string().max(60).optional(),
+  section_name:           z.string().max(80).optional(),
+  city:                   z.string().max(200).optional(),
+  metadata:               z.record(z.unknown()).optional(),
+});
+
+router.post("/compass/analytics", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const parsed = analyticsBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  // Strip any private/sensitive keys from metadata before persisting
+  const safeMetadata: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(parsed.data.metadata ?? {})) {
+    const lower = k.toLowerCase();
+    if (lower.includes("lat") || lower.includes("lng") || lower.includes("location") ||
+        lower.includes("coord") || lower.includes("email") || lower.includes("phone") ||
+        lower.includes("token") || lower.includes("password")) {
+      continue;
+    }
+    safeMetadata[k] = v;
+  }
+
+  sc.from("compass_analytics_events")
+    .insert({
+      user_id:                user.id,
+      event_name:             parsed.data.event_name,
+      compass_engine_version: parsed.data.compass_engine_version ?? "1.0",
+      item_id:                parsed.data.item_id ?? null,
+      item_type:              parsed.data.item_type ?? null,
+      section_name:           parsed.data.section_name ?? null,
+      city:                   parsed.data.city ?? null,
+      metadata:               safeMetadata,
+    })
+    .then(undefined, (err: unknown) => {
+      req.log?.warn({ err }, "compass/analytics: insert failed");
+    });
+
+  res.status(202).json({ ok: true });
 });
 
 // ── POST /api/compass/report ──────────────────────────────────────────────────
