@@ -51,6 +51,31 @@ function isPrivateLocation(text: string): boolean {
   return PRIVATE_LOCATION_PATTERNS.some((p) => p.test(text));
 }
 
+// ── Category risk levels ──────────────────────────────────────────────────────
+// Maps each Rent a Buddy service category to a risk tier.
+// high  → requires verified status for both buddy and traveler at booking time
+// medium→ recommended but not a hard gate at this time
+// low   → no additional verification required
+
+export const CATEGORY_RISK_LEVELS: Record<string, 'low' | 'medium' | 'high'> = {
+  arrival:   'high',    // stranger greets traveler alone at airport/transport hub
+  nightlife: 'high',    // late-night, unfamiliar venues
+  adventure: 'medium',  // outdoor activities with physical risk
+  wellness:  'medium',  // spa/fitness — clear non-adult context required
+  city:      'low',
+  language:  'low',
+  food:      'low',
+  shopping:  'low',
+  culture:   'low',
+  content:   'low',
+  nature:    'low',
+  other:     'low',
+};
+
+export function getCategoryRiskLevel(category: string): 'low' | 'medium' | 'high' {
+  return (CATEGORY_RISK_LEVELS as Record<string, 'low' | 'medium' | 'high'>)[category] ?? 'low';
+}
+
 // ── Policy keyword scanner ────────────────────────────────────────────────────
 
 const POLICY_RULES: Array<{
@@ -1027,6 +1052,45 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
       error: "invalid_location",
       message: "Nightlife meetups must start at a public location (venue entrance, hotel lobby, landmark, etc.). Private rooms and homes are not allowed.",
     });
+  }
+
+  // High-risk category verification gate ─────────────────────────────────────
+  // arrival and nightlife require both sides to be verified; medium-risk
+  // categories are advisory only (not a hard block at this time).
+  if (getCategoryRiskLevel(category) === 'high') {
+    const buddyVerified = (buddyProfile as any).verification_status === 'verified'
+      || ((buddyProfile as any).id_verified && (buddyProfile as any).phone_verified);
+
+    // Fetch traveler's rent_buddy_profile (may not exist for brand-new users)
+    const { data: travProf } = await serviceClient
+      .from("rent_buddy_profiles")
+      .select("verification_status, id_verified, phone_verified")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    const travelerVerified = (travProf as any)?.verification_status === 'verified'
+      || ((travProf as any)?.id_verified && (travProf as any)?.phone_verified);
+
+    if (!buddyVerified && !travelerVerified) {
+      return res.status(403).json({
+        error: "verification_required",
+        side: "both",
+        message: `${category} bookings require both you and the Buddy to be verified. Please complete identity verification.`,
+      });
+    }
+    if (!buddyVerified) {
+      return res.status(403).json({
+        error: "verification_required",
+        side: "buddy",
+        message: `${category} bookings require the Buddy to be verified. This Buddy has not completed identity verification.`,
+      });
+    }
+    if (!travelerVerified) {
+      return res.status(403).json({
+        error: "verification_required",
+        side: "traveler",
+        message: `${category} bookings require your account to be verified. Please complete identity verification to continue.`,
+      });
+    }
   }
 
   // New Buddy restrictions
@@ -2283,6 +2347,17 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/review", async (req, res) => 
   // reviewee must be a profiles.id (user ID), NOT a rent_buddy_profiles.id
   const revieweeId: string = isTraveler ? buddyUserId : b.traveler_id;
 
+  // One-review-per-booking enforcement at API level (DB also has a unique constraint)
+  const { data: existingReview } = await serviceClient
+    .from("rent_buddy_reviews")
+    .select("id")
+    .eq("booking_id", bookingId)
+    .eq("reviewer_id", auth.user.id)
+    .maybeSingle();
+  if (existingReview) {
+    return res.status(409).json({ error: "already_reviewed", message: "You have already submitted a review for this booking." });
+  }
+
   // Double-blind: blind until 7 days after booking date
   const blindUntil = new Date(b.booking_date);
   blindUntil.setDate(blindUntil.getDate() + 7);
@@ -2302,6 +2377,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/review", async (req, res) => 
       photos,
       is_public: false,
       blind_until: blindUntil.toISOString(),
+      moderation_status: "pending_moderation",
       updated_at: new Date().toISOString(),
     })
     .select()
@@ -3593,6 +3669,107 @@ router.patch("/api/rent-a-buddy/admin/buddies/:buddyId/categories", async (req, 
   await serviceClient.from("rent_buddy_profiles").update({ categories, updated_at: new Date().toISOString() }).eq("id", buddyId);
   await serviceClient.from("rent_buddy_admin_actions").insert({ admin_id: userId, target_type: "buddy", target_id: buddyId, action: "categories_updated", notes: JSON.stringify(categories) });
   return res.json({ ok: true });
+});
+
+// ── Admin — review moderation ─────────────────────────────────────────────────
+
+router.post("/api/rent-a-buddy/admin/reviews/:reviewId/approve", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient, userId } = admin;
+  const { reviewId } = req.params;
+
+  const { data: review } = await serviceClient
+    .from("rent_buddy_reviews")
+    .select("*")
+    .eq("id", reviewId)
+    .maybeSingle();
+  if (!review) return res.status(404).json({ error: "not_found" });
+
+  await serviceClient
+    .from("rent_buddy_reviews")
+    .update({ is_public: true, moderation_status: "approved", updated_at: new Date().toISOString() })
+    .eq("id", reviewId);
+
+  // Recalculate average_rating and review_count on the buddy's profile using
+  // only approved (public) reviews where the reviewer is the traveler role
+  const revieweeId = (review as any).reviewee_id as string;
+  const { data: approvedRows } = await serviceClient
+    .from("rent_buddy_reviews")
+    .select("rating")
+    .eq("reviewee_id", revieweeId)
+    .eq("role", "traveler")
+    .eq("is_public", true);
+
+  if (approvedRows && approvedRows.length > 0) {
+    const sum = approvedRows.reduce((acc: number, r: any) => acc + Number(r.rating), 0);
+    const avg = Math.round((sum / approvedRows.length) * 100) / 100;
+    // Find buddy profile by user_id (reviewee_id is a profiles.id = user_id)
+    const { data: buddyProfile } = await serviceClient
+      .from("rent_buddy_profiles")
+      .select("id")
+      .eq("user_id", revieweeId)
+      .maybeSingle();
+    if (buddyProfile) {
+      await serviceClient
+        .from("rent_buddy_profiles")
+        .update({ average_rating: avg, review_count: approvedRows.length, updated_at: new Date().toISOString() })
+        .eq("id", (buddyProfile as any).id);
+    }
+  }
+
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: userId, target_type: "review", target_id: reviewId,
+    action: "review_approved", notes: null,
+  });
+
+  return res.json({ ok: true });
+});
+
+router.post("/api/rent-a-buddy/admin/reviews/:reviewId/reject", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient, userId } = admin;
+  const { reviewId } = req.params;
+  const { reason } = req.body ?? {};
+
+  const { data: review } = await serviceClient
+    .from("rent_buddy_reviews")
+    .select("id")
+    .eq("id", reviewId)
+    .maybeSingle();
+  if (!review) return res.status(404).json({ error: "not_found" });
+
+  await serviceClient
+    .from("rent_buddy_reviews")
+    .update({ is_public: false, moderation_status: "rejected", updated_at: new Date().toISOString() })
+    .eq("id", reviewId);
+
+  await serviceClient.from("rent_buddy_admin_actions").insert({
+    admin_id: userId, target_type: "review", target_id: reviewId,
+    action: "review_rejected", notes: reason ?? null,
+  });
+
+  return res.json({ ok: true });
+});
+
+router.get("/api/rent-a-buddy/admin/reviews", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient } = admin;
+  const moderationStatus = (req.query.moderationStatus as string) ?? "pending_moderation";
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = 50;
+
+  const { data, count, error } = await serviceClient
+    .from("rent_buddy_reviews")
+    .select("*", { count: "exact" })
+    .eq("moderation_status", moderationStatus)
+    .order("created_at", { ascending: false })
+    .range((page - 1) * limit, page * limit - 1);
+
+  if (error) return sendError(res, "db_error", error.message);
+  return res.json({ reviews: data ?? [], total: count ?? 0, page });
 });
 
 router.get("/api/rent-a-buddy/admin/bookings", async (req, res) => {
@@ -5778,6 +5955,94 @@ router.post("/api/buddy-bookings/:bookingId/respond-change-request", async (req,
   }
 
   return res.json({ ok: true, decision, changeRequestId });
+});
+
+// ── Rebook — create a new pending booking pre-filled from a completed booking ─
+// Requires: bookingDate (fresh date); optional overrides: startTime, durationH, groupSize.
+// Uses current buddy pricing; keeps service category, city, and notes from original.
+
+router.post("/api/buddy-bookings/:bookingId/rebook", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId } = req.params;
+  const { bookingDate, startTime, durationH, groupSize } = req.body ?? {};
+
+  if (!bookingDate) {
+    return res.status(400).json({ error: "invalid_payload", message: "bookingDate is required to rebook." });
+  }
+
+  const { data: original } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("*")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!original) return res.status(404).json({ error: "not_found", message: "Booking not found." });
+  if ((original as any).traveler_id !== auth.user.id) {
+    return res.status(403).json({ error: "forbidden", message: "Not your booking." });
+  }
+  if ((original as any).status !== "completed") {
+    return res.status(400).json({ error: "invalid_payload", message: "You can only rebook from a completed booking." });
+  }
+
+  const buddyProfileId = (original as any).buddy_id as string;
+  const { data: buddyProfile } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("*")
+    .eq("id", buddyProfileId)
+    .maybeSingle();
+
+  if (!buddyProfile || (buddyProfile as any).status !== "active" || (buddyProfile as any).admin_status !== "active") {
+    return res.status(409).json({ error: "buddy_unavailable", message: "This Buddy is no longer accepting bookings." });
+  }
+
+  // Compute price with current buddy rates
+  const newDurationH = Number(durationH ?? (original as any).duration_h ?? 2);
+  const newGroupSize = Number(groupSize ?? (original as any).group_size ?? 1);
+  const rateUsd = (buddyProfile as any).hourly_rate_usd ? Number((buddyProfile as any).hourly_rate_usd) : 0;
+  const totalUsd = Math.round(rateUsd * newDurationH * 100) / 100;
+
+  const { data: newBooking, error } = await serviceClient
+    .from("rent_buddy_bookings")
+    .insert({
+      buddy_id: buddyProfileId,
+      traveler_id: auth.user.id,
+      package_id: null,
+      trip_id: null,
+      booking_date: bookingDate,
+      start_time: startTime ?? (original as any).start_time ?? null,
+      duration_h: newDurationH,
+      group_size: newGroupSize,
+      city: (original as any).city,
+      country_code: (original as any).country_code ?? null,
+      category: (original as any).category,
+      notes: (original as any).notes ?? null,
+      total_usd: totalUsd,
+      deposit_usd: totalUsd,
+      cash_balance_usd: 0,
+      payment_mode: "full_in_app",
+      status: "pending",
+      safety_status: "normal",
+      route_plan: [],
+      updated_at: new Date().toISOString(),
+    })
+    .select()
+    .maybeSingle();
+
+  if (error) return sendError(res, "db_error", error.message);
+
+  void serviceClient.from("buddy_booking_events").insert({
+    booking_id: (newBooking as any)?.id,
+    actor_user_id: auth.user.id,
+    event: "rebook_created",
+    from_status: null,
+    to_status: "pending",
+    metadata: { original_booking_id: bookingId },
+  });
+
+  return res.status(201).json({ bookingId: (newBooking as any)?.id, booking: newBooking });
 });
 
 export default router;

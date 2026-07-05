@@ -12,7 +12,7 @@ import {
 import { color, space, radius, type as t, shadow, layout } from '../../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState, TravelCard } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
-import { getBooking, cancelBooking, getOrCreateBookingThread, addExtraTime, optInStayConnected, reportBooking, type BuddyBooking } from '../../../src/services/rentABuddy';
+import { getBooking, cancelBooking, getOrCreateBookingThread, addExtraTime, optInStayConnected, reportBooking, rebookBooking, type BuddyBooking } from '../../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type BookingStatus = BuddyBooking['status'];
@@ -170,6 +170,43 @@ function AddTimeModal({ visible, onClose, onAdd }: { visible: boolean; onClose: 
   );
 }
 
+function RebookModal({ visible, onClose, onRebook }: { visible: boolean; onClose: () => void; onRebook: (date: string) => void }) {
+  const [date, setDate] = useState('');
+  const today = new Date().toISOString().slice(0, 10);
+  return (
+    <Modal visible={visible} transparent animationType="slide">
+      <View style={modal.overlay}>
+        <View style={modal.sheet}>
+          <Text style={modal.title}>Book again?</Text>
+          <Text style={modal.sub}>Same Buddy, same service. Enter a new date to get started.</Text>
+          <TextInput
+            style={modal.input}
+            value={date}
+            onChangeText={setDate}
+            placeholder={`Date (YYYY-MM-DD), e.g. ${today}`}
+            placeholderTextColor={color.haze}
+            autoCapitalize="none"
+            keyboardType="numbers-and-punctuation"
+          />
+          <View style={modal.actions}>
+            <Pressable style={modal.cancelBtn} onPress={onClose}>
+              <Text style={modal.cancelBtnText}>Never mind</Text>
+            </Pressable>
+            <Pressable
+              style={[modal.confirmBtn, !date.match(/^\d{4}-\d{2}-\d{2}$/) && { opacity: 0.4 }]}
+              onPress={() => {
+                if (date.match(/^\d{4}-\d{2}-\d{2}$/)) { onRebook(date); onClose(); }
+              }}
+            >
+              <Text style={modal.confirmBtnText}>Book</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 function CancelModal({ visible, onClose, onConfirm }: { visible: boolean; onClose: () => void; onConfirm: (reason: string) => void }) {
   const [reason, setReason] = useState('');
   return (
@@ -210,6 +247,7 @@ export default function BookingDetail() {
   const [cancelVisible, setCancelVisible] = useState(false);
   const [addTimeVisible, setAddTimeVisible] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [rebookVisible, setRebookVisible] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -421,6 +459,13 @@ export default function BookingDetail() {
               </Pressable>
               <Pressable
                 style={({ pressed }) => [styles.actionBtn, pressed && { opacity: layout.pressedOpacity }]}
+                onPress={() => setRebookVisible(true)}
+              >
+                <Calendar size={16} color={color.deep} />
+                <Text style={styles.actionBtnText}>Book again</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.actionBtn, pressed && { opacity: layout.pressedOpacity }]}
                 onPress={async () => {
                   const res = await optInStayConnected(id as string);
                   Alert.alert(
@@ -467,6 +512,25 @@ export default function BookingDetail() {
         visible={cancelVisible}
         onClose={() => setCancelVisible(false)}
         onConfirm={handleCancel}
+      />
+
+      <RebookModal
+        visible={rebookVisible}
+        onClose={() => setRebookVisible(false)}
+        onRebook={async (date) => {
+          const res = await rebookBooking(id as string, { bookingDate: date });
+          if (!res.ok) {
+            Alert.alert('Could not rebook', res.error ?? 'Please try again.');
+          } else if (res.data?.bookingId) {
+            const newId = res.data.bookingId;
+            Alert.alert('Booking requested!', 'Your new booking has been sent to the Buddy for confirmation.', [
+              { text: 'View booking', onPress: () => router.push({ pathname: '/(rent-a-buddy)/booking/[id]' as any, params: { id: newId } }) },
+              { text: 'OK' },
+            ]);
+          } else {
+            Alert.alert('Could not rebook', 'Please try again.');
+          }
+        }}
       />
     </View>
   );

@@ -1731,3 +1731,338 @@ describe("Rent a Buddy — booking: launch control and age enforcement", () => {
     assert.notEqual(r.body.error, "age_requirement", JSON.stringify(r.body));
   });
 });
+
+// ── Category risk enforcement ──────────────────────────────────────────────────
+
+describe("Rent a Buddy — booking: category risk levels", () => {
+  const BOOKING_DATE = new Date().toISOString().slice(0, 10);
+
+  function setupRiskState(
+    buddyVerified: boolean,
+    travelerVerified: boolean,
+    category = "arrival",
+    city = "Manila",
+  ) {
+    state = {
+      featureFlags: {
+        rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true },
+      },
+      profiles: {
+        [USER_ID]:    { id: USER_ID,    trust_score: 80 },
+        [BUDDY_USER]: { id: BUDDY_USER, trust_score: 80 },
+      },
+      buddyProfiles: {
+        [BUDDY_PROF]: {
+          id: BUDDY_PROF, user_id: BUDDY_USER, status: "active", admin_status: "active",
+          hourly_rate_usd: 30, categories: [category], category_approvals: { arrival: true },
+          new_buddy_public_only: false, new_buddy_max_hours: 8,
+          verification_status: buddyVerified ? "verified" : "unverified",
+          id_verified: buddyVerified, phone_verified: buddyVerified,
+          nightlife_admin_approved: true,
+        },
+        "bp-traveler": {
+          id: "bp-traveler", user_id: USER_ID,
+          verification_status: travelerVerified ? "verified" : "unverified",
+          id_verified: travelerVerified, phone_verified: travelerVerified,
+          date_of_birth: "1990-01-01",
+        },
+      },
+      launchControls: [],
+      // checkRentBuddyAccess fail-closes on unknown status; seed city as public_mvp
+      cityRollouts: [{ id: `cr-${city.toLowerCase()}`, city, country_code: "PH", status: "public_mvp", enabled: true }],
+    };
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  }
+
+  it("arrival booking blocked when buddy is not verified (side=buddy)", async () => {
+    setupRiskState(false, true, "arrival");
+    const r = await req("POST", "/api/rent-a-buddy/bookings", {
+      buddyId: BUDDY_PROF, bookingDate: BOOKING_DATE, durationH: 2,
+      city: "Manila", countryCode: "PH", category: "arrival",
+    });
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.error, "verification_required");
+    assert.equal(r.body.side, "buddy");
+  });
+
+  it("arrival booking blocked when traveler is not verified (side=traveler)", async () => {
+    setupRiskState(true, false, "arrival");
+    const r = await req("POST", "/api/rent-a-buddy/bookings", {
+      buddyId: BUDDY_PROF, bookingDate: BOOKING_DATE, durationH: 2,
+      city: "Manila", countryCode: "PH", category: "arrival",
+    });
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.error, "verification_required");
+    assert.equal(r.body.side, "traveler");
+  });
+
+  it("arrival booking blocked when both unverified (side=both)", async () => {
+    setupRiskState(false, false, "arrival");
+    const r = await req("POST", "/api/rent-a-buddy/bookings", {
+      buddyId: BUDDY_PROF, bookingDate: BOOKING_DATE, durationH: 2,
+      city: "Manila", countryCode: "PH", category: "arrival",
+    });
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.error, "verification_required");
+    assert.equal(r.body.side, "both");
+  });
+
+  it("city booking (low risk) proceeds even when both unverified", async () => {
+    setupRiskState(false, false, "city");
+    const r = await req("POST", "/api/rent-a-buddy/bookings", {
+      buddyId: BUDDY_PROF, bookingDate: BOOKING_DATE, durationH: 2,
+      city: "Manila", countryCode: "PH", category: "city",
+    });
+    // Should NOT be blocked for verification; may reach a business error or succeed
+    assert.notEqual(r.body.error, "verification_required", JSON.stringify(r.body));
+  });
+});
+
+// ── Review moderation: moderation_status + one-review-per-booking ─────────────
+
+describe("Rent a Buddy — reviews: moderation and duplicate guard", () => {
+  const COMPLETED_BOOKING_ID = "completed-bk-1";
+
+  function setupReviewState(extraReviews: any[] = []) {
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      profiles: {
+        [USER_ID]:    { id: USER_ID,    trust_score: 80 },
+        [BUDDY_USER]: { id: BUDDY_USER, trust_score: 80 },
+      },
+      buddyProfiles: {
+        [BUDDY_PROF]: { id: BUDDY_PROF, user_id: BUDDY_USER, status: "active", admin_status: "active" },
+      },
+      bookings: {
+        [COMPLETED_BOOKING_ID]: {
+          id: COMPLETED_BOOKING_ID, traveler_id: USER_ID, buddy_id: BUDDY_PROF,
+          status: "completed", city: "Tokyo",
+          booking_date: "2025-06-01",
+          payment_mode: "full_in_app", total_usd: 50,
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        },
+      },
+      reviews: extraReviews,
+    };
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  }
+
+  it("review submission returns 201 and sets moderation_status=pending_moderation", async () => {
+    setupReviewState([]);
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${COMPLETED_BOOKING_ID}/review`, {
+      rating: 5, body: "Amazing experience!",
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    // The review should contain moderation_status from the insert
+    const insertedReview = state.reviews?.find((rv: any) => rv.booking_id === COMPLETED_BOOKING_ID);
+    assert.ok(insertedReview, "review should be inserted");
+    assert.equal(insertedReview?.moderation_status, "pending_moderation");
+  });
+
+  it("second review submission returns 409 already_reviewed", async () => {
+    // Pre-seed an existing review for this booking+reviewer
+    setupReviewState([{
+      id: "rv-existing", booking_id: COMPLETED_BOOKING_ID,
+      reviewer_id: USER_ID, reviewee_id: BUDDY_USER,
+      role: "traveler", rating: 4, is_public: false,
+      moderation_status: "pending_moderation",
+    }]);
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${COMPLETED_BOOKING_ID}/review`, {
+      rating: 5, body: "Trying to review again",
+    });
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(r.body.error, "already_reviewed");
+  });
+
+  it("review on non-completed booking returns 400", async () => {
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      profiles: { [USER_ID]: { id: USER_ID, trust_score: 80 } },
+      bookings: {
+        "pending-bk": {
+          id: "pending-bk", traveler_id: USER_ID, buddy_id: BUDDY_PROF,
+          status: "pending", city: "Tokyo",
+          booking_date: "2025-06-10",
+          payment_mode: "full_in_app", total_usd: 50,
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        },
+      },
+      buddyProfiles: {
+        [BUDDY_PROF]: { id: BUDDY_PROF, user_id: BUDDY_USER },
+      },
+    };
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+    const r = await req("POST", "/api/rent-a-buddy/bookings/pending-bk/review", { rating: 5 });
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.error, "invalid_payload");
+  });
+});
+
+// ── Admin review moderation routes ────────────────────────────────────────────
+
+describe("Rent a Buddy — admin: review approve and reject", () => {
+  const REVIEW_ID = "review-uuid-mod-1";
+
+  function setupAdminReviewState() {
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      profiles: {
+        [ADMIN_USER]: { id: ADMIN_USER, role: "admin", trust_score: 90 },
+        [USER_ID]:    { id: USER_ID,    trust_score: 80 },
+        [BUDDY_USER]: { id: BUDDY_USER, trust_score: 80 },
+      },
+      buddyProfiles: {
+        [BUDDY_PROF]: { id: BUDDY_PROF, user_id: BUDDY_USER, status: "active", admin_status: "active",
+          average_rating: 0, review_count: 0 },
+      },
+      reviews: [{
+        id: REVIEW_ID, booking_id: BOOKING_ID,
+        reviewer_id: USER_ID, reviewee_id: BUDDY_USER,
+        role: "traveler", rating: 4.5,
+        is_public: false, moderation_status: "pending_moderation",
+        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      }],
+      adminActions: [],
+    };
+    const client = makeClient(ADMIN_USER);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  }
+
+  it("admin approve sets is_public=true and moderation_status=approved", async () => {
+    setupAdminReviewState();
+    const r = await req("POST", `/api/rent-a-buddy/admin/reviews/${REVIEW_ID}/approve`, {}, ADMIN_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.ok, true);
+    const action = state.adminActions?.find((a: any) => a.action === "review_approved");
+    assert.ok(action, "admin action should be logged");
+  });
+
+  it("admin reject sets moderation_status=rejected", async () => {
+    setupAdminReviewState();
+    const r = await req("POST", `/api/rent-a-buddy/admin/reviews/${REVIEW_ID}/reject`, { reason: "spam" }, ADMIN_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.ok, true);
+    const action = state.adminActions?.find((a: any) => a.action === "review_rejected");
+    assert.ok(action, "admin action should be logged");
+  });
+
+  it("non-admin cannot approve a review", async () => {
+    setupAdminReviewState();
+    // Reset client to regular user
+    const userClient = makeClient(USER_ID);
+    _setTestClient(userClient as any, true);
+    _setTestServiceClient(userClient as any);
+    const r = await req("POST", `/api/rent-a-buddy/admin/reviews/${REVIEW_ID}/approve`, {}, FAKE_TOKEN);
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+  });
+
+  it("admin moderation queue lists pending reviews", async () => {
+    setupAdminReviewState();
+    const r = await req("GET", "/api/rent-a-buddy/admin/reviews?moderationStatus=pending_moderation", undefined, ADMIN_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(Array.isArray(r.body.reviews));
+    assert.equal(r.body.reviews.length, 1);
+  });
+});
+
+// ── Rebook ─────────────────────────────────────────────────────────────────────
+
+describe("Rent a Buddy — rebook", () => {
+  const ORIG_BOOKING_ID = "completed-for-rebook-1";
+  const FUTURE_DATE = new Date(Date.now() + 86400000 * 10).toISOString().slice(0, 10);
+
+  function setupRebookState(bookingStatus = "completed") {
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      profiles: {
+        [USER_ID]:    { id: USER_ID,    trust_score: 80 },
+        [BUDDY_USER]: { id: BUDDY_USER, trust_score: 80 },
+      },
+      buddyProfiles: {
+        [BUDDY_PROF]: {
+          id: BUDDY_PROF, user_id: BUDDY_USER, status: "active", admin_status: "active",
+          hourly_rate_usd: 25, categories: ["city"], category_approvals: {},
+          new_buddy_public_only: false, new_buddy_max_hours: 8,
+        },
+      },
+      bookings: {
+        [ORIG_BOOKING_ID]: {
+          id: ORIG_BOOKING_ID, traveler_id: USER_ID, buddy_id: BUDDY_PROF,
+          status: bookingStatus, city: "Seoul", country_code: "KR", category: "city",
+          duration_h: 3, group_size: 2, notes: "Looking forward to it",
+          payment_mode: "full_in_app", total_usd: 75,
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        },
+      },
+    };
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  }
+
+  it("rebook creates a new pending booking (201)", async () => {
+    setupRebookState("completed");
+    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
+      bookingDate: FUTURE_DATE,
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.ok(r.body.bookingId, "should return new bookingId");
+  });
+
+  it("rebook pre-fills city and category from original", async () => {
+    setupRebookState("completed");
+    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
+      bookingDate: FUTURE_DATE,
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(r.body.booking?.city, "Seoul");
+    assert.equal(r.body.booking?.category, "city");
+    assert.equal(r.body.booking?.status, "pending");
+  });
+
+  it("rebook from non-completed booking returns 400", async () => {
+    setupRebookState("in_progress");
+    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
+      bookingDate: FUTURE_DATE,
+    });
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.error, "invalid_payload");
+  });
+
+  it("rebook without bookingDate returns 400", async () => {
+    setupRebookState("completed");
+    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {});
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.error, "invalid_payload");
+  });
+
+  it("rebook for someone else's booking returns 403", async () => {
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      profiles: { [USER_ID]: { id: USER_ID, trust_score: 80 } },
+      buddyProfiles: { [BUDDY_PROF]: { id: BUDDY_PROF, user_id: BUDDY_USER } },
+      bookings: {
+        [ORIG_BOOKING_ID]: {
+          id: ORIG_BOOKING_ID, traveler_id: "someone-else",
+          buddy_id: BUDDY_PROF, status: "completed",
+          city: "Seoul", category: "city",
+          payment_mode: "full_in_app", total_usd: 75,
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        },
+      },
+    };
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, { bookingDate: FUTURE_DATE });
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.error, "forbidden");
+  });
+});

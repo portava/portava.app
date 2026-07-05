@@ -1568,3 +1568,18 @@ export async function getOpenDispute(
 ): Promise<ApiResult<{ dispute: Record<string, unknown> | null }>> {
   return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/dispute`);
 }
+
+export async function rebookBooking(
+  originalBookingId: string,
+  payload: {
+    bookingDate: string;
+    startTime?: string;
+    durationH?: number;
+    groupSize?: number;
+  },
+): Promise<ApiResult<{ bookingId: string; booking: Record<string, unknown> }>> {
+  return apiFetch(`/api/buddy-bookings/${originalBookingId}/rebook`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}

@@ -519,3 +519,74 @@ Checks 20 routes × 21 tables = 41 contract points.  Exits 0 on full pass, 1 if 
 
 `pnpm --filter @workspace/api-server run typecheck` and
 `pnpm --filter @workspace/api-server run build` both pass clean.
+
+---
+
+## Task #1703 — Reviews, Safety Guards, Ranking & Test Suite
+
+**Date:** July 2026  
+**Scope:** Review moderation, CATEGORY_RISK_LEVELS enforcement, rebook route, expanded tests, documentation.
+
+### 10.1 CATEGORY_RISK_LEVELS enforcement (booking creation)
+
+Added `CATEGORY_RISK_LEVELS` constant in `rentABuddy.ts` mapping each category to `"low" | "medium" | "high"`. High-risk categories (`arrival`, `nightlife`) now require both the buddy and the traveler to be verified at booking creation time:
+
+- Buddy verification check: `rent_buddy_profiles.id_verified && phone_verified` (or `verification_status === 'verified'`)
+- Traveler verification check: same fields on the traveler's rent_buddy_profile row
+- Response on failure: `403 { error: "verification_required", side: "buddy" | "traveler" | "both" }`
+
+Medium-risk categories (`adventure`, `wellness`) log an advisory note but do not hard-block. Low-risk categories have no verification gate.
+
+### 10.2 Review moderation system
+
+**Moderation status column** — migration `0114_review_moderation.sql` adds `moderation_status TEXT NOT NULL DEFAULT 'pending_moderation'` with a CHECK constraint (`pending_moderation`, `approved`, `rejected`, `auto_approved`) and a GIN index for admin queue queries.
+
+**Review submission** (`POST /api/rent-a-buddy/bookings/:bookingId/review`):
+- Duplicate guard: returns `409 already_reviewed` if the caller already reviewed this booking
+- New reviews start with `moderation_status: 'pending_moderation'` (not yet public)
+
+**Admin moderation routes** (all require `requireAdmin`):
+- `GET /api/rent-a-buddy/admin/reviews` — list by `?moderationStatus=` filter
+- `POST /api/rent-a-buddy/admin/reviews/:id/approve` — sets `is_public: true`, `moderation_status: 'approved'`, recalculates buddy `average_rating` + `review_count`
+- `POST /api/rent-a-buddy/admin/reviews/:id/reject` — sets `is_public: false`, `moderation_status: 'rejected'`; accepts optional `{ reason }` body
+
+All admin moderation actions write to the `rent_buddy_admin_actions` audit log.
+
+### 10.3 Rebook route
+
+New route: `POST /api/buddy-bookings/:bookingId/rebook`
+
+- Traveler-only access (403 if caller is not the original traveler)
+- Source booking must be `status: 'completed'` (400 otherwise)
+- `bookingDate` (YYYY-MM-DD) is required (400 if missing or invalid)
+- Copies `city`, `country_code`, `category`, `duration_h`, `group_size`, `notes` from the original booking
+- Applies the buddy's current `hourly_rate_usd`
+- Creates a fresh `pending` booking; returns `{ bookingId, booking }`
+- Mobile: `rebookBooking(bookingId, { bookingDate })` in `src/services/rentABuddy.ts`
+- Mobile UI: "Book again" button (Calendar icon) on completed booking detail screen; `RebookModal` drives date selection
+
+### 10.4 Test suite expansion
+
+14 new tests across 4 describe blocks in `src/test/rentABuddy.test.ts`:
+
+| Describe block | Tests | Coverage |
+|----------------|-------|----------|
+| `booking: category risk levels` | 4 | arrival blocked (buddy unverified, traveler unverified, both), city low-risk passes |
+| `reviews: moderation and duplicate guard` | 3 | 201 + pending_moderation set, 409 duplicate, 400 non-completed booking |
+| `admin: review approve and reject` | 4 | approve → action logged, reject → action logged, non-admin → 403, queue list |
+| `rebook` | 5 | 201 new pending booking, pre-fills city/category, 400 non-completed, 400 no date, 403 wrong traveler |
+
+Key test pattern: `checkRentBuddyAccess` fail-closes on unknown city statuses; tests that exercise the booking creation path must seed `state.cityRollouts` with `status: "public_mvp"` for the city they send.
+
+### 10.5 Documentation
+
+- Created `docs/rent-buddy-product.md` — comprehensive product doc covering feature flags, category risk table, booking lifecycle, review system (double-blind, moderation), rebook flow, safety layer, launch controls, admin controls, ranking algorithm, mobile screens, and migration log.
+
+### 10.6 Build Verification (Task #1703)
+
+```
+pnpm run typecheck          ✅ clean
+cd travel-buddy-standalone && pnpm typecheck   ✅ clean
+14 new tests: all pass
+20 pre-existing test failures unchanged (city_not_available regression — pre-existing from before this task)
+```
