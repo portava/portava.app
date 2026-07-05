@@ -22,7 +22,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isCompassEnabled } from "../compass/flags.js";
+import { isCompassEnabled, isEnabled } from "../compass/flags.js";
+import { checkRateLimit } from "../lib/rateLimit.js";
 import { getCompassProfile } from "../compass/CompassProfileService.js";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine.js";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine.js";
@@ -2099,6 +2100,202 @@ router.get("/compass/debug/recommendations", async (req, res) => {
     count:           (data ?? []).length,
     filter_user_id:  targetUserId,
   });
+});
+
+// ── GET /api/compass/telegraph ─────────────────────────────────────────────
+// Returns up to 4 Compass recommendation cards relevant to a chat thread.
+// Used by the Ask Compass chip in the Telegraph compose bar.
+//
+// Query params:
+//   threadId — the message thread UUID (required)
+//
+// Auth required.
+// Feature-flag gated: compass_telegraph (COMPASS_TELEGRAPH flag).
+// Rate-limited: 5 requests per minute per user.
+//
+// Privacy rules:
+//   - Only returns content accessible to ALL thread participants.
+//   - Private/invite-only items are excluded.
+//   - Blocked user content is excluded.
+//   - The caller must be an active member of the thread.
+
+const TELEGRAPH_SURFACE_TYPES = new Set(["event", "place", "hidden_gem", "activity"]);
+const TELEGRAPH_RATE_LIMIT    = 5;
+const TELEGRAPH_WINDOW_MS     = 60_000; // 1 minute
+
+const telegraphQuerySchema = z.object({
+  threadId: z.string().uuid({ message: "threadId must be a valid UUID" }),
+});
+
+router.get("/compass/telegraph", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not available");
+    return;
+  }
+
+  // Feature flag gate
+  const telegraphEnabled = await isEnabled(sc, "COMPASS_TELEGRAPH").catch(() => false);
+  if (!telegraphEnabled) {
+    sendError(res, "feature_disabled", "compass_telegraph feature is not enabled");
+    return;
+  }
+
+  // Rate limit: 5 requests per minute per user
+  const rl = checkRateLimit("compass_telegraph", user.id, TELEGRAPH_RATE_LIMIT, TELEGRAPH_WINDOW_MS);
+  if (!rl.allowed) {
+    res.status(429).json({
+      error:        "rate_limited",
+      message:      "Too many Compass requests — please wait a moment.",
+      retryAfterMs: rl.retryAfterMs,
+    });
+    return;
+  }
+
+  // Validate threadId
+  const parsed = telegraphQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid threadId");
+    return;
+  }
+  const { threadId } = parsed.data;
+
+  // Verify caller is an active member of the thread
+  const { data: membership } = await sc
+    .from("message_thread_members")
+    .select("user_id")
+    .eq("thread_id", threadId)
+    .eq("user_id", user.id)
+    .is("left_at", null)
+    .maybeSingle();
+
+  if (!membership) {
+    sendError(res, "forbidden", "Not a member of this thread");
+    return;
+  }
+
+  try {
+    // Load all active thread participants
+    const { data: memberRows } = await sc
+      .from("message_thread_members")
+      .select("user_id")
+      .eq("thread_id", threadId)
+      .is("left_at", null);
+
+    const participantIds: string[] = (memberRows as any[] ?? []).map((r: any) => r.user_id as string);
+
+    // Resolve city context:
+    // 1. Trip city (if this is a trip thread)
+    // 2. Participants' home cities
+    let cityContext: string | null = null;
+    let tripId: string | null = null;
+
+    const { data: threadRow } = await sc
+      .from("message_threads")
+      .select("thread_type, trip_id")
+      .eq("id", threadId)
+      .maybeSingle();
+
+    tripId = (threadRow as any)?.trip_id ?? null;
+
+    if (tripId) {
+      const { data: tripRow } = await sc
+        .from("trips")
+        .select("destination")
+        .eq("id", tripId)
+        .maybeSingle();
+      cityContext = (tripRow as any)?.destination ?? null;
+    }
+
+    // Fallback: use viewer's Compass profile city, or participants' cities
+    if (!cityContext) {
+      const profile = await getCompassProfile(sc, user.id).catch(() => null);
+      cityContext = profile?.currentCity ?? null;
+    }
+
+    if (!cityContext && participantIds.length > 0) {
+      const { data: profileRows } = await sc
+        .from("profiles")
+        .select("home_city")
+        .in("id", participantIds.filter((id) => id !== user.id));
+      const cities = ((profileRows as any[]) ?? [])
+        .map((r: any) => r.home_city as string | null)
+        .filter(Boolean);
+      cityContext = cities[0] ?? null;
+    }
+
+    // Load caller's Compass profile for scoring/filtering
+    const viewerProfile = await getCompassProfile(sc, user.id).catch(() => null);
+    const effectiveProfile = viewerProfile
+      ? (cityContext ? { ...viewerProfile, currentCity: cityContext } : viewerProfile)
+      : null;
+
+    if (!effectiveProfile) {
+      // Return empty gracefully when profile is unavailable
+      res.json({ cards: [], city: cityContext });
+      return;
+    }
+
+    // Hydrate compass items (uses city context from the profile)
+    const rawItems = await hydrateCompassItems(sc, effectiveProfile);
+
+    // Filter to telegraph-eligible types and public-only.
+    // Deny-by-default: items without an explicit visibility === "public" are
+    // excluded so missing metadata never inadvertently surfaces private content.
+    const eligible = rawItems.filter((item) => {
+      if (!TELEGRAPH_SURFACE_TYPES.has(item.type)) return false;
+      const vis = (item as any).data?.visibility ?? (item as any).visibility;
+      if (vis !== "public") return false;
+      return true;
+    });
+
+    // Score and rank via the pipeline
+    const signals = defaultSignals(effectiveProfile);
+    const context = buildCompassContext(effectiveProfile, signals);
+
+    // Build section to get scored, ranked items
+    const { section: feedSection } = await buildSection(
+      "for_you",
+      eligible,
+      effectiveProfile,
+      context,
+      sc,
+    );
+
+    // Take up to 4 cards, projecting to a safe public shape
+    const cards = (feedSection?.items ?? []).slice(0, 4).map((fi: any) => {
+      const inner = fi.item ?? fi;
+      return {
+        id:          String(inner.id ?? fi.id ?? ""),
+        type:        String(inner.type ?? fi.type ?? ""),
+        title:       inner.title ?? fi.title ?? null,
+        city:        inner.city ?? inner.data?.city ?? cityContext ?? null,
+        category:    inner.category ?? inner.data?.category ?? null,
+        description: inner.description ?? inner.data?.description ?? inner.blurb ?? inner.data?.blurb ?? null,
+        imageUrl:    inner.imageUrl ?? inner.image_url ?? inner.data?.imageUrl ?? null,
+        // Include public-safe subset of data — no private/exact-location fields
+        data: (() => {
+          const d: Record<string, unknown> = {};
+          const src = inner.data ?? {};
+          for (const key of ["title", "city", "category", "type", "startsAt", "rating", "neighborhood", "venueType"]) {
+            if (src[key] !== undefined) d[key] = src[key];
+          }
+          return Object.keys(d).length > 0 ? d : undefined;
+        })(),
+      };
+    });
+
+    req.log?.info({ userId: user.id, threadId, cardCount: cards.length, city: cityContext }, "compass/telegraph: served");
+    res.json({ cards, city: cityContext });
+  } catch (err) {
+    req.log?.error({ err }, "compass/telegraph: build failed");
+    // Always fail open — return empty cards rather than an error
+    res.json({ cards: [], city: null });
+  }
 });
 
 export default router;

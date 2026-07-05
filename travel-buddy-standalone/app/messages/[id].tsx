@@ -52,6 +52,10 @@ import { MentionInput, type MentionInputHandle } from '../../src/components/Ment
 import { MentionSuggestionList } from '../../src/components/MentionSuggestionList';
 import type { AnyMentionSuggestion } from '../../src/services/tagging';
 import { RichText } from '../../src/components/RichText';
+import { CompassTelegraphTray } from '../../src/components/CompassTelegraphTray';
+import { checkCompassTelegraphAvailable, type CompassTelegraphCard } from '../../src/services/compass';
+import { CompassCardMessage } from '../../src/components/CompassCardMessage';
+import { sendMessage } from '../../src/services/messaging';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { RentABuddyThreadHeader } from '../../src/components/rentabuddy/BookingThreadHeader';
@@ -738,6 +742,15 @@ function MessageBubble({
     );
   }
 
+  // Compass card — shared from the Ask Compass tray
+  if (item.msgType === 'system' && item.subtype === 'compass_card') {
+    return (
+      <Pressable onLongPress={onLongPress} delayLongPress={300}>
+        <CompassCardMessage body={item.body ?? ''} mine={mine} />
+      </Pressable>
+    );
+  }
+
   // AI recommendation card — body is JSON with TelegraphActivityRecommendation shape
   if (item.msgType === 'ai_recommendation') {
     if (dismissedAiMsgIds?.has(item.id)) return null;
@@ -1008,6 +1021,8 @@ export default function TelegraphThread() {
   const [showSafetySheet, setShowSafetySheet] = useState(false);
   const [hideAiSuggestions, setHideAiSuggestions] = useState(false);
   const [threadIsMuted, setThreadIsMuted] = useState(false);
+  const [showCompassTray, setShowCompassTray] = useState(false);
+  const [compassTelegraphEnabled, setCompassTelegraphEnabled] = useState<null | boolean>(null);
   const [dismissedAiMsgIds, setDismissedAiMsgIds] = useState<Set<string>>(new Set());
   // Long-press action sheet state
   const [actionMsg, setActionMsg] = useState<Message | null>(null);
@@ -1073,6 +1088,17 @@ export default function TelegraphThread() {
     AsyncStorage.getItem(`thread_ai_hidden:${id}`)
       .then((v) => { if (v === '1') setHideAiSuggestions(true); })
       .catch(() => {});
+  }, [id]);
+
+  // Feature-flag gate: check if COMPASS_TELEGRAPH is enabled for this thread.
+  // Chip is hidden until the check resolves (null → false → true).
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    checkCompassTelegraphAvailable(id)
+      .then((enabled) => { if (!cancelled) setCompassTelegraphEnabled(enabled); })
+      .catch(() => { if (!cancelled) setCompassTelegraphEnabled(false); });
+    return () => { cancelled = true; };
   }, [id]);
 
   async function toggleHideAiSuggestions() {
@@ -1469,7 +1495,7 @@ export default function TelegraphThread() {
             return <BookingMilestoneMessage subtype={m.subtype} body={m.body ?? undefined} />;
           }
           // System event messages (non-meetup, non-rich-card) render as centred pill labels
-          if (m.msgType === 'system' && m.subtype !== 'discovery_card' && !parseMeetupCard(m.body ?? '', m)) {
+          if (m.msgType === 'system' && m.subtype !== 'discovery_card' && m.subtype !== 'compass_card' && !parseMeetupCard(m.body ?? '', m)) {
             return <TelegraphSystemNotice text={m.body ?? ''} />;
           }
           return (
@@ -1580,10 +1606,17 @@ export default function TelegraphThread() {
           <Compass size={18} color={color.mute} />
         </Pressable>
 
-        {/* AI suggestion stub */}
-        <Pressable style={styles.composeIconBtn} onPress={() => Alert.alert('AI Suggestions', 'Compass AI suggestions — coming soon.')} hitSlop={6}>
-          <Bot size={18} color={color.mute} />
-        </Pressable>
+        {/* Ask Compass chip — gated by COMPASS_TELEGRAPH feature flag */}
+        {compassTelegraphEnabled === true && (
+          <Pressable
+            style={styles.composeIconBtn}
+            onPress={() => setShowCompassTray(true)}
+            hitSlop={6}
+            accessibilityLabel="Ask Compass for recommendations"
+          >
+            <Bot size={18} color={color.signal} />
+          </Pressable>
+        )}
 
         <MentionInput
           ref={mentionRef}
@@ -1704,6 +1737,31 @@ export default function TelegraphThread() {
         }}
         onClose={() => setShowTranslationSheet(false)}
       />
+
+      {/* Ask Compass recommendation tray */}
+      {id && (
+        <CompassTelegraphTray
+          visible={showCompassTray}
+          threadId={id}
+          onDismiss={() => setShowCompassTray(false)}
+          onShareCard={async (card: CompassTelegraphCard) => {
+            setShowCompassTray(false);
+            if (!id) return;
+            const payload = JSON.stringify({
+              type:        'compass_card',
+              id:          card.id,
+              cardType:    card.type,
+              title:       card.title,
+              city:        card.city,
+              category:    card.category,
+              description: card.description,
+              imageUrl:    card.imageUrl,
+            });
+            await sendMessage(id, payload, { msgType: 'system', subtype: 'compass_card' });
+            reload();
+          }}
+        />
+      )}
     </KeyboardAvoidingView>
   );
 }

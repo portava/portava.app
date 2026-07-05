@@ -161,6 +161,59 @@ router.get("/pulse", async (req, res) => {
     });
   }
 
+  // ── Pre-shape: blocked-author filter + delayed-location guard ─────────────
+  // Both guards run on raw rows (before camelCase shaping) so they can access
+  // the snake_case DB column names (author_id, location_source).
+  //
+  // This block is a best-effort load; if the blocks query fails the feed is
+  // served without the filter (non-fatal — Compass ranking will degrade too).
+  try {
+    const [blockedRes, blockerRes] = await Promise.all([
+      sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
+      sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
+    ]);
+    const blockedSet = new Set<string>();
+    for (const row of (blockedRes.data as any[]) ?? []) blockedSet.add(row.blocked_id as string);
+    for (const row of (blockerRes.data as any[]) ?? []) blockedSet.add(row.blocker_id as string);
+
+    if (blockedSet.size > 0) {
+      rows = rows.filter((row) => !blockedSet.has(row.author_id as string));
+    }
+  } catch { /* non-fatal */ }
+
+  // Delayed-posting location guard: posts whose location has not yet been
+  // cleared by the delayed-publish job must have location fields scrubbed
+  // before they enter the response — real-time GPS must never reach other users.
+  rows = rows.map((row: any) => {
+    if (row.location_source === "delayed_pending" || row.location_source === "pending_location_exit") {
+      return {
+        ...row,
+        location_name:    null,
+        location_city:    null,
+        location_country: null,
+        venue_name:       null,
+        // Keep visibility label generic so clients don't infer location
+        pulse_geo_tags: null,
+      };
+    }
+    return row;
+  });
+
+  // Post-level moderation guard: exclude posts whose media was entirely
+  // rejected or failed.  A post that *had* media but has zero ready items
+  // after filtering must not appear in the feed.  Text-only posts (no
+  // post_media rows at all) are always allowed through.
+  rows = rows.filter((row: any) => {
+    const rawMedia = Array.isArray(row.post_media) ? row.post_media : [];
+    if (rawMedia.length === 0) return true; // text-only post — always allow
+    const ready = rawMedia.filter(
+      (m: any) => m.processing_status === 'ready' &&
+                  m.moderation_status !== 'rejected' &&
+                  m.moderation_status !== 'flagged',
+    );
+    return ready.length > 0;
+  });
+
   // Enrich posts with positioned @mention + #hashtag spans
   const spansMap = await enrichSpans(
     sc, 'post',
@@ -208,30 +261,99 @@ router.get("/pulse", async (req, res) => {
     };
   });
 
-  // When COMPASS_ENABLED, apply Compass intent-mode ordering to the Pulse feed.
-  // Safety Mode: verified-location posts surface first (explicit city+venue labels).
-  // Night Mode: filter to last 8 hours of posts (peak night content), fallback to full.
+  // ── Compass ranking pass ────────────────────────────────────────────────────
+  // Block filtering and delayed-location guarding already happened in the
+  // pre-shape section above (operating on raw rows).  This pass applies
+  // Compass-specific scoring signals to re-rank the already-filtered posts.
+  //
+  // Signals:
+  //   a. Followed-user recency boost
+  //   b. Hashtag interest boost (from compass_user_preferences)
+  //   c. Viewer's current Compass city boost
   let orderedPosts = posts;
-  // Prompt cards (e.g. safe-return) are returned separately so the `posts`
-  // shape stays homogeneous and existing clients are unaffected.
   let prompts: Array<{ type: string; id: string; title: string; body: string; action: string }> = [];
+
   try {
     const compassEnabled = await sc
       .from("feature_flags")
       .select("enabled")
       .eq("flag", "COMPASS_ENABLED")
       .maybeSingle();
+
     if ((compassEnabled.data as any)?.enabled) {
+      // ── Compass profile for ranking signals ───────────────────────
       const compassProfile = await getCompassProfile(sc, user.id);
       const compassContext = buildCompassContext(compassProfile, defaultSignals(compassProfile));
       const intentMode     = deriveIntentMode(compassContext);
       const primaryMode    = intentMode.primary;
 
+      // Load viewer's followed user IDs (for recency boost)
+      let followedIds = new Set<string>();
+      try {
+        const { data: followRows } = await sc
+          .from("follows")
+          .select("following_id")
+          .eq("follower_id", user.id);
+        for (const row of (followRows as any[]) ?? []) {
+          followedIds.add(row.following_id as string);
+        }
+      } catch { /* non-fatal */ }
+
+      // Load viewer's interest hashtags (for hashtag boost)
+      let interestTags: Set<string> = new Set();
+      try {
+        const { data: prefRow } = await sc
+          .from("compass_user_preferences")
+          .select("interests")
+          .eq("user_id", user.id)
+          .maybeSingle();
+        const interests: string[] = (prefRow as any)?.interests ?? [];
+        interestTags = new Set(interests.map((t: string) => t.toLowerCase()));
+      } catch { /* non-fatal */ }
+
+      const viewerCity = (compassProfile.currentCity ?? "").toLowerCase();
+
+      // ── Scoring function ─────────────────────────────────────────────────
+      // Base score: recency (0–100, linearly decays over 7 days).
+      // Boosts are additive multipliers (not caps) so strong signals compound.
+      const NOW_MS = Date.now();
+      const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1_000;
+      const TWO_HOURS_MS  = 2 * 60 * 60 * 1_000;
+
+      function scorePost(p: any): number {
+        const ageMs = NOW_MS - new Date(p.createdAt).getTime();
+        const recency = Math.max(0, 1 - ageMs / SEVEN_DAYS_MS); // 0–1
+
+        let boost = 0;
+
+        // a. Followed-user recency boost — posts from followed users within 2 h
+        //    get a strong boost; older posts from followed users get a mild boost.
+        if (followedIds.has(p.authorId)) {
+          boost += ageMs <= TWO_HOURS_MS ? 0.5 : 0.2;
+        }
+
+        // b. Hashtag interest boost — any matching hashtag slug in the post
+        if (interestTags.size > 0 && Array.isArray(p.spanHashtags)) {
+          const matched = (p.spanHashtags as Array<{ slug: string }>)
+            .some((h) => interestTags.has(h.slug?.toLowerCase() ?? ""));
+          if (matched) boost += 0.3;
+        }
+
+        // c. City boost — posts from the viewer's current Compass city
+        if (viewerCity && (p.locationCity ?? "").toLowerCase().includes(viewerCity)) {
+          boost += 0.2;
+        }
+
+        return recency + boost;
+      }
+
+      // Re-rank by score descending (stable: equal scores keep createdAt order)
+      const scored = posts.map((p: any) => ({ p, score: scorePost(p) }));
+      scored.sort((a: any, b: any) => b.score - a.score);
+      orderedPosts = scored.map((x: any) => x.p);
+
+      // ── Intent-mode overlays (applied after ranking) ─────────────────────
       if (compassContext.contextState === "safety_mode" || primaryMode === "safety_mode") {
-        // Safety Mode: surface safe-return prompt cards in a dedicated `prompts`
-        // field so existing clients consuming the `posts` array are unaffected.
-        // The prompt is typed separately; clients that understand it display it
-        // above the post list. Posts with location context come before those without.
         prompts = [
           {
             type:   "safe_return_prompt",
@@ -241,19 +363,18 @@ router.get("/pulse", async (req, res) => {
             action: "safe_return",
           },
         ];
-        // After prompts: location-rich posts first (actionable context)
-        const withLocation    = posts.filter((p: any) => p.venueName || (p.locationCity && p.locationCountry));
-        const withoutLocation = posts.filter((p: any) => !(p.venueName || (p.locationCity && p.locationCountry)));
+        // After prompts: location-rich posts first within the ranked set
+        const withLocation    = orderedPosts.filter((p: any) => p.venueName || (p.locationCity && p.locationCountry));
+        const withoutLocation = orderedPosts.filter((p: any) => !(p.venueName || (p.locationCity && p.locationCountry)));
         orderedPosts = [...withLocation, ...withoutLocation];
       } else if (compassContext.contextState === "night_mode" || primaryMode === "night_mode") {
         // Night Mode: filter to last 8 hours — fresh night content only
         const cutoff = new Date(Date.now() - 8 * 60 * 60 * 1_000).toISOString();
-        const recent = posts.filter((p: any) => p.createdAt >= cutoff);
-        orderedPosts  = recent.length >= 3 ? recent : posts; // graceful fallback
+        const recent = orderedPosts.filter((p: any) => p.createdAt >= cutoff);
+        orderedPosts = recent.length >= 3 ? recent : orderedPosts;
       }
-      // All other modes: default recency order (already sorted created_at DESC)
     }
-  } catch { /* Compass enrichment is non-fatal — return unmodified posts */ }
+  } catch { /* Compass ranking is non-fatal — return unmodified posts on any error */ }
 
   // Place recommendation cards — appended when live post count is below threshold.
   // Queries discovery_places for the requested city so the Pulse Wall shows nearby

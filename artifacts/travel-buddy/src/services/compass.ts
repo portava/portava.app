@@ -632,6 +632,70 @@ export async function fetchCompassTravelerMatches(params: {
   }
 }
 
+// ── Telegraph surface ─────────────────────────────────────────────────────────
+
+export interface CompassTelegraphCard {
+  id:          string;
+  type:        'event' | 'place' | 'hidden_gem' | 'activity' | string;
+  title:       string | null;
+  city:        string | null;
+  category:    string | null;
+  description: string | null;
+  imageUrl:    string | null;
+  data?:       Record<string, unknown>;
+}
+
+export interface CompassTelegraphResult {
+  ok:           boolean;
+  cards?:       CompassTelegraphCard[];
+  city?:        string | null;
+  flagDisabled?: boolean;
+  error?:       string;
+}
+
+/**
+ * Fetch Compass recommendation cards for the Ask Compass chip in Telegraph.
+ * Returns up to 4 cards relevant to the chat thread context.
+ * Returns flagDisabled=true when the compass_telegraph flag is off.
+ */
+export async function fetchCompassTelegraphCards(
+  threadId: string,
+): Promise<CompassTelegraphResult> {
+  if (!isSupabaseConfigured || !apiBase()) {
+    return { ok: false, error: 'not_configured' };
+  }
+  try {
+    const qs = new URLSearchParams({ threadId });
+    const r = await authedFetch(`/api/compass/telegraph?${qs.toString()}`);
+    if (r.status === 404 || r.status === 403) {
+      const body = await r.json().catch(() => ({}));
+      if ((body as any)?.error === 'feature_disabled') {
+        return { ok: true, cards: [], flagDisabled: true };
+      }
+      return { ok: false, error: r.status === 403 ? 'forbidden' : `http_${r.status}` };
+    }
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    return {
+      ok:    true,
+      cards: (body.cards ?? []) as CompassTelegraphCard[],
+      city:  body.city ?? null,
+    };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+/**
+ * Lightweight flag check: returns true when COMPASS_TELEGRAPH is enabled for
+ * this thread. Returns false when the flag is off or on any network/auth error.
+ * Use this to gate the Ask Compass chip without loading full card data.
+ */
+export async function checkCompassTelegraphAvailable(threadId: string): Promise<boolean> {
+  const result = await fetchCompassTelegraphCards(threadId);
+  return result.ok && !result.flagDisabled;
+}
+
 // ── AsyncStorage helpers ──────────────────────────────────────────────────────
 
 const FEED_CACHE_PREFIX = 'compass_feed_cache:';
