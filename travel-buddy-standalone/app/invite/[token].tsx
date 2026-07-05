@@ -15,6 +15,7 @@ import {
   mapInvitePreviewToScreenState,
   type ScreenState,
 } from '../../src/lib/invitePreviewMapper';
+import { mapAcceptResultToAction } from '../../src/lib/acceptResultMapper';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 
 function formatDateRange(start: string | null, end: string | null): string {
@@ -52,24 +53,22 @@ export default function InviteLinkScreen() {
     setJoining(true);
     const result = await acceptInviteByToken(token);
     setJoining(false);
-    if (result.tripId) {
-      router.replace(`/trip/${result.tripId}` as Parameters<typeof router.replace>[0]);
-    } else if (result.alreadyMember) {
-      router.replace(`/trip/${preview.tripId}` as Parameters<typeof router.replace>[0]);
-    } else if (result.error === 'gone' && result.reason === 'trip_full') {
-      // Trip filled up between preview and accept — re-fetch so the screen
-      // transitions to the 'full' state instead of showing a generic error.
-      load();
-    } else if (result.error === 'gone') {
-      // Trip ended or was cancelled — transition to the gone screen state
-      // with a clear, friendly message instead of a generic error toast.
-      setScreen({ kind: 'gone', message: 'This trip is no longer active.' });
-    } else {
-      const msg =
-        result.error === 'not_authenticated'
-          ? 'Please sign in and try again.'
-          : 'The invite link may have expired. Please ask the trip owner for a new one.';
-      Alert.alert('Could not join', msg);
+    const action = mapAcceptResultToAction(result, preview.tripId);
+    switch (action.kind) {
+      case 'navigate':
+        router.replace(`/trip/${action.tripId}` as Parameters<typeof router.replace>[0]);
+        break;
+      case 'reload':
+        // Trip filled up between preview and accept — re-fetch so the screen
+        // transitions to the 'full' state instead of showing a generic error.
+        load();
+        break;
+      case 'set_gone':
+        setScreen({ kind: 'gone', message: action.message });
+        break;
+      case 'alert':
+        Alert.alert(action.title, action.message);
+        break;
     }
   }
 
