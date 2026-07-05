@@ -800,6 +800,217 @@ describe("trips-expansion routes", () => {
       const r = await req(port, "DELETE", `/trips/${TRIP_ID}/invite-link/${LINK_ID}`, { token: "owner-token" });
       assert.equal(r.status, 204);
     });
+
+    // ── GET /trips/:tripId/invite-links ──────────────────────────────────────
+
+    it("GET /invite-links returns links with joiner list from activity log", async () => {
+      const JOINER_ID = OTHER_ID;
+      const { client } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome",
+            created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_invite_links: { rows: [
+          { id: LINK_ID, trip_id: TRIP_ID, token: "listtoken1234", created_by: OWNER_ID,
+            max_uses: 5, use_count: 1, revoked_at: null, expires_at: null,
+            created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_activity_log: { rows: [
+          { trip_id: TRIP_ID, actor_id: JOINER_ID, event_type: "joined_via_invite_link",
+            metadata: { linkId: LINK_ID }, created_at: "2026-01-02T00:00:00Z" },
+        ]},
+        trip_members: { rows: [
+          { trip_id: TRIP_ID, user_id: JOINER_ID, role: "member", status: "accepted" },
+        ]},
+        profiles: { rows: [
+          { id: JOINER_ID, full_name: "Jane Doe", username: "janedoe", avatar_url: null },
+        ]},
+      });
+      _setTestClient(client, true);
+
+      const r = await req(port, "GET", `/trips/${TRIP_ID}/invite-links`, { token: "owner-token" });
+      assert.equal(r.status, 200);
+      assert.ok(Array.isArray(r.body), "response should be an array");
+      assert.equal(r.body.length, 1);
+
+      const link = r.body[0];
+      assert.equal(link.id, LINK_ID);
+      assert.equal(link.useCount, 1);
+      assert.equal(link.maxUses, 5);
+      assert.equal(link.isActive, true);
+      assert.equal(link.isRevoked, false);
+
+      assert.ok(Array.isArray(link.joiners), "joiners should be an array");
+      assert.equal(link.joiners.length, 1);
+      assert.equal(link.joiners[0].id, JOINER_ID);
+      assert.equal(link.joiners[0].name, "Jane Doe");
+      assert.equal(link.joiners[0].handle, "janedoe");
+      assert.equal(link.joiners[0].removed, false);
+    });
+
+    it("GET /invite-links returns 403 for non-owner", async () => {
+      const { client } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome",
+            created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_invite_links: { rows: [] },
+      });
+      _setTestClient(client, true);
+
+      const r = await req(port, "GET", `/trips/${TRIP_ID}/invite-links`, { token: "other-token" });
+      assert.equal(r.status, 403);
+    });
+
+    it("GET /invite-links reflects revoked status after DELETE", async () => {
+      const LINK_TOKEN = "revoke-list-token-abc123def456ghij";
+      const { client, db } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome",
+            created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_invite_links: { rows: [
+          { id: LINK_ID, trip_id: TRIP_ID, token: LINK_TOKEN, created_by: OWNER_ID,
+            max_uses: null, use_count: 0, revoked_at: null, expires_at: null,
+            created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_activity_log: { rows: [] },
+        trip_members: { rows: [] },
+        profiles: { rows: [] },
+      });
+      _setTestClient(client, true);
+
+      // Revoke the link
+      const del = await req(port, "DELETE", `/trips/${TRIP_ID}/invite-link/${LINK_ID}`, { token: "owner-token" });
+      assert.equal(del.status, 204);
+
+      // GET list should now show isRevoked = true and revokedAt set
+      _setTestClient(client, true);
+      const r = await req(port, "GET", `/trips/${TRIP_ID}/invite-links`, { token: "owner-token" });
+      assert.equal(r.status, 200);
+      assert.equal(r.body.length, 1);
+      assert.equal(r.body[0].isRevoked, true);
+      assert.ok(r.body[0].revokedAt, "revokedAt should be set after revoke");
+      assert.equal(r.body[0].isActive, false);
+    });
+
+    it("POST accept is blocked with 410 after DELETE revokes the link", async () => {
+      const LINK_TOKEN = "revoke-block-token-xyz789abc012def3";
+      const { client } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome",
+            status: "upcoming", created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_invite_links: { rows: [
+          { id: LINK_ID, trip_id: TRIP_ID, token: LINK_TOKEN, created_by: OWNER_ID,
+            max_uses: null, use_count: 0, revoked_at: null, expires_at: null,
+            created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_members: { rows: [] },
+        blocks: { rows: [] },
+        trip_activity_log: { rows: [] },
+      });
+      _setTestClient(client, true);
+
+      // Revoke the link first
+      const del = await req(port, "DELETE", `/trips/${TRIP_ID}/invite-link/${LINK_ID}`, { token: "owner-token" });
+      assert.equal(del.status, 204);
+
+      // Now attempt to accept the revoked link — must be blocked
+      _setTestClient(client, true);
+      const r = await req(port, "POST", `/trips/invite-link/${LINK_TOKEN}/accept`, { token: "member-token" });
+      assert.equal(r.status, 410);
+      assert.equal(r.body.error, "gone");
+    });
+
+    // ── Restart-survival tests ───────────────────────────────────────────────
+    // These tests simulate a real server restart by closing the current server,
+    // starting a new one, and re-injecting the same fake client (same db object).
+    // The fake db object stands in for the real persistent database: data written
+    // before the restart is still present when a fresh server process starts up.
+
+    it("usage stats (useCount + joiners) survive a server restart", async () => {
+      const LINK_TOKEN = "restart-usage-token-abc123def456gh";
+      const { client, db } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome",
+            status: "upcoming", created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_invite_links: { rows: [
+          { id: LINK_ID, trip_id: TRIP_ID, token: LINK_TOKEN, created_by: OWNER_ID,
+            max_uses: null, use_count: 0, revoked_at: null, expires_at: null,
+            created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_members: { rows: [] },
+        blocks: { rows: [] },
+        trip_activity_log: { rows: [] },
+        profiles: { rows: [
+          { id: MEMBER_ID, full_name: "Bob Smith", username: "bobsmith", avatar_url: null },
+        ]},
+      });
+      _setTestClient(client, true);
+
+      // Step 1: accept the invite link (writes to the fake db)
+      const accept = await req(port, "POST", `/trips/invite-link/${LINK_TOKEN}/accept`, { token: "member-token" });
+      assert.equal(accept.status, 201, "accept should succeed");
+
+      // Step 2: simulate a server restart — close current server, start a fresh one
+      server.close();
+      ({ server, port } = await startServer());
+      // Re-inject the SAME fake client (same db object = persistent database)
+      _setTestClient(client, true);
+
+      // Step 3: GET invite-links on the new server — useCount and joiners must still be correct
+      const r = await req(port, "GET", `/trips/${TRIP_ID}/invite-links`, { token: "owner-token" });
+      assert.equal(r.status, 200);
+      assert.equal(r.body.length, 1);
+      assert.equal(r.body[0].useCount, 1, "useCount should reflect the pre-restart join");
+      assert.equal(r.body[0].joiners.length, 1, "joiner recorded in activity log should still appear");
+      assert.equal(r.body[0].joiners[0].id, MEMBER_ID);
+    });
+
+    it("revoke survives a server restart — GET shows revoked and POST accept stays blocked", async () => {
+      const LINK_TOKEN = "restart-revoke-token-xyz789abc012de";
+      const { client } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome",
+            status: "upcoming", created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_invite_links: { rows: [
+          { id: LINK_ID, trip_id: TRIP_ID, token: LINK_TOKEN, created_by: OWNER_ID,
+            max_uses: null, use_count: 0, revoked_at: null, expires_at: null,
+            created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_members: { rows: [] },
+        blocks: { rows: [] },
+        trip_activity_log: { rows: [] },
+        profiles: { rows: [] },
+      });
+      _setTestClient(client, true);
+
+      // Step 1: revoke the link (writes revoked_at to the fake db)
+      const del = await req(port, "DELETE", `/trips/${TRIP_ID}/invite-link/${LINK_ID}`, { token: "owner-token" });
+      assert.equal(del.status, 204, "revoke should succeed");
+
+      // Step 2: simulate a server restart — close current server, start a fresh one
+      server.close();
+      ({ server, port } = await startServer());
+      // Re-inject the SAME fake client (same db object = persistent database)
+      _setTestClient(client, true);
+
+      // Step 3: GET invite-links on the new server — must still show revoked
+      const list = await req(port, "GET", `/trips/${TRIP_ID}/invite-links`, { token: "owner-token" });
+      assert.equal(list.status, 200);
+      assert.equal(list.body.length, 1);
+      assert.equal(list.body[0].isRevoked, true, "isRevoked must be true after restart");
+      assert.ok(list.body[0].revokedAt, "revokedAt must be set after restart");
+      assert.equal(list.body[0].isActive, false, "isActive must be false after restart");
+
+      // Step 4: POST accept on the new server — must still be blocked
+      const accept = await req(port, "POST", `/trips/invite-link/${LINK_TOKEN}/accept`, { token: "member-token" });
+      assert.equal(accept.status, 410, "revoked link must still block accept after restart");
+      assert.equal(accept.body.error, "gone");
+    });
   });
 
   // ── Budget ─────────────────────────────────────────────────────────────────
