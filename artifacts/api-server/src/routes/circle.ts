@@ -534,6 +534,40 @@ router.post("/circle/pause-all", async (req, res) => {
 
   void writeAuditEvent(sc, { actorUserId: user.id, eventType: "sharing_paused" });
 
+  // Notify members of all active contexts that this user paused Circle (fire-and-forget).
+  void (async () => {
+    try {
+      const [tripMemberRes, eventRsvpRes, eventAttendeeRes, actorProfile] = await Promise.all([
+        sc.from("trip_members").select("trip_id").eq("user_id", user.id).eq("status", "accepted"),
+        sc.from("event_rsvps").select("event_id").eq("user_id", user.id).eq("status", "going"),
+        sc.from("event_attendees").select("event_id").eq("user_id", user.id),
+        sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
+      ]);
+      const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "Someone";
+      const rsvpEids     = new Set(((eventRsvpRes.data     ?? []) as any[]).map((r) => r.event_id as string));
+      const attendeeEids = new Set(((eventAttendeeRes.data  ?? []) as any[]).map((r) => r.event_id as string));
+      const eligibleEids = [...rsvpEids].filter((eid) => attendeeEids.has(eid));
+      const contexts: { context_type: ContextType; context_id: string }[] = [
+        ...((tripMemberRes.data ?? []) as any[]).map((r) => ({ context_type: "trip"  as ContextType, context_id: r.trip_id  as string })),
+        ...eligibleEids.map((eid) => ({ context_type: "event" as ContextType, context_id: eid })),
+      ];
+      await Promise.all(
+        contexts.map(async ({ context_type, context_id }) => {
+          try {
+            const [memberIds, contextTitle] = await Promise.all([
+              getAcceptedMemberIds(sc, context_type, context_id),
+              resolveContextTitle(sc, context_type, context_id),
+            ]);
+            const recipients = memberIds.filter((m) => m !== user.id);
+            await sendCircleNotifications(sc, recipients, "circle.sharing_paused", {
+              actor: actorName, contextTitle, contextType: context_type, contextId: context_id,
+            });
+          } catch { /* non-fatal per context */ }
+        }),
+      );
+    } catch { /* non-fatal */ }
+  })();
+
   res.status(200).json({
     globalEnabled:       (data as any)?.global_enabled         ?? false,
     visibilityMode:      (data as any)?.visibility_mode        ?? "status_only",
