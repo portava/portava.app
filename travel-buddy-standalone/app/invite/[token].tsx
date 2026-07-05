@@ -248,9 +248,14 @@ export default function InviteLinkScreen() {
             )}
           </View>
 
-          <View style={[styles.primaryBtn, styles.primaryBtnFull, styles.btnDisabled]}>
-            <Text style={styles.primaryBtnText}>Accept Invite</Text>
-          </View>
+          <Pressable
+            style={[styles.primaryBtn, styles.primaryBtnFull, styles.btnDisabled]}
+            disabled
+            accessibilityState={{ disabled: true }}
+            accessibilityHint="This trip has reached its maximum number of members"
+          >
+            <Text style={styles.primaryBtnText}>Trip Is Full</Text>
+          </Pressable>
 
           <Pressable style={styles.ghostBtn} onPress={handleClose}>
             <Text style={styles.ghostBtnText}>Go back</Text>
