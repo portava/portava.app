@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# check-engagement-indexes.sh — verify that the five engagement indexes
-# introduced in migration 0106 are present in the Supabase production database.
+# check-engagement-indexes.sh — verify that all ten engagement indexes are
+# present in the Supabase production database:
+#
+#   migration 0106 — five post-perspective indexes (cursor-based pagination in
+#                    GET /api/engagement/likes ordered by post/comment/etc. ID)
+#   migration 0123 — five user-perspective indexes (profile-page + 'liked by
+#                    me' feed lookups by user_id)
 #
 # Called by scripts/pre-release-check.sh as the "engagement-indexes" check.
 #
@@ -39,7 +44,7 @@
 #                                Used only when ENGAGEMENT_QUERY_MODE=psql.
 #
 # Exit codes:
-#   0  all five indexes confirmed present, or check was skipped (no token)
+#   0  all ten indexes confirmed present, or check was skipped (no token)
 #   1  one or more indexes are missing or the API call failed
 
 set -euo pipefail
@@ -66,7 +71,12 @@ AND indexname IN (\
 'idx_post_reactions_post_emoji_created',\
 'idx_comment_likes_comment_created',\
 'idx_highlight_likes_highlight_created',\
-'idx_memory_likes_memory_created'\
+'idx_memory_likes_memory_created',\
+'idx_posts_likes_user_created',\
+'idx_post_reactions_user_created',\
+'idx_comment_likes_user_created',\
+'idx_highlight_likes_user_created',\
+'idx_memory_likes_user_created'\
 )"
 
 # ── local psql mode (testing / CI with direct DB access) ─────────────────────
@@ -128,15 +138,15 @@ elif [[ -n "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
 else
   printf "  ⚠️   No Supabase token found — skipping engagement index check.\n"
   printf "      Set SUPABASE_ACCESS_TOKEN (local) or SUPABASE_PROJECT_TOKEN (CI)\n"
-  printf "      to verify that migration 0106 engagement indexes are live.\n"
+  printf "      to verify that migration 0106 + 0123 engagement indexes are live.\n"
   printf "      Without this check a schema reset could silently drop the indexes\n"
-  printf "      and degrade GET /api/engagement/likes to sequential scans.\n"
+  printf "      and degrade engagement likes and profile-page queries.\n"
   exit 0
 fi
 
 printf "  ℹ  Using %s for Supabase Management API\n" "$TOKEN_SOURCE"
 
-# ── query Management API for all five engagement indexes ─────────────────────
+# ── query Management API for all ten engagement indexes ──────────────────────
 API_URL="https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query"
 
 RESPONSE=$(curl -s -w "\n%{http_code}" \

@@ -61,11 +61,16 @@ jobs:
       - name: Test bundle-ID placeholder guard
         run: bash scripts/test-bundle-id-guard.sh
 
-      - name: Check engagement indexes (migration 0106)
-        # Verifies the five pg_indexes added by migration 0106 are present in
-        # production.  Missing indexes cause GET /api/engagement/likes to degrade
-        # to sequential scans on posts_likes, post_reactions, comment_likes,
-        # highlight_likes, and memory_likes under cursor-based pagination.
+      - name: Check engagement indexes (migrations 0106 + 0123)
+        # Verifies the ten pg_indexes added by migrations 0106 and 0123 are present
+        # in production.
+        #   migration 0106 (post-perspective, 5 indexes): missing indexes cause
+        #     GET /api/engagement/likes to degrade to sequential scans on posts_likes,
+        #     post_reactions, comment_likes, highlight_likes, and memory_likes under
+        #     cursor-based pagination.
+        #   migration 0123 (user-perspective, 5 indexes): missing indexes cause
+        #     profile-page and 'liked by me' feed queries to degrade to sequential
+        #     scans as like tables grow.
         #
         # SUPABASE_PROJECT_TOKEN must be stored as a repo secret:
         #   GitHub → Settings → Secrets and variables → Actions → New repository secret

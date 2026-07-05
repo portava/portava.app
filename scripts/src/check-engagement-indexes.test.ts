@@ -51,12 +51,19 @@ const CHECK_SCRIPT = resolve(
 
 const LOCAL_PSQL_URL = 'postgresql://postgres@helium:5432/heliumdb';
 
-const ALL_FIVE_INDEXES = JSON.stringify([
+const ALL_TEN_INDEXES = JSON.stringify([
+  // migration 0106 — post-perspective (cursor-based pagination)
   { indexname: 'idx_posts_likes_post_created' },
   { indexname: 'idx_post_reactions_post_emoji_created' },
   { indexname: 'idx_comment_likes_comment_created' },
   { indexname: 'idx_highlight_likes_highlight_created' },
   { indexname: 'idx_memory_likes_memory_created' },
+  // migration 0123 — user-perspective (profile pages + liked-by-me feed)
+  { indexname: 'idx_posts_likes_user_created' },
+  { indexname: 'idx_post_reactions_user_created' },
+  { indexname: 'idx_comment_likes_user_created' },
+  { indexname: 'idx_highlight_likes_user_created' },
+  { indexname: 'idx_memory_likes_user_created' },
 ]);
 
 const MISSING_ONE_INDEX = JSON.stringify([
@@ -65,6 +72,11 @@ const MISSING_ONE_INDEX = JSON.stringify([
   { indexname: 'idx_comment_likes_comment_created' },
   { indexname: 'idx_highlight_likes_highlight_created' },
   // idx_memory_likes_memory_created intentionally omitted
+  { indexname: 'idx_posts_likes_user_created' },
+  { indexname: 'idx_post_reactions_user_created' },
+  { indexname: 'idx_comment_likes_user_created' },
+  { indexname: 'idx_highlight_likes_user_created' },
+  { indexname: 'idx_memory_likes_user_created' },
 ]);
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -220,7 +232,7 @@ describe('check-engagement-indexes.sh + verify-db-engagement-indexes.mjs pipelin
       root,
       bin,
       captureFile,
-      indexResponse: ALL_FIVE_INDEXES,
+      indexResponse: ALL_TEN_INDEXES,
       noToken: true,
     });
 
@@ -243,10 +255,10 @@ describe('check-engagement-indexes.sh + verify-db-engagement-indexes.mjs pipelin
   // for it.  We capture the exact payload the script sends to curl and assert
   // every required index name is present in the WHERE clause.
 
-  test('SQL sent to the API includes all five engagement index names in the IN (...) filter', () => {
+  test('SQL sent to the API includes all ten engagement index names in the IN (...) filter', () => {
     const { root, bin, captureFile } = makeWorkspace(tmpBase, 'sql-inspection');
 
-    runCheck({ root, bin, captureFile, indexResponse: ALL_FIVE_INDEXES });
+    runCheck({ root, bin, captureFile, indexResponse: ALL_TEN_INDEXES });
 
     assert.ok(
       existsSync(captureFile),
@@ -256,11 +268,18 @@ describe('check-engagement-indexes.sh + verify-db-engagement-indexes.mjs pipelin
     const payload = readFileSync(captureFile, 'utf8');
 
     const REQUIRED_IN_SQL = [
+      // migration 0106 — post-perspective
       'idx_posts_likes_post_created',
       'idx_post_reactions_post_emoji_created',
       'idx_comment_likes_comment_created',
       'idx_highlight_likes_highlight_created',
       'idx_memory_likes_memory_created',
+      // migration 0123 — user-perspective
+      'idx_posts_likes_user_created',
+      'idx_post_reactions_user_created',
+      'idx_comment_likes_user_created',
+      'idx_highlight_likes_user_created',
+      'idx_memory_likes_user_created',
     ];
 
     for (const indexName of REQUIRED_IN_SQL) {
@@ -274,10 +293,10 @@ describe('check-engagement-indexes.sh + verify-db-engagement-indexes.mjs pipelin
 
   // ── green path ─────────────────────────────────────────────────────────────
 
-  test('exits 0 when all five indexes are present', () => {
+  test('exits 0 when all ten indexes are present', () => {
     const { root, bin, captureFile } = makeWorkspace(tmpBase, 'all-present');
 
-    const result = runCheck({ root, bin, captureFile, indexResponse: ALL_FIVE_INDEXES });
+    const result = runCheck({ root, bin, captureFile, indexResponse: ALL_TEN_INDEXES });
 
     assert.equal(
       result.status,
@@ -288,6 +307,10 @@ describe('check-engagement-indexes.sh + verify-db-engagement-indexes.mjs pipelin
     assert.ok(
       result.stdout.includes('idx_memory_likes_memory_created'),
       `Expected "idx_memory_likes_memory_created" in success output.\nStdout:\n${result.stdout}`,
+    );
+    assert.ok(
+      result.stdout.includes('idx_memory_likes_user_created'),
+      `Expected "idx_memory_likes_user_created" (migration 0123) in success output.\nStdout:\n${result.stdout}`,
     );
   });
 
@@ -317,7 +340,7 @@ describe('check-engagement-indexes.sh + verify-db-engagement-indexes.mjs pipelin
 
   // ── remediation hint ───────────────────────────────────────────────────────
 
-  test('includes the migration file path in the remediation hint when an index is absent', () => {
+  test('includes both migration file paths in the remediation hint when all indexes are absent', () => {
     const { root, bin, captureFile } = makeWorkspace(tmpBase, 'remediation-hint');
 
     const result = runCheck({ root, bin, captureFile, indexResponse: '[]' });
@@ -332,6 +355,10 @@ describe('check-engagement-indexes.sh + verify-db-engagement-indexes.mjs pipelin
     assert.ok(
       combined.includes('0106'),
       `Expected migration "0106" reference in remediation hint.\nCombined:\n${combined}`,
+    );
+    assert.ok(
+      combined.includes('0123'),
+      `Expected migration "0123" reference in remediation hint.\nCombined:\n${combined}`,
     );
   });
 
@@ -431,28 +458,31 @@ describe('check-engagement-indexes.sh + verify-db-engagement-indexes.mjs pipelin
 // ═══════════════════════════════════════════════════════════════════════════════
 // Suite 2: real-database integration tests (ENGAGEMENT_QUERY_MODE=psql)
 //
-// Provisions a dedicated schema in the local PostgreSQL instance, creates the
-// five engagement indexes, then exercises the full shell → Node.js pipeline
-// against real DB state — confirming the SQL in check-engagement-indexes.sh
-// correctly queries pg_indexes.
+// Provisions a dedicated schema in the local PostgreSQL instance, creates all
+// ten engagement indexes (five post-perspective from migration 0106 and five
+// user-perspective from migration 0123), then exercises the full shell →
+// Node.js pipeline against real DB state — confirming the SQL in
+// check-engagement-indexes.sh correctly queries pg_indexes for both sets.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('check-engagement-indexes.sh — real PostgreSQL integration (ENGAGEMENT_QUERY_MODE=psql)', () => {
   const schema = `ei_test_${Date.now()}`;
 
   before(() => {
-    // Create five minimal tables (each needs at least one column) and the five
-    // engagement indexes.  The index bodies don't need to match production —
-    // we only care that pg_indexes reports the correct indexname values.
+    // Create five minimal tables with both the post-scoped and user-scoped
+    // columns so all ten indexes can be created.  Index bodies don't need to
+    // match production — we only care that pg_indexes reports the correct
+    // indexname values.
     psql(`
       CREATE SCHEMA ${schema};
 
-      CREATE TABLE ${schema}.posts_likes        (id serial PRIMARY KEY, post_id int, created_at timestamptz);
-      CREATE TABLE ${schema}.post_reactions      (id serial PRIMARY KEY, post_id int, emoji text, created_at timestamptz);
-      CREATE TABLE ${schema}.comment_likes       (id serial PRIMARY KEY, comment_id int, created_at timestamptz);
-      CREATE TABLE ${schema}.highlight_likes     (id serial PRIMARY KEY, highlight_id int, created_at timestamptz);
-      CREATE TABLE ${schema}.memory_likes        (id serial PRIMARY KEY, memory_id int, created_at timestamptz);
+      CREATE TABLE ${schema}.posts_likes        (id serial PRIMARY KEY, post_id int, user_id int, created_at timestamptz);
+      CREATE TABLE ${schema}.post_reactions      (id serial PRIMARY KEY, post_id int, user_id int, emoji text, created_at timestamptz);
+      CREATE TABLE ${schema}.comment_likes       (id serial PRIMARY KEY, comment_id int, user_id int, created_at timestamptz);
+      CREATE TABLE ${schema}.highlight_likes     (id serial PRIMARY KEY, highlight_id int, user_id int, created_at timestamptz);
+      CREATE TABLE ${schema}.memory_likes        (id serial PRIMARY KEY, memory_id int, user_id int, created_at timestamptz);
 
+      -- migration 0106: post-perspective indexes
       CREATE INDEX idx_posts_likes_post_created
         ON ${schema}.posts_likes (post_id, created_at DESC);
 
@@ -467,6 +497,22 @@ describe('check-engagement-indexes.sh — real PostgreSQL integration (ENGAGEMEN
 
       CREATE INDEX idx_memory_likes_memory_created
         ON ${schema}.memory_likes (memory_id, created_at DESC);
+
+      -- migration 0123: user-perspective indexes
+      CREATE INDEX idx_posts_likes_user_created
+        ON ${schema}.posts_likes (user_id, created_at DESC);
+
+      CREATE INDEX idx_post_reactions_user_created
+        ON ${schema}.post_reactions (user_id, created_at DESC);
+
+      CREATE INDEX idx_comment_likes_user_created
+        ON ${schema}.comment_likes (user_id, created_at DESC);
+
+      CREATE INDEX idx_highlight_likes_user_created
+        ON ${schema}.highlight_likes (user_id, created_at DESC);
+
+      CREATE INDEX idx_memory_likes_user_created
+        ON ${schema}.memory_likes (user_id, created_at DESC);
     `);
   });
 
@@ -478,22 +524,26 @@ describe('check-engagement-indexes.sh — real PostgreSQL integration (ENGAGEMEN
     }
   });
 
-  test('exits 0 when all five indexes exist in the database', () => {
+  test('exits 0 when all ten indexes exist in the database', () => {
     const result = runCheckPsql(schema);
 
     assert.equal(
       result.status,
       0,
-      `Expected exit 0 with all five indexes present but got ${result.status}.\n` +
+      `Expected exit 0 with all ten indexes present but got ${result.status}.\n` +
         `Stdout:\n${result.stdout}\nStderr:\n${result.stderr}`,
     );
     assert.ok(
       result.stdout.includes('idx_memory_likes_memory_created'),
       `Expected confirmation of idx_memory_likes_memory_created in output.\nStdout:\n${result.stdout}`,
     );
+    assert.ok(
+      result.stdout.includes('idx_memory_likes_user_created'),
+      `Expected confirmation of idx_memory_likes_user_created (migration 0123) in output.\nStdout:\n${result.stdout}`,
+    );
   });
 
-  test('exits 1 after idx_memory_likes_memory_created is dropped from the database', () => {
+  test('exits 1 after idx_memory_likes_memory_created (migration 0106) is dropped from the database', () => {
     psql(`DROP INDEX ${schema}.idx_memory_likes_memory_created;`);
 
     const result = runCheckPsql(schema);
@@ -532,6 +582,52 @@ describe('check-engagement-indexes.sh — real PostgreSQL integration (ENGAGEMEN
     assert.ok(
       result.stdout.includes('idx_memory_likes_memory_created'),
       `Expected confirmation of idx_memory_likes_memory_created in output.\nStdout:\n${result.stdout}`,
+    );
+  });
+
+  // ── user-perspective regression test (migration 0123) ────────────────────────
+  // Confirms that dropping a user-perspective index from migration 0123 is
+  // detected — catching the specific regression this task guards against.
+
+  test('exits 1 after idx_posts_likes_user_created (migration 0123) is dropped from the database', () => {
+    psql(`DROP INDEX ${schema}.idx_posts_likes_user_created;`);
+
+    const result = runCheckPsql(schema);
+
+    assert.equal(
+      result.status,
+      1,
+      `Expected exit 1 after dropping idx_posts_likes_user_created but got ${result.status}.\n` +
+        `Stdout:\n${result.stdout}\nStderr:\n${result.stderr}`,
+    );
+    assert.ok(
+      (result.stdout + result.stderr).includes('idx_posts_likes_user_created'),
+      `Expected "idx_posts_likes_user_created" to be named in the failure output.\n` +
+        `Stdout:\n${result.stdout}\nStderr:\n${result.stderr}`,
+    );
+    assert.ok(
+      (result.stdout + result.stderr).includes('MISSING'),
+      `Expected "MISSING" keyword in failure output.\nStdout:\n${result.stdout}\nStderr:\n${result.stderr}`,
+    );
+  });
+
+  test('exits 0 again after idx_posts_likes_user_created is re-created', () => {
+    psql(`
+      CREATE INDEX idx_posts_likes_user_created
+        ON ${schema}.posts_likes (user_id, created_at DESC);
+    `);
+
+    const result = runCheckPsql(schema);
+
+    assert.equal(
+      result.status,
+      0,
+      `Expected exit 0 after re-creating idx_posts_likes_user_created but got ${result.status}.\n` +
+        `Stdout:\n${result.stdout}\nStderr:\n${result.stderr}`,
+    );
+    assert.ok(
+      result.stdout.includes('idx_posts_likes_user_created'),
+      `Expected confirmation of idx_posts_likes_user_created in output.\nStdout:\n${result.stdout}`,
     );
   });
 });
