@@ -6806,6 +6806,7 @@ export type Database = {
           destination_place_id: string | null
           end_date: string | null
           id: string
+          max_members: number | null
           neighborhoods: string[]
           open_to_meet: boolean
           owner_id: string
@@ -6840,6 +6841,7 @@ export type Database = {
           destination_place_id?: string | null
           end_date?: string | null
           id?: string
+          max_members?: number | null
           neighborhoods?: string[]
           open_to_meet?: boolean
           owner_id: string
@@ -6874,6 +6876,7 @@ export type Database = {
           destination_place_id?: string | null
           end_date?: string | null
           id?: string
+          max_members?: number | null
           neighborhoods?: string[]
           open_to_meet?: boolean
           owner_id?: string

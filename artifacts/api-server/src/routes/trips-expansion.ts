@@ -1208,7 +1208,7 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
   const tripId = lk.trip_id as string;
 
   // Block check against owner
-  const { data: trip } = await sc.from("trips").select("owner_id, status").eq("id", tripId).maybeSingle();
+  const { data: trip } = await sc.from("trips").select("owner_id, status, end_date, max_members").eq("id", tripId).maybeSingle();
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const blocked = await isBlocked(sc, user.id, (trip as any).owner_id);
   if (blocked) { sendError(res, "forbidden", "Blocked"); return; }
@@ -1220,11 +1220,40 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
     return;
   }
 
+  // Past-trip guard: cannot join a trip whose end date has already passed.
+  // end_date is stored as a YYYY-MM-DD date string; compare lexicographically
+  // to today's ISO date so no timezone ambiguity is introduced.
+  const endDate = (trip as any).end_date as string | null;
+  if (endDate) {
+    const today = new Date().toISOString().slice(0, 10);
+    if (endDate < today) {
+      res.status(410).json({ error: "gone", message: "This trip has already ended" });
+      return;
+    }
+  }
+
   // Already a member?
   const membership = await requireTripMember(sc, tripId, user.id, { status: "any" });
   if (membership) {
     res.json({ status: "already_member", tripId, idempotent: true });
     return;
+  }
+
+  // Member-capacity guard: if the trip has a max_members cap, check that it
+  // has not been reached before consuming a slot.  This guard runs after the
+  // already-member check so that an already-joined user's idempotent retry is
+  // never blocked by a later capacity squeeze.
+  const maxMembers = (trip as any).max_members as number | null;
+  if (maxMembers != null) {
+    const { data: memberRows } = await sc
+      .from("trip_members")
+      .select("id")
+      .eq("trip_id", tripId)
+      .eq("status", "accepted");
+    if ((memberRows?.length ?? 0) >= maxMembers) {
+      res.status(410).json({ error: "gone", message: "This trip is already full" });
+      return;
+    }
   }
 
   // Atomically claim one slot before inserting the member — or detect that a

@@ -6,6 +6,7 @@ All migrations have been applied to production Supabase unless noted otherwise.
 
 | Migration | Description | Applied |
 |-----------|-------------|---------|
+| `0114_add_max_members_to_trips.sql` | Adds nullable `max_members INTEGER` column to `trips`. NULL means no member cap. When set, the invite-link accept handler returns 410 gone before claiming a slot if the accepted-member count has reached the limit. | 2026-07-05 |
 | `0010_trip_plan.sql` | Creates `trip_plan_items` table with RLS policies (select/insert/update for trip members/owners) and a partial unique index on `(trip_id, source_type, source_id)` | 2026-06-21 |
 | `0011_message_type.sql` | Adds `msg_type` (default `'text'`) and `subtype` columns to `messages`; partial index on `subtype` | 2026-06-21 |
 | `0012_daily_briefs.sql` | Creates `daily_briefs` table with per-user/per-day uniqueness constraint and RLS (users read own rows only); service role handles all writes | 2026-06-21 |

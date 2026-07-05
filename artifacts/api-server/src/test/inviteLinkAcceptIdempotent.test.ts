@@ -48,6 +48,11 @@ interface FakeRpcCall { fn: string; args: Record<string, any> }
  * @param opts.claimError            — if true, the rpc returns an error instead
  * @param opts.memberInsertError     — if set, the trip_members INSERT fails with this
  *                                     error object (must include { message, code? })
+ * @param opts.tripStatus            — status value returned by the fake trips row
+ * @param opts.endDate               — end_date value for the fake trip row (null = no end date)
+ * @param opts.maxMembers            — max_members cap for the fake trip row (null = unlimited)
+ * @param opts.existingMemberCount   — number of accepted members already in the trip
+ *                                     (returned by the capacity count query)
  */
 function makeClient(opts: {
   isMemberOnFirstCheck?: boolean;
@@ -56,6 +61,9 @@ function makeClient(opts: {
   claimError?: boolean;
   memberInsertError?: { message: string; code?: string };
   tripStatus?: string;
+  endDate?: string | null;
+  maxMembers?: number | null;
+  existingMemberCount?: number;
 }): { client: any; rpcCalls: FakeRpcCall[] } {
   const {
     isMemberOnFirstCheck  = false,
@@ -64,6 +72,9 @@ function makeClient(opts: {
     claimError            = false,
     memberInsertError,
     tripStatus            = "upcoming",
+    endDate               = null,
+    maxMembers            = null,
+    existingMemberCount   = 0,
   } = opts;
 
   const rpcCalls: FakeRpcCall[] = [];
@@ -141,9 +152,11 @@ function makeClient(opts: {
           if (tableName === "trips") {
             return Promise.resolve({
               data: {
-                id:       TRIP_ID,
-                owner_id: OWNER_ID,
-                status:   tripStatus,
+                id:          TRIP_ID,
+                owner_id:    OWNER_ID,
+                status:      tripStatus,
+                end_date:    endDate,
+                max_members: maxMembers,
               },
               error: null,
             });
@@ -171,6 +184,13 @@ function makeClient(opts: {
         then(onF: any, onR: any) {
           if (_delete) {
             return Promise.resolve({ data: null, error: null }).then(onF, onR);
+          }
+          if (tableName === "trip_members") {
+            // This branch handles the capacity count query:
+            //   sc.from("trip_members").select("id").eq("trip_id",...).eq("status","accepted")
+            // maybySingle() is used for the membership check and does NOT go through then().
+            const rows = Array.from({ length: existingMemberCount }, (_, i) => ({ id: `existing-${i}` }));
+            return Promise.resolve({ data: rows, error: null }).then(onF, onR);
           }
           return Promise.resolve({ data: [], error: null }).then(onF, onR);
         },
@@ -455,5 +475,149 @@ describe("POST /api/trips/invite-link/:token/accept — idempotency & usage cap"
 
     const claimCalls = rpcCalls.filter((c) => c.fn === "claim_invite_link_slot_for_user");
     assert.equal(claimCalls.length, 0, "claim must NOT be called for an archived trip");
+  });
+
+  // ── Past-trip guard ───────────────────────────────────────────────────────
+
+  it("returns 410 gone and does not claim a slot when the trip's end_date has already passed", async () => {
+    // end_date is compared lexicographically to today's ISO date string.
+    // "2020-01-01" is unambiguously in the past.
+    const { client, rpcCalls } = makeClient({
+      isMemberOnFirstCheck: false,
+      endDate:              "2020-01-01",
+    });
+    _setTestClient(client, true);
+
+    const r = await post(port, `/trips/invite-link/${LINK_TOKEN}/accept`, "joiner-token");
+
+    assert.equal(r.status, 410, "should return 410 when the trip's end date has passed");
+    assert.equal(r.body.error, "gone");
+    assert.ok(
+      typeof r.body.message === "string" && r.body.message.length > 0,
+      "should include a human-readable message",
+    );
+
+    const claimCalls = rpcCalls.filter((c) => c.fn === "claim_invite_link_slot_for_user");
+    assert.equal(claimCalls.length, 0, "claim must NOT be called for a trip that has already ended");
+  });
+
+  it("does not block when the trip's end_date is today or in the future", async () => {
+    // A trip ending in the far future should pass the guard and proceed to join.
+    const { client, rpcCalls } = makeClient({
+      isMemberOnFirstCheck: false,
+      endDate:              "2099-12-31",
+      claimResult:          "claimed",
+    });
+    _setTestClient(client, true);
+
+    const r = await post(port, `/trips/invite-link/${LINK_TOKEN}/accept`, "joiner-token");
+
+    assert.equal(r.status, 201, "should return 201 for a trip ending in the future");
+    assert.equal(r.body.status, "joined");
+
+    const claimCalls = rpcCalls.filter((c) => c.fn === "claim_invite_link_slot_for_user");
+    assert.equal(claimCalls.length, 1, "claim must be called — past-trip guard must not fire for future end_date");
+  });
+
+  it("does not block when the trip has no end_date set", async () => {
+    // end_date = null means no deadline; the guard must be skipped entirely.
+    const { client, rpcCalls } = makeClient({
+      isMemberOnFirstCheck: false,
+      endDate:              null,
+      claimResult:          "claimed",
+    });
+    _setTestClient(client, true);
+
+    const r = await post(port, `/trips/invite-link/${LINK_TOKEN}/accept`, "joiner-token");
+
+    assert.equal(r.status, 201, "should return 201 when end_date is null");
+    assert.equal(r.body.status, "joined");
+
+    const claimCalls = rpcCalls.filter((c) => c.fn === "claim_invite_link_slot_for_user");
+    assert.equal(claimCalls.length, 1, "claim must be called — no end_date means no past-trip guard");
+  });
+
+  // ── Member-capacity guard ─────────────────────────────────────────────────
+
+  it("returns 410 gone and does not claim a slot when the trip has hit its max_members cap", async () => {
+    // Trip has max_members = 3 and already has 3 accepted members.
+    // A new joiner must be blocked before the slot claim.
+    const { client, rpcCalls } = makeClient({
+      isMemberOnFirstCheck: false,
+      maxMembers:           3,
+      existingMemberCount:  3,
+    });
+    _setTestClient(client, true);
+
+    const r = await post(port, `/trips/invite-link/${LINK_TOKEN}/accept`, "joiner-token");
+
+    assert.equal(r.status, 410, "should return 410 when the trip's member cap is reached");
+    assert.equal(r.body.error, "gone");
+    assert.ok(
+      typeof r.body.message === "string" && r.body.message.length > 0,
+      "should include a human-readable message",
+    );
+
+    const claimCalls = rpcCalls.filter((c) => c.fn === "claim_invite_link_slot_for_user");
+    assert.equal(claimCalls.length, 0, "claim must NOT be called — capacity check fires before the slot claim");
+  });
+
+  it("does not block when the trip has capacity remaining under max_members", async () => {
+    // Trip has max_members = 5 with 3 accepted members — still has room.
+    const { client, rpcCalls } = makeClient({
+      isMemberOnFirstCheck: false,
+      maxMembers:           5,
+      existingMemberCount:  3,
+      claimResult:          "claimed",
+    });
+    _setTestClient(client, true);
+
+    const r = await post(port, `/trips/invite-link/${LINK_TOKEN}/accept`, "joiner-token");
+
+    assert.equal(r.status, 201, "should return 201 when the trip still has capacity");
+    assert.equal(r.body.status, "joined");
+
+    const claimCalls = rpcCalls.filter((c) => c.fn === "claim_invite_link_slot_for_user");
+    assert.equal(claimCalls.length, 1, "claim must be called — capacity not reached yet");
+  });
+
+  it("does not apply the max_members guard when max_members is null (unlimited)", async () => {
+    // max_members = null means no cap; the capacity check must be skipped entirely.
+    const { client, rpcCalls } = makeClient({
+      isMemberOnFirstCheck: false,
+      maxMembers:           null,
+      existingMemberCount:  100,
+      claimResult:          "claimed",
+    });
+    _setTestClient(client, true);
+
+    const r = await post(port, `/trips/invite-link/${LINK_TOKEN}/accept`, "joiner-token");
+
+    assert.equal(r.status, 201, "should return 201 for unlimited trips regardless of member count");
+    assert.equal(r.body.status, "joined");
+
+    const claimCalls = rpcCalls.filter((c) => c.fn === "claim_invite_link_slot_for_user");
+    assert.equal(claimCalls.length, 1, "claim must be called — null max_members means no cap check");
+  });
+
+  it("already_member user is not blocked by the max_members cap (idempotent accept)", async () => {
+    // If a user is already a member, the already-member guard fires first and
+    // the capacity check is never reached.  This prevents a full trip from
+    // blocking an already-joined user's retry.
+    const { client, rpcCalls } = makeClient({
+      isMemberOnFirstCheck: true,
+      maxMembers:           1,
+      existingMemberCount:  1,
+    });
+    _setTestClient(client, true);
+
+    const r = await post(port, `/trips/invite-link/${LINK_TOKEN}/accept`, "joiner-token");
+
+    assert.equal(r.status, 200, "already-member user must get 200, not 410 from the capacity guard");
+    assert.equal(r.body.status, "already_member");
+    assert.equal(r.body.idempotent, true);
+
+    const claimCalls = rpcCalls.filter((c) => c.fn === "claim_invite_link_slot_for_user");
+    assert.equal(claimCalls.length, 0, "claim must not be called for an already-member user");
   });
 });
