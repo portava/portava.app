@@ -502,6 +502,64 @@ router.post("/api/rent-a-buddy/search", async (req, res) => {
   });
 });
 
+// ── GET /api/buddies — public RESTful buddy listing with SQL-level filtering ──
+// Canonical public-facing endpoint.  All filter params are query-string so
+// the URL is bookmarkable / cache-friendly without a request body.
+
+router.get("/api/buddies", async (req, res) => {
+  const serviceClient = sc();
+  if (!serviceClient) return res.json({ buddies: [], total: 0, page: 1, perPage: 20 });
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const {
+    city,
+    category,
+    language,
+    maxBudgetUsd,
+    buddyLevel,
+    available,
+    featured,
+    verified,
+    q,
+    page: rawPage = "1",
+    perPage: rawPerPage = "20",
+  } = req.query as Record<string, string | undefined>;
+
+  const page = Math.max(1, parseInt(rawPage ?? "1", 10) || 1);
+  const perPage = Math.min(100, Math.max(1, parseInt(rawPerPage ?? "20", 10) || 20));
+
+  let query = serviceClient
+    .from("rent_buddy_profiles")
+    .select("*", { count: "exact" })
+    .eq("status", "active")
+    .eq("admin_status", "active")
+    .order("featured", { ascending: false })
+    .order("average_rating", { ascending: false })
+    .order("review_count", { ascending: false })
+    .range((page - 1) * perPage, page * perPage - 1);
+
+  if (city)           query = query.ilike("city", `%${city}%`);
+  if (category)       query = query.contains("categories", [category]);
+  if (language)       query = query.contains("languages", [language]);
+  if (maxBudgetUsd)   query = query.lte("hourly_rate_usd", Number(maxBudgetUsd));
+  if (buddyLevel)     query = query.eq("buddy_level", buddyLevel);
+  if (available === "now") query = query.eq("available_now", true);
+  if (featured === "true")  query = query.eq("featured", true);
+  if (verified === "true")  query = query.eq("verified", true);
+  if (q)              query = query.or(`display_name.ilike.%${q}%,tagline.ilike.%${q}%,bio.ilike.%${q}%`);
+
+  const { data, count, error } = await query;
+  if (error) return sendError(res, "db_error", error.message);
+
+  return res.json({
+    buddies: (data ?? []).map((p: Record<string, unknown>) => mapProfile(stripBuddyPrivateFields(p, false))),
+    total: count ?? 0,
+    page,
+    perPage,
+    totalPages: Math.ceil((count ?? 0) / perPage),
+  });
+});
+
 // ── Buddy profile ─────────────────────────────────────────────────────────────
 
 router.get("/api/rent-a-buddy/buddies/:buddyId", async (req, res) => {

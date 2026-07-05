@@ -1,0 +1,1518 @@
+Build Travel Buddy “Find Your Circle” System for Trips and Events
+
+Goal:
+Create an actual Find Your Circle system that helps users see and coordinate with people they are actively on a trip or event with, but only when users intentionally enable the right settings.
+
+This is not public tracking.  
+This is not dating.  
+This is not public discovery.  
+This is not live GPS by default.  
+This is not Safe Return.  
+This is not Telegraph membership.  
+This is not follow/follower access.
+
+Core product rule:
+Users can only see Circle presence for people they are actively on a trip or event with, and only when those people intentionally enabled sharing for that specific trip/event context.
+
+Use real backend truth only. Do not fake:
+- circle members
+- trip membership
+- event attendance
+- location
+- check-ins
+- sharing settings
+- Telegraph access
+- Compass suggestions
+- map pins
+- notifications
+
+Do not rebuild unrelated systems.
+
+PHASE 1 — Audit Current Circle / Trip / Event / Location State
+
+First inspect the current app before patching.
+
+Find:
+- existing Trip Crew system
+- existing Event attendee/member system
+- existing Circles/groups system, if any
+- existing Telegraph trip/event group chats
+- existing location/GPS permission system
+- existing Safe Return/check-in system
+- existing user privacy settings
+- existing blocked/muted user logic
+- existing trip member tables
+- existing event attendee tables
+- existing location sharing tables, if any
+- existing map/live map screen
+- existing Discovery/Compass location logic
+- existing notification/activity system
+- existing admin/moderation controls
+- existing tests
+- placeholder/demo/local-only circle features
+- canonical migrations directory
+
+Report briefly before changing:
+- what already exists
+- what is fake/placeholder
+- where trip membership truth lives
+- where event attendance truth lives
+- where Telegraph membership truth lives
+- what location-sharing settings exist
+- what screens/routes/components will be touched
+- what must be added
+- what can be reused safely
+
+PHASE 2 — Product Scope Lock
+
+Find Your Circle V1 should support:
+
+For Trips:
+- show current Trip Circle members
+- show who has Circle sharing enabled
+- show privacy-safe status/location
+- open Trip Telegraph
+- open member Passport/profile
+- show nearby/arriving/checked-in/with-group style status where allowed
+- show broad meeting point or venue
+- help users coordinate without exposing exact location by default
+
+For Events:
+- show Event Circle members
+- show accepted attendees who opted into Event Circle visibility
+- show checked-in users where allowed
+- show broad venue/area status
+- open Event Telegraph or event chat
+- show event meeting point
+- help users find the group during the event
+
+For Users:
+- explicit first-time consent
+- global Find Your Circle toggle
+- per-trip sharing setting
+- per-event sharing setting
+- pause sharing
+- “who can see me” preview
+- sharing precision selector:
+  - off
+  - status only
+  - approximate area
+  - venue/check-in only
+  - precise live location only if explicitly supported later
+- stop sharing after trip/event ends
+- hide/block specific users through block/privacy settings
+- clear/expire stale presence
+
+Core boundary:
+Find Your Circle only works when:
+- users are in the same active trip or event
+- viewer has access to that trip/event
+- target user has global sharing enabled
+- target user has context sharing enabled
+- target user is not paused
+- target user is not stale/expired
+- target user is not blocked from viewer
+- viewer is not blocked from target
+- backend access guard approves visibility
+
+PHASE 3 — Database Model
+
+Use existing tables if present. Extend rather than duplicate.
+
+Suggested tables:
+
+circle_visibility_settings
+- id
+- user_id
+- global_enabled boolean default false
+- default_trip_visibility: off / status_only / approximate_area / venue_checkin / precise_live
+- default_event_visibility: off / status_only / approximate_area / venue_checkin / precise_live
+- allow_trip_circle boolean
+- allow_event_circle boolean
+- allow_compass_circle_suggestions boolean
+- consented_at nullable
+- consent_version nullable
+- updated_at
+- created_at
+
+circle_context_settings
+- id
+- user_id
+- context_type: trip / event
+- context_id
+- visibility_mode: off / status_only / approximate_area / venue_checkin / precise_live
+- is_paused boolean
+- paused_until nullable
+- expires_at nullable
+- created_at
+- updated_at
+
+circle_presence
+- id
+- user_id
+- context_type: trip / event
+- context_id
+- status:
+  - available
+  - nearby
+  - arriving
+  - checked_in
+  - with_group
+  - leaving
+  - safe
+  - needs_help
+  - paused
+  - offline
+- visibility_mode_snapshot
+- approximate_label nullable
+- venue_id nullable
+- venue_label nullable
+- public_lat nullable
+- public_lng nullable
+- precise_lat nullable/encrypted if ever supported
+- precise_lng nullable/encrypted if ever supported
+- last_seen_at
+- stale_after
+- expires_at
+- created_at
+- updated_at
+
+circle_checkins
+- id
+- user_id
+- context_type: trip / event
+- context_id
+- checkin_type:
+  - arrived
+  - with_group
+  - leaving
+  - safe
+  - needs_help
+- broad_location_label nullable
+- venue_id nullable
+- venue_name nullable
+- created_at
+
+circle_member_visibility_overrides
+- id
+- user_id
+- hidden_from_user_id
+- context_type nullable
+- context_id nullable
+- created_at
+
+circle_meeting_points
+- id
+- context_type: trip / event
+- context_id
+- set_by_user_id
+- venue_id nullable
+- venue_name
+- broad_location_label
+- public_lat nullable
+- public_lng nullable
+- notes nullable
+- active boolean
+- created_at
+- updated_at
+
+circle_audit_events
+- id
+- user_id nullable
+- actor_id nullable
+- context_type nullable
+- context_id nullable
+- event_type
+- metadata jsonb
+- visibility: user_visible / admin_only
+- created_at
+
+Rules:
+- Use canonical migrations directory.
+- Add RLS if Supabase uses RLS.
+- Prefer additive migrations.
+- Do not drop existing data blindly.
+- Do not expose precise location by default.
+- Do not store precise location unless explicitly supported and permissioned.
+- Presence should expire automatically.
+- Trip/event end should stop sharing.
+- Blocked users must not see each other.
+- Deleted/suspended/banned users must not appear.
+- Precise GPS should be deferred in V1 unless the app already has mature safety controls.
+
+PHASE 4 — Backend Access Guard
+
+Create one backend access guard:
+
+canViewCirclePresence(viewerId, targetUserId, contextType, contextId)
+
+Viewer can see target only if:
+- viewer is authenticated
+- viewer is a member of the trip or accepted attendee of the event
+- target is a member of the same trip or accepted attendee of the same event
+- target has global Find Your Circle enabled
+- target has consented to Find Your Circle
+- target has context sharing enabled for that trip/event
+- target visibility mode is not off
+- target is not paused
+- target presence is not expired
+- target presence is not stale beyond display policy
+- viewer is not blocked by target
+- target is not blocked by viewer
+- target is not hidden from viewer by Circle override
+- target is not banned/suspended/deleted
+- context is active or within allowed grace window
+- event/trip privacy allows viewer access
+- admin kill switch is not disabling that context
+
+Rules:
+- Backend must enforce this.
+- Frontend hiding is not enough.
+- Never return hidden users.
+- Never return private location data if mode does not allow it.
+- Trip/event membership truth must be separate from Telegraph membership.
+- Following someone does not grant Circle visibility.
+- Being in Telegraph does not grant Circle visibility unless trip/event membership allows it.
+- Pending/waitlisted/maybe/interested does not grant access.
+
+Validation:
+- Same trip member with settings on can see eligible user.
+- Same trip member with settings off cannot see user.
+- Non-member cannot see Circle.
+- Pending invite cannot see Circle.
+- Event waitlist user cannot see Circle.
+- Interested/maybe user cannot see Circle.
+- Blocked user cannot see Circle.
+- Expired event does not leak presence.
+- Paused sharing hides user.
+- Telegraph-only participant cannot see Circle.
+
+PHASE 5 — Visibility Modes
+
+Implement these modes clearly.
+
+off
+- user does not appear in Find Your Circle
+
+status_only
+- show profile row and status only
+- no map pin
+- no distance
+- no route
+- example: “Checked in” or “With group”
+
+approximate_area
+- show broad area label
+- optional fuzzy map area
+- no exact GPS
+- example: “near Shibuya” or “around Cloud 9”
+
+venue_checkin
+- show checked-in venue only if user explicitly checked in
+- example: “Checked in at Cloud 9”
+- no live tracking
+
+precise_live
+- defer unless explicitly supported
+- requires separate confirmation
+- should be time-limited
+- should show strong privacy indicator
+- should have shortest retention
+- should never be default
+
+Recommended V1:
+- off
+- status_only
+- approximate_area
+- venue_checkin
+
+Rules:
+- Exact GPS is off by default.
+- Status-only never returns location.
+- Approximate area never returns precise GPS.
+- Venue check-in only returns explicit check-in venue.
+- Off returns nothing.
+- Precise live location should be deferred unless already safe and permissioned.
+
+Validation:
+- Each mode returns correct data shape.
+- Status-only has no map pin.
+- Approximate has no precise coordinates.
+- Venue check-in only shows explicit venue.
+- Off hides user completely.
+
+PHASE 6 — Explicit Consent Moment
+
+Goal:
+Users should clearly understand what they are turning on.
+
+First time enabling Find Your Circle, show a consent screen explaining:
+- who can see them:
+  - people in the same trip or event
+  - only when that trip/event is active
+  - only when their sharing setting is on
+- what can be shared:
+  - status
+  - approximate area
+  - venue check-in
+  - precise live location only if explicitly supported later
+- how to stop sharing:
+  - pause
+  - per-trip/per-event off
+  - global off
+- that Circle is not public Discovery
+
+Rules:
+- Store consent timestamp and consent version.
+- If privacy policy changes, require renewed consent.
+- Do not enable by default without user action.
+- User can cancel and remain hidden.
+- Consent must save to backend.
+
+Validation:
+- First enable shows consent.
+- Consent timestamp saves.
+- User can cancel and remain hidden.
+- Policy version change requires renewed consent if implemented.
+
+PHASE 7 — Settings UI
+
+Add Find Your Circle settings.
+
+Settings page:
+- Find Your Circle global toggle
+- Trip Circle visibility default
+- Event Circle visibility default
+- sharing precision selector
+- pause sharing
+- auto-stop after trip ends
+- auto-stop after event ends
+- “Who can see me?” entry
+- explanation copy
+
+Suggested copy:
+“Find Your Circle helps people in the same trip or event find each other when you allow it. You control when you appear and what level of detail is shared.”
+
+Visibility labels:
+- Off
+- Status only
+- Approximate area
+- Venue check-in only
+- Live precise location, if supported later
+
+Rules:
+- Default should be off or status-only, not precise.
+- User must explicitly enable location-based sharing.
+- Context-specific setting overrides global default.
+- Turning global off hides user from all circles.
+- Pause sharing immediately hides user.
+- Settings must save to backend.
+- Do not use local-only settings.
+
+Validation:
+- Global toggle works.
+- Per-trip setting works.
+- Per-event setting works.
+- Pause sharing works.
+- Settings persist after app restart.
+- Sharing is off if user disables global toggle.
+
+PHASE 8 — “Who Can See Me?” Preview
+
+Goal:
+Users should always know who can currently see them.
+
+Add a screen or bottom sheet:
+- “Who can see me right now?”
+- list eligible trip/event members
+- show context: Trip Circle or Event Circle
+- show visibility mode
+- show freshness/status being shared
+- pause sharing button
+- turn off for this trip/event button
+- global off shortcut
+
+Rules:
+- This list must use backend truth.
+- Do not include people blocked by the user.
+- Do not include non-members.
+- Do not include Telegraph-only participants.
+- Do not include followers unless they are also eligible trip/event members.
+- Do not imply hidden users can see them.
+
+Validation:
+- Preview accurately shows eligible viewers.
+- Pause/turn off works immediately.
+- Blocked users excluded.
+- Non-members excluded.
+- Telegraph-only users excluded.
+
+PHASE 9 — Trip Circle Screen
+
+Create or complete Trip Find Your Circle screen.
+
+Entry points:
+- Trip detail
+- Trip Crew section
+- Trip Telegraph
+- Safe Return / coordination card if present
+- Compass Trip Circle suggestion
+
+Trip Circle should show:
+- trip name
+- active circle members
+- member status
+- approximate area / venue if allowed
+- last updated label
+- meeting point
+- open Telegraph button
+- message member button where allowed
+- profile button
+- check-in button
+- “I’m with the group”
+- “I’m leaving”
+- “I need help”
+- pause my sharing button
+- settings button
+- who can see me button
+
+Member row:
+- circular avatar
+- display name
+- username/handle
+- trust/verified badge if public
+- status
+- visibility label if helpful
+- broad location label if allowed
+- freshness label
+- message/profile actions
+- report/block/hide menu
+
+Rules:
+- Only show members viewer can access.
+- Do not show hidden/blocked users.
+- Do not show exact GPS unless precise mode exists and is allowed.
+- Do not show users who have sharing off.
+- Do not show “tracking” language.
+- Use “Circle” / “Trip Circle” language.
+- Do not imply hidden users are nearby.
+
+Validation:
+- Trip Circle opens.
+- Only eligible members appear.
+- Settings off hides member.
+- Pause hides current user.
+- Telegraph opens correct trip thread.
+- Member profile opens Passport.
+- Report/block works from member row.
+
+PHASE 10 — Event Circle Screen
+
+Create or complete Event Find Your Circle screen.
+
+Entry points:
+- Event detail
+- Event attendee section
+- Event Telegraph
+- event check-in screen
+- event reminder card
+- Compass Event Circle suggestion
+
+Event Circle should show:
+- event name
+- active event circle members
+- check-in status
+- venue / broad area if allowed
+- event timing
+- event meeting point
+- group Telegraph button
+- “I arrived” check-in
+- “I’m with the group”
+- “I’m leaving”
+- “I need help”
+- pause my sharing
+- settings
+- who can see me
+
+Rules:
+- Event circle should only work for accepted event attendees/participants.
+- Interested/maybe users should not get access.
+- Waitlisted users should not get access.
+- Invite-only/private events must not expose Circle data to non-attendees.
+- Event circle should expire after event ends plus a short grace window.
+- Cancelled/hidden/rejected events should not expose Circle data.
+- Host cannot force users to share.
+
+Validation:
+- Accepted attendee sees Event Circle.
+- Non-attendee cannot see Circle.
+- Maybe/interested does not grant access.
+- Waitlisted user cannot see Circle.
+- Event end expires Circle.
+- Cancelled event hides Circle.
+
+PHASE 11 — Public Venue Meeting Point
+
+Goal:
+Find Your Circle should point people toward safe meeting points.
+
+Rules:
+- Trips/events can have a meeting point.
+- Map should prioritize meeting point over person location.
+- “Meet at venue” is safer than “go to this user.”
+- Host can update meeting point.
+- Members can open directions to meeting point.
+- Meeting point updates can post a card to Telegraph.
+- Exact home/work/private addresses should not be used by default.
+
+Validation:
+- Meeting point displays.
+- Directions go to venue, not person, by default.
+- Host updates sync to Circle and Telegraph.
+- Meeting point does not expose private addresses.
+
+PHASE 12 — Map / Direction Behavior
+
+Goal:
+Point users to their Circle without leaking exact locations.
+
+Map behavior:
+- show broad area pins or venue pins only
+- show “group nearby” style indicators
+- show venue/check-in marker if allowed
+- show route to meeting point or venue by default
+- show route to person only if precise mode is explicitly supported and allowed
+- show user’s own location only to themselves
+- show last updated timestamp
+- permission denied state falls back to list/status mode
+
+Rules:
+- Default to venue/broad area, not person GPS.
+- Do not expose exact live location by default.
+- Do not show movement trails.
+- Do not show home/work locations.
+- Do not retain location longer than needed.
+- If permission denied, show list/status mode.
+- Do not route users to stale person location.
+
+Validation:
+- Map shows broad/venue markers.
+- Exact location is not exposed.
+- Permission denied state works.
+- Stale location is not routed to.
+- Directions prioritize venue/meeting point.
+
+PHASE 13 — Circle Check-Ins
+
+Add simple check-ins.
+
+Check-in actions:
+- I arrived
+- I’m with the group
+- I’m leaving
+- I’m safe
+- I need help
+
+Rules:
+- Check-ins are context-specific.
+- Check-ins respect visibility settings.
+- “I need help” can trigger Safe Return/support flow if available.
+- Do not broadcast sensitive safety details to everyone.
+- Check-ins should expire or become stale.
+- Check-in can update circle_presence.status.
+- Venue check-in only shows venue if explicitly checked in.
+- Check-ins should be audit logged.
+
+Validation:
+- Check-in updates Circle status.
+- Check-in appears to eligible members.
+- Need help opens safe escalation flow.
+- Stale check-ins expire or show stale state.
+- Venue check-in is explicit only.
+
+PHASE 14 — Emergency vs Circle Separation
+
+Goal:
+Do not mix safety escalation with public Circle status.
+
+Rules:
+- “I need help” should not publicly expose detailed emergency info.
+- Safe Return escalation should be private to emergency/support flow.
+- Circle can show simple safe status only if user chooses.
+- Admin/support escalation data must not appear in normal Circle API.
+- Circle is coordination; Safe Return is safety escalation.
+- Other party should not receive sensitive details from unsafe action.
+- Emergency/support data should have separate permissioned access.
+
+Validation:
+- Emergency details are not visible to normal members.
+- Safe Return remains separate.
+- Circle status stays privacy-safe.
+- Normal Circle API does not return support/admin safety details.
+
+PHASE 15 — Telegraph Integration
+
+Goal:
+Find Your Circle should connect to Telegraph without making Telegraph itself a Circle permission.
+
+Trip Circle:
+- open Trip Telegraph
+- share circle status card
+- send “I’m here” card
+- send “meet at venue” card
+- send meeting point update card
+
+Event Circle:
+- open Event Telegraph
+- send check-in card
+- send venue card
+- send “I’m with the group” card
+- send meeting point update card
+
+Rules:
+- Telegraph membership does not grant Circle access by itself.
+- Circle cards in Telegraph should not expose hidden location to users who cannot view it.
+- Auto-translation should not alter location/status facts.
+- Removed trip/event members should lose Circle access according to policy.
+- Blocking should hide presence/cards where needed.
+- Circle cards should render access-safe placeholders for unauthorized viewers.
+
+Validation:
+- Circle card sends to correct Telegraph.
+- Unauthorized members do not receive private presence.
+- Auto-translation still works.
+- Removed member loses access.
+- Telegraph-only participant cannot view Circle card details.
+
+PHASE 16 — Notifications
+
+Send optional notifications:
+- Circle sharing turned on
+- Circle sharing paused
+- Circle sharing expired
+- Trip Circle active
+- Event Circle starting
+- trip/event member checked in
+- host updated meeting point
+- event group nearby
+- someone says “I need help”
+- admin disabled Circle for context
+
+Rules:
+- Respect notification preferences.
+- Do not spam.
+- Do not send exact location in notification.
+- “I need help” notifications should be careful and privacy-safe.
+- Notifications should open the correct Circle screen.
+- If user loses access before opening, show safe unavailable state.
+
+Validation:
+- Notifications fire.
+- Notification opens correct screen.
+- Exact location is not included.
+- Preferences respected.
+- Stale/inaccessible notification is safe.
+
+PHASE 17 — Compass Integration
+
+Compass can help with Circle coordination.
+
+Compass suggestions:
+- “Your Trip Circle is active”
+- “3 people from your event checked in”
+- “Meet your circle at the venue”
+- “Your circle is nearby”
+- “Turn on Find Your Circle for this trip?”
+- “Set a meeting point for your event”
+
+Rules:
+- Compass cannot bypass privacy settings.
+- Compass cannot infer private location.
+- Compass explanations must be privacy-safe.
+- Compass should not recommend tracking language.
+- Compass should not reveal hidden members.
+- Compass can only mention Circle to eligible trip/event members.
+
+Validation:
+- Compass card appears only when eligible.
+- Compass respects settings.
+- No private explanation leaks.
+- Compass does not suggest Circle for non-members.
+
+PHASE 18 — Discovery / Search / Passport / Public Surface Boundaries
+
+Find Your Circle must never become public discovery.
+
+Rules:
+- Circle members are not searchable because they are nearby.
+- Circle location does not appear in public Discovery.
+- Circle presence does not appear in public Search.
+- Circle presence does not appear on public Passport.
+- Circle presence does not appear in public maps.
+- Circle presence does not appear in follower/following lists.
+- Circle presence does not appear in like/reaction lists.
+- Circle presence does not appear in Rent a Buddy listings.
+- Circle presence does not affect public ranking.
+- Hashtag/location feeds cannot expose Circle presence.
+- Compass can only mention Circle to eligible members in same context.
+
+Validation:
+- Circle presence not public.
+- Search cannot access Circle data.
+- Passport does not leak Circle status.
+- Discovery/map does not leak Circle status.
+- Rent a Buddy does not show Circle status.
+
+PHASE 19 — Privacy and Block Rules
+
+Rules:
+- Blocked users cannot see each other in Circle.
+- Users who blocked viewer are hidden.
+- Muted users may be hidden/deprioritized according to app policy.
+- Suspended/banned/deleted users never appear.
+- Private account status does not block trip/event membership access by itself, but Circle sharing still requires settings on.
+- Follow relationship is irrelevant.
+- Exact location privacy always wins.
+- Location sharing stops when user leaves trip/event or context expires.
+- Hide from my Circle should hide that person if implemented.
+- Block overrides Circle visibility.
+
+Validation:
+- Blocking hides Circle presence.
+- Deleted/suspended users hidden.
+- Follow does not grant access.
+- Private account with sharing off stays hidden.
+- Leaving trip/event removes access.
+- Hide from Circle works if implemented.
+
+PHASE 20 — Guest / Pending / Waitlist Rules
+
+Goal:
+Only real accepted members should access Circle.
+
+Rules:
+- Pending trip invites do not grant Circle access.
+- Event waitlist does not grant Circle access.
+- Maybe/interested does not grant Circle access.
+- Declined users lose Circle access.
+- Removed users lose Circle access.
+- Cancelled participants lose Circle access.
+- Guests without account cannot access Circle unless product intentionally builds guest access later.
+
+Validation:
+- Pending invite cannot see Circle.
+- Waitlisted event user cannot see Circle.
+- Removed member loses access immediately.
+- Declined/cancelled user loses access.
+
+PHASE 21 — Multi-Trip / Multi-Event Conflict Handling
+
+Goal:
+A user may be in multiple active trips/events.
+
+Rules:
+- User chooses which active Circle they are sharing with.
+- Do not accidentally share one trip’s presence into another trip.
+- Event Circle and Trip Circle must stay separate unless explicitly linked.
+- If an event belongs to a trip, show clear context:
+  - “Sharing with this event”
+  - or “Sharing with this trip”
+- Do not merge circles automatically.
+- If sharing in multiple contexts, show that clearly in “Who can see me?”
+
+Validation:
+- User in two trips shares only with selected context.
+- Event Circle does not leak into unrelated Trip Circle.
+- Linked trip/event context is clear.
+- Who-can-see-me shows correct contexts.
+
+PHASE 22 — Stale Location and Freshness Labels
+
+Goal:
+Users should not think old location is current.
+
+Labels:
+- Just now
+- Updated 5 min ago
+- Stale
+- Offline
+- Sharing paused
+
+Rules:
+- Presence older than TTL should not appear as current.
+- Stale presence should either hide or clearly show stale.
+- Do not route users to stale person location.
+- Venue/check-in status should show timestamp.
+- Last updated labels must be visible anywhere presence appears.
+
+Validation:
+- Old presence becomes stale/offline.
+- Map does not route to stale person.
+- Timestamp displays clearly.
+- Stale state is not misleading.
+
+PHASE 23 — Expiration and Cleanup
+
+Goal:
+Circle data should not live forever.
+
+Rules:
+- Event Circle expires after event ends plus grace period.
+- Trip Circle expires after trip ends plus grace period.
+- Presence rows expire after short TTL.
+- Stale presence should show offline/stale or disappear.
+- Precise location, if ever stored, should have shortest TTL.
+- Cleanup job should remove/expire old presence.
+- Deleted users should be removed from Circle history.
+- Users should be able to clear Circle sharing history where product policy allows.
+
+Recommended retention:
+- active presence freshness: 15–30 minutes
+- stale presence: hidden after TTL
+- check-in history: keep only broad label and timestamp if kept
+- event circle: expire 2 hours after event end
+- trip circle: expire at trip end or 24 hours after trip end
+- precise GPS: avoid storing in V1; if stored later, short TTL only
+
+Validation:
+- Old event does not show Circle.
+- Stale presence disappears or marks stale.
+- Cleanup works.
+- Old location data not retained unnecessarily.
+- Deleted user does not remain visible.
+
+PHASE 24 — Permission State Truth
+
+Goal:
+The app should be honest about why Circle is or is not working.
+
+Show clear states:
+- Location permission off
+- Sharing off
+- Trip ended
+- Event ended
+- You are not a member
+- User paused sharing
+- No one is sharing right now
+- Admin disabled Circle
+- Circle unavailable in this city/context
+- Offline
+- Background location unavailable
+
+Rules:
+- Do not show broken blank maps.
+- Do not imply hidden users are nearby.
+- Do not say “nobody is here” when privacy/settings may be hiding users.
+- Use privacy-safe copy:
+  “No one is sharing right now.”
+- Provide settings CTA where useful.
+
+Validation:
+- Every disabled state has honest explanation.
+- No private information is implied through empty states.
+- No blank Circle/map screens.
+
+PHASE 25 — Offline Mode
+
+Goal:
+Circle should degrade safely when connectivity is poor.
+
+Rules:
+- If offline, show last known safe status only with timestamp.
+- Do not show stale data as live.
+- Do not queue precise location updates indefinitely.
+- Check-ins can queue only if safe and clearly marked pending.
+- “I need help” should try immediate send; if offline, show emergency guidance instead of pretending it sent.
+- Offline state should not imply current location.
+
+Validation:
+- Offline state is honest.
+- Pending check-in label appears.
+- Emergency action does not fake success.
+- Stale offline presence is labeled clearly.
+
+PHASE 26 — Battery and Permission Handling
+
+Goal:
+Location sharing should not kill battery or fail silently.
+
+Rules:
+- If location permission is denied, offer status-only and venue check-in.
+- If background location is not enabled, do not pretend live sharing works.
+- If app is backgrounded, show last updated label.
+- Prefer low-power approximate updates.
+- Do not request precise/background location unless feature truly needs it.
+- OS permission revocation should stop updates.
+
+Validation:
+- Permission denied state works.
+- Background limitation is explained.
+- User can still use status-only mode.
+- Revoked permission stops updates.
+
+PHASE 27 — Device Session Controls
+
+Goal:
+Sharing should respect account/device safety.
+
+Rules:
+- Logging out should stop active sharing from that device.
+- Account deactivation should stop all Circle sharing.
+- Password/security reset should pause sharing if security system supports it.
+- Sharing should not continue forever from a stale session.
+- If user revokes location permission in OS settings, Circle updates stop.
+- Suspended/banned users disappear.
+
+Validation:
+- Logout stops sharing.
+- Deactivated user disappears.
+- Revoked permission stops updates.
+- Suspended/banned user hidden.
+
+PHASE 28 — Trip/Event Host Controls
+
+Goal:
+Hosts need coordination tools, not tracking powers.
+
+Host can:
+- enable Circle suggestion card for the trip/event
+- set recommended meeting venue
+- send “meet here” card
+- remind members to check in
+- disable Circle for the trip/event if needed
+
+Host cannot:
+- force users to share location
+- see users with sharing off
+- bypass block/privacy settings
+- see precise location without explicit permission
+- expose Circle on public surfaces
+
+Validation:
+- Host can coordinate group.
+- Host cannot override user privacy.
+- Sharing remains voluntary.
+- Host meeting point works.
+
+PHASE 29 — Child / Minor Safety Gate If Age System Exists
+
+Goal:
+If the app supports age restrictions, Circle must respect them.
+
+Rules:
+- Minor users should have stricter defaults.
+- Precise location should be disabled for minors unless policy/legal review allows it.
+- Adult/minor Circle visibility should follow event/trip rules and safety policy.
+- Do not expose age publicly.
+- Admin/safety policy should control high-risk contexts.
+- High-risk event/trip contexts may disable Circle for minors.
+
+Validation:
+- Age-restricted safety rules apply if age system exists.
+- Age is not exposed publicly.
+- Precise mode is blocked for minors if policy requires.
+
+PHASE 30 — Abuse Reporting From Circle
+
+Goal:
+Users need a direct safety path from Circle UI.
+
+Actions from member row:
+- Report
+- Block
+- Hide from my Circle
+- Message in Telegraph if allowed
+- View Passport
+
+Rules:
+- Hide from my Circle only affects visibility to/from that person where policy supports it.
+- Block overrides Circle visibility.
+- Report connects to existing moderation.
+- Message does not bypass Telegraph/trip/event permissions.
+- Report/Block should be easy to reach.
+
+Validation:
+- Report works from Circle.
+- Block hides both users.
+- Hide from Circle works if implemented.
+- Message uses correct Telegraph permissions.
+
+PHASE 31 — Anti-Abuse and Rate Limits
+
+Goal:
+Prevent Circle from being abused.
+
+Protect against:
+- repeatedly refreshing someone’s status
+- scraping circle members
+- forcing frequent location updates
+- fake “need help” spam
+- harassment through Circle messages
+- screenshot/social pressure abuse where possible
+
+Rules:
+- Circle API must be paginated/rate-limited where needed.
+- Presence updates should be throttled.
+- “Need help” should be protected from spam but never blocked in real emergencies.
+- Block/report actions should be one tap away.
+- Admin can disable abusive context.
+- Do not expose full member graph through scrape-friendly endpoints.
+
+Validation:
+- API is not scrape-friendly.
+- Presence update spam is limited.
+- Safety actions remain accessible.
+- Admin can disable abusive context.
+
+PHASE 32 — Admin and Safety Controls
+
+Admin can:
+- disable Find Your Circle globally
+- disable per city/country if safety issue
+- disable for a trip/event
+- disable for specific user if abusive
+- inspect abuse reports
+- handle “I need help” escalations
+- suspend abusive users
+
+Rules:
+- Admin access must be permissioned.
+- Admin actions should be logged.
+- Normal users cannot access admin visibility.
+- Admin should not casually view precise location unless emergency policy supports it.
+- Admin/support escalation data must not appear in normal Circle responses.
+
+Validation:
+- Admin kill switch works.
+- Per-context disable works.
+- Admin actions logged.
+- Normal user blocked from admin routes.
+- Admin-only safety data remains private.
+
+PHASE 33 — Audit Log for Sensitive Actions
+
+Goal:
+Sensitive changes should be traceable.
+
+Log:
+- sharing enabled
+- sharing disabled
+- visibility mode changed
+- sharing paused
+- check-in created
+- need-help triggered
+- admin disabled context
+- host changed meeting point
+- consent accepted
+- who-can-see-me viewed if product wants
+- blocked/hidden from Circle
+
+Rules:
+- Normal users see simple history only if useful.
+- Admin audit is permissioned.
+- Do not log more precise location than needed.
+- Do not create location privacy leaks through logs.
+- Audit events should use minimal metadata.
+
+Validation:
+- Sensitive actions are logged.
+- Admin audit is permissioned.
+- Logs do not create privacy leaks.
+
+PHASE 34 — UI Copy and Naming
+
+Use clear, non-creepy language.
+
+Use:
+- Find Your Circle
+- Trip Circle
+- Event Circle
+- Circle sharing
+- Approximate area
+- Check in
+- With the group
+- Pause sharing
+- Meeting point
+- Who can see me
+
+Avoid:
+- Track
+- Stalk
+- Spy
+- Live tracking, unless precise mode is intentionally supported
+- Exact location, unless precise mode is explicitly active
+
+Suggested helper copy:
+“Your Circle only includes people in this trip or event. You choose whether you appear and what level of detail is shared.”
+
+Validation:
+- UI copy is privacy-safe.
+- No creepy tracking language appears.
+- Users understand sharing is optional.
+
+PHASE 35 — Error and Empty States
+
+States:
+- Circle sharing is off
+- No one is sharing right now
+- You are not in this trip/event
+- This event has ended
+- This trip has ended
+- Location permission is off
+- Couldn’t load Circle
+- Sharing paused
+- Circle unavailable
+- Find Your Circle disabled by admin
+- Offline
+- Meeting point not set
+- Event not active yet
+- Trip not active yet
+
+Rules:
+- Empty states should be honest.
+- Do not imply hidden users exist.
+- Provide settings CTA where useful.
+- Do not show blank screens.
+
+Validation:
+- Empty states render.
+- No blank screens.
+- Settings CTA works.
+- Empty copy does not leak privacy.
+
+PHASE 36 — API Routes / Services
+
+Create or complete backend routes.
+
+Suggested routes:
+- GET /api/circle/settings
+- PATCH /api/circle/settings
+- GET /api/circle/contexts/:type/:id/settings
+- PATCH /api/circle/contexts/:type/:id/settings
+- GET /api/circle/contexts/:type/:id/members
+- GET /api/circle/contexts/:type/:id/who-can-see-me
+- POST /api/circle/contexts/:type/:id/presence
+- POST /api/circle/contexts/:type/:id/check-in
+- POST /api/circle/contexts/:type/:id/pause
+- POST /api/circle/contexts/:type/:id/resume
+- POST /api/circle/contexts/:type/:id/hide-user
+- POST /api/circle/contexts/:type/:id/meeting-point
+- DELETE /api/circle/contexts/:type/:id/meeting-point
+- POST /api/circle/contexts/:type/:id/need-help
+- GET /api/admin/circle/reports
+- POST /api/admin/circle/disable-context
+- POST /api/admin/circle/kill-switch
+
+Rules:
+- Use existing route style if different.
+- Validate context type.
+- Enforce backend access guard.
+- Return public-safe fields only.
+- Do not return precise location unless explicitly allowed.
+- Rate-limit presence reads/updates.
+- Do not return hidden/blocked users.
+
+Validation:
+- Routes work.
+- Unauthorized requests blocked.
+- Invalid context rejected.
+- Public-safe response shape.
+- Rate limits work where implemented.
+
+PHASE 37 — Response Shapes
+
+Circle member response should include:
+- user id
+- avatar URL
+- fallback initials
+- display name
+- username/handle
+- verified/trust badge if public
+- status
+- visibility mode
+- approximate label if allowed
+- venue label if allowed
+- public map coordinate only if allowed
+- freshness label
+- last updated timestamp
+- canMessage boolean
+- canViewProfile boolean
+- safety actions allowed
+
+Do not include:
+- email
+- phone
+- exact GPS by default
+- private verification details
+- private safety data
+- private emergency details
+- hidden admin notes
+- private trip/event fields
+- private home/work location
+
+Validation:
+- Response shape is consistent.
+- Private fields are absent.
+- Visibility mode controls returned data.
+
+PHASE 38 — Data Retention Rules
+
+Goal:
+Circle location/status data should not stay forever.
+
+Rules:
+- Presence records expire automatically.
+- Old approximate location/status should be deleted or anonymized.
+- Check-ins can remain as trip/event history only if privacy-safe.
+- Precise location, if ever supported, must have shortest retention window.
+- Deleted users should be removed from Circle history.
+- Users should be able to clear their Circle sharing history where product policy allows.
+- Logs should avoid precise location.
+
+Recommended retention:
+- live/active presence: 15–30 minute freshness window
+- stale presence: hidden after TTL
+- check-in history: keep broad label and timestamp only
+- precise GPS: avoid storing in V1; if stored later, short TTL only
+
+Validation:
+- Old presence expires.
+- Stale data is not shown as live.
+- Precise data is not retained unnecessarily.
+- Deleted user does not remain visible.
+
+PHASE 39 — Tests
+
+Backend tests:
+- first enable requires consent
+- consent timestamp saves
+- global setting off hides user
+- per-trip setting off hides user
+- per-event setting off hides user
+- pause sharing hides user
+- who-can-see-me returns correct eligible viewers
+- status_only returns no location
+- approximate_area returns no precise GPS
+- venue_checkin returns only explicit venue
+- same trip member can view eligible presence
+- non-trip member cannot view
+- same event attendee can view eligible presence
+- maybe/interested event user cannot view
+- waitlisted event user cannot view
+- pending trip invite cannot view
+- blocked user cannot view
+- hidden-from-circle user cannot view if implemented
+- removed trip member loses access
+- event end expires Circle
+- trip end expires Circle
+- stale presence hidden or marked stale
+- Telegraph membership alone does not grant access
+- follow relationship alone does not grant access
+- admin kill switch disables Circle
+- per-context admin disable works
+- cleanup expires old presence
+- meeting point create/update works
+- host cannot force user sharing
+- need-help does not expose emergency data in normal response
+- offline/stale data not returned as live
+- API rejects invalid context type
+- response contains no private fields
+
+Frontend tests:
+- Find Your Circle settings render
+- first enable consent renders
+- global toggle works
+- per-trip setting works
+- per-event setting works
+- pause sharing works
+- who-can-see-me renders
+- Trip Circle opens
+- Event Circle opens
+- eligible members render
+- hidden members do not render
+- status-only row has no map pin
+- approximate map does not show exact GPS
+- venue check-in displays correctly
+- meeting point displays
+- directions prioritize venue
+- check-in actions work
+- need-help opens safety flow
+- Telegraph opens correct thread
+- empty states render
+- permission denied state works
+- offline state works
+- stale labels render
+- report/block menu works
+- no tracking language appears
+
+Regression:
+- Trips still load
+- Events still load
+- Telegraph still loads
+- Safe Return still works
+- Discovery/Search do not leak Circle
+- Passport does not leak Circle
+- Compass respects privacy
+- Rent a Buddy does not show Circle status
+- Universal engagement lists do not show Circle status
+
+PHASE 40 — Manual QA Checklist
+
+Settings:
+- Global Find Your Circle toggle works.
+- First enable shows consent.
+- Consent can be cancelled.
+- Trip-specific setting works.
+- Event-specific setting works.
+- Pause sharing hides user.
+- Who-can-see-me preview is accurate.
+- Settings persist after app restart.
+
+Trip:
+- Trip member with sharing on appears.
+- Trip member with sharing off does not appear.
+- Non-trip member cannot view Circle.
+- Pending invite cannot view Circle.
+- Removed member loses access.
+- Trip Telegraph opens.
+- Meeting point appears.
+
+Event:
+- Accepted attendee appears if sharing on.
+- Interested/maybe user cannot view.
+- Waitlisted user cannot view.
+- Event ends and Circle expires.
+- Event Telegraph opens.
+- Meeting point appears.
+
+Privacy:
+- Blocked user hidden.
+- Follow does not grant access.
+- Telegraph alone does not grant access.
+- Exact GPS not shown by default.
+- Passport/Search/Discovery do not leak Circle.
+- Rent a Buddy does not leak Circle.
+- Like/reaction lists do not leak Circle.
+- Who-can-see-me excludes blocked/non-members.
+
+Map:
+- Broad area works.
+- Venue check-in works.
+- Meeting point works.
+- Permission denied state works.
+- Stale status handled.
+- Directions go to venue/meeting point by default.
+
+Safety:
+- I need help works.
+- Emergency details do not leak to normal Circle.
+- Report works.
+- Block works.
+- Admin kill switch works.
+- No creepy tracking language appears.
+
+Expiration:
+- Old presence expires.
+- Event end stops Circle.
+- Trip end stops Circle.
+- Logout/deactivation stops sharing.
+- Offline state is honest.
+
+PHASE 41 — Documentation
+
+Update docs for:
+- Find Your Circle product scope
+- visibility modes
+- consent behavior
+- backend access guard
+- trip/event membership requirements
+- Telegraph separation
+- Safe Return separation
+- public surface restrictions
+- retention/cleanup rules
+- admin controls
+- exact GPS deferral
+- testing checklist
+
+Rules:
+- Document what is complete.
+- Document what is intentionally deferred.
+- Document that precise live location is off/deferred unless explicitly implemented.
+- Document that Circle is never public Discovery.
+
+Validation:
+- Docs updated.
+- Deferred items are clearly listed.
+- Privacy lock is documented.
+
+PHASE 42 — Final Find Your Circle Lock Rule
+
+Lock the product meanings:
+
+- Trip member = trip access truth.
+- Event attendee = event access truth.
+- Telegraph participant = chat access truth.
+- Find Your Circle = optional visibility/status coordination.
+- Follow = social graph truth.
+- Location sharing = explicit user-controlled setting.
+- Check-in = user action, not automatic tracking.
+- Safe Return = safety escalation, not public Circle visibility.
+- Meeting point = group coordination target.
+- Compass = suggestion layer, not access permission.
+- Discovery/Search/Passport = public surfaces that must not show Circle presence.
+
+Rules:
+- Being in a trip/event is required but not enough; settings must be on.
+- Following someone does not grant Circle access.
+- Telegraph membership does not grant Circle access.
+- Find Your Circle does not expose public Discovery location.
+- Find Your Circle does not expose public Passport status.
+- Find Your Circle does not expose Search results.
+- Find Your Circle does not expose Rent a Buddy listings.
+- Exact GPS is off by default.
+- Users can pause or disable sharing anytime.
+- Circle visibility expires after trip/event ends.
+- Safe Return emergency details stay separate.
+- Circle presence never affects public ranking.
+
+PHASE 43 — Final Acceptance Criteria
+
+Find Your Circle is complete when:
+
+- Users explicitly consent before enabling.
+- Users can turn Find Your Circle on/off globally.
+- Users can control sharing per trip.
+- Users can control sharing per event.
+- Users can pause sharing instantly.
+- Users can see “who can see me.”
+- Users can choose privacy-safe visibility mode.
+- Trip Circle shows only eligible trip members with settings on.
+- Event Circle shows only eligible event attendees with settings on.
+- Pending/waitlisted/maybe users cannot access Circle.
+- Removed/declined/cancelled users lose access.
+- Non-members cannot access Circle data.
+- Blocked users cannot access Circle data.
+- Follow does not grant Circle access.
+- Telegraph membership alone does not grant Circle access.
+- Circle presence uses backend truth.
+- Location/status sharing uses backend settings.
+- Exact GPS is not exposed by default.
+- Check-ins work.
+- Meeting points work.
+- Directions prioritize venue/meeting point over person location.
+- Stale/freshness labels exist.
+- Offline/permission states degrade safely.
+- Telegraph integration works without leaking private location.
+- Compass can suggest Circle actions without bypassing privacy.
+- Discovery/Search/Passport/Rent a Buddy/public maps do not leak Circle status.
+- Circle data expires after trip/event ends.
+- Admin safety controls exist.
+- Abuse reporting exists.
+- Audit logs exist.
+- Retention/cleanup exists.
+- Tests pass.
+- No fake local-only Circle data remains.
+- No unrelated systems were rebuilt.
+
+Deliverable:
+Build a real Find Your Circle system for Travel Buddy that points users to their trip/event circle only when users intentionally enable sharing for that context. Wire backend settings, explicit consent, trip/event access guards, Circle presence, visibility modes, check-ins, who-can-see-me preview, broad-area/venue-first map UI, meeting points, Telegraph integration, Compass suggestions, expiration cleanup, offline/permission handling, abuse reporting, admin controls, audit logs, documentation, and tests. Keep it consent-based, backend-truth-based, privacy-safe, non-public, time-limited, and separate from follows, Telegraph membership, trip membership, event attendance, Rent a Buddy, public Discovery/Search/Passport, and Safe Return.
