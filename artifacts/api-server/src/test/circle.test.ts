@@ -18,6 +18,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import circleRouter from "../routes/circle.js";
 import { checkRateLimit, _resetRateLimit } from "../lib/rateLimit.js";
+import { renderTemplate } from "../services/notifications/NotificationTemplateService.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
@@ -1354,5 +1355,58 @@ describe("Rate limiting", () => {
       visibilityMode: "status_only",
     });
     assert.equal(r.status, 429, "presence update should be rate-limited after bucket exhaustion");
+  });
+});
+
+// ── Privacy regression checks ─────────────────────────────────────────────────
+
+describe("Privacy regression checks", () => {
+  it("circle.meeting_point_updated template body never contains venue or location text", () => {
+    // Regression guard: the template must NOT render venue names, area labels,
+    // or any location-bearing text in the notification body. Only generic status
+    // + deep-link. Even if callers accidentally pass venueLabel / approximateLabel
+    // the template should not emit them.
+    const rendered = renderTemplate("circle.meeting_point_updated", {
+      actor: "Alice",
+      contextType: "trip",
+      contextId: TRIP_ID,
+      contextTitle: "Tokyo Trip",
+      // intentionally pass location fields to verify they are ignored
+      venueLabel: "Shinjuku Station West Exit",
+      approximateLabel: "Shinjuku, Tokyo",
+    });
+    assert.ok(rendered, "template should render");
+    const body = rendered!.body;
+    assert.ok(!body.includes("Shinjuku Station"), "body must not include venue name");
+    assert.ok(!body.includes("Shinjuku, Tokyo"), "body must not include approximate label");
+    assert.ok(!body.toLowerCase().includes("head to:"), "body must not use 'Head to:' phrasing");
+    // Must be a safe, generic message with only a deep-link via actionUrl
+    assert.ok(body.includes("meeting point"), "body should describe what changed");
+    assert.ok(rendered!.actionUrl?.includes(TRIP_ID), "actionUrl must reference the context");
+  });
+
+  it("compass-suggestions excludes events where caller has RSVP but no event_attendees row", async () => {
+    // Regression guard: canonical event membership requires BOTH going RSVP AND
+    // an event_attendees row. A user with only an RSVP (e.g. sync not yet run)
+    // must NOT receive Circle prompts for that event context.
+    resetState();
+    _resetRateLimit();
+    const c = makeClient(VIEWER_ID);
+    _setTestClient(c as any, true);
+    _setTestServiceClient(c as any);
+
+    // Remove trip membership so the only potential context is the event.
+    state.tripMembers = [];
+    // Keep event RSVP (going) but remove the event_attendees row for VIEWER_ID.
+    state.eventAttendees = state.eventAttendees.filter((r) => r.user_id !== VIEWER_ID);
+
+    const r = await req("GET", "/circle/compass-suggestions");
+    assert.equal(r.status, 200);
+    // Without the attendees row the event context must be excluded → no cards.
+    assert.deepEqual(
+      r.body.cards,
+      [],
+      "RSVP-only (no event_attendees row) must yield zero event Circle cards",
+    );
   });
 });

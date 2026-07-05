@@ -845,17 +845,15 @@ export const TEMPLATES: NotificationTemplate[] = [
     actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,
   }),
   tpl({
+    // Privacy: body must NOT include venue names, area labels, or any location text.
+    // The deep-link takes the user to the authorized Circle meeting-point endpoint.
     eventType: 'circle.meeting_point_updated',
     category: 'trips',
     defaultPriority: 'important',
     defaultChannels: ['in_app', 'push'],
     title: ({ contextTitle }) => `Meeting point updated${contextTitle ? ` · ${contextTitle}` : ''}`,
-    body: ({ venueLabel, approximateLabel }) =>
-      venueLabel
-        ? `Head to: ${venueLabel}${approximateLabel ? ` (${approximateLabel})` : ''}`
-        : approximateLabel
-          ? `Head to: ${approximateLabel}`
-          : 'The host updated the meeting point. Tap to see details.',
+    body: ({ contextTitle }) =>
+      `${contextTitle ? `In ${contextTitle} — ` : ''}The host updated the meeting point. Tap to see details.`,
     actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,
   }),
   tpl({

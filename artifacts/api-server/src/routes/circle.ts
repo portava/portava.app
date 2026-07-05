@@ -1276,12 +1276,10 @@ router.post("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
         resolveContextTitle(sc, type as ContextType, id),
       ]);
       const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "The host";
-      const safeVenue = parsed.data.venueLabel ?? null;
-      const safeArea  = parsed.data.approximateLabel ?? null;
       const recipients = memberIds.filter((m) => m !== user.id);
+      // Privacy: no venue/location fields in notification params — status + deep-link only.
       await sendCircleNotifications(sc, recipients, "circle.meeting_point_updated", {
         actor: actorName, contextTitle, contextType: type, contextId: id,
-        venueLabel:       safeVenue ?? "", approximateLabel: safeArea ?? "",
       });
       // Telegraph status card: subtype only — no venue/location data in body (server-side privacy).
       void postCircleStatusCard(sc, type as ContextType, id, user.id, "meeting_point");
@@ -1357,12 +1355,10 @@ router.patch("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
         resolveContextTitle(sc, type as ContextType, id),
       ]);
       const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "The host";
-      const safeVenue = parsed.data.venueLabel ?? null;
-      const safeArea  = parsed.data.approximateLabel ?? null;
       const recipients = memberIds.filter((m) => m !== user.id);
+      // Privacy: no venue/location fields in notification params — status + deep-link only.
       await sendCircleNotifications(sc, recipients, "circle.meeting_point_updated", {
         actor: actorName, contextTitle, contextType: type, contextId: id,
-        venueLabel: safeVenue ?? "", approximateLabel: safeArea ?? "",
       });
       void postCircleStatusCard(sc, type as ContextType, id, user.id, "meeting_point");
     } catch { /* non-fatal */ }
@@ -1423,9 +1419,9 @@ router.delete("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
       ]);
       const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "The host";
       const recipients = memberIds.filter((m) => m !== user.id);
+      // Privacy: no venue/location fields — status + deep-link only.
       await sendCircleNotifications(sc, recipients, "circle.meeting_point_updated", {
         actor: actorName, contextTitle, contextType: type, contextId: id,
-        venueLabel: "", approximateLabel: "Meeting point removed",
       });
     } catch { /* non-fatal */ }
   })();
@@ -1581,14 +1577,21 @@ router.get("/circle/compass-suggestions", async (req, res) => {
   }
 
   // Step 1: discover caller's contexts using canonical membership tables.
-  // circle_members has no migration — trip_members / event_rsvps are the source of truth.
-  const [tripMemberRes, eventRsvpRes] = await Promise.all([
+  // circle_members has no migration — trip_members / event_rsvps + event_attendees are the source of truth.
+  // Events require BOTH an accepted RSVP (going) AND an event_attendees row — same gate as isAcceptedMember.
+  const [tripMemberRes, eventRsvpRes, eventAttendeeRes] = await Promise.all([
     sc.from("trip_members").select("trip_id").eq("user_id", user.id).eq("status", "accepted").limit(20),
     sc.from("event_rsvps").select("event_id").eq("user_id", user.id).eq("status", "going").limit(20),
+    sc.from("event_attendees").select("event_id").eq("user_id", user.id).limit(20),
   ]);
+  // Intersect: only include events where the caller appears in both tables (canonical check).
+  const rsvpEventIds   = new Set(((eventRsvpRes.data     ?? []) as any[]).map((r) => r.event_id as string));
+  const attendeeEventIds = new Set(((eventAttendeeRes.data ?? []) as any[]).map((r) => r.event_id as string));
+  const eligibleEventIds = [...rsvpEventIds].filter((id) => attendeeEventIds.has(id));
+
   const myContexts: { context_type: string; context_id: string }[] = [
     ...((tripMemberRes.data  ?? []) as any[]).map((r) => ({ context_type: "trip",  context_id: r.trip_id  as string })),
-    ...((eventRsvpRes.data   ?? []) as any[]).map((r) => ({ context_type: "event", context_id: r.event_id as string })),
+    ...eligibleEventIds.map((eid) => ({ context_type: "event", context_id: eid })),
   ];
 
   if (myContexts.length === 0) {
