@@ -13,6 +13,7 @@ import { useCityPulse } from '../../src/hooks/useCityPulse';
 import { useFollowingFeed } from '../../src/hooks/usePosts';
 import { usePulseFeed } from '../../src/hooks/usePulseFeed';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
+import { useCircleFlag } from '../../src/hooks/useCircleFlag';
 import { fetchPreferences } from '../../src/services/intelligence';
 import { STATUS_LABEL } from '../../src/lib/availability';
 import type { PulseFilter, PulseFeedItem } from '../../src/types/models';
@@ -24,6 +25,7 @@ import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { Plane, Users, MapPin } from 'lucide-react-native';
 import { PeopleYouMayKnow } from '../../src/components/PeopleYouMayKnow';
+import { CircleCompassSuggestions } from '../../src/components/CircleCompassSuggestions';
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
 
@@ -85,6 +87,7 @@ export default function Pulse() {
   const [categoryAffinities, setCategoryAffinities] = useState<Record<string, number>>({});
   const [peopleRefreshKey, setPeopleRefreshKey] = useState(0);
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
+  const { enabled: circleEnabled } = useCircleFlag();
 
   // Comment count overrides: populated by the post detail screen via commentCountStore.
   // Initialised from the store snapshot so overrides from a previous visit are applied
@@ -302,6 +305,9 @@ export default function Pulse() {
           </Pressable>
         </View>
       )}
+
+      {/* Circle suggestions — shown in For You mode when find_your_circle_enabled flag is on */}
+      {feedMode === 'forYou' && circleEnabled && <CircleCompassSuggestions />}
 
       {/* People you may know — shown in For You mode only */}
       {feedMode === 'forYou' && <PeopleYouMayKnow refreshKey={peopleRefreshKey} />}

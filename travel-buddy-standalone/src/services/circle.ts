@@ -413,3 +413,33 @@ export async function patchMeetingPoint(
     return { ok: false, error: e?.message ?? 'network_error' };
   }
 }
+
+// ── Compass suggestions ───────────────────────────────────────────────────────
+
+export interface CompassCircleCard {
+  cardType: 'circle_active' | 'turn_on_circle' | 'set_meeting_point';
+  contextType: string;
+  contextId: string;
+  contextTitle: string;
+  metadata: {
+    activeCount?: number;
+    othersActiveCount?: number;
+  };
+}
+
+/**
+ * Returns Circle-state suggestion cards for the caller's active Circle contexts.
+ * Each card is an actionable prompt the Compass feed surfaces.
+ * Returns an empty array when the caller has no contexts or the flag is off.
+ */
+export async function getCompassSuggestions(): Promise<ServiceResult<{ cards: CompassCircleCard[] }>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
+  try {
+    const res = await authedFetch('/api/circle/compass-suggestions');
+    const data = await res.json();
+    if (res.ok) return { ok: true, data };
+    return { ok: false, error: data.error ?? 'unknown', status: res.status };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'network_error' };
+  }
+}
