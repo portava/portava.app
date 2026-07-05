@@ -1,0 +1,658 @@
+Full Travel Buddy Audit: Today’s Work, Completion Status, Gaps, and Database Schema
+
+Goal:
+Run a complete audit of everything planned, changed, migrated, or scoped today. Produce a clear report showing:
+
+1. What is actually finished and verified.
+2. What is partially done.
+3. What is only planned/spec’d but not implemented.
+4. What is broken or risky.
+5. What database schema currently exists in production.
+6. What database schema is still needed for the planned systems.
+7. What tasks should be done next, in priority order.
+
+Important:
+Be honest. Do not mark anything finished unless it exists in code/database and passes verification. Specs/commands/plans do not count as finished implementation.
+
+Systems to audit:
+- Migration 0103 post media deployment
+- followers_only post visibility
+- Follow-only social graph
+- Universal like/reaction viewer
+- Rent a Buddy
+- Find Your Circle
+- Posts/Postcards/media
+- Passport profile/social/media
+- Trips
+- Events
+- Telegraph
+- Discovery/Search/Compass integration points
+- Hidden Gems/Places integration points
+- Notifications/activity center
+- Privacy/block/report/RLS policies
+
+PHASE 1 — Read Project Docs and Migration History
+
+Read:
+- database/migration docs
+- docs/migrations.md
+- pre-release/deployment docs
+- Supabase/runbook docs
+- canonical migrations directory
+- latest migration files around 0103 and any 0104/followers_only attempt
+- generated database types if present
+- schema dump files if present
+- current API route docs if present
+
+Report:
+- canonical migrations directory
+- latest documented migration
+- latest migration file present
+- latest production migration confirmed in docs
+- whether 0103 is documented
+- whether 0104 exists
+- whether followers_only has a migration file
+- whether docs and migration files match production truth
+
+PHASE 2 — Production Schema Introspection
+
+Use the same Supabase production introspection path used for Task #1671. Do not use Replit’s built-in PostgreSQL as production truth.
+
+Introspect and report all tables related to:
+
+Core users/profile:
+- profiles
+- users/auth-linked profile table
+- user privacy/settings tables
+- blocks/mutes/reports tables
+- verification/trust tables
+
+Social graph:
+- user_follows
+- any friend/friend_request legacy tables
+- follow request tables if any
+- profile counts/materialized views if any
+
+Posts/Postcards/media:
+- posts
+- passport_postcards
+- post_media
+- post likes/reactions tables
+- comments/replies tables
+- saves/bookmarks tables
+- hashtags/tagging tables
+
+Trips:
+- trips
+- trip_members
+- trip invites/requests
+- trip posts/Postcards
+- trip Telegraph linkage
+
+Events:
+- events
+- event attendees/participants
+- event join requests
+- event comments
+- event posts/Postcards
+- event Telegraph linkage
+
+Telegraph:
+- conversations/threads
+- messages
+- message participants
+- message reactions
+- translations
+- trip/event/buddy conversation linkage
+
+Discovery/Search/Compass:
+- saved searches
+- compass feedback/settings/context
+- recommendation tables if present
+- hidden gems/places tables
+- saved places/bookmarks
+
+Rent a Buddy:
+- buddy_profiles
+- buddy_services
+- buddy_availability
+- buddy_booking_requests
+- buddy_reviews
+- buddy_payments/payouts if any
+- buddy reports/disputes if any
+- buddy favorites if any
+
+Find Your Circle:
+- circle_visibility_settings
+- circle_context_settings
+- circle_presence
+- circle_checkins
+- circle_meeting_points
+- circle audit/events
+- any existing location sharing tables
+
+Notifications/activity:
+- notifications
+- activity_events
+- user notification settings
+
+For each table, report:
+- exists / missing
+- columns
+- column types
+- nullable/defaults
+- primary key
+- foreign keys
+- unique constraints
+- indexes
+- RLS enabled yes/no
+- RLS policies
+- row counts if safe
+- obvious schema gaps
+
+PHASE 3 — Enum and Type Audit
+
+Inspect all relevant enum types.
+
+At minimum:
+- post_visibility
+- post_status
+- delayed_post_status
+- post_location_privacy_mode
+- location_source
+- location_sensitivity_level
+- any event status/visibility enums
+- any trip status/visibility enums
+- any buddy status/payment/booking enums
+- any Telegraph enums
+- any report/moderation enums
+
+Specifically verify:
+- Does post_visibility include followers_only?
+- Does any policy still reference invalid followers?
+- Does any policy still reference invalid friends_only?
+- Does frontend/backend reference values not present in production enum?
+- Are enum values documented?
+
+Report:
+- exact enum values
+- invalid references found in code/policies
+- required enum migrations
+
+PHASE 4 — RLS Policy Audit
+
+Audit RLS policies for:
+- posts
+- passport_postcards
+- post_media
+- user_follows
+- trip members/content
+- event attendees/content
+- Telegraph messages/participants
+- likes/reactions
+- buddy marketplace tables if present
+- circle/location tables if present
+- reports/moderation tables
+
+For each policy, report:
+- table
+- policy name
+- command
+- roles
+- USING expression
+- WITH CHECK expression
+- whether it references existing columns
+- whether it references valid enum values
+- whether it accidentally exposes private/followers-only/trip-only/event-only content
+- whether it protects blocked users where required
+- whether it relies on frontend-only filtering
+
+Special check:
+The earlier failed followers_only policy used posts.user_id, but production posts owner column is author_id. Search all policies and code for posts.user_id or user_id assumptions on posts.
+
+PHASE 5 — Today’s Actual Completion Status
+
+Produce a status table with these columns:
+
+- System
+- Planned today
+- Implemented in code
+- Implemented in production DB
+- Verified with tests/introspection
+- Status
+- Evidence
+- Remaining gaps
+- Next action
+
+Systems:
+
+1. Migration 0103 post_media
+2. followers_only post visibility
+3. Follow-only social graph
+4. Universal like/reaction viewer
+5. Rent a Buddy
+6. Find Your Circle
+7. Profile/Passport media integration
+8. Posts/Postcards media/video
+9. Events integration
+10. Trips integration
+11. Telegraph integration
+12. Discovery/Search/Compass integration
+13. Hidden Gems/Places integration
+14. Notifications/activity integration
+15. Privacy/block/report integration
+
+Status values:
+- Finished and verified
+- Partially implemented
+- Schema exists but app not wired
+- App UI exists but backend not wired
+- Spec only / not implemented
+- Broken / risky
+- Unknown, needs deeper inspection
+
+Rules:
+- Do not call something finished because a command/spec exists.
+- Only mark finished if code/database/tests prove it.
+- Be explicit about evidence.
+
+PHASE 6 — followers_only Visibility Audit
+
+Audit the current state of follower-only visibility.
+
+Check production:
+- post_visibility enum values
+- posts.visibility type
+- passport_postcards.visibility type
+- posts SELECT policy
+- passport_postcards SELECT policy
+- post_media SELECT policy
+- RLS enabled on relevant tables
+- any rows using followers_only
+- whether policies use author_id
+- whether policies reference user_follows.follower_id and user_follows.following_id
+- whether user_follows has no status column
+- whether approved follow is represented by row existence
+
+Check code:
+- post create validation
+- post update validation
+- Postcard create/update validation
+- frontend visibility picker
+- feed queries
+- Passport post queries
+- Pulse queries
+- hashtag/search/Compass queries
+- like/reaction access guard
+- media access
+
+Report:
+- whether followers_only is production-ready
+- what SQL still needs applying
+- what backend/API changes are missing
+- what frontend changes are missing
+- what tests are missing
+
+PHASE 7 — Follow-Only Social Graph Audit
+
+Audit whether the app truly uses Follow-only social graph.
+
+Check:
+- profile UI
+- public Passport
+- owner Passport
+- user cards
+- Discovery traveler cards
+- Search user cards
+- Compass user cards
+- Telegraph profile previews
+- Trip Crew member previews
+- Event attendee previews
+- Rent a Buddy previews
+- backend relationship tables/routes
+- follow request/private account handling
+- follower/following counts
+- followers/following lists
+- mutuals
+- block integration
+- legacy friend code
+
+Report:
+- all places Add Friend still appears
+- all places friend wording still appears
+- whether follow state is backend-backed
+- whether counts are real
+- whether followers/following lists exist
+- whether mutuals exist
+- whether private account requests exist
+- whether user_follows is enough or needs request/status table
+- schema needed to complete
+
+PHASE 8 — Universal Like / Reaction Viewer Audit
+
+Audit current engagement state.
+
+Check:
+- post likes
+- postcard likes
+- video likes
+- comment likes
+- event likes/reactions
+- trip likes/reactions
+- place/hidden gem likes
+- buddy profile likes/favorites
+- Telegraph message reactions
+- review helpful votes
+- like counts
+- like list endpoints
+- tappable like counts
+- privacy/access guards
+- blocked/deleted/banned filtering
+- universal reusable viewer component
+
+Report:
+- what content types have likes/reactions now
+- which counts are tappable
+- which lists are backend-backed
+- which systems are save/bookmark only
+- whether likes expose private users
+- whether save/booked/viewed/reported lists are accidentally exposed
+- schema needed to complete universal engagement
+
+PHASE 9 — Rent a Buddy Audit
+
+Audit actual Rent a Buddy implementation.
+
+Check:
+- screens/routes
+- database tables
+- buddy application flow
+- admin approval
+- service listings
+- pricing
+- availability
+- booking request flow
+- booking lifecycle
+- Telegraph integration
+- reviews
+- reports/disputes
+- payments/payout status
+- safety boundary copy
+- non-dating/non-adult enforcement
+- Discovery/Search/Compass integration
+- Passport integration
+- Trip/Event/Gem integrations
+- tests
+
+Report:
+- what exists
+- what is placeholder
+- what buttons are no-op
+- what backend tables are missing
+- what endpoints are missing
+- what privacy/safety gaps exist
+- full schema needed to complete Rent a Buddy
+- prioritized implementation phases
+
+PHASE 10 — Find Your Circle Audit
+
+Audit whether any Circle/location coordination exists.
+
+Check:
+- trip circle UI
+- event circle UI
+- location settings
+- circle/presence tables
+- check-ins
+- meeting points
+- who-can-see-me preview
+- per-trip/per-event sharing settings
+- consent
+- stale/TTL cleanup
+- Telegraph integration
+- Compass suggestions
+- public surface leak prevention
+- Safe Return separation
+- admin controls
+- tests
+
+Report:
+- what exists
+- what is placeholder
+- whether any location sharing currently leaks
+- whether Circle is separate from Safe Return
+- whether Telegraph membership is separate
+- whether trip/event membership is enforced
+- full schema needed to complete Find Your Circle
+- prioritized implementation phases
+
+PHASE 11 — Full Current Database Schema Report
+
+Produce a full current schema report grouped by feature.
+
+For each table include:
+
+text Table: Purpose: Exists: yes/no Columns: Primary key: Foreign keys: Indexes: Unique constraints: Enums used: RLS enabled: Policies: Known issues: Used by screens/routes: 
+
+Groups:
+1. Users/Profile/Passport
+2. Social graph/follows
+3. Posts/Postcards/media
+4. Likes/reactions/comments/saves
+5. Trips
+6. Events
+7. Telegraph
+8. Discovery/Search/Compass
+9. Hidden Gems/Places
+10. Rent a Buddy
+11. Find Your Circle/location
+12. Notifications/activity
+13. Reports/moderation/safety
+14. Payments/payouts if any
+15. Admin/config/feature flags
+
+PHASE 12 — Full Needed Database Schema Report
+
+Based on today’s planned systems, produce the required missing schema grouped by feature.
+
+Include:
+- table name
+- purpose
+- columns
+- indexes
+- constraints
+- RLS requirements
+- dependencies
+- migration priority
+- whether table already exists and only needs extension
+- whether table is new
+
+Must include missing/needed schema for:
+- follow-only social graph request/visibility support
+- followers_only post visibility support
+- universal engagement viewer
+- Rent a Buddy
+- Find Your Circle
+- privacy/settings
+- audit logs
+- admin kill switches
+- notification preferences if needed
+
+PHASE 13 — Code Wiring Audit
+
+For each system, trace frontend → API → database → RLS/policy.
+
+Report:
+- screen/component
+- action/button
+- API call
+- backend route
+- database table
+- RLS/access guard
+- test coverage
+- status
+
+Systems:
+- create/edit post visibility
+- view followers-only post
+- media access
+- like count tap
+- follow/unfollow
+- followers/following counts
+- Rent a Buddy request booking
+- buddy approval
+- Find Your Circle settings
+- Trip Circle open
+- Event Circle open
+- Telegraph integration
+
+Flag:
+- no-op buttons
+- fake local state
+- missing API calls
+- missing backend routes
+- frontend-only privacy
+- table/column mismatch
+- enum mismatch
+- dead routes
+- broken imports
+
+PHASE 14 — Test Coverage Audit
+
+Run existing tests.
+
+Then report missing tests for:
+- migration/schema
+- RLS
+- posts/media/followers_only
+- follow-only social graph
+- universal engagement
+- Rent a Buddy
+- Find Your Circle
+- privacy/block/report
+- Telegraph integrations
+- Discovery/Search/Compass leakage
+- Passport/profile leakage
+- Trips/Events integration
+
+Report:
+- tests run
+- pass/fail count
+- failing tests
+- missing critical tests
+- recommended test files to add
+
+PHASE 15 — Risk Register
+
+Create a risk register.
+
+Columns:
+- Risk
+- Severity
+- Affected system
+- Evidence
+- Why it matters
+- Fix
+- Priority
+
+Include risks such as:
+- production enum mismatch
+- RLS policy references wrong owner column
+- frontend accepts values backend rejects
+- follower-only content leaks in search/hashtag/Compass
+- private media access bypasses parent privacy
+- fake buddy marketplace state
+- location sharing becoming public discovery
+- Telegraph membership confused with trip/event/circle access
+- save/booked/viewed lists exposed as engagement
+- legacy friend code conflicting with follow-only graph
+
+PHASE 16 — Next Task Plan
+
+Produce a prioritized task list.
+
+Use priority levels:
+- P0 production/privacy/blocker
+- P1 core feature wiring
+- P2 polish/UX
+- P3 future enhancement
+
+For each task:
+- title
+- why it matters
+- files/tables likely affected
+- acceptance criteria
+- tests needed
+- whether migration needed
+
+Suggested priority order:
+1. Verify/fix followers_only production RLS safely.
+2. Add backend/API/frontend support for followers_only.
+3. Finish follow-only social graph truth.
+4. Build universal engagement viewer for posts/Postcards first.
+5. Audit/patch Rent a Buddy existing state before building new tables.
+6. Audit/patch Find Your Circle after trip/event membership truth is stable.
+7. Integrate Compass/Search/Discovery privacy-safe filters.
+
+PHASE 17 — Deliverables
+
+Create these deliverables:
+
+1. docs/audits/today-full-audit.md
+   - executive summary
+   - finished/partial/not-started table
+   - production schema findings
+   - current gaps
+   - risk register
+   - next task plan
+
+2. docs/audits/current-database-schema.md
+   - full current schema grouped by feature
+   - RLS/policies
+   - enums
+   - indexes
+   - issues
+
+3. docs/audits/needed-database-schema.md
+   - missing schema for follow-only, followers_only, engagement, Rent a Buddy, Find Your Circle
+   - migration priorities
+
+4. docs/audits/wiring-audit.md
+   - frontend/API/database wiring table
+   - no-op/fake/local-only findings
+
+5. Optional if useful:
+   - docs/audits/privacy-risk-register.md
+
+PHASE 18 — Final Acceptance Criteria
+
+This audit is complete when:
+
+- It clearly separates finished vs partial vs spec-only work.
+- It verifies production schema, not local assumptions.
+- It includes full current database schema.
+- It includes full needed database schema.
+- It identifies enum/policy mismatches.
+- It identifies RLS/privacy risks.
+- It identifies fake/local-only/no-op actions.
+- It covers all systems touched today:
+  - 0103 migration
+  - followers_only
+  - follow-only social graph
+  - universal engagement
+  - Rent a Buddy
+  - Find Your Circle
+- It provides prioritized next tasks.
+- It writes the audit docs.
+- Existing tests are run and summarized.
+- Nothing is marked finished without evidence.
+
+Final output:
+Print a concise summary in the console:
+
+- Finished and verified:
+- Partially done:
+- Not implemented/spec only:
+- Production risks:
+- Database schema gaps:
+- Recommended next task:
