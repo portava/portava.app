@@ -11,6 +11,19 @@ import { awardStamp, type StampLogger } from "../services/passport/StampAwardEng
 
 const router = Router();
 
+/**
+ * Explicit column list for all trip selects.
+ * Intentionally avoids SELECT * so new internal columns (e.g. internal_notes,
+ * moderation_status) never accidentally reach clients.
+ */
+const TRIP_COLUMNS =
+  "id, owner_id, title, destination_city, destination_country, destination_lat, " +
+  "destination_lng, destination_place_id, start_date, end_date, status, visibility, " +
+  "cover_url, trip_type, timezone, travel_style, open_to_meet, trip_notes, " +
+  "show_on_profile, show_in_discovery, allow_friend_suggestions, allow_trip_crew_invites, " +
+  "allow_join_requests, show_exact_dates, show_destination_city, delayed_posting_default, " +
+  "precise_location_visible, plan_edit_permission, progress, created_at, updated_at";
+
 /** Canonical trip status — never let clients override this server-side logic. */
 function computeTripStatus(
   title: string | null,
@@ -249,7 +262,7 @@ router.post("/trips", async (req, res) => {
       visibility: visibility ?? "private",
       cover_url: coverUrl ?? null,
     })
-    .select("*")
+    .select(TRIP_COLUMNS)
     .single();
 
   if (error) {
@@ -609,7 +622,7 @@ router.patch("/trips/:tripId", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Only the trip owner may change trip settings
-  const { data: trip } = await sc.from("trips").select("*").eq("id", tripId).maybeSingle();
+  const { data: trip } = await sc.from("trips").select("id, owner_id, title, destination_city, destination_country, start_date, end_date, status, plan_edit_permission").eq("id", tripId).maybeSingle();
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const t = trip as any;
   if (t.owner_id !== user.id) { sendError(res, "forbidden", "Only the trip owner can update this trip"); return; }
@@ -660,7 +673,7 @@ router.patch("/trips/:tripId", async (req, res) => {
     .from("trips")
     .update(patch)
     .eq("id", tripId)
-    .select("*")
+    .select(TRIP_COLUMNS)
     .single();
 
   if (patchErr) { sendError(res, "db_error", patchErr.message); return; }

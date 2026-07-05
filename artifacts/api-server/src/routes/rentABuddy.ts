@@ -335,6 +335,21 @@ async function requireAdmin(
 
 // ── Row mapper helpers ─────────────────────────────────────────────────────────
 
+/**
+ * Explicit column list for all public-facing buddy profile selects.
+ * Intentionally excludes admin-only and private contact fields:
+ *   admin_status, risk_hold, id_verification_ref, legal_name,
+ *   exact_address, home_address, phone_number.
+ */
+const BUDDY_PUBLIC_COLUMNS =
+  "id, user_id, display_name, tagline, bio, intro_video_url, languages, city, country, " +
+  "categories, hourly_rate_usd, status, verified, verified_at, verification_status, " +
+  "average_rating, review_count, completed_bookings, completed_count, response_time_h, " +
+  "cover_photo_url, gallery_urls, vibe_tags, safety_badges, buddy_level, category_approvals, " +
+  "new_buddy_public_only, new_buddy_daytime_only, new_buddy_max_hours, max_group_size, " +
+  "preferred_meetup_zones, featured, available_now, cancel_count, no_show_count, " +
+  "favorites_count, created_at, updated_at";
+
 function mapProfile(row: any) {
   if (!row) return null;
   return {
@@ -350,7 +365,6 @@ function mapProfile(row: any) {
     categories: row.categories ?? [],
     hourlyRateUsd: row.hourly_rate_usd ? Number(row.hourly_rate_usd) : null,
     status: row.status,
-    adminStatus: row.admin_status,
     verified: row.verified,
     verifiedAt: row.verified_at,
     averageRating: row.average_rating ? Number(row.average_rating) : null,
@@ -368,7 +382,6 @@ function mapProfile(row: any) {
     newBuddyMaxHours: row.new_buddy_max_hours,
     maxGroupSize: row.max_group_size,
     preferredMeetupZones: row.preferred_meetup_zones ?? [],
-    riskHold: row.risk_hold,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -572,7 +585,7 @@ router.post("/api/rent-a-buddy/search", async (req, res) => {
 
   let query = serviceClient
     .from("rent_buddy_profiles")
-    .select("*", { count: "exact" })
+    .select(BUDDY_PUBLIC_COLUMNS, { count: "exact" })
     .eq("status", "active")
     .eq("admin_status", "active")
     .order("review_count", { ascending: false })
@@ -714,7 +727,7 @@ router.get("/api/buddies", async (req, res) => {
   const { count: totalCount, error: countError } = await applyBuddyFilters(
     serviceClient
       .from("rent_buddy_profiles")
-      .select("*", { count: "exact", head: true })
+      .select("id", { count: "exact", head: true })
       .eq("status", "active")
       .eq("admin_status", "active"),
   );
@@ -727,7 +740,7 @@ router.get("/api/buddies", async (req, res) => {
   const { data, error } = await applyBuddyFilters(
     serviceClient
       .from("rent_buddy_profiles")
-      .select("*")
+      .select(BUDDY_PUBLIC_COLUMNS)
       .eq("status", "active")
       .eq("admin_status", "active")
       .order("featured", { ascending: false })
@@ -767,7 +780,7 @@ router.get("/api/rent-a-buddy/buddies/:buddyId", async (req, res) => {
   const { buddyId } = req.params;
 
   const [profileRes, packagesRes, addonsRes, availRes] = await Promise.all([
-    serviceClient.from("rent_buddy_profiles").select("*").eq("id", buddyId).maybeSingle(),
+    serviceClient.from("rent_buddy_profiles").select(BUDDY_PUBLIC_COLUMNS).eq("id", buddyId).maybeSingle(),
     serviceClient.from("rent_buddy_packages").select("*").eq("buddy_id", buddyId).eq("is_active", true),
     serviceClient.from("rent_buddy_addons").select("*").eq("buddy_id", buddyId).eq("is_active", true),
     serviceClient.from("rent_buddy_availability")
