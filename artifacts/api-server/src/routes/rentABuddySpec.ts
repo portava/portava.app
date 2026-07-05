@@ -1038,9 +1038,21 @@ router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
   const hasAreas = Array.isArray(p.preferred_meetup_zones) && p.preferred_meetup_zones.length > 0;
   const hasPricing = p.hourly_rate_usd != null && Number(p.hourly_rate_usd) > 0;
 
-  // Verification is required for restricted categories (nightlife always requires it)
   const categories: string[] = Array.isArray(p.categories) ? p.categories : [];
-  const needsVerification = categories.includes("nightlife");
+
+  // Verify via city policy: query launch controls to see if any of the buddy's
+  // categories requires ID verification (require_id_verification = TRUE).
+  // Falls back to false (no verification required) if the table is empty or query fails.
+  let needsVerification = false;
+  if (categories.length > 0) {
+    const { data: verifyControls } = await serviceClient
+      .from("rent_buddy_launch_controls")
+      .select("id")
+      .eq("require_id_verification", true)
+      .in("category", categories)
+      .limit(1);
+    needsVerification = (verifyControls?.length ?? 0) > 0;
+  }
   const isVerified = p.verification_status === "verified";
 
   const checklist: Array<{ key: string; label: string; done: boolean; verificationRequired?: boolean }> = [
@@ -1110,7 +1122,7 @@ router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
   if (needsVerification) {
     checklist.push({
       key: "verification",
-      label: "Complete ID verification (required for nightlife category)",
+      label: "Complete ID verification (required by category policy)",
       done: isVerified,
       verificationRequired: true,
     });
@@ -1118,7 +1130,19 @@ router.get("/api/rent-a-buddy/me/profile/checklist", async (req, res) => {
 
   const allComplete = checklist.every((i) => i.done);
 
-  return res.json({ checklist, allComplete });
+  // Object-style per-field completion — matches the contract defined in the task spec.
+  // The `checklist` array is kept for UI display; `fields` is the canonical shape.
+  const fields: Record<string, boolean> = {};
+  for (const item of checklist) {
+    fields[item.key] = item.done;
+  }
+  // Normalise key names to match spec (safety_ack / policy_ack / boundaries_ack)
+  fields.safety_ack = fields.safety_acknowledged ?? false;
+  fields.policy_ack = fields.policy_accepted ?? false;
+  delete fields.safety_acknowledged;
+  delete fields.policy_accepted;
+
+  return res.json({ checklist, allComplete, fields });
 });
 
 // POST /api/rent-a-buddy/me/profile/submit — finalize and submit profile for review
@@ -1207,13 +1231,22 @@ router.post("/api/rent-a-buddy/me/profile/submit", async (req, res) => {
     });
   }
 
-  // Verification gate — nightlife (and other restricted categories) require ID verification
+  // Verification gate — check city/category policy via rent_buddy_launch_controls
   const cats: string[] = Array.isArray(p.categories) ? p.categories : [];
-  const needsVerification = cats.includes("nightlife");
+  let needsVerification = false;
+  if (cats.length > 0) {
+    const { data: verifyControls } = await serviceClient
+      .from("rent_buddy_launch_controls")
+      .select("id")
+      .eq("require_id_verification", true)
+      .in("category", cats)
+      .limit(1);
+    needsVerification = (verifyControls?.length ?? 0) > 0;
+  }
   if (needsVerification && p.verification_status !== "verified") {
     return res.status(422).json({
       error: "verification_required",
-      message: "ID verification is required before a nightlife buddy profile can be submitted for review. Please complete your verification first.",
+      message: "ID verification is required by your category policy before this profile can be submitted for review. Please complete your verification first.",
       verification_status: p.verification_status ?? "unverified",
     });
   }

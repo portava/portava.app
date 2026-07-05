@@ -11,7 +11,7 @@ import { TravelButton, TravelCard, TravelChip } from '../../../src/components/pr
 import { Stamp } from '../../../src/components/ui';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
-import type { BuddyCategory, TrainingItem, ChecklistItem } from '../../../src/services/rentABuddy';
+import type { BuddyCategory, TrainingItem, ChecklistItem, ProfileSubmitResult } from '../../../src/services/rentABuddy';
 
 const TOTAL_STEPS = 7;
 
@@ -288,6 +288,49 @@ export default function ApplyToBeBuddy() {
     }
   }
 
+  // Submits an existing buddy profile for admin review.
+  // Called from the profile checklist gate — routes to POST /api/me/buddy-profile/submit
+  // which enforces all checklist + verification requirements server-side.
+  async function handleProfileSubmit() {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      const result: rentABuddy.ProfileSubmitResult = await rentABuddy.submitProfileForReview();
+      if (result.ok) {
+        setSubmitted(true);
+      } else if (result.error === 'verification_required') {
+        const vr = result as Extract<rentABuddy.ProfileSubmitResult, { error: 'verification_required' }>;
+        Alert.alert(
+          'Verification Required',
+          `ID verification is required by your category policy before submitting for review.\n\nCurrent status: ${vr.verification_status ?? 'unverified'}. Please contact support to begin the verification process.`,
+          [{ text: 'OK' }],
+        );
+      } else if (result.error === 'incomplete_profile') {
+        const ip = result as Extract<rentABuddy.ProfileSubmitResult, { error: 'incomplete_profile' }>;
+        const fieldNames: Record<string, string> = {
+          display_name: 'Display name',
+          bio: 'Bio (min 30 characters)',
+          photo: 'Profile photo',
+          categories: 'Categories',
+          services: 'Service offerings',
+          areas: 'Meetup areas',
+          languages: 'Languages',
+          pricing: 'Hourly rate',
+          availability: 'Weekly availability',
+          policy_accepted: 'Buddy policy acceptance',
+          safety_acknowledged: 'Safety guidelines confirmation',
+          boundaries_acknowledged: 'Conduct & boundaries confirmation',
+        };
+        const labels = (ip.missing ?? []).map((k) => fieldNames[k] ?? k).join('\n• ');
+        Alert.alert('Profile Incomplete', `Please complete the following before submitting:\n\n• ${labels}`);
+      } else {
+        Alert.alert('Could not submit', (result as any).error ?? 'Please try again.');
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   if (trainingLoading) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: color.paper }}>
@@ -373,7 +416,7 @@ export default function ApplyToBeBuddy() {
         </ScrollView>
         <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: space.lg, paddingBottom: insets.bottom + space.md, paddingTop: space.md, backgroundColor: color.paper }}>
           <Pressable
-            onPress={profileComplete && !submitting ? handleSubmit : undefined}
+            onPress={profileComplete && !submitting ? handleProfileSubmit : undefined}
             style={[
               {
                 borderRadius: radius.md,

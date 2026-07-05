@@ -320,6 +320,38 @@ export async function submitApplication(payload: {
   });
 }
 
+// Submit an existing buddy profile for admin review.
+// Unlike submitApplication() which creates a new application, this transitions an
+// existing profile to pending_review status.  It preserves the full structured
+// error body so the UI can render the specific missing fields and verification state.
+export type ProfileSubmitResult =
+  | { ok: true; status: string; message?: string }
+  | { ok: false; error: 'incomplete_profile'; missing: string[]; message?: string }
+  | { ok: false; error: 'verification_required'; verification_status: string; message?: string }
+  | { ok: false; error: string; message?: string };
+
+export async function submitProfileForReview(opts?: {
+  acceptSafety?: boolean;
+  acceptBoundaries?: boolean;
+}): Promise<ProfileSubmitResult> {
+  try {
+    const headers = await authHeaders();
+    const res = await fetch(`${apiBase()}/api/me/buddy-profile/submit`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts ?? {}),
+    });
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+    if (!res.ok) {
+      // Preserve full body so callers can read missing[], verification_status, etc.
+      return { ok: false, ...body } as ProfileSubmitResult;
+    }
+    return { ok: true, ...body } as ProfileSubmitResult;
+  } catch (err: any) {
+    return { ok: false, error: err?.message ?? 'network_error' };
+  }
+}
+
 // ── Saved ─────────────────────────────────────────────────────────────────────
 
 export async function getMySavedBuddies(): Promise<ApiResult<{ saved: BuddyProfile[] }>> {
