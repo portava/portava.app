@@ -758,6 +758,23 @@ describe("trips-expansion routes", () => {
       assert.equal(r.status, 410);
     });
 
+    it("GET preview returns 410 for expired link", async () => {
+      const LINK_TOKEN = "expiredtokenabcdefghijklmnop123456";
+      const { client } = makeFakeClient({
+        trip_invite_links: { rows: [
+          { id: LINK_ID, trip_id: TRIP_ID, token: LINK_TOKEN, created_by: OWNER_ID,
+            max_uses: null, use_count: 0, revoked_at: null,
+            expires_at: "2020-01-01T00:00:00Z",
+            created_at: "2019-12-01T00:00:00Z" },
+        ]},
+      });
+      _setTestClient(client, true);
+
+      const r = await req(port, "GET", `/trips/invite-link/${LINK_TOKEN}/preview`, { token: "other-token" });
+      assert.equal(r.status, 410);
+      assert.equal(r.body.error, "gone");
+    });
+
     it("POST accept joins the trip and increments use_count", async () => {
       const LINK_TOKEN = "accepttokenabcdefghijklmnop1234567";
       const { client, db } = makeFakeClient({
