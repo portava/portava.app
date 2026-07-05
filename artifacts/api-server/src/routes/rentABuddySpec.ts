@@ -399,18 +399,45 @@ router.post("/api/buddies/:buddyId/request", async (req, res) => {
   const serviceClient = sc(auth.client);
 
   const { buddyId } = req.params;
-  const { startsAt, endsAt, city, notes, categoryRequested, languages } = req.body ?? {};
-  if (!startsAt || !endsAt) {
-    return res.status(400).json({ error: "invalid_payload", message: "startsAt and endsAt are required." });
+  const { bookingDate, durationH, city, category, notes, groupSize } = req.body ?? {};
+
+  // Required field validation
+  if (!bookingDate || !durationH || !city || !category) {
+    return res.status(400).json({
+      error: "invalid_payload",
+      message: "bookingDate, durationH, city, and category are required.",
+    });
   }
 
+  // Self-booking prevention
+  const { data: ownProfile } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id")
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+  if (ownProfile && (ownProfile as any).id === buddyId) {
+    return res.status(409).json({ error: "self_booking_not_allowed" });
+  }
+
+  // Verify buddy exists and is active
   const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
-    .select("id, status")
+    .select("id, status, admin_status, verified, categories")
     .eq("id", buddyId)
     .maybeSingle();
-  if (!bp || (bp as any).status !== "active") {
-    return res.status(404).json({ error: "buddy_not_found" });
+
+  if (!bp) return res.status(404).json({ error: "buddy_not_found" });
+  if ((bp as any).status !== "active") {
+    return res.status(422).json({ error: "buddy_not_available", message: "This buddy is not currently accepting bookings." });
+  }
+  if ((bp as any).admin_status !== "active") {
+    return res.status(422).json({ error: "buddy_suspended" });
+  }
+
+  // Category availability check
+  const buddyCategories: string[] = (bp as any).categories ?? [];
+  if (buddyCategories.length > 0 && !buddyCategories.includes(category)) {
+    return res.status(422).json({ error: "category_not_offered", message: `This buddy does not offer the '${category}' category.` });
   }
 
   const now = new Date().toISOString();
@@ -419,12 +446,15 @@ router.post("/api/buddies/:buddyId/request", async (req, res) => {
     .insert({
       traveler_id: auth.user.id,
       buddy_id: buddyId,
-      starts_at: startsAt,
-      ends_at: endsAt,
-      city: city ?? null,
+      booking_date: bookingDate,
+      duration_h: durationH,
+      city,
+      category,
       notes: notes ?? null,
-      category_requested: categoryRequested ?? null,
-      language_preference: languages ?? [],
+      group_size: groupSize ?? 1,
+      route_plan: [],
+      total_usd: 0,
+      deposit_usd: 0,
       status: "pending",
       created_at: now,
       updated_at: now,
@@ -588,7 +618,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/change-request", async (req, 
     .insert({
       booking_id: bookingId,
       requested_by: auth.user.id,
-      old_stops_json: b.stops_json ?? [],
+      old_stops_json: b.route_plan ?? [],
       new_stops_json: newStops,
       reason: reason ?? null,
       created_at: new Date().toISOString(),
@@ -659,14 +689,14 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => 
   const serviceClient = sc(auth.client);
 
   const { bookingId } = req.params;
-  const { startsAt, endsAt, notes } = req.body ?? {};
-  if (!startsAt || !endsAt) {
-    return res.status(400).json({ error: "invalid_payload", message: "startsAt and endsAt are required for rebook." });
+  const { bookingDate, durationH, notes } = req.body ?? {};
+  if (!bookingDate || !durationH) {
+    return res.status(400).json({ error: "invalid_payload", message: "bookingDate and durationH are required for rebook." });
   }
 
   const { data: original } = await serviceClient
     .from("rent_buddy_bookings")
-    .select("buddy_id, traveler_id, city, category_requested, language_preference")
+    .select("buddy_id, traveler_id, city, category, group_size")
     .eq("id", bookingId)
     .eq("traveler_id", auth.user.id)
     .maybeSingle();
@@ -680,12 +710,15 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => 
     .insert({
       traveler_id: auth.user.id,
       buddy_id: o.buddy_id,
-      starts_at: startsAt,
-      ends_at: endsAt,
+      booking_date: bookingDate,
+      duration_h: durationH,
       city: o.city,
+      category: o.category,
       notes: notes ?? null,
-      category_requested: o.category_requested,
-      language_preference: o.language_preference ?? [],
+      group_size: o.group_size ?? 1,
+      route_plan: [],
+      total_usd: 0,
+      deposit_usd: 0,
       status: "pending",
       created_at: now,
       updated_at: now,

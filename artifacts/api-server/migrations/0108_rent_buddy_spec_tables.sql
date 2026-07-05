@@ -198,10 +198,9 @@ CREATE OR REPLACE VIEW buddy_disputes AS
     booking_id,
     raised_by,
     reason,
-    details,
     status,
+    resolution_note,
     resolved_at,
-    resolution_notes,
     created_at
   FROM rent_buddy_disputes;
 
