@@ -45,7 +45,9 @@ export function BuddyCard({
   if (dismissed) return null;
   const rating = buddy.averageRating ?? 0;
   const stars = rating > 0 ? rating.toFixed(1) : '—';
-  const level = deriveLevel(buddy.reviewCount, buddy.verified);
+  const level = buddy.buddyLevel
+    ? { label: buddy.buddyLevel, color: buddy.buddyLevel === 'Elite' ? color.warn : buddy.buddyLevel === 'Pro' ? '#9B59B6' : buddy.buddyLevel === 'Rising' ? color.deep : color.mute }
+    : deriveLevel(buddy.reviewCount, buddy.verified);
   const trustScore = deriveTrustScore(buddy);
 
   return (

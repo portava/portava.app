@@ -494,7 +494,8 @@ function BuddySection({ userId }: { userId: string }) {
   }, [userId]);
 
   if (loading) return <ActivityIndicator size="small" color={color.mute} style={{ marginVertical: space.md }} />;
-  if (!buddy) return null;
+  // Only show card for active/approved buddies; pending/suspended/rejected show nothing to visitors
+  if (!buddy || buddy.status !== 'active') return null;
 
   return (
     <View style={buddyCardStyles.card}>
@@ -509,12 +510,20 @@ function BuddySection({ userId }: { userId: string }) {
       <Text style={buddyCardStyles.title} numberOfLines={2}>
         {buddy.tagline ?? 'Available as your travel buddy'}
       </Text>
-      <Pressable
-        style={({ pressed }) => [buddyCardStyles.btn, pressed && { opacity: 0.75 }]}
-        onPress={() => router.push(`/(rent-a-buddy)/buddy/${buddy.id}` as any)}
-      >
-        <Text style={buddyCardStyles.btnText}>View buddy profile</Text>
-      </Pressable>
+      <View style={{ flexDirection: 'row', gap: space.sm, marginTop: 4 }}>
+        <Pressable
+          style={({ pressed }) => [buddyCardStyles.btn, { flex: 1 }, pressed && { opacity: 0.75 }]}
+          onPress={() => router.push(`/(rent-a-buddy)/buddy/${buddy.id}` as any)}
+        >
+          <Text style={buddyCardStyles.btnText}>View profile</Text>
+        </Pressable>
+        <Pressable
+          style={({ pressed }) => [buddyCardStyles.btn, buddyCardStyles.bookBtn, { flex: 1 }, pressed && { opacity: 0.75 }]}
+          onPress={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: buddy.id } })}
+        >
+          <Text style={buddyCardStyles.btnText}>Book {buddy.displayName?.split(' ')[0] ?? 'Buddy'}</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -537,6 +546,7 @@ const buddyCardStyles = StyleSheet.create({
     backgroundColor: color.ink, borderRadius: radius.pill,
     paddingVertical: 10, alignItems: 'center', marginTop: 4,
   },
+  bookBtn: { backgroundColor: color.signal },
   btnText: { ...t.small, color: color.onInk, fontWeight: '700' },
 });
 

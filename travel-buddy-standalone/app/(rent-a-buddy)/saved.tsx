@@ -162,7 +162,7 @@ export default function RentABuddySaved() {
               buddy={item}
               onBook={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: item.id } })}
               onCustom={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: item.id, custom: '1' } })}
-              onViewHistory={() => {}}
+              onViewHistory={() => router.push(`/(rent-a-buddy)/buddy/${item.id}` as any)}
               onRemove={() => handleRemove(item)}
             />
           )}

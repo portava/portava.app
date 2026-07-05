@@ -15,7 +15,7 @@ import {
 } from '../../src/components/primitives';
 import { Stamp } from '../../src/components/ui';
 import { BuddyCard, BuddyCardSkeleton } from '../../src/components/BuddyCard';
-import { searchBuddies, getLaunchStatus, type BuddyProfile } from '../../src/services/rentABuddy';
+import { searchBuddies, getLaunchStatus, getAvailableNow, type BuddyProfile } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const CATEGORIES = [
@@ -169,6 +169,8 @@ export default function RentABuddyLanding() {
   const [city, setCity] = useState('');
   const [topBuddies, setTopBuddies] = useState<BuddyProfile[]>([]);
   const [loadingTop, setLoadingTop] = useState(false);
+  const [availableNow, setAvailableNow] = useState<BuddyProfile[]>([]);
+  const [availableNowCity, setAvailableNowCity] = useState<string | null>(null);
 
   const loadTopBuddies = useCallback(async (searchCity: string) => {
     if (!searchCity.trim()) return;
@@ -178,6 +180,16 @@ export default function RentABuddyLanding() {
     if (res.ok) setTopBuddies(res.data.buddies);
     else setTopBuddies([]);
   }, []);
+
+  useEffect(() => {
+    if (city.trim().length < 2) return;
+    getAvailableNow(city).then(res => {
+      if (res.ok) {
+        setAvailableNow(res.data.buddies.slice(0, 6));
+        setAvailableNowCity(city);
+      }
+    }).catch(() => {});
+  }, [city]);
 
   useEffect(() => {
     if (city.trim().length > 2) {
@@ -235,11 +247,36 @@ export default function RentABuddyLanding() {
         title="Available Now"
         onAction={() => router.push('/(rent-a-buddy)/search' as any)}
       />
-      <View style={{ paddingHorizontal: space.lg, paddingVertical: space.sm }}>
-        <Text style={{ color: color.mute, fontSize: 14, lineHeight: 20 }}>
-          No buddies available right now — check back soon or search by city.
-        </Text>
-      </View>
+      {availableNow.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: space.lg, paddingBottom: space.sm, gap: space.md }}
+        >
+          {availableNow.map(b => (
+            <Pressable
+              key={b.id}
+              style={{ width: 140 }}
+              onPress={() => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)}
+            >
+              <BuddyCard
+                buddy={b}
+                compact
+                availableNow
+                onBook={() => router.push({ pathname: '/(rent-a-buddy)/checkout' as any, params: { buddyId: b.id } })}
+              />
+            </Pressable>
+          ))}
+        </ScrollView>
+      ) : (
+        <View style={{ paddingHorizontal: space.lg, paddingVertical: space.sm }}>
+          <Text style={{ color: color.mute, fontSize: 14, lineHeight: 20 }}>
+            {availableNowCity
+              ? `No Buddies available right now in ${availableNowCity} — check back soon.`
+              : 'Enter a city above to see who\'s available right now.'}
+          </Text>
+        </View>
+      )}
 
       {/* Match Me CTA */}
       <View style={styles.matchCard}>

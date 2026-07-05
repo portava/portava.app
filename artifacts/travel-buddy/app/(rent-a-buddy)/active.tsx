@@ -9,7 +9,7 @@ import {
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState } from '../../src/components/primitives';
-import { getBooking, addExtraTime, reportBooking, safetyCheckin, feelUnsafe, type BuddyBooking } from '../../src/services/rentABuddy';
+import { getBooking, addExtraTime, reportBooking, safetyCheckin, feelUnsafe, endBookingEarly, type BuddyBooking } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 function pad(n: number) { return String(n).padStart(2, '0'); }
@@ -254,18 +254,23 @@ export default function RentABuddyActive() {
                       text: 'Notify safety team',
                       style: 'destructive',
                       onPress: async () => {
-                        const res = await feelUnsafe(bookingId);
-                        if (res.ok) {
-                          Alert.alert(
-                            'Safety team notified',
-                            'Our team has been alerted. If in immediate danger, use the SOS button.',
-                          );
-                        } else {
-                          Alert.alert(
-                            'Could not send alert',
-                            'Please use the SOS button to call emergency services.',
-                          );
-                        }
+                        // Report unsafe + flag booking for dispute + trigger early end
+                        await Promise.allSettled([
+                          feelUnsafe(bookingId),
+                          endBookingEarly(bookingId, 'unsafe_behavior'),
+                        ]);
+                        Alert.alert(
+                          'Safety team notified',
+                          'Our team has been alerted and this session has been flagged for review. If in immediate danger, use the SOS button to call emergency services.',
+                          [
+                            { text: 'OK' },
+                            {
+                              text: 'Call emergency services',
+                              style: 'destructive',
+                              onPress: () => Linking.openURL('tel:112'),
+                            },
+                          ],
+                        );
                       },
                     },
                   ],

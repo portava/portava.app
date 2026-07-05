@@ -312,26 +312,15 @@ export default function BuddyProfileScreen() {
           </View>
         )}
 
-        {/* Suggested public meetup zones */}
+        {/* Meetup guidance */}
         <View style={styles.section}>
           <View style={styles.sectionRow}>
             <MapPin size={16} color={color.signal} />
-            <Text style={styles.sectionTitle}>Suggested meetup zones</Text>
+            <Text style={styles.sectionTitle}>Public meetup locations</Text>
           </View>
-          <Text style={[styles.safetySub, { marginBottom: space.sm }]}>
-            All initial meetups start in public, accessible locations.
+          <Text style={styles.safetySub}>
+            All first meetups must take place in a busy, well-lit public space of your choosing — a hotel lobby, busy café, or transit hub. Never agree to a private location for your first meeting.
           </Text>
-          {[
-            `${buddy.city} Central Train Station`,
-            `${buddy.city} Main Square / City Center`,
-            'Tourist Information Centre (nearest)',
-            'Hotel lobby (traveler\'s choice)',
-          ].map(zone => (
-            <View key={zone} style={styles.zoneRow}>
-              <Shield size={12} color={color.success} />
-              <Text style={styles.zoneText}>{zone}</Text>
-            </View>
-          ))}
         </View>
 
         {/* Safety notice */}
