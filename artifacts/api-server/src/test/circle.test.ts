@@ -1164,19 +1164,20 @@ describe("GET /circle/compass-suggestions", () => {
     _setTestServiceClient(c as any);
   });
 
-  it("returns 200 with cards array (empty when caller has no Circle memberships)", async () => {
-    // No circle_members rows for VIEWER_ID → should return empty cards
+  it("returns 200 with cards array (empty when caller has no trip/event memberships)", async () => {
+    // Clear the canonical membership tables so VIEWER_ID has no contexts.
+    // The endpoint now reads trip_members + event_rsvps (not circle_members).
+    state.tripMembers = [];
+    state.eventRsvps  = [];
     const r = await req("GET", "/circle/compass-suggestions");
     assert.equal(r.status, 200);
     assert.ok(Array.isArray(r.body.cards), "body.cards should be an array");
     assert.deepEqual(r.body.cards, []);
   });
 
-  it("returns a turn_on_circle card when caller is a member but not sharing", async () => {
-    state.circleMembers.push({
-      user_id: VIEWER_ID, context_type: "trip", context_id: TRIP_ID, status: "accepted",
-    });
-    // No circle_presence row for VIEWER_ID → caller is not actively sharing
+  it("returns a turn_on_circle card when caller is a trip member but not sharing", async () => {
+    // Default state already has VIEWER_ID as accepted trip_members of TRIP_ID.
+    // No circle_presence row for VIEWER_ID → caller is not actively sharing → turn_on_circle.
     const r = await req("GET", "/circle/compass-suggestions");
     assert.equal(r.status, 200);
     assert.ok(r.body.cards.length >= 1, "should have at least one card");
@@ -1188,15 +1189,13 @@ describe("GET /circle/compass-suggestions", () => {
   });
 
   it("returns a circle_active card when caller and others are actively sharing", async () => {
-    state.circleMembers.push({
-      user_id: VIEWER_ID, context_type: "trip", context_id: TRIP_ID, status: "accepted",
-    });
-    // VIEWER_ID is actively sharing
+    // Default state: VIEWER_ID is accepted member of TRIP_ID via trip_members.
+    // Add VIEWER_ID's own active presence row.
     state.circlePresence.push({
       id: "pres-viewer-active", user_id: VIEWER_ID, context_type: "trip", context_id: TRIP_ID,
       status: "active", is_stale: false, needs_help: false, last_seen_at: new Date().toISOString(),
     });
-    // TARGET_ID (existing row in state) is also active in that trip context
+    // TARGET_ID already has an active presence row in default state → othersActive > 0.
     const r = await req("GET", "/circle/compass-suggestions");
     assert.equal(r.status, 200);
     assert.ok(r.body.cards.length >= 1, "should have at least one card");
@@ -1209,15 +1208,13 @@ describe("GET /circle/compass-suggestions", () => {
   });
 
   it("returns a set_meeting_point card for host with no active meeting point", async () => {
-    state.circleMembers.push({
-      user_id: VIEWER_ID, context_type: "trip", context_id: TRIP_ID, status: "accepted",
-    });
-    // VIEWER_ID is actively sharing (so turn_on_circle won't fire)
+    // Default state: VIEWER_ID is trip_members of TRIP_ID; VIEWER_ID is owner (trips.owner_id).
+    // Add VIEWER_ID's own active presence (so turn_on_circle won't fire).
     state.circlePresence.push({
       id: "pres-viewer-active2", user_id: VIEWER_ID, context_type: "trip", context_id: TRIP_ID,
       status: "active", is_stale: false, needs_help: false, last_seen_at: new Date().toISOString(),
     });
-    // Remove all meeting points so none are active
+    // Remove all meeting points so is_active=true query returns nothing.
     state.circleMeetingPoints = [];
     const r = await req("GET", "/circle/compass-suggestions");
     assert.equal(r.status, 200);

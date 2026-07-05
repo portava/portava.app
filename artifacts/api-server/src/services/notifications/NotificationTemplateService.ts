@@ -805,7 +805,7 @@ export const TEMPLATES: NotificationTemplate[] = [
     eventType: 'circle.sharing_paused',
     category: 'trips',
     defaultPriority: 'low',
-    defaultChannels: ['in_app'],
+    defaultChannels: ['in_app', 'push'],
     title: ({ actor }) => `${actor} paused their Circle`,
     body: ({ contextTitle }) => `${contextTitle ? `In ${contextTitle} — ` : ''}They won't be visible until they resume.`,
     actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,

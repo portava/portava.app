@@ -240,9 +240,14 @@ async function sendCircleNotifications(
 /**
  * Post a Circle status card to the trip/event Telegraph thread (fire-and-forget).
  * - Finds the thread via trip_id (trips) or events.chat_thread_id (events).
- * - Inserts a message with msg_type='circle_status_card' containing ONLY
- *   privacy-safe, user-supplied fields.  GPS, needs_help, and emergency data
- *   are NEVER included.
+ * - Inserts a message with msg_type='circle_status_card'.
+ * - PRIVACY: the message body intentionally stores ONLY the card subtype — no
+ *   status labels, venue names, GPS, or needs_help data.  Any member of the
+ *   thread (whether or not they are a Circle member for this context) can read
+ *   stored message bodies, so all Circle-specific details MUST remain behind the
+ *   authorized Circle API endpoints (GET /circle/contexts/:type/:id/presence,
+ *   GET /circle/contexts/:type/:id/meeting-points, etc.).  The mobile app deep-
+ *   links to those endpoints on card tap; the server never stores details here.
  * - No-op if no thread exists for this context.
  */
 async function postCircleStatusCard(
@@ -251,7 +256,6 @@ async function postCircleStatusCard(
   contextId: string,
   actorId: string,
   cardSubtype: string,
-  safeCardData: Record<string, unknown>,
 ): Promise<void> {
   try {
     let threadId: string | null = null;
@@ -276,15 +280,14 @@ async function postCircleStatusCard(
 
     if (!threadId) return; // No Telegraph thread for this context — no-op.
 
-    // Body is stored as JSON string. Rendering is handled client-side.
-    // Unauthorized viewers (non-Circle members) will see the placeholder
-    // "Shared a Circle update." — enforced by the client renderer.
+    // Body stores ONLY the subtype — no status/venue/location details.
+    // Clients fetch Circle details via the authorized Circle API after tapping the card.
     await sc.from("messages").insert({
       thread_id: threadId,
       sender_id: actorId,
       msg_type:  "circle_status_card",
       subtype:   cardSubtype,
-      body:      JSON.stringify(safeCardData),
+      body:      JSON.stringify({ subtype: cardSubtype }),
     });
   } catch { /* non-fatal — card delivery must never block Circle operations */ }
 }
@@ -460,22 +463,28 @@ router.patch("/circle/settings", async (req, res) => {
   if (isEnabling) {
     void (async () => {
       try {
-        const [membershipRows, actorProfile] = await Promise.all([
-          sc.from("circle_members").select("context_type, context_id").eq("user_id", user.id).eq("status", "accepted"),
+        // Discover caller's contexts using canonical membership tables — no circle_members
+        // (that table has no migration; trip_members / event_rsvps are the source of truth).
+        const [tripMemberRes, eventRsvpRes, actorProfile] = await Promise.all([
+          sc.from("trip_members").select("trip_id").eq("user_id", user.id).eq("status", "accepted"),
+          sc.from("event_rsvps").select("event_id").eq("user_id", user.id).eq("status", "going"),
           sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
         ]);
         const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "Someone";
+        const contexts: { context_type: ContextType; context_id: string }[] = [
+          ...((tripMemberRes.data  ?? []) as any[]).map((r) => ({ context_type: "trip"  as ContextType, context_id: r.trip_id  as string })),
+          ...((eventRsvpRes.data   ?? []) as any[]).map((r) => ({ context_type: "event" as ContextType, context_id: r.event_id as string })),
+        ];
         await Promise.all(
-          ((membershipRows.data ?? []) as any[]).map(async (row) => {
+          contexts.map(async ({ context_type, context_id }) => {
             try {
               const [memberIds, contextTitle] = await Promise.all([
-                getAcceptedMemberIds(sc, row.context_type as ContextType, row.context_id),
-                resolveContextTitle(sc, row.context_type as ContextType, row.context_id),
+                getAcceptedMemberIds(sc, context_type, context_id),
+                resolveContextTitle(sc, context_type, context_id),
               ]);
               const recipients = memberIds.filter((m) => m !== user.id);
               await sendCircleNotifications(sc, recipients, "circle.sharing_enabled", {
-                actor: actorName, contextTitle,
-                contextType: row.context_type, contextId: row.context_id,
+                actor: actorName, contextTitle, contextType: context_type, contextId: context_id,
               });
             } catch { /* non-fatal per context */ }
           }),
@@ -1027,13 +1036,8 @@ router.post("/circle/contexts/:type/:id/check-in", async (req, res) => {
         contextType:  type,
         contextId:    id,
       });
-      // Telegraph status card: include only user-supplied, privacy-safe fields.
-      void postCircleStatusCard(sc, type as ContextType, id, user.id, "checkin", {
-        actorName,
-        checkinType:  parsed.data.checkinType,
-        venueLabel:   parsed.data.venueLabel   ?? null,
-        // approximateLabel: intentionally omitted from card — too location-specific.
-      });
+      // Telegraph status card: subtype only — no status/venue data in body (server-side privacy).
+      void postCircleStatusCard(sc, type as ContextType, id, user.id, "checkin");
     } catch { /* non-fatal */ }
   })();
 
@@ -1248,10 +1252,8 @@ router.post("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
         actor: actorName, contextTitle, contextType: type, contextId: id,
         venueLabel:       safeVenue ?? "", approximateLabel: safeArea ?? "",
       });
-      void postCircleStatusCard(sc, type as ContextType, id, user.id, "meeting_point", {
-        actorName, venueLabel: safeVenue, approximateLabel: safeArea,
-        // Never include lat/lng — V1 coordinates are null; V2 will decide exposure.
-      });
+      // Telegraph status card: subtype only — no venue/location data in body (server-side privacy).
+      void postCircleStatusCard(sc, type as ContextType, id, user.id, "meeting_point");
     } catch { /* non-fatal */ }
   })();
 
@@ -1516,15 +1518,17 @@ router.get("/circle/compass-suggestions", async (req, res) => {
     return;
   }
 
-  // Step 1: fetch caller's accepted Circle contexts (up to 20).
-  const { data: myContextsData } = await sc
-    .from("circle_members")
-    .select("context_type, context_id")
-    .eq("user_id", user.id)
-    .eq("status", "accepted")
-    .limit(20);
+  // Step 1: discover caller's contexts using canonical membership tables.
+  // circle_members has no migration — trip_members / event_rsvps are the source of truth.
+  const [tripMemberRes, eventRsvpRes] = await Promise.all([
+    sc.from("trip_members").select("trip_id").eq("user_id", user.id).eq("status", "accepted").limit(20),
+    sc.from("event_rsvps").select("event_id").eq("user_id", user.id).eq("status", "going").limit(20),
+  ]);
+  const myContexts: { context_type: string; context_id: string }[] = [
+    ...((tripMemberRes.data  ?? []) as any[]).map((r) => ({ context_type: "trip",  context_id: r.trip_id  as string })),
+    ...((eventRsvpRes.data   ?? []) as any[]).map((r) => ({ context_type: "event", context_id: r.event_id as string })),
+  ];
 
-  const myContexts = (myContextsData ?? []) as { context_type: string; context_id: string }[];
   if (myContexts.length === 0) {
     res.json({ cards: [] });
     return;
