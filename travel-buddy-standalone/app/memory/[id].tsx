@@ -22,6 +22,7 @@ import {
   addMemoryItem, type Memory, type MemoryItem,
 } from '../../src/services/memories';
 import { useSession } from '../../src/context/SessionContext';
+import { EngagementUserListSheet } from '../../src/components/EngagementUserListSheet';
 import * as ImagePicker from 'expo-image-picker';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -65,6 +66,7 @@ export default function MemoryDetailScreen() {
   const [addingMedia, setAddingMedia] = useState(false);
   const [deletingItemId, setDeletingItemId] = useState<string | null>(null);
   const [likeLoading, setLikeLoading] = useState(false);
+  const [likerSheetOpen, setLikerSheetOpen] = useState(false);
 
   const isOwner = memory?.ownerId === userId;
 
@@ -322,19 +324,39 @@ export default function MemoryDetailScreen() {
           </View>
 
           {/* Like */}
-          <Pressable style={s.likeRow} onPress={handleLike} disabled={likeLoading}>
-            <Heart
-              size={20}
-              color={memory.likedByMe ? color.signal : color.mute}
-              fill={memory.likedByMe ? color.signal : 'none'}
-            />
+          <View style={s.likeRow}>
+            <Pressable
+              onPress={handleLike}
+              onLongPress={() => setLikerSheetOpen(true)}
+              disabled={likeLoading}
+              hitSlop={8}
+            >
+              <Heart
+                size={20}
+                color={memory.likedByMe ? color.signal : color.mute}
+                fill={memory.likedByMe ? color.signal : 'none'}
+              />
+            </Pressable>
             {(memory.likeCount ?? 0) > 0 && (
-              <Text style={s.likeCount}>{memory.likeCount}</Text>
+              <Pressable onPress={() => setLikerSheetOpen(true)} hitSlop={6}>
+                <Text style={s.likeCount}>{memory.likeCount}</Text>
+              </Pressable>
             )}
-          </Pressable>
+          </View>
         </View>
 
       </ScrollView>
+
+      {likerSheetOpen && (
+        <EngagementUserListSheet
+          visible
+          targetType="memory_like"
+          targetId={id ?? ''}
+          title="Liked by"
+          initialTotal={memory.likeCount ?? 0}
+          onClose={() => setLikerSheetOpen(false)}
+        />
+      )}
     </View>
   );
 }

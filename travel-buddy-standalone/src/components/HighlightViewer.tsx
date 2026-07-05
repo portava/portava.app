@@ -35,6 +35,7 @@ import {
 import { markHighlightsViewed } from '../services/messaging';
 import { markViewed, invalidateHighlightCache } from '../hooks/useHighlightRingState';
 import { HighlightViewersSheet } from './HighlightViewersSheet';
+import { EngagementUserListSheet } from './EngagementUserListSheet';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const ITEM_DURATION_MS = 5000;
@@ -68,6 +69,7 @@ export function HighlightViewer({
   const [paused, setPaused] = useState(false);
   const [localHighlights, setLocalHighlights] = useState<Highlight[]>(highlights);
   const [likeMap, setLikeMap] = useState<Record<string, { liked: boolean; count: number }>>({});
+  const [likerHighlightId, setLikerHighlightId] = useState<string | null>(null);
   const [viewersOpen, setViewersOpen] = useState(false);
   const [replyOpen, setReplyOpen] = useState(false);
   const [replyText, setReplyText] = useState('');
@@ -395,14 +397,24 @@ export function HighlightViewer({
 
           <View style={s.actions}>
             {!isOwner && (
-              <Pressable onPress={handleLike} style={s.actionBtn} hitSlop={HIT_SLOP}>
-                <Heart
-                  size={24}
-                  color={likeState.liked ? color.signal : '#fff'}
-                  fill={likeState.liked ? color.signal : 'transparent'}
-                />
-                {likeState.count > 0 && <Text style={s.actionCount}>{likeState.count}</Text>}
-              </Pressable>
+              <View style={s.actionBtn}>
+                <Pressable
+                  onPress={handleLike}
+                  onLongPress={() => setLikerHighlightId(current.id)}
+                  hitSlop={HIT_SLOP}
+                >
+                  <Heart
+                    size={24}
+                    color={likeState.liked ? color.signal : '#fff'}
+                    fill={likeState.liked ? color.signal : 'transparent'}
+                  />
+                </Pressable>
+                {likeState.count > 0 && (
+                  <Pressable onPress={() => setLikerHighlightId(current.id)} hitSlop={6}>
+                    <Text style={s.actionCount}>{likeState.count}</Text>
+                  </Pressable>
+                )}
+              </View>
             )}
 
             {!isOwner && !replyOpen && (
@@ -459,6 +471,17 @@ export function HighlightViewer({
         highlightId={current.id}
         onClose={() => setViewersOpen(false)}
       />
+
+      {likerHighlightId !== null && (
+        <EngagementUserListSheet
+          visible
+          targetType="highlight_like"
+          targetId={likerHighlightId}
+          title="Liked by"
+          initialTotal={likeMap[likerHighlightId]?.count ?? 0}
+          onClose={() => setLikerHighlightId(null)}
+        />
+      )}
     </Modal>
   );
 }
