@@ -14,8 +14,17 @@
  * Run with:
  *   node --import tsx/esm --test src/lib/engagementLikerSheet.test.ts
  */
-import { describe, it } from 'node:test';
+import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// ── Source-file paths ─────────────────────────────────────────────────────────
+// The test file lives at src/lib/engagementLikerSheet.test.ts.
+// Components are at src/components/<Name>.tsx.
+const _dir = path.dirname(fileURLToPath(import.meta.url));
+const COMPONENTS = path.resolve(_dir, '..', 'components');
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // § 1 — PostEngagementBar likerSheet state transitions
@@ -384,5 +393,111 @@ describe('EngagementUserListSheet — hasMore-driven loadMore guard', () => {
 
     assert.equal(hasMore, false, 'hasMore updated from page result');
     assert.equal(nextCursor, null, 'nextCursor updated from page result');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// § 4 — PostEngagementBar source-level wiring assertions
+//
+// RNTL component tests are not viable in this codebase due to the React 19 /
+// jest-expo multiple-React-instance crash ("Invalid hook call / null dispatcher").
+// These source-level assertions read the actual component file and verify that
+// the JSX bindings that open EngagementUserListSheet are present and correct.
+// Any regression (removed handler, wrong targetType, missing component) fails here.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('PostEngagementBar — source-level JSX wiring', () => {
+  let src = '';
+  before(() => { src = fs.readFileSync(path.join(COMPONENTS, 'PostEngagementBar.tsx'), 'utf8'); });
+
+  it('imports EngagementUserListSheet', () => {
+    assert.ok(src.includes("from './EngagementUserListSheet'"), 'PostEngagementBar must import EngagementUserListSheet');
+  });
+
+  it('like-count Pressable onPress calls setLikerSheet({})', () => {
+    assert.ok(src.includes('onPress={() => setLikerSheet({})}'), 'count-tap Pressable must call setLikerSheet({})');
+  });
+
+  it('heart onLongPress calls setLikerSheet({})', () => {
+    assert.ok(src.includes('onLongPress={() => setLikerSheet({})}'), 'heart long-press must call setLikerSheet({})');
+  });
+
+  it('reaction chip onChipPress passes emoji into likerSheet', () => {
+    assert.ok(
+      src.includes('onChipPress={(emoji) => setLikerSheet({ emoji })}'),
+      'chip press must set likerSheet with emoji'
+    );
+  });
+
+  it("EngagementUserListSheet targetType is 'post_reaction' when emoji set, 'post_like' otherwise", () => {
+    assert.ok(
+      src.includes("targetType={likerSheet.emoji ? 'post_reaction' : 'post_like'}"),
+      "targetType must derive from likerSheet.emoji"
+    );
+  });
+
+  it('EngagementUserListSheet reactionType is likerSheet.emoji', () => {
+    assert.ok(src.includes('reactionType={likerSheet.emoji}'), 'reactionType prop must be likerSheet.emoji');
+  });
+
+  it('EngagementUserListSheet onClose resets likerSheet to null', () => {
+    assert.ok(src.includes('onClose={() => setLikerSheet(null)}'), 'onClose must reset likerSheet to null');
+  });
+
+  it('EngagementUserListSheet is only rendered when likerSheet !== null', () => {
+    assert.ok(src.includes('likerSheet !== null'), 'sheet must be gated on likerSheet !== null');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// § 5 — CommentsSheet source-level wiring assertions
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('CommentsSheet — source-level JSX wiring', () => {
+  let src = '';
+  before(() => { src = fs.readFileSync(path.join(COMPONENTS, 'CommentsSheet.tsx'), 'utf8'); });
+
+  it('imports EngagementUserListSheet', () => {
+    assert.ok(src.includes("from './EngagementUserListSheet'"), 'CommentsSheet must import EngagementUserListSheet');
+  });
+
+  it('comment like-count Pressable onPress sets likerCommentId', () => {
+    assert.ok(
+      src.includes('onPress={() => setLikerCommentId(comment.id)}'),
+      'comment count-tap must call setLikerCommentId(comment.id)'
+    );
+  });
+
+  it('comment likers EngagementUserListSheet uses targetType="comment_like"', () => {
+    assert.ok(src.includes('targetType="comment_like"'), 'comment likers sheet must pass targetType=comment_like');
+  });
+
+  it('comment likers EngagementUserListSheet targetId is likerCommentId', () => {
+    assert.ok(src.includes('targetId={likerCommentId}'), 'comment likers sheet must pass likerCommentId as targetId');
+  });
+
+  it('comment likers EngagementUserListSheet onClose resets likerCommentId to null', () => {
+    assert.ok(
+      src.includes('onClose={() => setLikerCommentId(null)}'),
+      'comment likers onClose must reset likerCommentId to null'
+    );
+  });
+
+  it('reply like-count Pressable onPress sets likerReplyId', () => {
+    assert.ok(
+      src.includes('onPress={() => setLikerReplyId(reply.id)}'),
+      'reply count-tap must call setLikerReplyId(reply.id)'
+    );
+  });
+
+  it('reply likers EngagementUserListSheet targetId is likerReplyId', () => {
+    assert.ok(src.includes('targetId={likerReplyId}'), 'reply likers sheet must pass likerReplyId as targetId');
+  });
+
+  it('reply likers EngagementUserListSheet onClose resets likerReplyId to null', () => {
+    assert.ok(
+      src.includes('onClose={() => setLikerReplyId(null)}'),
+      'reply likers onClose must reset likerReplyId to null'
+    );
   });
 });
