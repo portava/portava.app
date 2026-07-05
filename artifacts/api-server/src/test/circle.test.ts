@@ -102,6 +102,8 @@ interface FakeState {
   circleMembers:        any[];
   messages:             any[];
   messageThreads:       any[];
+  // ── Notification pipeline tracking ──────────────────────────────────────────
+  notifications:        any[];
 }
 
 let state: FakeState;
@@ -204,6 +206,7 @@ function resetState(): void {
     circleMembers: [],
     messages: [],
     messageThreads: [],
+    notifications: [],
   };
 }
 
@@ -262,6 +265,7 @@ function makeClient(userId: string) {
           if (t === "circle_audit_events") state.circleAuditEvents.push(...generated);
           if (t === "circle_checkins") state.circleCheckins.push(...generated);
           if (t === "circle_meeting_points") state.circleMeetingPoints.push(...generated);
+          if (t === "notifications") state.notifications.push(...generated);
           const out = this._maybeSingle ? { data: generated[0] ?? null, error: null } : { data: generated, error: null };
           return out;
         }
@@ -494,6 +498,12 @@ function makeClient(userId: string) {
         // message_threads (for Telegraph card thread lookup)
         if (t === "message_threads") {
           const filtered = applyFilters(state.messageThreads);
+          return this._maybeSingle ? { data: filtered[0] ? { ...filtered[0] } : null, error: null } : { data: filtered.map((r) => ({ ...r })), error: null };
+        }
+
+        // notifications (pipeline tracking + dedup reads)
+        if (t === "notifications") {
+          const filtered = applyFilters(state.notifications);
           return this._maybeSingle ? { data: filtered[0] ? { ...filtered[0] } : null, error: null } : { data: filtered.map((r) => ({ ...r })), error: null };
         }
 
@@ -1408,5 +1418,77 @@ describe("Privacy regression checks", () => {
       [],
       "RSVP-only (no event_attendees row) must yield zero event Circle cards",
     );
+  });
+});
+
+// ── Notification pipeline smoke tests ─────────────────────────────────────────
+//
+// sendCircleNotifications() is fire-and-forget, so silent failures don't surface
+// in the HTTP response tests above.  These tests verify that the pipeline is
+// actually triggered by checking state.notifications after each action.
+//
+// Timing: all assertions run after a short delay so the fire-and-forget async
+// block (void (async () => {...})()) has time to complete.
+
+describe("Notification pipeline", () => {
+  function waitForPipeline(): Promise<void> {
+    // Give the fire-and-forget async block time to flush through the event loop.
+    return new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  beforeEach(() => {
+    resetState();
+    const c = makeClient(VIEWER_ID);
+    _setTestClient(c as any, true);
+    _setTestServiceClient(c as any);
+  });
+
+  it("check-in POST triggers circle.checkin notification to other members", async () => {
+    const r = await req("POST", `/circle/contexts/trip/${TRIP_ID}/check-in`, {
+      checkinType: "arrived",
+      venueLabel:  "Hotel Lobby",
+    });
+    assert.equal(r.status, 201, "check-in should succeed");
+
+    await waitForPipeline();
+
+    const notif = state.notifications.find((n: any) => n.event_type === "circle.checkin");
+    assert.ok(notif, "circle.checkin notification must be created after check-in");
+    // VIEWER_ID is the actor — TARGET_ID is the only other trip member, so they receive it.
+    assert.equal(notif.user_id, TARGET_ID, "notification must target the other circle member, not the actor");
+  });
+
+  it("need-help POST triggers circle.need_help_host_alert notification to the trip host", async () => {
+    // Switch to TARGET client — a non-host member triggers need-help so the
+    // host (VIEWER_ID, who owns TRIP_ID) receives the alert.
+    const tc = makeClient(TARGET_ID);
+    _setTestClient(tc as any, true);
+    _setTestServiceClient(tc as any);
+
+    const r = await req("POST", `/circle/contexts/trip/${TRIP_ID}/need-help`, { note: "SOS" }, TARGET_TOKEN);
+    assert.equal(r.status, 200, "need-help should succeed for an accepted member");
+
+    await waitForPipeline();
+
+    const notif = state.notifications.find((n: any) => n.event_type === "circle.need_help_host_alert");
+    assert.ok(notif, "circle.need_help_host_alert notification must be created");
+    assert.equal(notif.user_id, VIEWER_ID, "host-alert must target the trip owner, not the actor");
+  });
+
+  it("POST /meeting-point triggers circle.meeting_point_updated notification to members", async () => {
+    // Clear existing meeting point so POST (create) path is exercised.
+    state.circleMeetingPoints = [];
+
+    const r = await req("POST", `/circle/contexts/trip/${TRIP_ID}/meeting-point`, {
+      venueLabel: "Airport Terminal 2",
+    });
+    assert.equal(r.status, 201, "meeting-point POST should succeed for the host");
+
+    await waitForPipeline();
+
+    const notif = state.notifications.find((n: any) => n.event_type === "circle.meeting_point_updated");
+    assert.ok(notif, "circle.meeting_point_updated notification must be created after meeting point set");
+    // HOST (VIEWER_ID) is the actor — TARGET_ID is the only other member.
+    assert.equal(notif.user_id, TARGET_ID, "notification must target other members, not the host");
   });
 });
