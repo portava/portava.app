@@ -53,11 +53,19 @@ export function parseCircleCardBody(body: string | null | undefined): CircleCard
 
 // ── Subtype classification ────────────────────────────────────────────────────
 
-/** Map a raw subtype string to one of the three card variants. */
+/** Exhaustive set of known check-in subtype values. */
+const CHECKIN_SUBTYPES: ReadonlySet<string> = new Set(['arrived', 'with_group', 'leaving', 'safe']);
+
+/**
+ * Map a raw subtype string to one of the three card variants.
+ * Only explicitly-known check-in subtypes produce 'checkin'.
+ * Any unrecognised value returns 'unknown' and renders the placeholder.
+ */
 export function classifySubtype(subtype: string | null | undefined): CardVariant {
   if (!subtype) return 'unknown';
   if (subtype === 'meeting_point') return 'meeting_point';
-  return 'checkin';
+  if (CHECKIN_SUBTYPES.has(subtype)) return 'checkin';
+  return 'unknown';
 }
 
 /** Human-readable label for a check-in subtype. */
