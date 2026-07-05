@@ -1213,6 +1213,13 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
   const blocked = await isBlocked(sc, user.id, (trip as any).owner_id);
   if (blocked) { sendError(res, "forbidden", "Blocked"); return; }
 
+  // Terminal-state guard: cannot join a trip that has been cancelled or archived.
+  const tripStatus = (trip as any).status as string | null;
+  if (tripStatus === "cancelled" || tripStatus === "archived") {
+    res.status(410).json({ error: "gone", message: "This trip is no longer active" });
+    return;
+  }
+
   // Already a member?
   const membership = await requireTripMember(sc, tripId, user.id, { status: "any" });
   if (membership) {

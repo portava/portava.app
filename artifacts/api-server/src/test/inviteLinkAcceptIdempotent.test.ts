@@ -55,6 +55,7 @@ function makeClient(opts: {
   claimResult?: string;
   claimError?: boolean;
   memberInsertError?: { message: string; code?: string };
+  tripStatus?: string;
 }): { client: any; rpcCalls: FakeRpcCall[] } {
   const {
     isMemberOnFirstCheck  = false,
@@ -62,6 +63,7 @@ function makeClient(opts: {
     claimResult           = "claimed",
     claimError            = false,
     memberInsertError,
+    tripStatus            = "upcoming",
   } = opts;
 
   const rpcCalls: FakeRpcCall[] = [];
@@ -141,7 +143,7 @@ function makeClient(opts: {
               data: {
                 id:       TRIP_ID,
                 owner_id: OWNER_ID,
-                status:   "upcoming",
+                status:   tripStatus,
               },
               error: null,
             });
@@ -411,5 +413,47 @@ describe("POST /api/trips/invite-link/:token/accept — idempotency & usage cap"
       0,
       "release must NOT be called for retry-attempt path — attempt row is kept for further retries",
     );
+  });
+
+  // ── Terminal-state guards ─────────────────────────────────────────────────
+
+  it("returns 410 gone and does not claim a slot when the trip is cancelled", async () => {
+    const { client, rpcCalls } = makeClient({
+      isMemberOnFirstCheck: false,
+      tripStatus:           "cancelled",
+    });
+    _setTestClient(client, true);
+
+    const r = await post(port, `/trips/invite-link/${LINK_TOKEN}/accept`, "joiner-token");
+
+    assert.equal(r.status, 410, "should return 410 for a cancelled trip");
+    assert.equal(r.body.error, "gone");
+    assert.ok(
+      typeof r.body.message === "string" && r.body.message.length > 0,
+      "should include a human-readable message",
+    );
+
+    const claimCalls = rpcCalls.filter((c) => c.fn === "claim_invite_link_slot_for_user");
+    assert.equal(claimCalls.length, 0, "claim must NOT be called for a cancelled trip");
+  });
+
+  it("returns 410 gone and does not claim a slot when the trip is archived", async () => {
+    const { client, rpcCalls } = makeClient({
+      isMemberOnFirstCheck: false,
+      tripStatus:           "archived",
+    });
+    _setTestClient(client, true);
+
+    const r = await post(port, `/trips/invite-link/${LINK_TOKEN}/accept`, "joiner-token");
+
+    assert.equal(r.status, 410, "should return 410 for an archived trip");
+    assert.equal(r.body.error, "gone");
+    assert.ok(
+      typeof r.body.message === "string" && r.body.message.length > 0,
+      "should include a human-readable message",
+    );
+
+    const claimCalls = rpcCalls.filter((c) => c.fn === "claim_invite_link_slot_for_user");
+    assert.equal(claimCalls.length, 0, "claim must NOT be called for an archived trip");
   });
 });
