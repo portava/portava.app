@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MapPin, Calendar, X, CheckCircle2, Plane } from 'lucide-react-native';
+import { MapPin, Calendar, X, CheckCircle2, Plane, AlertTriangle } from 'lucide-react-native';
 import { useSession } from '../../src/context/SessionContext';
 import {
   previewInviteLink, acceptInviteByToken,
@@ -19,6 +19,7 @@ type ScreenState =
   | { kind: 'gone'; message: string }
   | { kind: 'error' }
   | { kind: 'already_member'; tripId: string }
+  | { kind: 'terminal'; preview: InvitePreview; message: string }
   | { kind: 'ready'; preview: InvitePreview };
 
 function formatDateRange(start: string | null, end: string | null): string {
@@ -49,6 +50,12 @@ export default function InviteLinkScreen() {
       setScreen({ kind: 'error' });
     } else if (result.data.alreadyMember) {
       setScreen({ kind: 'already_member', tripId: result.data.tripId });
+    } else if (result.data.isTerminal) {
+      setScreen({
+        kind: 'terminal',
+        preview: result.data,
+        message: result.data.terminalReason ?? 'This trip is no longer active.',
+      });
     } else {
       setScreen({ kind: 'ready', preview: result.data });
     }
@@ -68,11 +75,16 @@ export default function InviteLinkScreen() {
     setJoining(false);
     if (result.tripId) {
       router.replace(`/trip/${result.tripId}` as Parameters<typeof router.replace>[0]);
+    } else if (result.alreadyMember) {
+      router.replace(`/trip/${preview.tripId}` as Parameters<typeof router.replace>[0]);
     } else {
-      Alert.alert(
-        'Could not join',
-        'The invite link may have expired. Please ask the trip owner for a new one.',
-      );
+      const msg =
+        result.error === 'gone'
+          ? 'This trip is no longer accepting new members.'
+          : result.error === 'not_authenticated'
+          ? 'Please sign in and try again.'
+          : 'The invite link may have expired. Please ask the trip owner for a new one.';
+      Alert.alert('Could not join', msg);
     }
   }
 
@@ -141,6 +153,65 @@ export default function InviteLinkScreen() {
             <Text style={styles.primaryBtnText}>View Trip</Text>
           </Pressable>
         </View>
+      )}
+
+      {screen.kind === 'terminal' && (
+        <ScrollView
+          contentContainerStyle={styles.cardContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {screen.preview.coverUrl ? (
+            <Image
+              source={{ uri: screen.preview.coverUrl }}
+              style={[styles.cover, styles.coverDimmed]}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={[styles.cover, styles.coverPlaceholder, styles.coverDimmed]}>
+              <Plane size={36} color={color.mute} />
+            </View>
+          )}
+
+          <View style={styles.warningBanner}>
+            <AlertTriangle size={16} color={color.warn} />
+            <Text style={styles.warningText}>{screen.message}</Text>
+          </View>
+
+          <View style={[styles.cardBody, styles.cardBodyDimmed]}>
+            <Text style={styles.label}>YOU'VE BEEN INVITED TO</Text>
+            <Text style={styles.tripTitle}>
+              {screen.preview.tripTitle ?? screen.preview.destinationCity ?? 'a trip'}
+            </Text>
+
+            {Boolean(screen.preview.destinationCity) && (
+              <View style={styles.metaRow}>
+                <MapPin size={14} color={color.faint} />
+                <Text style={styles.metaText}>
+                  {[screen.preview.destinationCity, screen.preview.destinationCountry]
+                    .filter(Boolean)
+                    .join(', ')}
+                </Text>
+              </View>
+            )}
+
+            {Boolean(screen.preview.startDate) && (
+              <View style={styles.metaRow}>
+                <Calendar size={14} color={color.faint} />
+                <Text style={styles.metaText}>
+                  {formatDateRange(screen.preview.startDate, screen.preview.endDate)}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          <View style={[styles.primaryBtn, styles.primaryBtnFull, styles.btnDisabled]}>
+            <Text style={styles.primaryBtnText}>Accept Invite</Text>
+          </View>
+
+          <Pressable style={styles.ghostBtn} onPress={handleClose}>
+            <Text style={styles.ghostBtnText}>Go back</Text>
+          </Pressable>
+        </ScrollView>
       )}
 
       {screen.kind === 'ready' && (
@@ -301,6 +372,26 @@ const styles = StyleSheet.create({
     color: color.mute,
   },
   btnDisabled: {
+    opacity: 0.5,
+  },
+  coverDimmed: {
+    opacity: 0.4,
+  },
+  warningBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    backgroundColor: color.haze,
+    borderRadius: radius.sm,
+    paddingVertical: space.sm,
+    paddingHorizontal: space.md,
+  },
+  warningText: {
+    ...(t.bodyStrong as object),
+    color: color.warn,
+    flex: 1,
+  },
+  cardBodyDimmed: {
     opacity: 0.5,
   },
 });

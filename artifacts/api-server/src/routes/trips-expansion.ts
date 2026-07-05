@@ -1148,7 +1148,7 @@ router.get("/trips/invite-link/:token/preview", async (req, res) => {
 
   const { data: trip } = await sc
     .from("trips")
-    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id, visibility")
+    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id, visibility, status")
     .eq("id", lk.trip_id)
     .maybeSingle();
 
@@ -1157,17 +1157,38 @@ router.get("/trips/invite-link/:token/preview", async (req, res) => {
   // Is the caller already a member?
   const membership = await requireTripMember(sc, lk.trip_id, user.id, { status: "any" });
 
+  const tripStatus = (trip as any).status as string | null;
+  const endDate    = (trip as any).end_date as string | null;
+  const today      = new Date().toISOString().slice(0, 10);
+
+  // Compute a terminal-state flag the client can use to disable the Accept button
+  // and show a clear "no longer active" or "already ended" warning without having
+  // the user tap Accept first only to get a confusing 410 response.
+  const isTerminal =
+    tripStatus === "cancelled" ||
+    tripStatus === "archived"  ||
+    (endDate != null && endDate < today);
+
+  const terminalReason: string | null = isTerminal
+    ? (tripStatus === "cancelled" || tripStatus === "archived"
+        ? "This trip is no longer active."
+        : "This trip has already ended.")
+    : null;
+
   res.json({
     tripId:             (trip as any).id,
     tripTitle:          (trip as any).title,
     destinationCity:    (trip as any).destination_city,
     destinationCountry: (trip as any).destination_country ?? null,
     startDate:          (trip as any).start_date ?? null,
-    endDate:            (trip as any).end_date ?? null,
+    endDate:            endDate,
     coverUrl:           (trip as any).cover_url ?? null,
     alreadyMember:      Boolean(membership),
     linkId:             lk.id,
     expiresAt:          lk.expires_at ?? null,
+    tripStatus:         tripStatus,
+    isTerminal:         isTerminal,
+    terminalReason:     terminalReason,
   });
 });
 

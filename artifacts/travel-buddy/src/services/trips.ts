@@ -381,6 +381,12 @@ export interface InvitePreview {
   alreadyMember: boolean;
   linkId: string;
   expiresAt: string | null;
+  /** Trip lifecycle status ('upcoming' | 'in_progress' | 'cancelled' | 'archived' | …). */
+  tripStatus: string | null;
+  /** True when the trip is in a terminal state (cancelled, archived, or end_date passed). */
+  isTerminal: boolean;
+  /** Human-readable explanation for isTerminal, or null when not terminal. */
+  terminalReason: string | null;
 }
 
 export interface InvitePreviewResult {
