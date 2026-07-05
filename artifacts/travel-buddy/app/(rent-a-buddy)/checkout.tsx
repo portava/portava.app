@@ -51,8 +51,8 @@ function SafetyTutorialModal({ visible, onAcknowledge }: { visible: boolean; onA
           <View style={tut.rule}>
             <AlertTriangle size={14} color={color.warn} />
             <View style={{ flex: 1 }}>
-              <Text style={tut.ruleTitle}>Never pay off-app</Text>
-              <Text style={tut.ruleSub}>Only pay via Travel Buddy checkout. Cash should only be used for the pre-agreed cash balance at session end — never upfront.</Text>
+              <Text style={tut.ruleTitle}>No upfront cash payments</Text>
+              <Text style={tut.ruleSub}>In-app payment is coming soon. Payment is agreed directly with your Buddy after they confirm your booking — never pay cash to anyone before your session begins.</Text>
             </View>
           </View>
 

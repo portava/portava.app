@@ -1309,80 +1309,22 @@ router.get("/api/rent-a-buddy/bookings/:bookingId", async (req, res) => {
 // ── Bookings — Payment ────────────────────────────────────────────────────────
 
 router.post("/api/rent-a-buddy/bookings/:bookingId/pay-deposit", async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const serviceClient = sc(auth.client);
-  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
-
-  const { bookingId } = req.params;
-  const { data: booking } = await serviceClient
-    .from("rent_buddy_bookings")
-    .select("*")
-    .eq("id", bookingId)
-    .eq("traveler_id", auth.user.id)
-    .maybeSingle();
-
-  if (!booking) return res.status(404).json({ error: "not_found" });
-
-  const b = booking as any;
-  if (b.payment_mode !== "deposit_plus_cash") {
-    return res.status(400).json({ error: "invalid_payload", message: "This booking uses full in-app payment. Use /pay-full." });
-  }
-  if (!["pending", "confirmed", "scheduled"].includes(b.status)) {
-    return res.status(400).json({ error: "invalid_payload", message: "Deposit can only be paid for pending or confirmed bookings." });
-  }
-
-  // Record deposit intent — real Stripe integration wires here
-  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_deposit_paid", "Deposit paid — your booking is secured.");
-
-  // Compass: booking payment state changed — invalidate traveler's cache so
-  // active_booking reflects the new payment status on next frontload.
-  await invalidateCompassCache(serviceClient, auth.user.id, "booking_payment_initiated");
-
-  return res.json({
-    ok: true,
-    depositUsd: Number(b.deposit_usd),
-    cashBalanceUsd: Number(b.cash_balance_usd),
-    paymentIntent: { status: "requires_payment_method", bookingId },
-    message: "Deposit recorded. Complete payment via the Stripe payment sheet.",
+  // Payment module not yet implemented. Return 503 so no booking is ever
+  // marked "paid" and no false milestone notification is sent to the traveler.
+  return res.status(503).json({
+    error: "payment_not_available",
+    payment_stub: true,
+    message: "In-app payment is not yet available. Payment arrangements are agreed directly with your Buddy after booking confirmation — no charge is made through the app.",
   });
 });
 
 router.post("/api/rent-a-buddy/bookings/:bookingId/pay-full", async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const serviceClient = sc(auth.client);
-  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
-
-  const { bookingId } = req.params;
-  const { data: booking } = await serviceClient
-    .from("rent_buddy_bookings")
-    .select("*")
-    .eq("id", bookingId)
-    .eq("traveler_id", auth.user.id)
-    .maybeSingle();
-
-  if (!booking) return res.status(404).json({ error: "not_found" });
-
-  const b = booking as any;
-  if (b.payment_mode !== "full_in_app") {
-    return res.status(400).json({ error: "invalid_payload", message: "This booking uses deposit+cash. Use /pay-deposit." });
-  }
-  if (!["pending", "confirmed", "scheduled"].includes(b.status)) {
-    return res.status(400).json({ error: "invalid_payload", message: "Full payment can only be made for pending or confirmed bookings." });
-  }
-
-  void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_deposit_paid", "Payment confirmed — your booking is fully secured.");
-
-  // Compass: booking payment state changed — invalidate traveler's cache so
-  // active_booking reflects the new payment status on next frontload.
-  await invalidateCompassCache(serviceClient, auth.user.id, "booking_payment_initiated");
-
-  return res.json({
-    ok: true,
-    totalUsd: Number(b.total_usd),
-    paymentIntent: { status: "requires_payment_method", bookingId },
-    message: "Payment recorded. Complete payment via the Stripe payment sheet.",
+  // Payment module not yet implemented. Return 503 so no booking is ever
+  // marked "paid" and no false milestone notification is sent to the traveler.
+  return res.status(503).json({
+    error: "payment_not_available",
+    payment_stub: true,
+    message: "In-app payment is not yet available. Payment arrangements are agreed directly with your Buddy after booking confirmation — no charge is made through the app.",
   });
 });
 

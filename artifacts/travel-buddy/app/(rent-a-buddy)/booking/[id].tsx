@@ -7,7 +7,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import {
   ArrowLeft, MessageCircle, Clock, MapPin, Shield,
   CheckCircle, AlertTriangle, Star, Flag, ChevronDown, ChevronUp,
-  X, Users, Calendar, Plus, Route,
+  X, Users, Calendar, Plus, Route, Info,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState, TravelCard } from '../../../src/components/primitives';
@@ -361,8 +361,8 @@ export default function BookingDetail() {
               <Text style={styles.priceVal}>${booking.totalUsd}</Text>
             </View>
             <View style={styles.priceRow}>
-              <Text style={styles.priceKey}>Deposit paid</Text>
-              <Text style={[styles.priceVal, { color: color.success }]}>–${deposit}</Text>
+              <Text style={styles.priceKey}>Deposit</Text>
+              <Text style={styles.priceVal}>${deposit}</Text>
             </View>
             <View style={styles.priceRow}>
               <Text style={styles.priceKey}>Service fee</Text>
@@ -375,6 +375,12 @@ export default function BookingDetail() {
               </View>
             )}
           </TravelCard>
+          <View style={styles.paymentDisclosure}>
+            <Info size={12} color={color.deep} />
+            <Text style={styles.paymentDisclosureText}>
+              No payment is charged through the app. Payment is agreed directly with your Buddy after booking confirmation.
+            </Text>
+          </View>
         </View>
 
         {/* Safety panel */}
@@ -576,6 +582,8 @@ const styles = StyleSheet.create({
   priceRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: space.sm, borderBottomWidth: 1, borderBottomColor: color.haze },
   priceKey: { ...t.body, color: color.mute },
   priceVal: { ...t.body, fontWeight: '600', color: color.ink },
+  paymentDisclosure: { flexDirection: 'row', alignItems: 'flex-start', gap: space.xs, marginTop: space.sm },
+  paymentDisclosureText: { ...t.small, color: color.deep, flex: 1, lineHeight: 16 },
   actionBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.sm,
     borderRadius: radius.md, borderWidth: 1, borderColor: color.haze,
