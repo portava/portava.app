@@ -47,6 +47,7 @@ function baseProfile(overrides: Partial<CompassProfile> = {}): CompassProfile {
     visibilityPreference: "semi_private",
     blockedUserIds:       [],
     blockerUserIds:       [],
+    mutedUserIds:         [],
     blockCount:           0,
     blockerCount:         0,
     trustScore:           75,

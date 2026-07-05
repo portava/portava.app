@@ -146,6 +146,21 @@ function checkItem(
     return denied("report_count_threshold_exceeded");
   }
 
+  // 17. Moderation-rejected content (fail-closed: rejected items never surface)
+  if (item.isModerationRejected) {
+    return denied("moderation_rejected");
+  }
+
+  // 18. Deleted accounts / soft-deleted content
+  if (item.isDeleted) {
+    return denied("item_or_author_deleted");
+  }
+
+  // 19. Muted author: viewer has muted this user (softer than a block, still excluded from feed)
+  if (authorId && profile.mutedUserIds.includes(authorId)) {
+    return denied("author_muted_by_viewer");
+  }
+
   return { allowed: true };
 }
 

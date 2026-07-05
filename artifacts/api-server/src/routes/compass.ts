@@ -852,11 +852,39 @@ router.post("/compass/feedback", async (req, res) => {
     const result = await processFeedback(sc, user.id, parsed.data);
     res.json({ updated: result.updated });
 
+    // ── Dual-write canonical actions to compass_feedback ───────────────────
+    // compass_feedback stores the discrete UI-level actions users take on
+    // recommendations (what they tap in the overflow menu). These are a
+    // subset of the broader FEEDBACK_ACTIONS preference-weight events.
+    // Write is fire-and-forget — never blocks the response.
+    const COMPASS_FEEDBACK_ACTION_MAP: Partial<Record<FeedbackAction, string>> = {
+      not_interested:  "not_interested",
+      report:          "report",
+      too_expensive:   "too_expensive",
+      hide_user:       "hide",
+      not_my_vibe:     "wrong_vibe",
+    };
+    const { action, recommendationId, itemType, targetUserId } = parsed.data;
+    const mappedAction = COMPASS_FEEDBACK_ACTION_MAP[action];
+    if (mappedAction) {
+      sc.from("compass_feedback")
+        .insert({
+          user_id:           user.id,
+          item_id:           recommendationId,
+          item_type:         itemType,
+          action:            mappedAction,
+          recommendation_id: recommendationId,
+          metadata:          targetUserId ? { targetUserId } : {},
+        })
+        .then(undefined, (err: unknown) => {
+          req.log?.warn({ err }, "compass/feedback: dual-write to compass_feedback failed");
+        });
+    }
+
     // ── On-demand abuse scan ───────────────────────────────────────────────
     // When a user reports or blocks another user, immediately trigger a
     // scoped abuse scan for the target so the AbuseDefenseEngine can act
     // on the signal before the next scheduled batch window.
-    const { action, targetUserId } = parsed.data;
     if (targetUserId && (action === "report" || action === "block")) {
       triggerOnDemandScan(targetUserId);
     }
@@ -1001,6 +1029,323 @@ router.get("/compass/me/active-reward", async (req, res) => {
     badges,
     visibilityMessage: buildVisibilityMessage(tier, badges),
     boostEnabled:      boost,
+  });
+});
+
+// ── GET /api/compass/context ──────────────────────────────────────────────────
+// Returns the user's persisted recent context session from compass_recent_context.
+// Returns { context: null } when no session exists or the session has expired.
+
+router.get("/compass/context", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const now = new Date().toISOString();
+  const { data, error } = await sc
+    .from("compass_recent_context")
+    .select("context_state, intent_mode, city, country, signals, client_hints, expires_at, updated_at")
+    .eq("user_id", user.id)
+    .gt("expires_at", now)
+    .maybeSingle();
+
+  if (error) {
+    req.log.warn({ err: error, userId: user.id }, "compass/context GET: read failed");
+    sendError(res, "db_error", "Could not load context");
+    return;
+  }
+
+  res.json({ context: data ?? null });
+});
+
+// ── POST /api/compass/context ─────────────────────────────────────────────────
+// Upserts a context session for the user. TTL is 4 hours from submission.
+
+const contextBodySchema = z.object({
+  context_state: z.string().max(60).optional(),
+  intent_mode:   z.string().max(60).optional(),
+  city:          z.string().max(200).optional(),
+  country:       z.string().max(200).optional(),
+  signals:       z.record(z.unknown()).optional(),
+  client_hints:  z.record(z.unknown()).optional(),
+});
+
+router.post("/compass/context", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const parsed = contextBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 4 * 60 * 60 * 1_000).toISOString();
+
+  const { error } = await sc
+    .from("compass_recent_context")
+    .upsert(
+      {
+        user_id:       user.id,
+        context_state: parsed.data.context_state ?? "normal",
+        intent_mode:   parsed.data.intent_mode   ?? "explore_now",
+        city:          parsed.data.city          ?? null,
+        country:       parsed.data.country       ?? null,
+        signals:       parsed.data.signals       ?? {},
+        client_hints:  parsed.data.client_hints  ?? {},
+        expires_at:    expiresAt,
+        updated_at:    now.toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+
+  if (error) {
+    req.log.warn({ err: error, userId: user.id }, "compass/context POST: upsert failed");
+    sendError(res, "db_error", "Could not save context");
+    return;
+  }
+
+  res.status(201).json({ ok: true, expires_at: expiresAt });
+});
+
+// ── DELETE /api/compass/context ───────────────────────────────────────────────
+// Clears the user's persisted context session (e.g., on logout / mode reset).
+
+router.delete("/compass/context", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const { error } = await sc
+    .from("compass_recent_context")
+    .delete()
+    .eq("user_id", user.id);
+
+  if (error) {
+    req.log.warn({ err: error, userId: user.id }, "compass/context DELETE: delete failed");
+    sendError(res, "db_error", "Could not delete context");
+    return;
+  }
+
+  res.status(200).json({ ok: true });
+});
+
+// ── GET /api/compass/settings ─────────────────────────────────────────────────
+// Returns the user's Compass privacy/data-use settings from compass_settings.
+// On first access, returns the default settings (all enabled).
+
+const DEFAULT_COMPASS_SETTINGS = {
+  use_location:                true,
+  use_trip_data:               true,
+  use_saved_items:             true,
+  use_history:                 true,
+  show_buddy_recommendations:  true,
+  show_people_recommendations: true,
+  allow_smart_notifications:   true,
+};
+
+router.get("/compass/settings", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const { data, error } = await sc
+    .from("compass_settings")
+    .select("use_location, use_trip_data, use_saved_items, use_history, show_buddy_recommendations, show_people_recommendations, allow_smart_notifications, updated_at")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    req.log.warn({ err: error, userId: user.id }, "compass/settings GET: read failed");
+    sendError(res, "db_error", "Could not load settings");
+    return;
+  }
+
+  res.json({ settings: data ?? { user_id: user.id, ...DEFAULT_COMPASS_SETTINGS } });
+});
+
+// ── PATCH /api/compass/settings ───────────────────────────────────────────────
+// Partially updates the user's Compass privacy/data-use settings.
+
+const patchSettingsSchema = z.object({
+  use_location:                z.boolean().optional(),
+  use_trip_data:               z.boolean().optional(),
+  use_saved_items:             z.boolean().optional(),
+  use_history:                 z.boolean().optional(),
+  show_buddy_recommendations:  z.boolean().optional(),
+  show_people_recommendations: z.boolean().optional(),
+  allow_smart_notifications:   z.boolean().optional(),
+});
+
+router.patch("/compass/settings", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const parsed = patchSettingsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
+    return;
+  }
+
+  if (Object.keys(parsed.data).length === 0) {
+    sendError(res, "invalid_payload", "No settings fields provided");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const { error } = await sc
+    .from("compass_settings")
+    .upsert(
+      { user_id: user.id, ...parsed.data, updated_at: new Date().toISOString() },
+      { onConflict: "user_id" },
+    );
+
+  if (error) {
+    req.log.warn({ err: error, userId: user.id }, "compass/settings PATCH: upsert failed");
+    sendError(res, "db_error", "Could not save settings");
+    return;
+  }
+
+  const { data: updated } = await sc
+    .from("compass_settings")
+    .select("use_location, use_trip_data, use_saved_items, use_history, show_buddy_recommendations, show_people_recommendations, allow_smart_notifications, updated_at")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  res.json({ settings: updated ?? { user_id: user.id, ...DEFAULT_COMPASS_SETTINGS, ...parsed.data } });
+});
+
+// ── POST /api/compass/report ──────────────────────────────────────────────────
+// Dedicated abuse report endpoint for Compass recommendations.
+// Writes to compass_feedback (action=report) and triggers the abuse scanner.
+
+const reportBodySchema = z.object({
+  recommendationId: z.string().min(1),
+  itemId:           z.string().min(1),
+  itemType:         z.string().min(1).max(60),
+  targetUserId:     z.string().uuid().optional(),
+  reason:           z.enum([
+    "spam", "inappropriate", "dangerous", "misleading",
+    "harassment", "fake_profile", "other",
+  ]),
+  details:          z.string().max(500).optional(),
+});
+
+router.post("/compass/report", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const parsed = reportBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const { error } = await sc
+    .from("compass_feedback")
+    .insert({
+      user_id:           user.id,
+      item_id:           parsed.data.itemId,
+      item_type:         parsed.data.itemType,
+      action:            "report",
+      recommendation_id: parsed.data.recommendationId,
+      metadata: {
+        reason:       parsed.data.reason,
+        details:      parsed.data.details ?? null,
+        targetUserId: parsed.data.targetUserId ?? null,
+      },
+    });
+
+  if (error) {
+    req.log.warn({ err: error, userId: user.id }, "compass/report: insert failed");
+    sendError(res, "db_error", "Could not save report");
+    return;
+  }
+
+  // Trigger immediate abuse scan when target user is known
+  if (parsed.data.targetUserId) {
+    triggerOnDemandScan(parsed.data.targetUserId);
+  }
+
+  req.log?.info(
+    { userId: user.id, itemId: parsed.data.itemId, reason: parsed.data.reason },
+    "compass/report: submitted",
+  );
+
+  res.status(201).json({ ok: true });
+});
+
+// ── GET /api/compass/debug/recommendations ────────────────────────────────────
+// Admin-only debug view of recent served recommendations.
+// Returns the last 100 rows from compass_served_recommendations for a user,
+// or across all users if no userId query param is provided.
+
+router.get("/compass/debug/recommendations", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  // Admin gate: must have profiles.role = 'admin'
+  const { data: profileRow, error: profileErr } = await client
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profileErr || !profileRow || (profileRow as any).role !== "admin") {
+    res.status(403).json({ error: "forbidden", message: "Admin role required" });
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const targetUserId = typeof req.query.userId === "string" ? req.query.userId : null;
+  const limit        = Math.min(Number(req.query.limit ?? 100), 200);
+
+  let query = sc
+    .from("compass_served_recommendations")
+    .select("recommendation_id, user_id, item_id, item_type, section_name, explanation_key, created_at, explanation_looked_up_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (targetUserId) {
+    query = query.eq("user_id", targetUserId);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    req.log.warn({ err: error }, "compass/debug/recommendations: read failed");
+    sendError(res, "db_error", "Could not load recommendations");
+    return;
+  }
+
+  res.json({
+    recommendations: data ?? [],
+    count:           (data ?? []).length,
+    filter_user_id:  targetUserId,
   });
 });
 

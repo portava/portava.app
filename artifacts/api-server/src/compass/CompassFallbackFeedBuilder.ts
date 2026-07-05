@@ -113,6 +113,7 @@ function buildSafeProfile(
     visibilityPreference:  "public",
     blockedUserIds:        blockedArr,
     blockerUserIds:        [],
+    mutedUserIds:          [],
     blockCount:            blockedArr.length,
     blockerCount:          0,
     trustScore:            null,

@@ -118,6 +118,9 @@ async function buildProfile(
       .select("category_weights, ignored_item_ids, muted_hashtags")
       .eq("user_id", userId)
       .maybeSingle(),
+    db.from("user_mutes")
+      .select("muted_id")
+      .eq("muter_id", userId),
   ]);
 
   // Destructure the other results (indices offset by 2 for ownedTrips + memberTrips)
@@ -132,6 +135,7 @@ async function buildProfile(
     safeReturnRes,
     bookingRes,
     compassPrefsRes,
+    mutesRes,
   ] = otherResults;
 
   // ── Trips aggregation ──────────────────────────────────────────────────────
@@ -172,6 +176,7 @@ async function buildProfile(
   const safeReturn    = safeReturnRes.status    === "fulfilled" ? ((safeReturnRes.value.data as any[]) ?? [])  : [];
   const bookings      = bookingRes.status       === "fulfilled" ? ((bookingRes.value.data as any[]) ?? [])      : [];
   const compassPrefs  = compassPrefsRes?.status === "fulfilled" ? (compassPrefsRes.value.data as any)           : null;
+  const mutedRows     = mutesRes?.status       === "fulfilled" ? ((mutesRes.value.data  as any[]) ?? [])        : [];
 
   // ── Languages ──────────────────────────────────────────────────────────────
   const languages: string[] = [];
@@ -209,6 +214,7 @@ async function buildProfile(
   // ── Block arrays for downstream exclusion ─────────────────────────────────
   const blockedUserIds: string[] = blocksSent.map((r: any) => r.blocked_id as string);
   const blockerUserIds: string[] = blocksRecv.map((r: any) => r.blocker_id as string);
+  const mutedUserIds:   string[] = mutedRows.map((r: any) => r.muted_id as string);
 
   return {
     userId,
@@ -221,6 +227,7 @@ async function buildProfile(
     visibilityPreference: visPref,
     blockedUserIds,
     blockerUserIds,
+    mutedUserIds,
     blockCount: blockedUserIds.length,
     blockerCount: blockerUserIds.length,
     trustScore: trust?.overall_score ?? null,

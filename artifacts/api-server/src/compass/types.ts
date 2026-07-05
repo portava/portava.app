@@ -85,6 +85,11 @@ export interface CompassProfile {
    * Used by downstream Compass phases to exclude this user from their results.
    */
   blockerUserIds: string[];
+  /**
+   * IDs of users this user has muted (hide from feed, not a full block).
+   * Loaded from user_interactions where interaction_type = 'mute'.
+   */
+  mutedUserIds: string[];
   /** Total count of accounts this user has blocked. */
   blockCount: number;
   /** Total count of accounts that have blocked this user. */
@@ -301,6 +306,10 @@ export interface CompassItem {
   createdAt?: string;
   /** Base quality score 0–10 assigned by the content layer. */
   qualityScore?: number;
+  /** True if the item has been rejected by the moderation pipeline. */
+  isModerationRejected?: boolean;
+  /** True if the account or content has been soft-deleted. */
+  isDeleted?: boolean;
   /** True if the item has been flagged as spam. */
   isSpam?: boolean;
   /** How many times this item has already been shown to this viewer. */
