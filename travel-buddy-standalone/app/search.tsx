@@ -16,6 +16,7 @@ import {
 import type { UnifiedSearchResult, SearchHistoryEntry } from '../src/services/discovery';
 import { fetchCompassRecommendations } from '../src/services/compass';
 import type { CompassRecommendation } from '../src/services/compass';
+import { CompassTravelerRow } from '../src/components/compass/CompassTravelerRow';
 import { useActiveLocation } from '../src/hooks/useActiveLocation';
 import { parseSearchIntent, intentSummary } from '../src/lib/compassIntent';
 import { color, space, radius, type as t } from '../src/theme/tokens';
@@ -642,6 +643,9 @@ export default function SearchScreen() {
               </View>
             </View>
           )}
+
+          {/* Compass traveler matches — below search suggestions */}
+          <CompassTravelerRow city={userCoords?.city ?? null} limit={6} />
         </ScrollView>
       ) : (
         /* Results list */

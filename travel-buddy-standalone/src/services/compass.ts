@@ -500,6 +500,138 @@ export async function postCompassContext(params: {
   }
 }
 
+// ── Compass settings ─────────────────────────────────────────────────────────
+
+export interface CompassSettings {
+  use_location?: boolean;
+  use_trip_data?: boolean;
+  use_saved_items?: boolean;
+  use_history?: boolean;
+  show_buddy_recommendations?: boolean;
+  show_people_recommendations?: boolean;
+  allow_smart_notifications?: boolean;
+}
+
+export interface CompassSettingsResult {
+  ok: boolean;
+  data?: CompassSettings;
+  error?: string;
+}
+
+export async function fetchCompassSettings(): Promise<CompassSettingsResult> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch('/api/compass/settings');
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    return { ok: true, data: body.settings ?? {} };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+// ── Buddy matches ─────────────────────────────────────────────────────────────
+
+export interface CompassBuddyData {
+  userId: string;
+  verified: boolean;
+  averageRating: number | null;
+  reviewCount: number;
+  languages: string[];
+  categories: string[];
+  coverPhotoUrl: string | null;
+  hourlyRateUsd: number | null;
+  availabilityStatus: 'available_today' | 'available_this_week' | 'not_available';
+  reasonCode: string;
+}
+
+export interface CompassBuddyResult {
+  id: string;
+  type: 'buddy';
+  category: string;
+  title: string | null;
+  reason: string;
+  city: string | null;
+  data: CompassBuddyData;
+}
+
+export interface CompassBuddyMatchesResult {
+  ok: boolean;
+  data?: CompassBuddyResult[];
+  disabled?: boolean;
+  error?: string;
+}
+
+export async function fetchCompassBuddyMatches(params: {
+  city?: string | null;
+  limit?: number;
+} = {}): Promise<CompassBuddyMatchesResult> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured() as CompassBuddyMatchesResult;
+  try {
+    const qs = new URLSearchParams({ surface: 'buddy' });
+    if (params.city) qs.set('city', params.city);
+    if (params.limit != null) qs.set('limit', String(params.limit));
+    const r = await authedFetch(`/api/compass/recommendations?${qs.toString()}`);
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    if (body.disabled) return { ok: true, data: [], disabled: true };
+    return { ok: true, data: (body.recommendations ?? []) as CompassBuddyResult[] };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+// ── Traveler matches ──────────────────────────────────────────────────────────
+
+export interface CompassTravelerData {
+  userId: string;
+  username: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  homeCity: string | null;
+  isPrivate: boolean;
+  verified: boolean;
+  sharedInterests: string[];
+  reasonCode: string;
+  followStatus: 'following' | 'requested' | 'not_following';
+}
+
+export interface CompassTravelerResult {
+  id: string;
+  type: 'traveler';
+  category: 'traveler';
+  title: string | null;
+  reason: string;
+  city: string | null;
+  data: CompassTravelerData;
+}
+
+export interface CompassTravelerMatchesResult {
+  ok: boolean;
+  data?: CompassTravelerResult[];
+  disabled?: boolean;
+  error?: string;
+}
+
+export async function fetchCompassTravelerMatches(params: {
+  city?: string | null;
+  limit?: number;
+} = {}): Promise<CompassTravelerMatchesResult> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured() as CompassTravelerMatchesResult;
+  try {
+    const qs = new URLSearchParams({ surface: 'traveler' });
+    if (params.city) qs.set('city', params.city);
+    if (params.limit != null) qs.set('limit', String(params.limit));
+    const r = await authedFetch(`/api/compass/recommendations?${qs.toString()}`);
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    if (body.disabled) return { ok: true, data: [], disabled: true };
+    return { ok: true, data: (body.recommendations ?? []) as CompassTravelerResult[] };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
 // ── AsyncStorage helpers ──────────────────────────────────────────────────────
 
 const FEED_CACHE_PREFIX = 'compass_feed_cache:';

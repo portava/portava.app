@@ -1355,6 +1355,406 @@ router.get("/compass/recommendations", async (req, res) => {
   try {
     const profile = await getCompassProfile(sc, user.id);
 
+    // ── surface=buddy ─────────────────────────────────────────────────────────
+    // Separate query pipeline — skip the full Compass feed entirely.
+    if (surface === "buddy") {
+      // Settings gate (defense-in-depth; frontend also checks before calling)
+      const { data: settingsRow } = await sc
+        .from("compass_settings")
+        .select("show_buddy_recommendations")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (settingsRow && (settingsRow as any).show_buddy_recommendations === false) {
+        res.json({ recommendations: [], surface, disabled: true });
+        return;
+      }
+
+      // Bidirectional block set — fail-closed: any error returns empty list
+      const buddyBlockedIds = new Set<string>();
+      try {
+        const { data: blkRows, error: blkErr } = await sc
+          .from("blocks")
+          .select("blocked_id, blocker_id")
+          .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
+        if (blkErr) {
+          res.json({ recommendations: [], surface, error: "block_check_failed" });
+          return;
+        }
+        for (const bRow of (blkRows ?? []) as any[]) {
+          if (bRow.blocker_id === user.id) buddyBlockedIds.add(bRow.blocked_id);
+          if (bRow.blocked_id === user.id) buddyBlockedIds.add(bRow.blocker_id);
+        }
+      } catch {
+        res.json({ recommendations: [], surface, error: "block_check_failed" });
+        return;
+      }
+
+      const effectiveCity = city ?? profile.currentCity ?? null;
+
+      const { data: buddyRows } = await sc
+        .from("rent_buddy_profiles")
+        .select(
+          "id, user_id, display_name, city, country, categories, languages, " +
+          "hourly_rate_usd, status, verified, average_rating, review_count, " +
+          "cover_photo_url, admin_status, risk_hold",
+        )
+        .eq("status", "active");
+
+      const ADULT_CATS = new Set(["escort", "adult", "dating", "romantic", "sexual"]);
+
+      // Pre-filter candidates before availability lookup
+      const candidateBuddies = ((buddyRows ?? []) as any[]).filter((b) =>
+        b.verified &&
+        !buddyBlockedIds.has(b.user_id) &&
+        b.admin_status === "active" &&
+        !b.risk_hold &&
+        !((b.categories ?? []) as string[]).map((c: string) => c.toLowerCase()).some((c: string) => ADULT_CATS.has(c))
+      );
+
+      // Fetch availability for ALL candidates BEFORE scoring so it influences rank
+      type AvailStatus = "available_today" | "available_this_week" | "not_available";
+      const availMap = new Map<string, AvailStatus>();
+      for (const b of candidateBuddies) availMap.set(b.id, "not_available");
+      if (candidateBuddies.length > 0) {
+        const nowDate     = new Date();
+        const todayStr    = nowDate.toISOString().slice(0, 10);
+        const nextWeekStr = new Date(nowDate.getTime() + 7 * 86_400_000).toISOString().slice(0, 10);
+        const { data: availRows } = await sc
+          .from("rent_buddy_availability")
+          .select("buddy_id, date")
+          .in("buddy_id", candidateBuddies.map((b: any) => b.id))
+          .eq("is_available", true)
+          .gte("date", todayStr)
+          .lte("date", nextWeekStr);
+        for (const r of (availRows ?? []) as any[]) {
+          if (r.date === todayStr) {
+            availMap.set(r.buddy_id, "available_today");
+          } else if (availMap.get(r.buddy_id) !== "available_today") {
+            availMap.set(r.buddy_id, "available_this_week");
+          }
+        }
+      }
+
+      type BuddyEntry = {
+        id: string; userId: string; score: number;
+        reasonCode: string; row: any;
+      };
+      const scoredBuddies: BuddyEntry[] = [];
+
+      for (const b of candidateBuddies) {
+        let score = 0;
+
+        const availStatus = availMap.get(b.id) ?? "not_available";
+        const cats = ((b.categories ?? []) as string[]).map((c: string) => c.toLowerCase());
+
+        // Availability bonus (top-tier ranking signal — today > this week)
+        if (availStatus === "available_today")          score += 35;
+        else if (availStatus === "available_this_week") score += 20;
+
+        // City match (25 pts)
+        if (effectiveCity && b.city &&
+            b.city.toLowerCase() === effectiveCity.toLowerCase()) score += 25;
+
+        // Trust proxy: verified + rating + review volume
+        if (b.verified) score += 20;
+        score += ((b.average_rating ?? 0) / 5) * 15;
+        score += Math.min(b.review_count ?? 0, 10);
+
+        // Language overlap (10 pts)
+        const bLangs = ((b.languages ?? []) as string[]).map((l: string) => l.toLowerCase());
+        const vLangs = (profile.preferredLanguages ?? []).map((l: string) => l.toLowerCase());
+        if (vLangs.length > 0 && bLangs.some((l: string) => vLangs.includes(l))) score += 10;
+
+        // Category overlap with viewer travel styles (10 pts)
+        const vStyles = (profile.travelStyles ?? []).map((s: string) => s.toLowerCase());
+        const catOverlap = cats.filter((c: string) => vStyles.includes(c));
+        if (catOverlap.length > 0) score += 10;
+
+        // Reason code — availability takes priority over city; "city_match" ≠ "available"
+        let reasonCode = "verified_buddy";
+        if (availStatus === "available_today") {
+          reasonCode = "available_today";
+        } else if (availStatus === "available_this_week") {
+          reasonCode = "available_this_week";
+        } else if (effectiveCity && b.city &&
+                   b.city.toLowerCase() === effectiveCity.toLowerCase()) {
+          reasonCode = "city_match";
+        } else if (catOverlap.length > 0) {
+          reasonCode = `category_${catOverlap[0]}`;
+        } else if (vLangs.length > 0 && bLangs.some((l: string) => vLangs.includes(l))) {
+          reasonCode = "language_match";
+        }
+
+        scoredBuddies.push({ id: b.id, userId: b.user_id, score, reasonCode, row: b });
+      }
+
+      scoredBuddies.sort((a, b) => b.score - a.score);
+
+      const buddyRecommendations = scoredBuddies.slice(0, limit).map((s) => ({
+        id:       s.id,
+        type:     "buddy",
+        category: ((s.row.categories ?? []) as string[])[0] ?? "city",
+        title:    s.row.display_name ?? null,
+        reason:   buildBuddyReasonText(s.reasonCode, effectiveCity, {
+          languages: s.row.languages,
+        }),
+        city:     s.row.city ?? effectiveCity ?? null,
+        data: {
+          userId:             s.userId,
+          verified:           s.row.verified,
+          averageRating:      s.row.average_rating ?? null,
+          reviewCount:        s.row.review_count ?? 0,
+          languages:          s.row.languages ?? [],
+          categories:         s.row.categories ?? [],
+          coverPhotoUrl:      s.row.cover_photo_url ?? null,
+          hourlyRateUsd:      s.row.hourly_rate_usd ?? null,
+          availabilityStatus: (availMap.get(s.id) ?? "not_available") as AvailStatus,
+          reasonCode:         s.reasonCode,
+        },
+      }));
+
+      res.json({ recommendations: buddyRecommendations, surface });
+      return;
+    }
+
+    // ── surface=traveler ──────────────────────────────────────────────────────
+    if (surface === "traveler") {
+      // Settings gate
+      const { data: travSettingsRow } = await sc
+        .from("compass_settings")
+        .select("show_people_recommendations")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (travSettingsRow && (travSettingsRow as any).show_people_recommendations === false) {
+        res.json({ recommendations: [], surface, disabled: true });
+        return;
+      }
+
+      // Bidirectional block set — fail-closed: any error returns empty list
+      const travBlockedIds = new Set<string>();
+      try {
+        const { data: blkRows, error: blkErr } = await sc
+          .from("blocks")
+          .select("blocked_id, blocker_id")
+          .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
+        if (blkErr) {
+          res.json({ recommendations: [], surface, error: "block_check_failed" });
+          return;
+        }
+        for (const bRow of (blkRows ?? []) as any[]) {
+          if (bRow.blocker_id === user.id) travBlockedIds.add(bRow.blocked_id);
+          if (bRow.blocked_id === user.id) travBlockedIds.add(bRow.blocker_id);
+        }
+      } catch {
+        res.json({ recommendations: [], surface, error: "block_check_failed" });
+        return;
+      }
+
+      const effectiveCity = city ?? profile.currentCity ?? null;
+
+      const { data: travelerRows } = await sc
+        .from("profiles")
+        .select(
+          "id, username, display_name, name, avatar_url, home_city, home_country, " +
+          "spoken_languages, interests, verified, account_status, is_private, created_at",
+        )
+        .neq("id", user.id)
+        .in("account_status", ["active"])
+        .limit(50);
+
+      // Pre-filter blocked users to obtain candidate IDs for batch signal queries
+      const travCandidates = ((travelerRows ?? []) as any[]).filter((p) => !travBlockedIds.has(p.id));
+      const travCandidateIds = travCandidates.map((p: any) => p.id as string);
+
+      // ── Mutual connections (batch) ──────────────────────────────────────────
+      // People who both the viewer and the traveler follow
+      const mutualCountMap = new Map<string, number>();
+      if (travCandidateIds.length > 0) {
+        const { data: aliceFollowRows } = await sc
+          .from("user_follows")
+          .select("following_id")
+          .eq("follower_id", user.id);
+        const aliceFollowsSet = new Set<string>(
+          ((aliceFollowRows ?? []) as any[]).map((r: any) => r.following_id as string),
+        );
+        if (aliceFollowsSet.size > 0) {
+          const { data: mutualRows } = await sc
+            .from("user_follows")
+            .select("follower_id, following_id")
+            .in("following_id", travCandidateIds)
+            .in("follower_id", [...aliceFollowsSet]);
+          for (const r of (mutualRows ?? []) as any[]) {
+            mutualCountMap.set(r.following_id, (mutualCountMap.get(r.following_id) ?? 0) + 1);
+          }
+        }
+      }
+
+      // ── Upcoming destination overlap (batch) ────────────────────────────────
+      // Travelers heading to the same cities as the viewer's upcoming trips
+      const destOverlapSet = new Set<string>();
+      if (travCandidateIds.length > 0) {
+        const nowStr = new Date().toISOString().slice(0, 10);
+        const { data: aliceTripRows } = await sc
+          .from("trips")
+          .select("destination_city")
+          .eq("owner_id", user.id)
+          .in("status", ["upcoming", "active"])
+          .gte("end_date", nowStr);
+        const aliceDestinations = new Set<string>(
+          ((aliceTripRows ?? []) as any[])
+            .map((t: any) => (t.destination_city as string)?.toLowerCase().trim())
+            .filter(Boolean),
+        );
+        if (aliceDestinations.size > 0) {
+          const { data: travTripRows } = await sc
+            .from("trips")
+            .select("owner_id, destination_city")
+            .in("owner_id", travCandidateIds)
+            .in("status", ["upcoming", "active"])
+            .in("visibility", ["public", "friends"])
+            .gte("end_date", nowStr);
+          for (const t of (travTripRows ?? []) as any[]) {
+            const dest = (t.destination_city as string)?.toLowerCase().trim();
+            if (dest && aliceDestinations.has(dest)) destOverlapSet.add(t.owner_id);
+          }
+        }
+      }
+
+      type TravelerEntry = {
+        id: string; score: number; reasonCode: string;
+        sharedInterests: string[]; row: any;
+      };
+      const scoredTravelers: TravelerEntry[] = [];
+
+      for (const p of travCandidates) {
+        let score = 0;
+
+        // Mutual connections (20 pts max — capped at 5 shared connections × 4 pts)
+        const mutualCount = mutualCountMap.get(p.id) ?? 0;
+        score += Math.min(mutualCount * 4, 20);
+
+        // Destination overlap (15 pts — heading to the same city)
+        if (destOverlapSet.has(p.id)) score += 15;
+
+        // Shared interest overlap (30 pts max)
+        const pInterests = ((p.interests ?? []) as string[]).map((i: string) => i.toLowerCase());
+        const vStyles    = (profile.travelStyles ?? []).map((s: string) => s.toLowerCase());
+        const sharedInterests = pInterests.filter((i: string) => vStyles.includes(i));
+        const overlapRatio =
+          vStyles.length > 0 && pInterests.length > 0
+            ? sharedInterests.length / Math.max(vStyles.length, pInterests.length)
+            : 0;
+        score += overlapRatio * 30;
+
+        // City overlap (20 pts)
+        if (effectiveCity && p.home_city &&
+            p.home_city.toLowerCase() === effectiveCity.toLowerCase()) score += 20;
+
+        // Language match (15 pts)
+        const pLangs = ((p.spoken_languages ?? []) as string[]).map((l: string) => l.toLowerCase());
+        const vLangs = (profile.preferredLanguages ?? []).map((l: string) => l.toLowerCase());
+        if (vLangs.length > 0 && pLangs.some((l: string) => vLangs.includes(l))) score += 15;
+
+        // Activity freshness proxy via created_at (10 pts max)
+        if (p.created_at) {
+          const ageDays = (Date.now() - new Date(p.created_at).getTime()) / 86_400_000;
+          score += Math.max(0, 10 * Math.pow(2, -ageDays / 90));
+        }
+
+        // Verified (10 pts)
+        if (p.verified) score += 10;
+
+        // Reason code — mutual > destination > interests > city > language
+        let reasonCode = "similar_interests";
+        if (mutualCount > 0) {
+          reasonCode = "mutual_connections";
+        } else if (destOverlapSet.has(p.id)) {
+          reasonCode = "destination_overlap";
+        } else if (sharedInterests.length > 0) {
+          reasonCode = "shared_interests";
+        } else if (effectiveCity && p.home_city &&
+                   p.home_city.toLowerCase() === effectiveCity.toLowerCase()) {
+          reasonCode = "city_overlap";
+        } else if (vLangs.length > 0 && pLangs.some((l: string) => vLangs.includes(l))) {
+          reasonCode = "language_match";
+        }
+
+        scoredTravelers.push({
+          id:              p.id,
+          score,
+          reasonCode,
+          sharedInterests: sharedInterests.slice(0, 3),
+          row:             p,
+        });
+      }
+
+      scoredTravelers.sort((a, b) => b.score - a.score);
+
+      const topTravSlice = scoredTravelers.slice(0, limit);
+      const topTravIds   = topTravSlice.map((s) => s.id);
+
+      // Batch-check which travelers the viewer already follows
+      const followingSet  = new Set<string>();
+      const requestedSet  = new Set<string>();
+      if (topTravIds.length > 0) {
+        const { data: followRows } = await sc
+          .from("user_follows")
+          .select("following_id")
+          .eq("follower_id", user.id)
+          .in("following_id", topTravIds);
+        for (const r of (followRows ?? []) as any[]) followingSet.add(r.following_id);
+
+        // For private profiles not yet followed, check for a pending follow request
+        const privateUnfollowed = topTravSlice
+          .filter((s) => s.row.is_private && !followingSet.has(s.id))
+          .map((s) => s.id);
+        if (privateUnfollowed.length > 0) {
+          const { data: reqRows } = await sc
+            .from("friend_requests")
+            .select("recipient_id")
+            .eq("requester_id", user.id)
+            .eq("status", "pending")
+            .in("recipient_id", privateUnfollowed);
+          for (const r of (reqRows ?? []) as any[]) requestedSet.add(r.recipient_id);
+        }
+      }
+
+      const travelerRecommendations = topTravSlice.map((s) => {
+        const isPrivate = s.row.is_private ?? false;
+        const followStatus: "following" | "requested" | "not_following" =
+          followingSet.has(s.id) ? "following"
+          : requestedSet.has(s.id) ? "requested"
+          : "not_following";
+        return {
+          id:       s.id,
+          type:     "traveler",
+          category: "traveler",
+          // Title is always safe (public profile name or null for private)
+          title: isPrivate && !followingSet.has(s.id)
+            ? (s.row.display_name ?? s.row.name ?? null) as string | null
+            : (s.row.display_name ?? s.row.name ?? s.row.username ?? null) as string | null,
+          reason:   buildTravelerReasonText(s.reasonCode, isPrivate ? [] : s.sharedInterests, isPrivate ? null : (s.row.home_city ?? null)),
+          city:     isPrivate ? null : ((s.row.home_city ?? null) as string | null),
+          data: {
+            userId:          s.id,
+            // Private profiles: suppress identifying details until followed
+            username:        isPrivate ? null : ((s.row.username ?? null) as string | null),
+            displayName:     (s.row.display_name ?? s.row.name ?? null) as string | null,
+            avatarUrl:       (s.row.avatar_url ?? null) as string | null,
+            homeCity:        isPrivate ? null : ((s.row.home_city ?? null) as string | null),
+            isPrivate,
+            verified:        s.row.verified ?? false,
+            sharedInterests: isPrivate ? [] : s.sharedInterests,
+            reasonCode:      s.reasonCode,
+            followStatus,
+          },
+        };
+      });
+
+      res.json({ recommendations: travelerRecommendations, surface });
+      return;
+    }
+
     // Allow caller to override the context city.
     const effectiveProfile = city ? { ...profile, currentCity: city } : profile;
 
@@ -1594,6 +1994,48 @@ router.post("/compass/create-suggestions", async (req, res) => {
 
   res.json({ suggestions, type: "event" });
 });
+
+// ── Buddy reason text ─────────────────────────────────────────────────────────
+function buildBuddyReasonText(
+  reasonCode: string,
+  city: string | null,
+  buddyData: Record<string, unknown>,
+): string {
+  if (reasonCode === "available_today") return city ? `Available today in ${city}` : "Available today";
+  if (reasonCode === "available_this_week") return city ? `Available this week in ${city}` : "Available this week";
+  if (reasonCode === "city_match" && city) return `Based in ${city}`;
+  if (reasonCode.startsWith("category_")) {
+    const cat = reasonCode.replace("category_", "");
+    const CAT_LABELS: Record<string, string> = {
+      nightlife: "nightlife", city: "city exploring", language: "language support",
+      shopping: "shopping", arrival: "airport arrival", content: "content creation",
+      adventure: "group adventures", food: "food & dining", nature: "nature trips",
+      culture: "cultural tours", wellness: "wellness", other: "local experiences",
+    };
+    return `Verified buddy for ${CAT_LABELS[cat] ?? cat}`;
+  }
+  if (reasonCode === "language_match") {
+    const langs = (buddyData.languages as string[] | undefined) ?? [];
+    return langs.length > 0 ? `Speaks ${langs.slice(0, 2).join(" & ")}` : "Language match";
+  }
+  return "Verified buddy";
+}
+
+// ── Traveler reason text ──────────────────────────────────────────────────────
+function buildTravelerReasonText(
+  reasonCode: string,
+  sharedInterests: string[],
+  city: string | null,
+): string {
+  if (reasonCode === "mutual_connections") return "People you both follow";
+  if (reasonCode === "destination_overlap") return "Heading to the same destination";
+  if (reasonCode === "shared_interests" && sharedInterests.length > 0) {
+    return `Shared interests: ${sharedInterests.slice(0, 2).join(", ")}`;
+  }
+  if (reasonCode === "city_overlap" && city) return `Also travels to ${city}`;
+  if (reasonCode === "language_match") return "Language match";
+  return "Similar travel style";
+}
 
 // ── Reason text helper ────────────────────────────────────────────────────────
 function buildReasonText(type: string, explanationKey: string | undefined, city: string | null): string {

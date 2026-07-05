@@ -174,6 +174,10 @@ STANDALONE_OWNED_FILES=(
   "src/lib/__tests__/compassIntent.test.ts"
   "src/components/compass/CompassPicksSection.tsx"
   "src/components/discovery/__tests__/CompassPicksSection.test.ts"
+  "src/components/compass/CompassBuddyRow.tsx"
+  "src/components/compass/CompassTravelerRow.tsx"
+  "src/components/compass/__tests__/CompassBuddyRow.hide.test.ts"
+  "src/components/compass/__tests__/CompassTravelerRow.followState.test.ts"
   "app/search.tsx"
 )
 

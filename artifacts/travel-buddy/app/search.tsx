@@ -15,6 +15,7 @@ import {
 } from '../src/services/discovery';
 import type { UnifiedSearchResult, SearchHistoryEntry } from '../src/services/discovery';
 import { useActiveLocation } from '../src/hooks/useActiveLocation';
+import { CompassTravelerRow } from '../src/components/compass/CompassTravelerRow';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 
 type TabKey = 'all' | 'travelers' | 'events' | 'trips' | 'places' | 'hashtags';
@@ -438,6 +439,9 @@ export default function SearchScreen() {
               </View>
             </View>
           )}
+
+          {/* Compass traveler matches — below search suggestions */}
+          <CompassTravelerRow city={userCoords?.city ?? null} limit={6} />
         </ScrollView>
       ) : (
         <FlatList

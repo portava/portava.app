@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Component } from 'react';
 import {
   View, Text, TextInput, Pressable, FlatList,
   StyleSheet, RefreshControl,
@@ -16,6 +16,16 @@ import { Stamp } from '../../src/components/ui';
 import { BuddyCard, BuddyCardSkeleton } from '../../src/components/BuddyCard';
 import { searchBuddies, type BuddyProfile, type BuddyCategory } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { CompassBuddyRow } from '../../src/components/compass/CompassBuddyRow';
+
+class CompassBuddyErrorBoundary extends Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  render() { return this.state.hasError ? null : this.props.children; }
+}
 
 type ScreenMode = 'categories' | 'quiz' | 'results';
 
@@ -232,7 +242,11 @@ export default function RentABuddySearch() {
           columnWrapperStyle={{ gap: space.md, paddingHorizontal: space.lg }}
           contentContainerStyle={{ paddingTop: space.lg, paddingBottom: 40, gap: space.md }}
           ListHeaderComponent={
-            <View style={{ paddingHorizontal: space.lg, marginBottom: space.md }}>
+            <View>
+              <CompassBuddyErrorBoundary>
+                <CompassBuddyRow city={city.trim() || null} />
+              </CompassBuddyErrorBoundary>
+              <View style={{ paddingHorizontal: space.lg, marginBottom: space.md }}>
               <Text style={styles.sectionLabel}>BROWSE BY TYPE</Text>
               <Text style={styles.sectionTitle}>What kind of Buddy do you need?</Text>
               <Pressable
@@ -246,6 +260,7 @@ export default function RentABuddySearch() {
                 </View>
                 <Text style={{ color: color.onInk, fontSize: 18 }}>→</Text>
               </Pressable>
+            </View>
             </View>
           }
           renderItem={({ item }) => {

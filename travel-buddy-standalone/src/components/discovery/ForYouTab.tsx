@@ -29,6 +29,7 @@ import { CompassFeedbackMenu } from '../compass/CompassFeedbackMenu';
 import { CompassWhySheet } from '../compass/CompassWhySheet';
 import { postCompassFrontloadEvent, postCompassContext } from '../../services/compass';
 import { CompassPicksSection } from '../compass/CompassPicksSection';
+import { CompassTravelerRow } from '../compass/CompassTravelerRow';
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -275,6 +276,9 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
               : 'Curated picks'}
           </Text>
         </View>
+
+        {/* Compass traveler matches — people section */}
+        <CompassTravelerRow city={destination} limit={6} />
 
         {items.filter((item) => !dismissed.has(item.place.id)).map((item) => {
           const isShowMore = showMoreIds.has(item.place.id);
