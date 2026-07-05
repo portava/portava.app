@@ -642,39 +642,46 @@ router.get("/api/buddies", async (req, res) => {
     buddyIdsFilter = ids;
   }
 
-  // Weighted ranking: fetch a candidate pool larger than one page, score in-app,
-  // then slice the requested page. This keeps accurate total counts while producing
-  // a best-match ranked first page without needing a custom DB function.
-  // Scoring factors:
-  //   featured     +25   (manually surfaced by admin)
-  //   verified     +15   (id_verified + phone_verified = higher trust)
-  //   avg_rating   ×3    (0–5 → 0–15 pts)
-  //   review_count log×2 (logarithmic — prevents count gaming)
-  //   new_buddy    +5    (review_count=0 gets exposure boost so new buddies appear)
-  //   cancel_count –3/ea (cancellation reliability penalty)
-  //   no_show_count –10/ea (no-show is a severe trust signal)
-  const CANDIDATE_LIMIT = Math.min(200, perPage * 10);
-
+  // Weighted ranking: primary sort at DB level for pagination safety.
+  // In-page scoring is applied after fetch as a tie-break within the returned page.
+  // Scoring weights (safety/verification outweigh engagement per spec):
+  //   featured         +20   (admin-surfaced)
+  //   verified         +20   (trust/safety — highest priority signal)
+  //   category match   +15   (relevance: buddy supports the requested category)
+  //   language match   +15   (relevance: buddy speaks the requested language)
+  //   rating+count     ≤20   (combined: avg_rating×3 + log(completed_count+1)×2)
+  //   new_buddy        +5    (0 completed bookings → fair-exposure boost)
+  //   cancel_count     –15/ea (reliability penalty)
+  //   no_show_count    –10/ea (severe trust signal)
+  //   favorites        +5 max (weak popularity tiebreak)
   const scoreProfile = (p: Record<string, unknown>): number => {
-    const featPts    = (p.featured as boolean) ? 25 : 0;
-    const verPts     = (p.verification_status as string) === "verified" ? 15 : 0;
-    const ratingPts  = Number(p.average_rating ?? 0) * 3;
-    const reviewPts  = Math.log(Number(p.review_count ?? 0) + 1) * 2;
+    const featPts    = (p.featured as boolean) ? 20 : 0;
+    const verPts     = (p.verification_status as string) === "verified" ? 20 : 0;
+    const catPts     = category && Array.isArray(p.categories) && (p.categories as string[]).includes(category) ? 15 : 0;
+    const langPts    = language && Array.isArray(p.languages) && (p.languages as string[]).includes(language) ? 15 : 0;
+    const ratingScore = Math.min(20, Number(p.average_rating ?? 0) * 3 + Math.log(Number((p as any).completed_count ?? p.review_count ?? 0) + 1) * 2);
     const newBuddy   = Number(p.review_count ?? 0) === 0 ? 5 : 0;
-    const cancelPen  = Number((p as any).cancel_count ?? 0) * -3;
+    const cancelPen  = Number((p as any).cancel_count ?? 0) * -15;
     const noShowPen  = Number((p as any).no_show_count ?? 0) * -10;
-    return featPts + verPts + ratingPts + reviewPts + newBuddy + cancelPen + noShowPen;
+    const favPts     = Math.min(5, Number((p as any).favorites_count ?? 0));
+    return featPts + verPts + catPts + langPts + ratingScore + newBuddy + cancelPen + noShowPen + favPts;
   };
+
+  // Pagination range — .range() gives exact slice + accurate total count; avoids
+  // the candidate-pool truncation bug where pages beyond LIMIT/perPage return empty.
+  const rangeFrom = (page - 1) * perPage;
+  const rangeTo = rangeFrom + perPage - 1;
 
   let query = serviceClient
     .from("rent_buddy_profiles")
     .select("*", { count: "exact" })
     .eq("status", "active")
     .eq("admin_status", "active")
-    // Pre-sort at DB level ensures featured buddies are always in the candidate pool
+    // Primary DB ordering provides stable cross-page ranking
     .order("featured", { ascending: false })
     .order("average_rating", { ascending: false })
-    .limit(CANDIDATE_LIMIT);
+    .order("review_count", { ascending: false })
+    .range(rangeFrom, rangeTo);
 
   if (city)           query = query.ilike("city", `%${city}%`);
   if (country)        query = query.ilike("country", `%${country}%`);
@@ -711,14 +718,12 @@ router.get("/api/buddies", async (req, res) => {
   const { data, count, error } = await query;
   if (error) return sendError(res, "db_error", error.message);
 
-  // Score and sort the candidate pool, then slice the requested page
+  // Score within the fetched page as a tie-break (cross-page order uses DB ordering above)
   const candidates = (data ?? []) as Record<string, unknown>[];
   candidates.sort((a, b) => scoreProfile(b) - scoreProfile(a));
-  const pageStart = (page - 1) * perPage;
-  const pageData  = candidates.slice(pageStart, pageStart + perPage);
 
   return res.json({
-    buddies: pageData.map((p: Record<string, unknown>) => mapProfile(stripBuddyPrivateFields(p, false))),
+    buddies: candidates.map((p: Record<string, unknown>) => mapProfile(stripBuddyPrivateFields(p, false))),
     total: count ?? 0,
     page,
     perPage,
@@ -6066,6 +6071,22 @@ router.post("/api/buddy-bookings/:bookingId/rebook", async (req, res) => {
 
   if (!buddyProfile || (buddyProfile as any).status !== "active" || (buddyProfile as any).admin_status !== "active") {
     return res.status(409).json({ error: "buddy_unavailable", message: "This Buddy is no longer accepting bookings." });
+  }
+
+  // Validate that a fresh start time is provided (spec: requested_start_at must be new)
+  if (!startTime) {
+    return res.status(400).json({ error: "invalid_payload", message: "startTime is required to rebook." });
+  }
+
+  // Enforce buddy availability on the requested date
+  const { data: avRow } = await serviceClient
+    .from("rent_buddy_availability")
+    .select("is_available")
+    .eq("buddy_id", buddyProfileId)
+    .eq("date", bookingDate)
+    .maybeSingle();
+  if (avRow && !(avRow as any).is_available) {
+    return res.status(409).json({ error: "buddy_not_available", message: "This Buddy is not available on the requested date." });
   }
 
   // Compute price with current buddy rates

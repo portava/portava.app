@@ -1523,6 +1523,67 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     return;
   }
 
+  // Off-app solicitation detection for buddy booking threads (non-blocking fire-and-forget).
+  // Scans the message body for off-app payment solicitation phrases. On match:
+  //   1. Logs a buddy_booking_events row (event=off_app_solicitation_warning, admin_only).
+  //   2. After OFF_APP_SUSPENSION_THRESHOLD cumulative offenses for the buddy, suspends
+  //      the buddy profile and logs an auto-suspension event for admin review.
+  // Normal travel phrases do not trigger (patterns require explicit off-platform wording).
+  const OFF_APP_PATTERNS = [
+    /\boff[-\s]?app\b/i, /\bpay\s+outside\b/i, /\bcash\s+only\b.*\boutside\b/i,
+    /\bvenmo\s+me\b/i, /\bpaypal\s+me\b/i, /\bcashapp\b/i, /\bzelle\s+me\b/i,
+    /\bbank\s+transfer\s+only\b/i, /\bno\s+app\s+payment\b/i,
+    /\bpay\s+me\s+directly\b/i, /\bcontact\s+me\s+outside\b/i,
+    /\bmy\s+whatsapp\b/i, /\bmy\s+telegram\b/i, /\binstagram\s+dm\b/i,
+  ];
+  if (OFF_APP_PATTERNS.some((p) => p.test(body))) {
+    void (async () => {
+      try {
+        const svcClient = getServiceClient();
+        if (!svcClient) return;
+        const { data: booking } = await svcClient
+          .from('rent_buddy_bookings')
+          .select('id, buddy_id')
+          .eq('telegraph_thread_id', threadId)
+          .maybeSingle();
+        if (!booking) return;
+        const bookingId = (booking as any).id as string;
+        const buddyProfileId = (booking as any).buddy_id as string;
+        await svcClient.from('buddy_booking_events').insert({
+          booking_id: bookingId,
+          actor_user_id: user.id,
+          event: 'off_app_solicitation_warning',
+          metadata: { message_id: (msg as any).id, thread_id: threadId, excerpt: body.slice(0, 120), visibility: 'admin_only' },
+        });
+        const { data: buddyBookings } = await svcClient
+          .from('rent_buddy_bookings')
+          .select('id')
+          .eq('buddy_id', buddyProfileId);
+        const buddyBookingIds = (buddyBookings ?? []).map((r: any) => r.id as string);
+        if (buddyBookingIds.length > 0) {
+          const { count: priorCount } = await svcClient
+            .from('buddy_booking_events')
+            .select('id', { count: 'exact' })
+            .eq('event', 'off_app_solicitation_warning')
+            .in('booking_id', buddyBookingIds);
+          const threshold = Number(process.env['OFF_APP_SUSPENSION_THRESHOLD'] ?? '3');
+          if ((priorCount ?? 0) >= threshold) {
+            await svcClient
+              .from('rent_buddy_profiles')
+              .update({ status: 'suspended', admin_status: 'under_review', updated_at: new Date().toISOString() })
+              .eq('id', buddyProfileId);
+            await svcClient.from('buddy_booking_events').insert({
+              booking_id: bookingId,
+              actor_user_id: user.id,
+              event: 'buddy_auto_suspended',
+              metadata: { reason: 'repeated_off_app_solicitation', offense_count: priorCount, visibility: 'admin_only' },
+            });
+          }
+        }
+      } catch (_) {}
+    })();
+  }
+
   // Bump thread last_message_at.
   await sc
     .from('message_threads')

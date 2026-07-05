@@ -128,6 +128,7 @@ function makeClient(userId: string, role = "user") {
       range(from: number, to: number) { this._range = [from, to]; return this; },
       order(col: string, opts?: any) { this._order = { col, ...opts }; return this; },
       maybeSingle() { this._maybeSingle = true; return this; },
+      single() { this._maybeSingle = true; return this; },
 
       async then(resolve: (v: any) => void) {
         const result = await this._resolve();
@@ -173,6 +174,10 @@ function makeClient(userId: string, role = "user") {
             if (t === "rent_buddy_reviews") {
               if (!state.reviews) state.reviews = [];
               state.reviews.push(r);
+            }
+            if (t === "buddy_booking_events") {
+              if (!(state as any).bookingEvents) (state as any).bookingEvents = [];
+              (state as any).bookingEvents.push(r);
             }
             if (t === "rent_buddy_route_change_requests") {
               if (!(state as any).routeChangeRequests) (state as any).routeChangeRequests = [];
@@ -237,6 +242,9 @@ function makeClient(userId: string, role = "user") {
               if (col === "user_id" && state.buddyProfiles?.[val]) {
                 Object.assign(state.buddyProfiles[val], this._updateData);
               }
+              if (col === "id" && state.buddyProfiles?.[val]) {
+                Object.assign(state.buddyProfiles[val], this._updateData);
+              }
             }
           }
           return { data: null, error: null };
@@ -297,8 +305,8 @@ function makeClient(userId: string, role = "user") {
             if (op === "in") rows = rows.filter((r: any) => (val as any[]).includes(r[col]));
           }
           const cnt = rows.length;
-          if (this._count && !this._maybeSingle && rows.length === 0) {
-            // For count-only queries (select("id", {count:"exact"}))
+          if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
+          if (this._count && rows.length === 0) {
             return { data: null, count: 0, error: null };
           }
           return { data: rows, count: cnt, error: null };
@@ -444,6 +452,28 @@ function makeClient(userId: string, role = "user") {
           const fallback = { id: "default-rollout", city: "default", status: "live" };
           if (this._maybeSingle) return { data: rows[0] ?? fallback, error: null };
           return { data: rows.length ? rows : [fallback], count: rows.length || 1, error: null };
+        }
+
+        if (t === "rent_buddy_availability") {
+          const avRows = (state as any).availability ?? [];
+          let rows = [...avRows];
+          for (const [op, col, val] of this._filters) {
+            if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
+          }
+          if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
+          return { data: rows, error: null };
+        }
+
+        if (t === "buddy_booking_events") {
+          if (this._updateData !== null) return { data: null, error: null };
+          const events = (state as any).bookingEvents ?? [];
+          let rows = [...events];
+          for (const [op, col, val] of this._filters) {
+            if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
+            if (op === "in") rows = rows.filter((r: any) => (val as any[]).includes(r[col]));
+          }
+          if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
+          return { data: rows, count: rows.length, error: null };
         }
 
         if (this._maybeSingle) return { data: null, error: null };
@@ -2011,6 +2041,7 @@ describe("Rent a Buddy — rebook", () => {
     setupRebookState("completed");
     const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
       bookingDate: FUTURE_DATE,
+      startTime: "10:00",
     });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     assert.ok(r.body.bookingId, "should return new bookingId");
@@ -2020,11 +2051,44 @@ describe("Rent a Buddy — rebook", () => {
     setupRebookState("completed");
     const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
       bookingDate: FUTURE_DATE,
+      startTime: "10:00",
     });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     assert.equal(r.body.booking?.city, "Seoul");
     assert.equal(r.body.booking?.category, "city");
     assert.equal(r.body.booking?.status, "pending");
+  });
+
+  it("rebook without startTime returns 400", async () => {
+    setupRebookState("completed");
+    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
+      bookingDate: FUTURE_DATE,
+    });
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.error, "invalid_payload");
+  });
+
+  it("rebook blocked when buddy marked unavailable on the requested date", async () => {
+    setupRebookState("completed");
+    (state as any).availability = [
+      { buddy_id: BUDDY_PROF, date: FUTURE_DATE, is_available: false },
+    ];
+    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
+      bookingDate: FUTURE_DATE,
+      startTime: "10:00",
+    });
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(r.body.error, "buddy_not_available");
+  });
+
+  it("rebook proceeds when buddy availability is not set for the date (open availability)", async () => {
+    setupRebookState("completed");
+    (state as any).availability = [];
+    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
+      bookingDate: FUTURE_DATE,
+      startTime: "14:00",
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
   });
 
   it("rebook from non-completed booking returns 400", async () => {
@@ -2061,7 +2125,10 @@ describe("Rent a Buddy — rebook", () => {
     const client = makeClient(USER_ID);
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
-    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, { bookingDate: FUTURE_DATE });
+    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
+      bookingDate: FUTURE_DATE,
+      startTime: "10:00",
+    });
     assert.equal(r.status, 403, JSON.stringify(r.body));
     assert.equal(r.body.error, "forbidden");
   });
