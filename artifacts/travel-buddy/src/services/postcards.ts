@@ -66,15 +66,19 @@ export const POSTCARD_MAX_VIDEO_BYTES = 100 * 1024 * 1024;
 export function validatePostcardMedia(
   mimeType: string,
   fileSizeBytes: number,
-): { ok: true } | { ok: false; message: string } {
+): { ok: true } | { ok: false; reason: 'mime' | 'size'; message: string } {
   const isImage = POSTCARD_ALLOWED_IMAGE_TYPES.includes(mimeType);
   const isVideo = POSTCARD_ALLOWED_VIDEO_TYPES.includes(mimeType);
   if (!isImage && !isVideo) {
-    return { ok: false, message: `Unsupported type: ${mimeType}` };
+    return { ok: false, reason: 'mime', message: `Unsupported type: ${mimeType}` };
   }
   const max = isVideo ? POSTCARD_MAX_VIDEO_BYTES : POSTCARD_MAX_IMAGE_BYTES;
   if (fileSizeBytes > max) {
-    return { ok: false, message: `File too large (${Math.round(fileSizeBytes / 1024 / 1024)}MB; max ${Math.round(max / 1024 / 1024)}MB)` };
+    return {
+      ok: false,
+      reason: 'size',
+      message: `File too large (${Math.round(fileSizeBytes / 1024 / 1024)}MB; max ${Math.round(max / 1024 / 1024)}MB)`,
+    };
   }
   return { ok: true };
 }

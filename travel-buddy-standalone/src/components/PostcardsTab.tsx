@@ -4,7 +4,7 @@ import {
   Alert, StyleSheet, ScrollView,
 } from 'react-native';
 import { router } from 'expo-router';
-import { MapPin, Pin, MoreHorizontal, ShieldCheck, X, Plus, PlayCircle } from 'lucide-react-native';
+import { MapPin, Pin, MoreHorizontal, ShieldCheck, X, Plus, PlayCircle, Clock, AlertCircle } from 'lucide-react-native';
 import type { PassportPostcard } from '../types/models';
 import type { usePostcardActions } from '../hooks/usePostcardActions';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
@@ -140,9 +140,13 @@ function PostcardCard({
     <View style={pc.card}>
       {/* media — prefer thumbnail_url from structured media[], fall back to legacy mediaUrl */}
       {(() => {
-        const firstMedia = card.media?.find((m) => m.processing_status === 'ready') ?? card.media?.[0];
-        const displayUri = firstMedia?.thumbnail_url ?? firstMedia?.url ?? card.mediaUrl;
-        const isVideo = firstMedia?.media_type === 'video' || card.hasVideo;
+        const allMedia = card.media ?? [];
+        const firstReady = allMedia.find((m) => m.processing_status === 'ready');
+        const firstAny = allMedia[0];
+        const displayUri = firstReady?.thumbnail_url ?? firstReady?.url ?? firstAny?.thumbnail_url ?? firstAny?.url ?? card.mediaUrl;
+        const isVideo = (firstReady ?? firstAny)?.media_type === 'video' || card.hasVideo;
+        const hasPending = allMedia.length > 0 && !firstReady && allMedia.some((m) => m.processing_status === 'pending');
+        const hasFailed = allMedia.length > 0 && !firstReady && allMedia.every((m) => m.processing_status === 'failed');
         return displayUri ? (
           <Pressable onPress={() => card.postId && router.push(`/post/${card.postId}` as any)}>
             <Image
@@ -150,15 +154,39 @@ function PostcardCard({
               style={pc.media}
               defaultSource={undefined}
             />
-            {isVideo && (
+            {isVideo && !hasPending && !hasFailed && (
               <View style={pc.videoPlayOverlay}>
                 <PlayCircle size={36} color="#fff" />
+              </View>
+            )}
+            {hasPending && (
+              <View style={pc.mediaBadge}>
+                <Clock size={14} color="#fff" />
+                <Text style={pc.mediaBadgeText}>Processing…</Text>
+              </View>
+            )}
+            {hasFailed && (
+              <View style={[pc.mediaBadge, pc.mediaBadgeFailed]}>
+                <AlertCircle size={14} color="#fff" />
+                <Text style={pc.mediaBadgeText}>Upload failed</Text>
               </View>
             )}
           </Pressable>
         ) : (
           <View style={[pc.media, pc.noMedia]}>
-            <Text style={pc.noMediaText}>📷</Text>
+            {hasPending ? (
+              <>
+                <Clock size={22} color={color.mute} />
+                <Text style={pc.noMediaText}>Processing…</Text>
+              </>
+            ) : hasFailed ? (
+              <>
+                <AlertCircle size={22} color={color.mute} />
+                <Text style={pc.noMediaText}>Upload failed</Text>
+              </>
+            ) : (
+              <Text style={pc.noMediaText}>📷</Text>
+            )}
           </View>
         );
       })()}
@@ -334,6 +362,14 @@ const pc = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.22)',
   },
+  mediaBadge: {
+    position: 'absolute', bottom: 8, left: 8,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: radius.pill,
+    paddingHorizontal: 8, paddingVertical: 4,
+  },
+  mediaBadgeFailed: { backgroundColor: 'rgba(200,30,30,0.75)' },
+  mediaBadgeText: { ...t.small, color: '#fff', fontSize: 11, fontWeight: '600' },
   empty: { paddingHorizontal: space.xl, paddingTop: space.xxxl, alignItems: 'center', gap: space.md },
   emptyIcon: { fontSize: 48 },
   emptyTitle: { ...t.heading, color: color.ink },

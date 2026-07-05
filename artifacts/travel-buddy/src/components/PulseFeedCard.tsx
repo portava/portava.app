@@ -148,9 +148,9 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
     <View style={[s.postCard, width > 600 ? s.postCardWide : undefined]}>
       {/* ── Immersive media frame ── */}
       <View style={[s.postMedia, { height: mediaHeight }]}>
-        {(item.media?.[0]?.url ?? item.mediaUrl) && !mediaFailed ? (
+        {(item.media?.[0]?.thumbnail_url ?? item.media?.[0]?.url ?? item.mediaUrl) && !mediaFailed ? (
           <Image
-            source={{ uri: item.media?.[0]?.url ?? item.mediaUrl }}
+            source={{ uri: item.media?.[0]?.thumbnail_url ?? item.media?.[0]?.url ?? item.mediaUrl }}
             style={StyleSheet.absoluteFill}
             resizeMode="cover"
             onError={() => setMediaFailed(true)}

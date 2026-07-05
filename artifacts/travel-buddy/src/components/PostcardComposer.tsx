@@ -134,10 +134,19 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
 
     const fileSizeBytes = picked.fileSize ?? 0;
 
+    // Always validate MIME type — reject unsupported formats immediately.
+    const mimeValidation = validatePostcardMedia(mimeType, fileSizeBytes > 0 ? fileSizeBytes : 1);
+    if (!mimeValidation.ok && mimeValidation.reason === 'mime') {
+      Alert.alert('Cannot use this file', mimeValidation.message);
+      return;
+    }
+
+    // Validate file size when available. If the picker omits fileSize (common on
+    // Android for camera captures), skip the size check and let the server enforce it.
     if (fileSizeBytes > 0) {
-      const validation = validatePostcardMedia(mimeType, fileSizeBytes);
-      if (!validation.ok) {
-        Alert.alert('Cannot use this file', validation.message);
+      const sizeValidation = validatePostcardMedia(mimeType, fileSizeBytes);
+      if (!sizeValidation.ok) {
+        Alert.alert('Cannot use this file', sizeValidation.message);
         return;
       }
     }

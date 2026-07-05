@@ -132,7 +132,7 @@ export function pulsePostToFeedItem(p: PulsePost): PulseFeedItem {
     createdAt: p.createdAt,
     timeAgo: timeAgo(p.createdAt),
     tags: [],
-    mediaUrl: p.media?.[0]?.url ?? p.mediaUrls[0],
+    mediaUrl: p.media?.[0]?.thumbnail_url ?? p.media?.[0]?.url ?? p.mediaUrls[0],
     media: p.media,
     caption: p.content,
     source: 'user',
