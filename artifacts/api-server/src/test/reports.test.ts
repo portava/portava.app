@@ -262,6 +262,27 @@ describe("reports routes", () => {
       assert.ok(r.body.reportId);
     });
 
+    it("1i. thread report accepted with target_type=thread", async () => {
+      const threadId = "88888888-0001-0002-0003-888888880001";
+      setClients(makeFakeClient({}, USER_A_TOKEN, USER_A_ID));
+      const r = await req("POST", "/reports", { target_type: "thread", target_id: threadId, reason_code: "harassment" }, USER_A_TOKEN);
+      assert.equal(r.status, 201, JSON.stringify(r.body));
+      assert.ok(r.body.reportId);
+    });
+
+    it("1j. profile report accepted with target_type=profile (requires reason_detail)", async () => {
+      // target_type=profile is how buddy profile reports are submitted —
+      // "buddy" is not a separate target_type; it maps to profile/user.
+      // profile reports require a non-empty reason_detail.
+      setClients(makeFakeClient({}, USER_B_TOKEN, USER_B_ID));
+      const r = await req("POST", "/reports", {
+        target_type: "profile", target_id: TARGET_ID,
+        reason_code: "impersonation", reason_detail: "This account is impersonating a travel influencer",
+      }, USER_B_TOKEN);
+      assert.equal(r.status, 201, JSON.stringify(r.body));
+      assert.ok(r.body.reportId);
+    });
+
     it("1f. severity=high for harassment reason_code", async () => {
       setClients(makeFakeClient({}, USER_A_TOKEN, USER_A_ID));
       const r = await req("POST", "/reports", { target_type: "post", target_id: POST_ID, reason_code: "harassment" }, USER_A_TOKEN);
@@ -313,7 +334,14 @@ describe("reports routes", () => {
       assert.equal(r.body.error, "invalid_payload");
     });
 
-    it("2e. unauthenticated request returns 401", async () => {
+    it("2e. profile report without reason_detail returns 400", async () => {
+      setClients(makeFakeClient({}, USER_A_TOKEN, USER_A_ID));
+      const r = await req("POST", "/reports", { target_type: "profile", target_id: TARGET_ID, reason_code: "impersonation" }, USER_A_TOKEN);
+      assert.equal(r.status, 400);
+      assert.equal(r.body.error, "invalid_payload");
+    });
+
+    it("2f. unauthenticated request returns 401", async () => {
       setClients(makeFakeClient({}, USER_A_TOKEN, USER_A_ID));
       const r = await req("POST", "/reports", { target_type: "post", target_id: POST_ID, reason_code: "spam" }, "bad-token");
       assert.equal(r.status, 401);

@@ -436,6 +436,56 @@ describe("Session lifecycle", () => {
     assert.ok(r.body.ok);
     assert.equal(r.body.escalationLevel, 0);
   });
+
+  it("4f. trigger-missed at escalation level 1 succeeds (user + trusted-circle path)", async () => {
+    // Level 1: notify the user AND trusted contacts (when TC flag is on).
+    // The route must not error even when the TC flag gates the notification.
+    const session = {
+      id: SESSION_ID, user_id: USER_ID, status: "active", escalation_level: 1,
+      timer_start_at: new Date(Date.now() - 60 * 60_000).toISOString(),
+      timer_end_at:   new Date(Date.now() - 1000).toISOString(),
+      trusted_circle_enabled: true,  live_share_enabled: false,
+      notify_host_enabled: false,    notify_trip_crew_enabled: false,
+      plan_item_id: null, trip_id: null, trigger_reason: null,
+      emergency_note: null, closed_at: null,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      last_prompt_at: null, last_safe_confirmation_at: null,
+    };
+    setClients(makeFakeClient(enabledState({
+      sessions:  [session],
+      contacts:  [{ id: CONTACT_ID, session_id: SESSION_ID, user_id: USER_ID, contact_user_id: OTHER_USER_ID, contact_method: "in_app", can_receive_live_location: false, notified_at: null }],
+      profiles:  [{ id: USER_ID, expo_push_token: null, display_name: "Alice" }],
+    })));
+    const r = await req("POST", `/api/me/safe-return/sessions/${SESSION_ID}/trigger-missed`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(r.body.ok);
+    assert.equal(r.body.escalationLevel, 1);
+  });
+
+  it("4g. trigger-missed at escalation level 2 succeeds (user + TC + live-share prompt)", async () => {
+    // Level 2: same backend path as level 1; live-share prompt is a client-side UI action.
+    // The route must return 200 with escalationLevel=2.
+    const session = {
+      id: SESSION_ID, user_id: USER_ID, status: "active", escalation_level: 2,
+      timer_start_at: new Date(Date.now() - 60 * 60_000).toISOString(),
+      timer_end_at:   new Date(Date.now() - 1000).toISOString(),
+      trusted_circle_enabled: true,  live_share_enabled: true,
+      notify_host_enabled: false,    notify_trip_crew_enabled: false,
+      plan_item_id: null, trip_id: null, trigger_reason: null,
+      emergency_note: null, closed_at: null,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      last_prompt_at: null, last_safe_confirmation_at: null,
+    };
+    setClients(makeFakeClient(enabledState({
+      sessions:  [session],
+      contacts:  [],
+      profiles:  [{ id: USER_ID, expo_push_token: null, display_name: "Alice" }],
+    })));
+    const r = await req("POST", `/api/me/safe-return/sessions/${SESSION_ID}/trigger-missed`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(r.body.ok);
+    assert.equal(r.body.escalationLevel, 2);
+  });
 });
 
 // ── 5. Privacy: exact GPS absent from all public API shapes ───────────────────
