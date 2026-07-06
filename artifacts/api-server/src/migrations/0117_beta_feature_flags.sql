@@ -20,11 +20,18 @@
 -- is the simpler alias consumed by kill-switch checks.
 
 INSERT INTO feature_flags (flag, enabled, description) VALUES
-  ('disable_signups',            FALSE, 'Kill switch — blocks all new account registrations'),
-  ('disable_posting',            FALSE, 'Kill switch — blocks POST /posts app-wide'),
-  ('disable_messaging',          FALSE, 'Kill switch — blocks POST /threads/:id/messages app-wide'),
-  ('disable_rent_buddy_booking', FALSE, 'Kill switch — blocks Rent a Buddy booking creation'),
-  ('city_launch_mode',           FALSE, 'Feature gate — restricts access to seeded launch cities only'),
-  ('invite_only_beta',           FALSE, 'Feature gate — requires invite code to register (beta access)'),
-  ('compass_ai_enabled',         TRUE,  'Feature gate — Compass AI recommendation engine')
+  -- ── Feature gates (enabled by default) ──────────────────────────────────────
+  ('rent_buddy_enabled',              TRUE,  'Feature gate — Rent a Buddy is available in launch cities'),
+  ('safe_return_live_share_enabled',  TRUE,  'Feature gate — Safe Return live location share'),
+  ('find_your_circle_enabled',        TRUE,  'Feature gate — Find Your Circle social discovery'),
+  ('compass_ai_enabled',              TRUE,  'Feature gate — Compass AI recommendation engine'),
+  ('hidden_gems_enabled',             TRUE,  'Feature gate — Hidden Gems discovery feed'),
+  ('push_notifications_enabled',      TRUE,  'Feature gate — push notification delivery'),
+  -- ── Kill switches (disabled by default) ──────────────────────────────────────
+  ('disable_signups',                 FALSE, 'Kill switch — blocks all new account registrations'),
+  ('disable_posting',                 FALSE, 'Kill switch — blocks POST /posts app-wide'),
+  ('disable_messaging',               FALSE, 'Kill switch — blocks POST /threads/:id/messages app-wide'),
+  ('disable_rent_buddy_booking',      FALSE, 'Kill switch — blocks Rent a Buddy booking creation'),
+  ('city_launch_mode',                FALSE, 'Kill switch/gate — restricts access to seeded launch cities only'),
+  ('invite_only_beta',                FALSE, 'Kill switch/gate — requires invite code to register (beta access)')
 ON CONFLICT (flag) DO NOTHING;

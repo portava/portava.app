@@ -1,20 +1,23 @@
 /**
  * Beta Phase 12 — Admin Tools, Feature Flags & Kill-Switch tests
  *
- * Routes under test:
+ * Routes/units under test:
  *   GET  /admin/users?handle=<handle>      — admin user lookup by handle
  *   GET  /admin/users?email=<email>        — admin user lookup by email
  *   POST /posts                            — disable_posting kill switch
  *   POST /threads/:threadId/messages       — disable_messaging kill switch
- *   POST /admin/users/:userId/ban          — ban + effect on account_status
- *   POST /admin/reports/:id/hide-content   — hide referenced post/trip content
+ *   POST /admin/users/:userId/ban          — ban action
+ *   POST /admin/reports/:id/hide-content   — hide referenced post content
+ *   checkRentBuddyAccess (unit)            — city_not_available when city has no rollout row
  *
  * Invariants:
  *   - disable_posting = true  → POST /posts returns 404 feature_disabled
  *   - disable_messaging = true → POST /threads/:id/messages returns 404 feature_disabled
  *   - Fail-open: when flag DB query fails, the action is NOT blocked
- *   - Admin ban writes audit row and sets account_status = 'banned'
+ *   - Banned users get 403 on any requireUser-guarded route
+ *   - Admin ban writes audit row
  *   - hide-content moves report to in_review and hides the content
+ *   - checkRentBuddyAccess returns city_not_available when city has no rollout row
  *
  * Run:
  *   node --import tsx/esm --test src/test/adminPhase12.test.ts
@@ -28,6 +31,7 @@ import { _setTestServiceClient } from "../lib/supabase.js";
 import adminRouter from "../routes/admin.js";
 import postsRouter from "../routes/posts.js";
 import messagingRouter from "../routes/messaging.js";
+import { checkRentBuddyAccess, invalidateGcCache } from "../routes/rentABuddyRollout.js";
 
 // ── Server ─────────────────────────────────────────────────────────────────────
 
@@ -76,7 +80,7 @@ function req(
   });
 }
 
-// ── Fake client factories ──────────────────────────────────────────────────────
+// ── Admin fake client (filtering-aware builder) ────────────────────────────────
 
 function makeAdminFakeClient(opts: {
   isAdmin?: boolean;
@@ -97,7 +101,7 @@ function makeAdminFakeClient(opts: {
     posts = [{ id: POST_ID, post_status: "published" }],
   } = opts;
 
-  function builder(table: string, rows: unknown[]) {
+  function builder(_table: string, rows: unknown[]) {
     const baseRows = rows.map((r) => ({ ...(r as object) }));
 
     function makeB(filtered: unknown[]) {
@@ -137,6 +141,9 @@ function makeAdminFakeClient(opts: {
     return makeB(baseRows);
   }
 
+  const adminProfileRow = { id: ADMIN_ID, role: isAdmin ? "admin" : "member", account_status: "active", handle: "testadmin" };
+  const allProfiles = [adminProfileRow, ...profiles.filter((p: any) => p.id !== ADMIN_ID)];
+
   const client: any = {
     auth: {
       getUser: async (token: string) => {
@@ -151,54 +158,37 @@ function makeAdminFakeClient(opts: {
       from: () => ({ remove: async () => ({ error: null }) }),
     },
     from: (table: string) => {
-      if (table === "profiles") {
-        const isAdminProfile = [{ id: ADMIN_ID, role: isAdmin ? "admin" : "member", account_status: "active", handle: "testadmin" }];
-        return builder(table, isAdminProfile.concat(profiles.filter((p: any) => p.id !== ADMIN_ID)));
-      }
+      if (table === "profiles")          return builder(table, allProfiles);
       if (table === "feature_flags") {
-        return {
-          select:     () => b2,
-          update:     () => b2,
-          eq:         (col: string, val: string) => {
+        const b: any = {
+          select: () => b,
+          eq: (col: string, val: string) => {
             const enabled = flagEnabled[val] ?? false;
             const row = { flag: val, enabled };
-            const b2inner: any = {
-              eq:         () => b2inner,
-              select:     () => b2inner,
-              update:     () => b2inner,
+            return {
               maybeSingle: () => ({ data: row, error: null }),
-              then:       (resolve: any) => Promise.resolve({ data: [row], error: null }).then(resolve),
+              then: (resolve: any) => Promise.resolve({ data: [row], error: null }).then(resolve),
             };
-            return b2inner;
           },
           maybeSingle: () => ({ data: null, error: null }),
-          then:       (resolve: any) => Promise.resolve({ data: [], error: null }).then(resolve),
+          then: (resolve: any) => Promise.resolve({ data: [], error: null }).then(resolve),
         };
+        return b;
       }
+      if (table === "user_account_states") return builder(table, accountStates);
+      if (table === "reports")             return builder(table, reports);
+      if (table === "moderation_actions")  return builder(table, modActions);
+      if (table === "posts")               return builder(table, posts);
       const b2: any = {
-        select:     () => b2,
-        eq:         () => b2,
-        neq:        () => b2,
-        is:         () => b2,
-        ilike:      () => b2,
-        in:         () => b2,
-        or:         () => b2,
-        order:      () => b2,
-        limit:      () => b2,
-        range:      () => b2,
-        update:     () => b2,
-        insert:     (data: any) => b2,
-        upsert:     (data: any) => b2,
-        delete:     () => b2,
-        then:       (resolve: any) => Promise.resolve({ data: [], error: null }).then(resolve),
-        single:     () => ({ data: null, error: { message: "no rows" } }),
+        select: () => b2, eq: () => b2, neq: () => b2, is: () => b2,
+        ilike: () => b2, in: () => b2, or: () => b2, order: () => b2,
+        limit: () => b2, range: () => b2, update: () => b2,
+        insert: () => b2, upsert: () => b2, delete: () => b2, not: () => b2,
+        then: (resolve: any) => Promise.resolve({ data: [], error: null }).then(resolve),
+        single: () => ({ data: null, error: { message: "no rows" } }),
         maybeSingle: () => ({ data: null, error: null }),
         get count() { return 0; },
       };
-      if (table === "user_account_states") return builder(table, accountStates);
-      if (table === "reports")           return builder(table, reports);
-      if (table === "moderation_actions") return builder(table, modActions);
-      if (table === "posts")             return builder(table, posts);
       return b2;
     },
     rpc: async () => ({ data: [], error: null }),
@@ -207,8 +197,14 @@ function makeAdminFakeClient(opts: {
   return client;
 }
 
-function makePostsFakeClient(opts: { disablePosting?: boolean; disableMessaging?: boolean }) {
-  const { disablePosting = false, disableMessaging = false } = opts;
+// ── Posts/messaging fake client ────────────────────────────────────────────────
+
+function makePostsFakeClient(opts: {
+  disablePosting?: boolean;
+  disableMessaging?: boolean;
+  accountStatus?: string;
+}) {
+  const { disablePosting = false, disableMessaging = false, accountStatus = "active" } = opts;
 
   const client: any = {
     auth: {
@@ -219,6 +215,24 @@ function makePostsFakeClient(opts: { disablePosting?: boolean; disableMessaging?
     },
     storage: { from: () => ({ upload: async () => ({ data: null, error: null }), getPublicUrl: () => ({ data: { publicUrl: "" } }) }) },
     from: (table: string) => {
+      if (table === "profiles") {
+        const profileRow = { id: TARGET_ID, account_status: accountStatus, handle: "testuser" };
+        const b: any = {
+          select:     () => b,
+          eq:         () => b,
+          neq:        () => b,
+          is:         () => b,
+          ilike:      () => b,
+          in:         () => b,
+          or:         () => b,
+          not:        () => b,
+          order:      () => b,
+          limit:      () => b,
+          maybeSingle: () => ({ data: profileRow, error: null }),
+          then:       (resolve: any) => Promise.resolve({ data: [profileRow], error: null }).then(resolve),
+        };
+        return b;
+      }
       const b: any = {
         select:     () => b,
         insert:     () => b,
@@ -246,30 +260,9 @@ function makePostsFakeClient(opts: { disablePosting?: boolean; disableMessaging?
         get count() { return 0; },
       };
       if (table === "feature_flags") {
-        const flagCheck = (flagName: string) => {
-          const enabled = flagName === "disable_posting" ? disablePosting
-            : flagName === "disable_messaging" ? disableMessaging
-            : false;
-          const row = { flag: flagName, enabled };
-          const inner: any = {
-            eq:         (col: string, val: string) => {
-              const en = val === "disable_posting" ? disablePosting
-                : val === "disable_messaging" ? disableMessaging
-                : false;
-              const r = { flag: val, enabled: en };
-              return {
-                maybeSingle: () => ({ data: r, error: null }),
-                then: (resolve: any) => Promise.resolve({ data: [r], error: null }).then(resolve),
-              };
-            },
-            maybeSingle: () => ({ data: row, error: null }),
-            then: (resolve: any) => Promise.resolve({ data: [row], error: null }).then(resolve),
-          };
-          return inner;
-        };
         return {
           select: () => ({
-            eq: (col: string, val: string) => ({
+            eq: (_col: string, val: string) => ({
               maybeSingle: () => {
                 const enabled = val === "disable_posting" ? disablePosting
                   : val === "disable_messaging" ? disableMessaging
@@ -287,14 +280,84 @@ function makePostsFakeClient(opts: { disablePosting?: boolean; disableMessaging?
         };
       }
       if (table === "message_thread_members") {
+        const memberRow = { user_id: TARGET_ID, left_at: null };
+        const mb: any = {
+          select:     () => mb,
+          eq:         () => mb,
+          neq:        () => mb,
+          is:         () => mb,
+          not:        () => mb,
+          order:      () => mb,
+          limit:      () => mb,
+          maybeSingle: () => ({ data: memberRow, error: null }),
+          then:       (resolve: any) => Promise.resolve({ data: [memberRow], error: null }).then(resolve),
+        };
+        return mb;
+      }
+      return b;
+    },
+    rpc: async () => ({ data: [], error: null }),
+  };
+  return client;
+}
+
+// ── Rollout fake client (for city_not_available unit test) ────────────────────
+
+function makeRolloutFakeClient(opts: {
+  rentBuddyEnabled?: boolean;
+  cityRows?: { city: string; status: string }[];
+}) {
+  const { rentBuddyEnabled = true, cityRows = [] } = opts;
+
+  const client: any = {
+    from: (table: string) => {
+      if (table === "feature_flags") {
         return {
-          select: () => b,
-          eq:     () => b,
-          is:     () => b,
-          maybeSingle: () => ({ data: { user_id: TARGET_ID, left_at: null }, error: null }),
-          then:   (resolve: any) => Promise.resolve({ data: [{ user_id: TARGET_ID }], error: null }).then(resolve),
+          select: () => ({
+            eq: (_col: string, flagName: string) => ({
+              maybeSingle: () => {
+                const enabled = flagName === "rent_buddy_enabled" ? rentBuddyEnabled : false;
+                return { data: { flag: flagName, enabled }, error: null };
+              },
+            }),
+          }),
         };
       }
+      if (table === "rent_buddy_global_controls") {
+        return {
+          select: () => ({
+            eq:  () => ({
+              maybeSingle: () => ({ data: null, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === "rent_buddy_city_rollouts") {
+        return {
+          select: () => ({
+            ilike: (_col: string, city: string) => ({
+              maybeSingle: () => {
+                const lower = city.toLowerCase();
+                const match = cityRows.find((r) => r.city.toLowerCase() === lower);
+                return { data: match ?? null, error: null };
+              },
+            }),
+          }),
+        };
+      }
+      if (table === "profiles") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () => ({ data: { role: "member" }, error: null }),
+            }),
+          }),
+        };
+      }
+      const b: any = {
+        select: () => b, eq: () => b, maybeSingle: () => ({ data: null, error: null }),
+        then: (resolve: any) => Promise.resolve({ data: [], error: null }).then(resolve),
+      };
       return b;
     },
     rpc: async () => ({ data: [], error: null }),
@@ -416,24 +479,38 @@ describe("Kill switch: disable_messaging", () => {
   });
 });
 
+describe("Banned user enforcement", () => {
+  it("returns 403 forbidden when banned user attempts to post", async () => {
+    const fc = makePostsFakeClient({ accountStatus: "banned" });
+    _setTestClient(fc, true);
+    _setTestServiceClient(fc);
+    const r = await req("POST", "/posts", { content: "should be blocked", visibility: "public" });
+    assert.equal(r.status, 403, `expected 403, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body?.error, "forbidden");
+  });
+
+  it("returns 403 forbidden when suspended user attempts to send a message", async () => {
+    const fc = makePostsFakeClient({ accountStatus: "suspended" });
+    _setTestClient(fc, true);
+    _setTestServiceClient(fc);
+    const r = await req("POST", `/threads/${THREAD_ID}/messages`, { body: "hello" });
+    assert.equal(r.status, 403, `expected 403, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body?.error, "forbidden");
+  });
+
+  it("allows active user through (no ban enforcement side-effect)", async () => {
+    const fc = makePostsFakeClient({ accountStatus: "active" });
+    _setTestClient(fc, true);
+    _setTestServiceClient(fc);
+    const r = await req("POST", `/threads/${THREAD_ID}/messages`, { body: "hi" });
+    assert.notEqual(r.status, 403, "active user should not be blocked by ban check");
+    assert.notEqual(r.body?.error, "forbidden");
+  });
+});
+
 describe("Admin ban", () => {
   it("sets account_status to banned and writes audit row", async () => {
-    const capturedInserts: any[] = [];
     const admin = makeAdminFakeClient({});
-
-    const origFrom = admin.from.bind(admin);
-    admin.from = (table: string) => {
-      const b = origFrom(table);
-      if (table === "moderation_actions") {
-        const origInsert = b.insert?.bind(b);
-        b.insert = (data: any) => {
-          capturedInserts.push(data);
-          return b;
-        };
-      }
-      return b;
-    };
-
     _setTestClient(admin, true);
     _setTestServiceClient(admin);
 
@@ -465,5 +542,44 @@ describe("Admin reports: hide-content", () => {
     assert.ok([200, 201].includes(r.status), `expected 200/201, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(r.body?.contentHidden, true);
     assert.equal(r.body?.status, "in_review");
+  });
+});
+
+describe("City rollout: city_not_available (unit)", () => {
+  it("returns city_not_available when city has no rollout row", async () => {
+    invalidateGcCache();
+    const fc = makeRolloutFakeClient({ rentBuddyEnabled: true, cityRows: [] });
+    const decision = await checkRentBuddyAccess({ sc: fc, userId: TARGET_ID, city: "UnknownCity", action: "book" });
+    assert.equal((decision as any).allowed, false);
+    assert.equal((decision as any).code, "city_not_available");
+  });
+
+  it("returns city_not_available when city status is 'disabled'", async () => {
+    invalidateGcCache();
+    const fc = makeRolloutFakeClient({
+      rentBuddyEnabled: true,
+      cityRows: [{ city: "TestCity", status: "disabled" }],
+    });
+    const decision = await checkRentBuddyAccess({ sc: fc, userId: TARGET_ID, city: "TestCity", action: "book" });
+    assert.equal((decision as any).allowed, false);
+    assert.equal((decision as any).code, "city_not_available");
+  });
+
+  it("returns feature_disabled when rent_buddy_enabled = false", async () => {
+    invalidateGcCache();
+    const fc = makeRolloutFakeClient({ rentBuddyEnabled: false, cityRows: [] });
+    const decision = await checkRentBuddyAccess({ sc: fc, userId: TARGET_ID, city: "Manila", action: "book" });
+    assert.equal((decision as any).allowed, false);
+    assert.equal((decision as any).code, "feature_disabled");
+  });
+
+  it("allows access when city is at public_mvp", async () => {
+    invalidateGcCache();
+    const fc = makeRolloutFakeClient({
+      rentBuddyEnabled: true,
+      cityRows: [{ city: "Cebu", status: "public_mvp" }],
+    });
+    const decision = await checkRentBuddyAccess({ sc: fc, userId: TARGET_ID, city: "Cebu", action: "read" });
+    assert.equal((decision as any).allowed, true);
   });
 });

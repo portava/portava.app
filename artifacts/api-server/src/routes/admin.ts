@@ -865,11 +865,7 @@ router.get("/admin/users", async (req, res) => {
   let profileData: any = null;
 
   if (email) {
-    // Look up auth.users first via admin API to get the user_id, then fetch profile
-    const { data: authList, error: authErr } = await sc.auth.admin.listUsers({ perPage: 1 });
-    // Supabase JS v2: use getUserById is not searchable by email in listUsers easily.
-    // Instead query profiles for a matching email if the column exists, otherwise
-    // fall back to searching via auth admin API's filter.
+    // Try profiles.email column first (fast path when the column exists)
     const { data: profileByEmail, error: emailErr } = await sc
       .from("profiles")
       .select("id, handle, username, name, display_name, bio, avatar_url, role, verified, account_status, created_at")
@@ -879,17 +875,25 @@ router.get("/admin/users", async (req, res) => {
     if (!emailErr && profileByEmail) {
       profileData = profileByEmail;
     } else {
-      // profiles may not store email; fall back to auth admin listUsers
-      if (authList && !authErr) {
-        const match = authList.users.find((u: any) => u.email?.toLowerCase() === email);
-        if (match) {
-          const { data: pById } = await sc
-            .from("profiles")
-            .select("id, handle, username, name, display_name, bio, avatar_url, role, verified, account_status, created_at")
-            .eq("id", match.id)
-            .maybeSingle();
-          profileData = pById ?? null;
-        }
+      // Fall back: paginate auth.admin.listUsers until we find the matching email.
+      // perPage=1000 keeps round trips low for small beta apps.
+      let authUserId: string | null = null;
+      let page = 1;
+      while (!authUserId) {
+        const { data: authPage, error: authErr } = await sc.auth.admin.listUsers({ page, perPage: 1000 });
+        if (authErr || !authPage?.users?.length) break;
+        const match = authPage.users.find((u: any) => u.email?.toLowerCase() === email);
+        if (match) { authUserId = match.id; break; }
+        if (authPage.users.length < 1000) break; // last page — not found
+        page++;
+      }
+      if (authUserId) {
+        const { data: pById } = await sc
+          .from("profiles")
+          .select("id, handle, username, name, display_name, bio, avatar_url, role, verified, account_status, created_at")
+          .eq("id", authUserId)
+          .maybeSingle();
+        profileData = pById ?? null;
       }
     }
   } else if (handle) {

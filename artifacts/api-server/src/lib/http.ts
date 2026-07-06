@@ -142,6 +142,25 @@ export async function requireUser(
     return null;
   }
 
+  // Enforce account ban/suspend — reject banned or suspended users immediately.
+  // Fail-open: if the profile query errors we still allow the request through
+  // so a DB outage doesn't lock out all users.
+  const { data: profile } = await client
+    .from("profiles")
+    .select("account_status")
+    .eq("id", data.user.id)
+    .maybeSingle();
+
+  const accountStatus: string = (profile as any)?.account_status ?? "active";
+  if (accountStatus === "banned") {
+    sendError(res, "forbidden", "Your account has been banned");
+    return null;
+  }
+  if (accountStatus === "suspended") {
+    sendError(res, "forbidden", "Your account is temporarily suspended");
+    return null;
+  }
+
   return { client, user: data.user as User };
 }
 
