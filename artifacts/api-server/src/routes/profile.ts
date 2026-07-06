@@ -435,6 +435,26 @@ router.patch("/me/profile", async (req, res) => {
     row.username_updated_at = new Date().toISOString();
   }
 
+  // Capture old avatar / cover URLs before the update so we can clean up the
+  // storage files after the profile row is successfully committed.  Failure is
+  // fail-open: we just skip the old-file cleanup.
+  let oldAvatarUrl: string | null = null;
+  let oldCoverUrl: string | null = null;
+  if (p.avatarUrl !== undefined || p.coverUrl !== undefined) {
+    const sc = getServiceClient();
+    if (sc) {
+      try {
+        const { data: cur } = await sc
+          .from("profiles")
+          .select("avatar_url, cover_photo_url")
+          .eq("id", user.id)
+          .maybeSingle();
+        oldAvatarUrl = (cur as any)?.avatar_url ?? null;
+        oldCoverUrl = (cur as any)?.cover_photo_url ?? null;
+      } catch { /* fail-open */ }
+    }
+  }
+
   if (Object.keys(row).length === 0) {
     sendError(res, "invalid_payload", "At least one field must be provided");
     return;
@@ -487,6 +507,23 @@ router.patch("/me/profile", async (req, res) => {
       retranslateForUser(sc, user.id, p.preferredLanguage, req.log).catch(() => {});
     }
   }
+
+  // Fire-and-forget: delete old storage files now that the profile row is confirmed saved.
+  setImmediate(() => {
+    const sc = getServiceClient();
+    if (!sc) return;
+    const marker = `/object/public/${AVATAR_BUCKET}/`;
+    for (const [newUrl, oldUrl] of [
+      [p.avatarUrl, oldAvatarUrl],
+      [p.coverUrl,  oldCoverUrl],
+    ] as Array<[string | undefined, string | null]>) {
+      if (newUrl === undefined || !oldUrl || oldUrl === newUrl) continue;
+      const idx = oldUrl.indexOf(marker);
+      if (idx === -1) continue;
+      const oldPath = oldUrl.slice(idx + marker.length);
+      sc.storage.from(AVATAR_BUCKET).remove([oldPath]).catch(() => {});
+    }
+  });
 
   res.status(200).json(mapProfile(updated));
 });
@@ -574,21 +611,6 @@ router.post(
 
     await ensureStorageBucket(sc, AVATAR_BUCKET, req);
 
-    // Delete existing avatar file(s) before uploading new one to avoid orphaned files
-    try {
-      const { data: existingProfile } = await sc
-        .from("profiles").select("avatar_url").eq("id", user.id).maybeSingle();
-      const oldUrl: string | null = (existingProfile as any)?.avatar_url ?? null;
-      if (oldUrl) {
-        const marker = `/object/public/${AVATAR_BUCKET}/`;
-        const idx = oldUrl.indexOf(marker);
-        if (idx !== -1) {
-          const oldPath = oldUrl.slice(idx + marker.length);
-          await sc.storage.from(AVATAR_BUCKET).remove([oldPath]);
-        }
-      }
-    } catch { /* fail-open: old file deletion is best-effort */ }
-
     const { randomUUID } = await import("crypto");
     const uuid = randomUUID();
     const path = `avatars/${user.id}/${uuid}.${ext}`;
@@ -659,21 +681,6 @@ router.post(
 
     await ensureStorageBucket(sc, AVATAR_BUCKET, req);
 
-    // Delete existing cover file (any extension) before uploading new one
-    try {
-      const { data: existingProfile } = await sc
-        .from("profiles").select("cover_photo_url").eq("id", user.id).maybeSingle();
-      const oldUrl: string | null = (existingProfile as any)?.cover_photo_url ?? null;
-      if (oldUrl) {
-        const marker = `/object/public/${AVATAR_BUCKET}/`;
-        const idx = oldUrl.indexOf(marker);
-        if (idx !== -1) {
-          const oldPath = oldUrl.slice(idx + marker.length);
-          await sc.storage.from(AVATAR_BUCKET).remove([oldPath]);
-        }
-      }
-    } catch { /* fail-open: old file deletion is best-effort */ }
-
     const path = `covers/${user.id}/cover.${ext}`;
 
     const { error } = await sc.storage
@@ -690,6 +697,62 @@ router.post(
     res.status(201).json({ url: urlData.publicUrl, path });
   },
 );
+
+/* ===========================================================================
+ * DELETE /me/avatar/file — purge an orphaned avatar upload
+ * ===========================================================================
+ * Called by the mobile client when the avatar upload succeeded but the
+ * subsequent PATCH /me/profile call failed, leaving the new file orphaned in
+ * storage.  Path must be scoped to the authenticated user's own directory.
+ * Returns 204 regardless of whether the file existed.
+ */
+router.delete("/me/avatar/file", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const path = req.body?.path;
+  if (typeof path !== "string" || !path.startsWith(`avatars/${user.id}/`)) {
+    sendError(res, "invalid_payload", "Invalid or unauthorised path");
+    return;
+  }
+
+  try {
+    await sc.storage.from(AVATAR_BUCKET).remove([path]);
+  } catch { /* best-effort: storage may already be gone */ }
+
+  res.status(204).end();
+});
+
+/* ===========================================================================
+ * DELETE /me/cover/file — purge an orphaned cover upload
+ * ===========================================================================
+ * Same contract as DELETE /me/avatar/file but for cover photos stored at
+ * covers/{userId}/cover.{ext}.
+ */
+router.delete("/me/cover/file", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  const path = req.body?.path;
+  if (typeof path !== "string" || !path.startsWith(`covers/${user.id}/`)) {
+    sendError(res, "invalid_payload", "Invalid or unauthorised path");
+    return;
+  }
+
+  try {
+    await sc.storage.from(AVATAR_BUCKET).remove([path]);
+  } catch { /* best-effort */ }
+
+  res.status(204).end();
+});
 
 // ── PUT /api/me/push-token ────────────────────────────────────────────────────
 // Stores the device's Expo push token so the server can send push notifications.

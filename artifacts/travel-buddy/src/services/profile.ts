@@ -137,7 +137,7 @@ export async function checkUsername(username: string): Promise<{ available: bool
 
 /* ---------- Avatar upload ---------- */
 
-export async function uploadAvatar(uri: string, mimeType = 'image/jpeg'): Promise<ProfileResult<{ url: string }>> {
+export async function uploadAvatar(uri: string, mimeType = 'image/jpeg'): Promise<ProfileResult<{ url: string; path: string | null }>> {
   if (!isSupabaseConfigured || !apiBase()) {
     return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
   }
@@ -167,7 +167,7 @@ export async function uploadAvatar(uri: string, mimeType = 'image/jpeg'): Promis
       return { ok: false, data: null, errorKind: 'upload_failed', message: (body as any)?.message ?? `Upload failed (${res.status})` };
     }
     const body = await res.json();
-    return { ok: true, data: { url: body.url } };
+    return { ok: true, data: { url: body.url, path: body.path ?? null } };
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'upload_failed', message: e instanceof Error ? e.message : 'Unknown' };
@@ -176,7 +176,7 @@ export async function uploadAvatar(uri: string, mimeType = 'image/jpeg'): Promis
 
 /* ---------- Cover photo upload ---------- */
 
-export async function uploadCover(uri: string, mimeType = 'image/jpeg'): Promise<ProfileResult<{ url: string }>> {
+export async function uploadCover(uri: string, mimeType = 'image/jpeg'): Promise<ProfileResult<{ url: string; path: string | null }>> {
   if (!isSupabaseConfigured || !apiBase()) {
     return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
   }
@@ -206,11 +206,39 @@ export async function uploadCover(uri: string, mimeType = 'image/jpeg'): Promise
       return { ok: false, data: null, errorKind: 'upload_failed', message: (body as any)?.message ?? `Upload failed (${res.status})` };
     }
     const body = await res.json();
-    return { ok: true, data: { url: body.url } };
+    return { ok: true, data: { url: body.url, path: body.path ?? null } };
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'upload_failed', message: e instanceof Error ? e.message : 'Unknown' };
   }
+}
+
+/* ---------- Orphan cleanup — called when PATCH /me/profile fails after upload ---------- */
+
+export async function deleteOrphanedAvatar(path: string): Promise<void> {
+  if (!isSupabaseConfigured || !apiBase()) return;
+  const token = await freshToken();
+  if (!token) return;
+  try {
+    await fetch(`${apiBase()}/api/me/avatar/file`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ path }),
+    });
+  } catch { /* best-effort */ }
+}
+
+export async function deleteOrphanedCover(path: string): Promise<void> {
+  if (!isSupabaseConfigured || !apiBase()) return;
+  const token = await freshToken();
+  if (!token) return;
+  try {
+    await fetch(`${apiBase()}/api/me/cover/file`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ path }),
+    });
+  } catch { /* best-effort */ }
 }
 
 /* ---------- Public profile (share card) ---------- */

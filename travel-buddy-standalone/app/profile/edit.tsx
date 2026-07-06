@@ -9,7 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Camera, ImagePlus, Check, X, AlertCircle, ChevronDown } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { renderAvatarImage, renderCoverImage, MAX_ORIGINAL_BYTES } from '../../src/lib/imageRender';
-import { getMyProfile, updateMyProfile, uploadAvatar, uploadCover, checkUsername } from '../../src/services/profile';
+import { getMyProfile, updateMyProfile, uploadAvatar, uploadCover, checkUsername, deleteOrphanedAvatar, deleteOrphanedCover } from '../../src/services/profile';
 import { getCurrentGps, reverseGeocodeDetailed } from '../../src/services/location';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { DatePickerField } from '../../src/components/DatePickerField';
@@ -528,6 +528,9 @@ export default function EditProfileScreen() {
     }
     // preferredLanguage is saved separately via the canonical language-settings endpoint below
 
+    let uploadedAvatarPath: string | null = null;
+    let uploadedCoverPath: string | null = null;
+
     if (form.avatarUri) {
       // Step 1 — compress to 512×512 JPEG
       setPhotoPhase('optimizing');
@@ -542,6 +545,7 @@ export default function EditProfileScreen() {
         return;
       }
       patch.avatarUrl = upRes.data!.url;
+      uploadedAvatarPath = upRes.data!.path;
     }
 
     if (form.coverUri) {
@@ -558,6 +562,7 @@ export default function EditProfileScreen() {
         return;
       }
       patch.coverUrl = upRes.data!.url;
+      uploadedCoverPath = upRes.data!.path;
     }
 
     if (form.dateOfBirth !== (originalForm?.dateOfBirth ?? null)) {
@@ -626,6 +631,10 @@ export default function EditProfileScreen() {
       } else {
         setSaveError(msg || 'Failed to save profile');
       }
+      // Profile row was not updated — clean up any newly uploaded files so they
+      // don't accumulate as orphans in storage.
+      if (uploadedAvatarPath) deleteOrphanedAvatar(uploadedAvatarPath).catch(() => {});
+      if (uploadedCoverPath) deleteOrphanedCover(uploadedCoverPath).catch(() => {});
       return;
     }
 
