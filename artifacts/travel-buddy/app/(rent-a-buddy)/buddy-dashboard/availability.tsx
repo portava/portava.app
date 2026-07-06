@@ -25,7 +25,10 @@ function nextOccurrences(dayName: string, weeks: number): string[] {
   for (let w = 0; w < weeks; w++) {
     const d = new Date(today);
     d.setDate(today.getDate() + offset + w * 7);
-    dates.push(d.toISOString().slice(0, 10));
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    dates.push(`${y}-${m}-${day}`);
   }
   return dates;
 }
