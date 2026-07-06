@@ -22,6 +22,7 @@ import { useMyTrips, usePendingTripInvites } from '../../src/hooks/useBackend';
 import { useUnreadCounts } from '../../src/hooks/useMessaging';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { acceptTripInvite, declineTripInvite, type TripInvite } from '../../src/services/trips';
+import { classifyInviteAcceptError } from '../../src/lib/inviteCardGoneHandler';
 
 function MeetupsShortcut({ count }: { count: number }) {
   const label = count > 9 ? '9+' : count > 0 ? String(count) : null;
@@ -61,12 +62,13 @@ function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void
         await declineTripInvite(invite.tripId);
         onDone();
       }
-    } catch (e: any) {
-      if (action === 'accept' && (e?.code === 'gone' || e?.message === 'gone')) {
+    } catch (e: unknown) {
+      if (action === 'accept' && classifyInviteAcceptError(e) === 'gone') {
         setTripGone(true);
         setBusy(null);
       } else {
-        Alert.alert('Error', e?.message ?? 'Something went wrong. Please try again.');
+        const msg = (e as { message?: string } | null)?.message;
+        Alert.alert('Error', msg ?? 'Something went wrong. Please try again.');
         setBusy(null);
       }
     }

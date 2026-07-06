@@ -268,7 +268,12 @@ export interface TripInvite {
   } | null;
 }
 
+/** Test seam — set to a non-null string to bypass Supabase auth in tests. */
+let _testAuthToken: string | null = null;
+export function _setTestAuthToken(t: string | null): void { _testAuthToken = t; }
+
 async function freshToken(): Promise<string | null> {
+  if (_testAuthToken !== null) return _testAuthToken;
   const { data: refreshed } = await supabase.auth.refreshSession();
   const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
   return session?.access_token ?? null;

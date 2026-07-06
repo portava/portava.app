@@ -185,6 +185,10 @@ STANDALONE_OWNED_FILES=(
   "src/components/compass/CompassOnboardingCard.tsx"
   "src/hooks/compass/useCompassSettings.ts"
   "app/compass-settings.tsx"
+  # Trip gone error path tests
+  "src/test/tripGoneError.test.ts"
+  "src/lib/__tests__/inviteCardGoneHandler.test.ts"
+  "src/lib/inviteCardGoneHandler.ts"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.
