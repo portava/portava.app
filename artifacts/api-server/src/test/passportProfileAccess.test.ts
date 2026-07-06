@@ -163,15 +163,48 @@ function makeClient(state: FakeState) {
           return builder;
         },
         or(expr: string) {
-          const parts = expr.split(",").map((p) => {
-            const m = p.trim().match(/^(\w+)\.(\w+)\.(.+)$/);
+          // Split on top-level commas only (skip commas inside parentheses)
+          const terms: string[] = [];
+          let depth = 0;
+          let cur = "";
+          for (const ch of expr) {
+            if (ch === "(") { depth++; cur += ch; }
+            else if (ch === ")") { depth--; cur += ch; }
+            else if (ch === "," && depth === 0) { terms.push(cur); cur = ""; }
+            else { cur += ch; }
+          }
+          if (cur) terms.push(cur);
+
+          function simpleFilter(cond: string): ((r: any) => boolean) | null {
+            const m = cond.trim().match(/^(\w+)\.(\w+)\.(.+)$/);
             if (!m) return null;
             const [, col, op, val] = m;
             if (op === "eq")    return (r: any) => String(r[col!]) === val;
+            if (op === "neq")   return (r: any) => String(r[col!]) !== val;
             if (op === "ilike") return (r: any) => String(r[col!]).toLowerCase().includes((val ?? "").replace(/%/g, "").toLowerCase());
             return null;
+          }
+
+          const termFilters = terms.map((term) => {
+            const t = term.trim();
+            if (t.startsWith("and(") && t.endsWith(")")) {
+              const inner = t.slice("and(".length, -1);
+              const sub: Array<(r: any) => boolean> = [];
+              let d2 = 0; let c2 = "";
+              for (const ch of inner) {
+                if (ch === "(") { d2++; c2 += ch; }
+                else if (ch === ")") { d2--; c2 += ch; }
+                else if (ch === "," && d2 === 0) { const f = simpleFilter(c2); if (f) sub.push(f); c2 = ""; }
+                else { c2 += ch; }
+              }
+              if (c2) { const f = simpleFilter(c2); if (f) sub.push(f); }
+              if (!sub.length) return null;
+              return (r: any) => sub.every((f) => f(r));
+            }
+            return simpleFilter(t);
           }).filter(Boolean) as Array<(r: any) => boolean>;
-          if (parts.length) filters.push((r) => parts.some((f) => f(r)));
+
+          if (termFilters.length) filters.push((r) => termFilters.some((f) => f(r)));
           return builder;
         },
         limit(n: number) { _limit = n; return builder; },
@@ -404,5 +437,97 @@ describe("POST /me/avatar/upload", () => {
     });
     assert.equal(r.status, 400, "should reject oversized upload");
     assert.ok(r.body.error, "should have error field");
+  });
+});
+
+// ── Block enforcement — passport deep-link endpoint ───────────────────────────
+//
+// resolveProfileVisibility performs a FAIL-CLOSED block check: any row in the
+// `blocks` table for the (viewer, target) pair (either direction) causes the
+// endpoint to return { blocked: true, targetId } rather than exposing profile
+// data.  The two describes below each spin up their own isolated server so
+// block state doesn't bleed into the shared baseState tests above.
+//
+// Note on the fake client: the `.or()` helper doesn't parse Supabase's
+// `and(col.eq.X,col.eq.Y)` compound syntax, so it returns ALL rows in the
+// blocks table when called.  This is fine here because each describe seeds
+// only the relevant block entry and the check is binary (any row → blocked).
+
+describe("GET /users/:username/passport — viewer blocked by target", () => {
+  let blockSrv: ReturnType<typeof createServer>;
+
+  before(async () => {
+    const app = express();
+    app.use(express.json());
+    const state: FakeState = {
+      ...JSON.parse(JSON.stringify(baseState)),
+      // Alice (target) has blocked ME (viewer)
+      blocks: [{ blocker_id: ALICE, blocked_id: ME }],
+    };
+    const client = makeClient(state);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+    app.use("/", passportRouter);
+    blockSrv = createServer(app);
+    await new Promise<void>((r) => blockSrv.listen(0, "127.0.0.1", r));
+  });
+
+  after(async () => {
+    await new Promise<void>((r) => blockSrv.close(() => r()));
+    _setTestClient(null as any, false);
+    _setTestServiceClient(null as any);
+  });
+
+  it("returns { blocked: true, targetId } for authenticated viewer blocked by target", async () => {
+    const r = await req(blockSrv, "GET", "/users/alice_public/passport", { token: ME_TOK });
+    assert.equal(r.status, 200, "HTTP status should be 200");
+    assert.equal(r.body.blocked, true, "body.blocked should be true");
+    assert.equal(r.body.targetId, ALICE, "body.targetId should identify the target");
+    assert.ok(!("username" in r.body), "username should not be exposed when blocked");
+    assert.ok(!("displayName" in r.body), "displayName should not be exposed when blocked");
+  });
+
+  it("still serves the full passport to an unauthenticated request (no viewer → block check skipped)", async () => {
+    // resolveProfileVisibility only runs the block query when viewerId is non-null.
+    // Anonymous visitors should still be able to see public profiles.
+    const r = await req(blockSrv, "GET", "/users/alice_public/passport");
+    assert.equal(r.status, 200, "HTTP status should be 200");
+    assert.equal(r.body.username, "alice_public", "unauthenticated request should see the public profile");
+    assert.ok(!r.body.blocked, "blocked flag must be absent for unauthenticated viewers");
+  });
+});
+
+describe("GET /users/:username/passport — viewer has blocked target", () => {
+  let blockSrv: ReturnType<typeof createServer>;
+
+  before(async () => {
+    const app = express();
+    app.use(express.json());
+    const state: FakeState = {
+      ...JSON.parse(JSON.stringify(baseState)),
+      // ME (viewer) has blocked Alice (target)
+      blocks: [{ blocker_id: ME, blocked_id: ALICE }],
+    };
+    const client = makeClient(state);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+    app.use("/", passportRouter);
+    blockSrv = createServer(app);
+    await new Promise<void>((r) => blockSrv.listen(0, "127.0.0.1", r));
+  });
+
+  after(async () => {
+    await new Promise<void>((r) => blockSrv.close(() => r()));
+    _setTestClient(null as any, false);
+    _setTestServiceClient(null as any);
+  });
+
+  it("returns { blocked: true, targetId } when the viewer has blocked the target", async () => {
+    const r = await req(blockSrv, "GET", "/users/alice_public/passport", { token: ME_TOK });
+    assert.equal(r.status, 200, "HTTP status should be 200");
+    assert.equal(r.body.blocked, true, "body.blocked should be true");
+    assert.equal(r.body.targetId, ALICE, "body.targetId should identify the target");
+    assert.ok(!("username" in r.body), "username should not be exposed when blocked");
+    assert.ok(!("displayName" in r.body), "displayName should not be exposed when blocked");
   });
 });
