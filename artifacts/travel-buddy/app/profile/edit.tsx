@@ -607,9 +607,7 @@ export default function EditProfileScreen() {
       const kind = (profileRes as any).errorKind as string;
       const msg: string = (profileRes as any).message ?? '';
       const msgLower = msg.toLowerCase();
-      const isCooldown =
-        kind === 'invalid_payload' &&
-        (msgLower.includes('30 days') || msgLower.includes('days remaining'));
+      const isCooldown = kind === 'rate_limited';
       const isUsernameTaken =
         !isCooldown &&
         (kind === 'invalid_payload' || kind === 'conflict') &&

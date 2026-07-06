@@ -415,7 +415,7 @@ router.patch("/me/profile", async (req, res) => {
       const daysSince = msSince / (1000 * 60 * 60 * 24);
       if (daysSince < 30) {
         const daysLeft = Math.ceil(30 - daysSince);
-        sendError(res, "invalid_payload", `Username can only be changed once every 30 days. ${daysLeft} day${daysLeft !== 1 ? "s" : ""} remaining.`);
+        sendError(res, "rate_limited", `Username can only be changed once every 30 days. ${daysLeft} day${daysLeft !== 1 ? "s" : ""} remaining.`);
         return;
       }
     }

@@ -501,9 +501,10 @@ describe("Username rules — PATCH /api/me/profile", () => {
     );
     setup(state);
     const r = await req("/me/profile", { method: "PATCH", body: { username: "new_me" } });
-    assert.equal(r.status, 400);
+    assert.equal(r.status, 429);
     const body = await r.json() as any;
-    assert.match(body.message ?? body.error ?? "", /30 days|remaining/i);
+    assert.equal(body.error, "rate_limited");
+    assert.match(body.message ?? "", /30 days|remaining/i);
   });
 
   it("allows username change when last change was more than 30 days ago", async () => {

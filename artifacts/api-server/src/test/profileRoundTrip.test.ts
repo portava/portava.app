@@ -1130,10 +1130,10 @@ describe("PATCH /me/profile — username 30-day cooldown", () => {
     const res = await api("/me/profile", { method: "PATCH", body: { username: "new_handle" } });
     const body = await res.json() as any;
 
-    assert.equal(res.status, 400,
-      `Expected 400 when cooldown is active, got ${res.status}: ${JSON.stringify(body)}`);
-    assert.equal(body.error, "invalid_payload",
-      `Expected error code "invalid_payload", got: ${JSON.stringify(body)}`);
+    assert.equal(res.status, 429,
+      `Expected 429 when cooldown is active, got ${res.status}: ${JSON.stringify(body)}`);
+    assert.equal(body.error, "rate_limited",
+      `Expected error code "rate_limited", got: ${JSON.stringify(body)}`);
     assert.match(String(body.message), /30 days/,
       `Error message should mention "30 days", got: ${body.message}`);
   });
