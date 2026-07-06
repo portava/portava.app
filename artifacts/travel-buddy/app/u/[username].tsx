@@ -244,6 +244,8 @@ function KebabMenu({
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [reportDone, setReportDone] = useState(false);
 
+  const displayName = resolveDisplayName({ name, handle });
+
   useEffect(() => {
     if (!open) return;
     setStatusLoading(true);
@@ -260,7 +262,7 @@ function KebabMenu({
     setOpen(false);
     Alert.alert(
       'Block user',
-      `Block ${name ?? `@${handle}`}? They won't be able to message you, follow you, or see your profile. You can unblock them any time in Settings.`,
+      `Block ${displayName}? They won't be able to message you, follow you, or see your profile. You can unblock them any time in Settings.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -331,8 +333,6 @@ function KebabMenu({
       Alert.alert('Error', res.error ?? 'Could not submit report');
     }
   }
-
-  const displayName = resolveDisplayName({ name, handle });
 
   return (
     <>
