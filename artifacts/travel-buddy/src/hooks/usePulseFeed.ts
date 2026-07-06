@@ -62,17 +62,17 @@ export function usePulseFeed(opts: {
       .then((result) => {
         if (ac.signal.aborted) return;
         if (result.ok) {
-          const mapped = result.data.posts
-            .map(pulsePostToFeedItem)
-            .filter((p) => !deletedIds.current.has(p.id));
-          setItems(mapped);
-          setPlaceCards(result.data.placeCards.map(placeCardToFeedItem));
-          setError(null);
-          if (mapped.length === PAGE_SIZE) {
-            const oldest = result.data.posts[result.data.posts.length - 1]?.createdAt ?? null;
-            cursorRef.current = oldest;
+          const raw = result.data.posts;
+          // Pagination is based on raw backend count so deleting a post from the
+          // local set does not prematurely prevent loading further pages.
+          const hasNextPage = raw.length === PAGE_SIZE;
+          if (hasNextPage) {
+            cursorRef.current = raw[raw.length - 1]?.createdAt ?? null;
             setHasMore(true);
           }
+          setItems(raw.map(pulsePostToFeedItem).filter((p) => !deletedIds.current.has(p.id)));
+          setPlaceCards(result.data.placeCards.map(placeCardToFeedItem));
+          setError(null);
         } else {
           setError(result.error);
         }

@@ -71,12 +71,14 @@ export function useFollowingFeed() {
     setHasMore(false);
     const res = await listFollowingFeed({ limit: PAGE_SIZE });
     if (res.ok) {
-      const rows = (res.data ?? []).filter((p) => !deletedIds.current.has(p.id));
-      setData(rows);
-      if (rows.length === PAGE_SIZE) {
-        setCursor(rows[rows.length - 1]?.createdAt ?? null);
+      const raw = res.data ?? [];
+      // Pagination state uses raw backend count so a locally-deleted post cannot
+      // prematurely end pagination.
+      if (raw.length === PAGE_SIZE) {
+        setCursor(raw[raw.length - 1]?.createdAt ?? null);
         setHasMore(true);
       }
+      setData(raw.filter((p) => !deletedIds.current.has(p.id)));
     } else {
       setError(res.message ?? res.errorKind ?? 'Failed to load following feed');
     }
