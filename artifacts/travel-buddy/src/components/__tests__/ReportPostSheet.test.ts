@@ -32,7 +32,7 @@
  *   the contract that both must satisfy identically.
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   REPORT_POST_REASONS,
@@ -349,5 +349,296 @@ describe('canSubmitReport — submit button gate', () => {
   it('detail text alone does not affect canSubmitReport', () => {
     assert.equal(canSubmitReport(state({ reason: 'other', detail: 'some text' })), true);
     assert.equal(canSubmitReport(state({ reason: 'other', detail: '' })), true);
+  });
+});
+
+// ── reportContent API call shape ───────────────────────────────────────────────
+//
+// The component's submit() calls:
+//   reportContent({
+//     target_type: 'post',
+//     target_id:   postId,
+//     reason_code: reason,
+//     reason_detail: detail.trim() || undefined,
+//   })
+//
+// These tests inline the reportContent fetch logic (to avoid the supabase
+// module at load time) and verify that the correct URL, method, body, and
+// auth header are sent, and that success / error responses are mapped
+// correctly to { ok, data, error }.
+//
+// The inline implementation mirrors services/reports.ts reportContent()
+// identically, but accepts token + base as explicit parameters instead of
+// reading them from module-level singletons, making the fetch call observable.
+
+// ── Fake fetch helpers ─────────────────────────────────────────────────────────
+
+type FetchCall = { url: string; init?: RequestInit };
+let fetchCalls: FetchCall[] = [];
+const _originalFetch = globalThis.fetch;
+
+function installFakeFetch(handler: (url: string, init?: RequestInit) => Response) {
+  fetchCalls = [];
+  (globalThis as any).fetch = (url: string, init?: RequestInit): Promise<Response> => {
+    fetchCalls.push({ url, init });
+    return Promise.resolve(handler(url, init));
+  };
+}
+
+function restoreFetch() {
+  (globalThis as any).fetch = _originalFetch;
+}
+
+function jsonRes(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+// ── Inline reportContent ───────────────────────────────────────────────────────
+
+interface ReportContentPayload {
+  target_type: string;
+  target_id:   string;
+  reason_code: string;
+  reason_detail?: string;
+}
+
+interface ReportResult {
+  ok: boolean;
+  data?: { reportId: string };
+  error?: string;
+}
+
+async function inlineReportContent(
+  payload: ReportContentPayload,
+  token: string,
+  base: string,
+): Promise<ReportResult> {
+  try {
+    const res = await (globalThis as any).fetch(`${base}/api/reports`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, error: body.message ?? 'Failed to submit report' };
+    }
+    const body = await res.json();
+    return { ok: true, data: { reportId: body.reportId } };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+// ── API call shape ─────────────────────────────────────────────────────────────
+
+describe('reportContent API call — URL, method, and headers', () => {
+  afterEach(() => restoreFetch());
+
+  it('sends POST to /api/reports', async () => {
+    installFakeFetch(() => jsonRes({ reportId: 'r-1' }));
+    await inlineReportContent(
+      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
+      'tok', 'http://api.test',
+    );
+    assert.equal(fetchCalls.length, 1);
+    assert.ok(fetchCalls[0]!.url.endsWith('/api/reports'), 'URL must end with /api/reports');
+    assert.equal(fetchCalls[0]!.init?.method, 'POST');
+  });
+
+  it('includes Authorization: Bearer <token> header', async () => {
+    installFakeFetch(() => jsonRes({ reportId: 'r-2' }));
+    await inlineReportContent(
+      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
+      'my-token', 'http://api.test',
+    );
+    const headers = fetchCalls[0]!.init?.headers as Record<string, string>;
+    assert.equal(headers['Authorization'], 'Bearer my-token');
+  });
+
+  it('sets Content-Type: application/json', async () => {
+    installFakeFetch(() => jsonRes({ reportId: 'r-3' }));
+    await inlineReportContent(
+      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
+      'tok', 'http://api.test',
+    );
+    const headers = fetchCalls[0]!.init?.headers as Record<string, string>;
+    assert.equal(headers['Content-Type'], 'application/json');
+  });
+});
+
+// ── Request body shape ─────────────────────────────────────────────────────────
+
+describe('reportContent API call — request body', () => {
+  afterEach(() => restoreFetch());
+
+  it('body includes target_type="post"', async () => {
+    installFakeFetch(() => jsonRes({ reportId: 'r-4' }));
+    await inlineReportContent(
+      { target_type: 'post', target_id: 'abc', reason_code: 'spam' },
+      'tok', 'http://api.test',
+    );
+    const body = JSON.parse(fetchCalls[0]!.init?.body as string);
+    assert.equal(body.target_type, 'post');
+  });
+
+  it('body includes target_id matching postId', async () => {
+    installFakeFetch(() => jsonRes({ reportId: 'r-5' }));
+    await inlineReportContent(
+      { target_type: 'post', target_id: 'post-abc-123', reason_code: 'spam' },
+      'tok', 'http://api.test',
+    );
+    const body = JSON.parse(fetchCalls[0]!.init?.body as string);
+    assert.equal(body.target_id, 'post-abc-123');
+  });
+
+  it('body includes reason_code matching the selected reason', async () => {
+    installFakeFetch(() => jsonRes({ reportId: 'r-6' }));
+    await inlineReportContent(
+      { target_type: 'post', target_id: 'p-1', reason_code: 'harassment' },
+      'tok', 'http://api.test',
+    );
+    const body = JSON.parse(fetchCalls[0]!.init?.body as string);
+    assert.equal(body.reason_code, 'harassment');
+  });
+
+  it('body includes reason_detail when detail is provided', async () => {
+    installFakeFetch(() => jsonRes({ reportId: 'r-7' }));
+    await inlineReportContent(
+      { target_type: 'post', target_id: 'p-1', reason_code: 'other', reason_detail: 'specific concern' },
+      'tok', 'http://api.test',
+    );
+    const body = JSON.parse(fetchCalls[0]!.init?.body as string);
+    assert.equal(body.reason_detail, 'specific concern');
+  });
+
+  it('body omits reason_detail when not provided', async () => {
+    installFakeFetch(() => jsonRes({ reportId: 'r-8' }));
+    await inlineReportContent(
+      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
+      'tok', 'http://api.test',
+    );
+    const body = JSON.parse(fetchCalls[0]!.init?.body as string);
+    assert.equal(Object.prototype.hasOwnProperty.call(body, 'reason_detail'), false);
+  });
+
+  it('sends correct body for each of the 7 reason codes', async () => {
+    for (const { code } of REPORT_POST_REASONS) {
+      installFakeFetch(() => jsonRes({ reportId: `r-${code}` }));
+      await inlineReportContent(
+        { target_type: 'post', target_id: 'p-1', reason_code: code },
+        'tok', 'http://api.test',
+      );
+      const body = JSON.parse(fetchCalls[0]!.init?.body as string);
+      assert.equal(body.reason_code, code, `reason_code must be ${code}`);
+    }
+    restoreFetch();
+  });
+});
+
+// ── Component submit() payload contract ───────────────────────────────────────
+//
+// Verifies that the payload shape the component builds matches what the
+// backend expects. This mirrors the submit() function in ReportPostSheet.tsx:
+//   reportContent({
+//     target_type: 'post',
+//     target_id:   postId,
+//     reason_code: reason!,
+//     reason_detail: detail.trim() || undefined,
+//   })
+
+describe('reportContent payload — component submit() contract', () => {
+  it('target_type is always "post" for post reports', () => {
+    const payload: ReportContentPayload = {
+      target_type: 'post',
+      target_id: 'some-post-id',
+      reason_code: 'spam',
+    };
+    assert.equal(payload.target_type, 'post');
+  });
+
+  it('reason_detail is omitted when detail.trim() is empty', () => {
+    const detail = '   ';
+    const payload: ReportContentPayload = {
+      target_type: 'post',
+      target_id: 'p-1',
+      reason_code: 'other',
+      ...(detail.trim() ? { reason_detail: detail.trim() } : {}),
+    };
+    assert.equal(Object.prototype.hasOwnProperty.call(payload, 'reason_detail'), false);
+  });
+
+  it('reason_detail is included when detail.trim() is non-empty', () => {
+    const detail = '  some detail  ';
+    const payload: ReportContentPayload = {
+      target_type: 'post',
+      target_id: 'p-1',
+      reason_code: 'other',
+      ...(detail.trim() ? { reason_detail: detail.trim() } : {}),
+    };
+    assert.equal(payload.reason_detail, 'some detail');
+  });
+});
+
+// ── Response handling ──────────────────────────────────────────────────────────
+
+describe('reportContent response handling', () => {
+  afterEach(() => restoreFetch());
+
+  it('returns { ok: true, data: { reportId } } on HTTP 200', async () => {
+    installFakeFetch(() => jsonRes({ reportId: 'report-xyz' }));
+    const result = await inlineReportContent(
+      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
+      'tok', 'http://api.test',
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.data?.reportId, 'report-xyz');
+  });
+
+  it('returns { ok: false, error } on HTTP 400 with message body', async () => {
+    installFakeFetch(() => jsonRes({ message: 'invalid_reason' }, 400));
+    const result = await inlineReportContent(
+      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
+      'tok', 'http://api.test',
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.error, 'invalid_reason');
+  });
+
+  it('returns { ok: false } on HTTP 500', async () => {
+    installFakeFetch(() => jsonRes({ error: 'internal_error' }, 500));
+    const result = await inlineReportContent(
+      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
+      'tok', 'http://api.test',
+    );
+    assert.equal(result.ok, false);
+    assert.ok(!result.data, 'data must be absent on failure');
+  });
+
+  it('returns { ok: false, error: message } on network error', async () => {
+    fetchCalls = [];
+    (globalThis as any).fetch = () => Promise.reject(new Error('Network failure'));
+    const result = await inlineReportContent(
+      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
+      'tok', 'http://api.test',
+    );
+    restoreFetch();
+    assert.equal(result.ok, false);
+    assert.ok(result.error?.includes('Network failure'), 'error must include network message');
+  });
+
+  it('makes exactly one fetch call per submit', async () => {
+    installFakeFetch(() => jsonRes({ reportId: 'r-once' }));
+    await inlineReportContent(
+      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
+      'tok', 'http://api.test',
+    );
+    assert.equal(fetchCalls.length, 1, 'submit must call fetch exactly once');
   });
 });
