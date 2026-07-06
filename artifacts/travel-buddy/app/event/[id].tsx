@@ -7,17 +7,19 @@
  * Host/co-host: tap Settings icon for HostDashboardPanel.
  *
  * RSVP state machine (action bar):
- *   cancelled/archived → static note
+ *   completed → "This event has ended" (no actions)
+ *   cancelled/archived → "This event was [state]" (no actions)
  *   eligibility blocked → blocked row
  *   rsvpClosed → "RSVPs closed" note
  *   already RSVP'd → change RSVP dropdown + chat button
  *   invite_only, no pending request → "Request to join"
  *   invite_only, pending request → "Request sent" (disabled)
- *   on waitlist with offer → Accept / Leave
+ *   waitlist offer_pending → Accept / Leave
+ *   waitlist offer_expired → "Offer expired" + Leave
  *   on waitlist, no offer → Leave waitlist
  *   event full + waitlist → Join waitlist
  *   event full + no waitlist → "Full — no waitlist"
- *   open/started → RSVP dropdown
+ *   attendeeActions.canRsvp → RSVP dropdown (open/started; not banned)
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -47,6 +49,8 @@ import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { Avatar } from '../../src/components/ui';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import { getWaitlistUiState } from '../../src/lib/waitlistState';
+import { getAttendeeActionSet, type EventLifecycleState } from '../../src/lib/eventRoleActions';
 
 const STATE_BADGE: Record<string, { label: string; bg: string; fg: string }> = {
   draft:     { label: 'Draft',          bg: color.haze, fg: color.mute },
@@ -324,6 +328,17 @@ export default function EventDetailScreen() {
 
   const isHost = event?.isHost || event?.myRole === 'host' || event?.myRole === 'co_host';
   const isBanned = event?.myRole === 'banned';
+
+  const waitlistUiState = event ? getWaitlistUiState({
+    myWaitlistPosition: event.myWaitlistPosition ?? null,
+    myWaitlistOfferExpiresAt: event.myWaitlistOfferExpiresAt ?? null,
+    eventState: event.state,
+    myRsvp: event.myRsvp ?? null,
+  }) : 'not_on_waitlist';
+
+  const attendeeActions = event
+    ? getAttendeeActionSet(event.myRole ?? null, event.state as EventLifecycleState)
+    : { canRsvp: false, canLeave: false, canJoinWaitlist: false };
   const stateBadge = event ? (STATE_BADGE[event.state] ?? STATE_BADGE.open) : null;
 
   // ── Eligibility gate ───────────────────────────────────────────────────────
@@ -755,24 +770,29 @@ export default function EventDetailScreen() {
       {/* RSVP / action bar */}
       {event && !isBanned && !loading && (
         <View style={[styles.actionBar, { paddingBottom: insets.bottom + space.md }]}>
-          {event.state === 'cancelled' || event.state === 'archived' ? (
-            /* ① Cancelled / archived */
+          {event.state === 'completed' ? (
+            /* ① Ended — show no actions; reviews are shown in the scroll body */
+            <View style={styles.cancelledNote}>
+              <Text style={styles.cancelledText}>This event has ended</Text>
+            </View>
+          ) : event.state === 'cancelled' || event.state === 'archived' ? (
+            /* ② Cancelled / archived */
             <View style={styles.cancelledNote}>
               <Text style={styles.cancelledText}>This event was {event.state}</Text>
             </View>
           ) : eligibilityBlock ? (
-            /* ② Eligibility gate */
+            /* ③ Eligibility gate */
             <View style={styles.blockedRow}>
               <Shield size={15} color="#B45309" />
               <Text style={styles.blockedText} numberOfLines={2}>{eligibilityBlock}</Text>
             </View>
           ) : event.rsvpClosed && !event.myRsvp ? (
-            /* ③ RSVPs closed — already RSVP'd viewers still see their status above */
+            /* ④ RSVPs closed — already RSVP'd viewers still see their status above */
             <View style={styles.cancelledNote}>
               <Text style={styles.cancelledText}>RSVPs are closed for this event</Text>
             </View>
           ) : event.myRsvp ? (
-            /* ④ Already RSVP'd — show current status + change dropdown */
+            /* ⑤ Already RSVP'd — show current status + change dropdown */
             <View style={styles.rsvpRow}>
               <Pressable
                 style={styles.rsvpCurrentBtn}
@@ -804,8 +824,8 @@ export default function EventDetailScreen() {
                 ? <ActivityIndicator color={color.onInk} />
                 : <Text style={styles.rsvpBtnText}>Request to join</Text>}
             </Pressable>
-          ) : event.myWaitlistPosition != null && event.myWaitlistOfferExpiresAt ? (
-            /* ⑦ Waitlist offer active */
+          ) : waitlistUiState === 'offer_pending' ? (
+            /* ⑦ Waitlist offer active — user must accept before expiry */
             <View style={styles.offerRow}>
               <Pressable style={styles.rsvpBtn} onPress={handleAcceptOffer} disabled={rsvpLoading}>
                 {rsvpLoading
@@ -816,25 +836,35 @@ export default function EventDetailScreen() {
                 <Text style={styles.leaveWaitlistText}>Leave waitlist</Text>
               </Pressable>
             </View>
-          ) : event.myWaitlistPosition != null ? (
-            /* ⑧ On waitlist, no offer */
+          ) : waitlistUiState === 'offer_expired' ? (
+            /* ⑧ Offer window passed — stay on waitlist or leave */
+            <View style={styles.offerRow}>
+              <View style={[styles.cancelledNote, { flex: 1 }]}>
+                <Text style={styles.cancelledText}>Your spot offer expired</Text>
+              </View>
+              <Pressable style={styles.leaveWaitlistBtn} onPress={handleLeaveWaitlist} disabled={rsvpLoading}>
+                <Text style={styles.leaveWaitlistText}>Leave waitlist</Text>
+              </Pressable>
+            </View>
+          ) : waitlistUiState === 'on_waitlist' ? (
+            /* ⑨ On waitlist, no offer yet */
             <Pressable style={styles.leaveWaitlistBtn} onPress={handleLeaveWaitlist} disabled={rsvpLoading}>
               <Text style={styles.leaveWaitlistText}>Leave waitlist</Text>
             </Pressable>
-          ) : ['full', 'waitlist'].includes(event.state) && event.waitlistEnabled ? (
-            /* ⑨ Full + waitlist */
+          ) : attendeeActions.canJoinWaitlist && event.waitlistEnabled ? (
+            /* ⑩ Full + waitlist enabled — join waitlist */
             <Pressable style={styles.waitlistBtn} onPress={handleJoinWaitlist} disabled={rsvpLoading}>
               {rsvpLoading
                 ? <ActivityIndicator color="#fff" />
                 : <Text style={styles.waitlistBtnText}>Join waitlist</Text>}
             </Pressable>
           ) : ['full', 'waitlist'].includes(event.state) && !event.waitlistEnabled ? (
-            /* ⑩ Full, no waitlist */
+            /* ⑪ Full, no waitlist */
             <View style={styles.cancelledNote}>
               <Text style={styles.cancelledText}>This event is full — no waitlist available</Text>
             </View>
-          ) : ['open', 'started'].includes(event.state) ? (
-            /* ⑪ Open — RSVP picker */
+          ) : attendeeActions.canRsvp ? (
+            /* ⑫ Open/started and not banned — RSVP picker */
             <Pressable
               style={styles.rsvpBtn}
               onPress={() => setShowRsvpMenu((v) => !v)}
