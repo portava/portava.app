@@ -1,0 +1,630 @@
+Add a top-of-Pulse smart rail called “Live Pulse.”
+
+This is a core Travel Buddy beta feature, not a decorative banner. It should turn the Pulse page into a real-time action center showing what is happening now, what is starting soon, what needs the user’s attention, and what they can join, save, request, message, or manage.
+
+Do not rebuild Pulse. Do not create a separate fake event banner. Do not duplicate recommendation logic. Do not use placeholder/demo data. Live Pulse must use real app data and the same shared truth layer used by Events, Trips, Circles, Rent a Buddy, Discovery, Compass, Find Your Circle, Trip Crew, Notifications, Availability, Privacy, and Safety.
+
+Core requirement:
+
+Every Live Pulse card must either:
+
+1. Open the correct real object.
+2. Perform the correct real action.
+3. Be hidden or disabled with an honest reason.
+
+No dead buttons. No fake success. No stale cards. No private data leaks.
+
+---
+
+# 1. Feature name and placement
+
+Add a smart rail at the top of the Pulse page.
+
+Name:
+
+Live Pulse
+
+Placement:
+
+- At the top of Pulse, above the main feed.
+- Mobile-first.
+- Horizontally scrollable.
+- Collapsible.
+- Not too tall.
+- Should not push the feed too far down.
+- Should have a clean loading state, empty state, and error/retry state.
+
+The rail should feel like:
+
+“What is happening around me / my trip / my city right now?”
+
+---
+
+# 2. Shared service requirement
+
+Create or use one shared service:
+
+txt getLivePulseItems(userId, context) 
+
+Do not build Live Pulse with its own disconnected query logic.
+
+This service should combine real data from:
+
+- Events
+- Trips
+- Circles
+- Rent a Buddy
+- Hidden Gems
+- Saved items
+- Notifications
+- Host requests
+- Buddy requests
+- Safe Return reminders
+- Compass-backed picks
+- User profile
+- User interests
+- User languages
+- User availability
+- User trip dates
+- User current city / selected city / trip city
+- Privacy settings
+- Location settings
+- Blocks
+- Reports
+- Trust/safety filters
+- Capacity/join rules
+- City launch mode if present
+
+Pulse, Discovery, Compass, Find Your Circle, Trip Crew, and Rent a Buddy should not contradict Live Pulse. They should all use the same source-of-truth concepts.
+
+---
+
+# 3. Supported Live Pulse item types
+
+Live Pulse should support these real item types where implemented:
+
+## Events
+
+- Starting soon events
+- Ongoing events
+- Events ending soon
+- Tonight’s events
+- Tomorrow’s events
+- Upcoming events
+- Joined events
+- Saved events
+- Hosted events
+- Invite-only events where user can request
+- Full events where waitlist exists
+
+## Trips
+
+- Active trips
+- Upcoming trips
+- Trips starting soon
+- Joined trips
+- Saved trips
+- Hosted trips
+- Trips with crew activity
+- Trips with pending join requests
+- Trips tied to current city or selected trip city
+
+## Circles
+
+- Circles gathering now
+- Circles tied to user’s trip
+- Circles tied to current city
+- Circles with active members
+- Circles the user joined
+- Circles with pending requests
+- Invite-only circles where user can request
+
+## Rent a Buddy
+
+- Available buddies today
+- Buddies available near selected city/trip city
+- Saved buddies
+- Buddy requests sent by user
+- Buddy requests received by buddy
+- Upcoming buddy bookings/requests
+- Buddy profiles needing action
+- Buddy availability prompts
+
+If payments are not fully wired, do not show fake payment/deposit actions. Use request-only or hide payment actions.
+
+## Hidden Gems
+
+- Relevant nearby gems
+- Gems tied to trip city
+- Gems popular with similar travelers
+- Gems saved by the user
+- Gems with directions action if map/location is available
+
+## Safety / Safe Return
+
+- Active Safe Return check-in
+- Check-in due soon
+- Missed check-in requiring action
+- Trip safety reminder
+- Safety card must be honest and must not claim emergency dispatch unless actually wired
+
+## Compass-backed picks
+
+- Compass picks backed by real app objects only
+- No invented events
+- No invented people
+- No invented buddies
+- No fake places
+- No unsupported claims
+
+## Host and management cards
+
+Live Pulse should also show user-owned responsibilities:
+
+- Join requests waiting for host
+- Event/trip/circle starting soon that user hosts
+- Message attendees prompt
+- Buddy request received
+- Buddy request pending
+- Circle member request
+- Trip Crew activity
+- Event update requiring attention
+
+---
+
+# 4. Required card structure
+
+Each Live Pulse card should include:
+
+- Status badge
+- Object type
+- Title
+- Time or distance
+- City/location label
+- People count where relevant
+- Reason label
+- User relationship state
+- Primary action
+- Secondary action where useful
+
+Example structure:
+
+txt Starting Soon Rooftop Drinks Starts in 24m · Shibuya · 8 going Because you like nightlife Join · View 
+
+Another example:
+
+txt Action Needed 2 join requests Tokyo Food Crawl starts tonight Review · Manage 
+
+Another example:
+
+txt Buddy Available Mika · Local nightlife buddy Available today · Bangkok Request · Message 
+
+---
+
+# 5. Status labels and time rules
+
+Use exact status logic.
+
+txt Starting Soon = starts within 60 minutes Ongoing = current time is between start_time and end_time Ends Soon = ends within 45 minutes Tonight = starts later today after current time Tomorrow = starts tomorrow This Weekend = starts Friday through Sunday Upcoming = future item within 14 days Open Now = buddy/place/experience available now Last Call = capacity almost full or event ends soon Action Needed = user has host/buddy/safety/request task My Plan = user already joined or saved 
+
+Do not show ended events/trips/circles as active.
+
+Cancelled, deleted, hidden, reported, unavailable, and completed items should not show unless the card is specifically for owner/host management and clearly labeled.
+
+---
+
+# 6. User relationship states
+
+Cards must reflect the user’s relationship to the item.
+
+Supported states:
+
+txt joined saved hosting pending requestable invite-only full waitlist ongoing starting-soon ending-soon available unavailable cancelled completed location-off privacy-limited action-needed 
+
+Required behavior:
+
+txt Joined → Open / Open Crew Saved → View / Join Hosting → Manage / Message Attendees Pending request → Pending / View Full → Waitlist or View Invite-only → Request Requestable → Request Buddy available → Request Buddy / Message Buddy request received → Review / Accept / Decline Safe Return due → Check In / Open Safety Cancelled → Hidden from normal users Ended → Hidden from normal users Unavailable buddy → Hidden or View Only Location off → Show trip-city/saved-city content, not live-location content Privacy-limited → Do not show private/live-location-dependent item 
+
+---
+
+# 7. Supported actions
+
+Live Pulse cards may support:
+
+- View
+- Join
+- Request
+- Save
+- Unsave
+- Message Host
+- Message Buddy
+- Open Crew
+- Manage
+- Review Request
+- Accept
+- Decline
+- Request Buddy
+- Directions
+- Join Waitlist
+- Check In
+- Open Safety
+- Create Event
+- Create Trip
+- Find Your Circle
+- Explore Discovery
+- Invite Travelers
+
+Every action must be real.
+
+No action should be shown unless the backend, route, and permission state support it.
+
+---
+
+# 8. Ranking priority
+
+When many items exist, rank by urgency and relevance.
+
+Priority order:
+
+txt 1. Safe Return / urgent safety items 2. User’s joined events/trips starting soon 3. User’s saved events/trips starting soon 4. Host/buddy/circle/trip requests requiring action 5. Ongoing events in user’s trip city/current city 6. Active Trip Crew or Circle activity 7. Rent a Buddy availability for today 8. Events/trips/circles matching interests, language, and availability 9. Hidden Gems near user/trip city 10. Compass-backed picks 11. General upcoming items 
+
+Do not allow random general events to outrank user-owned or urgent items.
+
+---
+
+# 9. Deduping rules
+
+If the same object qualifies for multiple reasons, show it once.
+
+Example:
+
+txt Rooftop Drinks Reasons: Starts soon · Your circle is going · Matches nightlife 
+
+Do not show duplicate cards for the same event/trip/circle/buddy/place.
+
+Deduplicate by stable object identity:
+
+txt item_type + item_id 
+
+---
+
+# 10. Context switching
+
+Live Pulse must support context.
+
+Possible contexts:
+
+txt Near Me Current City Upcoming Trip City Saved City Specific Trip Specific Circle My Plans 
+
+The app should not assume the user only cares about their physical location. A traveler in Florida may be planning Tokyo.
+
+If location is denied/off, use:
+
+- selected city
+- upcoming trip city
+- saved city
+- user’s joined/saved plans
+- general Discovery picks
+
+Do not use live location if location permission or privacy settings do not allow it.
+
+---
+
+# 11. Privacy and safety filtering
+
+Live Pulse must respect:
+
+- blocked users
+- users who blocked the viewer
+- reported/hidden content
+- private events
+- private trips
+- private circles
+- invite-only rules
+- age limits if implemented
+- language filters if implemented
+- trust thresholds if implemented
+- location privacy
+- Trip Crew visibility
+- Find Your Circle visibility
+- Rent a Buddy approval status
+- capacity
+- cancelled/completed/deleted status
+- user availability
+- city launch status if present
+
+Live Pulse must never expose:
+
+- exact private live location
+- private trip/circle membership
+- blocked users
+- hidden/reported content
+- unavailable buddies as bookable
+- private events as public
+- full events as joinable unless waitlist exists
+- fake payments
+- fake bookings
+- fake safety escalation
+
+---
+
+# 12. Quality threshold
+
+Only promote content that is complete enough for beta.
+
+Do not show an event/trip/circle if it is missing:
+
+- title
+- date/time when time-based
+- city/location or valid context
+- host/owner
+- visibility status
+- join/request rules
+- valid detail route
+- valid action target
+
+Do not show a buddy if missing:
+
+- approved/visible status
+- city/area
+- service type
+- availability
+- request/message action
+- safety boundary language
+
+Do not show cards that cannot route correctly.
+
+---
+
+# 13. Card expiration rules
+
+Each Live Pulse item must expire or change state correctly.
+
+txt Starting soon event → becomes ongoing when it starts Ongoing event → removed or completed when it ends Ends soon event → removed when ended Join request → removed when accepted/declined/cancelled Buddy request → removed when accepted/declined/expired/cancelled Safe Return reminder → removed when completed/cancelled/escalated Hidden Gem → removed after session/day unless saved Compass Pick → expires after refresh window Full event → hidden as joinable unless waitlist exists Cancelled event/trip/circle → hidden from normal rail 
+
+No stale cards should stay in the rail.
+
+---
+
+# 14. Refresh behavior
+
+Live Pulse should update without spamming the backend.
+
+Refresh rules:
+
+txt Refresh on Pulse open Refresh on pull-to-refresh Refresh after join/save/request/accept/decline/check-in actions Refresh when context city/trip changes Refresh every few minutes while Pulse is open Do not refresh every second Do not create duplicate cards after refresh Do not lose user state after refresh 
+
+If realtime is available, use it carefully for notifications/messages/activity, but still support manual refresh fallback.
+
+---
+
+# 15. Collapsed and expanded states
+
+Default collapsed summary:
+
+txt Live Pulse 3 starting soon · 2 ongoing · 5 tonight 
+
+Expanded state:
+
+- Horizontally scrollable cards
+- Filter chips
+- Clean spacing
+- Mobile safe-area support
+
+Suggested filter chips:
+
+txt All Now Starting Soon Tonight My Trip Near Me Requests Buddies 
+
+Do not overload the top of Pulse.
+
+---
+
+# 16. Empty states
+
+If there are no Live Pulse items, show a clean helpful state.
+
+Examples:
+
+txt Nothing live nearby yet. Create a plan or explore Discovery. 
+
+Buttons:
+
+- Create Event
+- Create Trip
+- Explore Discovery
+- Find Your Circle
+
+If the city has low content:
+
+txt Nothing live in Tokyo yet. Start the first plan or find travelers heading there. 
+
+Buttons:
+
+- Create Event
+- Create Trip
+- Invite Travelers
+- Explore Hidden Gems
+
+If location is off:
+
+txt Location is off. Showing your trip and saved-city activity instead. 
+
+Actions:
+
+- Choose City
+- Open Privacy Settings
+
+---
+
+# 17. “Do not show again” behavior
+
+Allow dismissing non-critical recommendation cards:
+
+- Hidden Gems
+- Compass picks
+- general event suggestions
+- create prompts
+- buddy availability prompts
+
+Do not allow dismissing critical safety cards unless the user completes/cancels the proper Safe Return action.
+
+Store dismissals so dismissed cards do not immediately reappear.
+
+---
+
+# 18. Host and buddy management cards
+
+Live Pulse should help creators and buddies manage activity.
+
+Examples:
+
+txt 2 join requests waiting Tokyo Food Crawl · starts tonight Review · Manage 
+
+txt Buddy request received Maya wants arrival help Friday Review · Message 
+
+txt Your event starts in 40m Message attendees before they arrive Message · Manage 
+
+Host/buddy management cards should rank above general discovery cards.
+
+---
+
+# 19. Cross-screen consistency
+
+If Live Pulse says something, every other screen must agree.
+
+txt Joined → Event/trip detail, Discovery card, Passport plans agree Saved → Saved list, Discovery, detail page agree Pending → Host tools, detail page, notifications agree Full → Detail page and Discovery agree Ongoing → Event/trip detail agrees Cancelled → Hidden or cancelled everywhere Buddy available → Buddy profile and request form agree Privacy off → Discovery, Find Your Circle, Trip Crew, and Live Pulse agree Blocked user → Hidden consistently everywhere 
+
+Do not create another truth mismatch.
+
+---
+
+# 20. Analytics
+
+Add tracking events if analytics exists. If no analytics framework exists, add clear TODO/report hooks without breaking the app.
+
+Suggested events:
+
+txt live_pulse_viewed live_pulse_expanded live_pulse_collapsed live_pulse_card_opened live_pulse_join_clicked live_pulse_save_clicked live_pulse_request_clicked live_pulse_buddy_requested live_pulse_host_request_reviewed live_pulse_safety_checkin_clicked live_pulse_empty_state_clicked live_pulse_context_changed live_pulse_error 
+
+Analytics should include:
+
+- user ID if available
+- item type
+- item ID
+- context
+- status
+- action
+- city/trip context
+- result success/failure
+
+Do not block user actions if analytics fails.
+
+---
+
+# 21. Notifications tie-in
+
+Live Pulse should connect with notification/activity data.
+
+Use notification/activity data for:
+
+- upcoming joined event
+- accepted join request
+- buddy request
+- message tied to active trip
+- Safe Return reminder
+- host request
+- circle invite
+- trip/event update
+
+Clicking a notification-style Live Pulse card must route to the same correct destination as the notification itself.
+
+No notification card should route to a dead page.
+
+---
+
+# 22. Beta UI behavior
+
+Mobile requirements:
+
+- Horizontal scroll works.
+- Tap targets are usable.
+- Cards do not overflow.
+- Text truncates cleanly.
+- Status badges are readable.
+- Primary/secondary actions are clear.
+- Rail does not cover feed content.
+- Rail does not conflict with floating menu or bottom nav.
+- Loading skeleton is compact.
+- Empty state is compact.
+- Expanded state can collapse.
+
+Desktop requirements:
+
+- Rail can show more cards across width.
+- Cards still use same logic.
+- No stretched awkward layout.
+
+---
+
+# 23. External dependency fallback
+
+If a dependency fails:
+
+txt Maps API fails → hide directions/map-specific action or use list view Location denied → show selected/trip/saved city context Realtime fails → allow manual refresh Recommendation service fails → show joined/saved/upcoming items from direct data AI/Compass fails → hide Compass-backed cards, keep real event/trip cards Storage/media fails → show fallback image/avatar Database error → show retry state 
+
+Do not allow external failures to make Pulse blank.
+
+---
+
+# 24. Security requirements
+
+Check:
+
+- No service role key in frontend
+- No private fields exposed
+- No private location leakage
+- No admin-only actions visible to normal users
+- No user can manage another user’s event/trip/buddy profile
+- No user can accept/decline requests unless they are host/buddy/admin
+- No blocked/private content leaks through Live Pulse
+- No unsafe direct object access by ID
+
+Do not loosen RLS/security to make the rail work.
+
+---
+
+# 25. Tests required
+
+Add targeted tests where possible.
+
+Test:
+
+txt [ ] Live Pulse renders on Pulse [ ] Shows loading state [ ] Shows empty state [ ] Shows error/retry state [ ] Shows real event/trip/circle/buddy cards [ ] Applies correct status labels [ ] Applies correct ranking priority [ ] Dedupes repeated items [ ] Hides ended/cancelled/deleted items [ ] Hides blocked/reported/private items [ ] Respects location-off fallback [ ] Respects privacy settings [ ] Shows joined/saved/hosting/pending/full states correctly [ ] Correct action appears for each state [ ] Join action works [ ] Save action works [ ] Request action works [ ] Buddy request action works where supported [ ] Host review/manage action works where supported [ ] Safe Return card routes correctly [ ] Card opens correct detail screen [ ] Updates after join/save/request [ ] Does not show duplicate cards after refresh [ ] Does not crash with missing profile [ ] Does not crash with no city/location [ ] Mobile horizontal scroll works 
+
+Run:
+
+- Typecheck
+- Existing tests
+- Relevant component/render tests
+- Relevant route/API tests
+- New targeted Live Pulse tests
+
+---
+
+# 26. Final acceptance checklist
+
+Live Pulse is complete only when:
+
+txt [ ] It uses real data only [ ] It uses a shared truth layer [ ] It includes events, trips, circles, Rent a Buddy, Hidden Gems, Safe Return, and Compass-backed picks where implemented [ ] It supports starting soon, ongoing, ends soon, tonight, tomorrow, upcoming, action needed, and my plan states [ ] It ranks urgent/user-owned items first [ ] It dedupes repeated objects [ ] It expires stale items correctly [ ] It respects privacy/location/block/report/capacity/invite-only rules [ ] It handles joined/saved/hosting/pending/full/waitlist/requestable states [ ] It shows correct actions only when supported [ ] Every card opens the right route [ ] Every visible action works [ ] It refreshes after actions [ ] It has compact loading/empty/error states [ ] It works with location off [ ] It works on mobile [ ] It does not crowd the Pulse feed [ ] It tracks analytics if available [ ] It does not create a second contradictory event/recommendation system [ ] It does not expose private live location [ ] It does not show fake payments/bookings/safety actions 
+
+---
+
+# 27. Required final report
+
+After implementation, provide a report:
+
+txt Live Pulse Beta Report  1. Files changed 2. Service/data source used 3. Item types supported 4. Status labels implemented 5. Actions implemented 6. Privacy/safety filters implemented 7. Ranking logic 8. Deduping logic 9. Refresh behavior 10. Empty/error/location-off states 11. Analytics events added 12. Tests added/run 13. Remaining limitations 14. Anything hidden or disabled for beta 15. Confirmation that no fake data/dead buttons remain 
+
+Final goal:
+
+Live Pulse should make Pulse feel alive and useful by showing real, actionable, privacy-safe travel activity: events, trips, circles, buddies, hidden gems, safety reminders, and user responsibilities. It should be a command center for what is happening now and what the user should do next, without creating clutter, fake data, or truth mismatches.
