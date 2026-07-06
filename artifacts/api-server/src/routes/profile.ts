@@ -157,6 +157,22 @@ router.post("/profile/ensure", async (req, res) => {
     return;
   }
 
+  // Also ensure a location_preferences row exists with safe defaults.
+  // NOTE: The table was originally called user_location_privacy and was renamed
+  // to location_preferences in migration 0032_location_preferences.sql.
+  // Uses ignoreDuplicates so existing preferences are never overwritten.
+  const { error: locError } = await sc
+    .from('location_preferences')
+    .upsert(
+      { user_id: user.id },
+      { onConflict: 'user_id', ignoreDuplicates: true },
+    );
+  if (locError) {
+    // Non-fatal: log but don't block the response. The row will be created
+    // on first access to location features.
+    req.log.warn({ err: locError }, "profile/ensure location_preferences upsert failed (non-fatal)");
+  }
+
   res.status(200).json({ ok: true });
 });
 

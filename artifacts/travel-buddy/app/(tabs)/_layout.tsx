@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform, useColorScheme } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Tabs, router, usePathname } from 'expo-router';
@@ -11,6 +11,7 @@ import { useUnreadCounts } from '../../src/hooks/useMessaging';
 import { useGeofenceMonitor } from '../../src/hooks/useGeofenceMonitor';
 import { getIncomingMessageRequests } from '../../src/services/messaging';
 import { getPendingTripInvites } from '../../src/services/trips';
+import { getMyProfile } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
 
 const NAV_ITEMS = [
@@ -203,6 +204,23 @@ export default function TabLayout() {
       router.replace('/(auth)/sign-in' as any);
     }
   }, [configured, loading, isAuthed]);
+
+  // Profile-completeness gate for cold-start / session-restore paths.
+  // Fires once per authenticated session. When the profile lacks displayName
+  // or username (user abandoned onboarding mid-flow), redirect back to finish.
+  const profileGateChecked = useRef(false);
+  useEffect(() => {
+    if (!isAuthed || loading) return;
+    if (profileGateChecked.current) return;
+    profileGateChecked.current = true;
+    getMyProfile().then((res) => {
+      if (res.ok && res.data && (!res.data.displayName || !res.data.username)) {
+        router.replace('/(auth)/onboarding' as any);
+      }
+    }).catch(() => {
+      // Non-fatal — leave user on tabs if profile check fails.
+    });
+  }, [isAuthed, loading]);
 
   useGeofenceMonitor();
 

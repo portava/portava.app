@@ -156,6 +156,7 @@ STANDALONE_OWNED_FILES=(
   "src/test/accountActivation.test.ts"
   "src/test/discoverySearch.test.ts"
   "src/test/onboardingPassportFlow.test.ts"
+  "src/test/authEnsureProfile.test.ts"
   "src/services/fillHomeFromGps.machine.ts"
   "src/services/__tests__/fillHomeFromGps.test.ts"
   "src/components/__tests__/CreateMemory.doubletap.test.ts"

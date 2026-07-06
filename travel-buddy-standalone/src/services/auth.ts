@@ -4,6 +4,10 @@
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
+/** Test seam — set to a fake token to bypass supabase.auth.getSession in ensureProfile. */
+let _testSessionToken: string | null = null;
+export function _setTestSessionToken(t: string | null): void { _testSessionToken = t; }
+
 export interface AuthResult {
   userId: string | null;
   error: string | null;
@@ -35,7 +39,14 @@ export async function signUp(email: string, password: string, meta?: { name?: st
   if (error) return { userId: null, error: error.message };
   const userId = data.user?.id ?? null;
   if (userId && data.session) {
-    await ensureProfile(userId, email, meta);
+    try {
+      await ensureProfile(userId, email, meta);
+    } catch (e) {
+      // Non-fatal: profile row creation failed (e.g. network hiccup or API
+      // not configured yet). The onboarding screen calls getMyProfile on
+      // mount and SessionContext has a recovery path, so we don't block sign-up.
+      if (__DEV__) console.warn('[Auth] ensureProfile failed during signUp (non-fatal):', e);
+    }
   }
   return { userId, error: null };
 }
@@ -50,15 +61,22 @@ export async function signUp(email: string, password: string, meta?: { name?: st
  * verify P-256 JWTs so auth.uid() returns NULL under RLS and direct inserts fail for new users.
  */
 export async function ensureProfile(userId: string, email: string, meta?: { name?: string; handle?: string }): Promise<void> {
-  if (!isSupabaseConfigured) return;
+  // When a test session token is injected, bypass the isSupabaseConfigured guard
+  // (same pattern as _setTestAuthToken in profile.ts).
+  if (!isSupabaseConfigured && !_testSessionToken) return;
 
   const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
   if (!apiBase) {
     throw new Error('ensureProfile: EXPO_PUBLIC_API_BASE_URL is not configured');
   }
 
-  const { data: sessionData } = await supabase.auth.getSession();
-  const token = sessionData.session?.access_token;
+  let token: string | undefined;
+  if (_testSessionToken) {
+    token = _testSessionToken;
+  } else {
+    const { data: sessionData } = await supabase.auth.getSession();
+    token = sessionData.session?.access_token;
+  }
   if (!token) {
     throw new Error('ensureProfile: no session token available');
   }
@@ -91,7 +109,15 @@ export async function signIn(email: string, password: string): Promise<AuthResul
   }
   if (error) return { userId: null, error: error.message };
   const userId = data.user?.id ?? null;
-  if (userId) await ensureProfile(userId, email, { name: data.user?.user_metadata?.name });
+  if (userId) {
+    try {
+      await ensureProfile(userId, email, { name: data.user?.user_metadata?.name });
+    } catch (e) {
+      // Non-fatal: if ensureProfile fails the profile row already exists for
+      // returning users, or SessionContext will recover it on sign-in.
+      if (__DEV__) console.warn('[Auth] ensureProfile failed during signIn (non-fatal):', e);
+    }
+  }
   return { userId, error: null };
 }
 

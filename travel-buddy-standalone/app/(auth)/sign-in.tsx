@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Plane, Mail, Lock, User as UserIcon, ArrowLeft } from 'lucide-react-native';
 import { signIn, signUp, requestPasswordReset, lookupUsernameByEmail } from '../../src/services/auth';
+import { getMyProfile } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
 import { isSupabaseConfigured } from '../../src/lib/supabase';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
@@ -21,9 +22,12 @@ export default function SignIn() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // Redirect already-authed users who land on this screen.
+  // Guard with !busy so we don't race against the submit handler's own navigation
+  // during the signup flow (busy=true while the handler is running).
   useEffect(() => {
-    if (isAuthed) router.replace('/(tabs)');
-  }, [isAuthed]);
+    if (isAuthed && !busy) router.replace('/(tabs)');
+  }, [isAuthed, busy]);
 
   function switchMode(next: Mode) {
     setMode(next);
@@ -46,6 +50,24 @@ export default function SignIn() {
         setNotice('Check your email to confirm your account, then sign in.');
         switchMode('signin');
         return;
+      }
+      // New users (just signed up with an active session) always go to onboarding.
+      if (mode === 'signup' && res.userId) {
+        router.replace('/(auth)/onboarding');
+        return;
+      }
+      // Returning users: check profile completeness before routing.
+      // A user who abandoned onboarding mid-flow is sent back to finish it
+      // rather than landing on tabs with a blank / incomplete profile state.
+      try {
+        const profileRes = await getMyProfile();
+        if (profileRes.ok && profileRes.data &&
+            (!profileRes.data.displayName || !profileRes.data.username)) {
+          router.replace('/(auth)/onboarding');
+          return;
+        }
+      } catch {
+        // Non-fatal — if the profile check fails, proceed to tabs normally.
       }
       router.replace('/(tabs)');
     } catch (e: any) {

@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { AppState } from 'react-native';
-import { getSessionUserId, onAuthChange, signOut as svcSignOut } from '../services/auth';
+import { getSessionUserId, onAuthChange, signOut as svcSignOut, ensureProfile } from '../services/auth';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { getAccountStatus } from '../services/profile';
 import type { AccountStatus } from '../services/profile';
@@ -85,6 +85,39 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     fetchAccountStatus(userId);
   }, [userId, fetchAccountStatus]);
+
+  // Defensive profile recovery: when a userId becomes available, try to ensure
+  // the profile row exists. This covers cases where ensureProfile failed during
+  // sign-up/sign-in (e.g. a network error) and the user resumes the app.
+  // Fire-and-forget — never blocks the UI or shows an error.
+  const lastRecoveredUserId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!userId || lastRecoveredUserId.current === userId) return;
+    // Mark immediately to prevent concurrent calls within this session.
+    // Reset to null on failure so a subsequent userId change (e.g. re-sign-in)
+    // can trigger a retry.
+    lastRecoveredUserId.current = userId;
+
+    const recover = async () => {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const session = sessionData.session;
+        if (!session) {
+          lastRecoveredUserId.current = null;
+          return;
+        }
+        const email = session.user?.email ?? '';
+        const name = session.user?.user_metadata?.name ?? undefined;
+        await ensureProfile(session.user.id, email, { name });
+      } catch {
+        // Transient failure — reset the guard so the next sign-in attempt
+        // can trigger another recovery attempt.
+        lastRecoveredUserId.current = null;
+      }
+    };
+
+    recover();
+  }, [userId]);
 
   const refreshAccountStatus = useCallback(async () => {
     await fetchAccountStatus(userId);
