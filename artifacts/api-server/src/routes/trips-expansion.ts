@@ -1335,6 +1335,15 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
     return;
   }
 
+  // Trip member cap reached (enforced atomically inside the DB function via
+  // SELECT … FOR UPDATE on the trips row).  This is the authoritative guard
+  // for max_members — two concurrent requests serialise on the trip row lock
+  // so only the first one through sees the count as under-capacity.
+  if (claimResult === "trip_full") {
+    res.status(410).json({ error: "gone", reason: "trip_full", message: "This trip is already full" });
+    return;
+  }
+
   // Helper: clean up the attempt row (best-effort; failure is non-fatal).
   const clearAttempt = () =>
     sc.from("trip_invite_link_attempts")
@@ -1364,6 +1373,31 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
       }
       await clearAttempt();
       res.json({ status: "already_member", tripId, idempotent: true });
+      return;
+    }
+    // Trip member cap enforced by the BEFORE INSERT trigger (migration 0115).
+    // The trigger raises SQLSTATE P0001 with message 'trip_full' when another
+    // request committed a member row between our claim and our INSERT, pushing
+    // the accepted-member count to max_members.  Release the freshly claimed
+    // slot (so use_count is not permanently bumped) and return 410.
+    //
+    // The claim RPC's 'trip_full' fast-path (above) skips the INSERT entirely
+    // when the trip is obviously full at claim time.  This branch catches the
+    // residual race where two requests both receive 'claimed' but only one's
+    // INSERT commits — the trigger serialises the concurrent inserts and the
+    // second one reaches this error path.
+    if ((memErr as { code?: string }).code === "P0001" && memErr.message === "trip_full") {
+      if (!isRetryAttempt) {
+        const { error: releaseErr } = await sc.rpc("release_invite_link_slot", { link_id: lk.id });
+        if (releaseErr) {
+          req.log.error(
+            { linkId: lk.id, userId: user.id, releaseError: releaseErr.message },
+            "release_invite_link_slot failed after trigger trip_full — slot may be stranded"
+          );
+        }
+      }
+      await clearAttempt();
+      res.status(410).json({ error: "gone", reason: "trip_full", message: "This trip is already full" });
       return;
     }
     // Any other DB error: release the slot if it was freshly claimed.  When
