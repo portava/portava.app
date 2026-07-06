@@ -404,6 +404,12 @@ export interface InvitePreview {
 export interface InvitePreviewResult {
   data: InvitePreview | null;
   gone?: boolean;
+  /**
+   * Populated when `gone` is true. `'trip_inactive'` means the trip itself
+   * has ended or been cancelled; other values (or absence) mean the link was
+   * revoked, expired, or exhausted.
+   */
+  goneReason?: string;
   error?: string;
 }
 
@@ -411,6 +417,8 @@ export interface InvitePreviewResult {
  * Fetch a non-sensitive preview of the trip for a given invite token.
  * Requires the caller to be authenticated; returns `error: 'not_authenticated'` if not.
  * Returns `gone: true` when the link is expired, revoked, or exhausted.
+ * Sets `goneReason: 'trip_inactive'` when the 410 is specifically because the
+ * trip itself has ended or been cancelled (vs the link being revoked/expired).
  */
 export async function previewInviteLink(token: string): Promise<InvitePreviewResult> {
   const accessToken = await freshToken();
@@ -420,7 +428,11 @@ export async function previewInviteLink(token: string): Promise<InvitePreviewRes
     `${apiBase}/api/trips/invite-link/${encodeURIComponent(token)}/preview`,
     { headers: { Authorization: `Bearer ${accessToken}` } },
   );
-  if (res.status === 410) return { data: null, gone: true };
+  if (res.status === 410) {
+    const body = await res.json().catch(() => null) as Record<string, unknown> | null;
+    const goneReason = body?.reason === 'trip_inactive' ? 'trip_inactive' : undefined;
+    return { data: null, gone: true, goneReason };
+  }
   if (!res.ok) return { data: null };
   return { data: await res.json().catch(() => null) };
 }

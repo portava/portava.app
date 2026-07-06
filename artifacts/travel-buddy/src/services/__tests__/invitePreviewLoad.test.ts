@@ -126,10 +126,39 @@ describe('mapInvitePreviewToScreenState() — isTerminal routing', () => {
     }
   });
 
-  // ── gone response → 'gone' ────────────────────────────────────────────────
-  it('maps gone:true to ScreenState kind:\'gone\'', () => {
+  // ── gone response → 'gone' (generic: link revoked/expired) ──────────────
+  it('maps gone:true (no goneReason) to \'gone\' with link-level message', () => {
     const state: ScreenState = mapInvitePreviewToScreenState({ data: null, gone: true });
     assert.equal(state.kind, 'gone');
+    if (state.kind === 'gone') {
+      assert.equal(state.message, 'This invite link has expired or been revoked.');
+    }
+  });
+
+  // ── gone response → 'gone' (trip_inactive: ended or cancelled) ────────────
+  it('maps gone:true + goneReason:\'trip_inactive\' to \'gone\' with trip-level message', () => {
+    const state: ScreenState = mapInvitePreviewToScreenState({
+      data: null,
+      gone: true,
+      goneReason: 'trip_inactive',
+    });
+    assert.equal(state.kind, 'gone');
+    if (state.kind === 'gone') {
+      assert.equal(state.message, 'This trip is no longer active.');
+    }
+  });
+
+  // ── gone + unknown goneReason falls back to link-level message ────────────
+  it('maps gone:true + unknown goneReason to the generic link-level message', () => {
+    const state: ScreenState = mapInvitePreviewToScreenState({
+      data: null,
+      gone: true,
+      goneReason: 'some_future_reason',
+    });
+    assert.equal(state.kind, 'gone');
+    if (state.kind === 'gone') {
+      assert.equal(state.message, 'This invite link has expired or been revoked.');
+    }
   });
 
   // ── not_authenticated → 'not_authed' ─────────────────────────────────────

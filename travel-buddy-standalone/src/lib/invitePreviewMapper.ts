@@ -26,7 +26,10 @@ export function mapInvitePreviewToScreenState(result: InvitePreviewResult): Scre
     return { kind: 'not_authed' };
   }
   if (result.gone) {
-    return { kind: 'gone', message: 'This invite link has expired or been revoked.' };
+    const message = result.goneReason === 'trip_inactive'
+      ? 'This trip is no longer active.'
+      : 'This invite link has expired or been revoked.';
+    return { kind: 'gone', message };
   }
   if (!result.data) {
     return { kind: 'error' };
