@@ -16,6 +16,8 @@ import {
   type PostResult,
 } from '../services/posts';
 
+const PAGE_SIZE = 20;
+
 /** Global social feed (public standalone posts). */
 export function useGlobalFeed() {
   const [data, setData] = useState<PostRow[]>([]);
@@ -25,7 +27,7 @@ export function useGlobalFeed() {
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const res = await listGlobalPosts({ limit: 20 });
+    const res = await listGlobalPosts({ limit: PAGE_SIZE });
     if (res.ok) setData(res.data ?? []);
     else setError(res.message ?? res.errorKind ?? 'Failed to load feed');
     setLoading(false);
@@ -38,22 +40,59 @@ export function useGlobalFeed() {
   return { data, loading, error, reload };
 }
 
-/** Following feed — public posts from followed users only. */
+/** Following feed — public posts from followed users only, with cursor pagination. */
 export function useFollowingFeed() {
   const [data, setData] = useState<PostRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // cursor = createdAt of oldest post on last page
+  const [cursor, setCursor] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const res = await listFollowingFeed({ limit: 20 });
-    if (res.ok) setData(res.data ?? []);
-    else setError(res.message ?? res.errorKind ?? 'Failed to load following feed');
+    setCursor(null);
+    setHasMore(false);
+    const res = await listFollowingFeed({ limit: PAGE_SIZE });
+    if (res.ok) {
+      const rows = res.data ?? [];
+      setData(rows);
+      if (rows.length === PAGE_SIZE) {
+        setCursor(rows[rows.length - 1]?.createdAt ?? null);
+        setHasMore(true);
+      }
+    } else {
+      setError(res.message ?? res.errorKind ?? 'Failed to load following feed');
+    }
     setLoading(false);
   }, []);
 
-  return { data, loading, error, reload };
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore || !cursor) return;
+    setLoadingMore(true);
+    const res = await listFollowingFeed({ limit: PAGE_SIZE, before: cursor });
+    if (res.ok) {
+      const rows = res.data ?? [];
+      // De-dupe by id to prevent duplicates at page boundaries
+      setData((prev) => {
+        const seen = new Set(prev.map((p) => p.id));
+        const fresh = rows.filter((p) => !seen.has(p.id));
+        return [...prev, ...fresh];
+      });
+      if (rows.length === PAGE_SIZE) {
+        setCursor(rows[rows.length - 1]?.createdAt ?? null);
+        setHasMore(true);
+      } else {
+        setCursor(null);
+        setHasMore(false);
+      }
+    }
+    setLoadingMore(false);
+  }, [loadingMore, hasMore, cursor]);
+
+  return { data, loading, loadingMore, hasMore, error, reload, loadMore };
 }
 
 /** A trip's feed. isMember reflects whether the viewer is an accepted member. */

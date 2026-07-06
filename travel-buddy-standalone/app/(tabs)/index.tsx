@@ -365,6 +365,18 @@ export default function Pulse() {
     </View>
   );
 
+  const isLoadingMore =
+    feedMode === 'following' ? followingFeed.loadingMore : pulseFeed.loadingMore;
+
+  const ForYouError = (
+    <View style={styles.followingEmpty}>
+      <Text style={styles.followingEmptyTitle}>Couldn't load the For You feed. Check your connection and try again.</Text>
+      <Pressable style={styles.exploreBtn} onPress={() => pulseFeed.reload()}>
+        <Text style={styles.exploreBtnText}>Retry</Text>
+      </Pressable>
+    </View>
+  );
+
   const Footer = (
     <View>
       {feedMode === 'following' ? (
@@ -375,12 +387,16 @@ export default function Pulse() {
         ) : followingItems.length === 0 ? (
           FollowingEmpty
         ) : null
-      ) : (
-        feed.length === 0 ? (
-          <TravelEmptyState title="No results for these filters" sub="Try clearing a filter or switch to All." action="Clear filters" onAction={() => setActive(['All'])} />
-        ) : null
+      ) : pulseFeed.error ? (
+        ForYouError
+      ) : feed.length === 0 ? (
+        <TravelEmptyState title="No results for these filters" sub="Try clearing a filter or switch to All." action="Clear filters" onAction={() => setActive(['All'])} />
+      ) : null}
+      {isLoadingMore && (
+        <View style={styles.loadMoreWrap}>
+          <ActivityIndicator size="small" color={color.signal} />
+        </View>
       )}
-      
     </View>
   );
 
@@ -408,6 +424,11 @@ export default function Pulse() {
         ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
         contentContainerStyle={{ paddingBottom: 120 }}
         showsVerticalScrollIndicator={false}
+        onEndReached={() => {
+          if (feedMode === 'following') followingFeed.loadMore();
+          else pulseFeed.loadMore();
+        }}
+        onEndReachedThreshold={0.3}
         refreshControl={
           <RefreshControl
             refreshing={feedMode === 'following' ? followingFeed.loading : pulseFeed.loading}
@@ -463,6 +484,7 @@ const styles = StyleSheet.create({
   exploreBtn: { backgroundColor: color.signal, paddingHorizontal: space.lg, paddingVertical: 10, borderRadius: 10 },
   exploreBtnText: { ...t.bodyStrong, color: '#fff', fontSize: 14 },
   loadingWrap: { paddingVertical: space.xxl, alignItems: 'center' },
+  loadMoreWrap: { paddingVertical: space.lg, alignItems: 'center' },
   layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: space.lg, marginTop: space.lg, marginBottom: space.sm, backgroundColor: '#E3F2FD', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
   layoverBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: '#1565C0' },
   /* Available Buddies in [City] module */

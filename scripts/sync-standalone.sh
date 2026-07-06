@@ -190,6 +190,8 @@ STANDALONE_OWNED_FILES=(
   "src/test/tripGoneError.test.ts"
   "src/lib/__tests__/inviteCardGoneHandler.test.ts"
   "src/lib/inviteCardGoneHandler.ts"
+  # Pulse feed save/pagination tests
+  "src/components/__tests__/PulseFeed.save.pagination.test.ts"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.

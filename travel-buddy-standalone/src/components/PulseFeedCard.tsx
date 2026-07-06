@@ -19,6 +19,10 @@ import { useHighlightRingState } from '../hooks/useHighlightRingState';
 import { useSession } from '../context/SessionContext';
 import { LocationChip } from './LocationChip';
 import type { LocationChipVariant } from './LocationChip';
+import { ReportPostSheet } from './ReportPostSheet';
+import { SaveButton } from './SaveButton';
+import { deletePost } from '../services/postEngagement';
+import { hidePost } from '../services/posts';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -41,14 +45,70 @@ function resolveLocationChipVariant(
 }
 
 /* shared bits */
-function AuthorRow({ item, badge, light }: { item: PulseFeedItem; badge?: { label: string; bg: string; fg: string }; light?: boolean }) {
+function AuthorRow({
+  item, badge, light, onHide, onUnhide, onDeleteSuccess,
+}: {
+  item: PulseFeedItem;
+  badge?: { label: string; bg: string; fg: string };
+  light?: boolean;
+  onHide?: () => void;
+  onUnhide?: () => void;
+  onDeleteSuccess?: () => void;
+}) {
   const { userId: currentUserId } = useSession();
+  const isOwner = !!currentUserId && currentUserId === item.author?.id;
   const ringState = useHighlightRingState(item.author?.id ?? null);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [avatarError, setAvatarError] = useState(false);
 
   const handleAuthorPress = item.author?.username
     ? () => router.push(`/u/${item.author!.username}` as any)
     : undefined;
+
+  function openOverflow() {
+    if (isOwner) {
+      Alert.alert('Post Options', undefined, [
+        {
+          text: 'Delete post',
+          style: 'destructive',
+          onPress: () =>
+            Alert.alert('Delete post?', 'This cannot be undone.', [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Delete',
+                style: 'destructive',
+                onPress: async () => {
+                  const ok = await deletePost(item.id);
+                  if (ok) {
+                    onDeleteSuccess?.();
+                  } else {
+                    Alert.alert('Error', 'Could not delete post. Please try again.');
+                  }
+                },
+              },
+            ]),
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+    } else {
+      Alert.alert('Post Options', undefined, [
+        { text: 'Report', onPress: () => setReportOpen(true) },
+        {
+          text: 'Hide from feed',
+          onPress: async () => {
+            onHide?.(); // optimistic dismiss
+            const ok = await hidePost(item.id);
+            if (!ok) {
+              onUnhide?.(); // restore card
+              Alert.alert('Error', 'Could not hide this post. Please try again.');
+            }
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+    }
+  }
 
   return (
     <View style={s.authorRow}>
@@ -61,7 +121,19 @@ function AuthorRow({ item, badge, light }: { item: PulseFeedItem; badge?: { labe
           gap={2}
           onPress={ringState?.hasActive ? () => setViewerOpen(true) : handleAuthorPress}
         >
-          <Image source={{ uri: item.author.avatarUrl }} style={s.avatar} />
+          {avatarError || !item.author.avatarUrl ? (
+            <View style={[s.avatar, s.avatarFallback]}>
+              <Text style={s.avatarFallbackText}>
+                {(item.author.name ?? '?').charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          ) : (
+            <Image
+              source={{ uri: item.author.avatarUrl }}
+              style={s.avatar}
+              onError={() => setAvatarError(true)}
+            />
+          )}
         </HighlightRing>
       ) : null}
       <View style={{ flex: 1 }}>
@@ -73,20 +145,7 @@ function AuthorRow({ item, badge, light }: { item: PulseFeedItem; badge?: { labe
         ) : null}
         <Text style={[s.meta, light ? { color: color.onInkMute } : undefined]}>{item.timeAgo}{item.neighborhood ? ` · ${item.neighborhood}` : item.city ? ` · ${item.city}` : ''}</Text>
       </View>
-      <Pressable
-        hitSlop={layout.hitSlop}
-        onPress={() =>
-          Alert.alert(
-            'Post Options',
-            undefined,
-            [
-              { text: 'Report', onPress: () => Alert.alert('Coming Soon', 'Post reporting is coming in a future update.') },
-              { text: 'Hide', onPress: () => Alert.alert('Coming Soon', 'Post hiding is coming in a future update.') },
-              { text: 'Cancel', style: 'cancel' },
-            ],
-          )
-        }
-      >
+      <Pressable hitSlop={layout.hitSlop} onPress={openOverflow}>
         <MoreHorizontal size={18} color={light ? color.onInkMute : color.faint} />
       </Pressable>
 
@@ -98,6 +157,12 @@ function AuthorRow({ item, badge, light }: { item: PulseFeedItem; badge?: { labe
           onClose={() => setViewerOpen(false)}
         />
       )}
+
+      <ReportPostSheet
+        postId={item.id}
+        visible={reportOpen}
+        onClose={() => setReportOpen(false)}
+      />
     </View>
   );
 }
@@ -137,6 +202,8 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
   const chipSublabel = item.locationDistrict ?? (item.neighborhood ? item.city : undefined);
   const [dismissed, setDismissed] = useState(false);
   const [mediaFailed, setMediaFailed] = useState(false);
+  const dismiss = () => setDismissed(true);
+  const undismiss = () => setDismissed(false);
   if (dismissed) return null;
 
   // 4:5 portrait media frame; capped at 600 for tablet/web
@@ -186,7 +253,7 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
         ) : null}
         {/* AuthorRow on bottom scrim */}
         <View style={s.postAuthorOverlay}>
-          <AuthorRow item={item} light />
+          <AuthorRow item={item} light onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={dismiss} />
         </View>
       </View>
 
@@ -217,12 +284,18 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
               canShare={item.canShare !== false}
             />
           </View>
+          <SaveButton
+            entityType="post"
+            entityId={item.id}
+            initialSaved={(item as any).savedByMe ?? false}
+            size={17}
+          />
           <CompassFeedbackMenu
             recommendationId={item.id}
             itemType={item.type}
             category={item.type}
             onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
-            onDismiss={() => setDismissed(true)}
+            onDismiss={dismiss}
           />
         </View>
       </View>
@@ -233,10 +306,12 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
 /* ── Question ── */
 function QuestionCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: string) => void }) {
   const [dismissed, setDismissed] = useState(false);
+  const dismiss = () => setDismissed(true);
+  const undismiss = () => setDismissed(false);
   if (dismissed) return null;
   return (
     <View style={s.card}>
-      <AuthorRow item={item} badge={{ label: 'QUESTION', bg: '#EFE7FA', fg: '#7A4DBF' }} />
+      <AuthorRow item={item} badge={{ label: 'QUESTION', bg: '#EFE7FA', fg: '#7A4DBF' }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={dismiss} />
       <Text style={s.question}>{item.question}</Text>
       <TagRow tags={item.tags} />
       <View style={s.actions}>
@@ -270,10 +345,12 @@ function QuestionCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: 
 function PlanCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: string) => void }) {
   const planPicker = usePlanPicker();
   const [dismissed, setDismissed] = useState(false);
+  const dismiss = () => setDismissed(true);
+  const undismiss = () => setDismissed(false);
   if (dismissed) return null;
   return (
     <View style={s.card}>
-      <AuthorRow item={item} badge={{ label: 'OPEN PLAN', bg: '#E3F1EA', fg: color.success }} />
+      <AuthorRow item={item} badge={{ label: 'OPEN PLAN', bg: '#E3F1EA', fg: color.success }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={dismiss} />
       <Text style={s.title}>{item.title}</Text>
       {item.time ? <View style={s.line}><Clock size={13} color={color.mute} /><Text style={s.lineText}>{item.time}</Text></View> : null}
       {item.neighborhood || item.city ? <View style={s.line}><MapPin size={13} color={color.mute} /><Text style={s.lineText}>{item.neighborhood ?? item.city}</Text></View> : null}
@@ -306,23 +383,25 @@ function GemCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: 
   const planPicker = usePlanPicker();
   const { userId: currentUserId } = useSession();
   const [dismissed, setDismissed] = useState(false);
+  const dismiss = () => setDismissed(true);
+  const undismiss = () => setDismissed(false);
   if (dismissed) return null;
   return (
     <View style={s.card}>
-      <AuthorRow item={item} badge={{ label: 'HIDDEN GEM', bg: '#E3F1EA', fg: color.success }} />
+      <AuthorRow item={item} badge={{ label: 'HIDDEN GEM', bg: '#E3F1EA', fg: color.success }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={dismiss} />
       <View style={s.media}><View style={s.gemIcon}><Gem size={15} color={color.onInk} /></View></View>
       <Text style={s.title}>{item.title}</Text>
       {item.blurb ? <RichText content={item.blurb} tags={item.spanTags} hashtagUsages={item.spanHashtags} currentUserId={currentUserId ?? undefined} style={s.blurb} /> : null}
       <View style={s.actions}>
         <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'hidden_gem', title: item.title ?? 'Hidden gem', city: item.city, category: 'Hidden Gem' })}><Text style={s.outlineText}>Add to Plan</Text></Pressable>
         <View style={{ flex: 1 }} />
-        <Pressable hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving recommendations is coming in a future update.')}><Bookmark size={17} color={color.mute} /></Pressable>
+        <SaveButton entityType="post" entityId={item.id} initialSaved={(item as any).savedByMe ?? false} size={17} />
         <CompassFeedbackMenu
           recommendationId={item.id}
           itemType={item.type}
           category={item.type}
           onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
-          onDismiss={() => setDismissed(true)}
+          onDismiss={dismiss}
         />
       </View>
     </View>
@@ -333,10 +412,12 @@ function GemCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: 
 function ItineraryCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: string) => void }) {
   const planPicker = usePlanPicker();
   const [dismissed, setDismissed] = useState(false);
+  const dismiss = () => setDismissed(true);
+  const undismiss = () => setDismissed(false);
   if (dismissed) return null;
   return (
     <View style={s.card}>
-      <AuthorRow item={item} badge={{ label: 'ITINERARY', bg: '#E2EDF0', fg: color.deep }} />
+      <AuthorRow item={item} badge={{ label: 'ITINERARY', bg: '#E2EDF0', fg: color.deep }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={dismiss} />
       <View style={s.titleRow}>
         <Route size={16} color={color.deep} />
         <Text style={[s.title, { flex: 1 }]}>{item.title}</Text>
@@ -349,13 +430,13 @@ function ItineraryCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?:
       <View style={s.actions}>
         <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'experience', title: item.title ?? 'Itinerary', city: item.city, category: 'Itinerary' })}><Text style={s.outlineText}>Use this plan</Text></Pressable>
         <View style={{ flex: 1 }} />
-        <Pressable hitSlop={layout.hitSlop} onPress={() => Alert.alert('Coming Soon', 'Saving itineraries is coming in a future update.')}><Bookmark size={17} color={color.mute} /></Pressable>
+        <SaveButton entityType="post" entityId={item.id} initialSaved={(item as any).savedByMe ?? false} size={17} />
         <CompassFeedbackMenu
           recommendationId={item.id}
           itemType={item.type}
           category={item.type}
           onWhyPress={item.recommendationId ? () => onWhyPress?.(item.recommendationId!) : undefined}
-          onDismiss={() => setDismissed(true)}
+          onDismiss={dismiss}
         />
       </View>
     </View>
@@ -538,6 +619,8 @@ const s = StyleSheet.create({
   card: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: space.sm, ...shadow.card },
   authorRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: color.haze },
+  avatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: color.deep },
+  avatarFallbackText: { color: color.onInk, fontSize: 15, fontWeight: '700' },
   author: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   meta: { ...t.small, color: color.faint, fontSize: 11 },
   kindBadge: { alignSelf: 'flex-start', paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm, marginBottom: 3 },

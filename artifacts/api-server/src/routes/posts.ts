@@ -713,6 +713,17 @@ router.get("/posts", async (req, res) => {
       return;
     }
 
+    // Step 1b: fetch caller's hidden post IDs before the main LIMIT query so
+    // the DB returns exactly `limit` visible posts (no premature end-of-feed).
+    const followingHiddenIds: string[] = [];
+    try {
+      const { data: hiddenRows } = await sc
+        .from("post_hides")
+        .select("post_id")
+        .eq("user_id", user.id);
+      for (const r of hiddenRows ?? []) followingHiddenIds.push((r as any).post_id);
+    } catch { /* best-effort */ }
+
     // Step 2: public standalone active published posts from followed users only.
     let q = sc
       .from("posts")
@@ -725,6 +736,7 @@ router.get("/posts", async (req, res) => {
       .order("created_at", { ascending: false })
       .limit(limit);
     if (before) q = q.lt("created_at", before);
+    if (followingHiddenIds.length > 0) q = q.not("id", "in", `(${followingHiddenIds.join(",")})`);
 
     const { data: postRows, error: postErr } = await q;
     if (postErr) {
@@ -822,6 +834,17 @@ router.get("/posts", async (req, res) => {
   const svc = getServiceClient();
   if (!svc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
+  // Fetch hidden IDs before the LIMIT query so the DB returns exactly `limit`
+  // visible posts; avoids premature hasMore=false when hidden posts exist.
+  const globalHiddenIds: string[] = [];
+  try {
+    const { data: hiddenRows } = await svc
+      .from("post_hides")
+      .select("post_id")
+      .eq("user_id", user.id);
+    for (const r of hiddenRows ?? []) globalHiddenIds.push((r as any).post_id);
+  } catch { /* best-effort */ }
+
   let q = svc
     .from("posts")
     .select(POST_COLUMNS)
@@ -832,6 +855,7 @@ router.get("/posts", async (req, res) => {
     .order("created_at", { ascending: false })
     .limit(limit);
   if (before) q = q.lt("created_at", before);
+  if (globalHiddenIds.length > 0) q = q.not("id", "in", `(${globalHiddenIds.join(",")})`);
 
   const { data, error } = await q;
   if (error) {
@@ -839,6 +863,7 @@ router.get("/posts", async (req, res) => {
     sendError(res, "db_error", error.message);
     return;
   }
+
   const globalPosts: any[] = data ?? [];
   const globalPostIds = globalPosts.map((p) => p.id);
   const globalAuthorIds = [...new Set(globalPosts.map((p) => p.author_id))];
@@ -1747,6 +1772,29 @@ router.delete("/posts/:postId/save", async (req, res) => {
   await sc.from("posts").update({ save_count: count ?? 0 }).eq("id", postId);
 
   res.status(200).json({ savedByMe: false, saveCount: count ?? 0 });
+});
+
+/* ============================================================================
+ * POST /posts/:postId/hide  — hide a post from the caller's feeds (idempotent)
+ * ============================================================================
+ */
+router.post("/posts/:postId/hide", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { postId } = req.params;
+  if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Upsert to be idempotent — hiding the same post twice is fine
+  const { error } = await sc
+    .from("post_hides")
+    .upsert({ user_id: user.id, post_id: postId }, { onConflict: "user_id,post_id", ignoreDuplicates: true });
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  res.status(200).json({ hidden: true });
 });
 
 /* ============================================================================

@@ -120,6 +120,18 @@ router.get("/pulse", async (req, res) => {
     return;
   }
 
+  // Fetch caller's hidden post IDs before the main query so the DB-level LIMIT
+  // applies to visible posts only — avoiding premature hasMore=false for pages
+  // that happen to contain hidden entries.
+  const hiddenPostIds: string[] = [];
+  try {
+    const { data: hiddenRows } = await sc
+      .from("post_hides")
+      .select("post_id")
+      .eq("user_id", user.id);
+    for (const r of hiddenRows ?? []) hiddenPostIds.push((r as any).post_id);
+  } catch { /* best-effort: feed continues even if the hide table is unreachable */ }
+
   let query = sc
     .from("posts")
     .select(`${POST_SAFE_COLUMNS}, post_media(${POST_MEDIA_COLUMNS}), pulse_geo_tags(${GEO_TAG_COLUMNS}), profiles!author_id(id, username, full_name, avatar_url)`)
@@ -130,6 +142,9 @@ router.get("/pulse", async (req, res) => {
 
   if (before) {
     query = query.lt("created_at", before);
+  }
+  if (hiddenPostIds.length > 0) {
+    query = query.not("id", "in", `(${hiddenPostIds.join(",")})`);
   }
 
   // Tab-specific filters

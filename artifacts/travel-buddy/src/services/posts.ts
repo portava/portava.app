@@ -609,3 +609,21 @@ export async function unsavePost(postId: string): Promise<{ ok: boolean; savedBy
     return { ok: false, savedByMe: true, saveCount: 0 };
   }
 }
+
+/**
+ * Hide a post from the caller's feeds. Idempotent — hiding a post twice is safe.
+ * Returns true on success (the post was hidden), false on any error.
+ */
+export async function hidePost(postId: string): Promise<boolean> {
+  const token = await freshToken();
+  if (!token) return false;
+  try {
+    const res = await fetch(`${apiBase()}/api/posts/${encodeURIComponent(postId)}/hide`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}

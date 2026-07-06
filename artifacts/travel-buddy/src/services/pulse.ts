@@ -89,6 +89,7 @@ export async function getPulseData(opts: {
   lng?: number | null;
   limit?: number;
   tab?: string;
+  before?: string | null;
 }): Promise<{ ok: true; data: PulseResponse } | { ok: false; error: string }> {
   const base = apiBase();
   if (!base) return { ok: false, error: 'API not configured' };
@@ -103,6 +104,7 @@ export async function getPulseData(opts: {
   if (opts.city) params.set('city', opts.city);
   if (opts.lat != null) params.set('lat', String(opts.lat));
   if (opts.lng != null) params.set('lng', String(opts.lng));
+  if (opts.before) params.set('before', opts.before);
 
   try {
     const res = await fetch(`${base}/api/pulse?${params}`, {
