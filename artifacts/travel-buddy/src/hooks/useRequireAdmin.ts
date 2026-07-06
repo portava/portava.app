@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { router } from 'expo-router';
 import { useSession } from '../context/SessionContext';
+import { resolveAdminGate } from '../screens/admin/featureFlags.machine';
 
 /**
  * Redirects unauthenticated users to the sign-in screen and
@@ -15,12 +16,13 @@ export function useRequireAdmin(): boolean {
   const adminLoading = loading || (isAuthed && !roleLoaded);
 
   useEffect(() => {
-    if (adminLoading) return;
-    if (!isAuthed) {
+    const outcome = resolveAdminGate({ adminLoading, isAuthed, role });
+    if (outcome === 'pending') return;
+    if (outcome === 'redirect_signin') {
       router.replace('/(auth)/sign-in' as any);
       return;
     }
-    if (role !== 'admin') {
+    if (outcome === 'redirect_home') {
       router.replace('/' as any);
     }
   }, [adminLoading, isAuthed, role]);

@@ -204,6 +204,8 @@ STANDALONE_OWNED_FILES=(
   "src/lib/__tests__/inviteRetryGuard.test.ts"
   "src/lib/__tests__/waitlistState.test.ts"
   "src/lib/__tests__/eventRoleActions.test.ts"
+  # Feature Flags screen machine-layer tests (machine file syncs from artifact; test is standalone-only)
+  "src/screens/admin/__tests__/featureFlags.machine.test.ts"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.

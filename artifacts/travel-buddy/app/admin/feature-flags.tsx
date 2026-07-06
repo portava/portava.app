@@ -23,6 +23,12 @@ import { supabase } from '../../src/lib/supabase';
 import { useSession } from '../../src/context/SessionContext';
 import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
+import {
+  applyOptimisticToggle,
+  applyToggleResult,
+  applyLoadResult,
+} from '../../src/screens/admin/featureFlags.machine';
+import type { FeatureFlag } from '../../src/screens/admin/featureFlags.machine';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -31,14 +37,6 @@ interface FlagLastChange {
   old_enabled: boolean;
   new_enabled: boolean;
   changed_by_name: string | null;
-}
-
-interface FeatureFlag {
-  flag: string;
-  enabled: boolean;
-  description: string | null;
-  updated_at: string | null;
-  last_change?: FlagLastChange;
 }
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -153,10 +151,11 @@ export default function FeatureFlagsScreen() {
     if (!silent) setLoading(true);
     setError(null);
     const res = await adminGet<{ flags: FeatureFlag[] }>('/api/admin/feature-flags');
-    if (res.ok && res.data) {
-      setFlags(res.data.flags);
+    const { flags: loaded, error: loadError } = applyLoadResult(res);
+    if (loaded !== null) {
+      setFlags(loaded);
     } else {
-      setError(res.error ?? 'Failed to load flags');
+      setError(loadError);
     }
     setLoading(false);
     setRefreshing(false);
@@ -169,21 +168,20 @@ export default function FeatureFlagsScreen() {
   const handleToggle = useCallback(async (flag: string, enabled: boolean) => {
     setTogglingFlag(flag);
     // Optimistic update
-    setFlags((prev) => prev.map((f) => f.flag === flag ? { ...f, enabled } : f));
+    setFlags((prev) => applyOptimisticToggle(prev, flag, enabled));
 
     const res = await adminPatch<{ flag: FeatureFlag }>(
       `/api/admin/feature-flags/${encodeURIComponent(flag)}`,
       { enabled },
     );
 
-    if (!res.ok) {
-      // Revert on failure
-      setFlags((prev) => prev.map((f) => f.flag === flag ? { ...f, enabled: !enabled } : f));
-      Alert.alert('Toggle failed', res.error ?? 'Unknown error');
-    } else if (res.data?.flag) {
-      // Sync confirmed server state
-      setFlags((prev) => prev.map((f) => f.flag === flag ? res.data!.flag : f));
-    }
+    setFlags((prev) => {
+      const { flags: next, error: toggleError } = applyToggleResult(prev, flag, enabled, res);
+      if (toggleError) {
+        Alert.alert('Toggle failed', toggleError);
+      }
+      return next;
+    });
 
     setTogglingFlag(null);
   }, []);
