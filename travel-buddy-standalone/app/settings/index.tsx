@@ -28,7 +28,7 @@ export default function Settings() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [accountStatus, setAccountStatus] = useState<string | null>(null);
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
-  const [killSwitchActive, setKillSwitchActive] = useState(false);
+  const [killSwitchCount, setKillSwitchCount] = useState(0);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -55,8 +55,8 @@ export default function Settings() {
         if (!res.ok || cancelled) return;
         const body = await res.json();
         const flags: Array<{ flag: string; enabled: boolean }> = body?.flags ?? [];
-        const active = flags.some((f) => KILL_SWITCH_FLAGS.includes(f.flag) && f.enabled);
-        if (!cancelled) setKillSwitchActive(active);
+        const count = flags.filter((f) => KILL_SWITCH_FLAGS.includes(f.flag) && f.enabled).length;
+        if (!cancelled) setKillSwitchCount(count);
       } catch { }
     }
     checkKillSwitches();
@@ -535,7 +535,12 @@ export default function Settings() {
               onPress={() => router.push('/admin/feature-flags' as any)}
             >
               <Text style={styles.item}>Feature Flags</Text>
-              {killSwitchActive && <View style={styles.killBadge} />}
+              {killSwitchCount > 0 && (
+                <View style={styles.killPill}>
+                  <View style={styles.killDot} />
+                  <Text style={styles.killCount}>{killSwitchCount} active</Text>
+                </View>
+              )}
             </Pressable>
             {rentBuddyEnabled && (
               <Pressable
@@ -688,7 +693,9 @@ const styles = StyleSheet.create({
   resetSub: { ...t.small, color: color.mute, fontSize: 11, lineHeight: 16 },
   row: { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, padding: space.lg },
   rowInline: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  killBadge: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#E03131' },
+  killPill: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#FFF0EE', borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3 },
+  killDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#E03131' },
+  killCount: { ...t.small, color: '#E03131', fontWeight: '700', fontSize: 11 },
   item: { ...t.body, color: color.ink },
   logout: { color: color.signal, fontWeight: '700' },
   langRow: {
