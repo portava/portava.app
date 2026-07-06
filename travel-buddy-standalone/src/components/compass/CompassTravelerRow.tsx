@@ -15,10 +15,10 @@
  */
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet, Image,
+  View, Text, ScrollView, Pressable, StyleSheet, Image, Alert,
 } from 'react-native';
 import { router } from 'expo-router';
-import { Users, Sparkles, CheckCircle, MapPin } from 'lucide-react-native';
+import { Users, Sparkles, CheckCircle, MapPin, MoreHorizontal } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens';
 import {
   fetchCompassSettings,
@@ -26,6 +26,8 @@ import {
   type CompassTravelerResult,
 } from '../../services/compass';
 import { followUser } from '../../services/follows';
+import { reportContent } from '../../services/reports';
+import { blockUser } from '../../services/blocks';
 
 interface Props {
   city?: string | null;
@@ -48,6 +50,7 @@ function TravelerCard({ item }: { item: CompassTravelerResult }) {
   const [followed, setFollowed] = useState(d.followStatus === 'following');
   const [requested, setRequested] = useState(d.followStatus === 'requested');
   const [inFlight, setInFlight] = useState(false);
+  const [hidden, setHidden] = useState(false);
 
   const displayName = d.displayName ?? (d.isPrivate ? 'Private Traveler' : (d.username ?? 'Traveler'));
   const initials = displayName.slice(0, 2).toUpperCase();
@@ -69,8 +72,67 @@ function TravelerCard({ item }: { item: CompassTravelerResult }) {
     }
   };
 
+  const submitReport = async (reason_code: 'spam' | 'harassment' | 'impersonation' | 'other') => {
+    const res = await reportContent({ target_type: 'user', target_id: d.userId, reason_code });
+    Alert.alert(
+      res.ok ? 'Report submitted' : 'Could not submit report',
+      res.ok
+        ? 'Thanks for helping keep the community safe.'
+        : 'Something went wrong. Please try again later.',
+    );
+  };
+
+  const handleOverflow = () => {
+    Alert.alert(
+      displayName,
+      undefined,
+      [
+        {
+          text: 'Report',
+          onPress: () => {
+            Alert.alert(
+              'Report this traveler',
+              'Why are you reporting this person?',
+              [
+                { text: 'Spam',          onPress: () => submitReport('spam') },
+                { text: 'Harassment',    onPress: () => submitReport('harassment') },
+                { text: 'Impersonation', onPress: () => submitReport('impersonation') },
+                { text: 'Other',         onPress: () => submitReport('other') },
+                { text: 'Cancel', style: 'cancel' as const },
+              ],
+            );
+          },
+        },
+        {
+          text: 'Block',
+          style: 'destructive' as const,
+          onPress: () => {
+            Alert.alert(
+              `Block ${displayName}?`,
+              'They will not be able to see your profile or contact you.',
+              [
+                {
+                  text: 'Block',
+                  style: 'destructive' as const,
+                  onPress: async () => {
+                    const res = await blockUser(d.userId);
+                    if (res.ok) setHidden(true);
+                  },
+                },
+                { text: 'Cancel', style: 'cancel' as const },
+              ],
+            );
+          },
+        },
+        { text: 'Cancel', style: 'cancel' as const },
+      ],
+    );
+  };
+
   const btnLabel = followed ? 'Following' : requested ? 'Requested' : d.isPrivate ? 'Request' : 'Follow';
   const btnDisabled = followed || requested || inFlight;
+
+  if (hidden) return null;
 
   return (
     <Pressable
@@ -137,6 +199,16 @@ function TravelerCard({ item }: { item: CompassTravelerResult }) {
         <Text style={[s.followText, (followed || requested) && s.followedText]}>
           {btnLabel}
         </Text>
+      </Pressable>
+
+      {/* Overflow — report / block */}
+      <Pressable
+        style={({ pressed }) => [s.overflowBtn, pressed && { opacity: 0.6 }]}
+        hitSlop={8}
+        onPress={handleOverflow}
+        accessibilityLabel="More options"
+      >
+        <MoreHorizontal size={14} color={color.faint} />
       </Pressable>
     </Pressable>
   );
@@ -331,5 +403,11 @@ const s = StyleSheet.create({
   },
   followedText: {
     color: color.mute,
+  },
+  overflowBtn: {
+    position: 'absolute',
+    top: space.xs,
+    right: space.xs,
+    padding: 3,
   },
 });

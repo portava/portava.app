@@ -112,11 +112,11 @@ export function FilterStrip({
             thumbColor={filters.openNow ? color.signal : color.faint}
             style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
           />
-          <Text style={fs.toggleLabel}>Open now</Text>
+          <Text style={fs.toggleLabel}>Open now (est.)</Text>
         </View>
 
         <View style={fs.ratingRow}>
-          <Text style={fs.ratingLabel}>Rating:</Text>
+          <Text style={fs.ratingLabel}>Rating (limited data):</Text>
           {MIN_RATING_OPTIONS.map((opt) => {
             const active = filters.minRating === opt.value;
             return (

@@ -155,6 +155,8 @@ STANDALONE_OWNED_FILES=(
   "app/settings/index.tsx"
   "src/test/accountActivation.test.ts"
   "src/test/discoverySearch.test.ts"
+  "src/test/DiscoveryBlockedUsers.test.ts"
+  "src/test/DiscoveryCityRefresh.test.ts"
   "src/test/onboardingPassportFlow.test.ts"
   "src/test/authEnsureProfile.test.ts"
   "src/services/fillHomeFromGps.machine.ts"
