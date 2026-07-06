@@ -144,6 +144,22 @@ SELECT 'live_city_count' AS check_type, COUNT(*)::text AS name, 'public_mvp,beta
 FROM rent_buddy_city_rollouts \
 WHERE status IN ('public_mvp', 'beta_testing')"
 
+# ── beta kill-switch and feature-gate flags SQL (migration 0117) ──────────────
+# Checks that all 7 rows seeded by 0117_beta_feature_flags.sql exist in the
+# feature_flags table.  Without these rows the kill switches (disable_posting,
+# disable_messaging, etc.) always fail-open because there is no row to read.
+BETA_FLAGS_SQL="SELECT flag, enabled::text \
+FROM feature_flags \
+WHERE flag IN (\
+'disable_signups',\
+'disable_posting',\
+'disable_messaging',\
+'disable_rent_buddy_booking',\
+'city_launch_mode',\
+'invite_only_beta',\
+'compass_ai_enabled'\
+)"
+
 # ── invite-link slot functions SQL (migrations 0109–0111) ─────────────────────
 # Checks that the SECURITY DEFINER functions and supporting table introduced by
 # migrations 0109 (claim/release slot), 0110 (idempotent claim + attempt ledger
@@ -260,7 +276,20 @@ if [[ "${TRIGGER_QUERY_MODE:-api}" == "psql" ]]; then
   INVITE_LINK_FUNCS_RESPONSE="$ILF_JSON" node "${SCRIPT_DIR}/src/verify-db-invite-link-funcs.mjs"
   ILF_EXIT=$?
 
-  [[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 && $PT_EXIT -eq 0 && $RBR_EXIT -eq 0 && $ILF_EXIT -eq 0 ]] && exit 0 || exit 1
+  # ── Beta flags check (psql) ───────────────────────────────────────────────────
+  printf "  ℹ  Checking beta kill-switch flags (migration 0117) (psql)\n"
+  BF_JSON_SQL="SELECT COALESCE(json_agg(row_to_json(q)), '[]'::json) FROM (${BETA_FLAGS_SQL}) q"
+  BF_JSON=$(psql "$PSQL_URL" -t -A -c "$BF_JSON_SQL" 2>&1)
+  BF_PSQL_EXIT=$?
+  if [[ $BF_PSQL_EXIT -ne 0 ]]; then
+    printf "  ✘  psql beta-flags query failed (exit %d):\n" "$BF_PSQL_EXIT"
+    printf "     %s\n" "$BF_JSON"
+    exit 1
+  fi
+  BETA_FLAGS_RESPONSE="$BF_JSON" node "${SCRIPT_DIR}/src/verify-db-beta-flags.mjs"
+  BF_EXIT=$?
+
+  [[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 && $PT_EXIT -eq 0 && $RBR_EXIT -eq 0 && $ILF_EXIT -eq 0 && $BF_EXIT -eq 0 ]] && exit 0 || exit 1
 fi
 
 # ── Supabase Management API mode (production / normal CI) ────────────────────
@@ -442,4 +471,24 @@ fi
 INVITE_LINK_FUNCS_RESPONSE="$ILF_HTTP_BODY" node "${SCRIPT_DIR}/src/verify-db-invite-link-funcs.mjs"
 ILF_EXIT=$?
 
-[[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 && $PT_EXIT -eq 0 && $RBR_EXIT -eq 0 && $ILF_EXIT -eq 0 ]] && exit 0 || exit 1
+# ── Beta kill-switch flags check — feature_flags rows (migration 0117) ────────
+printf "  ℹ  Checking beta kill-switch flags (migration 0117)\n"
+BF_CURL_RESPONSE=$(curl -s -w "\n%{http_code}" \
+  -X POST "$API_URL" \
+  -H "Authorization: Bearer ${MGMT_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data-raw "{\"query\":\"${BETA_FLAGS_SQL}\"}")
+
+BF_HTTP_BODY=$(printf "%s" "$BF_CURL_RESPONSE" | head -n -1)
+BF_HTTP_CODE=$(printf "%s" "$BF_CURL_RESPONSE" | tail -n 1)
+
+if [[ "$BF_HTTP_CODE" != "200" && "$BF_HTTP_CODE" != "201" ]]; then
+  printf "  ✘  Supabase Management API returned HTTP %s for beta-flags check\n" "$BF_HTTP_CODE"
+  printf "     Response: %s\n" "$BF_HTTP_BODY"
+  exit 1
+fi
+
+BETA_FLAGS_RESPONSE="$BF_HTTP_BODY" node "${SCRIPT_DIR}/src/verify-db-beta-flags.mjs"
+BF_EXIT=$?
+
+[[ $TRIGGER_EXIT -eq 0 && $SCHEMA_EXIT -eq 0 && $SR_EXIT -eq 0 && $PT_EXIT -eq 0 && $RBR_EXIT -eq 0 && $ILF_EXIT -eq 0 && $BF_EXIT -eq 0 ]] && exit 0 || exit 1

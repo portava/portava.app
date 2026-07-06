@@ -308,7 +308,7 @@ run_check "bundle-id-placeholder" \
 # If SUPABASE_ACCESS_TOKEN is not set the check exits non-zero so that a
 # release never ships without confirming the guards are live.
 run_check "db-triggers" \
-  "DB protection triggers + schema presence (migrations 0040, 0041, 0071–0074, 0076, 0090, 0109–0111)" \
+  "DB protection triggers + schema presence (migrations 0040, 0041, 0071–0074, 0076, 0090, 0109–0111, 0117)" \
   bash scripts/check-db-triggers.sh
 
 # ── 9. Engagement index presence check ───────────────────────────────────────
@@ -441,6 +441,17 @@ for entry in "${results[@]}"; do
         printf '            artifacts/api-server/src/migrations/0111_reconcile_invite_slots.sql\n'
         printf '          (0111 creates reconcile_invite_link_slots;\n'
         printf '           without this POST /api/admin/trips/reconcile-invite-slots returns 500)\n'
+        printf '            artifacts/api-server/src/migrations/0117_beta_feature_flags.sql\n'
+        printf '          (0117 seeds kill-switch rows: disable_posting, disable_messaging,\n'
+        printf '           disable_signups, invite_only_beta, city_launch_mode,\n'
+        printf '           disable_rent_buddy_booking, compass_ai_enabled;\n'
+        printf '           without these rows the kill switches always fail-open)\n'
+        printf '          Verify 0117 with:\n'
+        printf '            SELECT flag, enabled FROM feature_flags\n'
+        printf '              WHERE flag IN ('"'"'disable_posting'"'"','"'"'disable_messaging'"'"',\n'
+        printf '                             '"'"'disable_signups'"'"','"'"'invite_only_beta'"'"',\n'
+        printf '                             '"'"'compass_ai_enabled'"'"','"'"'city_launch_mode'"'"',\n'
+        printf '                             '"'"'disable_rent_buddy_booking'"'"');\n'
         printf '          Token required to query the Supabase Management API:\n'
         printf '            CI (preferred):  export SUPABASE_PROJECT_TOKEN=<project-scoped token>\n'
         printf '                             See docs/eas-runbook.md → "DB triggers check in CI"\n'
