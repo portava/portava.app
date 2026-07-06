@@ -45,3 +45,4 @@
 - [Telegraph surface + Pulse ranking guard](telegraph-pulse-patterns.md) — isEnabled uses like("flag","COMPASS_%"); fake client needs like(); req.log is undefined in tests → use req.log?.; pre-shape location guard must operate on raw rows (snake_case) not shaped posts
 - [Find Your Circle access guard + backend](circle-access-guard.md) — guard order, visibility mode contract, migration list (0115–0121), precise_live Zod/403 pattern, test mount uses no /api prefix
 - [Circle notification + Telegraph card pattern](circle-notif-telegraph.md) — sendCircleNotifications/postCircleStatusCard helpers; neq() needed in fake client; compass-suggestions is standalone route (not CompassFeedBuilder); pause-on-session-end bulk-updates via neq filter
+- [node:test describe concurrency](nodetest-describe-concurrency.md) — top-level describes run in parallel by default; wrap all suites in one outer describe to force sequential execution when tests share a global slot
