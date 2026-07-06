@@ -4,7 +4,7 @@
  * the API server (src/services/posts.ts). When the backend isn't configured
  * these return empty so the app still runs on mock screens.
  */
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   listGlobalPosts,
   listFollowingFeed,
@@ -23,12 +23,19 @@ export function useGlobalFeed() {
   const [data, setData] = useState<PostRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // IDs deleted this session — excluded from every reload so they never reappear
+  const deletedIds = useRef(new Set<string>());
+
+  const markDeleted = useCallback((id: string) => {
+    deletedIds.current.add(id);
+    setData((prev) => prev.filter((p) => !deletedIds.current.has(p.id)));
+  }, []);
 
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
     const res = await listGlobalPosts({ limit: PAGE_SIZE });
-    if (res.ok) setData(res.data ?? []);
+    if (res.ok) setData((res.data ?? []).filter((p) => !deletedIds.current.has(p.id)));
     else setError(res.message ?? res.errorKind ?? 'Failed to load feed');
     setLoading(false);
   }, []);
@@ -37,7 +44,7 @@ export function useGlobalFeed() {
     reload();
   }, [reload]);
 
-  return { data, loading, error, reload };
+  return { data, loading, error, reload, markDeleted };
 }
 
 /** Following feed — public posts from followed users only, with cursor pagination. */
@@ -49,6 +56,13 @@ export function useFollowingFeed() {
   const [error, setError] = useState<string | null>(null);
   // cursor = createdAt of oldest post on last page
   const [cursor, setCursor] = useState<string | null>(null);
+  // IDs deleted this session — excluded from every reload so they never reappear
+  const deletedIds = useRef(new Set<string>());
+
+  const markDeleted = useCallback((id: string) => {
+    deletedIds.current.add(id);
+    setData((prev) => prev.filter((p) => !deletedIds.current.has(p.id)));
+  }, []);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -57,7 +71,7 @@ export function useFollowingFeed() {
     setHasMore(false);
     const res = await listFollowingFeed({ limit: PAGE_SIZE });
     if (res.ok) {
-      const rows = res.data ?? [];
+      const rows = (res.data ?? []).filter((p) => !deletedIds.current.has(p.id));
       setData(rows);
       if (rows.length === PAGE_SIZE) {
         setCursor(rows[rows.length - 1]?.createdAt ?? null);
@@ -75,10 +89,10 @@ export function useFollowingFeed() {
     const res = await listFollowingFeed({ limit: PAGE_SIZE, before: cursor });
     if (res.ok) {
       const rows = res.data ?? [];
-      // De-dupe by id to prevent duplicates at page boundaries
+      // De-dupe by id and exclude locally-deleted posts
       setData((prev) => {
         const seen = new Set(prev.map((p) => p.id));
-        const fresh = rows.filter((p) => !seen.has(p.id));
+        const fresh = rows.filter((p) => !seen.has(p.id) && !deletedIds.current.has(p.id));
         return [...prev, ...fresh];
       });
       if (rows.length === PAGE_SIZE) {
@@ -92,7 +106,7 @@ export function useFollowingFeed() {
     setLoadingMore(false);
   }, [loadingMore, hasMore, cursor]);
 
-  return { data, loading, loadingMore, hasMore, error, reload, loadMore };
+  return { data, loading, loadingMore, hasMore, error, reload, loadMore, markDeleted };
 }
 
 /** A trip's feed. isMember reflects whether the viewer is an accepted member. */

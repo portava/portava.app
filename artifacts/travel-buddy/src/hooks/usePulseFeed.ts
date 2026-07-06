@@ -24,6 +24,8 @@ export interface UsePulseFeedResult {
   error: string | null;
   reload: () => void;
   loadMore: () => void;
+  /** Mark a post as deleted so it is filtered out on every subsequent reload. */
+  markDeleted: (id: string) => void;
 }
 
 export function usePulseFeed(opts: {
@@ -40,6 +42,13 @@ export function usePulseFeed(opts: {
   const abortRef = useRef<AbortController | null>(null);
   // Cursor = createdAt of the oldest item on the current page
   const cursorRef = useRef<string | null>(null);
+  // IDs deleted this session — excluded from every reload so they never reappear
+  const deletedIds = useRef(new Set<string>());
+
+  const markDeleted = useCallback((id: string) => {
+    deletedIds.current.add(id);
+    setItems((prev) => prev.filter((p) => !deletedIds.current.has(p.id)));
+  }, []);
 
   const reload = useCallback(() => {
     abortRef.current?.abort();
@@ -53,7 +62,9 @@ export function usePulseFeed(opts: {
       .then((result) => {
         if (ac.signal.aborted) return;
         if (result.ok) {
-          const mapped = result.data.posts.map(pulsePostToFeedItem);
+          const mapped = result.data.posts
+            .map(pulsePostToFeedItem)
+            .filter((p) => !deletedIds.current.has(p.id));
           setItems(mapped);
           setPlaceCards(result.data.placeCards.map(placeCardToFeedItem));
           setError(null);
@@ -82,10 +93,10 @@ export function usePulseFeed(opts: {
       .then((result) => {
         if (result.ok) {
           const mapped = result.data.posts.map(pulsePostToFeedItem);
-          // De-dupe by id to prevent duplicates at page boundaries
+          // De-dupe by id and exclude locally-deleted posts
           setItems((prev) => {
             const seen = new Set(prev.map((p) => p.id));
-            const fresh = mapped.filter((p) => !seen.has(p.id));
+            const fresh = mapped.filter((p) => !seen.has(p.id) && !deletedIds.current.has(p.id));
             return [...prev, ...fresh];
           });
           if (mapped.length === PAGE_SIZE) {
@@ -107,5 +118,5 @@ export function usePulseFeed(opts: {
     return () => { abortRef.current?.abort(); };
   }, [reload]);
 
-  return { items, placeCards, loading, loadingMore, hasMore, error, reload, loadMore };
+  return { items, placeCards, loading, loadingMore, hasMore, error, reload, loadMore, markDeleted };
 }
