@@ -37,14 +37,14 @@ const router = Router();
 async function requireAdmin(
   req: any,
   res: any,
-): Promise<{ userId: string; client: any; sc: any } | null> {
+): Promise<{ userId: string; displayName: string | null; client: any; sc: any } | null> {
   const auth = await requireUser(req, res);
   if (!auth) return null;
   const { client, user } = auth;
 
   const { data, error } = await client
     .from("profiles")
-    .select("role")
+    .select("role, display_name, username, handle")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -57,7 +57,9 @@ async function requireAdmin(
   // (which equals _testClient in tests) so routes are fully testable without
   // real Supabase credentials.
   const sc = getServiceClient() ?? client;
-  return { userId: user.id, client, sc };
+  const displayName: string | null =
+    (data as any).display_name ?? (data as any).username ?? (data as any).handle ?? null;
+  return { userId: user.id, displayName, client, sc };
 }
 
 // ── Geo zone schemas ──────────────────────────────────────────────────────────
@@ -521,26 +523,86 @@ router.get("/admin/geofence/:tripId/suspicious-checkins", async (req, res) => {
 // Use these routes to toggle them on as each feature ships.
 
 /**
+ * Resolve a set of user IDs to display names by querying profiles directly.
+ * The FK on feature_flag_audit_log points to auth.users, not profiles, so we
+ * cannot use a PostgREST embedded join — we query profiles separately instead.
+ */
+async function resolveDisplayNames(
+  sc: any,
+  userIds: string[],
+): Promise<Record<string, string | null>> {
+  if (userIds.length === 0) return {};
+  const { data } = await sc
+    .from("profiles")
+    .select("id, display_name, username, handle")
+    .in("id", userIds);
+  const map: Record<string, string | null> = {};
+  for (const p of (data ?? [])) {
+    map[p.id] = p.display_name ?? p.username ?? p.handle ?? null;
+  }
+  return map;
+}
+
+/**
  * GET /admin/feature-flags
- * Returns every row in feature_flags ordered by flag name.
+ * Returns every row in feature_flags ordered by flag name, with the most
+ * recent audit-log entry (changed_by display name + timestamp) merged in.
  */
 router.get("/admin/feature-flags", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
 
-  const { data, error } = await sc
+  const { data: flags, error } = await sc
     .from("feature_flags")
     .select("flag, enabled, description, updated_at")
     .order("flag");
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ flags: data ?? [] });
+
+  // Fetch the most-recent audit log entry per flag (one query, all flags).
+  const { data: recentChanges } = await sc
+    .from("feature_flag_audit_log")
+    .select("flag, new_enabled, old_enabled, changed_at, changed_by_user_id")
+    .order("changed_at", { ascending: false });
+
+  // Build a map of flag → most-recent audit entry.
+  const lastChangeMap: Record<string, any> = {};
+  for (const row of (recentChanges ?? [])) {
+    if (!lastChangeMap[row.flag]) lastChangeMap[row.flag] = row;
+  }
+
+  // Resolve display names for the actors that appear in last-change entries.
+  const actorIds = [...new Set(
+    Object.values(lastChangeMap)
+      .map((r: any) => r.changed_by_user_id)
+      .filter(Boolean),
+  )] as string[];
+  const nameMap = await resolveDisplayNames(sc, actorIds);
+
+  const enriched = (flags ?? []).map((f: any) => {
+    const lc = lastChangeMap[f.flag];
+    if (!lc) return f;
+    return {
+      ...f,
+      last_change: {
+        changed_at:      lc.changed_at,
+        old_enabled:     lc.old_enabled,
+        new_enabled:     lc.new_enabled,
+        changed_by_name: lc.changed_by_user_id ? (nameMap[lc.changed_by_user_id] ?? null) : null,
+      },
+    };
+  });
+
+  res.json({ flags: enriched });
 });
 
 /**
  * PATCH /admin/feature-flags/:flag
- * Toggle a single feature flag on or off.
+ * Toggle a single feature flag on or off, atomically recording the change in
+ * feature_flag_audit_log via the toggle_feature_flag_with_audit SQL function
+ * (migration 0119). The update and audit insert happen in one DB transaction,
+ * so every committed toggle always has a corresponding audit row.
  * Body: { enabled: boolean }
  */
 const toggleFlagSchema = z.object({ enabled: z.boolean() });
@@ -548,7 +610,7 @@ const toggleFlagSchema = z.object({ enabled: z.boolean() });
 router.patch("/admin/feature-flags/:flag", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { sc } = admin;
+  const { userId, displayName, sc } = admin;
 
   const parsed = toggleFlagSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -556,18 +618,78 @@ router.patch("/admin/feature-flags/:flag", async (req, res) => {
     return;
   }
 
+  // Atomic toggle + audit insert via a single DB transaction.
+  const { data: rows, error: rpcErr } = await sc.rpc("toggle_feature_flag_with_audit", {
+    p_flag:          req.params.flag,
+    p_new_enabled:   parsed.data.enabled,
+    p_changed_by_id: userId,
+  });
+
+  if (rpcErr) {
+    if (rpcErr.message?.includes("Flag not found") || rpcErr.code === "P0002") {
+      sendError(res, "not_found", `Flag '${req.params.flag}' not found`);
+    } else {
+      sendError(res, "db_error", rpcErr.message);
+    }
+    return;
+  }
+
+  const row = Array.isArray(rows) ? rows[0] : rows;
+  if (!row) { sendError(res, "not_found", `Flag '${req.params.flag}' not found`); return; }
+
+  req.log.info({ flag: row.flag, enabled: row.enabled }, "feature-flag toggled");
+  res.json({
+    flag: {
+      flag:        row.flag,
+      enabled:     row.enabled,
+      description: row.description,
+      updated_at:  row.updated_at,
+      last_change: {
+        changed_at:      row.changed_at,
+        old_enabled:     row.old_enabled,
+        new_enabled:     row.enabled,
+        changed_by_name: displayName,
+      },
+    },
+  });
+});
+
+/**
+ * GET /admin/feature-flags/:flag/history
+ * Returns the last N audit-log entries for one flag.
+ * Query params: limit (default 20, max 100)
+ */
+router.get("/admin/feature-flags/:flag/history", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+
   const { data, error } = await sc
-    .from("feature_flags")
-    .update({ enabled: parsed.data.enabled, updated_at: new Date().toISOString() })
+    .from("feature_flag_audit_log")
+    .select("id, flag, old_enabled, new_enabled, changed_at, changed_by_user_id")
     .eq("flag", req.params.flag)
-    .select("flag, enabled, description, updated_at")
-    .maybeSingle();
+    .order("changed_at", { ascending: false })
+    .limit(limit);
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  if (!data)  { sendError(res, "not_found", `Flag '${req.params.flag}' not found`); return; }
 
-  req.log.info({ flag: data.flag, enabled: data.enabled }, "feature-flag toggled");
-  res.json({ flag: data });
+  const rows = data ?? [];
+  const actorIds = [...new Set(rows.map((r: any) => r.changed_by_user_id).filter(Boolean))] as string[];
+  const nameMap = await resolveDisplayNames(sc, actorIds);
+
+  const entries = rows.map((row: any) => ({
+    id:                 row.id,
+    flag:               row.flag,
+    old_enabled:        row.old_enabled,
+    new_enabled:        row.new_enabled,
+    changed_at:         row.changed_at,
+    changed_by_user_id: row.changed_by_user_id,
+    changed_by_name:    row.changed_by_user_id ? (nameMap[row.changed_by_user_id] ?? null) : null,
+  }));
+
+  res.json({ flag: req.params.flag, history: entries });
 });
 
 // ── Safe Return admin routes ──────────────────────────────────────────────────

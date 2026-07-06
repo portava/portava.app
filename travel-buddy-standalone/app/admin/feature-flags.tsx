@@ -26,11 +26,19 @@ import { color, space, radius, type as t } from '../../src/theme/tokens';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+interface FlagLastChange {
+  changed_at: string;
+  old_enabled: boolean;
+  new_enabled: boolean;
+  changed_by_name: string | null;
+}
+
 interface FeatureFlag {
   flag: string;
   enabled: boolean;
   description: string | null;
   updated_at: string | null;
+  last_change?: FlagLastChange;
 }
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -79,6 +87,12 @@ async function adminPatch<T>(path: string, body: unknown): Promise<{ ok: boolean
 
 // ── Flag row ──────────────────────────────────────────────────────────────────
 
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) +
+    ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
 function FlagRow({
   item,
   onToggle,
@@ -88,6 +102,7 @@ function FlagRow({
   onToggle: (flag: string, enabled: boolean) => void;
   toggling: boolean;
 }) {
+  const lc = item.last_change;
   return (
     <View style={s.row}>
       <View style={s.rowText}>
@@ -95,7 +110,12 @@ function FlagRow({
         {!!item.description && (
           <Text style={s.flagDesc} numberOfLines={2}>{item.description}</Text>
         )}
-        {!!item.updated_at && (
+        {lc ? (
+          <Text style={s.flagDate}>
+            {lc.changed_by_name ? `${lc.changed_by_name} · ` : ''}
+            {formatDateTime(lc.changed_at)}
+          </Text>
+        ) : !!item.updated_at && (
           <Text style={s.flagDate}>
             Updated {new Date(item.updated_at).toLocaleDateString()}
           </Text>
