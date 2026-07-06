@@ -34,6 +34,7 @@ import { getBuddyProfileByUserId, type BuddyProfile } from '../../src/services/r
 import type { PublicProfile } from '../../src/types/models';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { PROFILE_NOT_FOUND_TITLE, PROFILE_NOT_FOUND_SUB } from '../../src/constants/profileScreenCopy';
+import { resolveDisplayName, formatHandle } from '../../src/utils/identity';
 
 type Tab = 'postcards' | 'stamps' | 'map' | 'about';
 const TABS: { key: Tab; label: string; Icon: LucideIcon }[] = [
@@ -745,8 +746,13 @@ export default function PublicPassportScreen() {
   // About tab is only accessible once social checks have resolved and the viewer
   // is neither blocked nor viewing a private profile they don't follow.
   const canViewAbout = isOwn || (!socialLoading && !social?.isPrivate && !isBlockedRelation);
-  const displayHandle = social?.handle ?? username ?? '';
-  const displayName = social?.name ?? (profile && ('displayName' in profile ? profile.displayName : null)) ?? username ?? '';
+  const rawHandle = (social?.handle ?? username ?? '').replace(/^@+/, '');
+  const displayHandle = rawHandle;
+  const displayName = resolveDisplayName({
+    name: social?.name,
+    displayName: (profile && 'displayName' in profile) ? profile.displayName : null,
+    username: username ?? undefined,
+  });
 
   async function handleUnmuteFromBadge() {
     if (!profile?.id) return;

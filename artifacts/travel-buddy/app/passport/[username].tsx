@@ -6,14 +6,16 @@
  * GET /api/users/:username/passport/postcards (existing public postcards endpoint).
  * Private profiles show a minimal "This profile is private" stub.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet,
+  View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Users } from 'lucide-react-native';
+import { ArrowLeft, Users, MoreVertical } from 'lucide-react-native';
 import { getPublicProfile, getPublicPostcards } from '../../src/services/profile';
+import { blockUser } from '../../src/services/blocks';
+import { submitReport, type ReportReason } from '../../src/services/reports';
 import { useSession } from '../../src/context/SessionContext';
 import { useFollow } from '../../src/hooks/useFollow';
 import { useHighlightRingState } from '../../src/hooks/useHighlightRingState';
@@ -24,6 +26,7 @@ import { StampsTab } from '../../src/components/StampsTab';
 import { AboutTab } from '../../src/components/AboutTab';
 import { MapTab } from '../../src/components/MapTab';
 import type { PublicProfile, PassportPostcard } from '../../src/types/models';
+import { resolveDisplayName, formatHandle } from '../../src/utils/identity';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 
 type Tab = 'postcards' | 'stamps' | 'map' | 'about';
@@ -104,12 +107,77 @@ export default function PassportDeepLinkScreen() {
   }, [username]);
 
   const { profile, postcards, loading, error, isPrivate, notFound } = state;
-  const { isAuthed } = useSession();
+  const { isAuthed, userId: viewerUserId } = useSession();
+  const isOwner = !!profile && !!viewerUserId && profile.id === viewerUserId;
   const follow = useFollow(profile?.id ?? null);
   const ringState = useHighlightRingState(profile?.id ?? null);
   const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
   const [tab, setTab] = useState<Tab>('postcards');
   const insets = useSafeAreaInsets();
+
+  const handleMorePress = useCallback(() => {
+    if (!profile) return;
+    const displayName = resolveDisplayName(profile);
+
+    Alert.alert(
+      displayName,
+      undefined,
+      [
+        {
+          text: 'Report',
+          onPress: () => {
+            Alert.alert(
+              'Report profile',
+              'Why are you reporting this profile?',
+              [
+                { text: 'Spam', onPress: () => doReport('spam') },
+                { text: 'Harassment', onPress: () => doReport('harassment') },
+                { text: 'Fake account', onPress: () => doReport('fake_account') },
+                { text: 'Other', onPress: () => doReport('other') },
+                { text: 'Cancel', style: 'cancel' },
+              ],
+            );
+          },
+        },
+        {
+          text: 'Block',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              `Block ${displayName}?`,
+              "They won't be able to message you, follow you, or see your profile. You can unblock them any time in Settings.",
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Block',
+                  style: 'destructive',
+                  onPress: async () => {
+                    const res = await blockUser(profile.id);
+                    if (res.ok) {
+                      router.canGoBack() ? router.back() : router.replace('/(tabs)/' as any);
+                    } else {
+                      Alert.alert('Error', res.error ?? 'Could not block user');
+                    }
+                  },
+                },
+              ],
+            );
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+    );
+  }, [profile, username]);
+
+  async function doReport(reason: ReportReason) {
+    if (!profile) return;
+    const res = await submitReport({ targetUserId: profile.id, reason });
+    if (res.ok) {
+      Alert.alert('Report submitted', 'Thank you for helping keep the community safe.');
+    } else {
+      Alert.alert('Could not submit report', res.error ?? 'Please try again.');
+    }
+  }
 
   const renderContent = () => {
     if (loading) {
@@ -244,10 +312,22 @@ export default function PassportDeepLinkScreen() {
         </Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>
           {profile
-            ? (profile.displayName || `@${profile.username ?? username}`)
-            : `@${username || 'Passport'}`}
+            ? resolveDisplayName(profile)
+            : (formatHandle(username) ?? 'Passport')}
         </Text>
-        <View style={{ width: 38 }} />
+        {isAuthed && !isOwner && profile ? (
+          <Pressable
+            style={styles.moreBtn}
+            onPress={handleMorePress}
+            hitSlop={8}
+            accessibilityLabel="More options"
+            accessibilityRole="button"
+          >
+            <MoreVertical size={20} color={color.ink} />
+          </Pressable>
+        ) : (
+          <View style={{ width: 38 }} />
+        )}
       </View>
       {renderContent()}
       <HighlightViewer
@@ -269,6 +349,7 @@ const styles = StyleSheet.create({
   },
   backBtn: { padding: 6 },
   headerTitle: { ...t.heading, color: color.ink, flex: 1, textAlign: 'center' },
+  moreBtn: { padding: 6, width: 38, alignItems: 'center' },
 
   center: {
     flex: 1, alignItems: 'center', justifyContent: 'center',
