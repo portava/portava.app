@@ -288,7 +288,7 @@ function PostCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; 
           <SaveButton
             entityType="post"
             entityId={item.id}
-            initialSaved={(item as any).savedByMe ?? false}
+            initialSaved={item.savedByMe ?? false}
             size={17}
           />
           <CompassFeedbackMenu
@@ -399,7 +399,7 @@ function GemCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; o
       <View style={s.actions}>
         <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'hidden_gem', title: item.title ?? 'Hidden gem', city: item.city, category: 'Hidden Gem' })}><Text style={s.outlineText}>Add to Plan</Text></Pressable>
         <View style={{ flex: 1 }} />
-        <SaveButton entityType="post" entityId={item.id} initialSaved={(item as any).savedByMe ?? false} size={17} />
+        <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={17} />
         <CompassFeedbackMenu
           recommendationId={item.id}
           itemType={item.type}
@@ -435,7 +435,7 @@ function ItineraryCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedI
       <View style={s.actions}>
         <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'experience', title: item.title ?? 'Itinerary', city: item.city, category: 'Itinerary' })}><Text style={s.outlineText}>Use this plan</Text></Pressable>
         <View style={{ flex: 1 }} />
-        <SaveButton entityType="post" entityId={item.id} initialSaved={(item as any).savedByMe ?? false} size={17} />
+        <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={17} />
         <CompassFeedbackMenu
           recommendationId={item.id}
           itemType={item.type}

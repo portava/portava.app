@@ -69,6 +69,8 @@ export interface PulsePost {
   canShare: boolean;
   spanTags: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number }>;
   spanHashtags: Array<{ slug: string; hashtagId: string; startChar: number; endChar: number }>;
+  /** Whether the authenticated viewer has bookmarked this post. */
+  savedByMe: boolean;
 }
 
 export interface PulseResponse {
@@ -149,6 +151,7 @@ export function pulsePostToFeedItem(p: PulsePost): PulseFeedItem {
     canShare: p.canShare ?? true,
     spanTags: p.spanTags ?? [],
     spanHashtags: p.spanHashtags ?? [],
+    savedByMe: p.savedByMe ?? false,
   };
 }
 

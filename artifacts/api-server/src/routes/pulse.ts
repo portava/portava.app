@@ -236,6 +236,21 @@ router.get("/pulse", async (req, res) => {
     user.id,
   );
 
+  // Batch-fetch which posts the viewer has bookmarked so we can include savedByMe
+  // in the response without a per-post query.
+  const postIds = rows.map((r: any) => r.id as string);
+  const savedSet = new Set<string>();
+  if (postIds.length > 0) {
+    try {
+      const { data: saveRows } = await sc
+        .from("post_saves")
+        .select("post_id")
+        .eq("user_id", user.id)
+        .in("post_id", postIds);
+      for (const r of (saveRows as any[]) ?? []) savedSet.add(r.post_id as string);
+    } catch { /* non-fatal — savedByMe defaults to false */ }
+  }
+
   // Shape responses — NEVER include exact coords
   const posts = rows.map((row: any) => {
     const geoTag = Array.isArray(row.pulse_geo_tags)
@@ -273,6 +288,8 @@ router.get("/pulse", async (req, res) => {
       // Rich-text span whitelists
       spanTags:         spans.tags,
       spanHashtags:     spans.hashtagUsages,
+      // Bookmark state for the authenticated viewer
+      savedByMe: savedSet.has(row.id as string),
     };
   });
 
