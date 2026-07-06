@@ -528,6 +528,7 @@ export interface OwnProfile {
   safetyFlagsCount?: number | null;
   followersCount?: number | null;
   followingCount?: number | null;
+  tripCount?: number | null;
   hostVerifiedAt?: ISODate | null;
   buddyVerifiedAt?: ISODate | null;
 }

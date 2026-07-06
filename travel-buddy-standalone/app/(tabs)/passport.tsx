@@ -28,8 +28,7 @@ import type { VerificationLevelStatus } from '../../src/components/VerificationL
 import { PostcardsTab } from '../../src/components/PostcardsTab';
 import { StampsTab } from '../../src/components/StampsTab';
 import { TripsTab } from '../../src/components/TripsTab';
-import { MapTab } from '../../src/components/MapTab';
-import { AboutTab } from '../../src/components/AboutTab';
+import { PassportStampsRail } from '../../src/components/PassportStampsRail';
 import { PassportSettingsSheet } from '../../src/components/PassportSettingsSheet';
 import { OwnerActionMenu } from '../../src/components/OwnerActionMenu';
 import { ProfileCompletionCard } from '../../src/components/ProfileCompletionCard';
@@ -41,18 +40,18 @@ import { CompassStatusCard } from '../../src/components/compass/CompassStatusCar
 import { CompassPassportSuggestions } from '../../src/components/compass/CompassPassportSuggestions';
 import { getMyBuddyProfile, type BuddyProfile } from '../../src/services/rentABuddy';
 
-type Tab = 'postcards' | 'stamps' | 'trips' | 'map';
+type Tab = 'all' | 'stamps' | 'plans' | 'postcards';
 const TABS: { key: Tab; label: string }[] = [
+  { key: 'all',       label: 'All' },
+  { key: 'stamps',    label: 'Stamps' },
+  { key: 'plans',     label: 'Plans' },
   { key: 'postcards', label: 'Postcards' },
-  { key: 'stamps', label: 'Stamps' },
-  { key: 'trips', label: 'Trips' },
-  { key: 'map', label: 'Map' },
 ];
 
 export default function PassportScreen() {
   const { profile, postcards, stamps, memories, suggestions, loading, error, reload } = usePassport();
   const { userId: ownUserId } = useSession();
-  const [tab, setTab] = useState<Tab>('postcards');
+  const [tab, setTab] = useState<Tab>('all');
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<'profile' | 'passport' | 'preferences' | 'safety'>('profile');
@@ -166,7 +165,7 @@ export default function PassportScreen() {
   }, [postcards]);
 
   React.useEffect(() => {
-    if (tab === 'trips' && !tripsLoaded) {
+    if (tab === 'plans' && !tripsLoaded) {
       setTripsLoaded(true);
       listMyTrips().then(setTrips).catch(() => {});
     }
@@ -440,16 +439,14 @@ function PassportContent({
           isOwner
         />
 
-        {/* Compact stats row */}
+        {/* Stats strip — Trips | Cities | Postcards | Followers | Following */}
         <CompactStatsRow
-          postcards={postcards}
-          stamps={verifiedStamps}
-          trips={trips}
+          tripCount={profile.tripCount ?? trips.length}
+          followersCount={profile.followersCount ?? 0}
+          followingCount={profile.followingCount ?? 0}
           onCellPress={(label) => {
             if (label === 'Postcards') setTab('postcards');
-            else if (label === 'Stamps') setTab('stamps');
-            else if (label === 'Trips') setTab('trips');
-            else if (label === 'Countries' || label === 'Cities') setTab('map');
+            else if (label === 'Trips')  setTab('plans');
           }}
         />
 
@@ -518,6 +515,17 @@ function PassportContent({
           </Pressable>
         )}
 
+        {/* My Stamps horizontal rail */}
+        <PassportStampsRail
+          stamps={stamps}
+          isVerified={profile.verificationStatus === 'verified'}
+          verifiedSince={profile.verifiedAt}
+          isOwner
+          onViewAll={() => setTab('stamps')}
+          onStampPress={() => setTab('stamps')}
+          onVerificationStampPress={() => setTab('stamps')}
+        />
+
         {/* Tab bar — full-width segmented control */}
         <View style={styles.tabBarWrap}>
           {TABS.map((tb) => (
@@ -535,7 +543,7 @@ function PassportContent({
 
         {/* Tab content */}
         <View style={styles.tabContent}>
-          {tab === 'postcards' && (
+          {tab === 'all' && (
             <>
               <PostcardsTab
                 postcards={postcards}
@@ -547,8 +555,15 @@ function PassportContent({
             </>
           )}
           {tab === 'stamps' && <StampsTab stamps={stamps} isOwner />}
-          {tab === 'trips' && <TripsTab trips={trips} isOwner />}
-          {tab === 'map' && <MapTab postcards={postcards} currentCity={profile.currentCity} currentUserId={profile.id} />}
+          {tab === 'plans' && <TripsTab trips={trips} isOwner />}
+          {tab === 'postcards' && (
+            <PostcardsTab
+              postcards={postcards}
+              isOwner
+              actions={actions}
+              onAddPostcard={onAddPostcard}
+            />
+          )}
         </View>
 
         {/* Verification Levels — always visible at the bottom of the scroll */}

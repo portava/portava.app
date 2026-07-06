@@ -99,6 +99,7 @@ export function usePassport(): PassportState {
         safetyFlagsCount: 0,
         followersCount: 420,
         followingCount: 180,
+        tripCount: 78,
         hostVerifiedAt: null,
         buddyVerifiedAt: null,
       };

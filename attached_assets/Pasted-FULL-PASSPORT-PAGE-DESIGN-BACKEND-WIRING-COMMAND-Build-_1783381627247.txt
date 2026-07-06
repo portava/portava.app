@@ -1,0 +1,1134 @@
+FULL PASSPORT PAGE DESIGN + BACKEND WIRING COMMAND
+
+Build the full mobile Passport page to match the approved design direction exactly, while keeping the app’s existing color scheme, dark mode, neon teal/mint accent system, current typography, current icon style, current rounded card language, current bottom navigation, and current backend architecture.
+
+This is not just a verification-stamp patch. This is a full Passport page implementation and wiring pass.
+
+Do not rebuild the app. Do not change the global theme. Do not rename main tabs. Do not create fake standalone UI that is disconnected from backend data. This must use real profile, trust, stamps, postcards, plans, follow, and verification data wherever those systems already exist.
+
+The Passport page should feel like a premium digital travel identity: part profile, part passport, part trust card, part travel memory board.
+
+MAIN GOAL
+
+Create a complete mobile Passport screen that includes:
+
+1. Header
+2. Cover photo hero
+3. Avatar/profile identity
+4. Owner edit controls
+5. Trust Score card
+6. Official Passport Verified stamp
+7. Stats strip
+8. My Stamps rail
+9. Tabs: All, Stamps, Plans, Postcards
+10. Postcards grid
+11. Plans preview/list
+12. Verification Levels section
+13. Public vs owner mode
+14. Loading, empty, error, and privacy states
+15. Full backend wiring
+16. No dead buttons
+17. No fake verification state
+18. No disconnected UI
+
+Keep current app color scheme:
+- Use existing app background.
+- Use existing dark cards.
+- Use existing teal/mint primary accent.
+- Use existing border, text, muted text, warning, danger, and success tokens.
+- Do not introduce a new color scheme.
+- Do not make the app look white, pastel, or generic.
+- Do not replace the existing brand feel.
+
+DESIGN STYLE
+
+Use this design pattern:
+
+“Digital Passport + Social Travel Identity + Trust Proof”
+
+The page should communicate:
+- This is the user’s travel identity.
+- This person is verified or not verified.
+- This person has a Trust Score.
+- This person has collected stamps.
+- This person has created postcards.
+- This person may host events, join trips, or offer Rent a Buddy services.
+- Other users can quickly decide whether they trust this traveler.
+
+Do not make it look like a normal Instagram profile.
+Do not make verification look like only a blue check.
+Verification must look like an official passport stamp.
+
+MOBILE-ONLY RULE
+
+This command is for the mobile Passport design first.
+
+Use:
+- SafeAreaView
+- Vertical ScrollView
+- Fixed bottom nav
+- Proper bottom padding so content never hides behind nav
+- Horizontal rails only where intended
+- No accidental horizontal screen overflow
+- 44px minimum touch targets
+- Clean spacing
+- Large enough text for mobile
+
+Recommended spacing:
+- Screen horizontal padding: 16px
+- Section top gap: 22–28px
+- Card padding: 14–18px
+- Small gap: 8px
+- Medium gap: 12px
+- Large gap: 20px
+- Hero radius: 24–30px
+- Card radius: 18–24px
+- Small pill radius: 999px
+
+BOTTOM NAV
+
+Keep the existing bottom nav exactly as the app uses it.
+
+Tabs:
+- Pulse
+- Discovery
+- Create
+- Trips
+- Passport
+
+Passport must be active on this screen.
+
+Do not remove Create center button.
+Do not change the app’s tab order.
+Do not create duplicate bottom nav.
+Do not let content scroll underneath the bottom nav without padding.
+
+HEADER SECTION
+
+At the top:
+
+Left:
+- Title: “Passport”
+- If verified, show small app-style verified badge/check beside the title.
+- Subtitle under title:
+  “Your travel identity. Your world.”
+
+Right:
+- Share icon
+- Settings icon if owner
+- More/options icon if public viewer and not owner
+
+Header layout:
+- Horizontal row.
+- Title/subtitle stack on left.
+- Action icons on right.
+- Maintain safe-area spacing.
+- Icons must be tappable.
+- No dead icons.
+
+Header actions:
+- Share icon:
+  - Owner and public viewer can use it.
+  - It should trigger existing share profile/passport behavior if available.
+  - If no existing share handler exists, wire to native/share helper or route-safe share modal.
+- Settings icon:
+  - Owner only.
+  - Opens profile/settings screen or existing Passport settings sheet.
+- More/options icon:
+  - Public viewer only.
+  - Opens report/block/share menu if those systems exist.
+  - At minimum must not dead-end.
+
+Example:
+Passport [verified badge]
+Your travel identity. Your world.
+
+HERO / COVER PHOTO SECTION
+
+Create a large rounded hero card at the top under the header.
+
+Hero card:
+- Full screen width minus padding.
+- Rounded corners.
+- Dark border.
+- Cover image fills top area.
+- Dark gradient overlay on image so content is readable.
+- Profile avatar overlaps cover image and identity area.
+- If user has no cover photo, use existing gradient placeholder.
+- If user has no avatar, use initials avatar.
+
+Cover photo:
+- Height: 180–220px.
+- Use ImageBackground if React Native.
+- Use object-fit/cover equivalent.
+- Add dark overlay:
+  bottom stronger than top.
+- Owner should have an edit cover button.
+- Edit cover button should appear as a small rounded camera/edit icon in the top-right or bottom-right of cover image.
+- Public viewer should not see edit cover button.
+
+Avatar:
+- Circular.
+- Size: 104–120px.
+- Position: overlaps bottom-left of cover image.
+- Add accent ring using current teal/gradient style.
+- Add subtle shadow/glow only if already in app style.
+- Owner gets small camera button overlapping lower-right of avatar.
+- Public viewer does not see camera button.
+- Avatar should appear everywhere with the user’s display name in profile-related UI, consistent with the app’s known requirement.
+
+Profile identity content:
+Under the avatar:
+- Display name large and bold.
+- Verified badge beside name if verified.
+- Location line with city/country and flag when available.
+- Bio line.
+- Optional second bio/status line.
+- Member-since pill.
+
+Example:
+Maya [verified badge]
+Cebu, Philippines 🇵🇭
+Travel lover • Ocean chaser 🌊
+Collecting moments, not things. ✨
+[calendar icon] Member since May 2024
+
+Owner edit behavior:
+- Avatar camera button opens existing image picker/avatar upload flow.
+- Cover edit button opens existing cover upload flow.
+- If the app currently lacks cover upload wiring, create a safe route/action placeholder that opens a functional upload sheet, not a dead button.
+- After upload success, update backend and refresh Passport.
+- Show loading state while uploading.
+- Show error toast on failure.
+- Never silently fail.
+
+TRUST + VERIFICATION PROOF AREA
+
+Under or inside the lower hero area, show two proof cards:
+
+1. Trust Score card
+2. Passport Verified stamp card
+
+On narrow mobile:
+Stack them vertically.
+
+On larger mobile:
+They can sit in a two-card row only if there is enough width. Do not crowd.
+
+TRUST SCORE CARD
+
+Card style:
+- Dark glass card.
+- Rounded.
+- Subtle border.
+- Teal accent for score.
+- Shield/star icon.
+
+Content:
+- Small label: “TRUST SCORE”
+- Info icon.
+- Large score: example “4.8 / 5”
+- Subtitle: “Trusted Traveler”
+- Optional small line: “Based on verified activity”
+
+Rules:
+- Score must come from backend truth.
+- Do not hardcode 4.8 unless mock data mode is active.
+- If trust score is missing:
+  - Show “New Traveler”
+  - Score can show “— / 5”
+  - Do not fake a score.
+- Info icon opens Trust Score explanation sheet.
+- Sheet explains what affects score:
+  - verification
+  - completed trips/events
+  - reviews
+  - safe behavior
+  - responsiveness
+  - reports/safety flags
+- Info icon must not be dead.
+
+PASSPORT VERIFIED STAMP CARD
+
+This is the signature design element.
+
+It should look like an official passport stamp, not a normal card.
+
+Visible only if verification_status === "verified".
+
+Visual style:
+- Rectangular stamp-style card.
+- Slight 0–2 degree rotation is acceptable, but keep text readable.
+- Teal/mint monochrome stamp effect using current accent.
+- Dark translucent background.
+- Double border or dashed inner border.
+- Rounded corners.
+- Slight distressed effect if possible using CSS opacity, dashed border, overlay texture, or pseudo-layer.
+- Do not import heavy texture libraries.
+- Do not introduce a new color palette.
+
+Stamp content:
+Top:
+PASSPORT VERIFIED
+
+Main:
+VERIFIED TRAVELER
+
+Icon:
+Shield with checkmark.
+
+Checklist:
+- ID Verified
+- Selfie Matched
+- Home Country Verified
+- No Safety Flags
+
+Bottom:
+Verified since Jun 2026
+
+Each checklist item should be tied to real backend booleans:
+- ID Verified = id_verified_at exists
+- Selfie Matched = selfie_verified_at exists
+- Home Country Verified = home_country_verified_at exists
+- No Safety Flags = safety_flags_count === 0
+
+Important:
+If verification_status is not verified, do not show “Verified Traveler.”
+
+Alternative states:
+
+If owner and verification_status === "unverified":
+Show CTA card:
+Title: “Verify your Passport”
+Body: “Unlock verified traveler trust across events, trips, Telegraph, and Rent a Buddy.”
+Button: “Start Verification”
+Button opens existing verification start flow or route.
+
+If owner and verification_status === "pending":
+Show muted stamp/card:
+Title: “Verification Pending”
+Body: “Your Passport verification is under review.”
+No verified badge.
+No green check on name.
+No “Verified Traveler.”
+
+If owner and verification_status === "rejected":
+Show private card:
+Title: “Verification needs attention”
+Body: “Review your details to complete Passport verification.”
+Button: “Review Details”
+Do not show rejection reason publicly.
+
+If public viewer and user is unverified/pending/rejected:
+Do not show the full verification card.
+Optionally show a small neutral line:
+“Not verified yet”
+Only if current app design supports this.
+Never expose rejection/pending details to the public.
+
+If verification_status === "suspended":
+Hide verified badge.
+Hide verified stamp.
+If owner, show:
+“Passport verification unavailable”
+with safe support/review action if available.
+If public, show no verification proof.
+
+STATS STRIP
+
+Below Trust/Verification proof area, add a stats strip.
+
+One dark rounded card containing five columns:
+- Trips
+- Cities
+- Postcards
+- Followers
+- Following
+
+Each column:
+- Small teal icon.
+- Number.
+- Label.
+
+Example:
+78 Trips
+32 Cities
+156 Postcards
+420 Followers
+180 Following
+
+Rules:
+- Stats must come from backend.
+- Tapping Followers opens followers list.
+- Tapping Following opens following list.
+- Tapping Trips opens Trips tab/section filtered to this user if public viewer.
+- Tapping Postcards scrolls or switches to Postcards tab.
+- No dead stats.
+- If a stat route does not exist, create a functional modal/list placeholder backed by existing data where possible.
+
+MY STAMPS SECTION
+
+Section header:
+Left: “My Stamps”
+Right: “View all”
+
+“View all” action:
+- Opens full Passport stamps screen/sheet.
+- Must not dead-end.
+
+Stamps rail:
+Horizontal scroll rail.
+
+First stamp:
+- Verification stamp mini-card if user is verified.
+- This is separate from travel stamps.
+- It should say:
+  “Verified Traveler”
+  with shield/check.
+- It must look different from destination stamps.
+
+Then destination stamps:
+Examples:
+- Japan — May 2025
+- Vietnam — Apr 2025
+- Cebu — Mar 2025
+- Siargao — Feb 2025
+
+Last placeholder:
+- Dashed border card.
+- Airplane icon.
+- “34 stamps to collect”
+or backend count.
+
+Rules:
+- Verification stamp appears first only if verified.
+- Destination stamps come from backend stamp/achievement/travel data.
+- Do not fake travel stamps if real data is empty unless mock mode.
+- If no stamps:
+  Show empty state card:
+  “Start collecting Passport stamps”
+  “Join events, trips, and visit places to earn stamps.”
+- Tapping a stamp opens stamp detail modal/screen.
+- Stamp detail should show:
+  - stamp title
+  - earned date
+  - location/source
+  - related event/trip/post if available
+- No dead stamp cards.
+
+STAMP TYPES
+
+Support at least these stamp types:
+- verification
+- destination
+- event
+- trip
+- host
+- rent_a_buddy
+- achievement
+
+Destination stamp card:
+- Tall rounded rectangle.
+- Destination title top.
+- Visual/image/illustration area.
+- Earned date bottom.
+- Border.
+- Stamp-like feel.
+
+Verification stamp card:
+- Shield/check.
+- “Verified Traveler.”
+- Stars/checks.
+- Teal/mint stamp look.
+
+TABS
+
+Under stamps rail, add segmented tabs:
+
+- All
+- Stamps
+- Plans
+- Postcards
+
+Active default: All.
+
+Tab style:
+- Dark rounded segmented control.
+- Active tab uses current teal underline or active accent.
+- Do not use bulky bright filled buttons unless current app already does.
+- Tab tap area minimum 44px high.
+- Smooth switch.
+
+Tab behavior:
+All:
+- Shows Postcards section first.
+- Shows Plans preview if profile has plans.
+- Shows verification levels lower down.
+
+Stamps:
+- Shows expanded stamp collection.
+- Group by:
+  - Verification
+  - Destinations
+  - Trips
+  - Events
+  - Achievements
+- Empty state if no stamps.
+
+Plans:
+- Shows public/visible plans only.
+- Owner sees all own plans with privacy labels.
+- Public sees only public/allowed plans.
+- Include events, trips, upcoming plans, maybe attending.
+- No private trip leaks.
+
+Postcards:
+- Shows full postcard grid.
+- Includes images/videos.
+- Supports viewer opening.
+
+POSTCARDS SECTION
+
+Section header:
+Left: “Postcards”
+Right: “+ New Postcard” for owner only.
+
+Public viewer:
+- Hide “+ New Postcard.”
+
+Owner:
+- “+ New Postcard” opens create postcard flow.
+- Should connect to existing create/post composer if available.
+- Do not dead-end.
+
+Grid:
+- Mobile 2-column grid.
+- Use 3 columns only on very wide phone/tablet if current layout supports it.
+- Rounded cards.
+- Image/video top.
+- Dark gradient/body bottom.
+- Video badge top-left if video:
+  “10s”
+- Media type icon if needed.
+- Title.
+- Time ago.
+- Like count.
+- Comment count.
+- Three-dot menu.
+- Bookmark optional if existing.
+
+Example cards:
+- Sunset in Da Nang
+- Hoi An Old Town
+- Island hopping in El Nido
+
+Card actions:
+- Tap card opens postcard viewer.
+- Like button toggles like via backend.
+- Comment button opens comments.
+- Three-dot menu:
+  - Owner: edit/delete/privacy
+  - Public: report/share
+- No dead buttons.
+
+Privacy:
+- Respect delayed posting/location privacy system.
+- If a postcard is delayed/private/not yet safe to publish, do not expose it publicly.
+- Owner can see it with badge:
+  “Delayed until you leave location”
+or existing delayed-post state.
+- Public sees only published/visible postcards.
+
+PLANS SECTION
+
+For Plans tab and All preview, show visible plans.
+
+Plan card fields:
+- Title
+- Type: Event / Trip / Circle / Rent a Buddy booking if applicable
+- Date/time
+- Location
+- Privacy badge
+- Attendee/crew count
+- Status: Upcoming / Ongoing / Completed
+- CTA:
+  - Owner: Manage
+  - Public: View / Request / Join if eligible
+
+Privacy rules:
+- Public only sees public plans.
+- Friends/circle-only plans should only show if viewer is allowed.
+- Private trips should not leak.
+- Do not expose hidden location.
+- If trip/event has delayed or approximate location mode, respect it.
+
+OWNER VS PUBLIC MODE
+
+Owner mode:
+- Shows edit avatar.
+- Shows edit cover.
+- Shows settings icon.
+- Shows + New Postcard.
+- Shows private verification status if pending/rejected.
+- Shows private/delayed postcards with labels.
+- Shows private plans with privacy labels.
+- Can manage profile sections.
+
+Public mode:
+- No edit avatar.
+- No edit cover.
+- No settings icon.
+- Show more/options icon.
+- Show Follow/Following button near identity or action area.
+- Show Message/Telegraph button if allowed.
+- Show Invite/Plan button if allowed.
+- Hide private plans.
+- Hide delayed/private postcards.
+- Hide verification rejection/pending details.
+- Show verified proof only if verified.
+
+PUBLIC ACTION BUTTONS
+
+For public viewer, add compact action row under identity or stats:
+- Follow / Following
+- Message
+- Invite / Plan
+
+Only show actions allowed by backend privacy/settings.
+
+Follow:
+- Calls backend follow/unfollow.
+- Optimistically update count but revert on error.
+- No fake state.
+
+Message:
+- Opens Telegraph thread if allowed.
+- If message permission blocked, show proper message:
+  “This traveler is not accepting new messages.”
+- No dead button.
+
+Invite/Plan:
+- Opens invite/create plan flow if allowed.
+- If no flow exists, hide button rather than dead-end.
+
+VERIFICATION LEVELS SECTION
+
+Place near bottom of Passport screen before bottom nav padding.
+
+Section:
+Title: “Verification Levels”
+Right: “Learn more”
+
+Horizontal rail of four cards:
+
+1. Basic Verified
+Subtitle: “ID & selfie verified”
+Status:
+- Verified / Not complete
+
+2. Trusted Traveler
+Subtitle: “Home country locked”
+Status:
+- All good / Not complete
+
+3. Host Verified
+Subtitle: “For event hosts”
+Status:
+- Verified / Apply / Not complete
+
+4. Buddy Verified
+Subtitle: “For Rent a Buddy”
+Status:
+- Verified / Apply / Not complete
+
+Rules:
+- Status from backend.
+- Buddy Verified must be tied to Rent a Buddy/local companion requirements.
+- Host Verified tied to event host requirements.
+- Learn more opens a modal explaining levels.
+- Cards are not dead.
+- If user is public viewer, cards can show achieved statuses only, not internal missing requirements.
+- If owner, can show next steps.
+
+BACKEND DATA REQUIREMENTS
+
+Use existing backend where possible. Do not duplicate systems.
+
+Passport page needs these data groups:
+- Profile identity
+- Avatar/cover
+- Verification status
+- Trust Score
+- Stats
+- Stamps
+- Postcards
+- Plans
+- Follow state
+- Viewer permissions
+- Owner/public mode
+
+Recommended API endpoint:
+
+GET /api/passport/:userId
+
+It should return a public-safe, viewer-aware Passport payload.
+
+The endpoint must know:
+- authenticated viewer id
+- requested profile id
+- whether viewer is owner
+- whether viewer can see private/circle/friend content
+
+Response shape:
+
+ts type PassportProfileResponse = {   id: string;   is_owner: boolean;    viewer_permissions: {     can_view_profile: boolean;     can_follow: boolean;     can_message: boolean;     can_invite: boolean;     can_view_private_plans: boolean;     can_view_delayed_posts: boolean;   };    identity: {     display_name: string;     username: string | null;     avatar_url: string | null;     cover_photo_url: string | null;     city: string | null;     country: string | null;     country_code: string | null;     flag_emoji: string | null;     bio: string | null;     tagline: string | null;     member_since: string | null;   };    verification: {     status: "unverified" | "pending" | "verified" | "rejected" | "suspended";     level: "none" | "basic_verified" | "trusted_traveler" | "host_verified" | "buddy_verified";     verified_since: string | null;      public_checks: {       id_verified: boolean;       selfie_matched: boolean;       home_country_verified: boolean;       no_safety_flags: boolean;     };      owner_private?: {       rejection_reason?: string | null;       next_step?: string | null;       review_status?: string | null;     };   };    trust: {     score: number | null;     label: string;     explanation_available: boolean;   };    stats: {     trips: number;     cities: number;     postcards: number;     followers: number;     following: number;   };    social: {     viewer_is_following: boolean;     follows_viewer: boolean;     mutual_friends_count: number;   };    stamps: Array<{     id: string;     type: "verification" | "destination" | "event" | "trip" | "host" | "rent_a_buddy" | "achievement";     title: string;     subtitle: string | null;     image_url: string | null;     icon: string | null;     earned_at: string | null;     location_label: string | null;     related_type: string | null;     related_id: string | null;     visibility: "public" | "friends" | "private";   }>;    remaining_stamp_count: number;    postcards: Array<{     id: string;     title: string;     caption: string | null;     media_url: string;     thumbnail_url: string | null;     media_type: "image" | "video";     duration_seconds: number | null;     created_at: string;     location_label: string | null;     visibility: "public" | "friends" | "private" | "delayed";     delayed_until_safe: boolean;     liked_by_viewer: boolean;     likes_count: number;     comments_count: number;     owner_id: string;   }>;    plans: Array<{     id: string;     type: "event" | "trip" | "circle" | "rent_a_buddy";     title: string;     starts_at: string | null;     ends_at: string | null;     location_label: string | null;     status: "upcoming" | "ongoing" | "completed" | "cancelled";     visibility: "public" | "friends" | "circle" | "private";     attendee_count: number;     viewer_can_open: boolean;     viewer_can_join: boolean;   }>;    verification_levels: {     basic_verified: boolean;     trusted_traveler: boolean;     host_verified: boolean;     buddy_verified: boolean;   }; }; 
+
+DATABASE / SUPABASE WIRING
+
+Before adding new columns, inspect the current schema.
+
+Do not blindly duplicate columns if profiles, profile_verifications, trust_scores, stamps, posts, trips, events, follows, and buddy tables already exist.
+
+If missing, add only what is necessary.
+
+Recommended profile verification columns if not present:
+
+sql alter table public.profiles add column if not exists verification_status text not null default 'unverified'   check (verification_status in ('unverified', 'pending', 'verified', 'rejected', 'suspended')), add column if not exists verification_level text not null default 'none'   check (verification_level in ('none', 'basic_verified', 'trusted_traveler', 'host_verified', 'buddy_verified')), add column if not exists verified_since timestamptz, add column if not exists id_verified_at timestamptz, add column if not exists selfie_verified_at timestamptz, add column if not exists home_country_verified_at timestamptz, add column if not exists safety_flags_count integer not null default 0, add column if not exists host_verified_at timestamptz, add column if not exists buddy_verified_at timestamptz, add column if not exists cover_photo_url text; 
+
+If verification data already lives in a dedicated verification table, do not move it. Instead create a safe API mapper.
+
+PUBLIC-SAFE VIEW
+
+Create a public-safe verification view or API mapper so sensitive identity data never goes to the client.
+
+Example view if needed:
+
+sql create or replace view public.public_profile_verification as select   id,   verification_status,   verification_level,   verified_since,   case     when verification_status = 'verified' and id_verified_at is not null     then true else false   end as id_verified,   case     when verification_status = 'verified' and selfie_verified_at is not null     then true else false   end as selfie_matched,   case     when verification_status = 'verified' and home_country_verified_at is not null     then true else false   end as home_country_verified,   case     when verification_status = 'verified' and safety_flags_count = 0     then true else false   end as no_safety_flags,   host_verified_at is not null as host_verified,   buddy_verified_at is not null as buddy_verified from public.profiles; 
+
+SECURITY RULES
+
+Never expose:
+- ID document images
+- Selfie images
+- legal name unless intentionally public
+- date of birth
+- address
+- raw verification vendor response
+- rejection notes to public viewers
+- safety report details
+- private trip location
+- delayed post real-time location
+
+Expose publicly:
+- verified or not
+- verification level
+- verified since
+- public-safe checklist booleans
+- trust score
+- visible stats
+- public stamps
+- public postcards
+- public plans
+
+COMPONENT STRUCTURE
+
+Implement or update these components:
+
+PassportScreen
+- Main screen container.
+- Fetches Passport payload.
+- Handles loading/error/refresh.
+- Manages active tab.
+
+PassportHeader
+Props:
+- verified
+- isOwner
+- onShare
+- onSettings
+- onMore
+
+PassportHero
+Props:
+- identity
+- isOwner
+- verificationStatus
+- onEditAvatar
+- onEditCover
+
+PublicProfileActions
+Props:
+- canFollow
+- canMessage
+- canInvite
+- viewerIsFollowing
+- onFollowToggle
+- onMessage
+- onInvite
+
+TrustScoreCard
+Props:
+- score
+- label
+- onInfo
+
+PassportVerificationStamp
+Props:
+- status
+- level
+- verifiedSince
+- checks
+- isOwner
+- onStartVerification
+- onReviewVerification
+
+StatsStrip
+Props:
+- stats
+- onTrips
+- onCities
+- onPostcards
+- onFollowers
+- onFollowing
+
+PassportStampsRail
+Props:
+- verification
+- stamps
+- remainingCount
+- onViewAll
+- onOpenStamp
+
+PassportMiniVerificationStamp
+Props:
+- verifiedSince
+
+DestinationStampCard
+Props:
+- stamp
+
+PassportTabs
+Props:
+- activeTab
+- onChange
+
+PostcardsGrid
+Props:
+- postcards
+- isOwner
+- onOpen
+- onLike
+- onComment
+- onMore
+- onCreate
+
+PostcardCard
+Props:
+- postcard
+
+PlansPreview
+Props:
+- plans
+- isOwner
+- onOpenPlan
+- onManagePlan
+- onJoinPlan
+
+VerificationLevelsRail
+Props:
+- levels
+- isOwner
+- onLearnMore
+- onApplyHost
+- onApplyBuddy
+
+PassportSkeleton
+PassportErrorState
+PassportEmptyState
+
+SCREEN LOGIC
+
+Pseudo implementation:
+
+tsx export function PassportScreen({ route }) {   const userId = route.params?.userId ?? currentUser.id;   const [activeTab, setActiveTab] = useState("All");    const {     data,     loading,     error,     refetch,   } = usePassportProfile(userId);    if (loading) return <PassportSkeleton />;   if (error) return <PassportErrorState onRetry={refetch} />;   if (!data?.viewer_permissions?.can_view_profile) {     return <PrivatePassportState />;   }    const isOwner = data.is_owner;   const isVerified = data.verification.status === "verified";    return (     <SafeAreaView style={styles.safe}>       <ScrollView         showsVerticalScrollIndicator={false}         refreshControl={<RefreshControl refreshing={loading} onRefresh={refetch} />}         contentContainerStyle={styles.scrollContent}       >         <PassportHeader           verified={isVerified}           isOwner={isOwner}           onShare={() => sharePassport(data.id)}           onSettings={openPassportSettings}           onMore={() => openPublicProfileMenu(data.id)}         />          <PassportHero           identity={data.identity}           isOwner={isOwner}           verificationStatus={data.verification.status}           onEditAvatar={openAvatarUpload}           onEditCover={openCoverUpload}         />          {!isOwner ? (           <PublicProfileActions             canFollow={data.viewer_permissions.can_follow}             canMessage={data.viewer_permissions.can_message}             canInvite={data.viewer_permissions.can_invite}             viewerIsFollowing={data.social.viewer_is_following}             onFollowToggle={toggleFollow}             onMessage={openTelegraph}             onInvite={openInviteFlow}           />         ) : null}          <View style={styles.proofStack}>           <TrustScoreCard             score={data.trust.score}             label={data.trust.label}             onInfo={openTrustScoreInfo}           />            <PassportVerificationStamp             status={data.verification.status}             level={data.verification.level}             verifiedSince={data.verification.verified_since}             checks={data.verification.public_checks}             isOwner={isOwner}             onStartVerification={startVerification}             onReviewVerification={reviewVerification}           />         </View>          <StatsStrip           stats={data.stats}           onTrips={openTrips}           onCities={openCities}           onPostcards={() => setActiveTab("Postcards")}           onFollowers={openFollowers}           onFollowing={openFollowing}         />          <PassportStampsRail           verification={data.verification}           stamps={data.stamps}           remainingCount={data.remaining_stamp_count}           onViewAll={() => setActiveTab("Stamps")}           onOpenStamp={openStampDetail}         />          <PassportTabs activeTab={activeTab} onChange={setActiveTab} />          {activeTab === "All" ? (           <>             <PostcardsGrid               postcards={data.postcards.slice(0, 6)}               isOwner={isOwner}               onOpen={openPostcard}               onLike={togglePostcardLike}               onComment={openPostcardComments}               onMore={openPostcardMenu}               onCreate={openPostcardComposer}             />              <PlansPreview               plans={data.plans.slice(0, 4)}               isOwner={isOwner}               onOpenPlan={openPlan}               onManagePlan={managePlan}               onJoinPlan={joinPlan}             />              <VerificationLevelsRail               levels={data.verification_levels}               isOwner={isOwner}               onLearnMore={openVerificationLevelsInfo}               onApplyHost={applyHostVerification}               onApplyBuddy={applyBuddyVerification}             />           </>         ) : null}          {activeTab === "Stamps" ? (           <ExpandedStampsView             verification={data.verification}             stamps={data.stamps}             onOpenStamp={openStampDetail}           />         ) : null}          {activeTab === "Plans" ? (           <PlansList             plans={data.plans}             isOwner={isOwner}             onOpenPlan={openPlan}             onManagePlan={managePlan}             onJoinPlan={joinPlan}           />         ) : null}          {activeTab === "Postcards" ? (           <PostcardsGrid             postcards={data.postcards}             isOwner={isOwner}             onOpen={openPostcard}             onLike={togglePostcardLike}             onComment={openPostcardComments}             onMore={openPostcardMenu}             onCreate={openPostcardComposer}           />         ) : null}       </ScrollView>        <BottomNav active="Passport" />     </SafeAreaView>   ); } 
+
+STYLE GUIDE
+
+Use existing app theme tokens. If names differ, map these to existing theme values.
+
+ts const passportTokens = {   background: theme.colors.background,   surface: theme.colors.surface,   surfaceGlass: theme.colors.surfaceGlass ?? "rgba(255,255,255,0.055)",   surfaceStrong: theme.colors.surfaceStrong ?? "rgba(255,255,255,0.085)",   border: theme.colors.border ?? "rgba(255,255,255,0.10)",   borderStrong: theme.colors.borderStrong ?? "rgba(255,255,255,0.16)",   text: theme.colors.text,   textMuted: theme.colors.textMuted,   primary: theme.colors.primary,   primarySoft: theme.colors.primarySoft ?? "rgba(0,255,190,0.16)",   primaryBorder: theme.colors.primaryBorder ?? "rgba(0,255,190,0.55)",   warning: theme.colors.warning,   danger: theme.colors.danger,   success: theme.colors.success ?? theme.colors.primary,   radiusHero: 28,   radiusCard: 22,   radiusPill: 999, }; 
+
+Core layout styles:
+
+tsx const styles = StyleSheet.create({   safe: {     flex: 1,     backgroundColor: passportTokens.background,   },    scrollContent: {     paddingHorizontal: 16,     paddingBottom: 118,   },    header: {     paddingTop: 8,     paddingBottom: 16,     flexDirection: "row",     alignItems: "center",     justifyContent: "space-between",   },    headerTitleRow: {     flexDirection: "row",     alignItems: "center",     gap: 8,   },    headerTitle: {     color: passportTokens.text,     fontSize: 34,     fontWeight: "800",     letterSpacing: -0.6,   },    headerSubtitle: {     color: passportTokens.textMuted,     fontSize: 15,     marginTop: 2,   },    headerActions: {     flexDirection: "row",     alignItems: "center",     gap: 12,   },    iconButton: {     width: 44,     height: 44,     borderRadius: 22,     alignItems: "center",     justifyContent: "center",   },    heroCard: {     borderRadius: 28,     overflow: "hidden",     backgroundColor: passportTokens.surface,     borderWidth: 1,     borderColor: passportTokens.border,   },    cover: {     height: 198,     width: "100%",   },    coverOverlay: {     ...StyleSheet.absoluteFillObject,     backgroundColor: "rgba(0,0,0,0.30)",   },    coverEditButton: {     position: "absolute",     right: 14,     top: 14,     width: 40,     height: 40,     borderRadius: 20,     backgroundColor: "rgba(0,0,0,0.45)",     borderWidth: 1,     borderColor: passportTokens.borderStrong,     alignItems: "center",     justifyContent: "center",   },    identityArea: {     paddingHorizontal: 18,     paddingBottom: 18,     paddingTop: 68,   },    avatarWrap: {     position: "absolute",     left: 18,     top: 140,     width: 112,     height: 112,     borderRadius: 56,     padding: 3,     backgroundColor: passportTokens.primary,   },    avatarInner: {     width: "100%",     height: "100%",     borderRadius: 56,     overflow: "hidden",     backgroundColor: passportTokens.surface,   },    avatar: {     width: "100%",     height: "100%",   },    avatarEditButton: {     position: "absolute",     right: -4,     bottom: -4,     width: 38,     height: 38,     borderRadius: 19,     backgroundColor: passportTokens.surfaceStrong,     borderWidth: 1,     borderColor: passportTokens.borderStrong,     alignItems: "center",     justifyContent: "center",   },    nameRow: {     flexDirection: "row",     alignItems: "center",     gap: 8,   },    displayName: {     color: passportTokens.text,     fontSize: 33,     fontWeight: "800",     letterSpacing: -0.7,   },    locationText: {     color: passportTokens.textMuted,     fontSize: 17,     marginTop: 6,   },    bioText: {     color: passportTokens.text,     fontSize: 16,     lineHeight: 23,     marginTop: 8,   },    memberPill: {     marginTop: 14,     alignSelf: "flex-start",     paddingHorizontal: 12,     paddingVertical: 8,     borderRadius: 999,     backgroundColor: passportTokens.surfaceGlass,     borderWidth: 1,     borderColor: passportTokens.border,     flexDirection: "row",     alignItems: "center",     gap: 8,   },    memberPillText: {     color: passportTokens.text,     fontSize: 13,     fontWeight: "600",   },    publicActions: {     marginTop: 14,     flexDirection: "row",     gap: 10,   },    publicActionButton: {     flex: 1,     height: 46,     borderRadius: 999,     alignItems: "center",     justifyContent: "center",     borderWidth: 1,     borderColor: passportTokens.primaryBorder,     backgroundColor: passportTokens.primarySoft,   },    publicActionText: {     color: passportTokens.primary,     fontSize: 15,     fontWeight: "800",   },    proofStack: {     marginTop: 14,     gap: 12,   },    trustCard: {     padding: 16,     borderRadius: 22,     backgroundColor: passportTokens.surfaceGlass,     borderWidth: 1,     borderColor: passportTokens.border,   },    trustTopRow: {     flexDirection: "row",     justifyContent: "space-between",     alignItems: "center",   },    trustLabel: {     color: passportTokens.textMuted,     fontSize: 12,     fontWeight: "800",     letterSpacing: 1,   },    trustScoreRow: {     marginTop: 10,     flexDirection: "row",     alignItems: "center",     gap: 12,   },    trustScore: {     color: passportTokens.primary,     fontSize: 44,     fontWeight: "900",     letterSpacing: -1,   },    trustScoreOutOf: {     color: passportTokens.textMuted,     fontSize: 20,     fontWeight: "700",   },    trustSubtitle: {     color: passportTokens.textMuted,     fontSize: 14,     marginTop: 2,   },    verifiedStamp: {     borderRadius: 22,     padding: 8,     backgroundColor: passportTokens.primarySoft,     borderWidth: 1.5,     borderColor: passportTokens.primaryBorder,   },    stampInner: {     borderRadius: 18,     borderWidth: 1,     borderStyle: "dashed",     borderColor: passportTokens.primaryBorder,     padding: 14,   },    stampEyebrow: {     color: passportTokens.primary,     textAlign: "center",     fontSize: 12,     fontWeight: "900",     letterSpacing: 2,   },    stampMainRow: {     marginTop: 10,     flexDirection: "row",     alignItems: "center",     gap: 12,   },    stampTitle: {     color: passportTokens.primary,     fontSize: 22,     fontWeight: "900",     letterSpacing: 1,   },    stampStars: {     color: passportTokens.primary,     fontSize: 13,     marginTop: 2,     letterSpacing: 2,   },    checkRow: {     marginTop: 8,     flexDirection: "row",     justifyContent: "space-between",     alignItems: "center",   },    checkText: {     color: passportTokens.primary,     fontSize: 14,     fontWeight: "700",   },    verifiedSince: {     marginTop: 10,     paddingTop: 8,     borderTopWidth: 1,     borderTopColor: "rgba(255,255,255,0.12)",     color: passportTokens.primary,     fontSize: 13,     fontWeight: "800",     textAlign: "center",   },    neutralVerificationCard: {     padding: 16,     borderRadius: 22,     backgroundColor: passportTokens.surfaceGlass,     borderWidth: 1,     borderColor: passportTokens.border,   },    neutralTitle: {     color: passportTokens.text,     fontSize: 18,     fontWeight: "800",   },    neutralBody: {     color: passportTokens.textMuted,     fontSize: 14,     lineHeight: 20,     marginTop: 6,   },    statsStrip: {     marginTop: 18,     paddingVertical: 16,     borderRadius: 22,     backgroundColor: passportTokens.surfaceGlass,     borderWidth: 1,     borderColor: passportTokens.border,     flexDirection: "row",   },    statItem: {     flex: 1,     alignItems: "center",     justifyContent: "center",   },    statValue: {     color: passportTokens.text,     fontSize: 20,     fontWeight: "900",     marginTop: 5,   },    statLabel: {     color: passportTokens.textMuted,     fontSize: 13,     marginTop: 3,   },    sectionHeader: {     marginTop: 26,     marginBottom: 12,     flexDirection: "row",     alignItems: "center",     justifyContent: "space-between",   },    sectionTitle: {     color: passportTokens.text,     fontSize: 22,     fontWeight: "900",     letterSpacing: -0.3,   },    sectionAction: {     color: passportTokens.primary,     fontSize: 15,     fontWeight: "800",   },    railContent: {     gap: 12,     paddingRight: 16,   },    miniVerificationStamp: {     width: 112,     height: 148,     borderRadius: 18,     padding: 10,     backgroundColor: passportTokens.primarySoft,     borderWidth: 1,     borderColor: passportTokens.primaryBorder,     justifyContent: "space-between",   },    miniStampText: {     color: passportTokens.primary,     fontSize: 15,     fontWeight: "900",     textTransform: "uppercase",   },    destinationStamp: {     width: 112,     height: 148,     borderRadius: 18,     overflow: "hidden",     backgroundColor: passportTokens.surfaceGlass,     borderWidth: 1,     borderColor: passportTokens.border,   },    destinationStampImage: {     height: 92,     width: "100%",   },    destinationStampBody: {     padding: 9,   },    destinationStampTitle: {     color: passportTokens.text,     fontSize: 14,     fontWeight: "900",   },    destinationStampDate: {     color: passportTokens.textMuted,     fontSize: 11,     fontWeight: "700",     marginTop: 3,     textTransform: "uppercase",   },    collectMoreStamp: {     width: 112,     height: 148,     borderRadius: 18,     borderWidth: 1,     borderStyle: "dashed",     borderColor: passportTokens.borderStrong,     alignItems: "center",     justifyContent: "center",     padding: 12,   },    collectMoreText: {     color: passportTokens.textMuted,     fontSize: 14,     fontWeight: "700",     textAlign: "center",     marginTop: 8,   },    tabs: {     marginTop: 24,     borderRadius: 18,     backgroundColor: passportTokens.surfaceGlass,     borderWidth: 1,     borderColor: passportTokens.border,     flexDirection: "row",     overflow: "hidden",   },    tabButton: {     flex: 1,     minHeight: 48,     alignItems: "center",     justifyContent: "center",   },    tabText: {     color: passportTokens.textMuted,     fontSize: 15,     fontWeight: "800",   },    tabTextActive: {     color: passportTokens.text,   },    tabUnderline: {     position: "absolute",     left: 10,     right: 10,     bottom: 0,     height: 3,     borderRadius: 999,     backgroundColor: passportTokens.primary,   },    postcardGrid: {     flexDirection: "row",     flexWrap: "wrap",     gap: 12,   },    postcardCard: {     width: "48%",     flexGrow: 1,     borderRadius: 18,     overflow: "hidden",     backgroundColor: passportTokens.surfaceGlass,     borderWidth: 1,     borderColor: passportTokens.border,   },    postcardImage: {     width: "100%",     height: 134,   },    postcardBody: {     padding: 12,   },    postcardTitle: {     color: passportTokens.text,     fontSize: 15,     fontWeight: "900",     lineHeight: 19,   },    postcardMeta: {     color: passportTokens.textMuted,     fontSize: 13,     marginTop: 4,   },    postcardFooter: {     marginTop: 10,     flexDirection: "row",     alignItems: "center",     justifyContent: "space-between",   },    postcardCountRow: {     flexDirection: "row",     alignItems: "center",     gap: 12,   },    countText: {     color: passportTokens.text,     fontSize: 13,     fontWeight: "700",   },    videoBadge: {     position: "absolute",     top: 9,     left: 9,     paddingHorizontal: 8,     paddingVertical: 5,     borderRadius: 999,     backgroundColor: "rgba(0,0,0,0.58)",     flexDirection: "row",     alignItems: "center",     gap: 4,   },    videoBadgeText: {     color: passportTokens.text,     fontSize: 12,     fontWeight: "800",   },    planCard: {     padding: 14,     borderRadius: 20,     backgroundColor: passportTokens.surfaceGlass,     borderWidth: 1,     borderColor: passportTokens.border,     marginBottom: 12,   },    planTitle: {     color: passportTokens.text,     fontSize: 17,     fontWeight: "900",   },    planMeta: {     color: passportTokens.textMuted,     fontSize: 14,     marginTop: 5,   },    levelCard: {     width: 164,     padding: 14,     borderRadius: 18,     backgroundColor: passportTokens.surfaceGlass,     borderWidth: 1,     borderColor: passportTokens.border,   },    levelTitle: {     color: passportTokens.text,     fontSize: 14,     fontWeight: "900",   },    levelSubtitle: {     color: passportTokens.textMuted,     fontSize: 12,     lineHeight: 17,     marginTop: 4,   },    levelStatus: {     color: passportTokens.primary,     fontSize: 13,     fontWeight: "800",     marginTop: 12,   }, }); 
+
+NO DEAD-END BUTTON RULE
+
+Every visible button/icon must do one of these:
+1. Navigate to an existing screen.
+2. Open an existing sheet/modal.
+3. Call a real backend action.
+4. Show a clear “coming soon/admin disabled” state only if the feature truly is not available.
+5. Be hidden until it can function.
+
+Do not leave buttons with empty onPress.
+Do not console.log only.
+Do not silently fail.
+Do not show clickable UI that does nothing.
+
+Required wired actions:
+- Share Passport
+- Settings
+- More/options
+- Edit avatar
+- Edit cover
+- Start verification
+- Review verification
+- Trust Score info
+- Follow/unfollow
+- Message in Telegraph
+- Invite/Plan
+- View all stamps
+- Open stamp detail
+- Switch tabs
+- New Postcard
+- Open postcard
+- Like postcard
+- Comment postcard
+- Postcard menu
+- Open plan
+- Manage plan
+- Join/request plan
+- Learn more verification levels
+- Apply host verification
+- Apply Buddy verification
+
+LOADING STATES
+
+Create skeleton placeholders:
+- Header skeleton
+- Hero skeleton
+- Trust card skeleton
+- Stamp rail skeleton
+- Postcard grid skeleton
+
+Do not show broken blank screen during load.
+
+ERROR STATES
+
+If Passport payload fails:
+Show:
+“Passport couldn’t load”
+“Check your connection and try again.”
+Button:
+“Try again”
+
+If partial data fails:
+- Render available sections.
+- Show inline error only for failed section.
+- Do not crash full screen if postcards fail but profile loads.
+
+EMPTY STATES
+
+No cover photo:
+- Use gradient placeholder.
+
+No avatar:
+- Use initials.
+
+No bio:
+- Owner sees “Add a short travel bio.”
+- Public sees nothing or a minimal placeholder.
+
+No stamps:
+- “Start collecting Passport stamps.”
+
+No postcards:
+- Owner:
+  “Create your first Postcard”
+  Button: “New Postcard”
+- Public:
+  “No public postcards yet.”
+
+No plans:
+- Owner:
+  “No plans yet”
+  Button: “Create a plan”
+- Public:
+  “No public plans right now.”
+
+PERFORMANCE
+
+- Use memoized components for cards.
+- Avoid recalculating formatted dates on every render.
+- Use optimized image loading.
+- Lazy-load large postcard images if the app supports it.
+- Keep screen interactions under 1 second where possible.
+- Do not block initial profile render while optional sections load if the app architecture supports partial fetch.
+
+ACCESSIBILITY
+
+- All buttons need accessibility labels.
+- Verified badge label: “Verified traveler”
+- Trust score label: “Trust Score 4.8 out of 5”
+- Stamp cards should have readable labels.
+- Minimum touch targets: 44px.
+- Text contrast must remain readable on dark background.
+
+TESTING / QA
+
+Add or update tests where the app has test coverage.
+
+Required tests:
+1. Verified user sees:
+   - verified badge
+   - verified traveler stamp
+   - trust score
+   - mini verified stamp in My Stamps
+
+2. Unverified owner sees:
+   - Start Verification CTA
+   - no verified badge
+   - no verified stamp
+
+3. Pending owner sees:
+   - Verification Pending
+   - no verified badge
+   - no Verified Traveler stamp
+
+4. Rejected owner sees:
+   - needs attention card
+   - no public rejection leak
+
+5. Public viewer of rejected user sees:
+   - no rejection reason
+   - no verified stamp
+   - no owner controls
+
+6. Owner sees:
+   - edit avatar
+   - edit cover
+   - settings
+   - New Postcard
+
+7. Public viewer sees:
+   - no edit controls
+   - Follow/Message/Invite only when permitted
+
+8. Private/delayed postcards do not appear publicly.
+
+9. Tabs switch correctly:
+   - All
+   - Stamps
+   - Plans
+   - Postcards
+
+10. No button has empty handler.
+
+11. Stats route actions work.
+
+12. Stamp detail opens.
+
+13. Postcard like toggles and updates count.
+
+14. Follow/unfollow updates count and state.
+
+15. Bottom nav still shows Passport active.
+
+VISUAL QA CHECKLIST
+
+The screen should match this layout order:
+
+1. Dark mobile screen with safe area.
+2. Header:
+   Passport + verified badge.
+   Subtitle below.
+   Share/settings actions right.
+3. Large rounded cover photo hero.
+4. Avatar overlapping cover.
+5. Name, verified badge, location, bio, member since.
+6. Public actions if public viewer.
+7. Trust Score card.
+8. Official Passport Verified stamp.
+9. Stats row.
+10. My Stamps rail with mini verification stamp first.
+11. Segmented tabs.
+12. Postcards grid or selected tab content.
+13. Verification Levels rail.
+14. Bottom nav fixed with Passport active.
+
+Design should feel:
+- premium
+- dark
+- clean
+- travel-native
+- trustworthy
+- not crowded
+- not generic
+- not rebuilt outside current app style
+
+IMPORTANT IMPLEMENTATION SEQUENCE
+
+Do this in order:
+
+1. Locate current Passport/Profile screen files.
+2. Locate current theme tokens/colors.
+3. Locate existing profile API/query hooks.
+4. Locate existing avatar/profile edit flows.
+5. Locate current bottom nav component.
+6. Locate current post/postcard data model.
+7. Locate current trip/event/plan data model.
+8. Locate current trust/verification fields.
+9. Add missing backend-safe fields only if needed.
+10. Create viewer-aware Passport payload mapper.
+11. Build components.
+12. Wire actions.
+13. Add states.
+14. Add tests.
+15. Run typecheck/tests.
+16. Confirm no route/button dead ends.
+
+DO NOT
+
+- Do not create a separate mock Passport page disconnected from app routing.
+- Do not hardcode Maya or fake data in production.
+- Do not change the app’s color scheme.
+- Do not remove existing Passport features unless replacing with wired equivalent.
+- Do not expose sensitive verification data.
+- Do not show rejected/pending verification publicly.
+- Do not let delayed/private posts leak.
+- Do not make verification only a small checkmark.
+- Do not use dead buttons.
+- Do not leave upload buttons unwired.
+- Do not break Pulse, Discovery, Trips, Create, or bottom nav.
+- Do not weaken privacy rules.
+- Do not fake trust score.
+- Do not calculate trust score only on client.
+- Do not introduce a second truth source for verification.
+- Do not bypass existing backend policies.
+
+FINAL ACCEPTANCE CRITERIA
+
+The Passport page is complete only when:
+
+- The mobile UI mirrors the approved Passport design.
+- Current color scheme is preserved.
+- Cover photo, avatar, name, location, bio, trust, verification, stamps, postcards, plans, and levels all render from backend data.
+- Owner controls work.
+- Public viewer controls work.
+- Verification stamp is official-looking and tied to backend truth.
+- My Stamps includes the verification stamp first when verified.
+- Tabs work.
+- Postcards open/like/comment.
+- Plans open/manage/join correctly based on permissions.
+- Private/delayed content does not leak.
+- Every visible button is wired.
+- Loading/empty/error states are handled.
+- Tests pass.
+- Typecheck passes.
+- No app-wide color/theme regression.
+- No dead route.
+- No dead button.
+- No fake production data.
+
+END OF COMMAND.
