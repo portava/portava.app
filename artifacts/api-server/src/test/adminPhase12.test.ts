@@ -332,6 +332,50 @@ function makeSignupStatusFakeClient(opts: { disableSignups?: boolean; inviteOnly
   } as any;
 }
 
+// ── Signup guard fake client ───────────────────────────────────────────────────
+
+const SIGNUP_USER_ID = "ffffffff-0000-0000-0000-000000000099";
+
+function makeSignupFakeClient(opts: {
+  disableSignups?: boolean;
+  flagQueryError?: boolean;
+  createUserError?: { status?: number; message: string } | null;
+}) {
+  const { disableSignups = false, flagQueryError = false, createUserError = null } = opts;
+
+  return {
+    from: (table: string) => {
+      if (table === "feature_flags") {
+        return {
+          select: () => ({
+            eq: (_col: string, val: string) => ({
+              maybeSingle: () => {
+                if (flagQueryError) return { data: null, error: { message: "db error" } };
+                const enabled = val === "disable_signups" ? disableSignups : false;
+                return { data: { flag: val, enabled }, error: null };
+              },
+            }),
+          }),
+        };
+      }
+      const b: any = { select: () => b, eq: () => b, maybeSingle: () => ({ data: null, error: null }) };
+      return b;
+    },
+    auth: {
+      admin: {
+        createUser: async (_opts: any) => {
+          if (createUserError) return { data: null, error: createUserError };
+          return {
+            data: { user: { id: SIGNUP_USER_ID, email: (_opts.email as string) } },
+            error: null,
+          };
+        },
+      },
+    },
+    rpc: async () => ({ data: [], error: null }),
+  } as any;
+}
+
 // ── Rollout fake client (for city_not_available unit test) ────────────────────
 
 function makeRolloutFakeClient(opts: {
@@ -603,6 +647,60 @@ describe("Kill switch: disable_signups + invite_only_beta (GET /auth/signup-stat
     const r = await req("GET", "/auth/signup-status");
     assert.equal(r.status, 200);
     assert.equal(r.body?.inviteOnly, true, "inviteOnly must reflect the invite_only_beta flag");
+  });
+});
+
+describe("Kill switch: disable_signups (POST /auth/signup)", () => {
+  it("returns 403 feature_disabled when disable_signups = true", async () => {
+    const fc = makeSignupFakeClient({ disableSignups: true });
+    _setTestServiceClient(fc);
+    const r = await req("POST", "/auth/signup", { email: "new@example.com", password: "password123" });
+    assert.equal(r.status, 403, `expected 403, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body?.error, "feature_disabled");
+  });
+
+  it("returns 201 and user when disable_signups = false", async () => {
+    const fc = makeSignupFakeClient({ disableSignups: false });
+    _setTestServiceClient(fc);
+    const r = await req("POST", "/auth/signup", { email: "new@example.com", password: "password123" });
+    assert.equal(r.status, 201, `expected 201, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.ok(r.body?.user?.id, "user.id present");
+    assert.ok(r.body?.user?.email, "user.email present");
+  });
+
+  it("is fail-open — signup succeeds when the flag DB query errors", async () => {
+    const fc = makeSignupFakeClient({ flagQueryError: true });
+    _setTestServiceClient(fc);
+    const r = await req("POST", "/auth/signup", { email: "new@example.com", password: "password123" });
+    assert.notEqual(r.status, 403, "flag DB error must not block signup");
+    assert.notEqual(r.body?.error, "feature_disabled");
+    assert.equal(r.status, 201, `expected 201 (fail-open), got ${r.status}: ${JSON.stringify(r.body)}`);
+  });
+
+  it("returns 400 for missing email", async () => {
+    const fc = makeSignupFakeClient({});
+    _setTestServiceClient(fc);
+    const r = await req("POST", "/auth/signup", { password: "password123" });
+    assert.equal(r.status, 400);
+    assert.equal(r.body?.error, "invalid_payload");
+  });
+
+  it("returns 400 for short password", async () => {
+    const fc = makeSignupFakeClient({});
+    _setTestServiceClient(fc);
+    const r = await req("POST", "/auth/signup", { email: "new@example.com", password: "abc" });
+    assert.equal(r.status, 400);
+    assert.equal(r.body?.error, "invalid_payload");
+  });
+
+  it("returns 409 when email is already registered", async () => {
+    const fc = makeSignupFakeClient({
+      createUserError: { status: 422, message: "User already registered" },
+    });
+    _setTestServiceClient(fc);
+    const r = await req("POST", "/auth/signup", { email: "existing@example.com", password: "password123" });
+    assert.equal(r.status, 409, `expected 409 email_taken, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body?.error, "email_taken");
   });
 });
 
