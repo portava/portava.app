@@ -201,6 +201,7 @@ export async function createTrip(input: CreateTripInput): Promise<TripRow | null
       status: input.status ?? 'planning',
       visibility: input.visibility ?? 'private',
       coverUrl: input.coverUrl,
+      tripNotes: input.tripNotes ?? null,
     }),
   });
 

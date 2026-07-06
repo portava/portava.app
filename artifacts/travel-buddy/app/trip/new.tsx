@@ -21,6 +21,7 @@ export default function NewTrip() {
   const [place, setPlace] = useState<Place | null>(null);
   const [startDate, setStartDate] = useState<string | null>(null);
   const [endDate, setEndDate] = useState<string | null>(null);
+  const [tripNotes, setTripNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,6 +56,7 @@ export default function NewTrip() {
         endDate: endDate ?? undefined,
         status: 'planning',
         visibility: 'private',
+        tripNotes: tripNotes.trim() || null,
       });
       if (!trip) { setError('Could not create the trip. Try again.'); return; }
       checkForNewStamps(2000);
@@ -65,7 +67,7 @@ export default function NewTrip() {
       setBusy(false);
       saveLock.current = false;
     }
-  }, [title, place, live, startDate, endDate, checkForNewStamps]);
+  }, [title, place, live, startDate, endDate, tripNotes, checkForNewStamps]);
 
   const startD = startDate ? fromISODate(startDate) : null;
   const endD = endDate ? fromISODate(endDate) : null;
@@ -95,6 +97,21 @@ export default function NewTrip() {
               </Pressable>
             )}
           </Pressable>
+        </View>
+
+        {/* Trip notes */}
+        <View>
+          <Text style={styles.label}>Notes (optional)</Text>
+          <TextInput
+            style={[styles.input, styles.notesInput]}
+            placeholder="Add notes, reminders, or a description…"
+            placeholderTextColor={color.faint}
+            value={tripNotes}
+            onChangeText={setTripNotes}
+            multiline
+            numberOfLines={4}
+            textAlignVertical="top"
+          />
         </View>
 
         {/* Dates */}
@@ -186,6 +203,7 @@ const styles = StyleSheet.create({
   },
   pickerText: { flex: 1, ...t.body, color: color.ink },
   pickerPlaceholder: { color: color.faint },
+  notesInput: { height: 100, paddingTop: space.md },
   error: { ...t.small, color: color.signal, fontWeight: '600' },
   hint: { ...t.small, color: color.mute },
   create: {

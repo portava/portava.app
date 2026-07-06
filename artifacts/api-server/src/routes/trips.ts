@@ -237,7 +237,7 @@ router.post("/trips", async (req, res) => {
     return;
   }
 
-  const { title, destinationCity, destinationCountry, startDate, endDate, visibility, coverUrl } = req.body;
+  const { title, destinationCity, destinationCountry, startDate, endDate, visibility, coverUrl, tripNotes } = req.body;
 
   // Date conflict check — applies even when title/city are absent (draft support)
   if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
@@ -261,6 +261,7 @@ router.post("/trips", async (req, res) => {
       status: computedStatus,
       visibility: visibility ?? "private",
       cover_url: coverUrl ?? null,
+      trip_notes: tripNotes ?? null,
     })
     .select(TRIP_COLUMNS)
     .single();
