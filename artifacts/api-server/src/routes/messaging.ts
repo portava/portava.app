@@ -1463,6 +1463,13 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   if (!body) { sendError(res, 'invalid_payload', 'body is required'); return; }
   if (body.length > 4000) { sendError(res, 'invalid_payload', 'body must be 4000 characters or fewer'); return; }
 
+  // Emergency kill switch: disable_messaging — fail-open on DB error
+  const flagSc = getServiceClient();
+  if (flagSc && await isFlagEnabled(flagSc, 'disable_messaging')) {
+    sendError(res, 'feature_disabled', 'Messaging is temporarily disabled');
+    return;
+  }
+
   const msgTypeRaw = typeof req.body?.msgType === 'string' ? req.body.msgType : 'text';
   const msgType = msgTypeRaw === 'system' ? 'system' : 'text';
   const subtype = typeof req.body?.subtype === 'string' ? req.body.subtype : null;

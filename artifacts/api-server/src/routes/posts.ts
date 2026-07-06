@@ -32,6 +32,7 @@ import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
 
 const router = Router();
 
@@ -210,6 +211,13 @@ router.post("/posts", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
+
+  // Emergency kill switch: disable_posting — fail-open on DB error
+  const flagSc = getServiceClient();
+  if (flagSc && await isFlagEnabled(flagSc, 'disable_posting')) {
+    sendError(res, 'feature_disabled', 'Posting is temporarily disabled');
+    return;
+  }
 
   const parsed = createPostSchema.safeParse(req.body);
   if (!parsed.success) {

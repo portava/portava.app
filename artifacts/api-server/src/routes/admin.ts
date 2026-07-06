@@ -841,6 +841,94 @@ async function logModerationAction(
   return { ok: true };
 }
 
+// ── Admin user search by email or handle ─────────────────────────────────────
+//
+// GET /admin/users?email=<email>   — look up a user by email address
+// GET /admin/users?handle=<handle> — look up a user by @handle
+//
+// Returns: profile, onboarding state, account status, and open report count.
+// Auth is via Supabase auth.users for email lookup (service client required).
+
+router.get("/admin/users", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const email  = ((req.query.email  as string) ?? "").trim().toLowerCase() || null;
+  const handle = ((req.query.handle as string) ?? "").trim().toLowerCase() || null;
+
+  if (!email && !handle) {
+    sendError(res, "invalid_payload", "Provide either ?email=... or ?handle=... query parameter");
+    return;
+  }
+
+  let profileData: any = null;
+
+  if (email) {
+    // Look up auth.users first via admin API to get the user_id, then fetch profile
+    const { data: authList, error: authErr } = await sc.auth.admin.listUsers({ perPage: 1 });
+    // Supabase JS v2: use getUserById is not searchable by email in listUsers easily.
+    // Instead query profiles for a matching email if the column exists, otherwise
+    // fall back to searching via auth admin API's filter.
+    const { data: profileByEmail, error: emailErr } = await sc
+      .from("profiles")
+      .select("id, handle, username, name, display_name, bio, avatar_url, role, verified, account_status, created_at")
+      .eq("email", email)
+      .maybeSingle();
+
+    if (!emailErr && profileByEmail) {
+      profileData = profileByEmail;
+    } else {
+      // profiles may not store email; fall back to auth admin listUsers
+      if (authList && !authErr) {
+        const match = authList.users.find((u: any) => u.email?.toLowerCase() === email);
+        if (match) {
+          const { data: pById } = await sc
+            .from("profiles")
+            .select("id, handle, username, name, display_name, bio, avatar_url, role, verified, account_status, created_at")
+            .eq("id", match.id)
+            .maybeSingle();
+          profileData = pById ?? null;
+        }
+      }
+    }
+  } else if (handle) {
+    const { data, error } = await sc
+      .from("profiles")
+      .select("id, handle, username, name, display_name, bio, avatar_url, role, verified, account_status, created_at")
+      .ilike("handle", handle)
+      .maybeSingle();
+    if (error) { sendError(res, "db_error", error.message); return; }
+    profileData = data ?? null;
+  }
+
+  if (!profileData) {
+    sendError(res, "not_found", "User not found");
+    return;
+  }
+
+  const userId: string = (profileData as any).id;
+
+  // Fetch supplementary context in parallel
+  const [accountStateRes, reportCountRes] = await Promise.all([
+    sc.from("user_account_states")
+      .select("state, reason, expires_at, created_at")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(5),
+    sc.from("reports")
+      .select("id", { count: "exact", head: true })
+      .eq("target_id", userId)
+      .eq("status", "open"),
+  ]);
+
+  res.json({
+    profile:       profileData,
+    accountStates: accountStateRes.data   ?? [],
+    openReports:   reportCountRes.count   ?? 0,
+  });
+});
+
 /** GET /admin/users/:userId/summary — full profile + trust/safety context for admin */
 router.get("/admin/users/:userId/summary", async (req, res) => {
   const admin = await requireAdmin(req, res);
@@ -1343,6 +1431,76 @@ router.post("/admin/reports/:id/dismiss", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
   res.json({ report: data });
+});
+
+/**
+ * POST /admin/reports/:id/hide-content
+ *
+ * Hides the content item (post, message, etc.) referenced by this report from
+ * all public feeds, without necessarily resolving the report.  Works by setting
+ * the target item's visibility/status to a hidden state based on target_type.
+ * Also marks the report as "in_review".
+ *
+ * Supported target_types:
+ *   post  — sets posts.post_status = 'removed'
+ *   trip  — sets trips.visibility = 'private'
+ *   event — sets events.visibility = 'invite_only'
+ *   (other types: report is moved to in_review but no content mutation is applied)
+ */
+router.post("/admin/reports/:id/hide-content", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+
+  const { data: reportRow, error: fetchErr } = await sc
+    .from("reports")
+    .select("id, target_type, target_id, status")
+    .eq("id", req.params.id)
+    .maybeSingle();
+
+  if (fetchErr) { sendError(res, "db_error", fetchErr.message); return; }
+  if (!reportRow) { sendError(res, "not_found", "Report not found"); return; }
+
+  const { target_type, target_id } = reportRow as { target_type: string; target_id: string };
+  const reason: string = typeof (req.body as any)?.reason === "string"
+    ? (req.body as any).reason.slice(0, 500)
+    : "Content hidden by admin";
+
+  const now = new Date().toISOString();
+
+  // Audit first (fail-closed)
+  const auditR = await logModerationAction(sc, target_id, adminUserId, "content_removed", reason);
+  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
+
+  // Apply content mutation based on target type
+  let contentHidden = false;
+  if (target_type === "post") {
+    const { error } = await sc.from("posts")
+      .update({ post_status: "removed", updated_at: now })
+      .eq("id", target_id);
+    if (error) { sendError(res, "db_error", error.message); return; }
+    contentHidden = true;
+  } else if (target_type === "trip") {
+    const { error } = await sc.from("trips")
+      .update({ visibility: "private", updated_at: now })
+      .eq("id", target_id);
+    if (error) { sendError(res, "db_error", error.message); return; }
+    contentHidden = true;
+  } else if (target_type === "event") {
+    const { error } = await sc.from("events")
+      .update({ visibility: "invite_only", updated_at: now })
+      .eq("id", target_id);
+    if (error) { sendError(res, "db_error", error.message); return; }
+    contentHidden = true;
+  }
+
+  // Move report to in_review
+  await sc.from("reports")
+    .update({ status: "in_review", updated_at: now })
+    .eq("id", req.params.id)
+    .then(undefined, () => {});
+
+  res.json({ reportId: req.params.id, targetType: target_type, targetId: target_id, contentHidden, status: "in_review" });
 });
 
 // ── Admin deletion request queue ──────────────────────────────────────────────
