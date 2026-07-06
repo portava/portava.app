@@ -232,8 +232,8 @@ export default function Settings() {
       router.push('/safety-history' as any);
     } else if (label === 'Emergency Contacts') {
       router.push('/settings/emergency-contacts' as any);
-    } else if (label === 'Report history' || label === 'Muted words') {
-      Alert.alert('Coming Soon', `${label} will be available in a future update.`, [{ text: 'OK' }]);
+    } else if (label === 'Report history') {
+      router.push('/report-history' as any);
     } else if (label === 'Compass Preferences') {
       router.push('/compass-preferences' as any);
     } else if (label === 'My Appeals') {
@@ -251,7 +251,7 @@ export default function Settings() {
     await updateTelegraphChatSettings({ [key]: value }).catch(() => {});
   }
 
-  const SAFETY_ITEMS = ['Blocked accounts', 'Muted accounts', 'Restricted accounts', 'Saved profiles', 'Safety & Privacy', 'Safe Return history', 'Emergency Contacts'];
+  const SAFETY_ITEMS = ['Blocked accounts', 'Muted accounts', 'Restricted accounts', 'Saved profiles', 'Safety & Privacy', 'Safe Return history', 'Emergency Contacts', 'Report history'];
   const ACCOUNT_ITEMS = ['Edit profile', 'Notifications', 'Location settings', 'Compass Preferences', 'My Appeals'];
 
   const INTERESTS_OPTIONS = ['beach', 'food', 'nightlife', 'adventure', 'culture', 'wellness', 'photography', 'shopping', 'luxury', 'backpacking'];

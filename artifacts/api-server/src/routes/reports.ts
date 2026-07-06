@@ -207,6 +207,34 @@ router.get("/reports/:id", async (req, res) => {
 });
 
 /* ===========================================================================
+ * GET /me/reports  — list reports filed by the authenticated user
+ * ===========================================================================
+ */
+router.get("/me/reports", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const limit  = Math.min(Number(req.query.limit  ?? 20), 100);
+  const offset = Number(req.query.offset ?? 0);
+
+  const { data, error, count } = await sc
+    .from("reports")
+    .select("id, target_type, target_id, reason_code, reason_detail, severity, status, created_at", { count: "exact" })
+    .eq("reporter_id", user.id)
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) { req.log.error({ err: error }, "me/reports fetch failed"); sendError(res, "db_error", error.message); return; }
+
+  const safe = (data ?? []).map(({ reporter_id: _r, ...rest }: any) => rest);
+  res.status(200).json({ reports: safe, total: count ?? 0 });
+});
+
+/* ===========================================================================
  * GET /admin/reports  — admin: list content reports (read-only)
  * ===========================================================================
  */

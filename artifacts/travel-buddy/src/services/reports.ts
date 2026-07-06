@@ -10,6 +10,42 @@ async function freshToken(): Promise<string | null> {
   return session?.access_token ?? null;
 }
 
+export interface MyReport {
+  id: string;
+  target_type: string;
+  target_id: string;
+  reason_code: string;
+  reason_detail: string | null;
+  severity: string | null;
+  status: string;
+  created_at: string;
+}
+
+export interface MyReportsResult {
+  ok: boolean;
+  reports: MyReport[];
+  total: number;
+  message?: string;
+}
+
+export async function fetchMyReports(opts?: { limit?: number; offset?: number }): Promise<MyReportsResult> {
+  if (!isSupabaseConfigured) return { ok: false, reports: [], total: 0, message: 'Not configured' };
+  const token = await freshToken();
+  if (!token) return { ok: false, reports: [], total: 0, message: 'Not authenticated' };
+  const limit = opts?.limit ?? 20;
+  const offset = opts?.offset ?? 0;
+  try {
+    const res = await fetch(`${apiBase()}/api/me/reports?limit=${limit}&offset=${offset}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return { ok: false, reports: [], total: 0, message: `HTTP ${res.status}` };
+    const json = await res.json();
+    return { ok: true, reports: json.reports ?? [], total: json.total ?? 0 };
+  } catch (e: any) {
+    return { ok: false, reports: [], total: 0, message: e?.message ?? 'Network error' };
+  }
+}
+
 export type ReportReason =
   | 'harassment'
   | 'spam'
