@@ -167,6 +167,7 @@ export interface CreateTripInput {
   status?: TripStatus;
   visibility?: TripVisibility;
   coverUrl?: string;
+  tripNotes?: string | null;
 }
 
 export async function createTrip(input: CreateTripInput): Promise<TripRow | null> {
@@ -225,6 +226,7 @@ export async function updateTrip(id: string, patch: Partial<CreateTripInput & { 
   if (patch.status !== undefined) body.status = patch.status;
   if (patch.visibility !== undefined) body.visibility = patch.visibility;
   if (patch.coverUrl !== undefined) body.coverUrl = patch.coverUrl;
+  if (patch.tripNotes !== undefined) body.tripNotes = patch.tripNotes;
   if (patch.progress !== undefined) body.progress = patch.progress;
   const res = await fetch(`${apiBase}/api/trips/${id}`, {
     method: 'PATCH',

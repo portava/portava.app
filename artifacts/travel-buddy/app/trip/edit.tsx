@@ -35,6 +35,7 @@ export default function EditTrip() {
   const [startDate, setStartDate] = useState<string | null>(null);
   const [endDate, setEndDate] = useState<string | null>(null);
   const [visibility, setVisibility] = useState<TripVisibility>('private');
+  const [tripNotes, setTripNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [calOpen, setCalOpen] = useState(false);
@@ -63,6 +64,7 @@ export default function EditTrip() {
       setStartDate(tr.startDate ?? null);
       setEndDate(tr.endDate ?? null);
       setVisibility((tr.visibility as TripVisibility) ?? 'private');
+      setTripNotes(tr.tripNotes ?? '');
       setLoading(false);
     }).catch(() => { setLoadError('Could not load trip.'); setLoading(false); });
   }, [id, live, userId]);
@@ -88,6 +90,7 @@ export default function EditTrip() {
         startDate: startDate ?? undefined,
         endDate: endDate ?? undefined,
         visibility,
+        tripNotes: tripNotes.trim() || null,
       });
       if (!updated) { setError('Could not save changes. Try again.'); return; }
       router.replace(`/trip/${id}` as any);
@@ -97,7 +100,7 @@ export default function EditTrip() {
       setBusy(false);
       saveLock.current = false;
     }
-  }, [title, place, live, id, startDate, endDate, visibility]);
+  }, [title, place, live, id, startDate, endDate, visibility, tripNotes]);
 
   if (!live) {
     return (
@@ -198,6 +201,20 @@ export default function EditTrip() {
         </View>
 
         <View>
+          <Text style={styles.label}>Trip notes (optional)</Text>
+          <TextInput
+            style={[styles.input, styles.notesInput]}
+            placeholder="Add notes, reminders, or a description…"
+            placeholderTextColor={color.faint}
+            value={tripNotes}
+            onChangeText={setTripNotes}
+            multiline
+            numberOfLines={4}
+            textAlignVertical="top"
+          />
+        </View>
+
+        <View>
           <Text style={styles.label}>Who can see this trip</Text>
           <View style={styles.visRow}>
             {VISIBILITY_OPTIONS.map((opt) => (
@@ -260,6 +277,7 @@ const styles = StyleSheet.create({
   },
   pickerText: { flex: 1, ...t.body, color: color.ink },
   pickerPlaceholder: { color: color.faint },
+  notesInput: { height: 100, paddingTop: space.md },
   visRow: { flexDirection: 'row', gap: space.sm },
   visBtn: {
     flex: 1, paddingVertical: space.sm, borderRadius: radius.md,

@@ -681,6 +681,7 @@ export interface TripDetail {
   timeline: TimelineDay[];
   savedIdeas: SavedIdea[];
   safetyStatus: SafetyStatus;
+  tripNotes?: string | null;
 }
 
 /* ───────────────────────────────────────────────────────────────────────

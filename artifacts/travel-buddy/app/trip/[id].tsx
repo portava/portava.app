@@ -33,12 +33,6 @@ import { updateTrip, createInviteLink } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
 
-// RichText surface note: the TripDetail model (`src/types/models.ts: TripDetail`)
-// does not expose a freeform description/notes field for RichText rendering.
-// The `notes` field exists on `TripPlanItem` (individual plan items) and is wired
-// via the plan-item detail sheets.  If a trip-level description is added to the
-// DB schema and the `TripDetail` type in the future, render it here with:
-//   <RichText content={trip.description} tags={trip.descriptionTags} hashtagUsages={trip.descriptionHashtags} />
 function TripDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
@@ -220,6 +214,7 @@ function TripDetailScreen() {
     timeline: [],
     savedIdeas: [],
     safetyStatus: 'unknown',
+    tripNotes: realTrip.tripNotes ?? null,
   };
 
   const todayDate = new Date().toISOString().slice(0, 10);
@@ -310,6 +305,13 @@ function TripDetailScreen() {
 
       <ScrollView ref={pageScrollRef} contentContainerStyle={{ paddingBottom: space.xxxl }} showsVerticalScrollIndicator={false}>
         <TripHero trip={trip} />
+
+        {/* ── Trip notes ── */}
+        {trip.tripNotes ? (
+          <View style={styles.tripNotesCard}>
+            <Text style={styles.tripNotesText}>{trip.tripNotes}</Text>
+          </View>
+        ) : null}
 
         {/* ── Daily Brief (accepted members only; graceful fallback for others) ── */}
         {live && trip.id ? (
@@ -628,6 +630,8 @@ const styles = StyleSheet.create({
   safeSetupBtnText: { ...t.body, color: color.deep, fontWeight: '600' },
   markCompleteBtn: { marginHorizontal: space.lg, marginTop: space.md, padding: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: color.success, backgroundColor: '#F0FDF4', alignItems: 'center' },
   markCompleteBtnText: { ...t.body, color: color.success, fontWeight: '700' },
+  tripNotesCard: { marginHorizontal: space.lg, marginBottom: space.lg, backgroundColor: color.paperRaised, borderRadius: radius.md, padding: space.lg, borderWidth: 1, borderColor: color.haze },
+  tripNotesText: { ...t.small, color: color.ink, lineHeight: 20 },
 });
 
 const srStyles = StyleSheet.create({
