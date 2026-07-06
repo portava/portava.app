@@ -26,7 +26,7 @@ import { StampsTab } from '../../src/components/StampsTab';
 import { AboutTab } from '../../src/components/AboutTab';
 import { MapTab } from '../../src/components/MapTab';
 import type { PublicProfile, PassportPostcard } from '../../src/types/models';
-import { resolveDisplayName, formatHandle } from '../../src/utils/identity';
+import { resolveDisplayName, formatHandle, resolveAvatarUrl } from '../../src/utils/identity';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 
 type Tab = 'postcards' | 'stamps' | 'map' | 'about';
@@ -82,7 +82,7 @@ export default function PassportDeepLinkScreen() {
         username: card.username,
         displayName: card.displayName,
         bio: card.bio ?? null,
-        avatarUrl: card.avatarUrl,
+        avatarUrl: resolveAvatarUrl(card.avatarUrl),
         homeCity: card.homeCity ?? null,
         homeCountry: card.homeCountry ?? null,
         travelStyle: card.travelStyle ?? null,

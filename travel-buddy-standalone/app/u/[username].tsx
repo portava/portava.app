@@ -332,7 +332,7 @@ function KebabMenu({
     }
   }
 
-  const displayName = name ?? `@${handle}`;
+  const displayName = resolveDisplayName({ name, handle });
 
   return (
     <>

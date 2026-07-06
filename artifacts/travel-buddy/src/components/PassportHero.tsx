@@ -5,6 +5,7 @@ import { Plane, MapPin, MoreHorizontal, Camera } from 'lucide-react-native';
 import type { OwnProfile, PublicProfile } from '../types/models';
 import { PassportMonogramWatermark, PassportInkStamp, PassportHeroBackdrop } from './PassportMarks';
 import { isTravelBuddyVerified, getVerificationOwnerPrompt } from '../lib/verification';
+import { resolveDisplayName, resolveAvatarUrl, fallbackInitials } from '../utils/identity';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import { HighlightRing } from './HighlightRing';
 
@@ -59,9 +60,7 @@ export function PassportHero({
   onHighlightRingPress?: () => void;
   onNewHighlightPress?: () => void;
 }) {
-  const displayName = ('displayName' in profile ? profile.displayName : null) ?? profile.avatarUrl ?? 'Traveler';
-  const name = ('name' in profile && profile.name) ? profile.name : null;
-  const resolvedName = displayName || name || 'Traveler';
+  const resolvedName = resolveDisplayName(profile);
   const username = 'username' in profile ? profile.username : null;
   const bio = profile.bio;
   const homeCity = profile.homeCity;
@@ -69,7 +68,8 @@ export function PassportHero({
   const interests = profile.interests ?? [];
   const shown = interests.slice(0, 3);
   const extra = interests.length - 3;
-  const avatarUrl = profile.avatarUrl;
+  const avatarUrl = resolveAvatarUrl(profile.avatarUrl);
+  const initials = fallbackInitials(profile);
   const isVerified = isTravelBuddyVerified(profile);
   const verificationStatus = 'verificationStatus' in profile ? profile.verificationStatus : undefined;
   const ownerPrompt = isOwner ? getVerificationOwnerPrompt(verificationStatus) : null;
@@ -134,7 +134,7 @@ export function PassportHero({
                 <Image source={{ uri: avatarUrl }} style={styles.photo} />
               ) : (
                 <View style={[styles.photo, styles.photoEmpty]}>
-                  <Text style={{ fontSize: 36 }}>👤</Text>
+                  <Text style={styles.initials}>{initials}</Text>
                 </View>
               )}
             </View>
@@ -249,6 +249,7 @@ const styles = StyleSheet.create({
   },
   photo: { width: '100%', height: '100%' },
   photoEmpty: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0EDE8' },
+  initials: { fontSize: 26, fontWeight: '700', color: color.mute, letterSpacing: 1 },
   cameraOverlay: {
     position: 'absolute', bottom: 4, right: 4,
     backgroundColor: color.ink, borderRadius: 12, padding: 5,

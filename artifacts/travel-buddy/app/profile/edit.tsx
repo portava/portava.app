@@ -16,6 +16,7 @@ import { DatePickerField } from '../../src/components/DatePickerField';
 import type { OwnProfile } from '../../src/types/models';
 import { useLanguagePreference } from '../../src/context/LanguagePreferenceContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import { resolveDisplayName, fallbackInitials } from '../../src/utils/identity';
 import {
   getTagPermission, updateTagPermission,
   type TagPermission, TAG_PERMISSION_OPTIONS,
@@ -633,6 +634,7 @@ export default function EditProfileScreen() {
 
   const avatarSource = form.avatarUri ?? form.avatarUrl ?? null;
   const coverSource = form.coverUri ?? form.coverUrl ?? null;
+  const previewName = resolveDisplayName({ displayName: form.displayName, username: form.username });
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
@@ -646,7 +648,10 @@ export default function EditProfileScreen() {
             <Pressable style={styles.headerBtn} onPress={() => router.back()} hitSlop={8}>
               <ArrowLeft size={22} color={color.ink} />
             </Pressable>
-            <Text style={styles.headerTitle}>Edit Profile</Text>
+            <View style={{ flex: 1, alignItems: 'center' }}>
+              <Text style={styles.headerTitle} numberOfLines={1}>{previewName}</Text>
+              <Text style={styles.headerSubtitle}>Edit Profile</Text>
+            </View>
             <Pressable
               style={[styles.saveBtn, (!canSave || saving) && styles.saveBtnDisabled]}
               onPress={handleSave}
@@ -692,7 +697,9 @@ export default function EditProfileScreen() {
                   <Image source={{ uri: avatarSource }} style={styles.avatar} />
                 ) : (
                   <View style={styles.avatarEmpty}>
-                    <Text style={{ fontSize: 32 }}>👤</Text>
+                    <Text style={styles.avatarInitials}>
+                      {fallbackInitials({ displayName: form.displayName, username: form.username })}
+                    </Text>
                   </View>
                 )}
                 <View style={styles.avatarEditBadge}>
@@ -1237,7 +1244,8 @@ const styles = StyleSheet.create({
     borderBottomColor: color.haze,
   },
   headerBtn: { width: 36, alignItems: 'flex-start' },
-  headerTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700', flex: 1, textAlign: 'center' },
+  headerTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700', textAlign: 'center' },
+  headerSubtitle: { ...t.small, color: color.mute, fontSize: 11, textAlign: 'center', marginTop: 1 },
   saveBtn: {
     backgroundColor: color.ink,
     borderRadius: radius.pill,
@@ -1300,6 +1308,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#F0EDE8',
   },
+  avatarInitials: { fontSize: 22, fontWeight: '700', color: color.mute, letterSpacing: 1 },
   avatarEditBadge: {
     position: 'absolute',
     bottom: 0,
