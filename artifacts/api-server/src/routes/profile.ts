@@ -1209,6 +1209,12 @@ router.patch("/me/privacy", async (req, res) => {
     sc.from("user_privacy_settings")
       .upsert({ user_id: user.id, profile_visibility: syncVisibility, updated_at: now }, { onConflict: "user_id" })
       .then(undefined, () => {});
+
+    // Keep profiles.is_private in sync so discovery/search exclusion is applied immediately
+    sc.from("profiles")
+      .update({ is_private: parsed.data.profile_visibility === "private", updated_at: now })
+      .eq("id", user.id)
+      .then(undefined, (e: any) => req.log.warn({ err: e }, "privacy/patch: failed to sync is_private to profiles"));
   }
 
   res.status(200).json(data);

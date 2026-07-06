@@ -104,7 +104,11 @@ function ActivityCard({
   const handlePress = useCallback(() => {
     if (isUnread) onMarkRead(notification.id);
     if (notification.actionUrl) {
-      router.push(notification.actionUrl as any);
+      try {
+        router.push(notification.actionUrl as any);
+      } catch {
+        Alert.alert('Content unavailable', 'This content is no longer available.', [{ text: 'OK' }]);
+      }
     }
   }, [notification, isUnread, onMarkRead]);
 

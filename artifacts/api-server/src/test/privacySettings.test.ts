@@ -275,5 +275,59 @@ describe("Privacy settings endpoints", () => {
       const r = await req("PATCH", "/api/me/privacy", { profile_visibility: "private" }, "");
       assert.equal(r.status, 401);
     });
+
+    it("syncs profiles.is_private=true when profile_visibility=private (discovery exclusion)", async () => {
+      const profilesUpdated: any[] = [];
+      const fc = buildFakeClient({ hasExistingSettings: true });
+      const origFrom = fc.from.bind(fc);
+      (fc as any).from = (table: string) => {
+        const b = origFrom(table);
+        if (table === "profiles") {
+          const origUpdate = b.update.bind(b);
+          b.update = (patch: any) => {
+            profilesUpdated.push(patch);
+            return origUpdate(patch);
+          };
+        }
+        return b;
+      };
+      _setTestClient(fc as any, true);
+      _setTestServiceClient(fc as any);
+
+      const r = await req("PATCH", "/api/me/privacy", { profile_visibility: "private" });
+      assert.equal(r.status, 200, `unexpected status: ${JSON.stringify(r.body)}`);
+      await new Promise((res) => setTimeout(res, 80));
+      assert.ok(
+        profilesUpdated.some((p: any) => p.is_private === true),
+        "profiles.is_private must be set to true when profile_visibility=private so discovery search excludes the user",
+      );
+    });
+
+    it("syncs profiles.is_private=false when profile_visibility=public (re-enables discovery)", async () => {
+      const profilesUpdated: any[] = [];
+      const fc = buildFakeClient({ hasExistingSettings: true });
+      const origFrom = fc.from.bind(fc);
+      (fc as any).from = (table: string) => {
+        const b = origFrom(table);
+        if (table === "profiles") {
+          const origUpdate = b.update.bind(b);
+          b.update = (patch: any) => {
+            profilesUpdated.push(patch);
+            return origUpdate(patch);
+          };
+        }
+        return b;
+      };
+      _setTestClient(fc as any, true);
+      _setTestServiceClient(fc as any);
+
+      const r = await req("PATCH", "/api/me/privacy", { profile_visibility: "public" });
+      assert.equal(r.status, 200, `unexpected status: ${JSON.stringify(r.body)}`);
+      await new Promise((res) => setTimeout(res, 80));
+      assert.ok(
+        profilesUpdated.some((p: any) => p.is_private === false),
+        "profiles.is_private must be set to false when profile_visibility=public",
+      );
+    });
   });
 });
