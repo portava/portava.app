@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, Pressable, Switch, StyleSheet, TextInput, Alert, ActivityIndicator } from 'react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { Zap, Brain, Globe } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { useSession } from '../../src/context/SessionContext';
@@ -14,11 +14,21 @@ import { SUPPORTED_LANGUAGES } from '../language-picker';
 import { useLanguagePreference } from '../../src/context/LanguagePreferenceContext';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 
+const KILL_SWITCH_FLAGS = [
+  'disable_posting',
+  'disable_messaging',
+  'disable_signups',
+  'disable_rent_buddy_booking',
+  'city_launch_mode',
+  'invite_only_beta',
+];
+
 export default function Settings() {
   const { signOut, isAuthed, configured } = useSession();
   const [isAdmin, setIsAdmin] = useState(false);
   const [accountStatus, setAccountStatus] = useState<string | null>(null);
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
+  const [killSwitchActive, setKillSwitchActive] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -30,6 +40,28 @@ export default function Settings() {
       });
     });
   }, []);
+
+  useFocusEffect(useCallback(() => {
+    let cancelled = false;
+    async function checkKillSwitches() {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+        if (!token) return;
+        const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+        const res = await fetch(`${apiBase}/api/admin/feature-flags`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok || cancelled) return;
+        const body = await res.json();
+        const flags: Array<{ flag: string; enabled: boolean }> = body?.flags ?? [];
+        const active = flags.some((f) => KILL_SWITCH_FLAGS.includes(f.flag) && f.enabled);
+        if (!cancelled) setKillSwitchActive(active);
+      } catch { }
+    }
+    checkKillSwitches();
+    return () => { cancelled = true; };
+  }, []));
 
   const [telegraphDM, setTelegraphDM] = useState(true);
   const [telegraphTrip, setTelegraphTrip] = useState(true);
@@ -499,10 +531,11 @@ export default function Settings() {
           <View style={{ gap: space.sm }}>
             <Text style={styles.h}>Admin</Text>
             <Pressable
-              style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
+              style={({ pressed }) => [styles.row, styles.rowInline, pressed && { opacity: layout.pressedOpacity }]}
               onPress={() => router.push('/admin/feature-flags' as any)}
             >
               <Text style={styles.item}>Feature Flags</Text>
+              {killSwitchActive && <View style={styles.killBadge} />}
             </Pressable>
             {rentBuddyEnabled && (
               <Pressable
@@ -654,6 +687,8 @@ const styles = StyleSheet.create({
   resetText: { ...t.bodyStrong, color: color.signal, fontSize: 13 },
   resetSub: { ...t.small, color: color.mute, fontSize: 11, lineHeight: 16 },
   row: { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, padding: space.lg },
+  rowInline: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  killBadge: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#E03131' },
   item: { ...t.body, color: color.ink },
   logout: { color: color.signal, fontWeight: '700' },
   langRow: {
