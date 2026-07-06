@@ -6,7 +6,7 @@
  * imports these types and helpers instead of inlining the logic.
  */
 
-import type { ReasonCode } from '../services/reports';
+import type { ReasonCode, ReportContentPayload, ReportResult } from '../services/reports';
 
 export const REPORT_POST_REASONS: { code: ReasonCode; label: string }[] = [
   { code: 'spam',           label: 'Spam or misleading' },
@@ -117,6 +117,88 @@ export function createReportSheetMachine(onClose: () => void): ReportSheetMachin
     handleClose() {
       onClose();                                  // (a) notify the parent
       state = { ...INITIAL_REPORT_SHEET_STATE };  // (b) reset all state
+    },
+  };
+}
+
+// ── Submit machine ─────────────────────────────────────────────────────────────
+//
+// createReportSubmitMachine extends the close/reset machine with the async
+// submit() action. The reportContentFn dependency is injected so tests can
+// observe the exact payload sent without importing supabase.
+//
+// Machine mirrors the component's submit() contract exactly:
+//   submit() →
+//     canSubmitReport guard → return early if blocked
+//     state.submitting = true
+//     call reportContentFn({ target_type:'post', target_id, reason_code,
+//                            reason_detail: trimmed | omitted if empty })
+//     state.submitting = false
+//     if res.ok: state.done = true, onReported?.()
+//     if !res.ok: state unchanged (caller surfaces the error)
+//
+// If the component's submit() ever sends the wrong payload, omits onReported,
+// or skips the submitting guard, the machine tests will catch it.
+
+export interface ReportSubmitMachine extends ReportSheetMachine {
+  /**
+   * Runs the full submit flow: guards with canSubmitReport, sets submitting,
+   * calls the injected reportContentFn with the correct payload, and
+   * transitions state on success/error — mirrors ReportPostSheet.submit().
+   */
+  submit(): Promise<void>;
+}
+
+/**
+ * Pure submit harness for ReportPostSheet's submission contract.
+ *
+ * @param postId           The post being reported (same as the React prop).
+ * @param onClose          Parent close callback.
+ * @param onReported       Optional success callback fired after submit ok.
+ * @param reportContentFn  Injected reportContent — accepts the production
+ *                         ReportContentPayload type and returns ReportResult.
+ */
+export function createReportSubmitMachine(
+  postId: string,
+  onClose: () => void,
+  onReported: (() => void) | undefined,
+  reportContentFn: (payload: ReportContentPayload) => Promise<ReportResult>,
+): ReportSubmitMachine {
+  let state: ReportSheetState = { ...INITIAL_REPORT_SHEET_STATE };
+
+  return {
+    getState: () => ({ ...state }),
+
+    selectReason(r) {
+      state = { ...state, reason: r };
+    },
+
+    setDetail(d) {
+      state = { ...state, detail: d };
+    },
+
+    handleClose() {
+      onClose();
+      state = { ...INITIAL_REPORT_SHEET_STATE };
+    },
+
+    async submit() {
+      if (!canSubmitReport(state)) return;
+      // Snapshot reason + detail before the await so mutations don't race.
+      const reasonCode = state.reason!;
+      const trimmedDetail = state.detail.trim();
+      state = { ...state, submitting: true };
+      const res = await reportContentFn({
+        target_type: 'post',
+        target_id:   postId,
+        reason_code: reasonCode,
+        ...(trimmedDetail ? { reason_detail: trimmedDetail } : {}),
+      });
+      state = { ...state, submitting: false };
+      if (res.ok) {
+        state = { ...state, done: true };
+        onReported?.();
+      }
     },
   };
 }

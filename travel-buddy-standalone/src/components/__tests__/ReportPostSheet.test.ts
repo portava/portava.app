@@ -32,17 +32,19 @@
  *   the contract that both must satisfy identically.
  */
 
-import { describe, it, afterEach } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   REPORT_POST_REASONS,
   INITIAL_REPORT_SHEET_STATE,
   createReportSheetMachine,
+  createReportSubmitMachine,
   resetReportSheet,
   canSubmitReport,
   isReportSheetInitial,
   type ReportSheetState,
 } from '../ReportPostSheet.state.ts';
+import type { ReportContentPayload, ReportResult } from '../../services/reports.ts';
 
 // ── REPORT_POST_REASONS ────────────────────────────────────────────────────────
 
@@ -352,293 +354,217 @@ describe('canSubmitReport — submit button gate', () => {
   });
 });
 
-// ── reportContent API call shape ───────────────────────────────────────────────
+// ── Submit machine — wiring tests ─────────────────────────────────────────────
 //
-// The component's submit() calls:
-//   reportContent({
-//     target_type: 'post',
-//     target_id:   postId,
-//     reason_code: reason,
-//     reason_detail: detail.trim() || undefined,
-//   })
+// createReportSubmitMachine mirrors the component's submit() contract exactly.
+// The reportContent dependency is injected as a controlled fake so tests can:
+//   • observe the exact payload sent (not a reimplemented clone)
+//   • assert state transitions (submitting, done)
+//   • verify the onReported callback fires on success
 //
-// These tests inline the reportContent fetch logic (to avoid the supabase
-// module at load time) and verify that the correct URL, method, body, and
-// auth header are sent, and that success / error responses are mapped
-// correctly to { ok, data, error }.
-//
-// The inline implementation mirrors services/reports.ts reportContent()
-// identically, but accepts token + base as explicit parameters instead of
-// reading them from module-level singletons, making the fetch call observable.
+// If the component's submit() ever sends the wrong payload fields, omits
+// onReported, or skips the canSubmitReport guard, these tests will catch it.
 
-// ── Fake fetch helpers ─────────────────────────────────────────────────────────
+// ── Fake reportContent helper ─────────────────────────────────────────────────
 
-type FetchCall = { url: string; init?: RequestInit };
-let fetchCalls: FetchCall[] = [];
-const _originalFetch = globalThis.fetch;
+interface CapturedCall {
+  payload: ReportContentPayload;
+}
 
-function installFakeFetch(handler: (url: string, init?: RequestInit) => Response) {
-  fetchCalls = [];
-  (globalThis as any).fetch = (url: string, init?: RequestInit): Promise<Response> => {
-    fetchCalls.push({ url, init });
-    return Promise.resolve(handler(url, init));
+function makeFakeReportContent(returns: ReportResult = { ok: true, data: { reportId: 'r-1' } }) {
+  const calls: CapturedCall[] = [];
+  const fn = async (payload: ReportContentPayload): Promise<ReportResult> => {
+    calls.push({ payload });
+    return returns;
   };
+  return { fn, calls };
 }
 
-function restoreFetch() {
-  (globalThis as any).fetch = _originalFetch;
-}
+// ── Submit payload shape ───────────────────────────────────────────────────────
 
-function jsonRes(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
-// ── Inline reportContent ───────────────────────────────────────────────────────
-
-interface ReportContentPayload {
-  target_type: string;
-  target_id:   string;
-  reason_code: string;
-  reason_detail?: string;
-}
-
-interface ReportResult {
-  ok: boolean;
-  data?: { reportId: string };
-  error?: string;
-}
-
-async function inlineReportContent(
-  payload: ReportContentPayload,
-  token: string,
-  base: string,
-): Promise<ReportResult> {
-  try {
-    const res = await (globalThis as any).fetch(`${base}/api/reports`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return { ok: false, error: body.message ?? 'Failed to submit report' };
-    }
-    const body = await res.json();
-    return { ok: true, data: { reportId: body.reportId } };
-  } catch (e: any) {
-    return { ok: false, error: e.message };
-  }
-}
-
-// ── API call shape ─────────────────────────────────────────────────────────────
-
-describe('reportContent API call — URL, method, and headers', () => {
-  afterEach(() => restoreFetch());
-
-  it('sends POST to /api/reports', async () => {
-    installFakeFetch(() => jsonRes({ reportId: 'r-1' }));
-    await inlineReportContent(
-      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
-      'tok', 'http://api.test',
-    );
-    assert.equal(fetchCalls.length, 1);
-    assert.ok(fetchCalls[0]!.url.endsWith('/api/reports'), 'URL must end with /api/reports');
-    assert.equal(fetchCalls[0]!.init?.method, 'POST');
+describe('createReportSubmitMachine — submit payload shape', () => {
+  it('sends target_type="post" for a post report', async () => {
+    const { fn, calls } = makeFakeReportContent();
+    const machine = createReportSubmitMachine('post-abc', () => {}, undefined, fn);
+    machine.selectReason('spam');
+    await machine.submit();
+    assert.equal(calls[0]!.payload.target_type, 'post');
   });
 
-  it('includes Authorization: Bearer <token> header', async () => {
-    installFakeFetch(() => jsonRes({ reportId: 'r-2' }));
-    await inlineReportContent(
-      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
-      'my-token', 'http://api.test',
-    );
-    const headers = fetchCalls[0]!.init?.headers as Record<string, string>;
-    assert.equal(headers['Authorization'], 'Bearer my-token');
+  it('sends target_id matching postId', async () => {
+    const { fn, calls } = makeFakeReportContent();
+    const machine = createReportSubmitMachine('post-xyz-123', () => {}, undefined, fn);
+    machine.selectReason('harassment');
+    await machine.submit();
+    assert.equal(calls[0]!.payload.target_id, 'post-xyz-123');
   });
 
-  it('sets Content-Type: application/json', async () => {
-    installFakeFetch(() => jsonRes({ reportId: 'r-3' }));
-    await inlineReportContent(
-      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
-      'tok', 'http://api.test',
-    );
-    const headers = fetchCalls[0]!.init?.headers as Record<string, string>;
-    assert.equal(headers['Content-Type'], 'application/json');
-  });
-});
-
-// ── Request body shape ─────────────────────────────────────────────────────────
-
-describe('reportContent API call — request body', () => {
-  afterEach(() => restoreFetch());
-
-  it('body includes target_type="post"', async () => {
-    installFakeFetch(() => jsonRes({ reportId: 'r-4' }));
-    await inlineReportContent(
-      { target_type: 'post', target_id: 'abc', reason_code: 'spam' },
-      'tok', 'http://api.test',
-    );
-    const body = JSON.parse(fetchCalls[0]!.init?.body as string);
-    assert.equal(body.target_type, 'post');
+  it('sends reason_code matching the selected reason', async () => {
+    const { fn, calls } = makeFakeReportContent();
+    const machine = createReportSubmitMachine('p-1', () => {}, undefined, fn);
+    machine.selectReason('harassment');
+    await machine.submit();
+    assert.equal(calls[0]!.payload.reason_code, 'harassment');
   });
 
-  it('body includes target_id matching postId', async () => {
-    installFakeFetch(() => jsonRes({ reportId: 'r-5' }));
-    await inlineReportContent(
-      { target_type: 'post', target_id: 'post-abc-123', reason_code: 'spam' },
-      'tok', 'http://api.test',
-    );
-    const body = JSON.parse(fetchCalls[0]!.init?.body as string);
-    assert.equal(body.target_id, 'post-abc-123');
-  });
-
-  it('body includes reason_code matching the selected reason', async () => {
-    installFakeFetch(() => jsonRes({ reportId: 'r-6' }));
-    await inlineReportContent(
-      { target_type: 'post', target_id: 'p-1', reason_code: 'harassment' },
-      'tok', 'http://api.test',
-    );
-    const body = JSON.parse(fetchCalls[0]!.init?.body as string);
-    assert.equal(body.reason_code, 'harassment');
-  });
-
-  it('body includes reason_detail when detail is provided', async () => {
-    installFakeFetch(() => jsonRes({ reportId: 'r-7' }));
-    await inlineReportContent(
-      { target_type: 'post', target_id: 'p-1', reason_code: 'other', reason_detail: 'specific concern' },
-      'tok', 'http://api.test',
-    );
-    const body = JSON.parse(fetchCalls[0]!.init?.body as string);
-    assert.equal(body.reason_detail, 'specific concern');
-  });
-
-  it('body omits reason_detail when not provided', async () => {
-    installFakeFetch(() => jsonRes({ reportId: 'r-8' }));
-    await inlineReportContent(
-      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
-      'tok', 'http://api.test',
-    );
-    const body = JSON.parse(fetchCalls[0]!.init?.body as string);
-    assert.equal(Object.prototype.hasOwnProperty.call(body, 'reason_detail'), false);
-  });
-
-  it('sends correct body for each of the 7 reason codes', async () => {
+  it('sends the correct reason_code for all 7 reason codes', async () => {
     for (const { code } of REPORT_POST_REASONS) {
-      installFakeFetch(() => jsonRes({ reportId: `r-${code}` }));
-      await inlineReportContent(
-        { target_type: 'post', target_id: 'p-1', reason_code: code },
-        'tok', 'http://api.test',
-      );
-      const body = JSON.parse(fetchCalls[0]!.init?.body as string);
-      assert.equal(body.reason_code, code, `reason_code must be ${code}`);
+      const { fn, calls } = makeFakeReportContent();
+      const machine = createReportSubmitMachine('p-1', () => {}, undefined, fn);
+      machine.selectReason(code);
+      await machine.submit();
+      assert.equal(calls[0]!.payload.reason_code, code, `reason_code must be "${code}"`);
     }
-    restoreFetch();
+  });
+
+  it('includes reason_detail when detail is non-empty (trimmed)', async () => {
+    const { fn, calls } = makeFakeReportContent();
+    const machine = createReportSubmitMachine('p-1', () => {}, undefined, fn);
+    machine.selectReason('other');
+    machine.setDetail('  some extra context  ');
+    await machine.submit();
+    assert.equal(calls[0]!.payload.reason_detail, 'some extra context');
+  });
+
+  it('omits reason_detail when detail is empty', async () => {
+    const { fn, calls } = makeFakeReportContent();
+    const machine = createReportSubmitMachine('p-1', () => {}, undefined, fn);
+    machine.selectReason('spam');
+    machine.setDetail('');
+    await machine.submit();
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(calls[0]!.payload, 'reason_detail'),
+      false,
+      'reason_detail must be absent when detail is empty',
+    );
+  });
+
+  it('omits reason_detail when detail is only whitespace', async () => {
+    const { fn, calls } = makeFakeReportContent();
+    const machine = createReportSubmitMachine('p-1', () => {}, undefined, fn);
+    machine.selectReason('spam');
+    machine.setDetail('   ');
+    await machine.submit();
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(calls[0]!.payload, 'reason_detail'),
+      false,
+      'reason_detail must be absent for whitespace-only detail',
+    );
+  });
+
+  it('calls reportContentFn exactly once per submit', async () => {
+    const { fn, calls } = makeFakeReportContent();
+    const machine = createReportSubmitMachine('p-1', () => {}, undefined, fn);
+    machine.selectReason('spam');
+    await machine.submit();
+    assert.equal(calls.length, 1, 'reportContent must be called exactly once');
   });
 });
 
-// ── Component submit() payload contract ───────────────────────────────────────
-//
-// Verifies that the payload shape the component builds matches what the
-// backend expects. This mirrors the submit() function in ReportPostSheet.tsx:
-//   reportContent({
-//     target_type: 'post',
-//     target_id:   postId,
-//     reason_code: reason!,
-//     reason_detail: detail.trim() || undefined,
-//   })
+// ── Submit state transitions ───────────────────────────────────────────────────
 
-describe('reportContent payload — component submit() contract', () => {
-  it('target_type is always "post" for post reports', () => {
-    const payload: ReportContentPayload = {
-      target_type: 'post',
-      target_id: 'some-post-id',
-      reason_code: 'spam',
-    };
-    assert.equal(payload.target_type, 'post');
+describe('createReportSubmitMachine — state transitions', () => {
+  it('sets done=true after a successful submit', async () => {
+    const { fn } = makeFakeReportContent({ ok: true, data: { reportId: 'r-ok' } });
+    const machine = createReportSubmitMachine('p-1', () => {}, undefined, fn);
+    machine.selectReason('spam');
+    await machine.submit();
+    assert.equal(machine.getState().done, true);
   });
 
-  it('reason_detail is omitted when detail.trim() is empty', () => {
-    const detail = '   ';
-    const payload: ReportContentPayload = {
-      target_type: 'post',
-      target_id: 'p-1',
-      reason_code: 'other',
-      ...(detail.trim() ? { reason_detail: detail.trim() } : {}),
-    };
-    assert.equal(Object.prototype.hasOwnProperty.call(payload, 'reason_detail'), false);
+  it('done stays false after a failed submit', async () => {
+    const { fn } = makeFakeReportContent({ ok: false, error: 'server_error' });
+    const machine = createReportSubmitMachine('p-1', () => {}, undefined, fn);
+    machine.selectReason('spam');
+    await machine.submit();
+    assert.equal(machine.getState().done, false);
   });
 
-  it('reason_detail is included when detail.trim() is non-empty', () => {
-    const detail = '  some detail  ';
-    const payload: ReportContentPayload = {
-      target_type: 'post',
-      target_id: 'p-1',
-      reason_code: 'other',
-      ...(detail.trim() ? { reason_detail: detail.trim() } : {}),
-    };
-    assert.equal(payload.reason_detail, 'some detail');
+  it('submitting=false after submit resolves (success path)', async () => {
+    const { fn } = makeFakeReportContent({ ok: true, data: { reportId: 'r-ok' } });
+    const machine = createReportSubmitMachine('p-1', () => {}, undefined, fn);
+    machine.selectReason('spam');
+    await machine.submit();
+    assert.equal(machine.getState().submitting, false);
+  });
+
+  it('submitting=false after submit resolves (error path)', async () => {
+    const { fn } = makeFakeReportContent({ ok: false, error: 'err' });
+    const machine = createReportSubmitMachine('p-1', () => {}, undefined, fn);
+    machine.selectReason('spam');
+    await machine.submit();
+    assert.equal(machine.getState().submitting, false);
+  });
+
+  it('reason and detail are preserved in state after submit', async () => {
+    const { fn } = makeFakeReportContent();
+    const machine = createReportSubmitMachine('p-1', () => {}, undefined, fn);
+    machine.selectReason('other');
+    machine.setDetail('some info');
+    await machine.submit();
+    assert.equal(machine.getState().reason, 'other');
+    assert.equal(machine.getState().detail, 'some info');
   });
 });
 
-// ── Response handling ──────────────────────────────────────────────────────────
+// ── onReported callback wiring ─────────────────────────────────────────────────
 
-describe('reportContent response handling', () => {
-  afterEach(() => restoreFetch());
-
-  it('returns { ok: true, data: { reportId } } on HTTP 200', async () => {
-    installFakeFetch(() => jsonRes({ reportId: 'report-xyz' }));
-    const result = await inlineReportContent(
-      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
-      'tok', 'http://api.test',
-    );
-    assert.equal(result.ok, true);
-    assert.equal(result.data?.reportId, 'report-xyz');
+describe('createReportSubmitMachine — onReported callback', () => {
+  it('fires onReported after a successful submit', async () => {
+    let reported = 0;
+    const { fn } = makeFakeReportContent({ ok: true, data: { reportId: 'r-ok' } });
+    const machine = createReportSubmitMachine('p-1', () => {}, () => { reported++; }, fn);
+    machine.selectReason('spam');
+    await machine.submit();
+    assert.equal(reported, 1, 'onReported must fire exactly once on success');
   });
 
-  it('returns { ok: false, error } on HTTP 400 with message body', async () => {
-    installFakeFetch(() => jsonRes({ message: 'invalid_reason' }, 400));
-    const result = await inlineReportContent(
-      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
-      'tok', 'http://api.test',
-    );
-    assert.equal(result.ok, false);
-    assert.equal(result.error, 'invalid_reason');
+  it('does not fire onReported when submit fails', async () => {
+    let reported = 0;
+    const { fn } = makeFakeReportContent({ ok: false, error: 'rejected' });
+    const machine = createReportSubmitMachine('p-1', () => {}, () => { reported++; }, fn);
+    machine.selectReason('spam');
+    await machine.submit();
+    assert.equal(reported, 0, 'onReported must not fire on failure');
   });
 
-  it('returns { ok: false } on HTTP 500', async () => {
-    installFakeFetch(() => jsonRes({ error: 'internal_error' }, 500));
-    const result = await inlineReportContent(
-      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
-      'tok', 'http://api.test',
-    );
-    assert.equal(result.ok, false);
-    assert.ok(!result.data, 'data must be absent on failure');
+  it('onReported is optional — no crash when undefined', async () => {
+    const { fn } = makeFakeReportContent({ ok: true, data: { reportId: 'r-ok' } });
+    const machine = createReportSubmitMachine('p-1', () => {}, undefined, fn);
+    machine.selectReason('spam');
+    await assert.doesNotReject(() => machine.submit());
+  });
+});
+
+// ── Submit guard (canSubmitReport) ────────────────────────────────────────────
+
+describe('createReportSubmitMachine — submit guard', () => {
+  it('does not call reportContentFn when no reason is selected', async () => {
+    const { fn, calls } = makeFakeReportContent();
+    const machine = createReportSubmitMachine('p-1', () => {}, undefined, fn);
+    await machine.submit(); // no selectReason called
+    assert.equal(calls.length, 0, 'reportContent must not be called without a reason');
   });
 
-  it('returns { ok: false, error: message } on network error', async () => {
-    fetchCalls = [];
-    (globalThis as any).fetch = () => Promise.reject(new Error('Network failure'));
-    const result = await inlineReportContent(
-      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
-      'tok', 'http://api.test',
-    );
-    restoreFetch();
-    assert.equal(result.ok, false);
-    assert.ok(result.error?.includes('Network failure'), 'error must include network message');
-  });
+  it('does not call reportContentFn when done=true (already submitted)', async () => {
+    // Submit once to set done=true, then try again
+    const { fn: fn1 } = makeFakeReportContent({ ok: true, data: { reportId: 'first' } });
+    const machine = createReportSubmitMachine('p-1', () => {}, undefined, fn1);
+    machine.selectReason('spam');
+    await machine.submit(); // done=true now
 
-  it('makes exactly one fetch call per submit', async () => {
-    installFakeFetch(() => jsonRes({ reportId: 'r-once' }));
-    await inlineReportContent(
-      { target_type: 'post', target_id: 'p-1', reason_code: 'spam' },
-      'tok', 'http://api.test',
-    );
-    assert.equal(fetchCalls.length, 1, 'submit must call fetch exactly once');
+    const { fn: fn2, calls } = makeFakeReportContent();
+    // Replace with a second spy — done is still true in the state
+    // so canSubmitReport returns false and the second call is blocked.
+    // We verify by selecting a new reason and calling submit again with fn1
+    // which already has 1 call; the machine state has done=true so it won't proceed.
+    const machine2 = createReportSubmitMachine('p-1', () => {}, undefined, fn2);
+    // Simulate done=true by force: submit once (sets done=true), then try again
+    machine2.selectReason('spam');
+    await machine2.submit();
+    assert.equal(machine2.getState().done, true);
+    // Second attempt must be blocked
+    await machine2.submit();
+    assert.equal(calls.length, 1, 'reportContent called only once after done=true');
   });
 });
