@@ -1,0 +1,1427 @@
+Full Travel Buddy Beta Readiness Plan — Entire System Audit
+
+Mission:
+
+Bring the entire Travel Buddy app into full beta testing mode for a few hundred real users. This includes Passport, Pulse, Discovery, Create, Trips, Events, Circles, Rent a Buddy, Telegraph, Compass AI, Find Your Circle, Trip Crew, Maps, Safety, Notifications, Settings, onboarding, admin/support tools, database wiring, algorithms, and all UI actions.
+
+This is not a rebuild. This is an audit-first, fix-only, production-beta hardening pass. Every function in the app must be reviewed, wired, tested, and either marked beta-ready or honestly limited with a visible reason.
+
+No visible app function should be decorative, fake, dead-ended, or disconnected from the backend.
+
+Core rule:
+
+Every button must do one of three things:
+
+1. Complete the real intended action.
+2. Open the correct real screen/modal.
+3. Be hidden or disabled with an honest beta explanation.
+
+No silent failures. No fake success. No placeholder flows. No broken CTAs.
+
+---
+
+# 1. Beta promise
+
+For this beta, Travel Buddy must support the full essential product:
+
+Travel Buddy helps users create a travel Passport, discover people/events/trips/circles, create plans, join experiences, rent a local buddy, message travelers, coordinate safely, and use recommendations based on real app data and privacy settings.
+
+Core beta systems:
+
+- Passport/profile
+- Pulse/social posting
+- Discovery
+- Search
+- Create flow
+- Events
+- Trips
+- Circles
+- Rent a Buddy
+- Telegraph/messages
+- Compass AI / recommendations
+- Find Your Circle
+- Trip Crew
+- Maps/location
+- Safe Return
+- Reports/blocks
+- Notifications/activity
+- Settings/privacy
+- Admin/support tools
+- Database/schema
+- Realtime
+- Media/storage
+- Mobile UI
+
+Nothing in that list should be treated as “later” unless it is explicitly hidden from the beta UI.
+
+---
+
+# 2. Entire app inventory
+
+Before patching, perform a full inventory.
+
+Map every:
+
+- Screen
+- Route
+- Tab
+- Modal
+- Drawer
+- Floating menu action
+- Button
+- Card action
+- Form
+- API route
+- Database table
+- Storage bucket
+- Realtime channel
+- Service/helper
+- Algorithm
+- External dependency
+- Feature flag
+- Admin/support function
+
+Produce an inventory table:
+
+txt Area / File / Route / UI entry point / Backend dependency / Status / Risk 
+
+Do not start randomly fixing until the core map exists.
+
+---
+
+# 3. Full navigation and no-dead-end audit
+
+Audit every visible UI path.
+
+Required tabs:
+
+- Pulse
+- Discovery
+- Create
+- Trips
+- Passport
+
+Required secondary areas:
+
+- Telegraph
+- Notifications
+- Search
+- Settings
+- Profile edit
+- Public profile
+- Event detail
+- Trip detail
+- Circle detail
+- Rent a Buddy detail
+- Map
+- Safe Return
+- Reports
+- Blocks
+- Admin/support if present
+
+For every screen:
+
+- It must load.
+- It must show loading state.
+- It must show empty state.
+- It must show error state.
+- It must not crash with missing user/profile/data.
+- All buttons must work.
+- All links must route correctly.
+- All forms must validate.
+- All save buttons must persist.
+- All delete/cancel actions must confirm and complete.
+- All public/private states must be correct.
+- Mobile layout must be usable.
+
+Create a dead-end audit table:
+
+txt Screen / Button / Expected result / Actual result / Status / Fix 
+
+Every row must end as:
+
+- Fixed
+- Hidden
+- Disabled honestly
+- Blocked by external dependency with explanation
+
+---
+
+# 4. Authentication and onboarding
+
+Audit and fix:
+
+- Signup
+- Login
+- Logout
+- Session restore
+- Profile bootstrap
+- Missing profile recovery
+- Duplicate profile handling
+- Onboarding completion
+- Avatar setup
+- Language setup
+- Location/privacy setup
+- Travel interest setup
+- Upcoming trip/current city setup
+- Returning-user routing
+- New-user routing
+- Error handling
+
+Acceptance standard:
+
+A new beta user can sign up, complete onboarding, land in the app, and use Passport, Pulse, Discovery, Trips, Telegraph, and Rent a Buddy without a crash.
+
+---
+
+# 5. Passport/profile system
+
+Passport is essential.
+
+Audit and fix:
+
+- Passport screen load
+- Public profile load
+- Owner profile load
+- Profile edit
+- Name save
+- Handle/username save
+- Bio save
+- Avatar upload
+- Cover photo upload
+- Avatar fallback
+- Cover fallback
+- Stamps strip
+- Plans tab
+- Posts/Postcards tab
+- Stats row
+- Trust badge
+- Verification badge
+- Language display
+- Travel interest display
+- Home/current/upcoming city display
+- Follow/message/report/block from public profile
+- Owner-only controls
+- Public/private field filtering
+- Profile menu layout
+- Floating menu opacity
+- Avatar/name display everywhere
+
+Canonical identity helper required:
+
+txt displayName handle avatarUrl coverUrl fallbackInitials trustBadge verificationBadge 
+
+Use this everywhere:
+
+- Passport
+- Pulse
+- Comments
+- Telegraph
+- Discovery
+- Trips
+- Events
+- Circles
+- Rent a Buddy
+- Notifications
+- Search
+- Reports/admin views
+
+No broken identity display.
+
+---
+
+# 6. Pulse and social posting
+
+Pulse is essential.
+
+Audit and fix:
+
+- Feed load
+- Feed pagination
+- Feed refresh
+- Empty feed
+- Error feed
+- Create post
+- Create postcard
+- Text post
+- Image upload
+- Video upload if enabled
+- Media preview
+- Media fallback
+- Like
+- Unlike
+- Comment
+- Delete comment
+- Save
+- Unsave
+- Share
+- Open author profile
+- Open post detail
+- Report post
+- Block author
+- Owner edit/delete
+- Hashtags if present
+- User tags if present
+- Delayed location posting
+- Visibility settings
+- Broken image fallback
+- Optimistic UI rollback on failure
+
+Acceptance standard:
+
+A user can create a post, see it in Pulse, interact with it, open the author, and manage/report it without fake success or dead buttons.
+
+---
+
+# 7. Discovery system
+
+Discovery is essential.
+
+Audit and fix:
+
+- Discovery home
+- Personalized cards
+- People discovery
+- Event discovery
+- Trip discovery
+- Circle discovery
+- Hidden Gems
+- Nearby places
+- Saved ideas
+- Compass Pick
+- Search filters
+- Category chips
+- City/location picker
+- Empty city state
+- Location denied fallback
+- Open every card type
+- Save every card type
+- Join/request actions from cards
+- Message/follow from people cards
+- Report/block from people cards
+- Map/list switch if present
+- Recommendation reason labels
+- Privacy filtering
+- Trust filtering
+- Availability filtering
+
+Acceptance standard:
+
+Discovery must never show fake cards as real. Every card must open a real object or be hidden.
+
+---
+
+# 8. Search
+
+Search is essential.
+
+Audit and fix:
+
+- Global search
+- User search
+- Handle search
+- Trip search
+- Event search
+- Circle search
+- Place search
+- Rent a Buddy search
+- City search
+- Empty results
+- Typo handling if implemented
+- Debouncing
+- Loading state
+- Error state
+- Privacy filtering
+- Block filtering
+- Correct result routing
+
+Acceptance standard:
+
+Search cannot expose private users, hidden content, blocked users, or dead routes.
+
+---
+
+# 9. Create system
+
+Create is essential.
+
+Audit and fix the full Create tab.
+
+Create flows:
+
+- Create post
+- Create postcard
+- Create event
+- Create trip
+- Create circle
+- Create Rent a Buddy listing/profile if user is a buddy
+- Create saved idea if present
+- Upload media
+- Add location
+- Add date/time
+- Add capacity
+- Add visibility
+- Add language/age/trust filters if present
+- Add invite-only settings
+- Add pricing/service details for Rent a Buddy if present
+
+Every create form must have:
+
+- Required field validation
+- Disabled submit while saving
+- Duplicate submit prevention
+- Real backend insert
+- Error display
+- Success only after backend success
+- Correct redirect after creation
+- Owner permissions
+- Safe fallback if storage/location fails
+
+Acceptance standard:
+
+No create button should open a half-built form that cannot save.
+
+---
+
+# 10. Events
+
+Events are essential.
+
+Audit and fix:
+
+- Create event
+- Edit event
+- Delete/cancel event
+- Event detail
+- Event cards
+- Event location/map
+- Event date/time
+- Event timezone handling
+- Event capacity
+- Event visibility
+- Public/private/invite-only
+- Join event
+- Request to join
+- Accept request
+- Decline request
+- Leave event
+- Save event
+- Maybe/interested state if present
+- Share event
+- Message attendees
+- Host controls
+- Attendee list
+- Notification routing
+- Past/completed/cancelled event states
+- Report event
+- Block/report attendee
+- Passport plans sync
+- Discovery sync
+
+Acceptance standard:
+
+Event state must stay consistent across Discovery, Trips/Plans, Passport, notifications, and detail pages.
+
+---
+
+# 11. Trips
+
+Trips are essential.
+
+Audit and fix:
+
+- Create trip
+- Edit trip
+- Delete/cancel trip
+- Trip detail
+- Trip cards
+- Destination
+- Dates
+- Timezone/date validation
+- Capacity
+- Visibility
+- Invite-only
+- Join trip
+- Request to join
+- Accept request
+- Decline request
+- Leave trip
+- Save trip
+- Share trip
+- Message trip members
+- Trip Crew
+- Trip timeline
+- Saved ideas inside trip
+- Map inside trip
+- Safety inside trip
+- Posts connected to trip
+- Stamps connected to trip
+- Passport plans sync
+- Discovery sync
+- Notifications sync
+- Past/current/upcoming trip states
+
+Acceptance standard:
+
+A user can create, join, view, coordinate, message, and leave a trip with consistent state across the app.
+
+---
+
+# 12. Circles
+
+Circles are essential if visible.
+
+Audit and fix:
+
+- Create circle
+- Circle detail
+- Circle cards
+- Circle membership
+- Join/request circle
+- Accept/decline request
+- Leave circle
+- Invite to circle
+- Circle chat
+- Circle privacy
+- Circle linked to trip/event
+- Find Your Circle integration
+- Map/location privacy rules
+- Member list
+- Report/block inside circle
+- Notifications
+- Empty states
+
+Acceptance standard:
+
+Circles cannot be fake groups. If visible, they must have real membership, privacy, and navigation.
+
+---
+
+# 13. Rent a Buddy
+
+Rent a Buddy is essential.
+
+Audit and fix the full system.
+
+Required user-side flows:
+
+- Browse buddies
+- Search buddies
+- Filter buddies
+- Open buddy profile
+- View buddy services
+- View availability
+- View pricing if enabled
+- Request buddy
+- Book buddy if enabled
+- Deposit/full payment if payment backend exists
+- Message buddy
+- Save buddy
+- Report buddy
+- Block buddy
+- Cancel request/booking
+- Review buddy after completed booking if implemented
+- See booking/request status
+- See safety boundaries
+
+Required buddy-side flows:
+
+- Create buddy profile
+- Edit buddy profile
+- Add services
+- Add availability
+- Add languages
+- Add city/area
+- Set pricing if enabled
+- Receive request
+- Accept request
+- Decline request
+- Message requester
+- Cancel booking
+- Mark completed if implemented
+- View reviews if implemented
+- Hide/pause buddy profile
+- Safety/reporting
+
+Required admin/support flows:
+
+- Approve buddy if approval exists
+- Disable buddy
+- View reported buddy
+- View bookings/requests
+- Remove unsafe buddy profile
+- Handle payment-disabled state
+
+Required safety rules:
+
+- Non-dating boundary visible
+- No escort/sexual service language
+- Report/block visible
+- Buddy verification status honest
+- Payment hidden unless real backend exists
+- Reviews only from completed booking if implemented
+- Cancellation/refund rules visible only if supported
+- No fake booking success
+- No fake payment success
+
+Acceptance standard:
+
+Rent a Buddy must be a real beta system. If payments are not wired, booking must become request-only or payment UI must be hidden. Browsing, requesting, messaging, safety, and buddy profiles must still work.
+
+---
+
+# 14. Telegraph / messaging
+
+Telegraph is essential.
+
+Audit and fix:
+
+- Open one-on-one chat from profile
+- Open one-on-one chat from Rent a Buddy
+- Open group chat from trip
+- Open group chat from event if supported
+- Open group chat from circle
+- Send message
+- Receive message
+- Read message
+- Realtime updates
+- Manual refresh fallback
+- Message pagination
+- Empty thread
+- Failed send retry
+- Attachments if enabled
+- Message translations if enabled
+- User avatars/names
+- Blocked-user restrictions
+- Report message/user
+- Notification on message
+- Deep link to thread
+- Keyboard/mobile composer behavior
+
+Acceptance standard:
+
+Every “Message” button must open a real Telegraph path and allow messaging if permissions allow.
+
+---
+
+# 15. Compass AI and recommendation algorithm
+
+Compass is essential if visible.
+
+Audit and fix:
+
+- Compass Pick
+- Travel Radar
+- Discovery recommendations
+- Find Your Circle
+- Trip Crew suggestions
+- Rent a Buddy matching
+- Event/trip suggestions
+- Hidden Gems suggestions
+- Availability-aware results
+- Location-aware results
+- Trust-aware results
+- Language-aware results
+- Privacy-aware results
+
+Create one shared recommendation truth layer.
+
+No separate contradictory logic per screen.
+
+Inputs:
+
+- User profile
+- Current city
+- Upcoming trips
+- Saved items
+- Attending/maybe/joined items
+- Interests
+- Languages
+- Availability
+- Privacy settings
+- Trust score
+- Blocks/reports
+- Location permission
+- City launch status
+- Content visibility
+- Recent activity
+
+Outputs:
+
+- Recommended people
+- Recommended events
+- Recommended trips
+- Recommended circles
+- Recommended buddies
+- Recommended places
+- Recommendation reason labels
+
+Rules:
+
+- Do not recommend blocked users.
+- Do not recommend private users by location.
+- Do not recommend reported/hidden content.
+- Do not invent users/events/trips.
+- Do not show unavailable buddies as bookable.
+- Do not show full/cancelled trips as joinable.
+- Do not use fake AI output as real objects.
+- Show limited-data fallback when personalization is weak.
+
+Acceptance standard:
+
+Pulse, Discovery, Compass, Find Your Circle, Trip Crew, and Rent a Buddy must not contradict each other.
+
+---
+
+# 16. Find Your Circle
+
+Find Your Circle is essential.
+
+Audit and fix:
+
+- Entry point
+- Matching logic
+- Trip/event/circle recommendations
+- Current city matching
+- Upcoming trip matching
+- Availability matching
+- Language matching
+- Interest matching
+- Trust/privacy filtering
+- Location settings
+- Open recommended circle/trip/event
+- Join/request action
+- Message/Telegraph action
+- Empty state
+- Disabled state when privacy settings do not allow
+
+Acceptance standard:
+
+Find Your Circle should point to real circles/trips/events/users only when privacy and settings allow.
+
+---
+
+# 17. Trip Crew
+
+Trip Crew is essential.
+
+Audit and fix:
+
+- Trip Crew screen
+- Crew member list
+- Member avatars/names
+- Privacy-safe location state
+- Coordination status
+- Group chat
+- Invite members
+- Remove/leave crew
+- Location off behavior
+- Blocked-user behavior
+- Map/list view if present
+- Notifications
+- Safe Return integration if present
+
+Acceptance standard:
+
+Trip Crew must help coordinate real trip members without exposing private live location.
+
+---
+
+# 18. Maps and location
+
+Maps/location are essential.
+
+Audit and fix:
+
+- Map loads
+- Map fallback if API missing
+- Place search
+- Event location pins
+- Trip destination pins
+- Hidden Gem pins
+- Buddy area pins if appropriate
+- User location permission flow
+- Manual city fallback
+- Directions/open maps action
+- Location denied state
+- Location privacy settings
+- No exact private user location leak
+- Geofence/delayed posting
+- Map performance
+- Cost control/caching
+
+Acceptance standard:
+
+The app must still work if location is denied or Maps API fails.
+
+---
+
+# 19. Safe Return
+
+Safe Return is essential but must be honest.
+
+Audit and fix:
+
+- Safe Return entry
+- Create check-in
+- Trip check-in
+- Timer/reminder if implemented
+- Missed prompt state
+- Emergency contact if implemented
+- Escalation if implemented
+- Manual cancel
+- Location privacy
+- Notifications
+- Status display
+- Error state
+- Clear disclaimer
+
+Required honesty:
+
+Safe Return must not claim emergency dispatch, police contact, medical response, or guaranteed rescue unless actually integrated.
+
+Acceptance standard:
+
+Safe Return can be beta-limited, but it must be real, privacy-safe, and honest.
+
+---
+
+# 20. Reports, blocks, and safety
+
+Safety is essential.
+
+Audit and fix:
+
+- Report user
+- Report post
+- Report event
+- Report trip
+- Report circle
+- Report buddy
+- Report message
+- Block user
+- Unblock user
+- Block effects across app
+- Report database insert
+- Report status
+- Admin/support visibility
+- Hidden/reported content filtering
+- Abuse prevention
+- Harassment prevention
+- Rent a Buddy safety boundaries
+- Location privacy protection
+
+Blocking must affect:
+
+- Messages
+- Search
+- Discovery
+- Profile interaction
+- Comments
+- Trip Crew
+- Find Your Circle
+- Rent a Buddy
+- Notifications
+
+Acceptance standard:
+
+Report/block cannot be decorative. It must change behavior and save to backend.
+
+---
+
+# 21. Notifications and activity center
+
+Notifications are essential.
+
+Audit and fix:
+
+- Notification list
+- Activity center
+- Empty state
+- Mark read
+- Mark all read if present
+- New message notification
+- Post like notification
+- Comment notification
+- Trip invite notification
+- Event invite/update notification
+- Circle invite notification
+- Join request notification
+- Join accepted/declined notification
+- Buddy request notification
+- Buddy booking status notification
+- Safe Return notification
+- Report status notification if present
+- Deep link routing
+- Deleted/private object handling
+
+Notification routing matrix required:
+
+txt Notification type / Target screen / Required permission / Empty/deleted fallback 
+
+Acceptance standard:
+
+No notification should route to a dead or wrong page.
+
+---
+
+# 22. Settings and privacy
+
+Settings are essential.
+
+Audit and fix:
+
+- Profile settings
+- Privacy settings
+- Location settings
+- Language settings
+- Notification settings
+- Availability settings
+- Discovery visibility
+- Trip Crew visibility
+- Find Your Circle visibility
+- Message permissions
+- Block list
+- Safety settings
+- Account settings
+- Logout
+- Delete/deactivate account request if present
+- Save success/error states
+
+Acceptance standard:
+
+Changing a setting must affect the app everywhere that setting matters.
+
+---
+
+# 23. Availability system
+
+Availability is essential for events, trips, buddy bookings, recommendations, and circles if visible.
+
+Audit and fix:
+
+- Weekly availability
+- Trip date availability
+- Buddy availability
+- Event scheduling
+- Timezone handling
+- Date picker
+- Calendar UI
+- Save/load
+- Empty state
+- Discovery filtering
+- Rent a Buddy filtering
+- Find Your Circle filtering
+
+Acceptance standard:
+
+Availability must not be saved in one place and ignored everywhere else.
+
+---
+
+# 24. Database/schema audit
+
+Audit the database against app code.
+
+Required tables to inspect if present:
+
+- profiles
+- user_settings
+- user_privacy_settings
+- posts
+- post_likes
+- post_saves
+- comments
+- media
+- events
+- event_attendees
+- trips
+- trip_members
+- circles
+- circle_members
+- messages
+- message_threads
+- notifications
+- activity_events
+- reports
+- blocks
+- trust_scores
+- availability
+- safe_return_checkins
+- stamps
+- saved_items
+- hidden_gems
+- places
+- rent_a_buddy_profiles
+- rent_a_buddy_services
+- rent_a_buddy_availability
+- rent_a_buddy_requests
+- rent_a_buddy_bookings
+- rent_a_buddy_reviews
+- payments/deposits if present
+
+Check:
+
+- Column names
+- Required fields
+- Nullable fields
+- Enums
+- Foreign keys
+- Indexes
+- RLS policies
+- Storage buckets
+- Generated database types
+- Migrations
+- Duplicate concepts
+- Missing tables
+- Deprecated fields
+
+No destructive migrations. Add only safe additive migrations unless explicitly required.
+
+---
+
+# 25. Storage and media
+
+Audit and fix:
+
+- Avatar bucket
+- Cover bucket
+- Post media bucket
+- Video upload if enabled
+- Buddy profile media
+- Place/event/trip media
+- File size limits
+- File type limits
+- Upload progress
+- Upload failure
+- Retry
+- Orphan cleanup
+- Broken media fallback
+- Permission rules
+
+Acceptance standard:
+
+No upload should pretend success if storage fails.
+
+---
+
+# 26. Realtime
+
+Audit and fix:
+
+- Telegraph realtime
+- Notifications realtime
+- Activity realtime
+- Trip/event membership updates
+- Comments/likes if realtime
+- Subscription cleanup
+- Reconnect behavior
+- Manual refresh fallback
+- Duplicate message prevention
+
+Acceptance standard:
+
+Realtime can enhance the app, but the app must still work without it.
+
+---
+
+# 27. Admin/support beta tools
+
+For beta, provide support ability.
+
+Required minimum:
+
+- Find user by email/handle
+- View user status
+- See onboarding completion
+- See profile completeness
+- See reports
+- See blocked users
+- See trips/events created
+- See buddy profiles
+- See buddy requests/bookings
+- Hide/disable unsafe content
+- Disable user if necessary
+- Reset stuck onboarding/profile state
+- Remove bad seed data
+- View failed critical actions if logs exist
+
+Scripts are acceptable if admin UI is not ready.
+
+Acceptance standard:
+
+The team must be able to support beta users without direct database guessing.
+
+---
+
+# 28. Feature flags and kill switches
+
+Essential for beta.
+
+Feature flags:
+
+- Rent a Buddy
+- Rent a Buddy payments
+- Safe Return
+- Telegraph translation
+- Trip Crew location
+- Find Your Circle
+- Compass AI
+- Hidden Gems
+- Video uploads
+- Public posting
+- Push notifications
+- City launch mode
+- Invite-only beta
+
+Kill switches:
+
+- Disable signups
+- Disable posting
+- Disable messaging
+- Disable media uploads
+- Disable location sharing
+- Disable Rent a Buddy booking
+- Disable payments
+- Disable Compass AI
+- Disable public Discovery
+- Disable a specific city
+- Disable a specific user
+
+Acceptance standard:
+
+If something goes wrong in beta, it can be turned off fast.
+
+---
+
+# 29. External dependencies
+
+Audit:
+
+- Supabase auth
+- Supabase database
+- Supabase storage
+- Supabase realtime
+- Google Maps / places
+- Translation provider
+- AI/Compass provider
+- Push notification provider
+- Email provider
+- Payment provider
+- Error logging/analytics provider
+
+For each:
+
+txt Dependency / Env vars / Used by / Failure behavior / Beta status 
+
+Acceptance standard:
+
+Missing provider config must not create broken user-facing flows.
+
+---
+
+# 30. Mobile UI audit
+
+Travel Buddy is mobile-first.
+
+Audit:
+
+- iPhone Safari
+- Android Chrome
+- Desktop Chrome
+- Small screen
+- Keyboard open
+- Safe areas
+- Bottom nav overlap
+- Floating menu overlap
+- Modal scroll
+- Forms
+- Upload UI
+- Message composer
+- Map view
+- Profile menu
+- Date picker
+- Tap targets
+- Text overflow
+- Image overflow
+- Loading skeletons
+- Empty states
+
+Acceptance standard:
+
+All essential flows must be usable on mobile.
+
+---
+
+# 31. Performance and beta load
+
+Audit:
+
+- App startup
+- Feed loading
+- Discovery loading
+- Passport loading
+- Trip detail loading
+- Event detail loading
+- Rent a Buddy list loading
+- Message loading
+- Search speed
+- Map loading
+- Media loading
+- Duplicate API calls
+- Missing indexes
+- Infinite loops
+- Re-render storms
+- Realtime subscription leaks
+- Pagination
+
+Acceptance standard:
+
+The app should handle a few hundred beta users without obvious slowdowns or query failures.
+
+---
+
+# 32. Security and privacy
+
+Audit:
+
+- No service role key in frontend
+- No private env vars exposed
+- No admin endpoint accessible by normal users
+- No user can edit another user’s profile/content
+- No user can delete another user’s content
+- No private location leaks
+- No private messages exposed
+- No unrestricted storage writes
+- No unsafe direct object access by ID
+- RLS policies are respected
+- Public profile exposes only public fields
+- Search respects privacy
+- Reports/blocks are protected
+
+Acceptance standard:
+
+Do not loosen security to make beta work.
+
+---
+
+# 33. Testing requirements
+
+Run existing tests:
+
+- Typecheck
+- Lint if available
+- Unit tests
+- Component/render tests
+- API/route tests
+- Existing regression tests
+
+Add targeted tests for:
+
+- Signup/profile bootstrap
+- Profile save
+- Avatar/cover fallback
+- Passport render
+- Public/private profile separation
+- Pulse create/like/comment/save
+- Discovery card routing
+- Create event
+- Join event
+- Create trip
+- Join trip
+- Create circle/join circle if visible
+- Rent a Buddy browse/request/message
+- Telegraph open/send
+- Notification routing
+- Report/block behavior
+- Privacy setting effects
+- Find Your Circle privacy filtering
+- Trip Crew privacy filtering
+- Safe Return honesty behavior
+- Storage upload failure
+- Date/time validation
+- No-dead-route checks
+
+Acceptance standard:
+
+Every critical fix must have proof.
+
+---
+
+# 34. Manual beta scenario checklist
+
+Simulate these users:
+
+- New traveler
+- Returning traveler
+- Trip host
+- Event host
+- Circle host
+- Local buddy
+- Buddy customer
+- Private user
+- Public user
+- Blocked user
+- Reported user/content
+- User with no posts/trips
+- User with many posts/trips
+- User with location denied
+- User with incomplete profile
+
+Run these journeys:
+
+1. Sign up and complete Passport.
+2. Create post and interact with it.
+3. Search city/user/event/trip/buddy.
+4. Create event.
+5. Join event.
+6. Create trip.
+7. Join trip.
+8. Create/use circle.
+9. Use Find Your Circle.
+10. Use Trip Crew.
+11. Browse/request Rent a Buddy.
+12. Message a user.
+13. Message a buddy.
+14. Open notifications.
+15. Report/block user.
+16. Change privacy settings.
+17. Use Safe Return.
+18. Upload avatar/cover/media.
+19. Open shared/deep links.
+20. Use app with location denied.
+
+---
+
+# 35. Final required report
+
+At the end, deliver:
+
+## A. Launch decision
+
+txt Ready for internal smoke test: Yes/No Ready for 20-user alpha: Yes/No Ready for 50-user beta: Yes/No Ready for 150-user beta: Yes/No Ready for 300-user beta: Yes/No 
+
+## B. Executive summary
+
+- Overall readiness
+- Biggest risks
+- Systems fully ready
+- Systems limited
+- Systems blocked
+- Systems hidden
+
+## C. Full audit coverage
+
+List every system checked.
+
+## D. Confirmed issues
+
+txt Issue / Severity / Area / File / User impact / Fix status 
+
+## E. Fixes made
+
+txt File / Change / Reason / Test proof 
+
+## F. Dead-end result
+
+txt Button / Screen / Previous issue / Final status 
+
+## G. Database/schema result
+
+txt Table / Expected fields / Missing fields / Migration needed / RLS concern 
+
+## H. Algorithm/truth result
+
+Explain the source of truth for:
+
+- Pulse
+- Discovery
+- Compass
+- Find Your Circle
+- Trip Crew
+- Rent a Buddy
+- Availability
+- Location/privacy
+- Trust score
+- Notifications
+
+## I. Rent a Buddy status
+
+Must include:
+
+- Browse status
+- Buddy profile status
+- Request status
+- Booking status
+- Payment/deposit status
+- Messaging status
+- Safety/reporting status
+- Admin approval status
+- What is safe to beta test
+
+## J. Events/trips/circles status
+
+Must include:
+
+- Create
+- Edit
+- Join/request
+- Leave
+- Host controls
+- Member state
+- Notifications
+- Messaging
+- Map/date/location
+- Privacy
+
+## K. Test report
+
+- Commands run
+- Pass/fail
+- Flaky tests
+- Skipped tests
+- Manual test needs
+
+## L. Beta launch checklist
+
+txt [ ] Auth ready [ ] Onboarding ready [ ] Passport ready [ ] Pulse ready [ ] Discovery ready [ ] Search ready [ ] Create ready [ ] Events ready [ ] Trips ready [ ] Circles ready [ ] Rent a Buddy ready [ ] Telegraph ready [ ] Compass ready [ ] Find Your Circle ready [ ] Trip Crew ready [ ] Maps ready [ ] Safe Return ready [ ] Reports/blocks ready [ ] Notifications ready [ ] Settings/privacy ready [ ] Admin/support ready [ ] Mobile ready [ ] Database ready [ ] Storage ready [ ] Realtime ready [ ] Performance ready [ ] Security/privacy ready [ ] Feature flags ready [ ] Kill switches ready 
+
+---
+
+# 36. Non-negotiable constraints
+
+Do not rebuild.
+
+Do not replace architecture.
+
+Do not create duplicate systems.
+
+Do not remove essential Travel Buddy systems.
+
+Do not fake backend success.
+
+Do not show fake payments.
+
+Do not show fake bookings.
+
+Do not show fake safety escalation.
+
+Do not invent recommendation objects.
+
+Do not loosen privacy.
+
+Do not expose private locations.
+
+Do not bypass auth.
+
+Do not bypass RLS/security.
+
+Do not leave visible dead buttons.
+
+Do not leave blank core screens.
+
+Do not mark beta-ready without proof.
+
+Final goal:
+
+After this pass, Travel Buddy should be ready for a controlled beta with a few hundred users using the full system: Passport, Pulse, Discovery, Events, Trips, Circles, Rent a Buddy, Telegraph, Compass, Find Your Circle, Trip Crew, Safety, Maps, Notifications, and Settings.
