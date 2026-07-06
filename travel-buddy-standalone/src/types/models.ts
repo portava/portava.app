@@ -474,6 +474,9 @@ export interface PublicProfile {
   isFollowing?: boolean;
   isOwnProfile?: boolean;
   stamps?: PassportStamp[];
+  trustScore?: number | null;
+  trustLabel?: string | null;
+  verificationLevel?: 'none' | 'basic_verified' | 'trusted_traveler' | 'host_verified' | 'buddy_verified' | null;
 }
 
 /* ───────────────────────────────────────────────────────────────────────
@@ -516,6 +519,17 @@ export interface OwnProfile {
   preferredLanguage: string | null;
   dateOfBirth: string | null;
   dobVerified: boolean;
+  trustScore?: number | null;
+  trustLabel?: string | null;
+  verificationLevel?: 'none' | 'basic_verified' | 'trusted_traveler' | 'host_verified' | 'buddy_verified' | null;
+  idVerifiedAt?: ISODate | null;
+  selfieVerifiedAt?: ISODate | null;
+  homeCountryVerifiedAt?: ISODate | null;
+  safetyFlagsCount?: number | null;
+  followersCount?: number | null;
+  followingCount?: number | null;
+  hostVerifiedAt?: ISODate | null;
+  buddyVerifiedAt?: ISODate | null;
 }
 
 /* ───────────────────────────────────────────────────────────────────────

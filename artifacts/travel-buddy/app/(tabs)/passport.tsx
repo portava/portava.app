@@ -21,6 +21,10 @@ import { useSession } from '../../src/context/SessionContext';
 import { listMyTrips } from '../../src/services/trips';
 import { PassportHero } from '../../src/components/PassportHero';
 import { CompactStatsRow } from '../../src/components/CompactStatsRow';
+import { TrustScoreCard } from '../../src/components/TrustScoreCard';
+import { PassportVerificationStamp } from '../../src/components/PassportVerificationStamp';
+import { VerificationLevelsRail } from '../../src/components/VerificationLevelsRail';
+import type { VerificationLevelStatus } from '../../src/components/VerificationLevelsRail';
 import { PostcardsTab } from '../../src/components/PostcardsTab';
 import { StampsTab } from '../../src/components/StampsTab';
 import { TripsTab } from '../../src/components/TripsTab';
@@ -417,6 +421,25 @@ function PassportContent({
           onNewHighlightPress={onNewHighlightPress}
         />
 
+        {/* Trust Score + Verification Stamp */}
+        {profile.trustScore != null && (
+          <View style={styles.trustRow}>
+            <TrustScoreCard
+              score={profile.trustScore}
+              label={profile.trustLabel ?? 'Trusted Traveler'}
+            />
+          </View>
+        )}
+        <PassportVerificationStamp
+          status={profile.verificationStatus}
+          verifiedSince={profile.verifiedAt}
+          idVerified={!!profile.idVerifiedAt}
+          selfieMatched={!!profile.selfieVerifiedAt}
+          homeCountryVerified={!!profile.homeCountryVerifiedAt}
+          noSafetyFlags={(profile.safetyFlagsCount ?? 0) === 0}
+          isOwner
+        />
+
         {/* Compact stats row */}
         <CompactStatsRow
           postcards={postcards}
@@ -527,6 +550,18 @@ function PassportContent({
           {tab === 'trips' && <TripsTab trips={trips} isOwner />}
           {tab === 'map' && <MapTab postcards={postcards} currentCity={profile.currentCity} currentUserId={profile.id} />}
         </View>
+
+        {/* Verification Levels — always visible at the bottom of the scroll */}
+        {(() => {
+          const lvl = profile.verificationLevel ?? 'none';
+          const levels: VerificationLevelStatus = {
+            basicVerified: ['basic_verified', 'trusted_traveler', 'host_verified', 'buddy_verified'].includes(lvl),
+            trustedTraveler: ['trusted_traveler', 'host_verified', 'buddy_verified'].includes(lvl),
+            hostVerified: !!profile.hostVerifiedAt,
+            buddyVerified: !!profile.buddyVerifiedAt,
+          };
+          return <VerificationLevelsRail levels={levels} />;
+        })()}
       </ScrollView>
 
       {/* Off-screen share card (captured by usePassportShare) */}
@@ -591,6 +626,10 @@ function PassportContent({
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paper },
 
+  trustRow: {
+    marginHorizontal: space.lg,
+    marginTop: space.md,
+  },
   coverBand: { width: '100%', height: 140, overflow: 'hidden' },
   coverUploadingOverlay: {
     ...StyleSheet.absoluteFillObject,

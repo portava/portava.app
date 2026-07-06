@@ -1,0 +1,513 @@
+Build the Passport screen verification-stamp upgrade exactly like the approved mobile design, while keeping the app’s current color scheme, dark mode, typography scale, spacing language, teal/neon accent system, rounded cards, and existing bottom navigation.
+
+Do not redesign the whole Passport page. Keep the current Passport page structure and only upgrade it with the verification proof stamp system, official stamp card, verification badges, and clean mobile layout.
+
+Goal:
+The Passport page should feel like a real travel identity profile. Verification should be visually proven with an official passport-style stamp, not just a small checkmark. The verification stamp should clearly show why the user is trusted: ID verified, selfie matched, home country verified, and no safety flags.
+
+Use the app’s current colors:
+- Main background: existing dark/black gradient background.
+- Primary accent: existing neon teal / mint green.
+- Secondary accents: current purple/pink/blue gradients only where already used.
+- Cards: existing dark translucent cards.
+- Borders: subtle dark gray borders with teal highlight when active.
+- Text: existing white/gray hierarchy.
+- Do not introduce a new color palette.
+
+Screen:
+Passport mobile screen only.
+
+Bottom nav:
+Keep existing bottom nav exactly as app currently has:
+Pulse, Discovery, Create, Trips, Passport.
+Passport should be active.
+Do not change icons unless the current implementation is missing one.
+
+Top header:
+At the top of the screen:
+- Left: “Passport” title.
+- Beside title: small verified check badge if user is verified.
+- Under title: small subtitle: “Your travel identity. Your world.”
+- Right side: share icon and settings icon.
+- Use existing icon system.
+
+Hero section:
+Create a large rounded cover-photo hero card at the top.
+- Full-width mobile card.
+- Height around 180–220px depending on screen.
+- Rounded corners: match current app radius, around 20–28px.
+- Image fills the top hero area.
+- Dark gradient overlay from bottom to top so profile text remains readable.
+- Avatar overlaps cover photo and profile details area.
+- Avatar should be circular, large, about 96–120px.
+- Avatar border should use current accent gradient/ring style.
+- Small camera/edit button overlaps bottom-right of avatar for owner profile only.
+- If viewing someone else’s Passport, hide camera/edit button.
+
+Profile identity block:
+Under/overlapping the hero:
+- Display name: large bold text.
+- Verification check icon next to name if verified.
+- Location: city/country with flag if available.
+- Bio line 1.
+- Bio line 2.
+- Member since pill:
+  “Member since May 2024”
+  Use a small rounded dark pill with calendar icon.
+
+Example display:
+Maya [verified badge]
+Cebu, Philippines 🇵🇭
+Travel lover • Ocean chaser 🌊
+Collecting moments, not things. ✨
+[calendar icon] Member since May 2024
+
+Trust Score card:
+On the right side of the hero/details area on larger mobile widths, or below the identity text if space is tight:
+- Dark glass card.
+- Title: “TRUST SCORE”
+- Small info icon.
+- Shield/star icon.
+- Large score: “4.8 / 5”
+- Subtitle: “Trusted Traveler”
+- Use teal accent for the score.
+- Do not make this too large. It should support the verification stamp, not replace it.
+
+Official Passport Verified Stamp:
+Add a large passport-style stamp card directly under or beside the Trust Score card.
+This is the main design feature.
+
+Visual style:
+- Looks like an official travel document stamp.
+- Rectangular stamp with slightly imperfect border.
+- Rounded corners.
+- Teal/green monochrome stamp effect.
+- Inner double border.
+- Slight rotation allowed, max -2deg to 2deg, but keep readable.
+- Use subtle distressed texture if already easy to implement with CSS. If not, use dashed/double border and opacity.
+- Background should be dark translucent, not a new bright color.
+- Border should be current teal.
+- Add glow very subtly, not heavy.
+
+Stamp content:
+Top small label:
+PASSPORT VERIFIED
+
+Main stamp text:
+VERIFIED TRAVELER
+
+Icon:
+Large shield with checkmark.
+
+Verification checklist:
+- ID Verified
+- Selfie Matched
+- Home Country Verified
+- No Safety Flags
+
+Each checklist row should have a small check icon on the right or left.
+
+Bottom line:
+Verified since Jun 2026
+
+Behavior:
+Only show this full stamp if the user is verified.
+If pending verification:
+Show muted stamp:
+“VERIFICATION PENDING”
+“Review in progress”
+No green verified check.
+If not verified:
+Show CTA card:
+“Verify your Passport”
+“Unlock verified traveler trust across events, trips, Telegraph, and Rent a Buddy.”
+Button: “Start Verification”
+If rejected:
+Show private owner-only status:
+“Verification needs attention”
+Button: “Review Details”
+Do not show rejection publicly.
+
+Stats row:
+Under the hero/verification section, keep the existing stats row but make it clean:
+- Trips
+- Cities
+- Postcards
+- Followers
+- Following
+
+Use icons in the current style.
+Each stat sits in a column inside one rounded dark card.
+Add subtle vertical dividers.
+Example:
+78 Trips
+32 Cities
+156 Postcards
+420 Followers
+180 Following
+
+My Stamps section:
+Add section title:
+“My Stamps”
+Right action:
+“View all”
+
+Stamp row:
+First stamp should always be the verification stamp when verified.
+This is separate from destination stamps but shown in the same row for visual consistency.
+
+Stamp order:
+1. Verified Traveler stamp
+2. Japan stamp
+3. Vietnam stamp
+4. Cebu stamp
+5. Siargao stamp
+6. “34 stamps to collect” placeholder
+
+Important:
+The verification stamp must be visually different from travel/location stamps.
+Verification stamp uses shield/check and “Verified Traveler.”
+Travel stamps use destination art/name/date.
+
+Travel stamp design:
+- Tall rounded rectangle, passport-stamp style.
+- Destination name at top.
+- Illustration/image in center.
+- Date at bottom.
+- Border matching destination card.
+- Slight paper/stamp feel.
+
+Example stamps:
+Verified Traveler
+Japan — May 2025
+Vietnam — Apr 2025
+Cebu — Mar 2025
+Siargao — Feb 2025
+
+Tabs:
+Under stamps row, add segmented tabs:
+- All
+- Stamps
+- Plans
+- Postcards
+
+Use current teal underline/active style.
+All should be selected by default.
+Do not use heavy filled tabs unless existing app uses that.
+
+Postcards section:
+Title:
+“Postcards”
+
+Right action:
+“+ New Postcard”
+
+Grid:
+Use 2-column mobile grid if screen width is narrow.
+Use 3-column grid only if current screen width supports it without crowding.
+Cards:
+- Rounded corners.
+- Image top.
+- Dark info gradient bottom.
+- Video badge if video: “10s”
+- Title.
+- Time ago.
+- Like count.
+- Comment count.
+- Three-dot menu.
+- Bookmark optional if already supported.
+
+Example cards:
+Sunset in Da Nang
+Hoi An Old Town
+Island hopping in El Nido
+
+Verification Levels section:
+Add a bottom section before nav padding:
+Title:
+“Verification Levels”
+
+Right action:
+“Learn more”
+
+Show 4 compact cards horizontally scrollable:
+1. Basic Verified
+   Subtitle: ID & selfie verified
+   Status: Verified
+
+2. Trusted Traveler
+   Subtitle: Home country locked
+   Status: All good
+
+3. Host Verified
+   Subtitle: For event hosts
+   Status: Verified
+
+4. Buddy Verified
+   Subtitle: For Rent a Buddy
+   Status: Verified
+
+Each card:
+- Small shield icon.
+- Label.
+- Subtitle.
+- Status row with check.
+- Use existing card backgrounds.
+- Use current accent colors, but do not introduce a new palette.
+- Buddy Verified may use the app’s existing gold/yellow accent only if already used for premium/trust. Otherwise keep teal.
+
+Data model:
+Add or map these fields from the backend. Do not fake verification status if real fields already exist.
+
+Recommended user/profile fields:
+- id
+- display_name
+- username
+- avatar_url
+- cover_photo_url
+- city
+- country
+- country_code
+- bio
+- member_since
+- trust_score
+- trips_count
+- cities_count
+- postcards_count
+- followers_count
+- following_count
+- verification_status
+- verification_level
+- verified_since
+- id_verified_at
+- selfie_verified_at
+- home_country_verified_at
+- safety_flags_count
+- host_verified_at
+- buddy_verified_at
+
+Verification status enum:
+- unverified
+- pending
+- verified
+- rejected
+- suspended
+
+Verification level enum:
+- none
+- basic_verified
+- trusted_traveler
+- host_verified
+- buddy_verified
+
+Public/private rules:
+Public users can see:
+- Verified badge
+- Verification level
+- Verified since date
+- “No Safety Flags” only if true
+- Trust Score
+
+Public users should not see:
+- Raw ID document details
+- Selfie data
+- Rejection reason
+- Internal review notes
+- Exact legal name unless user already displays it
+- Full date of birth
+- Address
+- Sensitive identity data
+
+Owner can see:
+- Pending status
+- Needs attention status
+- CTA to complete verification
+- Verification level progress
+
+Backend truth rules:
+- The green verified badge should only show when verification_status === "verified".
+- The large “VERIFIED TRAVELER” stamp should only show when verification_status === "verified".
+- “ID Verified” is true only if id_verified_at exists.
+- “Selfie Matched” is true only if selfie_verified_at exists.
+- “Home Country Verified” is true only if home_country_verified_at exists.
+- “No Safety Flags” is true only if safety_flags_count === 0.
+- Trust Score should come from backend-calculated value.
+- Do not calculate Trust Score on the client except for display fallback.
+- Do not show fake completed verification in demo data unless the app is in mock/demo mode.
+
+Component structure:
+Create or update these components:
+
+PassportScreen
+- loads profile data
+- controls owner/public view
+- renders all sections
+
+PassportHeader
+- title
+- subtitle
+- verified badge
+- share/settings actions
+
+PassportHero
+- cover image
+- avatar
+- edit camera button
+- identity text
+- member since pill
+
+TrustScoreCard
+- score
+- label
+- info icon
+- shield icon
+
+PassportVerificationStamp
+Props:
+- status
+- level
+- verifiedSince
+- idVerified
+- selfieMatched
+- homeCountryVerified
+- noSafetyFlags
+- isOwner
+
+StatsStrip
+- trips
+- cities
+- postcards
+- followers
+- following
+
+PassportStampsRail
+- verification stamp mini card
+- destination stamp cards
+- collect-more placeholder
+
+PassportTabs
+- All
+- Stamps
+- Plans
+- Postcards
+
+PostcardsGrid
+- list of postcard cards
+- handles video badge
+- likes/comments/menu
+
+VerificationLevelsRail
+- basic verified
+- trusted traveler
+- host verified
+- buddy verified
+
+Empty states:
+If no cover photo:
+- use existing gradient background.
+If no avatar:
+- use initials avatar.
+If no stamps:
+- show empty stamp card:
+  “Start collecting Passport stamps”
+If no postcards:
+- show empty postcard card:
+  “Your travel memories will appear here.”
+
+Mobile layout rules:
+- Use SafeAreaView.
+- Content should scroll vertically.
+- Bottom padding must account for bottom nav height.
+- No horizontal overflow except intended rails.
+- Stamps rail and verification levels rail can scroll horizontally.
+- Main hero, stats, tabs, and postcards should stay within screen width.
+- Minimum touch target: 44px.
+- Cards should not feel crowded.
+- Use consistent spacing:
+  screen padding: 16px
+  section gap: 20–24px
+  card padding: 14–18px
+  small gap: 8px
+  medium gap: 12px
+  large gap: 20px
+
+Design pattern:
+Use a “travel document + social proof” pattern.
+
+This means:
+- Profile = Passport identity.
+- Verified stamp = official proof.
+- Trust Score = quick numeric confidence.
+- Stamps = travel history and achievements.
+- Postcards = content/memories.
+- Verification Levels = what trust unlocks.
+
+Do not make verification look like a generic social media blue check. It should look like a passport/travel stamp.
+
+Suggested React Native structure:
+
+tsx export function PassportScreen() {   const { profile, loading, error } = usePassportProfile();    if (loading) return <PassportSkeleton />;   if (error) return <PassportErrorState />;    const isVerified = profile.verification_status === "verified";    return (     <SafeAreaView style={styles.safe}>       <ScrollView         showsVerticalScrollIndicator={false}         contentContainerStyle={styles.scrollContent}       >         <PassportHeader           verified={isVerified}           onShare={handleShare}           onSettings={handleSettings}         />          <PassportHero profile={profile} isOwner={profile.is_owner} />          <View style={styles.heroProofRow}>           <TrustScoreCard score={profile.trust_score} label={profile.trust_label} />            <PassportVerificationStamp             status={profile.verification_status}             level={profile.verification_level}             verifiedSince={profile.verified_since}             idVerified={Boolean(profile.id_verified_at)}             selfieMatched={Boolean(profile.selfie_verified_at)}             homeCountryVerified={Boolean(profile.home_country_verified_at)}             noSafetyFlags={profile.safety_flags_count === 0}             isOwner={profile.is_owner}           />         </View>          <StatsStrip stats={profile.stats} />          <PassportStampsRail           verified={isVerified}           verifiedSince={profile.verified_since}           stamps={profile.stamps}           remainingCount={profile.remaining_stamp_count}         />          <PassportTabs           activeTab={activeTab}           onChange={setActiveTab}         />          {activeTab === "All" || activeTab === "Postcards" ? (           <PostcardsGrid postcards={profile.postcards} />         ) : null}          <VerificationLevelsRail           verificationLevel={profile.verification_level}           statuses={profile.verification_levels}         />       </ScrollView>        <BottomNav active="Passport" />     </SafeAreaView>   ); } 
+
+Suggested style tokens:
+Use existing tokens if the app already has them. If not, map these names to the current app theme values.
+
+ts const PASSPORT_TOKENS = {   background: theme.colors.background,   surface: theme.colors.surface,   surfaceGlass: "rgba(255,255,255,0.055)",   surfaceStrong: "rgba(255,255,255,0.085)",   border: "rgba(255,255,255,0.10)",   borderStrong: "rgba(255,255,255,0.16)",   text: theme.colors.text,   textMuted: theme.colors.textMuted,   accent: theme.colors.primary,   accentSoft: "rgba(0,255,190,0.16)",   accentBorder: "rgba(0,255,190,0.55)",   danger: theme.colors.danger,   warning: theme.colors.warning,   radiusLg: 28,   radiusMd: 20,   radiusSm: 14,   screenPadding: 16, }; 
+
+PassportVerificationStamp component behavior:
+
+tsx function PassportVerificationStamp({   status,   level,   verifiedSince,   idVerified,   selfieMatched,   homeCountryVerified,   noSafetyFlags,   isOwner, }: PassportVerificationStampProps) {   if (status === "verified") {     return (       <View style={styles.verifiedStamp}>         <View style={styles.stampInnerBorder}>           <Text style={styles.stampEyebrow}>PASSPORT VERIFIED</Text>            <View style={styles.stampMainRow}>             <ShieldCheckIcon size={42} color={tokens.accent} />             <View>               <Text style={styles.stampTitle}>VERIFIED TRAVELER</Text>               <Text style={styles.stampStars}>★★★★★</Text>             </View>           </View>            <VerificationCheckRow label="ID Verified" checked={idVerified} />           <VerificationCheckRow label="Selfie Matched" checked={selfieMatched} />           <VerificationCheckRow label="Home Country Verified" checked={homeCountryVerified} />           <VerificationCheckRow label="No Safety Flags" checked={noSafetyFlags} />            <Text style={styles.verifiedSince}>             Verified since {formatMonthYear(verifiedSince)}           </Text>         </View>       </View>     );   }    if (status === "pending" && isOwner) {     return (       <View style={styles.pendingStamp}>         <Text style={styles.pendingTitle}>VERIFICATION PENDING</Text>         <Text style={styles.pendingBody}>Review in progress</Text>       </View>     );   }    if (status === "rejected" && isOwner) {     return (       <View style={styles.actionStamp}>         <Text style={styles.actionTitle}>Verification needs attention</Text>         <Text style={styles.actionBody}>Review your details to complete Passport verification.</Text>         <PrimaryButton label="Review Details" onPress={openVerificationReview} />       </View>     );   }    if (isOwner) {     return (       <View style={styles.actionStamp}>         <Text style={styles.actionTitle}>Verify your Passport</Text>         <Text style={styles.actionBody}>           Unlock verified traveler trust across events, trips, Telegraph, and Rent a Buddy.         </Text>         <PrimaryButton label="Start Verification" onPress={startVerification} />       </View>     );   }    return null; } 
+
+Core styles:
+
+ts const styles = StyleSheet.create({   safe: {     flex: 1,     backgroundColor: tokens.background,   },    scrollContent: {     paddingHorizontal: 16,     paddingBottom: 110,   },    header: {     paddingTop: 8,     paddingBottom: 16,     flexDirection: "row",     justifyContent: "space-between",     alignItems: "center",   },    headerTitleRow: {     flexDirection: "row",     alignItems: "center",     gap: 8,   },    headerTitle: {     color: tokens.text,     fontSize: 34,     fontWeight: "800",     letterSpacing: -0.6,   },    headerSubtitle: {     color: tokens.textMuted,     fontSize: 15,     marginTop: 2,   },    heroCard: {     borderRadius: 28,     overflow: "hidden",     backgroundColor: tokens.surface,     borderWidth: 1,     borderColor: tokens.border,   },    coverImage: {     height: 190,     width: "100%",   },    coverOverlay: {     ...StyleSheet.absoluteFillObject,     backgroundColor: "rgba(0,0,0,0.28)",   },    identityArea: {     padding: 18,     paddingTop: 68,   },    avatarWrap: {     position: "absolute",     top: 126,     left: 18,     width: 112,     height: 112,     borderRadius: 56,     borderWidth: 3,     borderColor: tokens.accent,     backgroundColor: tokens.surface,   },    avatar: {     width: "100%",     height: "100%",     borderRadius: 56,   },    avatarCameraButton: {     position: "absolute",     right: -4,     bottom: -4,     width: 36,     height: 36,     borderRadius: 18,     backgroundColor: tokens.surfaceStrong,     borderWidth: 1,     borderColor: tokens.borderStrong,     alignItems: "center",     justifyContent: "center",   },    nameRow: {     flexDirection: "row",     alignItems: "center",     gap: 8,   },    displayName: {     color: tokens.text,     fontSize: 32,     fontWeight: "800",     letterSpacing: -0.5,   },    locationText: {     color: tokens.textMuted,     fontSize: 17,     marginTop: 6,   },    bioText: {     color: tokens.text,     fontSize: 16,     lineHeight: 23,     marginTop: 8,   },    memberPill: {     marginTop: 14,     alignSelf: "flex-start",     flexDirection: "row",     alignItems: "center",     gap: 8,     paddingHorizontal: 12,     paddingVertical: 8,     borderRadius: 999,     backgroundColor: tokens.surfaceGlass,     borderWidth: 1,     borderColor: tokens.border,   },    heroProofRow: {     marginTop: 14,     gap: 12,   },    trustScoreCard: {     padding: 16,     borderRadius: 22,     backgroundColor: tokens.surfaceGlass,     borderWidth: 1,     borderColor: tokens.border,   },    trustScoreTitle: {     color: tokens.textMuted,     fontSize: 12,     fontWeight: "700",     letterSpacing: 0.8,     textTransform: "uppercase",   },    trustScoreValue: {     color: tokens.accent,     fontSize: 44,     fontWeight: "900",   },    trustScoreLabel: {     color: tokens.textMuted,     fontSize: 14,   },    verifiedStamp: {     borderRadius: 22,     padding: 8,     backgroundColor: "rgba(0,255,190,0.055)",     borderWidth: 1.5,     borderColor: tokens.accentBorder,     transform: [{ rotate: "-1deg" }],   },    stampInnerBorder: {     borderRadius: 18,     borderWidth: 1,     borderColor: tokens.accentBorder,     borderStyle: "dashed",     padding: 14,   },    stampEyebrow: {     color: tokens.accent,     fontSize: 12,     fontWeight: "800",     letterSpacing: 2,     textAlign: "center",   },    stampMainRow: {     marginTop: 8,     flexDirection: "row",     alignItems: "center",     gap: 12,   },    stampTitle: {     color: tokens.accent,     fontSize: 22,     fontWeight: "900",     letterSpacing: 1,   },    stampStars: {     color: tokens.accent,     fontSize: 13,     letterSpacing: 2,     marginTop: 2,   },    checkRow: {     marginTop: 7,     flexDirection: "row",     alignItems: "center",     justifyContent: "space-between",   },    checkLabel: {     color: tokens.accent,     fontSize: 14,     fontWeight: "600",   },    verifiedSince: {     color: tokens.accent,     fontSize: 13,     fontWeight: "700",     textAlign: "center",     marginTop: 10,     paddingTop: 8,     borderTopWidth: 1,     borderTopColor: "rgba(0,255,190,0.25)",   },    statsStrip: {     marginTop: 18,     paddingVertical: 16,     borderRadius: 22,     backgroundColor: tokens.surfaceGlass,     borderWidth: 1,     borderColor: tokens.border,     flexDirection: "row",     justifyContent: "space-between",   },    statItem: {     flex: 1,     alignItems: "center",   },    statValue: {     color: tokens.text,     fontSize: 20,     fontWeight: "800",   },    statLabel: {     color: tokens.textMuted,     fontSize: 13,     marginTop: 4,   },    sectionHeader: {     marginTop: 24,     marginBottom: 12,     flexDirection: "row",     alignItems: "center",     justifyContent: "space-between",   },    sectionTitle: {     color: tokens.text,     fontSize: 22,     fontWeight: "800",   },    sectionAction: {     color: tokens.accent,     fontSize: 15,     fontWeight: "700",   },    stampsRail: {     gap: 12,   },    miniVerificationStamp: {     width: 110,     height: 142,     borderRadius: 18,     padding: 10,     backgroundColor: "rgba(0,255,190,0.055)",     borderWidth: 1,     borderColor: tokens.accentBorder,     justifyContent: "space-between",   },    destinationStamp: {     width: 110,     height: 142,     borderRadius: 18,     overflow: "hidden",     backgroundColor: tokens.surfaceGlass,     borderWidth: 1,     borderColor: tokens.border,   },    tabBar: {     marginTop: 22,     borderRadius: 18,     backgroundColor: tokens.surfaceGlass,     borderWidth: 1,     borderColor: tokens.border,     flexDirection: "row",     overflow: "hidden",   },    tabButton: {     flex: 1,     paddingVertical: 13,     alignItems: "center",   },    tabText: {     color: tokens.textMuted,     fontSize: 15,     fontWeight: "700",   },    activeTabText: {     color: tokens.text,   },    activeTabUnderline: {     height: 3,     backgroundColor: tokens.accent,     position: "absolute",     left: 0,     right: 0,     bottom: 0,   },    postcardGrid: {     flexDirection: "row",     flexWrap: "wrap",     gap: 12,   },    postcardCard: {     flexBasis: "48%",     flexGrow: 1,     borderRadius: 18,     overflow: "hidden",     backgroundColor: tokens.surfaceGlass,     borderWidth: 1,     borderColor: tokens.border,   },    postcardImage: {     width: "100%",     height: 135,   },    postcardBody: {     padding: 12,   },    postcardTitle: {     color: tokens.text,     fontSize: 15,     fontWeight: "800",   },    postcardMeta: {     color: tokens.textMuted,     fontSize: 13,     marginTop: 4,   },    levelsRail: {     gap: 12,   },    levelCard: {     width: 160,     padding: 14,     borderRadius: 18,     backgroundColor: tokens.surfaceGlass,     borderWidth: 1,     borderColor: tokens.border,   },    levelTitle: {     color: tokens.text,     fontSize: 14,     fontWeight: "800",   },    levelSubtitle: {     color: tokens.textMuted,     fontSize: 12,     marginTop: 4,   },    levelStatus: {     color: tokens.accent,     fontSize: 13,     fontWeight: "700",     marginTop: 12,   }, }); 
+
+Database/Supabase recommendation:
+If the profiles table already exists, add only missing columns. Do not duplicate existing profile fields.
+
+Suggested migration:
+
+sql alter table public.profiles add column if not exists verification_status text not null default 'unverified'   check (verification_status in ('unverified', 'pending', 'verified', 'rejected', 'suspended')), add column if not exists verification_level text not null default 'none'   check (verification_level in ('none', 'basic_verified', 'trusted_traveler', 'host_verified', 'buddy_verified')), add column if not exists verified_since timestamptz, add column if not exists id_verified_at timestamptz, add column if not exists selfie_verified_at timestamptz, add column if not exists home_country_verified_at timestamptz, add column if not exists safety_flags_count integer not null default 0, add column if not exists host_verified_at timestamptz, add column if not exists buddy_verified_at timestamptz; 
+
+Optional helper view:
+Create a public-safe profile verification view so the client does not accidentally expose sensitive verification data.
+
+sql create or replace view public.public_profile_verification as select   id,   verification_status,   verification_level,   verified_since,   case when verification_status = 'verified' and id_verified_at is not null then true else false end as id_verified,   case when verification_status = 'verified' and selfie_verified_at is not null then true else false end as selfie_matched,   case when verification_status = 'verified' and home_country_verified_at is not null then true else false end as home_country_verified,   case when verification_status = 'verified' and safety_flags_count = 0 then true else false end as no_safety_flags,   host_verified_at is not null as host_verified,   buddy_verified_at is not null as buddy_verified from public.profiles; 
+
+Client query:
+Fetch Passport profile from the existing profile endpoint if one exists. If not, create:
+
+GET /api/passport/:userId
+
+Response shape:
+
+ts type PassportProfileResponse = {   id: string;   is_owner: boolean;   display_name: string;   username: string;   avatar_url: string | null;   cover_photo_url: string | null;   city: string | null;   country: string | null;   country_code: string | null;   bio: string | null;   member_since: string;   trust_score: number;   trust_label: string;   verification_status: "unverified" | "pending" | "verified" | "rejected" | "suspended";   verification_level: "none" | "basic_verified" | "trusted_traveler" | "host_verified" | "buddy_verified";   verified_since: string | null;   id_verified_at: string | null;   selfie_verified_at: string | null;   home_country_verified_at: string | null;   safety_flags_count: number;   stats: {     trips: number;     cities: number;     postcards: number;     followers: number;     following: number;   };   stamps: Array<{     id: string;     type: "verification" | "destination" | "achievement";     title: string;     subtitle?: string;     image_url?: string | null;     earned_at?: string | null;   }>;   remaining_stamp_count: number;   postcards: Array<{     id: string;     title: string;     media_url: string;     media_type: "image" | "video";     duration_seconds?: number | null;     created_at: string;     likes_count: number;     comments_count: number;   }>;   verification_levels: {     basic_verified: boolean;     trusted_traveler: boolean;     host_verified: boolean;     buddy_verified: boolean;   }; }; 
+
+Important QA checklist:
+- Passport screen renders correctly on small iPhone width.
+- No card overflows horizontally.
+- Verification stamp appears only for verified users.
+- Pending users do not show verified badge publicly.
+- Rejected users only see rejection/needs attention on their own profile.
+- Public viewer never sees sensitive ID/selfie details.
+- Stamps rail scrolls smoothly.
+- Postcards grid does not overlap bottom nav.
+- Bottom nav remains fixed.
+- Dark mode colors match the current app.
+- Trust Score and verification status come from backend truth.
+- No fake verified UI state unless in explicit mock/demo mode.
+- Rent a Buddy profiles can display Buddy Verified level.
+- Event hosts can display Host Verified level.
+- Telegraph chat headers can reuse the same verified badge later.
+- Pulse and Discovery cards can reuse the compact verification badge later.
+
+Final design outcome:
+The Passport page should clearly show:
+1. Who the traveler is.
+2. Where they are from.
+3. Their trust score.
+4. Their official Passport Verified stamp.
+5. Their travel stamps.
+6. Their postcards.
+7. Their verification levels.
+
+It should feel premium, safe, social, and travel-native — like a digital passport mixed with a modern travel social profile.
