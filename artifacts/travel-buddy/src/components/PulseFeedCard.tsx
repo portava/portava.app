@@ -195,7 +195,7 @@ function PostMediaPlaceholder({ city }: { city?: string }) {
 }
 
 /* ── Traveler Post ── */
-function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: string) => void }) {
+function PostCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void }) {
   const { width } = useWindowDimensions();
   const chipVariant = resolveLocationChipVariant(item.locationVisibility, item.neighborhood);
   const chipLabel   = item.venueName ?? item.neighborhood ?? item.city;
@@ -204,6 +204,7 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
   const [mediaFailed, setMediaFailed] = useState(false);
   const dismiss = () => setDismissed(true);
   const undismiss = () => setDismissed(false);
+  const handleDeleted = () => { dismiss(); onDeleteSuccess?.(); };
   if (dismissed) return null;
 
   // 4:5 portrait media frame; capped at 600 for tablet/web
@@ -253,7 +254,7 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
         ) : null}
         {/* AuthorRow on bottom scrim */}
         <View style={s.postAuthorOverlay}>
-          <AuthorRow item={item} light onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={dismiss} />
+          <AuthorRow item={item} light onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
         </View>
       </View>
 
@@ -304,14 +305,15 @@ function PostCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
 }
 
 /* ── Question ── */
-function QuestionCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: string) => void }) {
+function QuestionCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void }) {
   const [dismissed, setDismissed] = useState(false);
   const dismiss = () => setDismissed(true);
   const undismiss = () => setDismissed(false);
+  const handleDeleted = () => { dismiss(); onDeleteSuccess?.(); };
   if (dismissed) return null;
   return (
     <View style={s.card}>
-      <AuthorRow item={item} badge={{ label: 'QUESTION', bg: '#EFE7FA', fg: '#7A4DBF' }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={dismiss} />
+      <AuthorRow item={item} badge={{ label: 'QUESTION', bg: '#EFE7FA', fg: '#7A4DBF' }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
       <Text style={s.question}>{item.question}</Text>
       <TagRow tags={item.tags} />
       <View style={s.actions}>
@@ -342,15 +344,16 @@ function QuestionCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: 
 }
 
 /* ── Open Plan ── */
-function PlanCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: string) => void }) {
+function PlanCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void }) {
   const planPicker = usePlanPicker();
   const [dismissed, setDismissed] = useState(false);
   const dismiss = () => setDismissed(true);
   const undismiss = () => setDismissed(false);
+  const handleDeleted = () => { dismiss(); onDeleteSuccess?.(); };
   if (dismissed) return null;
   return (
     <View style={s.card}>
-      <AuthorRow item={item} badge={{ label: 'OPEN PLAN', bg: '#E3F1EA', fg: color.success }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={dismiss} />
+      <AuthorRow item={item} badge={{ label: 'OPEN PLAN', bg: '#E3F1EA', fg: color.success }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
       <Text style={s.title}>{item.title}</Text>
       {item.time ? <View style={s.line}><Clock size={13} color={color.mute} /><Text style={s.lineText}>{item.time}</Text></View> : null}
       {item.neighborhood || item.city ? <View style={s.line}><MapPin size={13} color={color.mute} /><Text style={s.lineText}>{item.neighborhood ?? item.city}</Text></View> : null}
@@ -379,16 +382,17 @@ function PlanCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id:
 }
 
 /* ── Hidden Gem Share ── */
-function GemCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: string) => void }) {
+function GemCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void }) {
   const planPicker = usePlanPicker();
   const { userId: currentUserId } = useSession();
   const [dismissed, setDismissed] = useState(false);
   const dismiss = () => setDismissed(true);
   const undismiss = () => setDismissed(false);
+  const handleDeleted = () => { dismiss(); onDeleteSuccess?.(); };
   if (dismissed) return null;
   return (
     <View style={s.card}>
-      <AuthorRow item={item} badge={{ label: 'HIDDEN GEM', bg: '#E3F1EA', fg: color.success }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={dismiss} />
+      <AuthorRow item={item} badge={{ label: 'HIDDEN GEM', bg: '#E3F1EA', fg: color.success }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
       <View style={s.media}><View style={s.gemIcon}><Gem size={15} color={color.onInk} /></View></View>
       <Text style={s.title}>{item.title}</Text>
       {item.blurb ? <RichText content={item.blurb} tags={item.spanTags} hashtagUsages={item.spanHashtags} currentUserId={currentUserId ?? undefined} style={s.blurb} /> : null}
@@ -409,15 +413,16 @@ function GemCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: 
 }
 
 /* ── Itinerary / Plan Idea ── */
-function ItineraryCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (id: string) => void }) {
+function ItineraryCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void }) {
   const planPicker = usePlanPicker();
   const [dismissed, setDismissed] = useState(false);
   const dismiss = () => setDismissed(true);
   const undismiss = () => setDismissed(false);
+  const handleDeleted = () => { dismiss(); onDeleteSuccess?.(); };
   if (dismissed) return null;
   return (
     <View style={s.card}>
-      <AuthorRow item={item} badge={{ label: 'ITINERARY', bg: '#E2EDF0', fg: color.deep }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={dismiss} />
+      <AuthorRow item={item} badge={{ label: 'ITINERARY', bg: '#E2EDF0', fg: color.deep }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
       <View style={s.titleRow}>
         <Route size={16} color={color.deep} />
         <Text style={[s.title, { flex: 1 }]}>{item.title}</Text>
@@ -581,7 +586,7 @@ function PlaceRecommendationCard({ item }: { item: PulseFeedItem }) {
 }
 
 /* ── Unified renderer: switch on type ── */
-export function PulseFeedCard({ item }: { item: PulseFeedItem }) {
+export function PulseFeedCard({ item, onDeleteSuccess }: { item: PulseFeedItem; onDeleteSuccess?: () => void }) {
   const [whyId, setWhyId] = useState<string | null>(null);
   const [whyOpen, setWhyOpen] = useState(false);
 
@@ -589,11 +594,11 @@ export function PulseFeedCard({ item }: { item: PulseFeedItem }) {
 
   let card: React.ReactNode;
   switch (item.type) {
-    case 'post':               card = <PostCard item={item} onWhyPress={handleWhyPress} />; break;
-    case 'question':           card = <QuestionCard item={item} onWhyPress={handleWhyPress} />; break;
-    case 'plan':               card = <PlanCard item={item} onWhyPress={handleWhyPress} />; break;
-    case 'hidden_gem':         card = <GemCard item={item} onWhyPress={handleWhyPress} />; break;
-    case 'itinerary':          card = <ItineraryCard item={item} onWhyPress={handleWhyPress} />; break;
+    case 'post':               card = <PostCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} />; break;
+    case 'question':           card = <QuestionCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} />; break;
+    case 'plan':               card = <PlanCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} />; break;
+    case 'hidden_gem':         card = <GemCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} />; break;
+    case 'itinerary':          card = <ItineraryCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} />; break;
     case 'circle_activity':    card = <CircleCard item={item} />; break;
     case 'compass_suggestion': card = item.reason ? <CompassCard item={item} onWhyPress={handleWhyPress} /> : null; break;
     case 'city_note':          card = item.isProvisional ? <CityNoteCard item={item} /> : null; break;
