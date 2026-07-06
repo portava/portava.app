@@ -120,6 +120,12 @@ export default function Pulse() {
   });
   const followingFeed = useFollowingFeed();
 
+  // When any post is deleted, remove it from both feeds so it cannot reappear on refresh
+  const handlePostDeleted = useCallback((id: string) => {
+    pulseFeed.markDeleted(id);
+    followingFeed.markDeleted(id);
+  }, [pulseFeed.markDeleted, followingFeed.markDeleted]);
+
   useFocusEffect(
     useCallback(() => {
       // Seed overrides from the store snapshot so feed cards reflect any
@@ -418,7 +424,7 @@ export default function Pulse() {
         ListFooterComponent={Footer}
         renderItem={({ item }) => (
           <View style={{ paddingHorizontal: space.lg }}>
-            <PulseFeedCard item={item} />
+            <PulseFeedCard item={item} onDeleteSuccess={() => handlePostDeleted(item.id)} />
           </View>
         )}
         ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
