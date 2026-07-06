@@ -102,6 +102,14 @@ describe('getAttendeeActionSet() — lifecycle gates for regular attendees', () 
     assert.equal(getAttendeeActionSet(null, 'open').canRsvp, true);
   });
 
+  it('can RSVP on a started event (late arrivals allowed while event is live)', () => {
+    assert.equal(
+      getAttendeeActionSet(null, 'started').canRsvp,
+      true,
+      'started must allow RSVP — matches original [\'open\',\'started\'] behavior',
+    );
+  });
+
   it('can RSVP on a waitlist event (joins waitlist instead of directly)', () => {
     assert.equal(getAttendeeActionSet(null, 'waitlist').canRsvp, true);
   });

@@ -67,7 +67,9 @@ export function getAttendeeActionSet(
     return { canRsvp: false, canLeave: false, canJoinWaitlist: false };
   }
 
-  const joinable     = state === 'open' || state === 'waitlist';
+  // RSVP is allowed during open, waitlist, and started states.
+  // 'started' is included so late arrivals can still RSVP while the event is live.
+  const joinable     = state === 'open' || state === 'waitlist' || state === 'started';
   const cancellable  = isActive(state);
   const waitlistable = state === 'waitlist' || state === 'full';
 
