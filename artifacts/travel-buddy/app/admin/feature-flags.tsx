@@ -27,6 +27,7 @@ import {
   applyOptimisticToggle,
   applyToggleResult,
   applyLoadResult,
+  getActiveKillSwitches,
 } from '../../src/screens/admin/featureFlags.machine';
 import type { FeatureFlag } from '../../src/screens/admin/featureFlags.machine';
 
@@ -130,6 +131,22 @@ function FlagRow({
   );
 }
 
+// ── Kill-switch banner ────────────────────────────────────────────────────────
+
+function KillSwitchBanner({ activeFlags }: { activeFlags: string[] }) {
+  if (activeFlags.length === 0) return null;
+  return (
+    <View style={s.killBanner}>
+      <Text style={s.killBannerTitle}>
+        {activeFlags.length === 1 ? '⚠ Kill switch active' : `⚠ ${activeFlags.length} kill switches active`}
+      </Text>
+      {activeFlags.map((flag) => (
+        <Text key={flag} style={s.killBannerItem}>· {flag}</Text>
+      ))}
+    </View>
+  );
+}
+
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 export default function FeatureFlagsScreen() {
@@ -191,6 +208,10 @@ export default function FeatureFlagsScreen() {
     load(true);
   }, [load]);
 
+  // ── Derived ─────────────────────────────────────────────────────────────────
+
+  const activeKillSwitches = getActiveKillSwitches(flags);
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -207,6 +228,9 @@ export default function FeatureFlagsScreen() {
         <Text style={s.title}>Feature Flags</Text>
         <View style={{ width: 36 }} />
       </View>
+
+      {/* Kill-switch banner */}
+      <KillSwitchBanner activeFlags={activeKillSwitches} />
 
       {/* Body */}
       {loading ? (
@@ -332,5 +356,25 @@ const s = StyleSheet.create({
     ...t.body,
     color: color.mute,
     textAlign: 'center',
+  },
+  killBanner: {
+    backgroundColor: '#FFF0EE',
+    borderLeftWidth: 4,
+    borderLeftColor: '#E03131',
+    marginHorizontal: space.md,
+    marginTop: space.sm,
+    marginBottom: space.xs,
+    borderRadius: radius.sm,
+    padding: space.md,
+    gap: 4,
+  },
+  killBannerTitle: {
+    ...t.bodyStrong,
+    color: '#C0392B',
+  },
+  killBannerItem: {
+    ...t.small,
+    color: '#C0392B',
+    paddingLeft: 4,
   },
 });

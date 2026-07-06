@@ -8,6 +8,32 @@
  *   src/screens/admin/__tests__/featureFlags.machine.test.ts
  */
 
+// ── Kill switches ─────────────────────────────────────────────────────────────
+
+/**
+ * Flag names that are treated as kill switches — disabling core system
+ * behaviour in response to an incident. When any of these is enabled the
+ * Feature Flags screen shows a prominent red banner.
+ */
+export const KILL_SWITCH_FLAGS: readonly string[] = [
+  'disable_posting',
+  'disable_messaging',
+  'disable_signups',
+  'disable_rent_buddy_booking',
+  'city_launch_mode',
+  'invite_only_beta',
+];
+
+/**
+ * Returns the flag names that are both in KILL_SWITCH_FLAGS and currently
+ * enabled. Empty array means the system is fully operational.
+ */
+export function getActiveKillSwitches(flags: FeatureFlag[]): string[] {
+  return flags
+    .filter((f) => KILL_SWITCH_FLAGS.includes(f.flag) && f.enabled)
+    .map((f) => f.flag);
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface FeatureFlag {
