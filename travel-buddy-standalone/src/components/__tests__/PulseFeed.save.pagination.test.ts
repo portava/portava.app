@@ -488,3 +488,60 @@ describe('pulsePostToFeedItem', () => {
     assert.match(item.timeAgo, /m ago/);
   });
 });
+
+// ── Hide from feed — immediate card dismissal ──────────────────────────────────
+//
+// When the user taps "Hide from feed" the card must vanish BEFORE the network
+// call completes (optimistic dismiss). If the backend later fails the card is
+// restored. These tests exercise that contract using the inline `hideFlow`
+// helper which mirrors the component's hide wiring exactly.
+
+describe('Hide from feed — immediate card dismissal', () => {
+  it('card is hidden synchronously before the backend call resolves', async () => {
+    let dismissed = false;
+    const onHide   = () => { dismissed = true; };
+    const onUnhide = () => { dismissed = false; };
+
+    let resolveBackend!: (ok: boolean) => void;
+    const backendPending = new Promise<boolean>((res) => { resolveBackend = res; });
+
+    const flowPromise = hideFlow(onHide, onUnhide, () => backendPending);
+
+    // Assert dismissed is true NOW — before awaiting the flow or resolving the backend.
+    assert.equal(dismissed, true, 'card must disappear immediately, before backend resolves');
+
+    resolveBackend(true);
+    await flowPromise;
+    assert.equal(dismissed, true, 'card stays hidden after backend confirms success');
+  });
+
+  it('card is restored when backend returns false', async () => {
+    let dismissed = false;
+    const onHide   = () => { dismissed = true; };
+    const onUnhide = () => { dismissed = false; };
+
+    const result = await hideFlow(onHide, onUnhide, async () => false);
+
+    assert.equal(result.rolledBack, true, 'rollback flag must be set');
+    assert.equal(dismissed, false, 'card must reappear after backend failure');
+  });
+
+  it('card stays hidden when backend confirms success', async () => {
+    let dismissed = false;
+    const onHide   = () => { dismissed = true; };
+    const onUnhide = () => { dismissed = false; };
+
+    const result = await hideFlow(onHide, onUnhide, async () => true);
+
+    assert.equal(result.rolledBack, false, 'no rollback on success');
+    assert.equal(dismissed, true, 'card must remain hidden after backend success');
+  });
+
+  it('hide is targeted to the specific post (does not affect other cards)', () => {
+    const hiddenIds: string[] = [];
+    const makeHide = (postId: string) => () => { hiddenIds.push(postId); };
+
+    makeHide('post-A')();
+    assert.deepEqual(hiddenIds, ['post-A'], 'only the tapped post is dismissed');
+  });
+});

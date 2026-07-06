@@ -426,29 +426,29 @@ describe('createReportSubmitMachine — submit payload shape', () => {
     assert.equal(calls[0]!.payload.reason_detail, 'some extra context');
   });
 
-  it('omits reason_detail when detail is empty', async () => {
+  it('reason_detail is undefined when detail is empty', async () => {
     const { fn, calls } = makeFakeReportContent();
     const machine = createReportSubmitMachine('p-1', () => {}, undefined, fn);
     machine.selectReason('spam');
     machine.setDetail('');
     await machine.submit();
     assert.equal(
-      Object.prototype.hasOwnProperty.call(calls[0]!.payload, 'reason_detail'),
-      false,
-      'reason_detail must be absent when detail is empty',
+      calls[0]!.payload.reason_detail,
+      undefined,
+      'reason_detail must be undefined when detail is empty',
     );
   });
 
-  it('omits reason_detail when detail is only whitespace', async () => {
+  it('reason_detail is undefined when detail is only whitespace', async () => {
     const { fn, calls } = makeFakeReportContent();
     const machine = createReportSubmitMachine('p-1', () => {}, undefined, fn);
     machine.selectReason('spam');
     machine.setDetail('   ');
     await machine.submit();
     assert.equal(
-      Object.prototype.hasOwnProperty.call(calls[0]!.payload, 'reason_detail'),
-      false,
-      'reason_detail must be absent for whitespace-only detail',
+      calls[0]!.payload.reason_detail,
+      undefined,
+      'reason_detail must be undefined for whitespace-only detail',
     );
   });
 

@@ -189,10 +189,10 @@ export function createReportSubmitMachine(
       const trimmedDetail = state.detail.trim();
       state = { ...state, submitting: true };
       const res = await reportContentFn({
-        target_type: 'post',
-        target_id:   postId,
-        reason_code: reasonCode,
-        ...(trimmedDetail ? { reason_detail: trimmedDetail } : {}),
+        target_type:   'post',
+        target_id:     postId,
+        reason_code:   reasonCode,
+        reason_detail: trimmedDetail || undefined,
       });
       state = { ...state, submitting: false };
       if (res.ok) {
