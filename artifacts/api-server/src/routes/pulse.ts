@@ -1,4 +1,5 @@
 import { enrichSpans } from '../lib/enrichSpans';
+import { isFlagEnabled } from '../lib/featureFlags';
 import { getCompassProfile } from "../compass/CompassProfileService";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine";
@@ -475,6 +476,869 @@ router.get("/pulse", async (req, res) => {
   } catch { /* non-fatal — place cards degrade gracefully */ }
 
   res.json({ posts: orderedPosts, total: orderedPosts.length, tab, prompts, placeCards });
+});
+
+/* ===========================================================================
+ * GET /api/pulse/live
+ *
+ * Aggregates real-time items from Safe Return, Events, Trips, Circles,
+ * Rent-a-Buddy, Hidden Gems, and Compass picks into a single ranked,
+ * deduplicated, privacy-filtered rail for the Pulse screen.
+ *
+ * Priority order (lower number = higher urgency):
+ *   0 — Safety (active Safe Return session)
+ *   1 — User-owned items starting soon (hosted events/trips)
+ *   2 — Joined items starting soon
+ *   3 — Pending requests (Action Needed)
+ *   4 — Ongoing / Ends Soon
+ *   5 — Active circles (gathering now)
+ *   6 — Tonight
+ *   7 — Tomorrow
+ *   8 — Upcoming (≤14 days)
+ *   9 — Discovery (gems, Compass picks)
+ *
+ * Privacy guarantees:
+ *   - No exact GPS coordinates in response
+ *   - Blocked users (both directions) excluded from all sources
+ *   - Events: only public + friends_only visibility shown to non-hosts
+ *   - Invite-only events excluded unless caller is host
+ *   - Capacity check: ended/cancelled/draft events excluded
+ *   - Buddy items: only approved/auto_approved profiles shown
+ *   - Feature-flagged sources are skipped when flag is disabled (fail-open)
+ *   - Trips: only public + friends visibility to non-members
+ *
+ * Query params:
+ *   context     — 'nearMe'|'currentCity'|'tripCity'|'savedCity'|'specificTrip'|'myPlans'
+ *   lat/lng     — optional caller location (not reflected in response)
+ *   citySlug    — city name for location-scoped queries
+ *   tripId      — required when context='specificTrip'
+ *
+ * Response: { items: LivePulseItem[], fallbackContext?: string }
+ * =========================================================================*/
+
+export type LivePulseItemType =
+  | 'event'
+  | 'trip'
+  | 'trip_request'
+  | 'buddy_request'
+  | 'available_buddy'
+  | 'hidden_gem'
+  | 'compass'
+  | 'circle'
+  | 'safe_return';
+
+export type StatusLabel =
+  | 'Starting Soon' | 'Ongoing' | 'Ends Soon' | 'Tonight' | 'Tomorrow'
+  | 'Upcoming' | 'Action Needed' | 'My Plan';
+
+export interface LivePulseItem {
+  id: string;
+  item_type: LivePulseItemType;
+  item_id: string;
+  status_label: StatusLabel;
+  title: string;
+  subtitle: string | null;
+  city: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  people_count: number | null;
+  user_relationship: 'host' | 'joined' | 'saved' | 'pending' | 'available' | null;
+  primary_action: { label: string; type: string } | null;
+  secondary_action: { label: string; type: string } | null;
+  reason_labels: string[];
+  expires_at: string | null;
+  is_joinable: boolean;
+}
+
+/** Compute the human-readable status label from timing data. */
+export function computeStatusLabel(
+  startsAt: string | null,
+  endsAt: string | null,
+): StatusLabel {
+  const now = Date.now();
+  if (!startsAt) return 'My Plan';
+
+  const startMs = new Date(startsAt).getTime();
+  const endMs   = endsAt ? new Date(endsAt).getTime() : null;
+
+  if (endMs !== null && endMs <= now) return 'My Plan'; // ended — caller filters
+  if (startMs <= now) {
+    if (endMs !== null && endMs - now <= 45 * 60 * 1000) return 'Ends Soon';
+    return 'Ongoing';
+  }
+
+  const minsToStart = (startMs - now) / 60_000;
+  if (minsToStart <= 60) return 'Starting Soon';
+
+  const todayEnd = new Date();
+  todayEnd.setHours(23, 59, 59, 999);
+  if (startMs <= todayEnd.getTime()) return 'Tonight';
+
+  const tomorrowEnd = new Date(todayEnd);
+  tomorrowEnd.setDate(tomorrowEnd.getDate() + 1);
+  if (startMs <= tomorrowEnd.getTime()) return 'Tomorrow';
+
+  const daysAway = (startMs - now) / 86_400_000;
+  if (daysAway <= 14) return 'Upcoming';
+  return 'My Plan';
+}
+
+/**
+ * Assign a numeric urgency for ranking (lower = higher priority):
+ *   0 — Safety (Safe Return)
+ *   1 — User-owned items starting soon
+ *   2 — Joined items starting soon
+ *   3 — Pending requests (Action Needed)
+ *   4 — Ongoing / Ends Soon
+ *   5 — Circles active now
+ *   6 — Tonight
+ *   7 — Tomorrow
+ *   8 — Upcoming
+ *   9 — Discovery
+ */
+function urgency(item: LivePulseItem & { _urgency?: number }): number {
+  if (item._urgency !== undefined) return item._urgency;
+  if (item.item_type === 'safe_return') return 0;
+  if (item.user_relationship === 'pending') return 3;
+  if (item.item_type === 'circle') return 5;
+  const sl = item.status_label;
+  if (sl === 'Starting Soon' && item.user_relationship === 'host') return 1;
+  if (sl === 'Starting Soon' && item.user_relationship === 'joined') return 2;
+  if (sl === 'Starting Soon') return 2;
+  if (sl === 'Ongoing' || sl === 'Ends Soon') return 4;
+  if (sl === 'Tonight') return 6;
+  if (sl === 'Tomorrow') return 7;
+  if (sl === 'Upcoming') return 8;
+  return 9; // discovery, My Plan, etc.
+}
+
+const livePulseQuerySchema = z.object({
+  context:  z.enum(['nearMe', 'currentCity', 'tripCity', 'savedCity', 'specificTrip', 'myPlans']).optional().default('myPlans'),
+  lat:      z.coerce.number().optional(),
+  lng:      z.coerce.number().optional(),
+  citySlug: z.string().max(200).optional(),
+  tripId:   z.string().uuid().optional(),
+});
+
+router.get("/pulse/live", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not available");
+    return;
+  }
+
+  const parsed = livePulseQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid query");
+    return;
+  }
+  let { context, citySlug, tripId } = parsed.data;
+  const { lat, lng } = parsed.data;
+
+  // Validate that specificTrip context includes a tripId
+  if (context === 'specificTrip' && !tripId) {
+    sendError(res, 'invalid_payload', 'tripId is required when context is specificTrip');
+    return;
+  }
+
+  // ── Location-off fallback: nearMe without coordinates → tripCity → savedCity → myPlans ──
+  let fallbackContext: string | undefined;
+  if (context === 'nearMe' && (lat === undefined || lng === undefined)) {
+    fallbackContext = 'tripCity';
+    context = 'tripCity';
+  }
+
+  // ── Load feature flags in parallel ─────────────────────────────────────
+  const [safeReturnEnabled, hiddenGemsEnabled, circlesEnabled] = await Promise.all([
+    isFlagEnabled(sc, 'safe_return_enabled').catch(() => false),
+    isFlagEnabled(sc, 'hidden_gems_enabled').catch(() => false),
+    isFlagEnabled(sc, 'find_your_circle_enabled').catch(() => false),
+  ]);
+
+  // ── Load blocked user IDs (both directions) ──────────────────────────────
+  const blockedSet = new Set<string>();
+  try {
+    const [outRes, inRes] = await Promise.all([
+      sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
+      sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
+    ]);
+    for (const r of (outRes.data as any[]) ?? []) blockedSet.add(r.blocked_id as string);
+    for (const r of (inRes.data as any[]) ?? []) blockedSet.add(r.blocker_id as string);
+  } catch { /* non-fatal */ }
+
+  const items: (LivePulseItem & { _urgency?: number })[] = [];
+  const seen = new Set<string>();
+
+  function addItem(item: LivePulseItem & { _urgency?: number }) {
+    const key = `${item.item_type}:${item.item_id}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    items.push(item);
+  }
+
+  const now = new Date().toISOString();
+
+  // ── 0. Safe Return — active sessions (urgency 0, highest priority) ─────────
+  if (safeReturnEnabled) {
+    try {
+      const { data: sessions } = await sc
+        .from("safe_return_sessions")
+        .select("id, status, timer_end_at, trip_id, escalation_level")
+        .eq("user_id", user.id)
+        .in("status", ["active", "pending"])
+        .gt("timer_end_at", now)
+        .order("timer_end_at", { ascending: true })
+        .limit(1);
+
+      for (const session of (sessions as any[]) ?? []) {
+        const minutesLeft = session.timer_end_at
+          ? Math.ceil((new Date(session.timer_end_at as string).getTime() - Date.now()) / 60_000)
+          : null;
+        const subtitle = minutesLeft !== null ? `Check-in in ${minutesLeft} min` : 'Check-in required';
+        addItem({
+          id:                `safe_return:${session.id as string}`,
+          item_type:         'safe_return',
+          item_id:           session.id as string,
+          status_label:      'Action Needed',
+          title:             'Safe Return Active',
+          subtitle,
+          city:              null,
+          starts_at:         null,
+          ends_at:           (session.timer_end_at as string | null) ?? null,
+          people_count:      null,
+          user_relationship: 'joined',
+          primary_action:    { label: 'Check In Safe', type: 'confirm_safe_return' },
+          secondary_action:  { label: 'Extend Timer', type: 'extend_safe_return' },
+          reason_labels:     ['Safety'],
+          expires_at:        (session.timer_end_at as string | null) ?? null,
+          is_joinable:       false,
+          _urgency:          0,
+        });
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  // ── 1. Events — hosted and RSVP'd ─────────────────────────────────────────
+  try {
+    const [hostedRes, rsvpRowsRes] = await Promise.all([
+      sc.from("events")
+        .select("id, title, starts_at, ends_at, city, state, visibility, max_attendees, going_count")
+        .eq("host_id", user.id)
+        .in("state", ["open", "started"])
+        .gt("ends_at", now),
+      sc.from("event_rsvps")
+        .select("event_id, status")
+        .eq("user_id", user.id)
+        .in("status", ["going", "maybe"]),
+    ]);
+
+    // Apply city filter for hosted events when context scopes to a city
+    // Note: hosted events are shown regardless of visibility — the host always sees their own events.
+    for (const ev of (hostedRes.data as any[]) ?? []) {
+      if (citySlug && (context === 'currentCity' || context === 'savedCity' || context === 'tripCity')) {
+        const evCity = ((ev.city as string | null) ?? '').toLowerCase().replace(/\s+/g, '-');
+        if (evCity !== citySlug) continue;
+      }
+      const sl = computeStatusLabel(ev.starts_at, ev.ends_at);
+      if (sl === 'My Plan') continue;
+      const maxAtt = ev.max_attendees as number | null;
+      const goingCount = (ev.going_count as number | null) ?? 0;
+      const atCapacity = maxAtt !== null && goingCount >= maxAtt;
+      addItem({
+        id:                `event:${ev.id as string}`,
+        item_type:         'event',
+        item_id:           ev.id as string,
+        status_label:      sl,
+        title:             ev.title as string,
+        subtitle:          ev.city ? `Hosted · ${ev.city as string}` : 'Hosted',
+        city:              (ev.city as string | null) ?? null,
+        starts_at:         (ev.starts_at as string | null) ?? null,
+        ends_at:           (ev.ends_at as string | null) ?? null,
+        people_count:      goingCount,
+        user_relationship: 'host',
+        primary_action:    { label: 'Manage', type: 'navigate_event' },
+        secondary_action:  null,
+        reason_labels:     atCapacity ? ['Your event', 'Full'] : ['Your event'],
+        expires_at:        (ev.ends_at as string | null) ?? null,
+        is_joinable:       !atCapacity,
+        // No _urgency override — let urgency() derive from status_label + user_relationship='host'
+      });
+    }
+
+    const rsvpEventIds = ((rsvpRowsRes.data as any[]) ?? []).map((r: any) => r.event_id as string);
+    if (rsvpEventIds.length > 0) {
+      const { data: rsvpEvents } = await sc
+        .from("events")
+        .select("id, title, starts_at, ends_at, city, state, visibility, going_count, max_attendees, host_id")
+        .in("id", rsvpEventIds)
+        .in("state", ["open", "started"])
+        .gt("ends_at", now)
+        .neq("host_id", user.id);
+
+      for (const ev of (rsvpEvents as any[]) ?? []) {
+        if (blockedSet.has(ev.host_id as string)) continue;
+        // Privacy: only public + friends_only are shown for joined events
+        if (ev.visibility !== 'public' && ev.visibility !== 'friends_only') continue;
+        if (citySlug && (context === 'currentCity' || context === 'savedCity' || context === 'tripCity')) {
+          const evCity = ((ev.city as string | null) ?? '').toLowerCase().replace(/\s+/g, '-');
+          if (evCity !== citySlug) continue;
+        }
+        const sl = computeStatusLabel(ev.starts_at, ev.ends_at);
+        if (sl === 'My Plan') continue;
+        const maxAtt = ev.max_attendees as number | null;
+        const goingCount = (ev.going_count as number | null) ?? 0;
+        const atCapacity = maxAtt !== null && goingCount >= maxAtt;
+        addItem({
+          id:                `event:${ev.id as string}`,
+          item_type:         'event',
+          item_id:           ev.id as string,
+          status_label:      sl,
+          title:             ev.title as string,
+          subtitle:          (ev.city as string | null) ?? null,
+          city:              (ev.city as string | null) ?? null,
+          starts_at:         (ev.starts_at as string | null) ?? null,
+          ends_at:           (ev.ends_at as string | null) ?? null,
+          people_count:      goingCount,
+          user_relationship: 'joined',
+          primary_action:    { label: 'View', type: 'navigate_event' },
+          secondary_action:  atCapacity ? null : { label: 'Invite', type: 'share_event' },
+          reason_labels:     ["You're going"],
+          expires_at:        (ev.ends_at as string | null) ?? null,
+          is_joinable:       !atCapacity,
+        });
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  // ── 2. Trips — user is a member ────────────────────────────────────────────
+  let callerTripIds: string[] = [];
+  const tripCityMap = new Map<string, string | null>(); // tripId → destinationCity
+
+  try {
+    const { data: memberRows } = await sc
+      .from("trip_members")
+      .select("trip_id, role")
+      .eq("user_id", user.id)
+      .in("role", ["owner", "co_host", "member"]);
+
+    callerTripIds = ((memberRows as any[]) ?? []).map((r: any) => r.trip_id as string);
+    const roleMap = new Map<string, string>(((memberRows as any[]) ?? []).map((r: any) => [r.trip_id as string, r.role as string]));
+
+    if (callerTripIds.length > 0) {
+      // When context is specificTrip, narrow to that trip only
+      const queryTripIds = context === 'specificTrip' && tripId
+        ? callerTripIds.filter(id => id === tripId)
+        : callerTripIds;
+
+      if (queryTripIds.length > 0) {
+        const { data: trips } = await sc
+          .from("trips")
+          .select("id, title, destination_city, start_date, end_date, status, visibility, owner_id")
+          .in("id", queryTripIds)
+          .in("status", ["planning", "upcoming", "active"]);
+
+        for (const trip of (trips as any[]) ?? []) {
+          const city = (trip.destination_city as string | null) ?? null;
+          tripCityMap.set(trip.id as string, city);
+
+          const sl = computeStatusLabel(trip.start_date, trip.end_date);
+          // City filter for currentCity / savedCity context
+          if (citySlug && (context === 'currentCity' || context === 'savedCity')) {
+            const tripCitySlug = (city ?? '').toLowerCase().replace(/\s+/g, '-');
+            if (tripCitySlug !== citySlug) continue;
+          }
+          // tripCity: derive citySlug from active trip destination if not set
+          if (context === 'tripCity' && !citySlug && city) {
+            citySlug = city.toLowerCase().replace(/\s+/g, '-');
+          }
+
+          const role = roleMap.get(trip.id as string) ?? 'member';
+          const isHost = role === 'owner' || role === 'co_host';
+          addItem({
+            id:                `trip:${trip.id as string}`,
+            item_type:         'trip',
+            item_id:           trip.id as string,
+            status_label:      sl,
+            title:             trip.title as string,
+            subtitle:          city,
+            city,
+            starts_at:         (trip.start_date as string | null) ?? null,
+            ends_at:           (trip.end_date as string | null) ?? null,
+            people_count:      null,
+            user_relationship: isHost ? 'host' : 'joined',
+            primary_action:    { label: 'View Trip', type: 'navigate_trip' },
+            secondary_action:  isHost ? { label: 'Invite', type: 'invite_to_trip' } : null,
+            reason_labels:     [isHost ? 'Your trip' : 'Trip member'],
+            expires_at:        (trip.end_date as string | null) ?? null,
+            is_joinable:       false,
+          });
+        }
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  // ── Location fallback: tripCity had no active trip → try savedCity → myPlans ─
+  if (context === 'tripCity' && !citySlug) {
+    try {
+      const { data: profileRow } = await sc
+        .from("profiles")
+        .select("home_city")
+        .eq("id", user.id)
+        .maybeSingle();
+      const homeCity = (profileRow as any)?.home_city as string | null;
+      if (homeCity) {
+        citySlug = homeCity.toLowerCase().replace(/\s+/g, '-');
+        fallbackContext = 'savedCity';
+        context = 'savedCity';
+      } else {
+        fallbackContext = 'myPlans';
+        context = 'myPlans';
+      }
+    } catch {
+      fallbackContext = 'myPlans';
+      context = 'myPlans';
+    }
+  }
+
+  // ── 3. Circles — active gatherings in user's trips/events ─────────────────
+  if (circlesEnabled && callerTripIds.length > 0) {
+    try {
+      const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+      const { data: presences } = await sc
+        .from("circle_presence")
+        .select("context_id, user_id, updated_at")
+        .eq("context_type", "trip")
+        .in("context_id", callerTripIds)
+        .neq("user_id", user.id)
+        .gt("updated_at", fourHoursAgo);
+
+      // Group by context_id (trip) and count unique members
+      const tripPresenceCounts = new Map<string, number>();
+      for (const p of (presences as any[]) ?? []) {
+        if (blockedSet.has(p.user_id as string)) continue;
+        const tid = p.context_id as string;
+        tripPresenceCounts.set(tid, (tripPresenceCounts.get(tid) ?? 0) + 1);
+      }
+
+      for (const [circTripId, memberCount] of tripPresenceCounts) {
+        const city = tripCityMap.get(circTripId) ?? null;
+        addItem({
+          id:                `circle:${circTripId}`,
+          item_type:         'circle',
+          item_id:           circTripId,
+          status_label:      'Ongoing',
+          title:             'Circle Active',
+          subtitle:          city ?? 'Your trip circle is gathering',
+          city,
+          starts_at:         null,
+          ends_at:           null,
+          people_count:      memberCount,
+          user_relationship: 'joined',
+          primary_action:    { label: 'Open Circle', type: 'navigate_circle' },
+          secondary_action:  null,
+          reason_labels:     [`${memberCount} member${memberCount !== 1 ? 's' : ''} present`],
+          expires_at:        null,
+          is_joinable:       false,
+          _urgency:          5,
+        });
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  // ── 4. Buddy bookings — pending requests (both directions) ─────────────────
+  try {
+    // Build a set of blocked profile IDs (buddy_bookings.buddy_id is a profile ID, not user ID)
+    // blockedSet contains user IDs; we need to map those to profile IDs for the traveler-side check.
+    const blockedProfileSet = new Set<string>();
+    if (blockedSet.size > 0) {
+      try {
+        const { data: blockedProfiles } = await sc
+          .from("rent_buddy_profiles")
+          .select("id")
+          .in("user_id", [...blockedSet]);
+        for (const bp of (blockedProfiles as any[]) ?? []) {
+          blockedProfileSet.add(bp.id as string);
+        }
+      } catch { /* non-fatal — fail open; user-ID check below is a secondary guard */ }
+    }
+
+    const [travelerRes, buddyProfileRes] = await Promise.all([
+      sc.from("buddy_bookings")
+        .select("id, buddy_id, booking_date, city, status")
+        .eq("traveler_id", user.id)
+        .eq("status", "requested"),
+      // rent_buddy_profiles is the correct table; gate on approved moderation_status
+      sc.from("rent_buddy_profiles")
+        .select("id")
+        .eq("user_id", user.id)
+        .in("moderation_status", ["approved", "auto_approved"])
+        .maybeSingle(),
+    ]);
+
+    for (const bk of (travelerRes.data as any[]) ?? []) {
+      // buddy_id is a profile ID; compare against blockedProfileSet (not blockedSet of user IDs)
+      if (blockedProfileSet.has(bk.buddy_id as string)) continue;
+      if (citySlug && context !== 'myPlans') {
+        const bkCity = ((bk.city as string | null) ?? '').toLowerCase().replace(/\s+/g, '-');
+        if (bkCity !== citySlug) continue;
+      }
+      addItem({
+        id:                `buddy_request:${bk.id as string}`,
+        item_type:         'buddy_request',
+        item_id:           bk.id as string,
+        status_label:      'Action Needed',
+        title:             'Buddy Request Pending',
+        subtitle:          (bk.city as string | null) ?? null,
+        city:              (bk.city as string | null) ?? null,
+        starts_at:         (bk.booking_date as string | null) ?? null,
+        ends_at:           null,
+        people_count:      null,
+        user_relationship: 'pending',
+        primary_action:    { label: 'View Request', type: 'navigate_buddy_booking' },
+        secondary_action:  { label: 'Cancel', type: 'cancel_buddy_booking' },
+        reason_labels:     ['Awaiting response'],
+        expires_at:        null,
+        is_joinable:       false,
+        _urgency:          3,
+      });
+    }
+
+    // As a buddy — only show if caller has an approved buddy profile
+    const buddyProfileRow = buddyProfileRes.data as any;
+    if (buddyProfileRow?.id) {
+      const { data: incomingBookings } = await sc
+        .from("buddy_bookings")
+        .select("id, traveler_id, booking_date, city, status")
+        .eq("buddy_id", buddyProfileRow.id as string)
+        .eq("status", "requested");
+
+      for (const bk of (incomingBookings as any[]) ?? []) {
+        if (blockedSet.has(bk.traveler_id as string)) continue;
+        addItem({
+          id:                `buddy_request:${bk.id as string}`,
+          item_type:         'buddy_request',
+          item_id:           bk.id as string,
+          status_label:      'Action Needed',
+          title:             'New Booking Request',
+          subtitle:          (bk.city as string | null) ?? null,
+          city:              (bk.city as string | null) ?? null,
+          starts_at:         (bk.booking_date as string | null) ?? null,
+          ends_at:           null,
+          people_count:      null,
+          user_relationship: 'pending',
+          primary_action:    { label: 'Respond', type: 'navigate_buddy_booking' },
+          secondary_action:  { label: 'Decline', type: 'decline_buddy_booking' },
+          reason_labels:     ['Action needed'],
+          expires_at:        null,
+          is_joinable:       false,
+          _urgency:          3,
+        });
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  // ── 5. Hidden Gems — top-rated active gems in the target city ─────────────
+  // When context=nearMe with coordinates, apply haversine radius (50 km) instead
+  // of city-name filter so gems truly near the user surface first.
+  if (hiddenGemsEnabled) {
+    const NEAR_ME_RADIUS_KM = 50;
+    const haversineKmGems = (la1: number, lo1: number, la2: number, lo2: number): number => {
+      const R = 6371;
+      const dLat = (la2 - la1) * Math.PI / 180;
+      const dLon = (lo2 - lo1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2 +
+                Math.cos(la1 * Math.PI / 180) * Math.cos(la2 * Math.PI / 180) *
+                Math.sin(dLon / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    };
+    try {
+      let gems: any[] | null = null;
+      if (context === 'nearMe' && lat !== undefined && lng !== undefined) {
+        // Proximity mode: fetch all active gems with coordinates, filter by radius
+        const { data } = await sc
+          .from("hidden_gems")
+          .select("id, name, city, category, save_count, lat, lng")
+          .eq("status", "active")
+          .order("save_count", { ascending: false })
+          .limit(100);
+        gems = ((data as any[]) ?? [])
+          .map((g: any) => ({
+            ...g,
+            _distKm: (g.lat != null && g.lng != null)
+              ? haversineKmGems(lat, lng, g.lat as number, g.lng as number)
+              : null,
+          }))
+          .filter((g: any) => g._distKm !== null && (g._distKm as number) <= NEAR_ME_RADIUS_KM)
+          .sort((a: any, b: any) => (a._distKm as number) - (b._distKm as number))
+          .slice(0, 3);
+      } else {
+        const gemCity = citySlug?.replace(/-/g, ' ');
+        if (gemCity) {
+          const { data } = await sc
+            .from("hidden_gems")
+            .select("id, name, city, category, save_count")
+            .eq("status", "active")
+            .ilike("city", `%${gemCity}%`)
+            .order("save_count", { ascending: false })
+            .limit(3);
+          gems = (data as any[]) ?? [];
+        }
+      }
+
+      for (const gem of gems ?? []) {
+        const distKm = (gem._distKm as number | null) ?? null;
+        addItem({
+          id:                `hidden_gem:${gem.id as string}`,
+          item_type:         'hidden_gem',
+          item_id:           gem.id as string,
+          status_label:      'My Plan',
+          title:             gem.name as string,
+          subtitle:          distKm !== null
+            ? `${distKm < 1 ? '<1' : Math.round(distKm)} km away`
+            : ((gem.category as string | null) ?? null),
+          city:              (gem.city as string | null) ?? null,
+          starts_at:         null,
+          ends_at:           null,
+          people_count:      (gem.save_count as number | null) ?? null,
+          user_relationship: 'available',
+          primary_action:    { label: 'Explore', type: 'navigate_gem' },
+          secondary_action:  { label: 'Save', type: 'save_gem' },
+          reason_labels:     distKm !== null ? ['Near You'] : ['Hidden Gem'],
+          expires_at:        null,
+          is_joinable:       false,
+          _urgency:          9,
+        });
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  // ── 6. Compass picks — personalised gems from user's preferred cities ──────
+  if (hiddenGemsEnabled) {
+    try {
+      const { data: compassProfile } = await sc
+        .from("compass_user_profiles")
+        .select("preferred_cities, current_city")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      const profile = compassProfile as any;
+      const compassCities: string[] = [];
+      if (profile?.current_city) compassCities.push(profile.current_city as string);
+      if (Array.isArray(profile?.preferred_cities)) {
+        for (const c of profile.preferred_cities as string[]) compassCities.push(c);
+      }
+
+      // Deduplicate against already-seen city from context
+      const gemCityNorm = (citySlug ?? '').replace(/-/g, ' ').toLowerCase();
+      const uniqueCompassCities = compassCities
+        .filter(c => c.toLowerCase() !== gemCityNorm)
+        .slice(0, 2); // top 2 extra cities only
+
+      for (const compassCity of uniqueCompassCities) {
+        const { data: picks } = await sc
+          .from("hidden_gems")
+          .select("id, name, city, category, save_count")
+          .eq("status", "active")
+          .ilike("city", `%${compassCity}%`)
+          .order("save_count", { ascending: false })
+          .limit(2);
+
+        for (const gem of (picks as any[]) ?? []) {
+          addItem({
+            id:                `compass:${gem.id as string}`,
+            item_type:         'compass',
+            item_id:           gem.id as string,
+            status_label:      'My Plan',
+            title:             gem.name as string,
+            subtitle:          (gem.city as string | null) ?? null,
+            city:              (gem.city as string | null) ?? null,
+            starts_at:         null,
+            ends_at:           null,
+            people_count:      (gem.save_count as number | null) ?? null,
+            user_relationship: 'available',
+            primary_action:    { label: 'Explore', type: 'navigate_gem' },
+            secondary_action:  { label: 'Save', type: 'save_gem' },
+            reason_labels:     ['Compass Pick'],
+            expires_at:        null,
+            is_joinable:       false,
+            _urgency:          9,
+          });
+        }
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  // ── 7. Available buddies — discovery cards for approved buddies in city ─────
+  // Only shown when a city is in scope; excludes the caller and blocked users.
+  try {
+    const buddyCitySlug = citySlug;
+    if (buddyCitySlug) {
+      const buddyCity = buddyCitySlug.replace(/-/g, ' ');
+      const { data: availableBuddies } = await sc
+        .from("rent_buddy_profiles")
+        .select("id, user_id, city, bio")
+        .in("moderation_status", ["approved", "auto_approved"])
+        .ilike("city", `%${buddyCity}%`)
+        .neq("user_id", user.id)
+        .limit(3);
+
+      for (const bp of (availableBuddies as any[]) ?? []) {
+        if (blockedSet.has(bp.user_id as string)) continue;
+        addItem({
+          id:                `available_buddy:${bp.id as string}`,
+          item_type:         'available_buddy',
+          item_id:           bp.id as string,
+          status_label:      'My Plan',
+          title:             'Buddy Available',
+          subtitle:          (bp.city as string | null) ?? null,
+          city:              (bp.city as string | null) ?? null,
+          starts_at:         null,
+          ends_at:           null,
+          people_count:      null,
+          user_relationship: 'available',
+          primary_action:    { label: 'View Profile', type: 'navigate_buddy_profile' },
+          // 'request_buddy' navigates to /(rent-a-buddy)/request-buddy?buddyId=<profile-id>
+          // (not navigate_buddy_booking which expects an existing booking ID)
+          secondary_action:  { label: 'Request', type: 'request_buddy' },
+          reason_labels:     ['Available in your city'],
+          expires_at:        null,
+          is_joinable:       true,
+          _urgency:          8,
+        });
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  // ── 8. Saved events — user's bookmarked upcoming events ──────────────────
+  // Shows events the user saved (event_saves) that are not already in the rail
+  // via RSVP. Provides discovery context for plans the user wants to attend.
+  try {
+    const { data: saveRows } = await sc
+      .from("event_saves")
+      .select("event_id")
+      .eq("user_id", user.id);
+
+    const savedEventIds = ((saveRows as any[]) ?? []).map((r: any) => r.event_id as string);
+    // Skip IDs already in the deduplicated items set
+    const alreadyAdded = new Set(items.map((i) => i.id));
+    const newSavedIds = savedEventIds.filter((id: string) => !alreadyAdded.has(`event:${id}`));
+
+    if (newSavedIds.length > 0) {
+      const { data: savedEvents } = await sc
+        .from("events")
+        .select("id, title, starts_at, ends_at, city, state, visibility, going_count, max_attendees, host_id")
+        .in("id", newSavedIds)
+        .in("state", ["open", "started"])
+        .gt("ends_at", now)
+        .in("visibility", ["public", "friends_only"]);
+
+      for (const ev of (savedEvents as any[]) ?? []) {
+        if (blockedSet.has(ev.host_id as string)) continue;
+        if (citySlug && (context === 'currentCity' || context === 'savedCity' || context === 'tripCity')) {
+          const evCity = ((ev.city as string | null) ?? '').toLowerCase().replace(/\s+/g, '-');
+          if (evCity !== citySlug) continue;
+        }
+        const sl = computeStatusLabel(ev.starts_at, ev.ends_at);
+        if (sl === 'My Plan') continue;
+        const maxAtt = ev.max_attendees as number | null;
+        const goingCount = (ev.going_count as number | null) ?? 0;
+        const atCapacity = maxAtt !== null && goingCount >= maxAtt;
+        addItem({
+          id:                `event:${ev.id as string}`,
+          item_type:         'event',
+          item_id:           ev.id as string,
+          status_label:      sl,
+          title:             ev.title as string,
+          subtitle:          (ev.city as string | null) ?? null,
+          city:              (ev.city as string | null) ?? null,
+          starts_at:         (ev.starts_at as string | null) ?? null,
+          ends_at:           (ev.ends_at as string | null) ?? null,
+          people_count:      goingCount,
+          user_relationship: 'saved',
+          primary_action:    { label: 'View', type: 'navigate_event' },
+          secondary_action:  { label: 'RSVP Going', type: 'rsvp_event_going' },
+          reason_labels:     atCapacity ? ['Saved', 'Full'] : ['Saved'],
+          expires_at:        (ev.ends_at as string | null) ?? null,
+          is_joinable:       !atCapacity,
+          // No _urgency override — let urgency() derive from status_label + user_relationship='saved'
+        });
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  // ── 9. Trip join requests — pending requests to join host's trips ─────────
+  // Surfaces Action Needed items for trips the user owns with pending requests.
+  try {
+    const { data: ownedTrips } = await sc
+      .from("trips")
+      .select("id, destination_city")
+      .eq("owner_id", user.id);
+
+    const ownedTripIds = ((ownedTrips as any[]) ?? []).map((t: any) => t.id as string);
+    if (ownedTripIds.length > 0) {
+      const { data: pendingRequests } = await sc
+        .from("trip_join_requests")
+        .select("id, trip_id, user_id, created_at")
+        .in("trip_id", ownedTripIds)
+        .eq("status", "pending");
+
+      // Group by trip_id — one rail item per trip with pending count
+      const byTrip = new Map<string, { count: number; dest: string | null; earliest: string }>();
+      for (const req of (pendingRequests as any[]) ?? []) {
+        if (blockedSet.has(req.user_id as string)) continue;
+        const tid = req.trip_id as string;
+        const dest = ((ownedTrips as any[]) ?? []).find((t: any) => t.id === tid)?.destination_city as string | null ?? null;
+        const existing = byTrip.get(tid);
+        const ts = req.created_at as string;
+        if (!existing) {
+          byTrip.set(tid, { count: 1, dest, earliest: ts });
+        } else {
+          existing.count += 1;
+          if (ts < existing.earliest) existing.earliest = ts;
+        }
+      }
+
+      for (const [tripId, { count, dest, earliest }] of byTrip) {
+        addItem({
+          id:                `trip_request:${tripId}`,
+          item_type:         'trip_request',
+          item_id:           tripId,
+          status_label:      'Action Needed',
+          title:             dest ? `Join request for ${dest}` : 'Trip join request',
+          subtitle:          count === 1 ? '1 request pending' : `${count} requests pending`,
+          city:              dest ?? null,
+          starts_at:         earliest,
+          ends_at:           null,
+          people_count:      count,
+          user_relationship: 'pending',
+          primary_action:    { label: 'Review', type: 'navigate_trip' },
+          secondary_action:  null,
+          reason_labels:     ['Action Needed'],
+          expires_at:        null,
+          is_joinable:       false,
+          _urgency:          3,
+        });
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  // ── Sort by urgency, then by starts_at ascending ───────────────────────────
+  items.sort((a, b) => {
+    const ua = urgency(a);
+    const ub = urgency(b);
+    if (ua !== ub) return ua - ub;
+    const aStart = a.starts_at ? new Date(a.starts_at).getTime() : Infinity;
+    const bStart = b.starts_at ? new Date(b.starts_at).getTime() : Infinity;
+    return aStart - bStart;
+  });
+
+  const responseItems: LivePulseItem[] = items.map(({ _urgency: _u, ...rest }) => rest);
+
+  res.json({ items: responseItems, fallbackContext: fallbackContext ?? null });
 });
 
 export default router;

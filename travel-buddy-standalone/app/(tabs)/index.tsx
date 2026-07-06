@@ -26,6 +26,8 @@ import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet'
 import { Plane, Users, MapPin } from 'lucide-react-native';
 import { PeopleYouMayKnow } from '../../src/components/PeopleYouMayKnow';
 import { CircleCompassSuggestions } from '../../src/components/CircleCompassSuggestions';
+import { LivePulseRail } from '../../src/components/LivePulseRail';
+import { useLivePulse } from '../../src/hooks/useLivePulse';
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
 
@@ -112,6 +114,13 @@ export default function Pulse() {
 
   const { buckets, status } = useCityPulse({ currentCitySlug: activeCitySlug, interests: [], categoryAffinities });
 
+  const livePulse = useLivePulse({
+    context: activeCitySlug ? 'currentCity' : 'myPlans',
+    citySlug: activeCitySlug || undefined,
+    lat: locationState.coords?.lat,
+    lng: locationState.coords?.lng,
+  });
+
   // Primary Pulse feed: real posts + place cards from /api/pulse.
   const pulseFeed = usePulseFeed({
     city: activeCity ?? undefined,
@@ -136,7 +145,10 @@ export default function Pulse() {
       }
       pulseFeed.reload();
       if (feedMode === 'following') followingFeed.reload();
-    }, [pulseFeed.reload, followingFeed.reload, feedMode]),
+      // Refresh the Live Pulse rail whenever the Pulse tab is focused so
+      // users always see fresh data on re-open, not just on mount or pull-to-refresh.
+      livePulse.refresh();
+    }, [pulseFeed.reload, followingFeed.reload, feedMode, livePulse.refresh]),
   );
 
   // Keep overrides in sync while the detail screen is open in the background
@@ -159,9 +171,10 @@ export default function Pulse() {
 
   const handleRefresh = useCallback(() => {
     setPeopleRefreshKey((k) => k + 1);
+    livePulse.refresh();
     if (feedMode === 'following') followingFeed.reload();
     else pulseFeed.reload();
-  }, [feedMode, followingFeed.reload, pulseFeed.reload]);
+  }, [feedMode, followingFeed.reload, pulseFeed.reload, livePulse.refresh]);
 
   const fits = [...buckets.fitsAvailability, ...buckets.openNearby];
   const noFits = fits.length === 0;
@@ -238,6 +251,9 @@ export default function Pulse() {
 
   const Header = (
     <View>
+      {/* Live Pulse smart rail — above all other sections */}
+      <LivePulseRail pulse={livePulse} />
+
       {activeCity ? (
         <>
           {/* Fits your time */}
