@@ -4,12 +4,13 @@
  * Converts an InvitePreviewResult from the service layer into the appropriate
  * ScreenState variant, with no React or React Native dependencies.
  */
-import type { InvitePreview, InvitePreviewResult } from '../services/trips';
+import type { InvitePreview, InvitePreviewResult, TripTombstone } from '../services/trips';
 
 export type ScreenState =
   | { kind: 'loading' }
   | { kind: 'not_authed' }
   | { kind: 'gone'; message: string }
+  | { kind: 'gone_inactive'; tombstone: TripTombstone | undefined }
   | { kind: 'error' }
   | { kind: 'already_member'; tripId: string }
   | { kind: 'full'; preview: InvitePreview }
@@ -25,9 +26,10 @@ export function mapInvitePreviewToScreenState(result: InvitePreviewResult): Scre
     return { kind: 'not_authed' };
   }
   if (result.gone) {
-    const message = result.goneReason === 'trip_inactive'
-      ? 'This trip is no longer active.'
-      : 'This invite link has expired or been revoked.';
+    if (result.goneReason === 'trip_inactive') {
+      return { kind: 'gone_inactive', tombstone: result.goneTripInfo };
+    }
+    const message = 'This invite link has expired or been revoked.';
     return { kind: 'gone', message };
   }
   if (!result.data) {

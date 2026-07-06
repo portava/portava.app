@@ -114,6 +114,63 @@ export default function InviteLinkScreen() {
         </View>
       )}
 
+      {screen.kind === 'gone_inactive' && (
+        <ScrollView
+          contentContainerStyle={styles.cardContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {screen.tombstone?.coverUrl ? (
+            <Image
+              source={{ uri: screen.tombstone.coverUrl }}
+              style={[styles.cover, styles.coverDimmed]}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={[styles.cover, styles.coverPlaceholder, styles.coverDimmed]}>
+              <Plane size={36} color={color.mute} />
+            </View>
+          )}
+
+          <View style={styles.warningBanner}>
+            <AlertTriangle size={16} color={color.warn} />
+            <Text style={styles.warningText}>This trip is no longer active.</Text>
+          </View>
+
+          {screen.tombstone && (
+            <View style={[styles.cardBody, styles.cardBodyDimmed]}>
+              <Text style={styles.label}>THIS TRIP HAS ENDED</Text>
+              <Text style={styles.tripTitle}>
+                {screen.tombstone.title ?? screen.tombstone.destinationCity ?? 'a trip'}
+              </Text>
+
+              {Boolean(screen.tombstone.destinationCity) && (
+                <View style={styles.metaRow}>
+                  <MapPin size={14} color={color.faint} />
+                  <Text style={styles.metaText}>
+                    {[screen.tombstone.destinationCity, screen.tombstone.destinationCountry]
+                      .filter(Boolean)
+                      .join(', ')}
+                  </Text>
+                </View>
+              )}
+
+              {Boolean(screen.tombstone.startDate) && (
+                <View style={styles.metaRow}>
+                  <Calendar size={14} color={color.faint} />
+                  <Text style={styles.metaText}>
+                    {formatDateRange(screen.tombstone.startDate, screen.tombstone.endDate)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
+
+          <Pressable style={styles.ghostBtn} onPress={handleClose}>
+            <Text style={styles.ghostBtnText}>Go back</Text>
+          </Pressable>
+        </ScrollView>
+      )}
+
       {screen.kind === 'error' && (
         <View style={styles.center}>
           <Text style={styles.heading}>Something went wrong</Text>

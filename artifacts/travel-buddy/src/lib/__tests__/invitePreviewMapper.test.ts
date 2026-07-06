@@ -1,5 +1,5 @@
 /**
- * Unit tests for mapInvitePreviewToScreenState — isFull branch.
+ * Unit tests for mapInvitePreviewToScreenState — isFull and gone_inactive branches.
  *
  * Pure function; no React Native dependencies required.
  * Uses Node.js built-in test runner.
@@ -41,8 +41,6 @@ function makePreview(overrides: Partial<InvitePreview> = {}): InvitePreview {
     linkId:             'link-test-id',
     expiresAt:          null,
     tripStatus:         'upcoming',
-    isTerminal:         false,
-    terminalReason:     null,
     isFull:             false,
     ...overrides,
   };
@@ -55,7 +53,7 @@ function makeResult(preview: InvitePreview): InvitePreviewResult {
 // ---------------------------------------------------------------------------
 // isFull → { kind: 'full' } branch
 // ---------------------------------------------------------------------------
-test('returns { kind: "full" } when isFull=true, isTerminal=false, alreadyMember=false', () => {
+test('returns { kind: "full" } when isFull=true, alreadyMember=false', () => {
   const preview = makePreview({ isFull: true });
   const result = mapInvitePreviewToScreenState(makeResult(preview));
   assertEqual(result.kind, 'full', 'kind should be "full"');
@@ -81,16 +79,37 @@ test('returns { kind: "already_member" } when alreadyMember=true even if isFull=
 });
 
 // ---------------------------------------------------------------------------
-// Precedence: isTerminal takes priority over isFull
+// trip_inactive 410 → gone_inactive (dedicated state with optional tombstone)
 // ---------------------------------------------------------------------------
-test('returns { kind: "terminal" } when isTerminal=true even if isFull=true', () => {
-  const preview = makePreview({
-    isFull:         true,
-    isTerminal:     true,
-    terminalReason: 'This trip is no longer active.',
+test('returns { kind: "gone_inactive" } with no tombstone when goneReason is trip_inactive and no trip data', () => {
+  const result = mapInvitePreviewToScreenState({
+    data: null,
+    gone: true,
+    goneReason: 'trip_inactive',
   });
-  const result = mapInvitePreviewToScreenState(makeResult(preview));
-  assertEqual(result.kind, 'terminal', 'terminal check must come before isFull check');
+  assertEqual(result.kind, 'gone_inactive', 'trip_inactive must route to gone_inactive');
+  if (result.kind !== 'gone_inactive') throw new Error('unreachable');
+  assertEqual(result.tombstone, undefined, 'tombstone should be undefined when goneTripInfo is absent');
+});
+
+test('returns { kind: "gone_inactive" } with tombstone when goneTripInfo is present', () => {
+  const result = mapInvitePreviewToScreenState({
+    data: null,
+    gone: true,
+    goneReason: 'trip_inactive',
+    goneTripInfo: {
+      title: 'Bali Retreat',
+      destinationCity: 'Bali',
+      destinationCountry: 'Indonesia',
+      startDate: '2025-01-01',
+      endDate: '2025-01-14',
+      coverUrl: null,
+    },
+  });
+  assertEqual(result.kind, 'gone_inactive', 'trip_inactive with trip info must route to gone_inactive');
+  if (result.kind !== 'gone_inactive') throw new Error('unreachable');
+  assertEqual(result.tombstone?.title, 'Bali Retreat', 'tombstone.title should be forwarded');
+  assertEqual(result.tombstone?.destinationCity, 'Bali', 'tombstone.destinationCity should be forwarded');
 });
 
 // ---------------------------------------------------------------------------

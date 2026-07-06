@@ -80,17 +80,37 @@ test('returns { kind: "already_member" } when alreadyMember=true even if isFull=
 });
 
 // ---------------------------------------------------------------------------
-// trip_inactive 410 → gone with trip-level message (handled before mapper)
+// trip_inactive 410 → gone_inactive (dedicated state with optional tombstone)
 // ---------------------------------------------------------------------------
-test('returns { kind: "gone" } with trip-inactive message for goneReason trip_inactive', () => {
+test('returns { kind: "gone_inactive" } with no tombstone when goneReason is trip_inactive and no trip data', () => {
   const result = mapInvitePreviewToScreenState({
     data: null,
     gone: true,
     goneReason: 'trip_inactive',
   });
-  assertEqual(result.kind, 'gone', 'trip_inactive must route to gone');
-  if (result.kind !== 'gone') throw new Error('unreachable');
-  assertEqual(result.message, 'This trip is no longer active.', 'message should be trip-level');
+  assertEqual(result.kind, 'gone_inactive', 'trip_inactive must route to gone_inactive');
+  if (result.kind !== 'gone_inactive') throw new Error('unreachable');
+  assertEqual(result.tombstone, undefined, 'tombstone should be undefined when goneTripInfo is absent');
+});
+
+test('returns { kind: "gone_inactive" } with tombstone when goneTripInfo is present', () => {
+  const result = mapInvitePreviewToScreenState({
+    data: null,
+    gone: true,
+    goneReason: 'trip_inactive',
+    goneTripInfo: {
+      title: 'Bali Retreat',
+      destinationCity: 'Bali',
+      destinationCountry: 'Indonesia',
+      startDate: '2025-01-01',
+      endDate: '2025-01-14',
+      coverUrl: null,
+    },
+  });
+  assertEqual(result.kind, 'gone_inactive', 'trip_inactive with trip info must route to gone_inactive');
+  if (result.kind !== 'gone_inactive') throw new Error('unreachable');
+  assertEqual(result.tombstone?.title, 'Bali Retreat', 'tombstone.title should be forwarded');
+  assertEqual(result.tombstone?.destinationCity, 'Bali', 'tombstone.destinationCity should be forwarded');
 });
 
 // ---------------------------------------------------------------------------

@@ -397,6 +397,16 @@ export interface InvitePreview {
   isFull: boolean;
 }
 
+/** Minimal trip data returned alongside a trip_inactive 410 response. */
+export interface TripTombstone {
+  title: string | null;
+  destinationCity: string | null;
+  destinationCountry: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  coverUrl: string | null;
+}
+
 export interface InvitePreviewResult {
   data: InvitePreview | null;
   gone?: boolean;
@@ -406,6 +416,8 @@ export interface InvitePreviewResult {
    * revoked, expired, or exhausted.
    */
   goneReason?: string;
+  /** Populated when `goneReason === 'trip_inactive'` — basic trip info for the tombstone UI. */
+  goneTripInfo?: TripTombstone;
   error?: string;
 }
 
@@ -427,7 +439,19 @@ export async function previewInviteLink(token: string): Promise<InvitePreviewRes
   if (res.status === 410) {
     const body = await res.json().catch(() => null) as Record<string, unknown> | null;
     const goneReason = body?.reason === 'trip_inactive' ? 'trip_inactive' : undefined;
-    return { data: null, gone: true, goneReason };
+    const rawTrip = (body?.trip ?? null) as Record<string, unknown> | null;
+    const goneTripInfo: TripTombstone | undefined =
+      goneReason === 'trip_inactive' && rawTrip
+        ? {
+            title:              (rawTrip.title as string | null) ?? null,
+            destinationCity:    (rawTrip.destinationCity as string | null) ?? null,
+            destinationCountry: (rawTrip.destinationCountry as string | null) ?? null,
+            startDate:          (rawTrip.startDate as string | null) ?? null,
+            endDate:            (rawTrip.endDate as string | null) ?? null,
+            coverUrl:           (rawTrip.coverUrl as string | null) ?? null,
+          }
+        : undefined;
+    return { data: null, gone: true, goneReason, goneTripInfo };
   }
   if (!res.ok) return { data: null };
   return { data: await res.json().catch(() => null) };

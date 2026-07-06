@@ -67,42 +67,55 @@ describe('mapInvitePreviewToScreenState() — routing', () => {
     }
   });
 
-  // ── gone (trip_inactive: cancelled) → 'gone' with trip-level message ─────
-  it('maps gone:true + goneReason:\'trip_inactive\' to \'gone\' with trip-level message (cancelled)', () => {
+  // ── gone (trip_inactive: cancelled) → 'gone_inactive' ───────────────────
+  it('maps gone:true + goneReason:\'trip_inactive\' to \'gone_inactive\' (cancelled)', () => {
     const state: ScreenState = mapInvitePreviewToScreenState({
       data: null,
       gone: true,
       goneReason: 'trip_inactive',
     });
-    assert.equal(state.kind, 'gone', 'cancelled trip must reach gone state');
-    if (state.kind === 'gone') {
-      assert.equal(state.message, 'This trip is no longer active.');
-    }
+    assert.equal(state.kind, 'gone_inactive', 'cancelled trip must reach gone_inactive state');
   });
 
-  // ── gone (trip_inactive: archived) → 'gone' ───────────────────────────────
-  it('maps gone:true + goneReason:\'trip_inactive\' to \'gone\' for an archived trip', () => {
+  // ── gone (trip_inactive: archived) → 'gone_inactive' ─────────────────────
+  it('maps gone:true + goneReason:\'trip_inactive\' to \'gone_inactive\' for an archived trip', () => {
     const state: ScreenState = mapInvitePreviewToScreenState({
       data: null,
       gone: true,
       goneReason: 'trip_inactive',
     });
-    assert.equal(state.kind, 'gone');
-    if (state.kind === 'gone') {
-      assert.equal(state.message, 'This trip is no longer active.');
-    }
+    assert.equal(state.kind, 'gone_inactive');
   });
 
-  // ── gone (trip_inactive: past end_date) → 'gone' ──────────────────────────
-  it('maps gone:true + goneReason:\'trip_inactive\' to \'gone\' when end_date has passed', () => {
+  // ── gone (trip_inactive: past end_date) → 'gone_inactive' ────────────────
+  it('maps gone:true + goneReason:\'trip_inactive\' to \'gone_inactive\' when end_date has passed', () => {
     const state: ScreenState = mapInvitePreviewToScreenState({
       data: null,
       gone: true,
       goneReason: 'trip_inactive',
     });
-    assert.equal(state.kind, 'gone');
-    if (state.kind === 'gone') {
-      assert.equal(state.message, 'This trip is no longer active.');
+    assert.equal(state.kind, 'gone_inactive');
+  });
+
+  // ── gone_inactive with tombstone → tombstone is forwarded ─────────────────
+  it('forwards goneTripInfo as tombstone when trip_inactive includes trip details', () => {
+    const state: ScreenState = mapInvitePreviewToScreenState({
+      data: null,
+      gone: true,
+      goneReason: 'trip_inactive',
+      goneTripInfo: {
+        title: 'Tokyo Sprint',
+        destinationCity: 'Tokyo',
+        destinationCountry: 'Japan',
+        startDate: '2024-03-01',
+        endDate: '2024-03-10',
+        coverUrl: null,
+      },
+    });
+    assert.equal(state.kind, 'gone_inactive');
+    if (state.kind === 'gone_inactive') {
+      assert.equal(state.tombstone?.title, 'Tokyo Sprint');
+      assert.equal(state.tombstone?.destinationCity, 'Tokyo');
     }
   });
 

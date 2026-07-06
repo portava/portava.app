@@ -1166,7 +1166,18 @@ router.get("/trips/invite-link/:token/preview", async (req, res) => {
     (endDate != null && endDate < today);
 
   if (isTerminal) {
-    res.status(410).json({ error: "gone", reason: "trip_inactive" });
+    res.status(410).json({
+      error: "gone",
+      reason: "trip_inactive",
+      trip: {
+        title:              (trip as any).title ?? null,
+        destinationCity:    (trip as any).destination_city ?? null,
+        destinationCountry: (trip as any).destination_country ?? null,
+        startDate:          (trip as any).start_date ?? null,
+        endDate:            endDate,
+        coverUrl:           (trip as any).cover_url ?? null,
+      },
+    });
     return;
   }
 
