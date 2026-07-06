@@ -823,6 +823,22 @@ describe("GET /circle/contexts/:type/:id/members — access guard", () => {
     assert.equal(telegr, undefined);
   });
 
+  it("mutual follows without co-membership do not grant presence access", async () => {
+    // NON_MEMBER_ID mutually follows TARGET_ID but is NOT in trip_members.
+    // Follow relationships must never satisfy the Circle membership guard —
+    // only accepted trip_members / event_rsvps rows count.
+    state.follows.push(
+      { follower_id: NON_MEMBER_ID, following_id: TARGET_ID },
+      { follower_id: TARGET_ID,     following_id: NON_MEMBER_ID },
+    );
+    const tc = makeClient(NON_MEMBER_ID);
+    _setTestClient(tc as any, true);
+    _setTestServiceClient(tc as any);
+    const r = await req("GET", `/circle/contexts/trip/${TRIP_ID}/members`, undefined, NON_MEMBER_TOKEN);
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error, "forbidden");
+  });
+
   it("admin kill switch blocks all visibility", async () => {
     state.featureFlags["find_your_circle_disabled"] = {
       flag: "find_your_circle_disabled",

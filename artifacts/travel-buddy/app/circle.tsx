@@ -284,7 +284,8 @@ export default function Circle() {
       {userId ? (
         <Pressable
           style={styles.chatBtn}
-          onPress={() => router.push(`/circle-chat?ownerId=${userId}` as any)}
+          onPress={handleOpenCircleChat}
+          disabled={chatLoading}
         >
           <View style={{ position: 'relative' }}>
             <MessageCircle size={15} color={color.onInk} />
