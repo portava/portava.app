@@ -12,6 +12,23 @@ import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const WEEKS_AHEAD = 8;
+const DAY_OF_WEEK: Record<string, number> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 0 };
+
+function nextOccurrences(dayName: string, weeks: number): string[] {
+  const target = DAY_OF_WEEK[dayName];
+  if (target === undefined) return [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const offset = (target - today.getDay() + 7) % 7;
+  const dates: string[] = [];
+  for (let w = 0; w < weeks; w++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + offset + w * 7);
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  return dates;
+}
 const TIME_BLOCKS = [
   { key: 'morning', label: 'Morning', sub: '6am–12pm' },
   { key: 'afternoon', label: 'Afternoon', sub: '12pm–6pm' },
@@ -81,7 +98,9 @@ export default function BuddyAvailabilityScreen() {
           .filter(([, on]) => on)
           .map(([k]) => k);
         if (slots.length > 0) {
-          entries.push({ date: day, timeSlots: slots, isAvailable: true });
+          nextOccurrences(day, WEEKS_AHEAD).forEach((date) => {
+            entries.push({ date, timeSlots: slots, isAvailable: true });
+          });
         }
       });
       const [gridRes, settingsRes] = await Promise.all([

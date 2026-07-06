@@ -75,13 +75,15 @@ function MeetupBlock({ city }: { city: string }) {
     <View style={{ paddingHorizontal: space.lg, marginTop: space.lg }}>
       <Text style={styles.sectionHeading}>Meetup plan</Text>
 
-      {/* Map placeholder */}
-      <View style={map.placeholder}>
-        <MapPin size={28} color={color.signal} />
+      {/* Honest map coming-soon state — MapLibre requires native runtime */}
+      <View style={map.comingSoon}>
+        <MapPin size={20} color={color.deep} />
         <View style={{ flex: 1 }}>
-          <Text style={map.label}>Public meetup zone</Text>
-          <Text style={map.city}>{city} — Central area</Text>
-          <Text style={map.hint}>Exact location confirmed after booking</Text>
+          <Text style={map.comingSoonLabel}>Map — coming soon</Text>
+          <Text style={map.comingSoonCity}>{city} · Public meetup zone</Text>
+          <Text style={map.comingSoonHint}>
+            Interactive map is on the roadmap. Your Buddy will confirm the exact public meeting spot after booking.
+          </Text>
         </View>
       </View>
 
@@ -617,15 +619,15 @@ const buddy = StyleSheet.create({
 });
 
 const map = StyleSheet.create({
-  placeholder: {
-    flexDirection: 'row', alignItems: 'center', gap: space.md,
-    backgroundColor: '#F0F4F8', borderRadius: radius.md,
+  comingSoon: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: space.md,
+    backgroundColor: color.paperRaised, borderRadius: radius.md,
     borderWidth: 1, borderColor: color.haze,
-    padding: space.md, borderStyle: 'dashed',
+    padding: space.md,
   },
-  label: { ...t.bodyStrong, color: color.ink },
-  city: { ...t.small, color: color.deep, marginTop: 2 },
-  hint: { ...t.small, color: color.haze, marginTop: 2 },
+  comingSoonLabel: { ...t.bodyStrong, color: color.ink },
+  comingSoonCity: { ...t.small, color: color.deep, marginTop: 2 },
+  comingSoonHint: { ...t.small, color: color.mute, marginTop: 4, lineHeight: 16 },
 });
 
 const route = StyleSheet.create({
