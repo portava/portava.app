@@ -117,6 +117,16 @@ FAKE_CURL
     CHECK_TRIGGERS_WORKSPACE_ROOT="${SELF_TEST_TMP}" \
     bash scripts/check-db-triggers.sh
 
+  # ── beta-flags verifier self-test ───────────────────────────────────────────
+  # Exercises verify-db-beta-flags.mjs directly with an empty fixture so that
+  # any future regression that makes the verifier fail-open on missing rows is
+  # caught before it reaches the real pre-release gate.
+  # We invoke node directly (not via check-db-triggers.sh) so this test
+  # specifically targets the 0117 verifier, independent of the trigger check.
+  run_self_check "beta-flags-verifier" \
+    BETA_FLAGS_RESPONSE='[]' \
+    node scripts/src/verify-db-beta-flags.mjs
+
   # ── Summary ─────────────────────────────────────────────────────────────────
   printf '\n'
   sep
