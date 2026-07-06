@@ -18,17 +18,19 @@ import discoveryRouter from "../routes/discoverySearch.js";
 let server: http.Server;
 let base: string;
 
-const VIEWER_TOKEN = "disc-privacy-viewer";
-const VIEWER_ID    = "11111111-1111-1111-1111-111111111111";
-const PUBLIC_USER  = "22222222-2222-2222-2222-222222222222";
-const PRIVATE_USER = "33333333-3333-3333-3333-333333333333";
-const OPTOUT_USER  = "44444444-4444-4444-4444-444444444444";
+const VIEWER_TOKEN   = "disc-privacy-viewer";
+const VIEWER_ID      = "11111111-1111-1111-1111-111111111111";
+const PUBLIC_USER    = "22222222-2222-2222-2222-222222222222";
+const PRIVATE_USER   = "33333333-3333-3333-3333-333333333333";
+const OPTOUT_USER    = "44444444-4444-4444-4444-444444444444";
+const BLOCKED_USER   = "55555555-5555-5555-5555-555555555555";
 
 function buildFakeClient() {
   const profiles = [
     { id: PUBLIC_USER,  name: "Alice Public",  handle: "alicepub",  is_private: false, account_status: "active", home_city: null, home_country: null },
     { id: PRIVATE_USER, name: "Bob Private",   handle: "bobpriv",   is_private: true,  account_status: "active", home_city: null, home_country: null },
     { id: OPTOUT_USER,  name: "Carol OptOut",  handle: "carolopt",  is_private: false, account_status: "active", home_city: null, home_country: null },
+    { id: BLOCKED_USER, name: "Dave Blocked",  handle: "daveblk",   is_private: false, account_status: "active", home_city: null, home_country: null },
     { id: VIEWER_ID,    name: "Viewer",        handle: "viewer",     is_private: false, account_status: "active", home_city: null, home_country: null },
   ];
 
@@ -36,11 +38,15 @@ function buildFakeClient() {
     { user_id: OPTOUT_USER, allow_profile_discovery: false },
   ];
 
+  const blocks = [
+    { blocker_id: VIEWER_ID, blocked_id: BLOCKED_USER },
+  ];
+
   function from(table: string) {
     const tableRows: Record<string, any[]> = {
       profiles,
       profile_privacy_settings: privacySettings,
-      blocks: [],
+      blocks,
       user_follows: [],
       user_privacy_settings: [],
     };
@@ -170,5 +176,23 @@ describe("Discovery search — privacy exclusions", () => {
   it("returns 400 for query shorter than 2 characters", async () => {
     const r = await req("/api/discovery/search?q=a&type=travelers");
     assert.ok(r.status === 400 || r.status === 422, `expected 400 or 422, got ${r.status}`);
+  });
+
+  it("excludes users blocked by the viewer from traveler search", async () => {
+    const r = await req("/api/discovery/search?q=dave&type=travelers");
+    assert.equal(r.status, 200, `unexpected status: ${JSON.stringify(r.body)}`);
+    const ids = (r.body.results ?? []).map((x: any) => x.id);
+    assert.ok(!ids.includes(BLOCKED_USER), "user blocked by viewer must not appear in search results");
+  });
+
+  it("excludes users who blocked the viewer from traveler search", async () => {
+    // The block is bidirectional — if Dave blocked the viewer it should also hide Dave.
+    // Our block row (blocker=VIEWER, blocked=BLOCKED_USER) satisfies the
+    // "viewer blocked them" direction; the route treats both directions as mutual exclusion.
+    const r = await req("/api/discovery/search?q=alice&type=travelers");
+    assert.equal(r.status, 200, `unexpected status: ${JSON.stringify(r.body)}`);
+    const ids = (r.body.results ?? []).map((x: any) => x.id);
+    assert.ok(ids.includes(PUBLIC_USER), "non-blocked public user should still appear");
+    assert.ok(!ids.includes(BLOCKED_USER), "blocked user must not appear even in a general search");
   });
 });
