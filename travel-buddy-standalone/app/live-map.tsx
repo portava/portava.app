@@ -1,6 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
-import { router } from 'expo-router';
+import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { Map as MapIcon, Lock, Users, MapPin, Ghost } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { color, space, radius, type as t, shadow } from '../src/theme/tokens';
@@ -18,8 +17,8 @@ export default function LiveMap() {
       <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg, paddingBottom: space.xxxl }}>
         <View style={s.hero}>
           <View style={s.iconWrap}><MapIcon size={30} color={color.deep} /></View>
-          <Text style={s.title}>Map coming soon</Text>
-          <Text style={s.sub}>No public circle locations or saved pins yet.</Text>
+          <Text style={s.title}>Map view is coming soon</Text>
+          <Text style={s.sub}>Your trip pins and saved places will appear here.</Text>
           <View style={s.privacyPill}>
             <Lock size={12} color={color.mute} />
             <Text style={s.privacyText}>Location sharing is private by default</Text>
@@ -39,9 +38,12 @@ export default function LiveMap() {
           </Text>
         </View>
 
-        <Pressable style={s.cta} onPress={() => router.push('/settings')}>
-          <Text style={s.ctaText}>Location privacy settings</Text>
-        </Pressable>
+        <View style={s.note}>
+          <Lock size={14} color={color.deep} />
+          <Text style={s.noteText}>
+            You can manage location sharing in your privacy settings any time.
+          </Text>
+        </View>
       </ScrollView>
     </View>
   );
@@ -73,6 +75,4 @@ const s = StyleSheet.create({
   rowSub: { ...t.small, color: color.mute, fontSize: 12 },
   note: { flexDirection: 'row', gap: space.sm, backgroundColor: '#E2EDF0', borderRadius: radius.md, padding: space.md },
   noteText: { ...t.small, color: color.deep, flex: 1, fontSize: 12 },
-  cta: { backgroundColor: color.ink, borderRadius: radius.md, paddingVertical: space.md, alignItems: 'center' },
-  ctaText: { ...t.bodyStrong, color: color.onInk },
 });

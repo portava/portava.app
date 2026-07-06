@@ -287,6 +287,24 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
     ? <InitialsFallback initials={result.fallbackInitials} size={AVATAR_SIZE} />
     : undefined;
 
+  // Null route means the backend returned a result with no valid destination —
+  // the item may have been deleted since it was indexed.
+  if (!route) {
+    return (
+      <View style={[styles.row, styles.rowUnavailable]}>
+        <View style={styles.avatarSquare}>
+          <TypeIcon type={result.type} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.title, styles.unavailableText]} numberOfLines={1}>
+            {result.title ?? 'Unavailable'}
+          </Text>
+          <Text style={styles.unavailableHint}>No longer available</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <Pressable style={styles.row} onPress={navigate}>
       {/* Left — shared UserAvatarButton for travelers/buddies, icon square for others */}
@@ -599,5 +617,17 @@ const styles = StyleSheet.create({
   saveBtnActive: {
     borderColor: color.signal,
     backgroundColor: '#FFF0EE',
+  },
+  rowUnavailable: {
+    opacity: 0.5,
+  },
+  unavailableText: {
+    color: color.mute,
+  },
+  unavailableHint: {
+    ...t.small,
+    color: color.faint,
+    fontSize: 11,
+    marginTop: 2,
   },
 });
