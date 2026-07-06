@@ -139,65 +139,6 @@ export default function InviteLinkScreen() {
         </View>
       )}
 
-      {screen.kind === 'terminal' && (
-        <ScrollView
-          contentContainerStyle={styles.cardContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {screen.preview.coverUrl ? (
-            <Image
-              source={{ uri: screen.preview.coverUrl }}
-              style={[styles.cover, styles.coverDimmed]}
-              resizeMode="cover"
-            />
-          ) : (
-            <View style={[styles.cover, styles.coverPlaceholder, styles.coverDimmed]}>
-              <Plane size={36} color={color.mute} />
-            </View>
-          )}
-
-          <View style={styles.warningBanner}>
-            <AlertTriangle size={16} color={color.warn} />
-            <Text style={styles.warningText}>{screen.message}</Text>
-          </View>
-
-          <View style={[styles.cardBody, styles.cardBodyDimmed]}>
-            <Text style={styles.label}>YOU'VE BEEN INVITED TO</Text>
-            <Text style={styles.tripTitle}>
-              {screen.preview.tripTitle ?? screen.preview.destinationCity ?? 'a trip'}
-            </Text>
-
-            {Boolean(screen.preview.destinationCity) && (
-              <View style={styles.metaRow}>
-                <MapPin size={14} color={color.faint} />
-                <Text style={styles.metaText}>
-                  {[screen.preview.destinationCity, screen.preview.destinationCountry]
-                    .filter(Boolean)
-                    .join(', ')}
-                </Text>
-              </View>
-            )}
-
-            {Boolean(screen.preview.startDate) && (
-              <View style={styles.metaRow}>
-                <Calendar size={14} color={color.faint} />
-                <Text style={styles.metaText}>
-                  {formatDateRange(screen.preview.startDate, screen.preview.endDate)}
-                </Text>
-              </View>
-            )}
-          </View>
-
-          <View style={[styles.primaryBtn, styles.primaryBtnFull, styles.btnDisabled]}>
-            <Text style={styles.primaryBtnText}>Accept Invite</Text>
-          </View>
-
-          <Pressable style={styles.ghostBtn} onPress={handleClose}>
-            <Text style={styles.ghostBtnText}>Go back</Text>
-          </Pressable>
-        </ScrollView>
-      )}
-
       {screen.kind === 'full' && (
         <ScrollView
           contentContainerStyle={styles.cardContent}

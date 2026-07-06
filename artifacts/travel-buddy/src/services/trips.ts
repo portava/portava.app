@@ -393,10 +393,6 @@ export interface InvitePreview {
   expiresAt: string | null;
   /** Trip lifecycle status ('upcoming' | 'in_progress' | 'cancelled' | 'archived' | …). */
   tripStatus: string | null;
-  /** True when the trip is in a terminal state (cancelled, archived, or end_date passed). */
-  isTerminal: boolean;
-  /** Human-readable explanation for isTerminal, or null when not terminal. */
-  terminalReason: string | null;
   /** True when accepted member count >= max_members (and max_members is set). */
   isFull: boolean;
 }

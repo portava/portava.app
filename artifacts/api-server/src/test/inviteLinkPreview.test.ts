@@ -1,15 +1,15 @@
 /**
  * inviteLinkPreview.test.ts
  *
- * Focused tests for the isTerminal code path in:
+ * Focused tests for the trip-inactive 410 code path in:
  *   GET /api/trips/invite-link/:token/preview
  *
  * Scenarios:
- *   1. cancelled trip   → isTerminal: true,  terminalReason: "This trip is no longer active."
- *   2. archived trip    → isTerminal: true,  terminalReason: "This trip is no longer active."
- *   3. end_date < today → isTerminal: true,  terminalReason: "This trip has already ended."
- *   4. active trip      → isTerminal: false, terminalReason: null
- *   5. already a member → alreadyMember: true (isTerminal still computed but not the focus)
+ *   1. cancelled trip   → 410 { error: "gone", reason: "trip_inactive" }
+ *   2. archived trip    → 410 { error: "gone", reason: "trip_inactive" }
+ *   3. end_date < today → 410 { error: "gone", reason: "trip_inactive" }
+ *   4. active trip      → 200 with isFull:false, no isTerminal field
+ *   5. already a member → 200 with alreadyMember:true (active trip only)
  */
 import { describe, it, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
@@ -151,7 +151,7 @@ async function getPreview(
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-describe("GET /api/trips/invite-link/:token/preview — isTerminal code paths", () => {
+describe("GET /api/trips/invite-link/:token/preview — trip_inactive 410 paths", () => {
   let server: Server;
   let port: number;
 
@@ -165,38 +165,29 @@ describe("GET /api/trips/invite-link/:token/preview — isTerminal code paths", 
   });
 
   // ── 1. cancelled trip ────────────────────────────────────────────────────
-  it("returns isTerminal:true and 'no longer active' reason for a cancelled trip", async () => {
+  it("returns 410 with reason trip_inactive for a cancelled trip", async () => {
     _setTestClient(makeClient({ tripStatus: "cancelled" }), true);
 
     const r = await getPreview(port, LINK_TOKEN);
 
-    assert.equal(r.status, 200, "should return 200 (not 410) for a cancelled trip preview");
-    assert.equal(r.body.isTerminal, true, "cancelled trip must be terminal");
-    assert.equal(
-      r.body.terminalReason,
-      "This trip is no longer active.",
-      "terminalReason for cancelled trip",
-    );
-    assert.equal(r.body.alreadyMember, false);
+    assert.equal(r.status, 410, "cancelled trip preview must return 410");
+    assert.equal(r.body.error, "gone");
+    assert.equal(r.body.reason, "trip_inactive");
   });
 
   // ── 2. archived trip ─────────────────────────────────────────────────────
-  it("returns isTerminal:true and 'no longer active' reason for an archived trip", async () => {
+  it("returns 410 with reason trip_inactive for an archived trip", async () => {
     _setTestClient(makeClient({ tripStatus: "archived" }), true);
 
     const r = await getPreview(port, LINK_TOKEN);
 
-    assert.equal(r.status, 200);
-    assert.equal(r.body.isTerminal, true, "archived trip must be terminal");
-    assert.equal(
-      r.body.terminalReason,
-      "This trip is no longer active.",
-      "terminalReason for archived trip",
-    );
+    assert.equal(r.status, 410, "archived trip preview must return 410");
+    assert.equal(r.body.error, "gone");
+    assert.equal(r.body.reason, "trip_inactive");
   });
 
   // ── 3. trip with end_date in the past ────────────────────────────────────
-  it("returns isTerminal:true and 'already ended' reason when end_date is in the past", async () => {
+  it("returns 410 with reason trip_inactive when end_date is in the past", async () => {
     _setTestClient(
       makeClient({ tripStatus: "upcoming", endDate: "2020-01-01" }),
       true,
@@ -204,17 +195,13 @@ describe("GET /api/trips/invite-link/:token/preview — isTerminal code paths", 
 
     const r = await getPreview(port, LINK_TOKEN);
 
-    assert.equal(r.status, 200);
-    assert.equal(r.body.isTerminal, true, "past end_date must be terminal");
-    assert.equal(
-      r.body.terminalReason,
-      "This trip has already ended.",
-      "terminalReason for ended trip",
-    );
+    assert.equal(r.status, 410, "past end_date trip preview must return 410");
+    assert.equal(r.body.error, "gone");
+    assert.equal(r.body.reason, "trip_inactive");
   });
 
   // ── 4. active upcoming trip ───────────────────────────────────────────────
-  it("returns isTerminal:false and terminalReason:null for an active trip", async () => {
+  it("returns 200 for an active trip with no isTerminal field", async () => {
     _setTestClient(
       makeClient({ tripStatus: "upcoming", endDate: "2099-12-31" }),
       true,
@@ -223,13 +210,17 @@ describe("GET /api/trips/invite-link/:token/preview — isTerminal code paths", 
     const r = await getPreview(port, LINK_TOKEN);
 
     assert.equal(r.status, 200);
-    assert.equal(r.body.isTerminal, false, "active upcoming trip must NOT be terminal");
-    assert.equal(r.body.terminalReason, null, "terminalReason must be null for non-terminal trip");
     assert.equal(r.body.tripTitle, "Test Trip");
+    assert.equal(r.body.isFull, false);
+    assert.equal(
+      r.body.isTerminal,
+      undefined,
+      "isTerminal must not appear in the 200 response",
+    );
   });
 
   // ── 5. no end_date and active status ─────────────────────────────────────
-  it("returns isTerminal:false when there is no end_date and status is upcoming", async () => {
+  it("returns 200 when there is no end_date and status is upcoming", async () => {
     _setTestClient(
       makeClient({ tripStatus: "upcoming", endDate: null }),
       true,
@@ -238,12 +229,15 @@ describe("GET /api/trips/invite-link/:token/preview — isTerminal code paths", 
     const r = await getPreview(port, LINK_TOKEN);
 
     assert.equal(r.status, 200);
-    assert.equal(r.body.isTerminal, false);
-    assert.equal(r.body.terminalReason, null);
+    assert.equal(
+      r.body.isTerminal,
+      undefined,
+      "isTerminal must not appear in the 200 response",
+    );
   });
 
   // ── 6. already a member on a terminal trip ───────────────────────────────
-  it("still returns isTerminal:true when the viewer is already a member of a cancelled trip", async () => {
+  it("returns 410 trip_inactive even when the viewer is already a member of a cancelled trip", async () => {
     _setTestClient(
       makeClient({ tripStatus: "cancelled", viewerIsMember: true }),
       true,
@@ -251,10 +245,9 @@ describe("GET /api/trips/invite-link/:token/preview — isTerminal code paths", 
 
     const r = await getPreview(port, LINK_TOKEN);
 
-    assert.equal(r.status, 200);
-    assert.equal(r.body.isTerminal, true);
-    assert.equal(r.body.alreadyMember, true);
-    assert.equal(r.body.terminalReason, "This trip is no longer active.");
+    assert.equal(r.status, 410, "terminal trip must return 410 regardless of membership");
+    assert.equal(r.body.error, "gone");
+    assert.equal(r.body.reason, "trip_inactive");
   });
 });
 

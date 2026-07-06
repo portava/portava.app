@@ -1154,26 +1154,24 @@ router.get("/trips/invite-link/:token/preview", async (req, res) => {
 
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
-  // Is the caller already a member?
-  const membership = await requireTripMember(sc, lk.trip_id, user.id, { status: "any" });
-
   const tripStatus = (trip as any).status as string | null;
   const endDate    = (trip as any).end_date as string | null;
   const today      = new Date().toISOString().slice(0, 10);
 
-  // Compute a terminal-state flag the client can use to disable the Accept button
-  // and show a clear "no longer active" or "already ended" warning without having
-  // the user tap Accept first only to get a confusing 410 response.
+  // Return 410 when the trip itself is in a terminal state so the client can
+  // show "This trip is no longer active" instead of a generic link-gone message.
   const isTerminal =
     tripStatus === "cancelled" ||
     tripStatus === "archived"  ||
     (endDate != null && endDate < today);
 
-  const terminalReason: string | null = isTerminal
-    ? (tripStatus === "cancelled" || tripStatus === "archived"
-        ? "This trip is no longer active."
-        : "This trip has already ended.")
-    : null;
+  if (isTerminal) {
+    res.status(410).json({ error: "gone", reason: "trip_inactive" });
+    return;
+  }
+
+  // Is the caller already a member?
+  const membership = await requireTripMember(sc, lk.trip_id, user.id, { status: "any" });
 
   // Compute isFull so the client can show a warning before the user taps Accept.
   // Only meaningful when max_members is set; counts accepted members only.
@@ -1200,8 +1198,6 @@ router.get("/trips/invite-link/:token/preview", async (req, res) => {
     linkId:             lk.id,
     expiresAt:          lk.expires_at ?? null,
     tripStatus:         tripStatus,
-    isTerminal:         isTerminal,
-    terminalReason:     terminalReason,
     isFull:             isFull,
   });
 });

@@ -5,8 +5,9 @@
  * extracted from load() in app/invite/[token].tsx and living in
  * src/lib/invitePreviewMapper.ts.
  *
- * Tests confirm that isTerminal preview data routes to ScreenState kind:'terminal'
- * (not 'ready'), and that all other result variants are correctly routed too.
+ * Terminal trips (cancelled, archived, past end_date) now return HTTP 410
+ * from the API with reason:'trip_inactive', so the mapper sees them as
+ * gone:true + goneReason:'trip_inactive' and routes to ScreenState kind:'gone'.
  *
  * The mapper uses only `import type` for its service-layer types, so this test
  * has zero React Native / supabase module dependencies and runs under node:test.
@@ -33,8 +34,7 @@ interface InvitePreview {
   linkId: string;
   expiresAt: string | null;
   tripStatus: string | null;
-  isTerminal: boolean;
-  terminalReason: string | null;
+  isFull: boolean;
 }
 
 function makePreview(overrides: Partial<InvitePreview> = {}): InvitePreview {
@@ -50,17 +50,16 @@ function makePreview(overrides: Partial<InvitePreview> = {}): InvitePreview {
     linkId:             'link-xyz-456',
     expiresAt:          null,
     tripStatus:         'upcoming',
-    isTerminal:         false,
-    terminalReason:     null,
+    isFull:             false,
     ...overrides,
   };
 }
 
-describe('mapInvitePreviewToScreenState() — isTerminal routing', () => {
-  // ── isTerminal: false → 'ready' ──────────────────────────────────────────
+describe('mapInvitePreviewToScreenState() — routing', () => {
+  // ── active trip → 'ready' ─────────────────────────────────────────────────
   it('maps an active trip preview to ScreenState kind:\'ready\'', () => {
     const state: ScreenState = mapInvitePreviewToScreenState(
-      { data: makePreview({ isTerminal: false }) },
+      { data: makePreview() },
     );
     assert.equal(state.kind, 'ready');
     if (state.kind === 'ready') {
@@ -68,60 +67,41 @@ describe('mapInvitePreviewToScreenState() — isTerminal routing', () => {
     }
   });
 
-  // ── isTerminal: true (cancelled) → 'terminal' ────────────────────────────
-  it('maps isTerminal:true to ScreenState kind:\'terminal\' (never \'ready\')', () => {
+  // ── gone (trip_inactive: cancelled) → 'gone' with trip-level message ─────
+  it('maps gone:true + goneReason:\'trip_inactive\' to \'gone\' with trip-level message (cancelled)', () => {
     const state: ScreenState = mapInvitePreviewToScreenState({
-      data: makePreview({
-        isTerminal:     true,
-        terminalReason: 'This trip is no longer active.',
-        tripStatus:     'cancelled',
-      }),
+      data: null,
+      gone: true,
+      goneReason: 'trip_inactive',
     });
-    assert.equal(state.kind, 'terminal', 'cancelled trip must reach terminal state');
-    if (state.kind === 'terminal') {
-      assert.equal(state.message, 'This trip is no longer active.');
-      assert.equal(state.preview.tripStatus, 'cancelled');
-    }
-  });
-
-  // ── isTerminal: true (archived) → 'terminal' ─────────────────────────────
-  it('maps isTerminal:true to \'terminal\' for an archived trip', () => {
-    const state: ScreenState = mapInvitePreviewToScreenState({
-      data: makePreview({
-        isTerminal:     true,
-        terminalReason: 'This trip is no longer active.',
-        tripStatus:     'archived',
-      }),
-    });
-    assert.equal(state.kind, 'terminal');
-    if (state.kind === 'terminal') {
+    assert.equal(state.kind, 'gone', 'cancelled trip must reach gone state');
+    if (state.kind === 'gone') {
       assert.equal(state.message, 'This trip is no longer active.');
     }
   });
 
-  // ── isTerminal: true (past end_date) → 'terminal' ────────────────────────
-  it('maps isTerminal:true to \'terminal\' when end_date has passed', () => {
+  // ── gone (trip_inactive: archived) → 'gone' ───────────────────────────────
+  it('maps gone:true + goneReason:\'trip_inactive\' to \'gone\' for an archived trip', () => {
     const state: ScreenState = mapInvitePreviewToScreenState({
-      data: makePreview({
-        isTerminal:     true,
-        terminalReason: 'This trip has already ended.',
-        tripStatus:     'upcoming',
-        endDate:        '2020-01-01',
-      }),
+      data: null,
+      gone: true,
+      goneReason: 'trip_inactive',
     });
-    assert.equal(state.kind, 'terminal');
-    if (state.kind === 'terminal') {
-      assert.equal(state.message, 'This trip has already ended.');
+    assert.equal(state.kind, 'gone');
+    if (state.kind === 'gone') {
+      assert.equal(state.message, 'This trip is no longer active.');
     }
   });
 
-  // ── terminalReason fallback ───────────────────────────────────────────────
-  it('falls back to the default message when terminalReason is null', () => {
+  // ── gone (trip_inactive: past end_date) → 'gone' ──────────────────────────
+  it('maps gone:true + goneReason:\'trip_inactive\' to \'gone\' when end_date has passed', () => {
     const state: ScreenState = mapInvitePreviewToScreenState({
-      data: makePreview({ isTerminal: true, terminalReason: null }),
+      data: null,
+      gone: true,
+      goneReason: 'trip_inactive',
     });
-    assert.equal(state.kind, 'terminal');
-    if (state.kind === 'terminal') {
+    assert.equal(state.kind, 'gone');
+    if (state.kind === 'gone') {
       assert.equal(state.message, 'This trip is no longer active.');
     }
   });
@@ -132,19 +112,6 @@ describe('mapInvitePreviewToScreenState() — isTerminal routing', () => {
     assert.equal(state.kind, 'gone');
     if (state.kind === 'gone') {
       assert.equal(state.message, 'This invite link has expired or been revoked.');
-    }
-  });
-
-  // ── gone response → 'gone' (trip_inactive: ended or cancelled) ────────────
-  it('maps gone:true + goneReason:\'trip_inactive\' to \'gone\' with trip-level message', () => {
-    const state: ScreenState = mapInvitePreviewToScreenState({
-      data: null,
-      gone: true,
-      goneReason: 'trip_inactive',
-    });
-    assert.equal(state.kind, 'gone');
-    if (state.kind === 'gone') {
-      assert.equal(state.message, 'This trip is no longer active.');
     }
   });
 
@@ -175,10 +142,10 @@ describe('mapInvitePreviewToScreenState() — isTerminal routing', () => {
     assert.equal(state.kind, 'error');
   });
 
-  // ── alreadyMember takes precedence over isTerminal ────────────────────────
-  it('maps alreadyMember:true to \'already_member\' even when isTerminal is also true', () => {
+  // ── alreadyMember → 'already_member' ─────────────────────────────────────
+  it('maps alreadyMember:true to \'already_member\'', () => {
     const state: ScreenState = mapInvitePreviewToScreenState({
-      data: makePreview({ alreadyMember: true, isTerminal: true }),
+      data: makePreview({ alreadyMember: true }),
     });
     assert.equal(state.kind, 'already_member');
     if (state.kind === 'already_member') {

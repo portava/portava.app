@@ -41,8 +41,6 @@ function makePreview(overrides: Partial<InvitePreview> = {}): InvitePreview {
     linkId:             'link-test-id',
     expiresAt:          null,
     tripStatus:         'upcoming',
-    isTerminal:         false,
-    terminalReason:     null,
     isFull:             false,
     ...overrides,
   };
@@ -55,7 +53,7 @@ function makeResult(preview: InvitePreview): InvitePreviewResult {
 // ---------------------------------------------------------------------------
 // isFull → { kind: 'full' } branch
 // ---------------------------------------------------------------------------
-test('returns { kind: "full" } when isFull=true, isTerminal=false, alreadyMember=false', () => {
+test('returns { kind: "full" } when isFull=true, alreadyMember=false', () => {
   const preview = makePreview({ isFull: true });
   const result = mapInvitePreviewToScreenState(makeResult(preview));
   assertEqual(result.kind, 'full', 'kind should be "full"');
@@ -82,16 +80,17 @@ test('returns { kind: "already_member" } when alreadyMember=true even if isFull=
 });
 
 // ---------------------------------------------------------------------------
-// Precedence: isTerminal takes priority over isFull
+// trip_inactive 410 → gone with trip-level message (handled before mapper)
 // ---------------------------------------------------------------------------
-test('returns { kind: "terminal" } when isTerminal=true even if isFull=true', () => {
-  const preview = makePreview({
-    isFull:         true,
-    isTerminal:     true,
-    terminalReason: 'This trip is no longer active.',
+test('returns { kind: "gone" } with trip-inactive message for goneReason trip_inactive', () => {
+  const result = mapInvitePreviewToScreenState({
+    data: null,
+    gone: true,
+    goneReason: 'trip_inactive',
   });
-  const result = mapInvitePreviewToScreenState(makeResult(preview));
-  assertEqual(result.kind, 'terminal', 'terminal check must come before isFull check');
+  assertEqual(result.kind, 'gone', 'trip_inactive must route to gone');
+  if (result.kind !== 'gone') throw new Error('unreachable');
+  assertEqual(result.message, 'This trip is no longer active.', 'message should be trip-level');
 });
 
 // ---------------------------------------------------------------------------
