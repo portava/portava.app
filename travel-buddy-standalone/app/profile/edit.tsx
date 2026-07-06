@@ -155,7 +155,7 @@ interface FormState {
   travelGroupStyle: string[];
 }
 
-type UsernameStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
+type UsernameStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid' | 'cooldown';
 
 export default function EditProfileScreen() {
   const navigation = useNavigation();
@@ -195,6 +195,7 @@ export default function EditProfileScreen() {
   const [originalForm, setOriginalForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [dobError, setDobError] = useState<string | null>(null);
   const [langPickerVisible, setLangPickerVisible] = useState(false);
   const [showHomePicker, setShowHomePicker] = useState(false);
   const [showCurrentPicker, setShowCurrentPicker] = useState(false);
@@ -462,13 +463,14 @@ export default function EditProfileScreen() {
     }
   }, []);
 
-  const canSave = usernameStatus !== 'taken' && usernameStatus !== 'invalid' && usernameStatus !== 'checking';
+  const canSave = usernameStatus !== 'taken' && usernameStatus !== 'invalid' && usernameStatus !== 'checking' && usernameStatus !== 'cooldown';
 
   const handleSave = useCallback(async () => {
     if (!canSave || saveLockRef.current) return;
     saveLockRef.current = true;
     setSaving(true);
     setSaveError(null);
+    setDobError(null);
     try {
 
     const patch: Parameters<typeof updateMyProfile>[0] = {};
@@ -604,12 +606,25 @@ export default function EditProfileScreen() {
     if (!profileRes.ok) {
       const kind = (profileRes as any).errorKind as string;
       const msg: string = (profileRes as any).message ?? '';
+      const msgLower = msg.toLowerCase();
+      const isCooldown =
+        kind === 'invalid_payload' &&
+        (msgLower.includes('30 days') || msgLower.includes('days remaining'));
       const isUsernameTaken =
+        !isCooldown &&
         (kind === 'invalid_payload' || kind === 'conflict') &&
-        msg.toLowerCase().includes('username');
-      if (isUsernameTaken) {
+        msgLower.includes('username');
+      const isDobError =
+        kind === 'invalid_payload' &&
+        (msgLower.includes('dateofbirth') || msgLower.includes('13 years') || msgLower.includes('date of birth'));
+      if (isCooldown) {
+        setUsernameStatus('cooldown');
+        setUsernameMessage(msg || 'Username cannot be changed yet');
+      } else if (isUsernameTaken) {
         setUsernameStatus('taken');
         setUsernameMessage(msg || 'Username not available');
+      } else if (isDobError) {
+        setDobError(msg || 'Invalid date of birth');
       } else {
         setSaveError(msg || 'Failed to save profile');
       }
@@ -757,7 +772,7 @@ export default function EditProfileScreen() {
                     {usernameStatus === 'available' && (
                       <Check size={16} color={color.success} />
                     )}
-                    {(usernameStatus === 'taken' || usernameStatus === 'invalid') && (
+                    {(usernameStatus === 'taken' || usernameStatus === 'invalid' || usernameStatus === 'cooldown') && (
                       <X size={16} color={color.signal} />
                     )}
                   </View>
@@ -1087,9 +1102,15 @@ export default function EditProfileScreen() {
                 <Text style={styles.fieldLabel}>Date of Birth</Text>
                 <DatePickerField
                   value={form.dateOfBirth ?? ''}
-                  onChange={(dateStr) => setForm((f) => ({ ...f, dateOfBirth: dateStr || null }))}
+                  onChange={(dateStr) => {
+                    setDobError(null);
+                    setForm((f) => ({ ...f, dateOfBirth: dateStr || null }));
+                  }}
                   placeholder="Select your date of birth"
                 />
+                {dobError && (
+                  <Text style={[styles.fieldHint, styles.hintError]}>{dobError}</Text>
+                )}
                 <Text style={styles.fieldHint}>
                   Used to enforce age limits on meetups and circles. Not shown publicly.
                 </Text>
