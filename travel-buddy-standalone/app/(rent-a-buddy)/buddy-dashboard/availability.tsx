@@ -100,11 +100,12 @@ export default function BuddyAvailabilityScreen() {
         const slots = Object.entries(grid[day] ?? {})
           .filter(([, on]) => on)
           .map(([k]) => k);
-        if (slots.length > 0) {
-          nextOccurrences(day, WEEKS_AHEAD).forEach((date) => {
-            entries.push({ date, timeSlots: slots, isAvailable: true });
-          });
-        }
+        // Send an entry for every date in the window — not just "on" days.
+        // isAvailable:false entries upsert the existing DB row to "off", so
+        // previously saved slots are cleared when a buddy deselects a day.
+        nextOccurrences(day, WEEKS_AHEAD).forEach((date) => {
+          entries.push({ date, timeSlots: slots, isAvailable: slots.length > 0 });
+        });
       });
       const [gridRes, settingsRes] = await Promise.all([
         rentABuddy.setDashboardAvailability(entries),
