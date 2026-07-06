@@ -133,12 +133,12 @@ export function TodayNextUp({ nextUp, tripId }: { nextUp: any | null; tripId?: s
               <Pressable
                 style={nx.ghost}
                 onPress={async () => {
-                  if (!tripId) { router.push('/(tabs)/messages' as any); return; }
+                  if (!tripId) { router.push('/messages' as any); return; }
                   const res = await openTripChat(tripId);
                   if (res.ok && res.data?.threadId) {
                     router.push(`/messages/${res.data.threadId}?threadType=trip&contextId=${encodeURIComponent(tripId)}` as any);
                   } else {
-                    router.push('/(tabs)/messages' as any);
+                    router.push('/messages' as any);
                   }
                 }}
               >
@@ -479,12 +479,12 @@ export function TripPlans({ plans, tripId }: { plans: TripPlan[]; tripId?: strin
                     style={pl.msgBtn}
                     hitSlop={layout.hitSlop}
                     onPress={async () => {
-                      if (!tripId) { router.push('/(tabs)/messages' as any); return; }
+                      if (!tripId) { router.push('/messages' as any); return; }
                       const res = await openTripChat(tripId);
                       if (res.ok && res.data?.threadId) {
                         router.push(`/messages/${res.data.threadId}?threadType=trip&contextId=${encodeURIComponent(tripId)}` as any);
                       } else {
-                        router.push('/(tabs)/messages' as any);
+                        router.push('/messages' as any);
                       }
                     }}
                   >
