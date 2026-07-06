@@ -31,6 +31,7 @@ import { _setTestServiceClient } from "../lib/supabase.js";
 import adminRouter from "../routes/admin.js";
 import postsRouter from "../routes/posts.js";
 import messagingRouter from "../routes/messaging.js";
+import authRouter from "../routes/auth.js";
 import { checkRentBuddyAccess, invalidateGcCache } from "../routes/rentABuddyRollout.js";
 
 // ── Server ─────────────────────────────────────────────────────────────────────
@@ -90,6 +91,7 @@ function makeAdminFakeClient(opts: {
   reports?: Record<string, unknown>[];
   modActions?: Record<string, unknown>[];
   posts?: Record<string, unknown>[];
+  compassAnalytics?: Record<string, unknown>[];
 }) {
   const {
     isAdmin = true,
@@ -99,6 +101,7 @@ function makeAdminFakeClient(opts: {
     reports = [],
     modActions = [],
     posts = [{ id: POST_ID, post_status: "published" }],
+    compassAnalytics = [],
   } = opts;
 
   function builder(_table: string, rows: unknown[]) {
@@ -179,6 +182,7 @@ function makeAdminFakeClient(opts: {
       if (table === "reports")             return builder(table, reports);
       if (table === "moderation_actions")  return builder(table, modActions);
       if (table === "posts")               return builder(table, posts);
+      if (table === "compass_analytics")   return builder(table, compassAnalytics);
       const b2: any = {
         select: () => b2, eq: () => b2, neq: () => b2, is: () => b2,
         ilike: () => b2, in: () => b2, or: () => b2, order: () => b2,
@@ -301,6 +305,33 @@ function makePostsFakeClient(opts: {
   return client;
 }
 
+// ── Auth / signup-status fake client ──────────────────────────────────────────
+
+function makeSignupStatusFakeClient(opts: { disableSignups?: boolean; inviteOnly?: boolean }) {
+  const { disableSignups = false, inviteOnly = false } = opts;
+  return {
+    from: (table: string) => {
+      if (table === "feature_flags") {
+        return {
+          select: () => ({
+            eq: (_col: string, val: string) => ({
+              maybeSingle: () => {
+                const enabled = val === "disable_signups" ? disableSignups
+                  : val === "invite_only_beta" ? inviteOnly
+                  : false;
+                return { data: { flag: val, enabled }, error: null };
+              },
+            }),
+          }),
+        };
+      }
+      const b: any = { select: () => b, eq: () => b, maybeSingle: () => ({ data: null, error: null }) };
+      return b;
+    },
+    rpc: async () => ({ data: [], error: null }),
+  } as any;
+}
+
 // ── Rollout fake client (for city_not_available unit test) ────────────────────
 
 function makeRolloutFakeClient(opts: {
@@ -378,6 +409,7 @@ before(async () => {
   app.use("/", adminRouter);
   app.use("/", postsRouter);
   app.use("/", messagingRouter);
+  app.use("/", authRouter);
 
   await new Promise<void>((resolve) => {
     server = app.listen(0, "127.0.0.1", () => resolve());
@@ -409,11 +441,12 @@ describe("Admin user lookup by handle", () => {
     assert.equal(r.body?.error, "not_found");
   });
 
-  it("returns profile + accountStates + openReports by handle", async () => {
+  it("returns profile + accountStates + openReports + onboardingStatus by handle", async () => {
     const targetProfile = { id: TARGET_ID, handle: "testuser", role: "member", account_status: "active", verified: false };
     const admin = makeAdminFakeClient({
       profiles: [targetProfile],
       accountStates: [{ state: "active", user_id: TARGET_ID }],
+      compassAnalytics: [{ user_id: TARGET_ID, onboarding_completed: true, onboarding_completed_at: "2026-07-01T00:00:00Z" }],
     });
     _setTestClient(admin, true);
     _setTestServiceClient(admin);
@@ -422,6 +455,8 @@ describe("Admin user lookup by handle", () => {
     assert.ok(r.body.profile, "profile present");
     assert.ok(Array.isArray(r.body.accountStates), "accountStates is array");
     assert.equal(typeof r.body.openReports, "number", "openReports is number");
+    assert.ok("onboardingStatus" in r.body, "onboardingStatus field present");
+    assert.equal(r.body.onboardingStatus?.completed, true, "onboardingStatus.completed matches DB value");
   });
 
   it("returns 403 when caller is not admin", async () => {
@@ -542,6 +577,32 @@ describe("Admin reports: hide-content", () => {
     assert.ok([200, 201].includes(r.status), `expected 200/201, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(r.body?.contentHidden, true);
     assert.equal(r.body?.status, "in_review");
+  });
+});
+
+describe("Kill switch: disable_signups + invite_only_beta (GET /auth/signup-status)", () => {
+  it("returns signupsEnabled=false when disable_signups = true", async () => {
+    const fc = makeSignupStatusFakeClient({ disableSignups: true });
+    _setTestServiceClient(fc);
+    const r = await req("GET", "/auth/signup-status");
+    assert.equal(r.status, 200);
+    assert.equal(r.body?.signupsEnabled, false, "signupsEnabled must be false when kill switch is active");
+  });
+
+  it("returns signupsEnabled=true when disable_signups = false (default/fail-open)", async () => {
+    const fc = makeSignupStatusFakeClient({ disableSignups: false });
+    _setTestServiceClient(fc);
+    const r = await req("GET", "/auth/signup-status");
+    assert.equal(r.status, 200);
+    assert.equal(r.body?.signupsEnabled, true, "signupsEnabled must be true when kill switch is off");
+  });
+
+  it("returns inviteOnly=true when invite_only_beta = true", async () => {
+    const fc = makeSignupStatusFakeClient({ inviteOnly: true });
+    _setTestServiceClient(fc);
+    const r = await req("GET", "/auth/signup-status");
+    assert.equal(r.status, 200);
+    assert.equal(r.body?.inviteOnly, true, "inviteOnly must reflect the invite_only_beta flag");
   });
 });
 

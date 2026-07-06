@@ -914,7 +914,7 @@ router.get("/admin/users", async (req, res) => {
   const userId: string = (profileData as any).id;
 
   // Fetch supplementary context in parallel
-  const [accountStateRes, reportCountRes] = await Promise.all([
+  const [accountStateRes, reportCountRes, onboardingRes] = await Promise.all([
     sc.from("user_account_states")
       .select("state, reason, expires_at, created_at")
       .eq("user_id", userId)
@@ -924,12 +924,21 @@ router.get("/admin/users", async (req, res) => {
       .select("id", { count: "exact", head: true })
       .eq("target_id", userId)
       .eq("status", "open"),
+    sc.from("compass_analytics")
+      .select("onboarding_completed, onboarding_completed_at")
+      .eq("user_id", userId)
+      .maybeSingle(),
   ]);
 
+  const onboardingRow: any = onboardingRes.data ?? null;
+
   res.json({
-    profile:       profileData,
-    accountStates: accountStateRes.data   ?? [],
-    openReports:   reportCountRes.count   ?? 0,
+    profile:         profileData,
+    accountStates:   accountStateRes.data ?? [],
+    openReports:     reportCountRes.count ?? 0,
+    onboardingStatus: onboardingRow
+      ? { completed: onboardingRow.onboarding_completed === true, completedAt: onboardingRow.onboarding_completed_at ?? null }
+      : null,
   });
 });
 

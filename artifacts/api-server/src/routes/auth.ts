@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { getServiceClient } from "../lib/supabase";
+import { isFlagEnabled } from "../lib/featureFlags.js";
 import { logger } from "../lib/logger";
 
 const router = Router();
@@ -61,6 +62,33 @@ router.post("/auth/lookup-username", async (req, res) => {
     logger.error({ err }, "lookup-username error");
     res.status(500).json({ error: "Something went wrong. Please try again." });
   }
+});
+
+/**
+ * GET /api/auth/signup-status
+ * Returns whether new signups are currently allowed.
+ * The mobile app MUST call this before initiating Supabase Auth sign-up and
+ * show an appropriate message when either kill switch is active.
+ * Response: { signupsEnabled: boolean, inviteOnly: boolean }
+ * Both checks are fail-open — if the feature_flags table is unreachable,
+ * the response defaults to signupsEnabled=true, inviteOnly=false.
+ */
+router.get("/auth/signup-status", async (_req, res) => {
+  const client = getServiceClient();
+  if (!client) {
+    res.json({ signupsEnabled: true, inviteOnly: false });
+    return;
+  }
+
+  const [disabledFlag, inviteOnlyFlag] = await Promise.all([
+    isFlagEnabled(client, "disable_signups"),
+    isFlagEnabled(client, "invite_only_beta"),
+  ]);
+
+  res.json({
+    signupsEnabled: !disabledFlag,
+    inviteOnly:     inviteOnlyFlag,
+  });
 });
 
 export default router;
