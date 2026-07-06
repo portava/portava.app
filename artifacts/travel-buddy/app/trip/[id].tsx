@@ -318,7 +318,7 @@ function TripDetailScreen() {
           <DailyBriefCard tripId={trip.id} date={todayDate} onGapDays={handleGapDays} />
         ) : null}
 
-        <TodayNextUp nextUp={null} />
+        <TodayNextUp nextUp={null} tripId={trip.id} />
 
         {/* ── Gap-day nudge ── */}
         {live && gapDays.length > 0 && trip.status !== 'planning' && (

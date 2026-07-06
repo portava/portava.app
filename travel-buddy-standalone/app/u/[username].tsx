@@ -17,6 +17,7 @@ import { useFollow } from '../../src/hooks/useFollow';
 import { useHighlightRingState, viewedHighlightIds } from '../../src/hooks/useHighlightRingState';
 import { useFriendStatus } from '../../src/hooks/useFriends';
 import { useMessagePermission } from '../../src/hooks/useMessaging';
+import { openDirectThread } from '../../src/services/messaging';
 import { useSession } from '../../src/context/SessionContext';
 import { PassportHero } from '../../src/components/PassportHero';
 import { HighlightViewer } from '../../src/components/HighlightViewer';
@@ -127,6 +128,7 @@ function MessageButton({ userId, isOwn }: { userId: string; isOwn: boolean }) {
   const [showComposer, setShowComposer] = useState(false);
   const [previewText, setPreviewText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [opening, setOpening] = useState(false);
   const [sent, setSent] = useState(false);
 
   if (isOwn || !userId) return null;
@@ -143,8 +145,24 @@ function MessageButton({ userId, isOwn }: { userId: string; isOwn: boolean }) {
 
   if (verdict === 'allowed') {
     return (
-      <Pressable style={[st.actionBtn, st.msgBtnStyle]} onPress={() => router.push('/messages')}>
-        <MessageCircle size={15} color={color.ink} />
+      <Pressable
+        style={[st.actionBtn, st.msgBtnStyle, opening && { opacity: 0.65 }]}
+        disabled={opening}
+        onPress={async () => {
+          setOpening(true);
+          const res = await openDirectThread(userId);
+          setOpening(false);
+          if (res.ok && res.data?.threadId) {
+            router.push(`/messages/${res.data.threadId}?threadType=direct&otherUserId=${encodeURIComponent(userId)}` as any);
+          } else {
+            Alert.alert('Error', 'Could not open conversation. Please try again.');
+          }
+        }}
+      >
+        {opening
+          ? <ActivityIndicator size="small" color={color.ink} style={{ marginRight: 4 }} />
+          : <MessageCircle size={15} color={color.ink} />
+        }
         <Text style={[st.btnText, { color: color.ink }]}>Message</Text>
       </Pressable>
     );

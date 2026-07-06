@@ -9,6 +9,7 @@ import {
 } from 'lucide-react-native';
 import { useTripSavedPlaces } from '../hooks/useTripSavedPlaces';
 import { fetchCompassTripBrief, type CompassRecommendation } from '../services/compass';
+import { openTripChat } from '../services/messaging';
 import { createPlanItem } from '../services/tripPlan';
 import type { BookmarkedPlace } from '../services/discoveryBookmarks';
 import type { TripDetail, SavedIdea, TimelineDay, PassportStamp, User } from '../types/models';
@@ -100,7 +101,7 @@ function Action({ icon, label, onPress }: { icon: React.ReactNode; label: string
 }
 
 /* ── Today / Next Up ── */
-export function TodayNextUp({ nextUp }: { nextUp: any | null }) {
+export function TodayNextUp({ nextUp, tripId }: { nextUp: any | null; tripId?: string }) {
   return (
     <View style={section.wrap}>
       <SectionHead title="Today / Next Up" onViewAll={nextUp ? () => router.push('/(tabs)/trips') : undefined} />
@@ -129,7 +130,20 @@ export function TodayNextUp({ nextUp }: { nextUp: any | null }) {
             </View>
             <View style={nx.btns}>
               <Pressable style={nx.primary} onPress={() => router.push('/(tabs)/trips')}><Text style={nx.primaryText}>View Plan</Text></Pressable>
-              <Pressable style={nx.ghost} onPress={() => router.push('/messages')}><Text style={nx.ghostText}>Message Group</Text></Pressable>
+              <Pressable
+                style={nx.ghost}
+                onPress={async () => {
+                  if (!tripId) { router.push('/(tabs)/messages' as any); return; }
+                  const res = await openTripChat(tripId);
+                  if (res.ok && res.data?.threadId) {
+                    router.push(`/messages/${res.data.threadId}?threadType=trip&contextId=${encodeURIComponent(tripId)}` as any);
+                  } else {
+                    router.push('/(tabs)/messages' as any);
+                  }
+                }}
+              >
+                <Text style={nx.ghostText}>Message Group</Text>
+              </Pressable>
             </View>
           </View>
         </View>
@@ -432,7 +446,7 @@ const PLAN_TABS: { key: TripPlanStatus; label: string }[] = [
 ];
 
 /* ── Plans ── */
-export function TripPlans({ plans }: { plans: TripPlan[] }) {
+export function TripPlans({ plans, tripId }: { plans: TripPlan[]; tripId?: string }) {
   const [tab, setTab] = useState<TripPlanStatus>('joined');
   const visible = plans.filter((p) => p.status === tab);
   return (
@@ -461,7 +475,21 @@ export function TripPlans({ plans }: { plans: TripPlan[] }) {
               <View style={pl.actions}>
                 <Pressable style={pl.viewBtn} onPress={() => router.push('/(tabs)/trips')}><Text style={pl.viewText}>View Plan</Text></Pressable>
                 {plan.hasGroup ? (
-                  <Pressable style={pl.msgBtn} onPress={() => router.push('/messages')} hitSlop={layout.hitSlop}><MessageCircle size={15} color={color.mute} /></Pressable>
+                  <Pressable
+                    style={pl.msgBtn}
+                    hitSlop={layout.hitSlop}
+                    onPress={async () => {
+                      if (!tripId) { router.push('/(tabs)/messages' as any); return; }
+                      const res = await openTripChat(tripId);
+                      if (res.ok && res.data?.threadId) {
+                        router.push(`/messages/${res.data.threadId}?threadType=trip&contextId=${encodeURIComponent(tripId)}` as any);
+                      } else {
+                        router.push('/(tabs)/messages' as any);
+                      }
+                    }}
+                  >
+                    <MessageCircle size={15} color={color.mute} />
+                  </Pressable>
                 ) : null}
               </View>
             </View>
