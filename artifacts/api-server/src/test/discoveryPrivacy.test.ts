@@ -24,14 +24,17 @@ const PUBLIC_USER    = "22222222-2222-2222-2222-222222222222";
 const PRIVATE_USER   = "33333333-3333-3333-3333-333333333333";
 const OPTOUT_USER    = "44444444-4444-4444-4444-444444444444";
 const BLOCKED_USER   = "55555555-5555-5555-5555-555555555555";
+// Viewer is blocked by REVERSE_BLOCKER (not the other way around)
+const REVERSE_BLOCKER = "66666666-6666-6666-6666-666666666666";
 
 function buildFakeClient() {
   const profiles = [
-    { id: PUBLIC_USER,  name: "Alice Public",  handle: "alicepub",  is_private: false, account_status: "active", home_city: null, home_country: null },
-    { id: PRIVATE_USER, name: "Bob Private",   handle: "bobpriv",   is_private: true,  account_status: "active", home_city: null, home_country: null },
-    { id: OPTOUT_USER,  name: "Carol OptOut",  handle: "carolopt",  is_private: false, account_status: "active", home_city: null, home_country: null },
-    { id: BLOCKED_USER, name: "Dave Blocked",  handle: "daveblk",   is_private: false, account_status: "active", home_city: null, home_country: null },
-    { id: VIEWER_ID,    name: "Viewer",        handle: "viewer",     is_private: false, account_status: "active", home_city: null, home_country: null },
+    { id: PUBLIC_USER,     name: "Alice Public",    handle: "alicepub",   is_private: false, account_status: "active", home_city: null, home_country: null },
+    { id: PRIVATE_USER,    name: "Bob Private",     handle: "bobpriv",    is_private: true,  account_status: "active", home_city: null, home_country: null },
+    { id: OPTOUT_USER,     name: "Carol OptOut",    handle: "carolopt",   is_private: false, account_status: "active", home_city: null, home_country: null },
+    { id: BLOCKED_USER,    name: "Dave Blocked",    handle: "daveblk",    is_private: false, account_status: "active", home_city: null, home_country: null },
+    { id: REVERSE_BLOCKER, name: "Eve RevBlock",    handle: "everevblk",  is_private: false, account_status: "active", home_city: null, home_country: null },
+    { id: VIEWER_ID,       name: "Viewer",          handle: "viewer",     is_private: false, account_status: "active", home_city: null, home_country: null },
   ];
 
   const privacySettings = [
@@ -39,7 +42,10 @@ function buildFakeClient() {
   ];
 
   const blocks = [
-    { blocker_id: VIEWER_ID, blocked_id: BLOCKED_USER },
+    // Viewer blocked Dave (viewer → target direction)
+    { blocker_id: VIEWER_ID,      blocked_id: BLOCKED_USER   },
+    // Eve blocked the viewer (target → viewer direction)
+    { blocker_id: REVERSE_BLOCKER, blocked_id: VIEWER_ID     },
   ];
 
   function from(table: string) {
@@ -186,13 +192,21 @@ describe("Discovery search — privacy exclusions", () => {
   });
 
   it("excludes users who blocked the viewer from traveler search", async () => {
-    // The block is bidirectional — if Dave blocked the viewer it should also hide Dave.
-    // Our block row (blocker=VIEWER, blocked=BLOCKED_USER) satisfies the
-    // "viewer blocked them" direction; the route treats both directions as mutual exclusion.
+    // REVERSE_BLOCKER has blocker_id=REVERSE_BLOCKER, blocked_id=VIEWER_ID.
+    // fetchBlockedSet adds REVERSE_BLOCKER to the set (blocker_id !== VIEWER_ID branch),
+    // so REVERSE_BLOCKER must not appear in results.
+    const r = await req("/api/discovery/search?q=eve&type=travelers");
+    assert.equal(r.status, 200, `unexpected status: ${JSON.stringify(r.body)}`);
+    const ids = (r.body.results ?? []).map((x: any) => x.id);
+    assert.ok(!ids.includes(REVERSE_BLOCKER), "user who blocked viewer must not appear in search results");
+  });
+
+  it("non-blocked users still appear after block exclusions", async () => {
     const r = await req("/api/discovery/search?q=alice&type=travelers");
     assert.equal(r.status, 200, `unexpected status: ${JSON.stringify(r.body)}`);
     const ids = (r.body.results ?? []).map((x: any) => x.id);
-    assert.ok(ids.includes(PUBLIC_USER), "non-blocked public user should still appear");
-    assert.ok(!ids.includes(BLOCKED_USER), "blocked user must not appear even in a general search");
+    assert.ok(ids.includes(PUBLIC_USER), "non-blocked public user must appear in results");
+    assert.ok(!ids.includes(BLOCKED_USER), "viewer-blocked user must not appear");
+    assert.ok(!ids.includes(REVERSE_BLOCKER), "reverse-blocker must not appear");
   });
 });

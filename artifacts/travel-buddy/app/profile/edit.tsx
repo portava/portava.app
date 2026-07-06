@@ -631,10 +631,15 @@ export default function EditProfileScreen() {
       } else {
         setSaveError(msg || 'Failed to save profile');
       }
-      // Profile row was not updated — clean up any newly uploaded files so they
-      // don't accumulate as orphans in storage.
-      if (uploadedAvatarPath) deleteOrphanedAvatar(uploadedAvatarPath).catch(() => {});
-      if (uploadedCoverPath) deleteOrphanedCover(uploadedCoverPath).catch(() => {});
+      // Clean up newly-uploaded files only when the server definitively rejected the
+      // PATCH (4xx/5xx, auth, or config errors). Skip on network_unreachable because
+      // the PATCH may have succeeded server-side; deleting the file in that case would
+      // leave the profile referencing a missing URL.
+      const canCleanup = kind !== 'network_unreachable';
+      if (canCleanup) {
+        if (uploadedAvatarPath) deleteOrphanedAvatar(uploadedAvatarPath).catch(() => {});
+        if (uploadedCoverPath) deleteOrphanedCover(uploadedCoverPath).catch(() => {});
+      }
       return;
     }
 
