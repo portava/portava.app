@@ -100,7 +100,7 @@ function makeAdminFakeClient(opts: {
     accountStates = [],
     reports = [],
     modActions = [],
-    posts = [{ id: POST_ID, post_status: "published" }],
+    posts = [{ id: POST_ID, post_status: "published", user_id: TARGET_ID }],
     compassAnalytics = [],
   } = opts;
 
@@ -569,7 +569,7 @@ describe("Admin reports: hide-content", () => {
     const report = { id: REPORT_ID, target_type: "post", target_id: POST_ID, status: "open" };
     const admin = makeAdminFakeClient({
       reports: [report],
-      posts:   [{ id: POST_ID, post_status: "published" }],
+      posts:   [{ id: POST_ID, post_status: "published", user_id: TARGET_ID }],
     });
     _setTestClient(admin, true);
     _setTestServiceClient(admin);

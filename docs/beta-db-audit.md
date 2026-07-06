@@ -47,7 +47,7 @@ by me" feed indicators. File: `artifacts/api-server/migrations/0123_engagement_u
 |------|------------|-----------|
 | `disable_posting` | `POST /posts` (posts.ts) | ✓ yes |
 | `disable_messaging` | `POST /threads/:id/messages` (messaging.ts) | ✓ yes |
-| `disable_rab_bookings` | `POST /api/rent-a-buddy/bookings` (rentABuddy.ts) | ✓ yes |
+| `disable_rent_buddy_booking` | `POST /api/rent-a-buddy/bookings` (rentABuddy.ts) | ✓ yes |
 | `disable_signups` | `GET /api/auth/signup-status` (auth.ts) | ✓ yes |
 | `invite_only_beta` | `GET /api/auth/signup-status` (auth.ts) | ✓ yes |
 | `city_launch_mode` | documented — per-city disable managed via `rent_buddy_city_rollouts.status='disabled'` | n/a |

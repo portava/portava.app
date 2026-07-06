@@ -780,8 +780,8 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
 
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  // Emergency flag: disable_rab_bookings — fail-open on DB error
-  if (await isFlagEnabled(serviceClient, 'disable_rab_bookings')) {
+  // Emergency flag: disable_rent_buddy_booking — fail-open on DB error
+  if (await isFlagEnabled(serviceClient, 'disable_rent_buddy_booking')) {
     return res.status(404).json({ error: 'feature_disabled', message: 'Rent-a-Buddy bookings are temporarily disabled' });
   }
 

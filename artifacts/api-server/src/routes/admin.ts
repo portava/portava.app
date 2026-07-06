@@ -1481,8 +1481,23 @@ router.post("/admin/reports/:id/hide-content", async (req, res) => {
 
   const now = new Date().toISOString();
 
-  // Audit first (fail-closed)
-  const auditR = await logModerationAction(sc, target_id, adminUserId, "content_removed", reason);
+  // Resolve the content owner's user_id — moderation_actions.target_user_id is a FK to
+  // profiles(id), so we must pass a profile UUID, not the content item UUID.
+  // Fall back to adminUserId (always a valid profile) when the owner cannot be found.
+  let ownerUserId: string = adminUserId;
+  if (target_type === "post") {
+    const { data: pr } = await sc.from("posts").select("user_id").eq("id", target_id).maybeSingle();
+    if ((pr as any)?.user_id) ownerUserId = (pr as any).user_id;
+  } else if (target_type === "trip") {
+    const { data: tr } = await sc.from("trips").select("user_id").eq("id", target_id).maybeSingle();
+    if ((tr as any)?.user_id) ownerUserId = (tr as any).user_id;
+  } else if (target_type === "event") {
+    const { data: er } = await sc.from("events").select("host_id").eq("id", target_id).maybeSingle();
+    if ((er as any)?.host_id) ownerUserId = (er as any).host_id;
+  }
+
+  // Audit against the OWNER's profile UUID (fail-closed)
+  const auditR = await logModerationAction(sc, ownerUserId, adminUserId, "content_removed", reason);
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`); return; }
 
   // Apply content mutation based on target type

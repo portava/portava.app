@@ -31,7 +31,7 @@ INSERT INTO feature_flags (flag, enabled, description) VALUES
   ('disable_signups',                 FALSE, 'Kill switch — blocks new account registrations; checked by GET /auth/signup-status'),
   ('disable_posting',                 FALSE, 'Kill switch — blocks POST /posts app-wide'),
   ('disable_messaging',               FALSE, 'Kill switch — blocks POST /threads/:id/messages app-wide'),
-  ('disable_rab_bookings',            FALSE, 'Kill switch — blocks Rent a Buddy booking creation (POST /api/rent-a-buddy/bookings)'),
+  ('disable_rent_buddy_booking',       FALSE, 'Kill switch — blocks Rent a Buddy booking creation (POST /api/rent-a-buddy/bookings)'),
   ('city_launch_mode',                FALSE, 'Kill switch/gate — restricts access to seeded launch cities only'),
   ('invite_only_beta',                FALSE, 'Kill switch/gate — requires invite code to register; checked by GET /auth/signup-status')
 ON CONFLICT (flag) DO NOTHING;
