@@ -35,7 +35,7 @@ import {
   getActiveKillSwitches,
 } from '../../src/screens/admin/featureFlags.machine';
 import { KILL_SWITCH_LABELS } from '../../src/constants/killSwitches';
-import type { FeatureFlag, FlagHistoryEntry } from '../../src/screens/admin/featureFlags.machine';
+import type { FeatureFlag, FlagHistoryEntry, ToggleApiResult } from '../../src/screens/admin/featureFlags.machine';
 
 // ── API helpers ───────────────────────────────────────────────────────────────
 
@@ -323,10 +323,15 @@ export default function FeatureFlagsScreen() {
     setTogglingFlag(flag);
     setFlags((prev) => applyOptimisticToggle(prev, flag, enabled));
 
-    const res = await adminPatch<{ flag: FeatureFlag }>(
-      `/api/admin/feature-flags/${encodeURIComponent(flag)}`,
-      { enabled },
-    );
+    let res: ToggleApiResult;
+    try {
+      res = await adminPatch<{ flag: FeatureFlag }>(
+        `/api/admin/feature-flags/${encodeURIComponent(flag)}`,
+        { enabled },
+      );
+    } catch (e: unknown) {
+      res = { ok: false, error: e instanceof Error ? e.message : 'Network error' };
+    }
 
     setFlags((prev) => {
       const { flags: next, error: toggleError } = applyToggleResult(prev, flag, enabled, res);

@@ -19,6 +19,7 @@ import {
   resolveAdminGate,
   applyOptimisticToggle,
   applyToggleResult,
+  runToggle,
   applyLoadResult,
   getActiveKillSwitches,
   KILL_SWITCH_FLAGS,
@@ -397,6 +398,129 @@ describe('getActiveKillSwitches — kill switch disabled → not listed', () => 
     ];
     const result = getActiveKillSwitches(flags);
     assert.deepEqual(result, ['disable_signups']);
+  });
+});
+
+// ── runToggle — network-throw path ────────────────────────────────────────────
+
+describe('runToggle — patcher throws (network drop mid-request)', () => {
+  it('reverts flag to false when optimistic true and patcher rejects with an Error', async () => {
+    const optimistic = applyOptimisticToggle([FLAG_A, FLAG_B], 'passport_stamps_enabled', true);
+    const { flags } = await runToggle(
+      optimistic,
+      'passport_stamps_enabled',
+      true,
+      () => Promise.reject(new Error('Network timeout')),
+    );
+    assert.equal(
+      flags.find((f) => f.flag === 'passport_stamps_enabled')?.enabled,
+      false,
+      'must revert optimistic true back to false after network throw',
+    );
+  });
+
+  it('reverts flag to true when optimistic false and patcher rejects with an Error', async () => {
+    const optimistic = applyOptimisticToggle([FLAG_A, FLAG_B], 'location_phase1_gps', false);
+    const { flags } = await runToggle(
+      optimistic,
+      'location_phase1_gps',
+      false,
+      () => Promise.reject(new Error('Connection reset')),
+    );
+    assert.equal(
+      flags.find((f) => f.flag === 'location_phase1_gps')?.enabled,
+      true,
+      'must revert optimistic false back to true after network throw',
+    );
+  });
+
+  it('surfaces the thrown Error message as the error string', async () => {
+    const optimistic = applyOptimisticToggle([FLAG_A], 'passport_stamps_enabled', true);
+    const { error } = await runToggle(
+      optimistic,
+      'passport_stamps_enabled',
+      true,
+      () => Promise.reject(new Error('Request timed out')),
+    );
+    assert.equal(error, 'Request timed out');
+  });
+
+  it('uses a fallback error string when the rejection is not an Error instance', async () => {
+    const optimistic = applyOptimisticToggle([FLAG_A], 'passport_stamps_enabled', true);
+    const { error } = await runToggle(
+      optimistic,
+      'passport_stamps_enabled',
+      true,
+      () => Promise.reject('plain string rejection'),
+    );
+    assert.ok(
+      typeof error === 'string' && error.length > 0,
+      'must provide a non-empty fallback error string when rejection is not an Error',
+    );
+  });
+
+  it('leaves unrelated flags untouched when the patcher throws', async () => {
+    const optimistic = applyOptimisticToggle([FLAG_A, FLAG_B], 'passport_stamps_enabled', true);
+    const { flags } = await runToggle(
+      optimistic,
+      'passport_stamps_enabled',
+      true,
+      () => Promise.reject(new Error('ECONNRESET')),
+    );
+    assert.equal(
+      flags.find((f) => f.flag === 'location_phase1_gps')?.enabled,
+      FLAG_B.enabled,
+      'sibling flag must not be affected by revert on throw',
+    );
+  });
+
+  it('preserves all other fields on the reverted flag when patcher throws', async () => {
+    const optimistic = applyOptimisticToggle([FLAG_A], 'passport_stamps_enabled', true);
+    const { flags } = await runToggle(
+      optimistic,
+      'passport_stamps_enabled',
+      true,
+      () => Promise.reject(new Error('Dropped')),
+    );
+    const reverted = flags.find((f) => f.flag === 'passport_stamps_enabled');
+    assert.equal(reverted?.description, FLAG_A.description);
+    assert.equal(reverted?.updated_at, FLAG_A.updated_at);
+  });
+});
+
+describe('runToggle — patcher resolves normally', () => {
+  it('returns null error and confirmed server row when patcher resolves ok', async () => {
+    const serverFlag: FeatureFlag = {
+      flag: 'passport_stamps_enabled',
+      enabled: true,
+      description: 'Confirmed by server',
+      updated_at: '2026-07-07T00:00:00Z',
+    };
+    const optimistic = applyOptimisticToggle([FLAG_A], 'passport_stamps_enabled', true);
+    const { flags, error } = await runToggle(
+      optimistic,
+      'passport_stamps_enabled',
+      true,
+      () => Promise.resolve({ ok: true, data: { flag: serverFlag } }),
+    );
+    assert.equal(error, null);
+    assert.deepEqual(flags.find((f) => f.flag === 'passport_stamps_enabled'), serverFlag);
+  });
+
+  it('reverts and surfaces error string when patcher resolves with ok: false', async () => {
+    const optimistic = applyOptimisticToggle([FLAG_A], 'passport_stamps_enabled', true);
+    const { flags, error } = await runToggle(
+      optimistic,
+      'passport_stamps_enabled',
+      true,
+      () => Promise.resolve({ ok: false, error: 'Forbidden' }),
+    );
+    assert.equal(error, 'Forbidden');
+    assert.equal(
+      flags.find((f) => f.flag === 'passport_stamps_enabled')?.enabled,
+      false,
+      'must revert optimistic true back to false on ok: false response',
+    );
   });
 });
 

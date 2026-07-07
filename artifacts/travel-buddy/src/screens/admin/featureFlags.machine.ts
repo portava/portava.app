@@ -136,6 +136,38 @@ export function applyToggleResult(
   return { flags, error: null };
 }
 
+/**
+ * Runs the full toggle round-trip against an async patcher.
+ *
+ * Handles both structured `{ ok: false }` responses **and** raw thrown
+ * exceptions (e.g. a dropped connection that causes fetch to reject before
+ * a Response is returned). In both cases the optimistic state is reverted
+ * to the pre-toggle value.
+ *
+ * @param flags      The *already-optimistically-updated* flags list.
+ * @param targetFlag The flag being toggled.
+ * @param requested  The value that was requested (what we optimistically set).
+ * @param patcher    Async function that calls the API; may resolve to a
+ *                   ToggleApiResult **or** throw.
+ */
+export async function runToggle(
+  flags: FeatureFlag[],
+  targetFlag: string,
+  requested: boolean,
+  patcher: (flag: string, enabled: boolean) => Promise<ToggleApiResult>,
+): Promise<{ flags: FeatureFlag[]; error: string | null }> {
+  let result: ToggleApiResult;
+  try {
+    result = await patcher(targetFlag, requested);
+  } catch (e: unknown) {
+    result = {
+      ok: false,
+      error: e instanceof Error ? e.message : 'Network error',
+    };
+  }
+  return applyToggleResult(flags, targetFlag, requested, result);
+}
+
 // ── Load result ───────────────────────────────────────────────────────────────
 
 export interface LoadApiResult {
