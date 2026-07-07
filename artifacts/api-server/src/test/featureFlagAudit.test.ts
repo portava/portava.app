@@ -328,6 +328,56 @@ describe("Feature flag audit log", () => {
       assert.ok("changed_by_name" in lc,        "changed_by_name field present");
     });
 
+    it("returns 200 with null-safe last_change when RPC row omits changed_at / old_enabled", async () => {
+      // Simulate an RPC that returns a row without the audit fields
+      // (e.g. the DB function was updated but the Postgres function signature
+      // predates migration 0119 and only returns base flag columns).
+      const strippedRpc = async (name: string, _args: Record<string, unknown>) => {
+        if (name !== "toggle_feature_flag_with_audit") return { data: [], error: null };
+        const resultRow = {
+          flag:        "some_flag",
+          enabled:     true,
+          description: "A test flag",
+          updated_at:  new Date().toISOString(),
+          // changed_at and old_enabled intentionally absent
+        };
+        return { data: [resultRow], error: null };
+      };
+
+      const { client } = makeFakeClient({
+        knownFlags: { some_flag: { enabled: false, description: "A test flag" } },
+      });
+      // Swap rpc with the stripped version.
+      const patchedClient = { ...client, rpc: strippedRpc };
+      _setTestClient(patchedClient, true);
+      _setTestServiceClient(patchedClient);
+
+      const r = await req("PATCH", "/admin/feature-flags/some_flag", { enabled: true });
+      assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+
+      const flag = r.body?.flag;
+      assert.ok(flag, "response has flag object");
+      assert.equal(flag.flag,    "some_flag", "flag.flag");
+      assert.equal(flag.enabled, true,        "flag.enabled reflects new value");
+
+      // last_change block must be present (handler always constructs it) and
+      // the missing fields must either be absent (undefined → JSON omit) or
+      // explicitly null, but must NOT cause the request to error.
+      const lc = flag.last_change;
+      assert.ok(lc, "last_change block is present even when RPC omits audit fields");
+      assert.ok(
+        !("changed_at" in lc) || lc.changed_at == null,
+        "changed_at is absent or null when RPC row does not include it",
+      );
+      assert.ok(
+        !("old_enabled" in lc) || lc.old_enabled == null,
+        "old_enabled is absent or null when RPC row does not include it",
+      );
+      // new_enabled and changed_by_name must always be present.
+      assert.equal(lc.new_enabled, true, "new_enabled always reflects the toggled value");
+      assert.ok("changed_by_name" in lc, "changed_by_name is always present");
+    });
+
     it("returns 400 when body is missing the enabled field", async () => {
       const { client } = makeFakeClient({});
       _setTestClient(client, true);
