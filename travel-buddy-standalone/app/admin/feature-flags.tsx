@@ -32,6 +32,7 @@ import {
   applyLoadResult,
   getActiveKillSwitches,
 } from '../../src/screens/admin/featureFlags.machine';
+import { KILL_SWITCH_LABELS } from '../../src/constants/killSwitches';
 import type { FeatureFlag } from '../../src/screens/admin/featureFlags.machine';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -284,7 +285,7 @@ function KillSwitchBanner({ activeFlags }: { activeFlags: string[] }) {
         {activeFlags.length === 1 ? '⚠ Kill switch active' : `⚠ ${activeFlags.length} kill switches active`}
       </Text>
       {activeFlags.map((flag) => (
-        <Text key={flag} style={s.killBannerItem}>· {flag}</Text>
+        <Text key={flag} style={s.killBannerItem}>· {KILL_SWITCH_LABELS[flag] ?? flag}</Text>
       ))}
     </View>
   );

@@ -13,15 +13,7 @@ import { resolveAccountButton, applyReactivateResult } from './settings.machine'
 import { SUPPORTED_LANGUAGES } from '../language-picker';
 import { useLanguagePreference } from '../../src/context/LanguagePreferenceContext';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
-
-const KILL_SWITCH_FLAGS = [
-  'disable_posting',
-  'disable_messaging',
-  'disable_signups',
-  'disable_rent_buddy_booking',
-  'city_launch_mode',
-  'invite_only_beta',
-];
+import { KILL_SWITCH_FLAGS } from '../../src/constants/killSwitches';
 
 export default function Settings() {
   const { signOut, isAuthed, configured } = useSession();
