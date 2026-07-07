@@ -626,6 +626,18 @@ router.patch("/admin/feature-flags/:flag", async (req, res) => {
   });
 
   if (rpcErr) {
+    if (rpcErr.code === "42883") {
+      req.log.error(
+        { flag: req.params.flag, pgCode: rpcErr.code },
+        "toggle_feature_flag_with_audit SQL function is missing — apply migration 0119 to the database",
+      );
+      res.status(503).json({
+        error: "server_not_configured",
+        message:
+          "toggle_feature_flag_with_audit function is missing — apply migration 0119 to the database",
+      });
+      return;
+    }
     if (rpcErr.message?.includes("Flag not found") || rpcErr.code === "P0002") {
       sendError(res, "not_found", `Flag '${req.params.flag}' not found`);
     } else {

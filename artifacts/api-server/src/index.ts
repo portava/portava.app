@@ -15,6 +15,7 @@ import { startEventWaitlistSweeper } from "./lib/eventWaitlistSweeper";
 import { startTripReminderScheduler } from "./lib/tripReminderScheduler";
 import { startInviteSlotReconciler } from "./lib/inviteSlotReconciler";
 import { startInviteSlotSweeper } from "./lib/inviteSlotSweeper";
+import { getServiceClient } from "./lib/supabase";
 
 const rawPort = process.env["PORT"];
 
@@ -53,6 +54,31 @@ app.listen(port, (err) => {
   startInviteSlotSweeper();
   warmUpDiscoveryCache(port).catch((e) =>
     logger.warn({ err: e }, "discovery warm-up: unhandled error"),
+  );
+
+  // Startup check: verify the toggle_feature_flag_with_audit SQL function
+  // exists (introduced by migration 0119).  If it is missing the PATCH
+  // /admin/feature-flags/:flag route will return a db_error with no clear
+  // explanation.  We probe by calling the function with a sentinel flag that
+  // will never exist; a P0002 (no_data_found) response confirms the function
+  // is present.  A 42883 (undefined_function) response means the migration
+  // has not been applied to this database.
+  (async () => {
+    const sc = getServiceClient();
+    if (!sc) return; // service client not configured — skip
+    const { error } = await sc.rpc("toggle_feature_flag_with_audit", {
+      p_flag:          "__startup_probe__",
+      p_new_enabled:   false,
+      p_changed_by_id: "00000000-0000-0000-0000-000000000000",
+    });
+    if (error?.code === "42883") {
+      logger.warn(
+        "startup: toggle_feature_flag_with_audit SQL function is missing — " +
+        "apply migration 0119 to the database or PATCH /admin/feature-flags/:flag will return 503",
+      );
+    }
+  })().catch((e) =>
+    logger.warn({ err: e }, "startup: could not probe toggle_feature_flag_with_audit"),
   );
 
   // Startup health check — warn if the cleanup job hasn't run recently.
