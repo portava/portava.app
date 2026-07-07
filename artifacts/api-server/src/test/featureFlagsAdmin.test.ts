@@ -63,8 +63,12 @@ function req(
 function makeFakeClient(opts: {
   role?: string;
   featureFlags?: Record<string, unknown>[];
+  /** Captures every rpc() call so tests can assert on them. */
+  rpcCalls?: Array<{ name: string; args: Record<string, unknown> }>;
 }) {
-  const { role = "admin", featureFlags = [] } = opts;
+  const { role = "admin", featureFlags = [], rpcCalls } = opts;
+  // Mutable copy so rpc() can update flag state in place.
+  const flags: Record<string, unknown>[] = featureFlags.map((f) => ({ ...f }));
 
   function builder(rows: unknown[]) {
     let _rows = [...rows];
@@ -88,15 +92,55 @@ function makeFakeClient(opts: {
     return b;
   }
 
+  /**
+   * Simulate toggle_feature_flag_with_audit (migration 0119).
+   * Atomically updates the in-memory flag state and records the call.
+   */
+  async function rpc(name: string, args: Record<string, unknown>) {
+    if (rpcCalls) rpcCalls.push({ name, args });
+
+    if (name !== "toggle_feature_flag_with_audit") {
+      return { data: [], error: null };
+    }
+
+    const { p_flag, p_new_enabled } = args as {
+      p_flag: string;
+      p_new_enabled: boolean;
+    };
+
+    const flagRow = flags.find((f: any) => f.flag === p_flag) as any;
+    if (!flagRow) {
+      return { data: null, error: { message: "Flag not found", code: "P0002" } };
+    }
+
+    const oldEnabled  = flagRow.enabled;
+    const now         = new Date().toISOString();
+    flagRow.enabled   = p_new_enabled;
+    flagRow.updated_at = now;
+
+    return {
+      data: [{
+        flag:        flagRow.flag,
+        enabled:     p_new_enabled,
+        description: flagRow.description ?? null,
+        updated_at:  now,
+        changed_at:  now,
+        old_enabled: oldEnabled,
+      }],
+      error: null,
+    };
+  }
+
   return {
     from: (table: string) => {
       if (table === "profiles")      return builder([{ id: "uid1", role }]);
-      if (table === "feature_flags") return builder(featureFlags);
+      if (table === "feature_flags") return builder(flags);
       return builder([]);
     },
     auth: {
       getUser: () => Promise.resolve({ data: { user: { id: "uid1" } }, error: null }),
     },
+    rpc,
   } as any;
 }
 
@@ -242,31 +286,31 @@ describe("PATCH /admin/feature-flags/:flag", () => {
     assert.equal(body.error, "invalid_payload");
   });
 
-  it("sends enabled and updated_at to the database (not extra columns)", async () => {
-    const captured: any[] = [];
+  it("calls toggle_feature_flag_with_audit RPC with correct procedure name and arguments", async () => {
+    const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
     const client = makeFakeClient({
       role: "admin",
       featureFlags: [{ flag: "trip_crew_map_enabled", enabled: false, description: "Crew map" }],
+      rpcCalls,
     });
-    const origFrom = client.from.bind(client);
-    client.from = (table: string) => {
-      const b = origFrom(table);
-      if (table === "feature_flags") {
-        const origUpdate = b.update.bind(b);
-        b.update = (data: any) => { captured.push(data); return origUpdate(data); };
-      }
-      return b;
-    };
     _setTestClient(client, true);
     _setTestServiceClient(client);
 
-    await req("PATCH", "/admin/feature-flags/trip_crew_map_enabled", { enabled: true });
+    const { status } = await req("PATCH", "/admin/feature-flags/trip_crew_map_enabled", { enabled: true });
+    assert.equal(status, 200, "toggle must succeed");
 
-    assert.equal(captured.length, 1, "update must be called exactly once");
-    const patch = captured[0];
-    assert.equal(patch.enabled, true, "enabled must be set to the requested value");
-    assert.ok("updated_at" in patch, "updated_at must be stamped on every toggle");
-    assert.ok(!("flag" in patch),        "flag PK must not be overwritten in the update payload");
-    assert.ok(!("description" in patch), "description must not be modified by a toggle");
+    // Exactly one RPC call must have been made (no bare UPDATE).
+    assert.equal(rpcCalls.length, 1, "exactly one RPC call must be made per toggle");
+    const call = rpcCalls[0];
+
+    // The procedure name must be the atomic audit function (not a raw update).
+    assert.equal(call.name, "toggle_feature_flag_with_audit",
+      "must call toggle_feature_flag_with_audit, not a bare UPDATE");
+
+    // All three required args must be forwarded correctly.
+    assert.equal(call.args.p_flag,        "trip_crew_map_enabled", "p_flag forwarded");
+    assert.equal(call.args.p_new_enabled, true,                    "p_new_enabled forwarded");
+    assert.ok(typeof call.args.p_changed_by_id === "string" && call.args.p_changed_by_id.length > 0,
+      "p_changed_by_id must be the authenticated user's ID");
   });
 });
