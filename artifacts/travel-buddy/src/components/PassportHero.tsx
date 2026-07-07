@@ -209,12 +209,12 @@ export function PassportHero({
                 style={styles.trustBadge}
                 onPress={onTrustInfo}
                 accessibilityRole="button"
-                accessibilityLabel={`Trust Score ${trustScore.toFixed(1)} out of 5, ${trustLabel ?? 'Trusted Traveler'}`}
+                accessibilityLabel={`Trust Score ${Math.round(trustScore)} out of 100, ${trustLabel ?? 'Trusted Traveler'}`}
                 hitSlop={6}
               >
                 <ShieldCheck size={12} color="#0D9B6F" strokeWidth={2.5} />
                 <Text style={styles.trustText}>
-                  {`Trust ${trustScore.toFixed(1)} / 5 · ${trustLabel ?? 'Trusted Traveler'}`}
+                  {`Trust ${Math.round(trustScore)} / 100 · ${trustLabel ?? 'Trusted Traveler'}`}
                 </Text>
               </Pressable>
             ) : null}

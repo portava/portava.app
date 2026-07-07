@@ -90,7 +90,7 @@ export function usePassport(): PassportState {
         preferredLanguage: null,
         dateOfBirth: null,
         dobVerified: false,
-        trustScore: mock.user.verified ? 4.8 : null,
+        trustScore: mock.user.verified ? 92 : null,
         trustLabel: mock.user.verified ? 'Trusted Traveler' : null,
         verificationLevel: mock.user.verified ? 'trusted_traveler' : 'none',
         idVerifiedAt: mock.user.verified ? '2026-06-01T00:00:00Z' : null,

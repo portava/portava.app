@@ -11,7 +11,7 @@ interface Props {
 }
 
 function fmtScore(n: number): string {
-  return Number.isFinite(n) ? n.toFixed(1) : '—';
+  return Number.isFinite(n) ? String(Math.round(n)) : '—';
 }
 
 export function TrustScoreCard({ score, label = 'Trusted Traveler', onInfoPress }: Props) {
@@ -30,7 +30,7 @@ export function TrustScoreCard({ score, label = 'Trusted Traveler', onInfoPress 
         <View style={s.nums}>
           <Text style={s.scoreText}>
             <Text style={s.scoreNum}>{fmtScore(score)}</Text>
-            <Text style={s.scoreDenom}> / 5</Text>
+            <Text style={s.scoreDenom}> / 100</Text>
           </Text>
         </View>
       </View>
