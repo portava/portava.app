@@ -524,6 +524,28 @@ describe('runToggle — patcher resolves normally', () => {
   });
 });
 
+// ── KILL_SWITCH_FLAGS contract ────────────────────────────────────────────────
+//
+// This test pins the exact set of kill-switch flag names.
+// If you intentionally add, remove, or rename a flag, update the expected list
+// below AND make sure the corresponding feature-flag row exists in the database.
+// The test exists so that an accidental edit (e.g. a mismerge or refactor) is
+// caught before it ships and silently breaks the kill-switch banner.
+
+describe('KILL_SWITCH_FLAGS — contract (snapshot)', () => {
+  it('contains exactly the expected set of kill-switch names', () => {
+    const expected = [
+      'disable_posting',
+      'disable_messaging',
+      'disable_signups',
+      'disable_rent_buddy_booking',
+      'city_launch_mode',
+      'invite_only_beta',
+    ];
+    assert.deepEqual([...KILL_SWITCH_FLAGS].sort(), [...expected].sort());
+  });
+});
+
 describe('getActiveKillSwitches — multiple active kill switches', () => {
   it('returns all enabled kill-switch flag names when several are active', () => {
     const flags: FeatureFlag[] = [
