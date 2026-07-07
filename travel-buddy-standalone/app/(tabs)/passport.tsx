@@ -21,7 +21,6 @@ import { useSession } from '../../src/context/SessionContext';
 import { listMyTrips } from '../../src/services/trips';
 import { PassportHero } from '../../src/components/PassportHero';
 import { CompactStatsRow } from '../../src/components/CompactStatsRow';
-import { TrustScoreCard } from '../../src/components/TrustScoreCard';
 import { PassportVerificationStamp } from '../../src/components/PassportVerificationStamp';
 import { VerificationLevelsRail } from '../../src/components/VerificationLevelsRail';
 import type { VerificationLevelStatus } from '../../src/components/VerificationLevelsRail';
@@ -78,6 +77,7 @@ export default function PassportScreen() {
   const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
   const [highlightComposerOpen, setHighlightComposerOpen] = useState(false);
   const [postcardComposerOpen, setPostcardComposerOpen] = useState(false);
+  const [trustSheetOpen, setTrustSheetOpen] = useState(false);
 
   // Tracks whether the composer was triggered from inside the viewer (vs. ring/camera)
   const composerFromViewer = useRef(false);
@@ -418,17 +418,12 @@ function PassportContent({
           onAvatarPress={() => openSettings('profile')}
           onHighlightRingPress={onHighlightRingPress}
           onNewHighlightPress={onNewHighlightPress}
+          trustScore={profile.trustScore ?? undefined}
+          trustLabel={profile.trustLabel ?? undefined}
+          onTrustInfo={() => setTrustSheetOpen(true)}
         />
 
-        {/* Trust Score + Verification Stamp */}
-        {profile.trustScore != null && (
-          <View style={styles.trustRow}>
-            <TrustScoreCard
-              score={profile.trustScore}
-              label={profile.trustLabel ?? 'Trusted Traveler'}
-            />
-          </View>
-        )}
+        {/* Verification Stamp — full-width, no longer paired with large trust card */}
         <PassportVerificationStamp
           status={profile.verificationStatus}
           verifiedSince={profile.verifiedAt}
@@ -641,10 +636,6 @@ function PassportContent({
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paper },
 
-  trustRow: {
-    marginHorizontal: space.lg,
-    marginTop: space.md,
-  },
   coverBand: { width: '100%', height: 140, overflow: 'hidden' },
   coverUploadingOverlay: {
     ...StyleSheet.absoluteFillObject,

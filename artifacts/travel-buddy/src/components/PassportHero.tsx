@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import Svg, { Path, Defs, Pattern, Rect, Circle } from 'react-native-svg';
-import { Plane, MapPin, MoreHorizontal, Camera } from 'lucide-react-native';
+import { Plane, MapPin, MoreHorizontal, Camera, ShieldCheck, Calendar } from 'lucide-react-native';
 import type { OwnProfile, PublicProfile } from '../types/models';
 import { PassportMonogramWatermark, PassportInkStamp, PassportHeroBackdrop } from './PassportMarks';
 import { isTravelBuddyVerified, getVerificationOwnerPrompt } from '../lib/verification';
@@ -32,6 +32,15 @@ function PhotoBackdrop() {
   );
 }
 
+function fmtMemberSince(iso: string | null | undefined): string {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  } catch {
+    return '';
+  }
+}
+
 /** Clean passport hero card — avatar, display name, username, bio (2 lines), home, up to 3 interests. */
 export function PassportHero({
   profile,
@@ -46,6 +55,9 @@ export function PassportHero({
   allHighlightsViewed,
   onHighlightRingPress,
   onNewHighlightPress,
+  trustScore,
+  trustLabel,
+  onTrustInfo,
 }: {
   profile: OwnProfile | PublicProfile;
   isOwner: boolean;
@@ -59,6 +71,9 @@ export function PassportHero({
   allHighlightsViewed?: boolean;
   onHighlightRingPress?: () => void;
   onNewHighlightPress?: () => void;
+  trustScore?: number | null;
+  trustLabel?: string | null;
+  onTrustInfo?: () => void;
 }) {
   const resolvedName = resolveDisplayName(profile);
   const username = 'username' in profile ? profile.username : null;
@@ -178,6 +193,32 @@ export function PassportHero({
               )}
             </View>
           )}
+
+          {/* Compact badges row: Member since + Trust Score */}
+          <View style={styles.badgesRow}>
+            {profile.createdAt ? (
+              <View style={styles.memberBadge}>
+                <Calendar size={11} color={color.mute} />
+                <Text style={styles.memberText}>
+                  Member since {fmtMemberSince(profile.createdAt)}
+                </Text>
+              </View>
+            ) : null}
+            {trustScore != null ? (
+              <Pressable
+                style={styles.trustBadge}
+                onPress={onTrustInfo}
+                accessibilityRole="button"
+                accessibilityLabel={`Trust Score ${trustScore.toFixed(1)} out of 5, ${trustLabel ?? 'Trusted Traveler'}`}
+                hitSlop={6}
+              >
+                <ShieldCheck size={12} color="#0D9B6F" strokeWidth={2.5} />
+                <Text style={styles.trustText}>
+                  {`Trust ${trustScore.toFixed(1)} / 5 · ${trustLabel ?? 'Trusted Traveler'}`}
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
         </View>
       </View>
 
@@ -284,4 +325,21 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: color.haze,
   },
   verifyPromptText: { ...t.small, color: color.mute, fontWeight: '600', fontSize: 11 },
+
+  badgesRow: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: 6,
+  },
+  memberBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: color.haze, borderRadius: radius.pill,
+    paddingHorizontal: 8, paddingVertical: 4,
+  },
+  memberText: { fontSize: 10, color: color.mute, fontWeight: '600' },
+  trustBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: 'rgba(13,155,111,0.10)', borderRadius: radius.pill,
+    paddingHorizontal: 8, paddingVertical: 4,
+    borderWidth: 1, borderColor: 'rgba(13,155,111,0.30)',
+  },
+  trustText: { fontSize: 10, color: '#0D9B6F', fontWeight: '700' },
 });

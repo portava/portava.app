@@ -1,0 +1,420 @@
+FINAL PASSPORT PAGE LAYOUT COMMAND — MATCH THIS DESIGN WITH TRUST SCORE ADJUSTMENT
+
+Use the uploaded Passport reference image as the target layout.
+
+Build the Passport page to mirror that design, but apply this required adjustment:
+
+The Trust Score must be smaller and placed inside the Identity Info section, not as a large card above the verification stamp.
+
+Do not change the app color scheme.
+Do not rebuild unrelated screens.
+Do not remove existing backend wiring.
+Do not fake profile, trust, stamp, or verification data.
+Do not leave any visible action unwired.
+
+FINAL LAYOUT ORDER
+
+The Passport page should render in this exact order:
+
+1. Top Header
+2. Cover Photo Hero
+3. Avatar overlapping cover
+4. Identity Info section
+5. Compact Trust Score badge inside Identity Info
+6. Passport Verified Stamp
+7. Stats Strip
+8. My Stamps rail
+9. Tabs
+10. Postcards grid
+11. Verification Levels
+12. Bottom Nav
+
+The page should look like the reference image, but with the large Trust Score card removed and replaced by a compact trust badge under the identity text.
+
+TOP HEADER
+
+Keep this exact structure:
+
+Left:
+- “Passport”
+- Small verified badge beside Passport title if verified
+- Subtitle: “Your travel identity. Your world.”
+
+Right:
+- Share icon
+- Settings icon for owner
+- More/options icon for public viewer
+
+Rules:
+- Header sits at the top inside SafeAreaView.
+- Use current app dark background.
+- Use current white text.
+- Use current teal/mint verified badge.
+- Icons must be 44px tap targets.
+- No duplicate Passport title.
+- No old profile header above or below this.
+
+COVER PHOTO HERO
+
+Directly under the header:
+
+- Large rounded cover image.
+- Full width with screen padding.
+- Height around 190–210px.
+- Border radius around 26–30px.
+- Dark gradient overlay.
+- Owner sees camera/edit cover button.
+- Public viewer does not.
+
+Use real backend cover_photo_url.
+If missing, use the app’s existing dark gradient fallback.
+
+AVATAR
+
+Avatar overlaps bottom-left of cover photo.
+
+- Circular.
+- Size around 108–116px.
+- Teal/mint accent ring.
+- Owner sees camera edit button.
+- Public viewer does not.
+- Use backend avatar_url.
+- If missing, use initials.
+
+IDENTITY INFO SECTION
+
+Under the avatar, inside the same hero/profile card:
+
+Render:
+
+Display Name + verified badge  
+City, Country flag  
+Bio/tagline  
+Member since pill  
+Compact Trust Score badge
+
+Example:
+
+Maya ✅  
+Cebu, Philippines 🇵🇭  
+Travel lover • Ocean chaser 🌊  
+Collecting moments, not things. ✨  
+
+[Member since May 2024] [Trust 4.8 / 5 · Trusted Traveler]
+
+IMPORTANT:
+The Trust Score must now live here as a compact badge.
+
+Do not render the large Trust Score card from the reference image.
+Do not place Trust Score beside or above the Passport Verified stamp.
+Do not duplicate Trust Score.
+
+COMPACT TRUST SCORE BADGE
+
+Design:
+- Small pill/card.
+- Height around 34–40px.
+- Rounded full pill radius.
+- Dark translucent background.
+- Thin border.
+- Small shield/star icon.
+- Teal score.
+- Muted text.
+- Fits beside the member-since pill if space allows.
+- Wraps under member-since on narrow screens.
+
+Text:
+If score exists:
+“Trust 4.8 / 5 · Trusted Traveler”
+
+If score missing:
+“Trust — / 5 · New Traveler”
+
+Behavior:
+- Badge is tappable.
+- Opens Trust Score explanation sheet.
+- Must not be dead.
+
+PASSPORT VERIFIED STAMP
+
+Under the Identity Info section, show the large official verification stamp.
+
+This should remain the primary proof element.
+
+Visual:
+- Same as the reference image.
+- Official passport stamp style.
+- Teal/mint ink effect.
+- Dark translucent background.
+- Double/dashed border.
+- Shield/check icon.
+- Text:
+  PASSPORT VERIFIED
+  VERIFIED TRAVELER
+- Checklist:
+  ID Verified
+  Selfie Matched
+  Home Country Verified
+  No Safety Flags
+- Bottom:
+  Verified since Jun 2026
+
+Rules:
+- Only show this stamp when verification_status === "verified".
+- Do not show for pending, rejected, suspended, or unverified users.
+- Public viewers should not see pending/rejected details.
+- Owner sees proper CTA/state if unverified, pending, or rejected.
+
+Because the Trust Score is now compact inside Identity Info, the Passport Verified stamp should be wider and cleaner.
+
+Use full-width or near full-width layout:
+- marginTop: 14px
+- borderRadius: 22px
+- padding: 8px
+- no squeezing beside Trust Score
+
+STATS STRIP
+
+Under the verification stamp:
+
+One dark rounded card with five columns:
+- Trips
+- Cities
+- Postcards
+- Followers
+- Following
+
+Each column:
+- Teal icon
+- Number
+- Label
+
+Example:
+78 Trips
+32 Cities
+156 Postcards
+420 Followers
+180 Following
+
+Actions:
+- Trips opens trips/plans section
+- Cities opens city/stamp collection if available
+- Postcards switches to Postcards tab
+- Followers opens followers list
+- Following opens following list
+
+No dead actions.
+
+MY STAMPS
+
+Under stats:
+
+Header:
+“My Stamps” left
+“View all” right
+
+Rail:
+Horizontal scroll.
+
+First stamp:
+- Verified Traveler mini stamp if verified.
+
+Then travel stamps:
+- Japan
+- Vietnam
+- Cebu
+- Siargao
+
+Last:
+- dashed “34 stamps to collect” card.
+
+Rules:
+- Use backend stamps.
+- Verification stamp appears first only when verified.
+- Tapping a stamp opens stamp detail.
+- View all opens Stamps tab or full stamps screen.
+- No dead cards.
+
+TABS
+
+Under My Stamps:
+
+Tabs:
+- All
+- Stamps
+- Plans
+- Postcards
+
+Default active:
+All
+
+Style:
+- Dark segmented control.
+- Active tab teal underline or teal active fill matching current app.
+- Minimum 44px touch height.
+- No dead tabs.
+
+POSTCARDS GRID
+
+Under tabs:
+
+Header:
+“Postcards”
+Owner right action:
+“+ New Postcard”
+
+Public viewer:
+Hide “+ New Postcard.”
+
+Grid:
+- 3 cards across if current layout supports it like the reference image.
+- If real mobile width is too narrow, use 2 columns.
+- Rounded image cards.
+- Video badge if video.
+- Title.
+- Time ago.
+- Like/comment counts.
+- More menu.
+
+Actions:
+- Tap opens postcard viewer.
+- Like toggles backend like.
+- Comment opens comments.
+- More opens owner/public menu.
+- New Postcard opens composer.
+- No dead buttons.
+
+VERIFICATION LEVELS
+
+Under postcards:
+
+Section:
+“Verification Levels”
+“Learn more”
+
+Four compact cards:
+1. Basic Verified
+   ID & selfie verified
+   Verified
+
+2. Trusted Traveler
+   Home country locked
+   All good
+
+3. Host Verified
+   For event hosts
+   Verified / Apply
+
+4. Buddy Verified
+   For Rent a Buddy
+   Verified / Apply
+
+Rules:
+- Status comes from backend.
+- Learn more opens explanation sheet.
+- Apply opens correct verification/application flow.
+- No dead buttons.
+
+BOTTOM NAV
+
+Keep existing bottom nav exactly:
+
+Pulse
+Discovery
+Create
+Trips
+Passport
+
+Passport active.
+
+Do not change order.
+Do not duplicate nav.
+Do not let content hide behind nav.
+
+COMPONENT STRUCTURE
+
+Update or create:
+
+PassportScreen
+PassportHeader
+PassportHeroCard
+PassportIdentityBlock
+CompactTrustBadge
+PassportVerificationStamp
+StatsStrip
+PassportStampsRail
+PassportTabs
+PostcardsGrid
+VerificationLevelsRail
+
+Do not create duplicate versions if existing components can be updated safely.
+
+EXPECTED PASSPORT SCREEN STRUCTURE
+
+tsx function PassportScreen() {   const { data, loading, error, refetch } = usePassportProfile(userId);    if (loading) return <PassportSkeleton />;   if (error) return <PassportErrorState onRetry={refetch} />;    const isOwner = data.is_owner;   const isVerified = data.verification.status === "verified";    return (     <SafeAreaView style={styles.safe}>       <ScrollView         showsVerticalScrollIndicator={false}         contentContainerStyle={styles.scrollContent}       >         <PassportHeader           verified={isVerified}           isOwner={isOwner}           onShare={() => sharePassport(data.id)}           onSettings={openPassportSettings}           onMore={() => openPublicProfileMenu(data.id)}         />          <PassportHeroCard           identity={data.identity}           trust={data.trust}           verified={isVerified}           isOwner={isOwner}           onEditAvatar={openAvatarUpload}           onEditCover={openCoverUpload}           onTrustInfo={openTrustScoreInfo}         />          {!isOwner ? (           <PublicProfileActions             canFollow={data.viewer_permissions.can_follow}             canMessage={data.viewer_permissions.can_message}             canInvite={data.viewer_permissions.can_invite}             viewerIsFollowing={data.social.viewer_is_following}             onFollowToggle={toggleFollow}             onMessage={openTelegraph}             onInvite={openInviteFlow}           />         ) : null}          <PassportVerificationStamp           status={data.verification.status}           level={data.verification.level}           verifiedSince={data.verification.verified_since}           checks={data.verification.public_checks}           isOwner={isOwner}           onStartVerification={startVerification}           onReviewVerification={reviewVerification}         />          <StatsStrip           stats={data.stats}           onTrips={openTrips}           onCities={openCities}           onPostcards={() => setActiveTab("Postcards")}           onFollowers={openFollowers}           onFollowing={openFollowing}         />          <PassportStampsRail           verification={data.verification}           stamps={data.stamps}           remainingCount={data.remaining_stamp_count}           onViewAll={() => setActiveTab("Stamps")}           onOpenStamp={openStampDetail}         />          <PassportTabs activeTab={activeTab} onChange={setActiveTab} />          {activeTab === "All" || activeTab === "Postcards" ? (           <PostcardsGrid             postcards={activeTab === "All" ? data.postcards.slice(0, 6) : data.postcards}             isOwner={isOwner}             onCreate={openPostcardComposer}             onOpen={openPostcard}             onLike={togglePostcardLike}             onComment={openPostcardComments}             onMore={openPostcardMenu}           />         ) : null}          {activeTab === "Stamps" ? (           <ExpandedStampsView             verification={data.verification}             stamps={data.stamps}             onOpenStamp={openStampDetail}           />         ) : null}          {activeTab === "Plans" ? (           <PlansList             plans={data.plans}             isOwner={isOwner}             onOpenPlan={openPlan}             onManagePlan={managePlan}             onJoinPlan={joinPlan}           />         ) : null}          <VerificationLevelsRail           levels={data.verification_levels}           isOwner={isOwner}           onLearnMore={openVerificationLevelsInfo}           onApplyHost={applyHostVerification}           onApplyBuddy={applyBuddyVerification}         />       </ScrollView>        <BottomNav active="Passport" />     </SafeAreaView>   ); } 
+
+PASSPORT HERO WITH COMPACT TRUST BADGE
+
+tsx function PassportHeroCard({   identity,   trust,   verified,   isOwner,   onEditAvatar,   onEditCover,   onTrustInfo, }) {   return (     <View style={styles.heroCard}>       <View style={styles.coverWrap}>         {identity.cover_photo_url ? (           <Image source={{ uri: identity.cover_photo_url }} style={styles.coverImage} />         ) : (           <View style={styles.coverFallback} />         )}          <LinearGradient           colors={["rgba(0,0,0,0.04)", "rgba(0,0,0,0.72)"]}           style={styles.coverGradient}         />          {isOwner ? (           <Pressable style={styles.coverEditButton} onPress={onEditCover}>             <CameraIcon size={18} color={theme.colors.text} />           </Pressable>         ) : null}       </View>        <View style={styles.avatarWrap}>         <View style={styles.avatarRing}>           {identity.avatar_url ? (             <Image source={{ uri: identity.avatar_url }} style={styles.avatarImage} />           ) : (             <InitialsAvatar name={identity.display_name || identity.username} />           )}         </View>          {isOwner ? (           <Pressable style={styles.avatarEditButton} onPress={onEditAvatar}>             <CameraIcon size={16} color={theme.colors.text} />           </Pressable>         ) : null}       </View>        <View style={styles.identityArea}>         <View style={styles.nameRow}>           <Text style={styles.displayName} numberOfLines={1}>             {identity.display_name || identity.username || "Traveler"}           </Text>           {verified ? <VerifiedBadge size="medium" /> : null}         </View>          {identity.city || identity.country ? (           <Text style={styles.locationText} numberOfLines={1}>             {[identity.city, identity.country].filter(Boolean).join(", ")}             {identity.flag_emoji ? ` ${identity.flag_emoji}` : ""}           </Text>         ) : null}          {identity.bio ? (           <Text style={styles.bioText} numberOfLines={2}>             {identity.bio}           </Text>         ) : isOwner ? (           <Text style={styles.bioPlaceholder}>             Add a short travel bio.           </Text>         ) : null}          <View style={styles.identityMetaRow}>           {identity.member_since ? (             <View style={styles.memberPill}>               <CalendarIcon size={14} color={theme.colors.textMuted} />               <Text style={styles.memberPillText}>                 Member since {formatMonthYear(identity.member_since)}               </Text>             </View>           ) : null}            <CompactTrustBadge             score={trust.score}             label={trust.label}             onPress={onTrustInfo}           />         </View>       </View>     </View>   ); } 
+
+COMPACT TRUST BADGE
+
+tsx function CompactTrustBadge({ score, label, onPress }) {   const scoreText = typeof score === "number" ? score.toFixed(1) : "—";   const labelText = label || "New Traveler";    return (     <Pressable       style={styles.compactTrustBadge}       onPress={onPress}       accessibilityRole="button"       accessibilityLabel={`Trust Score ${scoreText} out of 5, ${labelText}`}     >       <ShieldStarIcon size={15} color={theme.colors.primary} />        <Text style={styles.compactTrustText} numberOfLines={1}>         Trust <Text style={styles.compactTrustScore}>{scoreText} / 5</Text>       </Text>        <View style={styles.compactTrustDivider} />        <Text style={styles.compactTrustLabel} numberOfLines={1}>         {labelText}       </Text>     </Pressable>   ); } 
+
+KEY STYLE CHANGES
+
+tsx const styles = StyleSheet.create({   safe: {     flex: 1,     backgroundColor: theme.colors.background,   },    scrollContent: {     paddingHorizontal: 16,     paddingBottom: 118,   },    heroCard: {     position: "relative",     borderRadius: 28,     overflow: "hidden",     backgroundColor: theme.colors.surface,     borderWidth: 1,     borderColor: theme.colors.border ?? "rgba(255,255,255,0.10)",   },    coverWrap: {     height: 198,     width: "100%",     position: "relative",   },    coverImage: {     width: "100%",     height: "100%",     resizeMode: "cover",   },    coverFallback: {     width: "100%",     height: "100%",     backgroundColor: theme.colors.surfaceStrong ?? theme.colors.surface,   },    coverGradient: {     ...StyleSheet.absoluteFillObject,   },    avatarWrap: {     position: "absolute",     left: 18,     top: 140,     width: 114,     height: 114,     zIndex: 5,   },    avatarRing: {     width: 114,     height: 114,     borderRadius: 57,     padding: 3,     backgroundColor: theme.colors.primary,   },    avatarImage: {     width: "100%",     height: "100%",     borderRadius: 54,   },    identityArea: {     paddingHorizontal: 18,     paddingTop: 72,     paddingBottom: 18,   },    displayName: {     flexShrink: 1,     color: theme.colors.text,     fontSize: 32,     fontWeight: "900",     letterSpacing: -0.6,   },    locationText: {     color: theme.colors.textMuted,     fontSize: 16,     fontWeight: "600",     marginTop: 6,   },    bioText: {     color: theme.colors.text,     fontSize: 15,     lineHeight: 22,     marginTop: 8,   },    identityMetaRow: {     marginTop: 14,     flexDirection: "row",     flexWrap: "wrap",     alignItems: "center",     gap: 8,   },    memberPill: {     minHeight: 34,     paddingHorizontal: 12,     paddingVertical: 8,     borderRadius: 999,     flexDirection: "row",     alignItems: "center",     gap: 7,     backgroundColor: theme.colors.surfaceGlass ?? "rgba(255,255,255,0.06)",     borderWidth: 1,     borderColor: theme.colors.border ?? "rgba(255,255,255,0.10)",   },    compactTrustBadge: {     minHeight: 34,     maxWidth: "100%",     paddingHorizontal: 11,     paddingVertical: 8,     borderRadius: 999,     flexDirection: "row",     alignItems: "center",     gap: 7,     backgroundColor: theme.colors.surfaceGlass ?? "rgba(255,255,255,0.06)",     borderWidth: 1,     borderColor: theme.colors.primaryBorder ?? "rgba(0,255,190,0.38)",   },    compactTrustText: {     color: theme.colors.textMuted,     fontSize: 13,     fontWeight: "700",   },    compactTrustScore: {     color: theme.colors.primary,     fontWeight: "900",   },    compactTrustDivider: {     width: 1,     height: 14,     backgroundColor: theme.colors.border ?? "rgba(255,255,255,0.14)",   },    compactTrustLabel: {     color: theme.colors.text,     fontSize: 13,     fontWeight: "800",     maxWidth: 128,   },    verifiedStamp: {     marginTop: 14,     borderRadius: 22,     padding: 8,     backgroundColor: theme.colors.primarySoft ?? "rgba(0,255,190,0.12)",     borderWidth: 1.5,     borderColor: theme.colors.primaryBorder ?? "rgba(0,255,190,0.55)",   }, }); 
+
+REMOVE THIS OLD BLOCK
+
+Find and remove/stop rendering the large trust card block:
+
+tsx <TrustScoreCard   score={data.trust.score}   label={data.trust.label}   onInfo={openTrustScoreInfo} /> 
+
+Also remove any wrapper that placed TrustScoreCard beside PassportVerificationStamp.
+
+The verification stamp should now render alone under the identity area/public actions.
+
+BACKEND TRUTH RULES
+
+- CompactTrustBadge still uses backend trust.score and trust.label.
+- Verified badge still only shows when verification.status === "verified".
+- Passport Verified stamp still only shows when verification.status === "verified".
+- Do not use trust score to decide verification.
+- Do not fake data.
+
+NO DEAD BUTTONS
+
+These must work:
+- Share
+- Settings
+- Edit avatar
+- Edit cover
+- Compact Trust badge opens info
+- Verification stamp action states
+- Stats strip actions
+- View all stamps
+- Stamp taps
+- Tabs
+- New Postcard
+- Postcard open/like/comment/menu
+- Verification levels Learn more / Apply
+
+QA CHECKLIST
+
+Pass only if:
+
+1. Page matches the reference image layout.
+2. Large Trust Score card is gone.
+3. Trust Score is now a compact badge inside Identity Info.
+4. Member-since and Trust badge wrap cleanly.
+5. Passport Verified stamp remains large and prominent.
+6. No duplicate Trust Score appears.
+7. Header remains like reference image.
+8. Cover photo hero remains like reference image.
+9. Avatar overlap remains like reference image.
+10. Stats, stamps, tabs, postcards, and verification levels stay connected.
+11. Current color scheme is preserved.
+12. Every visible action is wired.
+13. No old Passport header remains.
+14. Bottom nav remains unchanged.
