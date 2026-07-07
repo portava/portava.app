@@ -55,3 +55,18 @@ expo-env.d.ts
 # @end expo-cli
 # Expo Router duplicate route quarantine
 .route-quarantine/
+
+# Secrets
+.env
+.env.*
+*.env
+.env.travelbuddy.backup
+
+# Dependencies/build/cache
+node_modules/
+dist/
+build/
+.expo/
+.cache/
+.local/
+.DS_Store
