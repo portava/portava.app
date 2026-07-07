@@ -20,6 +20,8 @@ import {
   applyOptimisticToggle,
   applyToggleResult,
   applyLoadResult,
+  getActiveKillSwitches,
+  KILL_SWITCH_FLAGS,
 } from '../featureFlags.machine.ts';
 import type { FeatureFlag } from '../featureFlags.machine.ts';
 
@@ -321,5 +323,102 @@ describe('applyLoadResult — failure', () => {
       typeof error === 'string' && error.length > 0,
       'must provide a fallback error message when none is given',
     );
+  });
+});
+
+// ── getActiveKillSwitches ─────────────────────────────────────────────────────
+
+describe('getActiveKillSwitches — no flags', () => {
+  it('returns an empty array when the flags list is empty', () => {
+    assert.deepEqual(getActiveKillSwitches([]), []);
+  });
+});
+
+describe('getActiveKillSwitches — non-kill-switch flags are ignored', () => {
+  it('does not include an enabled flag whose name is not in KILL_SWITCH_FLAGS', () => {
+    const flag: FeatureFlag = {
+      flag: 'passport_stamps_enabled',
+      enabled: true,
+      description: null,
+      updated_at: null,
+    };
+    assert.deepEqual(getActiveKillSwitches([flag]), []);
+  });
+
+  it('does not include a disabled non-kill-switch flag', () => {
+    const flag: FeatureFlag = {
+      flag: 'location_phase1_gps',
+      enabled: false,
+      description: null,
+      updated_at: null,
+    };
+    assert.deepEqual(getActiveKillSwitches([flag]), []);
+  });
+});
+
+describe('getActiveKillSwitches — kill switch enabled → appears in result', () => {
+  it('returns the flag name when a kill-switch flag is enabled', () => {
+    const flag: FeatureFlag = {
+      flag: 'disable_posting',
+      enabled: true,
+      description: null,
+      updated_at: null,
+    };
+    assert.deepEqual(getActiveKillSwitches([flag]), ['disable_posting']);
+  });
+
+  it('covers every entry in KILL_SWITCH_FLAGS when all are enabled', () => {
+    const allEnabled: FeatureFlag[] = KILL_SWITCH_FLAGS.map((name) => ({
+      flag: name,
+      enabled: true,
+      description: null,
+      updated_at: null,
+    }));
+    const result = getActiveKillSwitches(allEnabled);
+    assert.deepEqual(result.sort(), [...KILL_SWITCH_FLAGS].sort());
+  });
+});
+
+describe('getActiveKillSwitches — kill switch disabled → not listed', () => {
+  it('does not include a kill-switch flag that is disabled', () => {
+    const flag: FeatureFlag = {
+      flag: 'disable_messaging',
+      enabled: false,
+      description: null,
+      updated_at: null,
+    };
+    assert.deepEqual(getActiveKillSwitches([flag]), []);
+  });
+
+  it('excludes disabled kill switches even when other kill switches are enabled', () => {
+    const flags: FeatureFlag[] = [
+      { flag: 'disable_signups', enabled: true, description: null, updated_at: null },
+      { flag: 'disable_messaging', enabled: false, description: null, updated_at: null },
+    ];
+    const result = getActiveKillSwitches(flags);
+    assert.deepEqual(result, ['disable_signups']);
+  });
+});
+
+describe('getActiveKillSwitches — multiple active kill switches', () => {
+  it('returns all enabled kill-switch flag names when several are active', () => {
+    const flags: FeatureFlag[] = [
+      { flag: 'disable_posting', enabled: true, description: null, updated_at: null },
+      { flag: 'disable_signups', enabled: true, description: null, updated_at: null },
+      { flag: 'invite_only_beta', enabled: true, description: null, updated_at: null },
+      { flag: 'passport_stamps_enabled', enabled: true, description: null, updated_at: null },
+    ];
+    const result = getActiveKillSwitches(flags);
+    assert.deepEqual(result.sort(), ['disable_posting', 'disable_signups', 'invite_only_beta'].sort());
+  });
+
+  it('does not include non-kill-switch flags even when the list is mixed', () => {
+    const flags: FeatureFlag[] = [
+      { flag: 'disable_rent_buddy_booking', enabled: true, description: null, updated_at: null },
+      { flag: 'city_launch_mode', enabled: true, description: null, updated_at: null },
+      { flag: 'some_other_feature', enabled: true, description: null, updated_at: null },
+    ];
+    const result = getActiveKillSwitches(flags);
+    assert.deepEqual(result.sort(), ['city_launch_mode', 'disable_rent_buddy_booking'].sort());
   });
 });
