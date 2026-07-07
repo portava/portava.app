@@ -77,7 +77,6 @@ export default function PassportScreen() {
   const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
   const [highlightComposerOpen, setHighlightComposerOpen] = useState(false);
   const [postcardComposerOpen, setPostcardComposerOpen] = useState(false);
-  const [trustSheetOpen, setTrustSheetOpen] = useState(false);
 
   // Tracks whether the composer was triggered from inside the viewer (vs. ring/camera)
   const composerFromViewer = useRef(false);
@@ -332,6 +331,7 @@ function PassportContent({
   const [coverError, setCoverError] = useState(false);
   const [coverUploading, setCoverUploading] = useState(false);
   const [buddyProfile, setBuddyProfile] = useState<BuddyProfile | null | undefined>(undefined);
+  const [, setTrustSheetOpen] = useState(false);
 
   const handleChangeCover = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
