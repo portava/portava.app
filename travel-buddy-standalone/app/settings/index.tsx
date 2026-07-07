@@ -13,7 +13,7 @@ import { resolveAccountButton, applyReactivateResult } from './settings.machine'
 import { SUPPORTED_LANGUAGES } from '../language-picker';
 import { useLanguagePreference } from '../../src/context/LanguagePreferenceContext';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
-import { KILL_SWITCH_FLAGS } from '../../src/constants/killSwitches';
+import { KILL_SWITCH_FLAGS } from '../../src/screens/admin/featureFlags.machine';
 
 export default function Settings() {
   const { signOut, isAuthed, configured } = useSession();
