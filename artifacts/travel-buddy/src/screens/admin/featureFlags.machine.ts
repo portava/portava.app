@@ -157,3 +157,41 @@ export function applyLoadResult(result: LoadApiResult): {
   }
   return { flags: null, error: result.error ?? 'Failed to load flags' };
 }
+
+// ── Flag history ───────────────────────────────────────────────────────────────
+
+/**
+ * A single audit entry returned by
+ * GET /api/admin/feature-flags/:flag/history.
+ */
+export interface FlagHistoryEntry {
+  id: string;
+  flag: string;
+  old_enabled: boolean;
+  new_enabled: boolean;
+  changed_at: string;
+  changed_by_user_id: string | null;
+  changed_by_name: string | null;
+}
+
+export interface HistoryLoadApiResult {
+  ok: boolean;
+  data?: { flag: string; history: FlagHistoryEntry[] };
+  error?: string;
+}
+
+/**
+ * Applies the GET /api/admin/feature-flags/:flag/history response.
+ *
+ * On success: returns the history array (may be empty) and null error.
+ * On failure: returns an empty entries array and a non-empty error string.
+ */
+export function applyHistoryLoadResult(result: HistoryLoadApiResult): {
+  entries: FlagHistoryEntry[];
+  error: string | null;
+} {
+  if (result.ok && result.data) {
+    return { entries: result.data.history, error: null };
+  }
+  return { entries: [], error: result.error ?? 'Failed to load history' };
+}

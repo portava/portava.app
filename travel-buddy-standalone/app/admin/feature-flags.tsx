@@ -30,22 +30,11 @@ import {
   applyOptimisticToggle,
   applyToggleResult,
   applyLoadResult,
+  applyHistoryLoadResult,
   getActiveKillSwitches,
 } from '../../src/screens/admin/featureFlags.machine';
 import { KILL_SWITCH_LABELS } from '../../src/constants/killSwitches';
-import type { FeatureFlag } from '../../src/screens/admin/featureFlags.machine';
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface FlagHistoryEntry {
-  id: string;
-  flag: string;
-  old_enabled: boolean;
-  new_enabled: boolean;
-  changed_at: string;
-  changed_by_user_id: string | null;
-  changed_by_name: string | null;
-}
+import type { FeatureFlag, FlagHistoryEntry } from '../../src/screens/admin/featureFlags.machine';
 
 // ── API helpers ───────────────────────────────────────────────────────────────
 
@@ -150,12 +139,9 @@ function FlagHistorySheet({
     const res = await adminGet<{ flag: string; history: FlagHistoryEntry[] }>(
       `/api/admin/feature-flags/${encodeURIComponent(flag)}/history`,
     );
-    if (res.ok && res.data) {
-      setEntries(res.data.history);
-    } else {
-      setError(res.error ?? 'Failed to load history');
-      setEntries([]);
-    }
+    const { entries: loaded, error: loadError } = applyHistoryLoadResult(res);
+    setEntries(loaded);
+    setError(loadError);
     setLoading(false);
   }, []);
 
