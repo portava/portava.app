@@ -6,7 +6,7 @@
  * from GET /api/admin/feature-flags/:flag/history.
  * Requires admin role (enforced server-side by requireAdmin middleware).
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -17,10 +17,11 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { router } from 'expo-router';
-import { ArrowLeft, ChevronRight, Clock, X } from 'lucide-react-native';
+import { ArrowLeft, ChevronRight, Clock, Search, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../src/lib/supabase';
 import { useSession } from '../../src/context/SessionContext';
@@ -297,6 +298,9 @@ export default function FeatureFlagsScreen() {
   // History sheet state
   const [historyFlag, setHistoryFlag] = useState<string | null>(null);
 
+  // Search / filter state
+  const [query, setQuery] = useState('');
+
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     setError(null);
@@ -352,6 +356,16 @@ export default function FeatureFlagsScreen() {
 
   const activeKillSwitches = getActiveKillSwitches(flags);
 
+  const filteredFlags = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return flags;
+    return flags.filter(
+      (f) =>
+        f.flag.toLowerCase().includes(q) ||
+        (f.description ?? '').toLowerCase().includes(q),
+    );
+  }, [flags, query]);
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -372,6 +386,28 @@ export default function FeatureFlagsScreen() {
       {/* Kill-switch banner */}
       <KillSwitchBanner activeFlags={activeKillSwitches} />
 
+      {/* Search bar */}
+      <View style={s.searchRow}>
+        <Search size={16} color={color.faint} style={s.searchIcon} />
+        <TextInput
+          style={s.searchInput}
+          placeholder="Search flags…"
+          placeholderTextColor={color.faint}
+          value={query}
+          onChangeText={setQuery}
+          autoCapitalize="none"
+          autoCorrect={false}
+          clearButtonMode="while-editing"
+          returnKeyType="search"
+          accessibilityLabel="Search feature flags"
+        />
+        {query.length > 0 && (
+          <Pressable onPress={() => setQuery('')} hitSlop={8} accessibilityLabel="Clear search">
+            <X size={16} color={color.faint} />
+          </Pressable>
+        )}
+      </View>
+
       {/* Body */}
       {loading ? (
         <View style={s.center}>
@@ -386,7 +422,7 @@ export default function FeatureFlagsScreen() {
         </View>
       ) : (
         <FlatList
-          data={flags}
+          data={filteredFlags}
           keyExtractor={(f) => f.flag}
           contentContainerStyle={{ padding: space.md, paddingBottom: insets.bottom + space.xl }}
           ItemSeparatorComponent={() => <View style={s.separator} />}
@@ -399,7 +435,11 @@ export default function FeatureFlagsScreen() {
           }
           ListEmptyComponent={
             <View style={s.center}>
-              <Text style={s.emptyText}>No feature flags found.</Text>
+              <Text style={s.emptyText}>
+                {query.trim().length > 0
+                  ? `No flags match "${query.trim()}".`
+                  : 'No feature flags found.'}
+              </Text>
             </View>
           }
           renderItem={({ item }) => (
@@ -509,6 +549,29 @@ const s = StyleSheet.create({
     ...t.body,
     color: color.mute,
     textAlign: 'center',
+  },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: space.md,
+    marginTop: space.sm,
+    marginBottom: space.xs,
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.md,
+    paddingHorizontal: space.sm,
+    paddingVertical: space.xs,
+    gap: space.xs,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: color.haze,
+  },
+  searchIcon: {
+    flexShrink: 0,
+  },
+  searchInput: {
+    flex: 1,
+    ...t.body,
+    color: color.ink,
+    paddingVertical: 4,
   },
   killBanner: {
     backgroundColor: '#FFF0EE',
