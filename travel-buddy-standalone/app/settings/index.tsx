@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, Switch, StyleSheet, TextInput, Alert, ActivityIndicator } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Zap, Brain, Globe } from 'lucide-react-native';
@@ -33,9 +33,12 @@ export default function Settings() {
     });
   }, []);
 
+  const fetchingRef = useRef(false);
   useFocusEffect(useCallback(() => {
     let cancelled = false;
     async function checkKillSwitches() {
+      if (fetchingRef.current) return;
+      fetchingRef.current = true;
       try {
         const { data: sessionData } = await supabase.auth.getSession();
         const token = sessionData.session?.access_token;
@@ -43,6 +46,7 @@ export default function Settings() {
         const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
         const res = await fetch(`${apiBase}/api/admin/feature-flags`, {
           headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(10_000),
         });
         if (!res.ok || cancelled) return;
         const body = await res.json();
@@ -50,6 +54,7 @@ export default function Settings() {
         const count = flags.filter((f) => KILL_SWITCH_FLAGS.includes(f.flag) && f.enabled).length;
         if (!cancelled) setKillSwitchCount(count);
       } catch { }
+      finally { fetchingRef.current = false; }
     }
     checkKillSwitches();
     const interval = setInterval(checkKillSwitches, 60_000);
