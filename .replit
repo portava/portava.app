@@ -1,0 +1,242 @@
+modules = ["nodejs-24", "python-base-3.13", "postgresql-16"]
+
+[deployment]
+router = "application"
+deploymentTarget = "autoscale"
+
+[deployment.postBuild]
+args = ["pnpm", "store", "prune"]
+env = { "CI" = "true" }
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "api-test"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "api-typecheck"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "mobile-test"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "cross-tree-paths"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "travel-buddy-standalone: dev"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "check-frozen-dir"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "standalone-test"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "standalone-typecheck"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "check-async-handlers"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "mobile-typecheck"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "check-write-path-columns"
+
+[[workflows.workflow]]
+name = "api-test"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-server test"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "api-typecheck"
+author = "agent"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-server run typecheck"
+
+[[workflows.workflow]]
+name = "mobile-test"
+author = "agent"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/travel-buddy test -- --watchAll=false && pnpm --filter @workspace/travel-buddy run test:component"
+
+[[workflows.workflow]]
+name = "cross-tree-paths"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/scripts run test:cross-tree-paths"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "travel-buddy-standalone: dev"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd travel-buddy-standalone && PORT=3000 pnpm run dev"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "check-frozen-dir"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-server run check:frozen-dir"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "standalone-test"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd travel-buddy-standalone && pnpm test && pnpm run test:component"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "standalone-typecheck"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd travel-buddy-standalone && pnpm run typecheck"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "check-async-handlers"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-server run check:async-handlers"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "mobile-typecheck"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/travel-buddy run typecheck"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "check-write-path-columns"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-server run check:write-path-columns"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[agent]
+stack = "PNPM_WORKSPACE"
+expertMode = true
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 300000
+
+[userenv]
+
+[userenv.shared]
+STAMP_WORKER_ENABLED = "true"
+EXPO_PUBLIC_SUPABASE_ANON_KEY = "sb_publishable_xp3JiB50mBYHn1S_XjzOAg_rIoEqZKS"
+EXPO_PUBLIC_SUPABASE_URL = "https://ajrurzioarfkagpuxfnb.supabase.co"
+
+[userenv.development]
+
+[userenv.production]
+ALLOWED_ORIGINS = "https://portava.replit.app"
+
+[nix]
+channel = "stable-25_05"
+packages = ["eas-cli"]
+
+[[ports]]
+localPort = 3000
+externalPort = 3000
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[[ports]]
+localPort = 8081
+externalPort = 8081
+
+[[ports]]
+localPort = 8082
+externalPort = 80
+
+[[ports]]
+localPort = 8083
+externalPort = 3003
+
+[[ports]]
+localPort = 19894
+externalPort = 3002
+
+[[ports]]
+localPort = 19895
+externalPort = 4200
+
+[[ports]]
+localPort = 20682
+externalPort = 3001
+
+[[ports]]
+localPort = 20683
+externalPort = 5000
