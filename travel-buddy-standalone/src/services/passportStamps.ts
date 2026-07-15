@@ -40,6 +40,10 @@ export interface PassportStampNew {
   isRevoked: boolean;
   earnedAt: string;
   createdAt: string;
+  /** Universal stamp catalog ID — null when not yet linked to a catalog entry */
+  catalogId: string | null;
+  /** Active artwork URL from universal_stamp_catalog — null when pending or not approved */
+  activeArtworkUrl: string | null;
 }
 
 export interface PassportMemory {

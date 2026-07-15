@@ -109,6 +109,8 @@ function mapStamp(r: any): PassportStampNew {
     isRevoked:         r.is_revoked ?? r.isRevoked ?? false,
     earnedAt:          r.earned_at ?? r.earnedAt ?? new Date().toISOString(),
     createdAt:         r.created_at ?? r.createdAt ?? new Date().toISOString(),
+    catalogId:         r.catalog_id ?? r.catalogId ?? null,
+    activeArtworkUrl:  r.active_artwork_url ?? r.activeArtworkUrl ?? null,
   };
 }
 

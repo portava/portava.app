@@ -7,7 +7,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Lock, EyeOff } from 'lucide-react-native';
-import { StampArtwork } from '../StampArtwork';
+import { UniversalStampArtwork } from './UniversalStampArtwork';
 import type { PassportStamp } from '../../types/models';
 import type { PassportStampNew } from '../../services/passportStamps';
 import { color, space, radius, type as t } from '../../theme/tokens';
@@ -69,7 +69,12 @@ export function StampCard({ stamp, isOwner, onPress }: Props) {
   const inner = (
     <View style={[styles.card, isHidden && styles.cardHidden]}>
       <View style={styles.artworkWrap}>
-        <StampArtwork stamp={legacy} size={76} />
+        <UniversalStampArtwork
+          activeArtworkUrl={stamp.activeArtworkUrl}
+          stamp={legacy}
+          size={76}
+          showPendingLabel={false}
+        />
         {isOwner && isNonPublic && (
           <View style={styles.lockBadge}>
             <Lock size={9} color="#fff" strokeWidth={2.5} />

@@ -1,0 +1,163 @@
+/**
+ * Admin — Stamp Studio dashboard.
+ * Shows status counts, recent activity, and links to queue + catalog.
+ * Requires admin role.
+ */
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { router } from 'expo-router';
+import { ArrowLeft, Image as ImageIcon, Clock, CheckCircle, AlertTriangle, XCircle } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import { getAdminStampCatalog } from '../../../src/services/adminStamps';
+
+type StatusCounts = {
+  pending_artwork: number;
+  review_required: number;
+  approved: number;
+  rejected: number;
+  archived: number;
+};
+
+export default function StampStudioIndex() {
+  const insets = useSafeAreaInsets();
+  useRequireAdmin();
+
+  const [statusCounts, setStatusCounts] = useState<StatusCounts>({
+    pending_artwork: 0, review_required: 0, approved: 0, rejected: 0, archived: 0,
+  });
+  const [recentEntries, setRecentEntries] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async () => {
+    const res = await getAdminStampCatalog({ limit: 10 });
+    if (res.ok) {
+      setStatusCounts((res.data as any).statusCounts ?? {});
+      setRecentEntries((res.data as any).entries ?? []);
+    }
+    setLoading(false);
+    setRefreshing(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const onRefresh = useCallback(() => { setRefreshing(true); load(); }, [load]);
+
+  const STATUS_TILES = [
+    { label: 'Pending Artwork', key: 'pending_artwork', tileColor: '#F59E0B', icon: Clock },
+    { label: 'Needs Review',    key: 'review_required', tileColor: '#3B82F6', icon: AlertTriangle },
+    { label: 'Approved',        key: 'approved',        tileColor: '#10B981', icon: CheckCircle },
+    { label: 'Rejected',        key: 'rejected',        tileColor: '#EF4444', icon: XCircle },
+  ] as const;
+
+  return (
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      <View style={styles.header}>
+        <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backBtn}>
+          <ArrowLeft size={22} color={color.ink} />
+        </Pressable>
+        <Text style={styles.title}>Stamp Studio</Text>
+      </View>
+
+      {loading ? (
+        <View style={styles.center}>
+          <ActivityIndicator color={color.ink} />
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + space.xl }]}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        >
+          {/* Status tiles */}
+          <Text style={styles.sectionTitle}>Catalog Status</Text>
+          <View style={styles.tilesRow}>
+            {STATUS_TILES.map(({ label, key, tileColor, icon: Icon }) => (
+              <Pressable
+                key={key}
+                style={[styles.tile, { borderLeftColor: tileColor }]}
+                onPress={() => router.push(`/admin/stamps/queue?status=${key}` as any)}
+              >
+                <Icon size={18} color={tileColor} strokeWidth={2} />
+                <Text style={[styles.tileCount, { color: tileColor }]}>{statusCounts[key] ?? 0}</Text>
+                <Text style={styles.tileLabel}>{label}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {/* Quick links */}
+          <Text style={styles.sectionTitle}>Actions</Text>
+          <View style={styles.linksCol}>
+            <Pressable style={styles.linkRow} onPress={() => router.push('/admin/stamps/queue' as any)}>
+              <ImageIcon size={18} color={color.deep} strokeWidth={2} />
+              <Text style={styles.linkText}>Browse full catalog queue</Text>
+            </Pressable>
+            <Pressable style={styles.linkRow} onPress={() => router.push('/admin/stamps/queue?status=review_required' as any)}>
+              <AlertTriangle size={18} color="#3B82F6" strokeWidth={2} />
+              <Text style={styles.linkText}>Review pending artwork ({statusCounts.review_required ?? 0})</Text>
+            </Pressable>
+          </View>
+
+          {/* Recent entries */}
+          <Text style={styles.sectionTitle}>Recent Catalog Entries</Text>
+          {recentEntries.map((entry) => (
+            <Pressable
+              key={entry.id}
+              style={styles.entryRow}
+              onPress={() => router.push(`/admin/stamps/${entry.id}` as any)}
+            >
+              <View style={styles.entryMeta}>
+                <Text style={styles.entryName}>{entry.display_name}</Text>
+                <Text style={styles.entrySub}>{entry.stamp_type} · {entry.country_code}</Text>
+              </View>
+              <View style={[styles.statusBadge, { backgroundColor: statusBg(entry.status) }]}>
+                <Text style={styles.statusText}>{entry.status}</Text>
+              </View>
+            </Pressable>
+          ))}
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+function statusBg(status: string) {
+  switch (status) {
+    case 'approved':        return '#D1FAE5';
+    case 'pending_artwork': return '#FEF3C7';
+    case 'rejected':        return '#FEE2E2';
+    default:                return '#E5E7EB';
+  }
+}
+
+const styles = StyleSheet.create({
+  root:         { flex: 1, backgroundColor: color.paper },
+  header:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.md, paddingVertical: space.sm, borderBottomWidth: 1, borderBottomColor: color.haze },
+  backBtn:      { marginRight: space.sm },
+  title:        { ...t.heading, color: color.ink },
+  center:       { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  content:      { padding: space.md, gap: space.sm },
+  sectionTitle: { ...t.small, color: color.mute, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: space.md, marginBottom: space.xs },
+  tilesRow:     { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  tile:         { flex: 1, minWidth: 140, backgroundColor: color.paperRaised, borderRadius: radius.md, padding: space.md, borderLeftWidth: 4, gap: 4, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 4, elevation: 2 },
+  tileCount:    { fontSize: 28, fontWeight: '800', fontFamily: 'Courier' },
+  tileLabel:    { ...t.small, color: color.mute },
+  linksCol:     { gap: space.xs },
+  linkRow:      { flexDirection: 'row', alignItems: 'center', gap: space.sm, backgroundColor: color.paperRaised, borderRadius: radius.md, padding: space.md, borderWidth: 1, borderColor: color.haze },
+  linkText:     { ...t.body, color: color.ink, flex: 1 },
+  entryRow:     { flexDirection: 'row', alignItems: 'center', backgroundColor: color.paperRaised, borderRadius: radius.md, padding: space.md, borderWidth: 1, borderColor: color.haze },
+  entryMeta:    { flex: 1 },
+  entryName:    { ...t.body, color: color.ink, fontWeight: '600' },
+  entrySub:     { ...t.small, color: color.mute },
+  statusBadge:  { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
+  statusText:   { fontSize: 10, fontWeight: '700', color: color.ink },
+});
