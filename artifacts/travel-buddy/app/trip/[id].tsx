@@ -32,6 +32,7 @@ import { getEventsNearTrip, type EventSummary } from '../../src/services/events'
 import { updateTrip, createInviteLink } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 function TripDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -39,6 +40,7 @@ function TripDetailScreen() {
   const { configured, isAuthed, userId } = useSession();
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
   const { checkForNewStamps } = useStampToast();
+  const navBarScrollHandler = useNavBarScrollHandler();
   const live = configured && isAuthed;
   const { data: realTrip, loading } = useTrip(live ? id : undefined);
   const { invites } = usePendingTripInvites();
@@ -303,7 +305,7 @@ function TripDetailScreen() {
         )}
       </View>
 
-      <ScrollView ref={pageScrollRef} contentContainerStyle={{ paddingBottom: space.xxxl }} showsVerticalScrollIndicator={false}>
+      <ScrollView ref={pageScrollRef} contentContainerStyle={{ paddingBottom: space.xxxl }} showsVerticalScrollIndicator={false} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
         <TripHero trip={trip} />
 
         {/* ── Trip notes ── */}
@@ -517,6 +519,7 @@ function TripDetailScreen() {
             canReview={realTrip?.status === 'completed' && !!userId && userId !== realTrip?.ownerId}
           />
         ) : null}
+        <NavBarFiller />
       </ScrollView>
 
       {/* Layover Mode sheet */}

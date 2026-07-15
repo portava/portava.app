@@ -33,6 +33,7 @@ import { RouteFullMapModal } from '../../src/components/RouteFullMapModal';
 import { SafeReturnSetupSheet } from '../../src/components/safeReturn/SafeReturnSetupSheet';
 import { useActiveLocation } from '../../src/hooks/useActiveLocation';
 import type { RouteStop, RouteLeg } from '../../src/services/routePlan';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -96,6 +97,7 @@ export default function ActiveRouteScreen() {
   } = useRoutePlan({ planId: id ?? null });
 
   const { userId: currentUserId } = useSession();
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const { locationState, requestLocation } = useActiveLocation();
   const [compassExpanded, setCompassExpanded]   = useState(false);
@@ -296,7 +298,7 @@ export default function ActiveRouteScreen() {
       <Stack.Screen options={{ title: plan.title, headerBackTitle: 'Back' }} />
 
       <View style={styles.root}>
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
           {/* Mini-map — expand opens full-screen modal */}
           <View style={styles.mapWrapper}>
             <RouteMinimapView
@@ -496,6 +498,7 @@ export default function ActiveRouteScreen() {
               </View>
             );
           })}
+          <NavBarFiller />
         </ScrollView>
 
         {/* Action bar */}

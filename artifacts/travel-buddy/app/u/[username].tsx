@@ -36,6 +36,7 @@ import type { PublicProfile } from '../../src/types/models';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { PROFILE_NOT_FOUND_TITLE, PROFILE_NOT_FOUND_SUB } from '../../src/constants/profileScreenCopy';
 import { resolveDisplayName, formatHandle } from '../../src/utils/identity';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 type Tab = 'postcards' | 'stamps' | 'map' | 'about';
 const TABS: { key: Tab; label: string; Icon: LucideIcon }[] = [
@@ -759,6 +760,7 @@ export default function PublicPassportScreen() {
   }
 
   const insets = useSafeAreaInsets();
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const isOwn = social?.isOwnProfile ?? profile?.isOwnProfile ?? (profile?.id === currentUserId);
   // About tab is only accessible once social checks have resolved and the viewer
@@ -870,6 +872,8 @@ export default function PublicPassportScreen() {
         style={{ flex: 1, backgroundColor: color.paper }}
         contentContainerStyle={{ paddingTop: 0, paddingBottom: space.xxxl }}
         showsVerticalScrollIndicator={false}
+        onScroll={navBarScrollHandler}
+        scrollEventThrottle={16}
       >
         <PassportHero
           profile={profile}
@@ -1034,6 +1038,7 @@ export default function PublicPassportScreen() {
             </View>
           )}
         </View>
+        <NavBarFiller />
       </ScrollView>
     );
   };
