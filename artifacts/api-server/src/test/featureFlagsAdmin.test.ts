@@ -89,7 +89,12 @@ function makeFakeClient(opts: {
     return b;
   }
 
+  // Track rpc invocations so tests can assert on the toggle payload.
+  const rpcCalls: { fn: string; args: any }[] = [];
+
+
   return {
+    _rpcCalls: rpcCalls,
     from: (table: string) => {
       if (table === "profiles")      return builder([{ id: "uid1", role }]);
       if (table === "feature_flags") return builder(featureFlags);
@@ -119,7 +124,6 @@ function makeFakeClient(opts: {
         error: null,
       });
     },
-    _rpcCalls: rpcCalls,
     auth: {
       getUser: () => Promise.resolve({ data: { user: { id: "uid1" } }, error: null }),
     },

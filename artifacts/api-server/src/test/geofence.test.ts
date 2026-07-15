@@ -523,7 +523,7 @@ describe("Host attendance dashboard", () => {
         return {
           ...b,
           select: () => ({
-            // requireUser() checks account_status via .eq(id).maybeSingle()
+            // requireUser's account-status guard: .select("account_status").eq(id).maybeSingle()
             eq: () => ({
               maybeSingle: async () => ({ data: { account_status: "active" }, error: null }),
             }),
