@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet,
-  Alert, Modal, TextInput,
+  Alert, Modal, TextInput, Platform,
 } from 'react-native';
+import PassportDocumentScreen from '../passport/[username]';
 import { useLocalSearchParams, useFocusEffect, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -629,7 +630,20 @@ function HostReviewsSummary({ userId }: { userId: string }) {
 
 // ── Main screen ──────────────────────────────────────────────────────────────
 
+/**
+ * On web, the public profile URL (/u/<username> — the share-link web fallback)
+ * renders the passport document design so the brand matches the mobile
+ * passport screen: cream paper, ink top rule, MRZ stripe, verified seal,
+ * document tab bar. Native in-app profile viewing keeps the full social screen.
+ */
 export default function PublicPassportScreen() {
+  if (Platform.OS === 'web') {
+    return <PassportDocumentScreen />;
+  }
+  return <PublicPassportScreenNative />;
+}
+
+function PublicPassportScreenNative() {
   const { username } = useLocalSearchParams<{ username: string }>();
   const { userId: currentUserId } = useSession();
 
