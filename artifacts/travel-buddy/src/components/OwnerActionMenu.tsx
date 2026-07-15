@@ -3,7 +3,7 @@ import { View, Text, Pressable, Modal, StyleSheet, Share } from 'react-native';
 import { router } from 'expo-router';
 import {
   Edit3, Eye, Share2, MessageCircle,
-  Bookmark, Shield, Settings, Info,
+  Bookmark, Shield, Settings, Info, LayoutGrid,
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
 
@@ -14,6 +14,8 @@ interface Props {
   onEditProfile: () => void;
   onSettings: () => void;
   onViewAsPublic: () => void;
+  /** Optional: opens the passport section reorder sheet. */
+  onArrangeSections?: () => void;
 }
 
 const ACTIONS = [
@@ -43,6 +45,13 @@ const ACTIONS = [
         await Share.share({ message: `Check out my Travel Buddy Passport: ${url}`, url });
       } catch {}
     },
+  },
+  {
+    label: 'Arrange',
+    icon: LayoutGrid,
+    bg: '#EAF6EE',
+    iconColor: '#2E8B57',
+    onPress: (handlers: Props) => { handlers.onClose(); handlers.onArrangeSections?.(); },
   },
   {
     label: 'Messages',
@@ -82,9 +91,9 @@ const ACTIONS = [
 ] as const;
 
 export function OwnerActionMenu({
-  visible, onClose, username, onEditProfile, onSettings, onViewAsPublic,
+  visible, onClose, username, onEditProfile, onSettings, onViewAsPublic, onArrangeSections,
 }: Props) {
-  const handlers: Props = { visible, onClose, username, onEditProfile, onSettings, onViewAsPublic };
+  const handlers: Props = { visible, onClose, username, onEditProfile, onSettings, onViewAsPublic, onArrangeSections };
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>

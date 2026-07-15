@@ -596,6 +596,60 @@ describe("PATCH /api/me/profile — homeCity / homeCountry persistence", () => {
     assert.equal(r.status, 400, "empty PATCH body must be rejected");
   });
 
+  it("persists a valid passportSectionOrder permutation and returns it", async () => {
+    setup(baseState());
+    const order = ["dossier", "highlights", "identity", "stamps", "tabs"];
+    const r = await req("/me/profile", {
+      method: "PATCH",
+      body: { passportSectionOrder: order },
+    });
+    assert.equal(r.status, 200, "valid section order must be accepted");
+    const body = await r.json() as any;
+    assert.deepEqual(body.passportSectionOrder, order, "passportSectionOrder must round-trip");
+  });
+
+  it("accepts passportSectionOrder null (reset to canonical)", async () => {
+    const state = baseState();
+    state.profiles = state.profiles.map((p) =>
+      p.id === ME ? { ...p, passport_section_order: ["tabs", "identity", "stamps", "highlights", "dossier"] } : p
+    );
+    setup(state);
+    const r = await req("/me/profile", {
+      method: "PATCH",
+      body: { passportSectionOrder: null },
+    });
+    assert.equal(r.status, 200, "null section order (reset) must be accepted");
+    const body = await r.json() as any;
+    assert.equal(body.passportSectionOrder, null, "reset must return null");
+  });
+
+  it("rejects passportSectionOrder with duplicates", async () => {
+    setup(baseState());
+    const r = await req("/me/profile", {
+      method: "PATCH",
+      body: { passportSectionOrder: ["identity", "identity", "stamps", "highlights", "dossier"] },
+    });
+    assert.equal(r.status, 400, "duplicate section keys must be rejected");
+  });
+
+  it("rejects passportSectionOrder with unknown keys", async () => {
+    setup(baseState());
+    const r = await req("/me/profile", {
+      method: "PATCH",
+      body: { passportSectionOrder: ["identity", "stamps", "highlights", "dossier", "bogus"] },
+    });
+    assert.equal(r.status, 400, "unknown section keys must be rejected");
+  });
+
+  it("rejects passportSectionOrder with fewer than five sections", async () => {
+    setup(baseState());
+    const r = await req("/me/profile", {
+      method: "PATCH",
+      body: { passportSectionOrder: ["identity", "stamps"] },
+    });
+    assert.equal(r.status, 400, "partial section list must be rejected");
+  });
+
   it("homeCity and homeCountry appear in the passport response after being set", async () => {
     const state = baseState();
     state.profiles = state.profiles.map((p) =>

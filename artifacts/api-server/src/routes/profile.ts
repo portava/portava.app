@@ -52,7 +52,7 @@ function validateUsername(u: string): { valid: boolean; reason?: string } {
 }
 
 const PROFILE_COLUMNS =
-  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language, verification_level, id_verified_at, selfie_verified_at, home_country_verified_at, safety_flags_count, host_verified_at, buddy_verified_at";
+  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language, verification_level, id_verified_at, selfie_verified_at, home_country_verified_at, safety_flags_count, host_verified_at, buddy_verified_at, passport_section_order";
 
 /**
  * Fallback column list for older DB schemas that may not have the full set of columns
@@ -115,6 +115,7 @@ function mapProfile(r: any) {
     planningStyle: r.planning_style ?? null,
     publicSocialLinks: r.public_social_links ?? {},
     preferredLanguage: r.preferred_language ?? null,
+    passportSectionOrder: r.passport_section_order ?? null,
     verificationLevel: r.verification_level ?? null,
     idVerifiedAt: r.id_verified_at ?? null,
     selfieVerifiedAt: r.selfie_verified_at ?? null,
@@ -330,6 +331,11 @@ const patchProfileSchema = z.object({
   preferredLanguage: z.string().max(20).nullish(),
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "dateOfBirth must be YYYY-MM-DD").nullable().optional(),
   tagPermission: z.enum(['anyone', 'interacted', 'friends_only', 'nobody']).optional(),
+  passportSectionOrder: z
+    .array(z.enum(["identity", "stamps", "highlights", "tabs", "dossier"]))
+    .length(5)
+    .nullable()
+    .optional(),
   isPrivate: z.boolean().optional(),
 });
 
@@ -402,6 +408,16 @@ router.patch("/me/profile", async (req, res) => {
     row.date_of_birth = p.dateOfBirth;
   }
 
+  if (p.passportSectionOrder !== undefined) {
+    if (p.passportSectionOrder !== null) {
+      // Must be a permutation of all five section keys (no duplicates).
+      if (new Set(p.passportSectionOrder).size !== 5) {
+        sendError(res, "invalid_payload", "passportSectionOrder must contain each section exactly once");
+        return;
+      }
+    }
+    row.passport_section_order = p.passportSectionOrder;
+  }
   if (p.tagPermission !== undefined) row.tag_permission = p.tagPermission;
   if (p.isPrivate !== undefined) row.is_private = p.isPrivate;
 
@@ -494,6 +510,7 @@ router.patch("/me/profile", async (req, res) => {
     delete safeRow.planning_style;
     delete safeRow.public_social_links;
     delete safeRow.cover_photo_url;
+    delete safeRow.passport_section_order;
     ({ data: updated, error: updateError } = await client
       .from("profiles")
       .update(safeRow)

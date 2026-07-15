@@ -44,6 +44,8 @@ import { PassportHighlightsStrip } from '../../src/components/passport/PassportH
 import { PassportAboutSection } from '../../src/components/passport/PassportAboutSection';
 import { PassportSafetySection } from '../../src/components/passport/PassportSafetySection';
 import { PP, PP_LABEL } from '../../src/theme/passportTokens';
+import { PassportSectionReorderSheet } from '../../src/components/passport/PassportSectionReorderSheet';
+import { resolveSectionOrder, type PassportSectionKey } from '../../src/components/passport/passportSections';
 
 type Tab = 'posts' | 'memories' | 'plans' | 'saved';
 const TABS: { key: Tab; label: string }[] = [
@@ -63,6 +65,8 @@ export default function PassportScreen() {
   const [trips, setTrips] = useState<TripRow[]>([]);
   const [tripsLoaded, setTripsLoaded] = useState(false);
   const [stampsViewOpen, setStampsViewOpen] = useState(false);
+  const [reorderOpen, setReorderOpen] = useState(false);
+  const [sectionOrderOverride, setSectionOrderOverride] = useState<PassportSectionKey[] | null>(null);
   const insets = useSafeAreaInsets();
 
   // Suggestion modal — show the first pending suggestion once per session
@@ -248,6 +252,8 @@ export default function PassportScreen() {
         cardRef={cardRef}
         share={share}
         sharing={sharing}
+        sectionOrder={sectionOrderOverride ?? resolveSectionOrder(profile.passportSectionOrder)}
+        onArrangeSections={() => setReorderOpen(true)}
       />
 
       {/* ── Modals ── */}
@@ -270,6 +276,12 @@ export default function PassportScreen() {
         onClose={() => setPostcardComposerOpen(false)}
         onSuccess={() => { setPostcardComposerOpen(false); reload(); }}
       />
+      <PassportSectionReorderSheet
+        visible={reorderOpen}
+        initialOrder={sectionOrderOverride ?? profile.passportSectionOrder}
+        onClose={() => setReorderOpen(false)}
+        onSaved={(order) => { setSectionOrderOverride(order); reload(); }}
+      />
       <SuggestedMemoryModal
         suggestion={activeSuggestion}
         visible={activeSuggestion !== null}
@@ -290,6 +302,7 @@ function PassportContent({
   reload, insets, hasHighlights, allHighlightsViewed, highlights,
   onHighlightRingPress, onNewHighlightPress, onHighlightBubblePress, onAddPostcard,
   stampsViewOpen, setStampsViewOpen, verificationLevels, noSafetyFlags, cardRef, share, sharing,
+  sectionOrder, onArrangeSections,
 }: {
   profile: OwnProfile;
   postcards: PassportPostcard[];
@@ -322,6 +335,8 @@ function PassportContent({
   cardRef: any;
   share: () => void;
   sharing: boolean;
+  sectionOrder: PassportSectionKey[];
+  onArrangeSections: () => void;
 }) {
   const verifiedStamps = stamps.filter((st) => !st.locked).length;
   const [pendingCount, setPendingCount] = useState(0);
@@ -364,6 +379,77 @@ function PassportContent({
 
   const navScrollHandler = useNavBarScrollHandler();
 
+  const renderTabsSection = () => (
+    <>
+      {/* ── Document-style tab bar ── */}
+      <PassportDivider />
+      <View style={s.tabBar}>
+        {TABS.map((tb) => (
+          <Pressable
+            key={tb.key}
+            style={s.tabItem}
+            onPress={() => setTab(tb.key)}
+          >
+            <Text style={[s.tabText, tab === tb.key && s.tabTextActive]}>
+              {tb.label}
+            </Text>
+            {tab === tb.key && <View style={s.tabIndicator} />}
+          </Pressable>
+        ))}
+      </View>
+      <View style={s.tabBarRule} />
+
+      {/* ── Tab content ── */}
+      <View style={s.tabContent}>
+        {tab === 'posts' && (
+          <PostcardsTab
+            postcards={postcards}
+            isOwner
+            actions={actions}
+            onAddPostcard={onAddPostcard}
+          />
+        )}
+        {tab === 'memories' && (
+          <MemoriesTab memories={memories} onReload={reload} />
+        )}
+        {tab === 'plans' && (
+          <TripsTab trips={trips} isOwner />
+        )}
+        {tab === 'saved' && (
+          <View style={s.savedEmpty}>
+            <Text style={s.savedEmptyIcon}>🔖</Text>
+            <Text style={s.savedEmptyTitle}>Saved coming soon</Text>
+            <Text style={s.savedEmptySub}>
+              Bookmarked posts and places will appear here
+            </Text>
+          </View>
+        )}
+      </View>
+    </>
+  );
+
+  const renderDossierSection = () => (
+    <>
+      {/* ── Passport dossier sections ── */}
+      <PassportDivider label="DOSSIER" />
+      <PassportAboutSection
+        profile={profile}
+        isOwner
+        onEdit={handleEditProfile}
+      />
+      <View style={{ height: 16 }} />
+      <PassportSafetySection
+        levels={verificationLevels}
+        trustScore={profile.trustScore}
+        trustLabel={profile.trustLabel}
+        noSafetyFlags={noSafetyFlags}
+        isOwner
+        onPrivacySettings={() => openSettings('safety')}
+      />
+      <View style={{ height: 24 }} />
+    </>
+  );
+
   return (
     <View style={s.root}>
       <ScrollView
@@ -373,6 +459,10 @@ function PassportContent({
         onScroll={navScrollHandler}
         scrollEventThrottle={16}
       >
+        {sectionOrder.map((sectionKey) => (
+          <React.Fragment key={sectionKey}>
+            {sectionKey === 'identity' && (
+              <>
         {/* ── Identity Document Card ── */}
         <PassportIdentityCard
           profile={profile}
@@ -392,35 +482,6 @@ function PassportContent({
             if (label === 'Trips') setTab('plans');
             else if (label === 'Stamps') setStampsViewOpen(true);
           }}
-        />
-
-        {/* ── Stamps section ── */}
-        <PassportDivider label="MY STAMPS" />
-        <PassportStampCollection
-          stamps={stamps}
-          isOwner
-          onViewAll={() => setStampsViewOpen(true)}
-          onStampPress={() => setStampsViewOpen(true)}
-        />
-
-        {/* Full stamps modal */}
-        <PassportStampsFullView
-          visible={stampsViewOpen}
-          onClose={() => setStampsViewOpen(false)}
-          stamps={stamps}
-          isOwner
-          totalCount={verifiedStamps}
-        />
-
-        {/* ── Highlights ── */}
-        <PassportDivider label="HIGHLIGHTS" />
-        <PassportHighlightsStrip
-          highlights={highlights}
-          hasActive={hasHighlights ?? false}
-          allViewed={allHighlightsViewed ?? false}
-          isOwner
-          onHighlightPress={onHighlightBubblePress}
-          onAddHighlight={onNewHighlightPress}
         />
 
         {/* ── Pending posts ── */}
@@ -478,68 +539,51 @@ function PassportContent({
             </View>
           </Pressable>
         )}
+              </>
+            )}
 
-        {/* ── Document-style tab bar ── */}
-        <PassportDivider />
-        <View style={s.tabBar}>
-          {TABS.map((tb) => (
-            <Pressable
-              key={tb.key}
-              style={s.tabItem}
-              onPress={() => setTab(tb.key)}
-            >
-              <Text style={[s.tabText, tab === tb.key && s.tabTextActive]}>
-                {tb.label}
-              </Text>
-              {tab === tb.key && <View style={s.tabIndicator} />}
-            </Pressable>
-          ))}
-        </View>
-        <View style={s.tabBarRule} />
-
-        {/* ── Tab content ── */}
-        <View style={s.tabContent}>
-          {tab === 'posts' && (
-            <PostcardsTab
-              postcards={postcards}
-              isOwner
-              actions={actions}
-              onAddPostcard={onAddPostcard}
-            />
-          )}
-          {tab === 'memories' && (
-            <MemoriesTab memories={memories} onReload={reload} />
-          )}
-          {tab === 'plans' && (
-            <TripsTab trips={trips} isOwner />
-          )}
-          {tab === 'saved' && (
-            <View style={s.savedEmpty}>
-              <Text style={s.savedEmptyIcon}>🔖</Text>
-              <Text style={s.savedEmptyTitle}>Saved coming soon</Text>
-              <Text style={s.savedEmptySub}>
-                Bookmarked posts and places will appear here
-              </Text>
-            </View>
-          )}
-        </View>
-
-        {/* ── Passport dossier sections ── */}
-        <PassportDivider label="DOSSIER" />
-        <PassportAboutSection
-          profile={profile}
+            {sectionKey === 'stamps' && (
+              <>
+        {/* ── Stamps section ── */}
+        <PassportDivider label="MY STAMPS" />
+        <PassportStampCollection
+          stamps={stamps}
           isOwner
-          onEdit={handleEditProfile}
+          onViewAll={() => setStampsViewOpen(true)}
+          onStampPress={() => setStampsViewOpen(true)}
         />
-        <View style={{ height: 16 }} />
-        <PassportSafetySection
-          levels={verificationLevels}
-          trustScore={profile.trustScore}
-          trustLabel={profile.trustLabel}
-          noSafetyFlags={noSafetyFlags}
+              </>
+            )}
+
+            {sectionKey === 'highlights' && (
+              <>
+        {/* ── Highlights ── */}
+        <PassportDivider label="HIGHLIGHTS" />
+        <PassportHighlightsStrip
+          highlights={highlights}
+          hasActive={hasHighlights ?? false}
+          allViewed={allHighlightsViewed ?? false}
           isOwner
-          onPrivacySettings={() => openSettings('safety')}
+          onHighlightPress={onHighlightBubblePress}
+          onAddHighlight={onNewHighlightPress}
         />
+              </>
+            )}
+
+            {sectionKey === 'tabs' && renderTabsSection()}
+            {sectionKey === 'dossier' && renderDossierSection()}
+          </React.Fragment>
+        ))}
+
+        {/* Full stamps modal */}
+        <PassportStampsFullView
+          visible={stampsViewOpen}
+          onClose={() => setStampsViewOpen(false)}
+          stamps={stamps}
+          isOwner
+          totalCount={verifiedStamps}
+        />
+
         <View style={{ height: 24 }} />
         <NavBarFiller />
       </ScrollView>
@@ -579,6 +623,7 @@ function PassportContent({
         onEditProfile={() => { setMenuOpen(false); handleEditProfile(); }}
         onSettings={() => openSettings('passport')}
         onViewAsPublic={handleViewAsPublic}
+        onArrangeSections={onArrangeSections}
       />
 
       {/* Settings sheet */}
