@@ -10,8 +10,8 @@
  * Design: dark passport-cover background, cream text, stamp artwork centered.
  * Sized for social sharing (320 × 400px by default).
  */
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, Image } from 'react-native';
 import {
   MapPin, Users, Gem, ShieldCheck, Crown, Ticket, Sparkles,
 } from 'lucide-react-native';
@@ -50,6 +50,8 @@ export function StampShareCard({
 }: StampShareCardProps) {
   const art = resolveArtwork(stamp);
   const Icon = resolveIcon(art.iconKey);
+  const [artFailed, setArtFailed] = useState(false);
+  const showAiArtwork = Boolean(stamp.universalArtworkUrl) && !artFailed;
   const isPublic = visibility === 'public';
   const stampSize = Math.round(width * 0.42);
   const iconSize = Math.round(stampSize * 0.28);
@@ -77,6 +79,24 @@ export function StampShareCard({
 
       {/* Stamp artwork */}
       <View style={[styles.stampWrap, { height: stampSize + 40 }]}>
+        {showAiArtwork ? (
+          <View
+            style={{
+              width: stampSize,
+              height: stampSize,
+              borderRadius: Math.round(stampSize / 8),
+              overflow: 'hidden',
+            }}
+          >
+            <Image
+              source={{ uri: stamp.universalArtworkUrl }}
+              style={{ width: '100%', height: '100%' }}
+              resizeMode="cover"
+              onError={() => setArtFailed(true)}
+              accessibilityIgnoresInvertColors
+            />
+          </View>
+        ) : (
         <View style={{ width: stampSize, height: stampSize, overflow: 'hidden' }}>
           <StampSvgFrame
             size={stampSize}
@@ -99,6 +119,7 @@ export function StampShareCard({
             ) : null}
           </View>
         </View>
+        )}
 
         {/* Rarity badge */}
         <View style={[styles.rarityBadge, { borderColor: rarityColor + '55' }]}>

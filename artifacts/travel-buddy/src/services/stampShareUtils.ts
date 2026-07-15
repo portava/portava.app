@@ -23,7 +23,14 @@ export function stampToLegacy(s: PassportStampNew): PassportStamp {
     : s.stampType === 'host'        ? 'host'
     : 'city'
   ) as PassportStamp['kind'];
-  return { id: s.id, kind, label, earnedAt: s.earnedAt, locked: s.isRevoked };
+  return {
+    id: s.id,
+    kind,
+    label,
+    earnedAt: s.earnedAt,
+    locked: s.isRevoked,
+    universalArtworkUrl: s.definition?.universalArtworkUrl ?? undefined,
+  };
 }
 
 /**
