@@ -1,6 +1,6 @@
 /**
  * Unit tests for applyPrivacyChange — the optimistic-update + rollback logic
- * used by the Privacy settings screen (app/settings/privacy.tsx).
+ * used by the Privacy settings screen (app/profile/edit/privacy.tsx).
  *
  * Tests verify:
  *   1. No-op guard: when privacy is null (load failed or not yet complete),

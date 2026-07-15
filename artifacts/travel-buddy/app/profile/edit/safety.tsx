@@ -112,7 +112,7 @@ export default function SafetyVerificationScreen() {
           icon={<LifeBuoy size={18} color={PP.ink} />}
           title="Emergency Contacts"
           subtitle="People we can reach if something goes wrong"
-          onPress={() => router.push('/settings/emergency-contacts' as any)}
+          onPress={() => router.push('/profile/edit/emergency-contacts' as any)}
         />
         <SettingsDivider />
         <SettingsRow

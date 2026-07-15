@@ -797,7 +797,7 @@ export function TripSafety({ tripId }: { tripId?: string }) {
           </Pressable>
           <Pressable
             style={sf.btn}
-            onPress={() => router.push('/settings/emergency-contacts' as any)}
+            onPress={() => router.push('/profile/edit/emergency-contacts' as any)}
           >
             <Text style={sf.btnText}>Emergency Contacts</Text>
           </Pressable>

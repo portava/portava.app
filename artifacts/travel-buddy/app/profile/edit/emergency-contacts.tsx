@@ -11,8 +11,8 @@ import {
   KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { Phone, Mail, User, Plus, Trash2, Edit2, ShieldCheck, X } from 'lucide-react-native';
-import { ScreenHeader } from '../../src/components/ScreenHeader';
-import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { ScreenHeader } from '../../../src/components/ScreenHeader';
+import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import {
   listEmergencyContacts,
   addEmergencyContact,
@@ -20,9 +20,9 @@ import {
   deleteEmergencyContact,
   type EmergencyContact,
   type EmergencyContactInput,
-} from '../../src/services/emergencyContacts';
-import { useSession } from '../../src/context/SessionContext';
-import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+} from '../../../src/services/emergencyContacts';
+import { useSession } from '../../../src/context/SessionContext';
+import { NavBarFiller, useNavBarScrollHandler } from '../../../src/hooks/useNavBarCollapse';
 
 // ── Method labels ─────────────────────────────────────────────────────────────
 
