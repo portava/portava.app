@@ -75,8 +75,17 @@ const LikeHitSlopCtx = React.createContext<number>(8);
 
 // ── Animated FlatList ─────────────────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const AnimFlatList = Animated.createAnimatedComponent(FlatList as any);
+// Reanimated 4's createAnimatedComponent prop types no longer surface FlatList
+// props (e.g. onScroll), so re-assert the component as a FlatList that accepts
+// a Reanimated scroll handler on onScroll.
+type AnimatedFlatListType = React.ComponentType<
+  Omit<React.ComponentProps<typeof FlatList>, 'onScroll'> & {
+    onScroll?: ReturnType<typeof useAnimatedScrollHandler>;
+  }
+>;
+const AnimFlatList = Animated.createAnimatedComponent(
+  FlatList,
+) as unknown as AnimatedFlatListType;
 
 // Shared spring config for peek ↔ full transitions
 const SHEET_SPRING = { damping: 26, stiffness: 240, mass: 0.85 } as const;
