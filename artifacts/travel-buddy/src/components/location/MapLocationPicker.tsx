@@ -23,6 +23,7 @@ import type { NativeSyntheticEvent } from 'react-native';
 import type { ViewStateChangeEvent } from '@maplibre/maplibre-react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { reverseGeocodeToPlace } from '../../services/location';
+import { confirmMapCenterAsPlace } from './MapLocationPicker.machine';
 import type { Place } from '../../lib/location/placeTypes';
 
 // ── Map tile style ─────────────────────────────────────────────────────────────
@@ -91,10 +92,13 @@ export function MapLocationPicker({
     setGeocodeError(false);
     setConfirming(true);
     try {
-      // MapLibre stores coordinates as [lng, lat]; swap to { lat, lng }.
-      const [lng, lat] = centerRef.current;
-      const place = await reverseGeocodeToPlace(lat, lng);
-      if (mountedRef.current) onConfirm(place);
+      await confirmMapCenterAsPlace({
+        center: centerRef.current,
+        reverseGeocodeToPlace,
+        onConfirm: (place) => {
+          if (mountedRef.current) onConfirm(place);
+        },
+      });
     } catch {
       if (mountedRef.current) setGeocodeError(true);
     } finally {
