@@ -16,6 +16,8 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
+import type { Place } from '../../src/lib/location/placeTypes';
 import {
   ArrowLeft, Send, Users, Clock, Shield, AlertTriangle,
 } from 'lucide-react-native';
@@ -113,6 +115,7 @@ const POLICY_TEXT = "Requests must be for legitimate travel services only. Escor
 function OpenRequestForm() {
   const insets = useSafeAreaInsets();
   const [city, setCity]                       = useState('');
+  const [cityPickerOpen, setCityPickerOpen]   = useState(false);
   const [category, setCategory]               = useState('city');
   const [durationMinutes, setDurationMinutes] = useState(120);
   const [budgetIdx, setBudgetIdx]             = useState(1);
@@ -156,7 +159,19 @@ function OpenRequestForm() {
         <Text style={s.notice}>{POLICY_TEXT}</Text>
 
         <Text style={s.label}>City *</Text>
-        <TextInput style={s.input} placeholder="e.g. Tokyo, Barcelona…" placeholderTextColor={color.mute} value={city} onChangeText={setCity} />
+        <Pressable onPress={() => setCityPickerOpen(true)}>
+          <Text style={[s.input, !city && { color: color.mute }]} numberOfLines={1}>
+            {city || 'e.g. Tokyo, Barcelona…'}
+          </Text>
+        </Pressable>
+        <GlobalPlacePicker
+          visible={cityPickerOpen}
+          onClose={() => setCityPickerOpen(false)}
+          onSelect={(place: Place) => setCity(place.city ?? place.name)}
+          mode="city"
+          title="Which city?"
+          usedFor="buddy_request"
+        />
 
         <Text style={s.label}>Category *</Text>
         <View style={s.chips}>
@@ -223,6 +238,7 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
   const [startTime, setStartTime]           = useState<Date | null>(null);
   const [groupSize, setGroupSize]           = useState(1);
   const [city, setCity]                     = useState('');
+  const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const [notes, setNotes]                   = useState('');
   const [loading, setLoading]               = useState(false);
   const [initLoading, setInitLoading]       = useState(true);
@@ -371,13 +387,20 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
 
         {/* City / meeting area */}
         <Text style={s.label}>Meeting city / area *</Text>
-        <TextInput
-          style={s.input}
-          placeholder="e.g. Cebu City, BGC, Old Town…"
-          placeholderTextColor={color.mute}
-          value={city}
-          onChangeText={setCity}
+        <Pressable onPress={() => setCityPickerOpen(true)}>
+          <Text style={[s.input, !city && { color: color.mute }]} numberOfLines={1}>
+            {city || 'e.g. Cebu City, BGC, Old Town…'}
+          </Text>
+        </Pressable>
+        <GlobalPlacePicker
+          visible={cityPickerOpen}
+          onClose={() => setCityPickerOpen(false)}
+          onSelect={(place: Place) => setCity(place.city && place.type !== 'city' ? `${place.name}, ${place.city}` : (place.city ?? place.name))}
+          title="Meeting city or area"
+          placeholder="City, neighborhood or landmark…"
+          usedFor="buddy_meeting_area"
         />
+
 
         {/* Notes */}
         <Text style={s.label}>Additional notes</Text>

@@ -4,6 +4,8 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Bell, MapPin, CheckCircle, Calendar, Clock } from 'lucide-react-native';
+import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
+import type { Place } from '../../src/lib/location/placeTypes';
 import { GlobalCalendarPicker } from '../../src/components/selectors/GlobalCalendarPicker';
 import { GlobalTimePicker } from '../../src/components/selectors/GlobalTimePicker';
 import { formatDisplayDate, fromISODate, fromHHmm, formatDisplayTime } from '../../src/lib/dateTime/formatters';
@@ -30,6 +32,7 @@ export default function RentABuddyWaitlist() {
   const params = useLocalSearchParams<{ city?: string }>();
 
   const [city, setCity] = useState(params.city ?? '');
+  const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<BuddyCategory | null>(null);
   const [desiredDate, setDesiredDate] = useState('');
   const [desiredTime, setDesiredTime] = useState('');
@@ -123,15 +126,22 @@ export default function RentABuddyWaitlist() {
           <Text style={styles.fieldLabel}>City *</Text>
           <View style={styles.inputRow}>
             <MapPin size={14} color={color.mute} />
-            <TextInput
-              style={styles.input}
-              value={city}
-              onChangeText={setCity}
-              placeholder="Which city are you visiting?"
-              placeholderTextColor={color.haze}
-            />
+            <Pressable style={{ flex: 1 }} onPress={() => setCityPickerOpen(true)}>
+              <Text style={[styles.input, !city && { color: color.haze }]} numberOfLines={1}>
+                {city || 'Which city are you visiting?'}
+              </Text>
+            </Pressable>
           </View>
         </View>
+
+        <GlobalPlacePicker
+          visible={cityPickerOpen}
+          onClose={() => setCityPickerOpen(false)}
+          onSelect={(place: Place) => setCity(place.city ?? place.name)}
+          mode="city"
+          title="Which city are you visiting?"
+          usedFor="buddy_waitlist"
+        />
 
         {/* Category */}
         <View style={styles.field}>

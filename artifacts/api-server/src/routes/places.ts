@@ -10,6 +10,8 @@ import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { reverseGeocode } from "../services/geocodingService";
+import { searchFoursquare } from "../lib/foursquarePlaces";
+import { normalizeLocationName } from "../lib/canonicalLocations";
 import { logger as rootLogger } from "../lib/logger";
 
 const router = Router();
@@ -40,12 +42,16 @@ function makeSearchCacheKey(
   countryCode: string | undefined,
   lat: number | undefined,
   lng: number | undefined,
+  type?: string,
 ): string {
   // Round lat/lng to 2 decimal places (~1 km) so nearby identical queries share a cache entry
   const latKey = lat != null ? lat.toFixed(2) : "";
   const lngKey = lng != null ? lng.toFixed(2) : "";
-  return `${q.toLowerCase()}:${countryCode ?? ""}:${latKey}:${lngKey}`;
+  return `${q.toLowerCase()}:${countryCode ?? ""}:${latKey}:${lngKey}:${type ?? ""}`;
 }
+
+/** In-flight request dedup: identical concurrent searches share one Promise. */
+const inFlightSearches = new Map<string, Promise<any[]>>();
 
 function getSearchCached(key: string): any[] | null {
   const entry = searchCache.get(key);
@@ -65,7 +71,7 @@ function setSearchCached(key: string, places: any[]): void {
 
 async function searchNominatim(
   q: string,
-  opts: { countryCode?: string; lat?: number; lng?: number; limit?: number },
+  opts: { countryCode?: string; lat?: number; lng?: number; limit?: number; featureType?: string },
 ) {
   await nominatimRateLimit();
   const params = new URLSearchParams({
@@ -77,6 +83,8 @@ async function searchNominatim(
     dedupe: "1",
   });
   if (opts.countryCode) params.set("countrycodes", opts.countryCode.toLowerCase());
+  // "settlement" = state down to neighbourhood; used for city-only pickers
+  if (opts.featureType) params.set("featuretype", opts.featureType);
 
   const res = await fetch(
     `https://nominatim.openstreetmap.org/search?${params}`,
@@ -90,6 +98,23 @@ async function searchNominatim(
   );
   if (!res.ok) throw new Error(`Nominatim ${res.status}`);
   return res.json() as Promise<any[]>;
+}
+
+/** Map Nominatim class/addresstype onto our PlaceType vocabulary. */
+function inferNominatimType(raw: any): string {
+  const at = String(raw.addresstype ?? "");
+  const cls = String(raw.class ?? "");
+  if (at === "country") return "country";
+  if (["state", "province", "region", "county"].includes(at)) return "region";
+  if (["city", "municipality"].includes(at)) return "city";
+  if (["town", "village", "hamlet"].includes(at)) return "town";
+  if (["suburb", "neighbourhood", "quarter", "borough"].includes(at)) return "neighborhood";
+  if (["city_district", "district"].includes(at)) return "district";
+  if (at === "aerodrome" || cls === "aeroway") return "airport";
+  if (["tourism", "historic", "leisure", "natural"].includes(cls)) return "landmark";
+  if (["amenity", "shop", "building", "office", "highway"].includes(cls)) return "place";
+  if (cls === "place") return "city";
+  return "place";
 }
 
 function normalizeNominatim(raw: any) {
@@ -113,7 +138,7 @@ function normalizeNominatim(raw: any) {
 
   return {
     id: `nominatim-${raw.place_id as string}`,
-    type: "city" as const,
+    type: inferNominatimType(raw),
     name,
     displayName: displayParts.join(", "),
     country,
@@ -152,8 +177,10 @@ router.get("/places/search", async (req, res) => {
     return;
   }
 
+  const typeParam = typeof req.query.type === "string" ? req.query.type : undefined;
+
   // Check server-side cache
-  const cacheKey = makeSearchCacheKey(q, countryCode, lat, lng);
+  const cacheKey = makeSearchCacheKey(q, countryCode, lat, lng, typeParam);
   const cached = getSearchCached(cacheKey);
   if (cached) {
     res.json({ places: cached });
@@ -161,8 +188,13 @@ router.get("/places/search", async (req, res) => {
   }
 
   try {
-    const raw = await searchNominatim(q, { countryCode, lat, lng });
-    const places = Array.isArray(raw) ? raw.map(normalizeNominatim) : [];
+    let promise = inFlightSearches.get(cacheKey);
+    if (!promise) {
+      promise = runUniversalSearch(q, { countryCode, lat, lng, type: typeParam })
+        .finally(() => inFlightSearches.delete(cacheKey));
+      inFlightSearches.set(cacheKey, promise);
+    }
+    const places = await promise;
     setSearchCached(cacheKey, places);
     res.json({ places });
   } catch (err) {
@@ -170,6 +202,71 @@ router.get("/places/search", async (req, res) => {
     res.json({ places: [] });
   }
 });
+
+// ── Universal search: provider fan-out + merge ────────────────────────────────
+
+const CITY_CLASS_TYPES = new Set(["city", "town", "region", "country", "district", "neighborhood"]);
+
+/** Same real-world place? Normalized-name equal + within ~1 km when both have coords. */
+function samePlace(a: any, b: any): boolean {
+  if (normalizeLocationName(a.name) !== normalizeLocationName(b.name)) return false;
+  if (a.lat != null && a.lng != null && b.lat != null && b.lng != null) {
+    return Math.abs(a.lat - b.lat) < 0.01 && Math.abs(a.lng - b.lng) < 0.01;
+  }
+  return true;
+}
+
+/**
+ * Fan out to Nominatim (cities/regions/addresses) and Foursquare
+ * (venues/hotels/landmarks) in parallel, then merge. Either provider failing
+ * degrades gracefully to the other's results.
+ */
+async function runUniversalSearch(
+  q: string,
+  opts: { countryCode?: string; lat?: number; lng?: number; type?: string },
+): Promise<any[]> {
+  const cityOnly = opts.type === "city";
+  const wantVenues = !cityOnly && !CITY_CLASS_TYPES.has(opts.type ?? "");
+
+  const [nom, fsq] = await Promise.allSettled([
+    searchNominatim(q, {
+      countryCode: opts.countryCode,
+      lat: opts.lat,
+      lng: opts.lng,
+      featureType: cityOnly ? "settlement" : undefined,
+    }),
+    wantVenues
+      ? searchFoursquare(q, { lat: opts.lat, lng: opts.lng, limit: 5 })
+      : Promise.resolve([] as any[]),
+  ]);
+
+  if (nom.status === "rejected") logger.warn({ err: nom.reason, q }, "nominatim search failed");
+  const nomPlaces =
+    nom.status === "fulfilled" && Array.isArray(nom.value) ? nom.value.map(normalizeNominatim) : [];
+  const fsqPlaces = fsq.status === "fulfilled" ? fsq.value : [];
+
+  // Cities/admin areas first, venues appended, duplicates collapsed.
+  const merged: any[] = [...nomPlaces];
+  for (const venue of fsqPlaces) {
+    if (!merged.some((p) => samePlace(p, venue))) merged.push(venue);
+  }
+
+  const filtered = cityOnly
+    ? merged.filter((p) => ["city", "town", "district", "neighborhood", "region"].includes(p.type))
+    : merged;
+
+  // Exact-name city/town hits outrank broader admin areas ("Cebu City" the
+  // city above "Cebu" the province when the user typed "cebu").
+  const qNorm = normalizeLocationName(q);
+  const exactness = (p: any) =>
+    (["city", "town"].includes(p.type) && normalizeLocationName(p.name) === qNorm) ? 0 : 1;
+  const ranked = filtered
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => exactness(a.p) - exactness(b.p) || a.i - b.i)
+    .map(({ p }) => p);
+
+  return ranked.slice(0, 12);
+}
 
 // ── GET /api/places/reverse ───────────────────────────────────────────────────
 router.get("/places/reverse", async (req, res) => {

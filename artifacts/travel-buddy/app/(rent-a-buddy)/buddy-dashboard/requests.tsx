@@ -6,6 +6,8 @@ import {
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Star, X, Check, Edit2, AlertCircle } from 'lucide-react-native';
+import { GlobalPlacePicker } from '../../../src/components/selectors/GlobalPlacePicker';
+import type { Place } from '../../../src/lib/location/placeTypes';
 import {
   TravelButton, TravelCard, TravelLoadingState,
   TravelErrorState, TravelEmptyState,
@@ -106,6 +108,7 @@ function SuggestSheet({
   const [time, setTime] = useState(booking.startTime ?? '');
   const [duration, setDuration] = useState(String(booking.durationH));
   const [location, setLocation] = useState(booking.city);
+  const [locationPickerOpen, setLocationPickerOpen] = useState(false);
   const [message, setMessage] = useState('');
   const insets = useSafeAreaInsets();
 
@@ -157,12 +160,18 @@ function SuggestSheet({
           </View>
 
           <Text style={modal.fieldLabel}>Meetup location</Text>
-          <TextInput
-            style={[modal.input, { marginBottom: space.lg }]}
-            value={location}
-            onChangeText={setLocation}
-            placeholder="City or specific spot"
-            placeholderTextColor={color.haze}
+          <Pressable onPress={() => setLocationPickerOpen(true)}>
+            <Text style={[modal.input, { marginBottom: space.lg }, !location && { color: color.haze }]} numberOfLines={1}>
+              {location || 'City or specific spot'}
+            </Text>
+          </Pressable>
+          <GlobalPlacePicker
+            visible={locationPickerOpen}
+            onClose={() => setLocationPickerOpen(false)}
+            onSelect={(place: Place) => setLocation(place.city && place.type !== 'city' ? `${place.name}, ${place.city}` : (place.city ?? place.name))}
+            title="Meetup location"
+            placeholder="City, venue or landmark…"
+            usedFor="buddy_meetup_location"
           />
 
           <Text style={modal.fieldLabel}>Message to traveller</Text>

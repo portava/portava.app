@@ -17,6 +17,8 @@ import { BuddyCard, BuddyCardSkeleton } from '../../src/components/BuddyCard';
 import { searchBuddies, type BuddyProfile, type BuddyCategory } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CompassBuddyRow } from '../../src/components/compass/CompassBuddyRow';
+import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
+import type { Place } from '../../src/lib/location/placeTypes';
 
 class CompassBuddyErrorBoundary extends Component<
   { children: React.ReactNode },
@@ -85,7 +87,7 @@ function computeCompatibility(answers: string[], buddy: BuddyProfile): { score: 
 
 export default function RentABuddySearch() {
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ city?: string; category?: string; mode?: string; bookingDate?: string }>();
+  const params = useLocalSearchParams<{ city?: string; category?: string; mode?: string; bookingDate?: string; lat?: string; lng?: string }>();
 
   const [bookingDate] = useState<string | undefined>(params.bookingDate);
 
@@ -95,8 +97,13 @@ export default function RentABuddySearch() {
         : 'categories'
   );
   const [city, setCity] = useState(params.city ?? '');
-  const [cityLat, setCityLat] = useState<number | undefined>(undefined);
-  const [cityLng, setCityLng] = useState<number | undefined>(undefined);
+  const [cityLat, setCityLat] = useState<number | undefined>(
+    params.lat ? Number(params.lat) : undefined,
+  );
+  const [cityLng, setCityLng] = useState<number | undefined>(
+    params.lng ? Number(params.lng) : undefined,
+  );
+  const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<BuddyCategory | undefined>(
     params.category as BuddyCategory | undefined
   );
@@ -190,21 +197,32 @@ export default function RentABuddySearch() {
 
         <View style={styles.searchBar}>
           <Search size={14} color={color.mute} />
-          <TextInput
-            style={styles.searchInput}
-            value={city}
-            onChangeText={setCity}
-            placeholder="City or destination…"
-            placeholderTextColor={color.haze}
-            returnKeyType="search"
-            onSubmitEditing={() => { setMode('results'); doSearch(true); }}
-          />
+          <Pressable style={{ flex: 1 }} onPress={() => setCityPickerOpen(true)}>
+            <Text style={[styles.searchInput, !city && { color: color.haze }]} numberOfLines={1}>
+              {city || 'City or destination…'}
+            </Text>
+          </Pressable>
           {city.length > 0 && (
-            <Pressable onPress={() => { setCity(''); setBuddies([]); setMode('categories'); }}>
+            <Pressable onPress={() => { setCity(''); setCityLat(undefined); setCityLng(undefined); setBuddies([]); setMode('categories'); }}>
               <X size={14} color={color.mute} />
             </Pressable>
           )}
         </View>
+
+        {/* Universal city picker — canonical Places drive proximity-ranked results */}
+        <GlobalPlacePicker
+          visible={cityPickerOpen}
+          onClose={() => setCityPickerOpen(false)}
+          onSelect={(place: Place) => {
+            setCityLat(place.lat ?? undefined);
+            setCityLng(place.lng ?? undefined);
+            setCity(place.city ?? place.name);
+            setMode('results');
+          }}
+          mode="city"
+          title="Search Buddies in…"
+          usedFor="buddy_search"
+        />
 
         {mode === 'results' && (
           <Pressable

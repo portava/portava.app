@@ -9,6 +9,8 @@ import { ArrowLeft, Search, Sparkles, MapPin, SlidersHorizontal } from 'lucide-r
 import { color, space, radius, type as t, layout } from '../../src/theme/tokens';
 import { TravelErrorState, TravelLoadingState } from '../../src/components/primitives';
 import { BuddyCard } from '../../src/components/BuddyCard';
+import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
+import type { Place } from '../../src/lib/location/placeTypes';
 import {
   searchBuddies, type BuddyProfile, type BuddyCategory, type BuddySortBy,
 } from '../../src/services/rentABuddy';
@@ -71,6 +73,7 @@ export default function Marketplace() {
   const [ratingIdx, setRatingIdx]             = useState(0);
   const [sessionMode, setSessionMode]         = useState<SessionMode>('any');
   const [filtersOpen, setFiltersOpen]         = useState(false);
+  const [cityPickerOpen, setCityPickerOpen]   = useState(false);
 
   const [buddies, setBuddies]                 = useState<BuddyProfile[]>([]);
   const [page, setPage]                       = useState(1);
@@ -156,19 +159,29 @@ export default function Marketplace() {
         {/* City search */}
         <View style={s.cityRow}>
           <MapPin size={15} color={color.signal} />
-          <TextInput
-            style={s.cityInput}
-            placeholder="City (e.g. Cebu)"
-            placeholderTextColor={color.mute}
-            value={city}
-            onChangeText={setCity}
-            returnKeyType="search"
-            onSubmitEditing={onSearch}
-          />
+          <Pressable style={{ flex: 1 }} onPress={() => setCityPickerOpen(true)}>
+            <Text style={[s.cityInput, !city && { color: color.mute }]} numberOfLines={1}>
+              {city || 'City (e.g. Cebu)'}
+            </Text>
+          </Pressable>
           <Pressable style={s.searchBtn} onPress={onSearch}>
             <Search size={15} color={color.onInk} />
           </Pressable>
         </View>
+
+        {/* Universal city picker — canonical Places with coords for proximity ranking */}
+        <GlobalPlacePicker
+          visible={cityPickerOpen}
+          onClose={() => setCityPickerOpen(false)}
+          onSelect={(place: Place) => {
+            setCityLat(place.lat ?? undefined);
+            setCityLng(place.lng ?? undefined);
+            setCity(place.city ?? place.name);
+          }}
+          mode="city"
+          title="Find Buddies in…"
+          usedFor="buddy_search"
+        />
 
         {/* Category filter chips */}
         <ScrollView

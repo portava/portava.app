@@ -177,6 +177,14 @@ export default function PassportScreen() {
     if (username) router.push(`/u/${username}` as any);
   }, [profile]);
 
+  // ── MUST be called before any early return ───────────────────────────────
+  // Hooks called after a conditional return violate React's Rules of Hooks:
+  // on the first render (loading) the hook is skipped, on the second render it
+  // runs — React throws "Rendered more hooks than during the previous render"
+  // and the page goes blank. profile is null while loading; the hook accepts
+  // a null username safely.
+  const { cardRef, share, sharing } = usePassportShare(profile?.username ?? null);
+
   if (loading) {
     return (
       <View style={[s.center, { backgroundColor: PP.paperDeep }]}>
@@ -204,8 +212,7 @@ export default function PassportScreen() {
     );
   }
 
-  const verifiedStamps = stamps.filter((s) => !s.locked).length;
-  const { cardRef, share, sharing } = usePassportShare(profile.username ?? null);
+  const verifiedStamps = (stamps ?? []).filter((s) => !s.locked).length;
 
   // Compute verification levels for SafetySection
   const lvl = profile.verificationLevel ?? 'none';
@@ -275,7 +282,7 @@ export default function PassportScreen() {
       />
       <PassportSectionReorderSheet
         visible={reorderOpen}
-        initialOrder={sectionOrderOverride ?? profile.passportSectionOrder}
+        initialOrder={sectionOrderOverride ?? resolveSectionOrder(profile.passportSectionOrder)}
         onClose={() => setReorderOpen(false)}
         onSaved={(order) => { setSectionOrderOverride(order); reload(); }}
       />
@@ -332,7 +339,7 @@ function PassportContent({
   sectionOrder: PassportSectionKey[];
   onArrangeSections: () => void;
 }) {
-  const verifiedStamps = stamps.filter((st) => !st.locked).length;
+  const verifiedStamps = (stamps ?? []).filter((st) => !st.locked).length;
   const [pendingCount, setPendingCount] = useState(0);
   const [coverUploading, setCoverUploading] = useState(false);
   const [buddyProfile, setBuddyProfile] = useState<BuddyProfile | null | undefined>(undefined);

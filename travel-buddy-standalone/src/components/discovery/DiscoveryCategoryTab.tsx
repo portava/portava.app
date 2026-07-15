@@ -22,6 +22,9 @@ import {
   shouldBootstrapNearestLoad,
   shouldRefreshNearestOnMovement,
 } from './discoveryCategoryTabNearest';
+import { usePopularCities } from '../../hooks/usePopularCities';
+import { POPULAR } from '../selectors/GlobalPlacePicker';
+import type { Place } from '../../lib/location/placeTypes';
 
 // ── Sort labels ───────────────────────────────────────────────────────────────
 
@@ -279,19 +282,25 @@ const POPULAR_CITIES = [
 ];
 
 interface NoDestinationProps {
-  onPickCity: (city: string) => void;
+  onPickPlace: (place: Place) => void;
+  userLat?: number;
+  userLng?: number;
 }
 
-function NoDestinationView({ onPickCity }: NoDestinationProps) {
+function NoDestinationView({ onPickPlace, userLat, userLng }: NoDestinationProps) {
+  // Real activity ranking ("Popular on Portava"), proximity-biased when the
+  // user's coords are known; falls back to the seed list offline.
+  const { places } = usePopularCities({ lat: userLat, lng: userLng, limit: 10 });
+  const chips = places.length > 0 ? places : POPULAR.slice(0, 10);
   return (
     <View style={nd.wrap}>
       <Search size={32} color={color.faint} />
       <Text style={nd.title}>Pick a destination</Text>
       <Text style={nd.sub}>Tap the city bar above, or choose a popular one:</Text>
       <View style={nd.chips}>
-        {POPULAR_CITIES.map((city) => (
-          <Pressable key={city} style={nd.chip} onPress={() => onPickCity(city)}>
-            <Text style={nd.chipText}>{city}</Text>
+        {chips.map((place) => (
+          <Pressable key={place.id} style={nd.chip} onPress={() => onPickPlace(place)}>
+            <Text style={nd.chipText}>{place.name}</Text>
           </Pressable>
         ))}
       </View>
@@ -329,7 +338,7 @@ interface DiscoveryCategoryTabProps {
   onSelectPlace: (place: DiscoveryPlace) => void;
   onAddToPlan: (place: DiscoveryPlace) => void;
   onAddToRoute?: (draft: import('../RouteBuilderSheet').RouteStopDraft) => void;
-  onPickDestination?: (city: string) => void;
+  onPickDestination?: (place: Place) => void;
   contextMode?: DiscoveryContextMode | null;
   viewMode?: 'list' | 'map';
   ageFilter?: import('../../../src/services/discovery').DiscoveryAgeFilter | null;
@@ -544,7 +553,7 @@ export function DiscoveryCategoryTab({
 
   if (!destination) {
     return (
-      <NoDestinationView onPickCity={(city) => onPickDestination?.(city)} />
+      <NoDestinationView onPickPlace={(place) => onPickDestination?.(place)} />
     );
   }
 

@@ -29,7 +29,14 @@ export interface Place {
   lat: number | null;
   lng: number | null;
   timezone: string | null;
-  source: 'nominatim' | 'gps' | 'manual' | 'legacy' | 'recent';
+  source: 'nominatim' | 'foursquare' | 'gps' | 'manual' | 'legacy' | 'recent' | 'canonical';
+  /**
+   * Canonical location id from the universal location registry.
+   * All provider variants of one real-world location ("Cebu", "Cebu City",
+   * a Foursquare venue id) share the same canonicalId once resolved.
+   * Null/undefined when the selection has not been resolved yet.
+   */
+  canonicalId?: string | null;
   confidence?: number;
   /** Street-level address line (may be null for city-level results) */
   address?: string | null;

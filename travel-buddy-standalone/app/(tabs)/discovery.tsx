@@ -409,12 +409,12 @@ function DiscoveryHubScreen() {
     setDetailVisible(true);
   };
 
-  const handlePickDestination = useCallback((city: string) => {
-    setDestination(city);
-    setDestinationLat(null);
-    setDestinationLng(null);
+  const handlePickDestination = useCallback((place: Place) => {
+    setDestination(place.city ?? place.name);
+    setDestinationLat(place.lat ?? null);
+    setDestinationLng(place.lng ?? null);
     // Also persist as manual city in the location system
-    setManualCity(city).catch(() => {});
+    setManualCity(place).catch(() => {});
   }, [setManualCity]);
 
   // MapTiler geocode on load:
@@ -450,7 +450,7 @@ function DiscoveryHubScreen() {
     setDestination(place.city ?? place.name);
     setDestinationLat(place.lat ?? null);
     setDestinationLng(place.lng ?? null);
-    setManualCity(place.city ?? place.name).catch(() => {});
+    setManualCity(place).catch(() => {});
   }, [setManualCity]);
 
   // ── Map vs list mode ─────────────────────────────────────────────────────

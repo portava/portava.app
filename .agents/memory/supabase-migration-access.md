@@ -1,12 +1,22 @@
 ---
 name: Supabase migration access
-description: How schema migrations get applied in this project and the current broken credential.
+description: How to apply SQL migrations to the Supabase database from this workspace
 ---
 
-Schema migrations live in `artifacts/api-server/src/migrations/` and are applied to production Supabase via the Management API (`POST https://api.supabase.com/v1/projects/<ref>/database/query` with `SUPABASE_ACCESS_TOKEN`), then logged in `docs/migrations.md`.
+# Supabase migration access
 
-**As of 2026-07-15 a fresh `SUPABASE_ACCESS_TOKEN` was saved and the Management API works.** The previous token was 43 chars (valid `sbp_` tokens are 44) and returned "JWT could not be decoded". Direct psql also fails: `SUPABASE_DB_PASSWORD` gets "password authentication failed" against the `aws-1-us-east-1` pooler (the tenant resolves there) — do not rely on psql.
+**Working path:** the Supabase Management API applies SQL directly and `SUPABASE_ACCESS_TOKEN` is valid:
 
-**How to apply future migrations:** use `POST https://api.supabase.com/v1/projects/<ref>/database/query` with `Authorization: Bearer $SUPABASE_ACCESS_TOKEN`. The project ref is `ajrurzioarfkagpuxfnb` (derived from `$SUPABASE_URL`). A successful DDL returns `[]`.
+```
+POST https://api.supabase.com/v1/projects/{ref}/database/query
+Authorization: Bearer $SUPABASE_ACCESS_TOKEN
+{"query": "<sql>"}
+```
 
-**Why it matters:** the profile route strips unknown columns on 42703/PGRST204, so an unapplied `profiles` column fails silently — saves appear to succeed but the field never persists.
+`{ref}` = subdomain of `$SUPABASE_URL`. Returns `[]` on DDL success. Also works for read-only verification queries.
+
+**Why:** direct psql to `db.{ref}.supabase.co` and all pooler hosts fail to connect from this workspace (tested exhaustively) — don't burn time on psql. An earlier session recorded the token as invalid; that is no longer true.
+
+**How to apply:**
+- POST the migration SQL to the Management API, verify with a follow-up query, then set the migration's row in `docs/migrations.md` to `applied <date>`.
+- Watch for unapplied migrations: server code often degrades silently (column probes, best-effort selects), so a "pending" row in `docs/migrations.md` is the only reliable signal.

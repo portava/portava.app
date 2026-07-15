@@ -17,6 +17,8 @@ import { Stamp } from '../../src/components/ui';
 import { BuddyCard, BuddyCardSkeleton } from '../../src/components/BuddyCard';
 import { searchBuddies, getLaunchStatus, getAvailableNow, type BuddyProfile } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
+import type { Place } from '../../src/lib/location/placeTypes';
 
 const CATEGORIES = [
   { key: 'city', label: 'City Explorer', icon: MapPin, desc: 'Navigate like a local' },
@@ -167,6 +169,8 @@ const bannerStyles = StyleSheet.create({
 export default function RentABuddyLanding() {
   const insets = useSafeAreaInsets();
   const [city, setCity] = useState('');
+  const [cityCoords, setCityCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const [topBuddies, setTopBuddies] = useState<BuddyProfile[]>([]);
   const [loadingTop, setLoadingTop] = useState(false);
   const [availableNow, setAvailableNow] = useState<BuddyProfile[]>([]);
@@ -225,25 +229,43 @@ export default function RentABuddyLanding() {
 
         <View style={styles.searchBox}>
           <Search size={16} color={color.mute} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Enter city or destination…"
-            placeholderTextColor={color.haze}
-            value={city}
-            onChangeText={setCity}
-            returnKeyType="search"
-            onSubmitEditing={() => router.push({ pathname: '/(rent-a-buddy)/search' as any, params: { city } })}
-          />
+          <Pressable style={{ flex: 1 }} onPress={() => setCityPickerOpen(true)}>
+            <Text
+              style={[styles.searchInput, !city && { color: color.haze }]}
+              numberOfLines={1}
+            >
+              {city || 'Enter city or destination…'}
+            </Text>
+          </Pressable>
           {city.trim().length > 0 && (
             <Pressable
               style={styles.searchBtn}
-              onPress={() => router.push({ pathname: '/(rent-a-buddy)/search' as any, params: { city } })}
+              onPress={() => router.push({
+                pathname: '/(rent-a-buddy)/search' as any,
+                params: {
+                  city,
+                  ...(cityCoords ? { lat: String(cityCoords.lat), lng: String(cityCoords.lng) } : {}),
+                },
+              })}
             >
               <Text style={styles.searchBtnText}>Go</Text>
             </Pressable>
           )}
         </View>
       </View>
+
+      {/* Universal city picker — selections are canonical Places, not raw text */}
+      <GlobalPlacePicker
+        visible={cityPickerOpen}
+        onClose={() => setCityPickerOpen(false)}
+        onSelect={(place: Place) => {
+          setCity(place.city ?? place.name);
+          setCityCoords(place.lat != null && place.lng != null ? { lat: place.lat, lng: place.lng } : null);
+        }}
+        mode="city"
+        title="Where do you need a Buddy?"
+        usedFor="buddy_search"
+      />
 
       {/* City availability banner — shown when city is typed */}
       <CityAvailabilityBanner city={city} />

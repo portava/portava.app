@@ -654,7 +654,7 @@ export default function DiscoveryHub() {
             onSelectPlace={handleSelectPlace}
             onAddToPlan={handleAddToPlanFromPlace}
             onAddToRoute={handleAddToRoute}
-            onPickDestination={(city: string) => handlePickDestination({ id: `manual-${city.toLowerCase().replace(/\s+/g, '-')}`, type: 'city', name: city, displayName: city, city, country: null, countryCode: null, region: null, district: null, lat: null, lng: null, timezone: null, source: 'manual' as const })}
+            onPickDestination={handlePickDestination}
             contextMode={contextMode}
             viewMode={viewMode}
             ageFilter={ageFilter}

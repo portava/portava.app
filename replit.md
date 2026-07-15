@@ -35,6 +35,16 @@ Manual steps:
 
 The tunnel URL is read from `$REPLIT_EXPO_DEV_DOMAIN` at runtime — it updates automatically if Replit rotates the domain. The startup script is `travel-buddy-standalone/scripts/android-dev.sh`.
 
+## Universal location service
+
+Every location selection in the app flows through `GlobalPlacePicker` (`src/components/selectors/GlobalPlacePicker.tsx`) — no raw-text city inputs on user-facing save paths. Key pieces:
+
+- **Canonical registry:** `canonical_locations` table (migration 0125). Provider variants ("Cebu" / "Cebu City" / a Foursquare id) resolve to one canonical id via `api-server/src/lib/canonicalLocations.ts` (normalized name + kind-class + proximity matching). `POST /api/locations/resolve` is find-or-create, tolerant of DB failures (returns `canonicalId: null`, never blocks a selection), rate-limited per user, and race-safe via the unique identity index from migration 0126 (23505 → re-match).
+- **Popular on Portava:** `GET /api/locations/popular` ranks cities from real activity (posts/trips/events/profiles/discovery saves, 90-day window, proximity boost) with `SEED_CITIES` top-up; 15-min server cache. Client hook: `usePopularCities`.
+- **Search:** `/api/places/search` fans out Nominatim + Foursquare in parallel and merges/dedupes; `type=city` restricts to settlements. Foursquare venue search silently no-ops until a valid `FOURSQUARE_API_KEY` is set (current key is rejected with 401 by both v3 and current-gen Foursquare APIs).
+- **Client resolution:** selections resolve through `src/lib/location/resolveCanonical.ts` (≤1.3 s cap, falls back to the unresolved place). `ManualCityPicker` is a deprecated thin wrapper around `GlobalPlacePicker` in city mode.
+- **Intentional exceptions to the picker rule:** admin tooling (`admin/rollout`, `admin/bookings` filter), text filter on events list, and optional display-label override fields in event creation / buddy application (their primary location comes from the picker).
+
 ## Run & Operate
 
 - API server auto-starts: port 8080

@@ -9,6 +9,9 @@ import { color, space, radius, type as t } from '../../theme/tokens';
 import PlaceCard from './PlaceCard';
 import { PlaceSkeletonList } from './PlaceSkeleton';
 import { DiscoveryMapView } from './DiscoveryMapView';
+import { usePopularCities } from '../../hooks/usePopularCities';
+import { POPULAR } from '../selectors/GlobalPlacePicker';
+import type { Place } from '../../lib/location/placeTypes';
 
 // ── Radius chips ──────────────────────────────────────────────────────────────
 
@@ -158,25 +161,27 @@ const fs = StyleSheet.create({
 
 // ── Popular destinations fallback ─────────────────────────────────────────────
 
-const POPULAR_CITIES = [
-  'Paris', 'Tokyo', 'Bali', 'Barcelona', 'London',
-  'New York', 'Rome', 'Amsterdam', 'Bangkok', 'Sydney',
-];
-
 interface NoDestinationProps {
-  onPickCity: (city: string) => void;
+  /** Emits a full normalized Place (canonical when online) — never a raw string. */
+  onPickPlace: (place: Place) => void;
+  userLat?: number | null;
+  userLng?: number | null;
 }
 
-function NoDestinationView({ onPickCity }: NoDestinationProps) {
+function NoDestinationView({ onPickPlace, userLat, userLng }: NoDestinationProps) {
+  // Real activity ranking ("Popular on Portava"), proximity-biased when the
+  // user's coords are known; falls back to the seed list offline.
+  const { places } = usePopularCities({ lat: userLat, lng: userLng, limit: 10 });
+  const chips = places.length > 0 ? places : POPULAR.slice(0, 10);
   return (
     <View style={nd.wrap}>
       <Search size={32} color={color.faint} />
       <Text style={nd.title}>Pick a destination</Text>
       <Text style={nd.sub}>Tap the city bar above, or choose a popular one:</Text>
       <View style={nd.chips}>
-        {POPULAR_CITIES.map((city) => (
-          <Pressable key={city} style={nd.chip} onPress={() => onPickCity(city)}>
-            <Text style={nd.chipText}>{city}</Text>
+        {chips.map((place) => (
+          <Pressable key={place.id} style={nd.chip} onPress={() => onPickPlace(place)}>
+            <Text style={nd.chipText}>{place.name}</Text>
           </Pressable>
         ))}
       </View>
@@ -214,7 +219,8 @@ interface DiscoveryCategoryTabProps {
   onSelectPlace: (place: DiscoveryPlace) => void;
   onAddToPlan: (place: DiscoveryPlace) => void;
   onAddToRoute?: (draft: import('../RouteBuilderSheet').RouteStopDraft) => void;
-  onPickDestination?: (city: string) => void;
+  /** Fired with a full normalized Place when the user picks a popular destination chip. */
+  onPickDestination?: (place: Place) => void;
   contextMode?: DiscoveryContextMode | null;
   viewMode?: 'list' | 'map';
   ageFilter?: import('../../../src/services/discovery').DiscoveryAgeFilter | null;
@@ -329,7 +335,11 @@ export function DiscoveryCategoryTab({
 
   if (!destination) {
     return (
-      <NoDestinationView onPickCity={(city) => onPickDestination?.(city)} />
+      <NoDestinationView
+        onPickPlace={(place) => onPickDestination?.(place)}
+        userLat={userLat}
+        userLng={userLng}
+      />
     );
   }
 
