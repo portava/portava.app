@@ -662,6 +662,211 @@ router.get("/users/:username/profile", async (req, res) => {
 });
 
 /* ===========================================================================
+ * GET /users/:username/og-image.png — passport-styled Open Graph image
+ * ===========================================================================
+ * 1200x630 PNG for link previews in chat apps. Enforces the same visibility
+ * policy as /profile: private / blocked / unavailable / not-found accounts
+ * all receive the same generic branded image (no name, no avatar) so the
+ * image response never leaks account state.
+ */
+
+/** Escape a string for embedding inside SVG/XML text nodes. */
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+/**
+ * SSRF guard for avatar fetches: only allow HTTPS URLs whose host is the
+ * Supabase project (or its storage subdomain). Rejects IP literals, localhost,
+ * and anything not on the trusted storage host.
+ */
+function isTrustedImageUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:") return false;
+  const host = parsed.hostname.toLowerCase();
+  // Reject IP literals and localhost outright.
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host.includes(":") || host === "localhost") return false;
+  const trusted: string[] = [];
+  for (const envKey of ["SUPABASE_URL", "EXPO_PUBLIC_SUPABASE_URL"]) {
+    const v = process.env[envKey];
+    if (!v) continue;
+    try {
+      trusted.push(new URL(v).hostname.toLowerCase());
+    } catch { /* ignore malformed env */ }
+  }
+  return trusted.some((t) => host === t || host.endsWith(`.${t}`));
+}
+
+/** Fetch a remote image and return it as a base64 data URI, or null on any failure. */
+async function fetchImageAsDataUri(url: string): Promise<string | null> {
+  if (!isTrustedImageUrl(url)) return null;
+  try {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(3000), redirect: "error" });
+    if (!resp.ok) return null;
+    const type = resp.headers.get("content-type") ?? "";
+    if (!/^image\/(png|jpe?g|webp|gif)/.test(type)) return null;
+    const buf = Buffer.from(await resp.arrayBuffer());
+    if (buf.length === 0 || buf.length > 5 * 1024 * 1024) return null;
+    return `data:${type.split(";")[0]};base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
+interface OgCardData {
+  displayName: string | null;
+  username: string | null;
+  tripCount: number;
+  stampCount: number;
+  avatarDataUri: string | null;
+}
+
+/** Build the 1200x630 passport-cover SVG. Pass null data for the generic branded card. */
+function buildPassportOgSvg(card: OgCardData | null): string {
+  const W = 1200;
+  const H = 630;
+  const navy = "#152642";
+  const navyLight = "#1D3358";
+  const gold = "#C9A227";
+  const goldSoft = "#E3C566";
+  const cream = "#F5EFE0";
+
+  const name = card?.displayName?.trim() || "Travel Buddy Passport";
+  const handle = card?.username ? `@${card.username}` : null;
+  const statsLine = card
+    ? `${card.tripCount} ${card.tripCount === 1 ? "trip" : "trips"}  ·  ${card.stampCount} ${card.stampCount === 1 ? "stamp" : "stamps"}`
+    : "A traveler's passport of trips, stamps & postcards";
+
+  const initials = (card?.displayName || card?.username || "TB")
+    .trim()
+    .split(/\s+/)
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+
+  const avatar = card?.avatarDataUri
+    ? `<image href="${card.avatarDataUri}" x="96" y="195" width="240" height="240" clip-path="url(#avatarClip)" preserveAspectRatio="xMidYMid slice"/>`
+    : `<circle cx="216" cy="315" r="120" fill="${navyLight}"/>
+       <text x="216" y="345" text-anchor="middle" font-family="Georgia, serif" font-size="88" font-weight="bold" fill="${goldSoft}">${escapeXml(initials)}</text>`;
+
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="avatarClip"><circle cx="216" cy="315" r="120"/></clipPath>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="${navy}"/>
+      <stop offset="1" stop-color="#0E1B31"/>
+    </linearGradient>
+  </defs>
+  <rect width="${W}" height="${H}" fill="url(#bg)"/>
+  <rect x="28" y="28" width="${W - 56}" height="${H - 56}" fill="none" stroke="${gold}" stroke-width="3"/>
+  <rect x="40" y="40" width="${W - 80}" height="${H - 80}" fill="none" stroke="${gold}" stroke-width="1" opacity="0.55"/>
+  <!-- decorative stamp, bottom right -->
+  <g opacity="0.28" transform="translate(1010,470) rotate(-12)">
+    <circle r="86" fill="none" stroke="${cream}" stroke-width="4" stroke-dasharray="6 5"/>
+    <circle r="66" fill="none" stroke="${cream}" stroke-width="2"/>
+    <text y="12" text-anchor="middle" font-family="Georgia, serif" font-size="40" font-weight="bold" fill="${cream}">TB</text>
+  </g>
+  <!-- header -->
+  <text x="96" y="122" font-family="Georgia, serif" font-size="30" letter-spacing="12" fill="${gold}">TRAVEL BUDDY</text>
+  <text x="96" y="162" font-family="Georgia, serif" font-size="22" letter-spacing="8" fill="${cream}" opacity="0.7">·  PASSPORT  ·</text>
+  ${avatar}
+  <circle cx="216" cy="315" r="124" fill="none" stroke="${gold}" stroke-width="4"/>
+  <!-- name block -->
+  <text x="392" y="300" font-family="Georgia, serif" font-size="${name.length > 22 ? 48 : 60}" font-weight="bold" fill="${cream}">${escapeXml(name.slice(0, 34))}</text>
+  ${handle ? `<text x="392" y="356" font-family="Georgia, serif" font-size="32" fill="${goldSoft}">${escapeXml(handle)}</text>` : ""}
+  <text x="392" y="${handle ? 424 : 372}" font-family="Georgia, serif" font-size="30" fill="${cream}" opacity="0.85">${escapeXml(statsLine)}</text>
+  <!-- footer rule -->
+  <line x1="96" y1="524" x2="760" y2="524" stroke="${gold}" stroke-width="1.5" opacity="0.6"/>
+  <text x="96" y="562" font-family="Georgia, serif" font-size="22" letter-spacing="4" fill="${cream}" opacity="0.55">SCAN THE WORLD, ONE STAMP AT A TIME</text>
+</svg>`;
+}
+
+async function renderOgPng(card: OgCardData | null): Promise<Buffer> {
+  const sharp = (await import("sharp")).default;
+  return sharp(Buffer.from(buildPassportOgSvg(card))).png().toBuffer();
+}
+
+router.get("/users/:username/og-image.png", async (req, res) => {
+  const sc = getServiceClient();
+
+  const sendPng = async (card: OgCardData | null) => {
+    try {
+      const png = await renderOgPng(card);
+      res
+        .status(200)
+        .set({
+          "Content-Type": "image/png",
+          "Cache-Control": "public, max-age=600",
+        })
+        .send(png);
+    } catch (e: any) {
+      req.log.error({ err: e }, "og-image: render failed");
+      sendError(res, "db_error", "Could not render preview image");
+    }
+  };
+
+  if (!sc) {
+    await sendPng(null);
+    return;
+  }
+
+  const username = req.params.username.replace(/^@/, "").toLowerCase().trim().replace(/[^a-z0-9_]/g, "");
+  if (!username) {
+    await sendPng(null);
+    return;
+  }
+
+  try {
+    const { data: profile, error: profileErr } = await sc
+      .from("profiles")
+      .select("id, username, display_name, name, avatar_url, passport_visibility, is_private")
+      .eq("handle", username)
+      .maybeSingle();
+
+    if (profileErr || !profile) {
+      await sendPng(null);
+      return;
+    }
+
+    // OG image requests come from crawlers — always unauthenticated viewers.
+    const { visibility } = await resolveProfileVisibility(sc, null, profile.id, profile);
+    if (visibility !== "full" && visibility !== "followers_only") {
+      await sendPng(null);
+      return;
+    }
+
+    const [tripResult, stampResult] = await Promise.all([
+      sc.from("trips").select("id", { count: "exact", head: true }).eq("owner_id", profile.id),
+      sc.from("stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id).eq("locked", false),
+    ]);
+
+    const avatarDataUri = profile.avatar_url ? await fetchImageAsDataUri(profile.avatar_url) : null;
+
+    await sendPng({
+      displayName: profile.display_name ?? profile.name ?? null,
+      username: profile.username ?? username,
+      tripCount: tripResult.count ?? 0,
+      stampCount: (stampResult as any).error?.code === "PGRST205" ? 0 : (stampResult.count ?? 0),
+      avatarDataUri,
+    });
+  } catch (e: any) {
+    req.log.warn({ err: e }, "og-image: lookup failed, serving generic image");
+    await sendPng(null);
+  }
+});
+
+/* ===========================================================================
  * GET /me/stamps  — caller's earned stamps
  * ===========================================================================
  * Returns only unlocked stamps (locked=false). Ordered most-recently-earned

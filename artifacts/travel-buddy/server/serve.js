@@ -81,6 +81,122 @@ function serveLandingPage(req, res, landingPageTemplate, appName) {
   res.end(html);
 }
 
+// ── /u/<username> share page with server-rendered Open Graph tags ────────────
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Fetch the public profile card from the API server (same host, /api prefix).
+ * Returns the parsed JSON or null on any failure. Never throws.
+ */
+async function fetchProfileCard(baseUrl, username) {
+  const apiOrigin = (process.env.API_ORIGIN || baseUrl).replace(/\/$/, "");
+  try {
+    const resp = await fetch(
+      `${apiOrigin}/api/users/${encodeURIComponent(username)}/profile`,
+      { signal: AbortSignal.timeout(4000), headers: { accept: "application/json" } },
+    );
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Serve HTML for /u/<username> with Open Graph metadata so chat apps render a
+ * rich preview. Private / blocked / unavailable / unknown profiles get generic
+ * metadata (no name, no counts) so link previews never leak account state.
+ */
+async function serveProfileSharePage(req, res, username, appName) {
+  const forwardedProto = req.headers["x-forwarded-proto"];
+  const protocol = forwardedProto || "https";
+  const host = req.headers["x-forwarded-host"] || req.headers["host"];
+  const baseUrl = `${protocol}://${host}`;
+  const pageUrl = `${baseUrl}${basePath}/u/${encodeURIComponent(username)}`;
+  const apiOrigin = (process.env.API_ORIGIN || baseUrl).replace(/\/$/, "");
+
+  const card = await fetchProfileCard(baseUrl, username);
+  const isPublic =
+    card &&
+    !card.unavailable &&
+    !card.blocked &&
+    !card.private &&
+    card.visibility !== "private";
+
+  let title = `${appName} Passport`;
+  let description = "A traveler's passport of trips, stamps & postcards.";
+  let imageUrl = `${apiOrigin}/api/users/${encodeURIComponent(username)}/og-image.png`;
+
+  if (isPublic) {
+    const name = card.displayName || (card.username ? `@${card.username}` : username);
+    title = `${name} · ${appName} Passport`;
+    const trips = Number(card.tripCount) || 0;
+    const stamps = Number(card.stampCount) || 0;
+    const stats = `${trips} ${trips === 1 ? "trip" : "trips"} · ${stamps} ${stamps === 1 ? "stamp" : "stamps"}`;
+    description = card.bio ? `${stats} — ${String(card.bio).slice(0, 140)}` : `${stats} on ${appName}.`;
+  } else {
+    // Generic image endpoint enforces the same visibility rules server-side,
+    // but point at a username-less generic render to avoid cache confusion.
+    imageUrl = `${apiOrigin}/api/users/_/og-image.png`;
+  }
+
+  const deepLink = `travelbuddy://passport/@${encodeURIComponent(username)}`;
+  const safeTitle = escapeHtml(title);
+  const safeDesc = escapeHtml(description);
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>${safeTitle}</title>
+<meta name="description" content="${safeDesc}"/>
+<meta property="og:type" content="profile"/>
+<meta property="og:site_name" content="${escapeHtml(appName)}"/>
+<meta property="og:title" content="${safeTitle}"/>
+<meta property="og:description" content="${safeDesc}"/>
+<meta property="og:url" content="${escapeHtml(pageUrl)}"/>
+<meta property="og:image" content="${escapeHtml(imageUrl)}"/>
+<meta property="og:image:width" content="1200"/>
+<meta property="og:image:height" content="630"/>
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:title" content="${safeTitle}"/>
+<meta name="twitter:description" content="${safeDesc}"/>
+<meta name="twitter:image" content="${escapeHtml(imageUrl)}"/>
+<style>
+  body{margin:0;font-family:Georgia,serif;background:#0E1B31;color:#F5EFE0;display:flex;min-height:100vh;align-items:center;justify-content:center}
+  .card{max-width:420px;margin:24px;padding:40px 32px;border:2px solid #C9A227;background:#152642;text-align:center}
+  .kicker{letter-spacing:6px;font-size:12px;color:#C9A227;margin-bottom:6px}
+  h1{font-size:26px;margin:10px 0 6px}
+  p{opacity:.8;font-size:15px;line-height:1.5}
+  a.btn{display:inline-block;margin-top:18px;padding:12px 28px;background:#C9A227;color:#152642;text-decoration:none;font-weight:bold}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="kicker">TRAVEL BUDDY · PASSPORT</div>
+  <h1>${safeTitle}</h1>
+  <p>${safeDesc}</p>
+  <a class="btn" href="${escapeHtml(deepLink)}">Open in ${escapeHtml(appName)}</a>
+</div>
+</body>
+</html>`;
+
+  res.writeHead(200, {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "public, max-age=300",
+  });
+  res.end(html);
+}
+
 function serveStaticFile(urlPath, res) {
   const safePath = path.normalize(urlPath).replace(/^(\.\.(\/|\\|$))+/, "");
   const filePath = path.join(STATIC_ROOT, safePath);
@@ -124,6 +240,23 @@ const server = http.createServer((req, res) => {
     if (pathname === "/") {
       return serveLandingPage(req, res, landingPageTemplate, appName);
     }
+  }
+
+  let decodedPathname = pathname;
+  try {
+    decodedPathname = decodeURIComponent(pathname);
+  } catch {
+    // Malformed percent-encoding — fall through with the raw path (static
+    // serving will 404); never let a crafted URL throw in the handler.
+  }
+  const shareMatch = /^\/u\/(@?[A-Za-z0-9_]{1,64})\/?$/.exec(decodedPathname);
+  if (shareMatch && (req.method === "GET" || req.method === "HEAD")) {
+    const username = shareMatch[1].replace(/^@/, "").toLowerCase();
+    serveProfileSharePage(req, res, username, appName).catch(() => {
+      res.writeHead(500);
+      res.end("Internal Server Error");
+    });
+    return;
   }
 
   serveStaticFile(pathname, res);
