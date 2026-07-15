@@ -89,10 +89,6 @@ function makeFakeClient(opts: {
     return b;
   }
 
-  // Track rpc invocations so tests can assert on the toggle payload.
-  const rpcCalls: { fn: string; args: any }[] = [];
-
-
   return {
     _rpcCalls: rpcCalls,
     from: (table: string) => {

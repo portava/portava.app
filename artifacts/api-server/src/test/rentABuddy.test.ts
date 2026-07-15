@@ -191,6 +191,10 @@ function makeClient(userId: string, role = "user") {
               if (!(state as any).supportReports) (state as any).supportReports = [];
               (state as any).supportReports.push(r);
             }
+            if (t === "buddy_availability_exceptions") {
+              if (!(state as any).availabilityExceptions) (state as any).availabilityExceptions = [];
+              (state as any).availabilityExceptions.push(r);
+            }
             if (t === "rent_buddy_training_checklist") {
               if (!(state as any).trainingChecklist) (state as any).trainingChecklist = [];
               (state as any).trainingChecklist.push(r);
@@ -218,6 +222,15 @@ function makeClient(userId: string, role = "user") {
 
         // Handle updates / deletes
         if (this._updateData !== null) {
+          if (t === "buddy_availability_exceptions" && this._updateData === "__delete__") {
+            let rows = (state as any).availabilityExceptions ?? [];
+            for (const [op, col, val] of this._filters) {
+              if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
+            }
+            (state as any).availabilityExceptions =
+              ((state as any).availabilityExceptions ?? []).filter((r: any) => !rows.includes(r));
+            return { data: null, error: null };
+          }
           if (t === "rent_buddy_bookings") {
             for (const [, col, val] of this._filters) {
               if (col === "id" && state.bookings?.[val]) {
@@ -462,6 +475,18 @@ function makeClient(userId: string, role = "user") {
           }
           if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
           return { data: rows, error: null };
+        }
+
+        if (t === "buddy_availability_exceptions") {
+          const exRows = (state as any).availabilityExceptions ?? [];
+          let rows = [...exRows];
+          for (const [op, col, val] of this._filters) {
+            if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
+            if (op === "lte") rows = rows.filter((r: any) => r[col] <= val);
+            if (op === "gte") rows = rows.filter((r: any) => r[col] >= val);
+          }
+          if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
+          return { data: rows, count: rows.length, error: null };
         }
 
         if (t === "buddy_booking_events") {
@@ -2138,5 +2163,130 @@ describe("Rent a Buddy — rebook", () => {
     });
     assert.equal(r.status, 403, JSON.stringify(r.body));
     assert.equal(r.body.error, "forbidden");
+  });
+});
+
+// ── Availability settings & vacation/blocked dates (dashboard) ─────────────────
+
+describe("Rent a Buddy — dashboard availability settings & blocked dates", () => {
+  const TODAY = new Date().toISOString().slice(0, 10);
+  const IN_5 = new Date(Date.now() + 5 * 86400_000).toISOString().slice(0, 10);
+  const IN_10 = new Date(Date.now() + 10 * 86400_000).toISOString().slice(0, 10);
+  const IN_7 = new Date(Date.now() + 7 * 86400_000).toISOString().slice(0, 10);
+
+  function setupBuddy(extra: Partial<FakeState> = {}) {
+    state = {
+      featureFlags: {
+        rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true },
+        RENT_BUDDY_NIGHTLIFE_ENABLED: { flag: "RENT_BUDDY_NIGHTLIFE_ENABLED", enabled: true },
+      },
+      profiles: {
+        [USER_ID]:   { id: USER_ID, trust_score: 80 },
+        [BUDDY_USER]:{ id: BUDDY_USER, trust_score: 80 },
+      },
+      buddyProfiles: {
+        [BUDDY_PROF]: {
+          id: BUDDY_PROF, user_id: BUDDY_USER, status: "active", admin_status: "active",
+          hourly_rate_usd: 25, categories: ["city"], category_approvals: {},
+          available_now: false, min_notice_hours: null, buffer_minutes: null, max_bookings_per_day: null,
+        },
+      },
+      ...extra,
+    };
+    const client = makeClient(BUDDY_USER);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  }
+
+  it("PATCH settings saves a blocked range as a vacation exception", async () => {
+    setupBuddy();
+    const r = await req("PATCH", "/api/rent-a-buddy/dashboard/availability/settings", {
+      blockedFrom: IN_5, blockedTo: IN_10, maxBookingsPerDay: 4,
+    }, BUDDY_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.ok, true);
+    const exceptions = (state as any).availabilityExceptions ?? [];
+    assert.equal(exceptions.length, 1);
+    assert.equal(exceptions[0].exception_type, "vacation");
+    assert.equal(exceptions[0].exception_date, IN_5);
+    assert.equal(exceptions[0].end_date, IN_10);
+    assert.equal(state.buddyProfiles?.[BUDDY_PROF].max_bookings_per_day, 4);
+  });
+
+  it("GET dashboard availability returns the saved blocked range in settings", async () => {
+    setupBuddy();
+    (state as any).availabilityExceptions = [{
+      id: "ex-1", buddy_id: BUDDY_PROF, exception_type: "vacation",
+      exception_date: IN_5, end_date: IN_10,
+    }];
+    const r = await req("GET", "/api/rent-a-buddy/dashboard/availability", undefined, BUDDY_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.settings.blockedFrom, IN_5);
+    assert.equal(r.body.settings.blockedTo, IN_10);
+  });
+
+  it("PATCH settings with empty blockedFrom clears the vacation exception", async () => {
+    setupBuddy();
+    (state as any).availabilityExceptions = [{
+      id: "ex-1", buddy_id: BUDDY_PROF, exception_type: "vacation",
+      exception_date: IN_5, end_date: IN_10,
+    }];
+    const r = await req("PATCH", "/api/rent-a-buddy/dashboard/availability/settings", {
+      blockedFrom: "", blockedTo: "",
+    }, BUDDY_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(((state as any).availabilityExceptions ?? []).length, 0);
+  });
+
+  it("PATCH settings rejects an inverted blocked range", async () => {
+    setupBuddy();
+    const r = await req("PATCH", "/api/rent-a-buddy/dashboard/availability/settings", {
+      blockedFrom: IN_10, blockedTo: IN_5,
+    }, BUDDY_TOKEN);
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.error, "invalid_blocked_range");
+  });
+
+  it("PATCH settings rejects malformed dates", async () => {
+    setupBuddy();
+    const r = await req("PATCH", "/api/rent-a-buddy/dashboard/availability/settings", {
+      blockedFrom: "not-a-date",
+    }, BUDDY_TOKEN);
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.error, "invalid_blocked_from");
+  });
+
+  it("booking on a blocked date is rejected with buddy_unavailable", async () => {
+    setupBuddy();
+    (state as any).availabilityExceptions = [{
+      id: "ex-1", buddy_id: BUDDY_PROF, exception_type: "vacation",
+      exception_date: IN_5, end_date: IN_10,
+    }];
+    // traveler books inside the blocked range
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+    const r = await req("POST", "/api/rent-a-buddy/bookings", {
+      buddyId: BUDDY_PROF, bookingDate: IN_7, durationH: 1,
+      city: "Tokyo", countryCode: "JP", category: "city",
+    });
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(r.body.error, "buddy_unavailable");
+  });
+
+  it("booking outside the blocked range is not rejected as buddy_unavailable", async () => {
+    setupBuddy();
+    (state as any).availabilityExceptions = [{
+      id: "ex-1", buddy_id: BUDDY_PROF, exception_type: "vacation",
+      exception_date: IN_5, end_date: IN_7,
+    }];
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+    const r = await req("POST", "/api/rent-a-buddy/bookings", {
+      buddyId: BUDDY_PROF, bookingDate: TODAY, durationH: 1,
+      city: "Tokyo", countryCode: "JP", category: "city",
+    });
+    assert.notEqual(r.body.error, "buddy_unavailable", JSON.stringify(r.body));
   });
 });

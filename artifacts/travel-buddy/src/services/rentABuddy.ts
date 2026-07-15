@@ -412,7 +412,19 @@ export async function getDashboardRequests(): Promise<ApiResult<{ requests: Budd
   return apiFetch('/api/rent-a-buddy/dashboard/requests');
 }
 
-export async function getDashboardAvailability(): Promise<ApiResult<{ availability: BuddyAvailability[] }>> {
+export interface DashboardAvailabilitySettings {
+  availableNow: boolean;
+  minNoticeHours: number | null;
+  bufferMinutes: number | null;
+  maxBookingsPerDay: number | null;
+  blockedFrom: string | null;
+  blockedTo: string | null;
+}
+
+export async function getDashboardAvailability(): Promise<ApiResult<{
+  availability: BuddyAvailability[];
+  settings?: DashboardAvailabilitySettings | null;
+}>> {
   return apiFetch('/api/rent-a-buddy/dashboard/availability');
 }
 
@@ -660,7 +672,9 @@ export interface AvailabilitySettings {
   minNoticeHours?: number;
   bufferMinutes?: number;
   maxBookingsPerDay?: number;
+  /** ISO date (YYYY-MM-DD). Send '' to clear the blocked range. */
   blockedFrom?: string;
+  /** ISO date (YYYY-MM-DD). Send '' to clear the blocked range. */
   blockedTo?: string;
 }
 

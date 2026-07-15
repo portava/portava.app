@@ -72,6 +72,21 @@ export default function BuddyAvailabilityScreen() {
         });
       });
       if (Object.keys(g).length > 0) setGrid(g);
+      const st = res.data.settings;
+      if (st) {
+        setAvailableNow(!!st.availableNow);
+        if (st.minNoticeHours != null) {
+          const idx = [1, 2, 4, 24].indexOf(st.minNoticeHours);
+          if (idx >= 0) setNotice(NOTICE_OPTIONS[idx]);
+        }
+        if (st.bufferMinutes != null) {
+          const idx = [0, 30, 60].indexOf(st.bufferMinutes);
+          if (idx >= 0) setBuffer(BUFFER_OPTIONS[idx]);
+        }
+        if (st.maxBookingsPerDay != null) setMaxPerDay(st.maxBookingsPerDay);
+        setVacStart(st.blockedFrom ?? '');
+        setVacEnd(st.blockedTo ?? '');
+      }
     }
   }, []);
 
@@ -121,8 +136,9 @@ export default function BuddyAvailabilityScreen() {
             ? [0, 30, 60][BUFFER_OPTIONS.indexOf(buffer)]
             : undefined,
           maxBookingsPerDay: maxPerDay,
-          blockedFrom: vacStart.trim() || undefined,
-          blockedTo: vacEnd.trim() || undefined,
+          // '' clears a previously saved blocked range on the server
+          blockedFrom: vacStart.trim(),
+          blockedTo: vacEnd.trim(),
         }),
       ]);
       if (gridRes.ok && settingsRes.ok) {
@@ -270,6 +286,15 @@ export default function BuddyAvailabilityScreen() {
             </Pressable>
           </View>
         </View>
+        {(vacStart || vacEnd) ? (
+          <Pressable
+            onPress={() => { setVacStart(''); setVacEnd(''); }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={{ alignSelf: 'flex-start', marginTop: space.sm }}
+          >
+            <Text style={{ ...t.small, color: color.signal, fontWeight: '600' }}>Clear blocked dates</Text>
+          </Pressable>
+        ) : null}
         <GlobalCalendarPicker
           visible={showVacPicker}
           mode="range"

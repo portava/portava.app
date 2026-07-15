@@ -11,6 +11,8 @@ description: Verify Supabase column names against the LIVE schema (generated typ
 
 **Why:** A new map endpoint queried `user_location_state.latitude/longitude` (names recalled from earlier exploration); the real columns are `lat`/`lng`. Because the code was fail-closed, the bug produced no error — just silently zero results — and only a review round caught it. Coordinate column names are inconsistent across this schema (some tables use `lat`/`lng`, notes/other layers say latitude/longitude), so recall is unreliable.
 
+**Legacy-table trap:** `CREATE TABLE IF NOT EXISTS` silently no-ops when an older table with the *same name but a different shape* pre-exists — code compiles, every query silently fails. The rent_buddy_* family is affected (availability was realigned; profiles/bookings still drifted). Also treat docs/migrations.md "applied" rows as claims, not facts — verify against information_schema (at least one migration was marked applied but never ran).
+
 **How to apply:** grep `database.types.ts` for the table name first; add a `Pick<>`-typed row alias next to the query (cast the supabase result to it) so a future schema regen breaks the build instead of silently emptying responses. Also: for `user_location_state`, position freshness = `last_known_at` (written atomically with lat/lng on each fix), NOT `updated_at` (bumped by manual/permission-only updates).
 
 ## CHECK-constraint drift (2026-07-15)

@@ -3103,21 +3103,105 @@ router.get("/api/rent-a-buddy/dashboard/availability", async (req, res) => {
   const serviceClient = sc(auth.client);
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
-  if (!bp) return res.json({ availability: [] });
+  const { data: bp } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id, available_now, min_notice_hours, buffer_minutes, max_bookings_per_day")
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+  if (!bp) return res.json({ availability: [], settings: null });
 
+  const today = new Date().toISOString().slice(0, 10);
   const { data } = await serviceClient
     .from("rent_buddy_availability")
     .select("*")
     .eq("buddy_id", (bp as any).id)
-    .gte("date", new Date().toISOString().slice(0, 10))
+    .gte("date", today)
     .order("date");
+
+  // Current/future vacation block (single range surfaced to the dashboard UI)
+  const { data: vacations } = await serviceClient
+    .from("buddy_availability_exceptions")
+    .select("exception_date, end_date")
+    .eq("buddy_id", (bp as any).id)
+    .eq("exception_type", "vacation")
+    .or(`end_date.gte.${today},and(end_date.is.null,exception_date.gte.${today})`)
+    .order("exception_date")
+    .limit(1);
+  const vacation = (vacations ?? [])[0] as any | undefined;
 
   return res.json({
     availability: (data ?? []).map((av: any) => ({
       id: av.id, date: av.date, timeSlots: av.time_slots ?? [], isAvailable: av.is_available, notes: av.notes,
     })),
+    settings: {
+      availableNow: (bp as any).available_now ?? false,
+      minNoticeHours: (bp as any).min_notice_hours ?? null,
+      bufferMinutes: (bp as any).buffer_minutes ?? null,
+      maxBookingsPerDay: (bp as any).max_bookings_per_day ?? null,
+      blockedFrom: vacation?.exception_date ?? null,
+      blockedTo: vacation?.end_date ?? vacation?.exception_date ?? null,
+    },
   });
+});
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+router.patch("/api/rent-a-buddy/dashboard/availability/settings", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
+  if (!bp) return res.status(404).json({ error: "profile_not_found" });
+
+  const body = req.body ?? {};
+  const { availableNow, minNoticeHours, bufferMinutes, maxBookingsPerDay, blockedFrom, blockedTo } = body;
+
+  // Validate blocked range when provided (empty string = clear)
+  const hasBlockedInput = blockedFrom !== undefined || blockedTo !== undefined;
+  const from = typeof blockedFrom === "string" && blockedFrom.trim() ? blockedFrom.trim() : null;
+  const to = typeof blockedTo === "string" && blockedTo.trim() ? blockedTo.trim() : null;
+  if (from && !ISO_DATE_RE.test(from)) return res.status(400).json({ error: "invalid_blocked_from", message: "blockedFrom must be YYYY-MM-DD." });
+  if (to && !ISO_DATE_RE.test(to)) return res.status(400).json({ error: "invalid_blocked_to", message: "blockedTo must be YYYY-MM-DD." });
+  if (!from && to) return res.status(400).json({ error: "invalid_blocked_range", message: "blockedTo requires blockedFrom." });
+  if (from && to && to < from) return res.status(400).json({ error: "invalid_blocked_range", message: "blockedTo must be on or after blockedFrom." });
+
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (availableNow !== undefined) patch.available_now = !!availableNow;
+  if (minNoticeHours !== undefined) patch.min_notice_hours = minNoticeHours == null ? null : Number(minNoticeHours);
+  if (bufferMinutes !== undefined) patch.buffer_minutes = bufferMinutes == null ? null : Number(bufferMinutes);
+  if (maxBookingsPerDay !== undefined) patch.max_bookings_per_day = maxBookingsPerDay == null ? null : Number(maxBookingsPerDay);
+
+  if (Object.keys(patch).length > 1) {
+    const { error } = await serviceClient.from("rent_buddy_profiles").update(patch).eq("id", (bp as any).id);
+    if (error) return sendError(res, "db_error", error.message);
+  }
+
+  if (hasBlockedInput) {
+    // Replace the buddy's vacation block with the new range (or just clear it)
+    const { error: delError } = await serviceClient
+      .from("buddy_availability_exceptions")
+      .delete()
+      .eq("buddy_id", (bp as any).id)
+      .eq("exception_type", "vacation");
+    if (delError) return sendError(res, "db_error", delError.message);
+
+    if (from) {
+      const { error: insError } = await serviceClient
+        .from("buddy_availability_exceptions")
+        .insert({
+          buddy_id: (bp as any).id,
+          exception_date: from,
+          end_date: to ?? from,
+          exception_type: "vacation",
+          reason: "Vacation / blocked dates",
+        });
+      if (insError) return sendError(res, "db_error", insError.message);
+    }
+  }
+
+  return res.json({ ok: true });
 });
 
 router.post("/api/rent-a-buddy/dashboard/availability", async (req, res) => {
