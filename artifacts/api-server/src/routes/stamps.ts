@@ -136,6 +136,26 @@ function requireInternalSecret(req: any, res: any): boolean {
   return true;
 }
 
+// ── Universal artwork column probe ────────────────────────────────────────────
+// `stamp_definitions.universal_artwork_url` is added by migration 0124. Until
+// that migration is applied, selecting the column would 42703 every stamp
+// endpoint, so probe once and only include it when it exists. A negative
+// result is re-probed after 60s so applying the migration doesn't require a
+// server restart.
+
+let _hasArtworkCol: boolean | null = null;
+let _artProbeAt = 0;
+
+async function artCol(sc: any): Promise<string> {
+  const now = Date.now();
+  if (_hasArtworkCol === null || (_hasArtworkCol === false && now - _artProbeAt > 60_000)) {
+    const { error } = await sc.from("stamp_definitions").select("universal_artwork_url").limit(1);
+    _hasArtworkCol = !error;
+    _artProbeAt = now;
+  }
+  return _hasArtworkCol ? ", universal_artwork_url" : "";
+}
+
 // ── GET /stamps/definitions ───────────────────────────────────────────────────
 
 router.get("/stamps/definitions", async (req, res) => {
@@ -148,7 +168,7 @@ router.get("/stamps/definitions", async (req, res) => {
   let query = sc
     .from("stamp_definitions")
     .select(
-      "id, slug, name, description, stamp_type, category, icon_url, rarity, " +
+      "id, slug, name, description, stamp_type, category, icon_url" + (await artCol(sc)) + ", rarity, " +
       "is_repeatable, max_awards_per_user, visibility_default, city, country, starts_at, ends_at",
     )
     .eq("is_active", true)
@@ -179,7 +199,7 @@ router.get("/stamps/me", async (req, res) => {
   // Owner sees all stamps including revoked and hidden — use full column set with metadata
   let query = sc
     .from("user_stamps")
-    .select(OWNER_STAMP_COLS + ", stamp_definitions(slug, name, icon_url, rarity, stamp_type, category)")
+    .select(OWNER_STAMP_COLS + ", stamp_definitions(slug, name, icon_url" + (await artCol(sc)) + ", rarity, stamp_type, category)")
     .eq("user_id", user.id)
     .order("earned_at", { ascending: false })
     .limit(200);
@@ -213,7 +233,7 @@ router.get("/stamps/me/progress", async (req, res) => {
 
   const { data, error } = await sc
     .from("stamp_progress")
-    .select("stamp_definition_id, progress_count, progress_target, updated_at, stamp_definitions(slug, name, icon_url)")
+    .select("stamp_definition_id, progress_count, progress_target, updated_at, stamp_definitions(slug, name, icon_url" + (await artCol(sc)) + ")")
     .eq("user_id", user.id);
 
   if (error) { sendError(res, "db_error", error.message); return; }
@@ -292,7 +312,7 @@ router.get("/stamps/user/:userId", async (req, res) => {
     // Owner path: sees all stamps including revoked and hidden, with metadata
     const { data, error } = await sc
       .from("user_stamps")
-      .select(OWNER_STAMP_COLS + ", stamp_definitions(slug, name, icon_url, rarity, stamp_type, category)")
+      .select(OWNER_STAMP_COLS + ", stamp_definitions(slug, name, icon_url" + (await artCol(sc)) + ", rarity, stamp_type, category)")
       .eq("user_id", userId)
       .order("earned_at", { ascending: false })
       .limit(200);
@@ -306,7 +326,7 @@ router.get("/stamps/user/:userId", async (req, res) => {
 
   let query = sc
     .from("user_stamps")
-    .select(PUBLIC_STAMP_COLS + ", stamp_definitions(slug, name, icon_url, rarity, stamp_type, category)")
+    .select(PUBLIC_STAMP_COLS + ", stamp_definitions(slug, name, icon_url" + (await artCol(sc)) + ", rarity, stamp_type, category)")
     .eq("user_id", userId)
     .eq("is_revoked", false)
     .eq("display_on_passport", true)
@@ -386,7 +406,7 @@ router.get("/stamps/profile/:username", async (req, res) => {
 
   let stampQuery = sc
     .from("user_stamps")
-    .select(colSet + ", stamp_definitions(slug, name, icon_url, rarity, stamp_type, category)")
+    .select(colSet + ", stamp_definitions(slug, name, icon_url" + (await artCol(sc)) + ", rarity, stamp_type, category)")
     .eq("user_id", targetUserId)
     .order("earned_at", { ascending: false })
     .limit(100);
@@ -418,7 +438,7 @@ router.get("/stamps/recent", async (req, res) => {
 
   const { data, error } = await sc
     .from("user_stamps")
-    .select(PUBLIC_STAMP_COLS + ", stamp_definitions(slug, name, icon_url, rarity, stamp_type)")
+    .select(PUBLIC_STAMP_COLS + ", stamp_definitions(slug, name, icon_url" + (await artCol(sc)) + ", rarity, stamp_type)")
     .eq("is_revoked", false)
     .eq("visibility", "public")
     .eq("display_on_passport", true)
@@ -439,7 +459,7 @@ router.get("/stamps/city/:city", async (req, res) => {
 
   const { data, error } = await sc
     .from("user_stamps")
-    .select(PUBLIC_STAMP_COLS + ", stamp_definitions(slug, name, icon_url, rarity, stamp_type)")
+    .select(PUBLIC_STAMP_COLS + ", stamp_definitions(slug, name, icon_url" + (await artCol(sc)) + ", rarity, stamp_type)")
     .eq("city", req.params.city)
     .eq("is_revoked", false)
     .eq("visibility", "public")
@@ -460,7 +480,7 @@ router.get("/stamps/country/:country", async (req, res) => {
 
   const { data, error } = await sc
     .from("user_stamps")
-    .select(PUBLIC_STAMP_COLS + ", stamp_definitions(slug, name, icon_url, rarity, stamp_type)")
+    .select(PUBLIC_STAMP_COLS + ", stamp_definitions(slug, name, icon_url" + (await artCol(sc)) + ", rarity, stamp_type)")
     .eq("country", req.params.country)
     .eq("is_revoked", false)
     .eq("visibility", "public")
@@ -488,7 +508,7 @@ router.get("/stamps/:stampId", async (req, res) => {
   // Fetch with owner columns first — we'll check ownership after
   const { data, error } = await sc
     .from("user_stamps")
-    .select(OWNER_STAMP_COLS + ", stamp_definitions(slug, name, description, icon_url, rarity, stamp_type, category)")
+    .select(OWNER_STAMP_COLS + ", stamp_definitions(slug, name, description, icon_url" + (await artCol(sc)) + ", rarity, stamp_type, category)")
     .eq("id", stampId)
     .maybeSingle();
 

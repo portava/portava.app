@@ -692,7 +692,7 @@ router.get("/me/stamps", async (req, res) => {
     return;
   }
 
-  const stamps = (data ?? []).map((r: any) => ({
+  let stamps = (data ?? []).map((r: any) => ({
     id: r.id,
     kind: r.kind,
     label: r.label,
@@ -701,6 +701,30 @@ router.get("/me/stamps", async (req, res) => {
     checkInCount: r.check_in_count ?? 1,
     locked: r.locked ?? false,
   }));
+
+  // Best-effort: attach AI universal artwork from Stamp System v2 definitions.
+  // Legacy stamps have no definition link, so match by stamp_type (+ city).
+  // Any failure (e.g. v2 tables not yet migrated) leaves stamps unchanged.
+  try {
+    const { data: v2 } = await sc
+      .from("user_stamps")
+      .select("city, stamp_definitions(stamp_type, universal_artwork_url)")
+      .eq("user_id", user.id)
+      .eq("is_revoked", false);
+    if (v2 && v2.length > 0) {
+      const { attachUniversalArtwork } = await import("../lib/stampArtworkEnrichment.js");
+      stamps = attachUniversalArtwork(
+        stamps,
+        v2.map((r: any) => ({
+          city: r.city ?? null,
+          stampType: r.stamp_definitions?.stamp_type ?? null,
+          universalArtworkUrl: r.stamp_definitions?.universal_artwork_url ?? null,
+        })),
+      );
+    }
+  } catch {
+    /* artwork enrichment is optional — never fail the stamps response */
+  }
 
   res.status(200).json({ stamps });
 });

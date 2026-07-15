@@ -48,6 +48,7 @@ function toLegacy(s: PassportStampNew): PassportStamp {
     sublabel: sub.join(' · ') || undefined,
     earnedAt: s.earnedAt,
     locked: s.isRevoked,
+    universalArtworkUrl: s.definition?.universalArtworkUrl ?? undefined,
   };
 }
 

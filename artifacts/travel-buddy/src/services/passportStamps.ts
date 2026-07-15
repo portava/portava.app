@@ -12,6 +12,8 @@ export interface StampDefinition {
   slug: string;
   name: string;
   iconUrl: string | null;
+  /** AI-generated universal artwork image URL for this stamp definition. */
+  universalArtworkUrl?: string | null;
   rarity: 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
   stampType: string;
   category: string | null;
@@ -169,42 +171,8 @@ async function apiPatch<T>(path: string, body: unknown): Promise<ApiResult<T>> {
   }
 }
 
-function mapDefinition(d: any): StampDefinition | null {
-  if (!d) return null;
-  return {
-    slug:        d.slug ?? '',
-    name:        d.name ?? '',
-    iconUrl:     d.icon_url ?? d.iconUrl ?? null,
-    rarity:      d.rarity ?? 'common',
-    stampType:   d.stamp_type ?? d.stampType ?? 'city',
-    category:    d.category ?? null,
-    description: d.description ?? null,
-  };
-}
-
-function mapStamp(r: any): PassportStampNew {
-  const def = mapDefinition(r.definition ?? r.stamp_definitions ?? null);
-  return {
-    id:                 r.id,
-    stampDefinitionId:  r.stamp_definition_id ?? r.stampDefinitionId ?? null,
-    definition:         def,
-    stampType:          def?.stampType ?? r.stamp_type ?? r.stampType ?? 'city',
-    country:            r.country ?? null,
-    city:               r.city ?? null,
-    neighborhood:       r.neighborhood ?? null,
-    titleOverride:      r.title_override ?? r.titleOverride ?? null,
-    placeId:            r.place_id ?? r.placeId ?? null,
-    planId:             r.plan_id ?? r.planId ?? null,
-    tripId:             r.trip_id ?? r.tripId ?? null,
-    sourceType:         r.source_type ?? r.sourceType ?? 'system',
-    verificationLevel:  r.verification_level ?? r.verificationLevel ?? 'unverified',
-    visibility:         r.visibility ?? 'public',
-    displayOnPassport:  r.display_on_passport ?? r.displayOnPassport ?? true,
-    isRevoked:          r.is_revoked ?? r.isRevoked ?? false,
-    earnedAt:           r.earned_at ?? r.earnedAt ?? new Date().toISOString(),
-    createdAt:          r.created_at ?? r.createdAt ?? new Date().toISOString(),
-  };
-}
+export { mapStamp, mapDefinition } from './passportStampMappers';
+import { mapStamp } from './passportStampMappers';
 
 function mapMemory(r: any): PassportMemory {
   return {
