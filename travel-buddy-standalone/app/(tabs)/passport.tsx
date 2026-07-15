@@ -1,8 +1,8 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { View, Text, Image, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert } from 'react-native';
+import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Share2, Clock, Camera } from 'lucide-react-native';
+import { Share2, Clock } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { uploadAvatar, uploadCover } from '../../src/services/profile';
 import { getPendingPosts } from '../../src/services/posts';
@@ -15,50 +15,56 @@ import { HighlightViewer } from '../../src/components/HighlightViewer';
 import { HighlightComposer } from '../../src/components/HighlightComposer';
 import { PostcardComposer } from '../../src/components/PostcardComposer';
 import { MemoriesTab } from '../../src/components/MemoriesTab';
+import { TripsTab } from '../../src/components/TripsTab';
 import { SuggestedMemoryModal } from '../../src/components/SuggestedMemoryModal';
 import type { PassportMemory } from '../../src/services/passportStamps';
 import { useSession } from '../../src/context/SessionContext';
 import { listMyTrips } from '../../src/services/trips';
-import { PassportHero } from '../../src/components/PassportHero';
-import { CompactStatsRow } from '../../src/components/CompactStatsRow';
-import { PassportVerificationStamp } from '../../src/components/PassportVerificationStamp';
-import { VerificationLevelsRail } from '../../src/components/VerificationLevelsRail';
-import type { VerificationLevelStatus } from '../../src/components/VerificationLevelsRail';
-import { PostcardsTab } from '../../src/components/PostcardsTab';
-import { StampsTab } from '../../src/components/StampsTab';
-import { TripsTab } from '../../src/components/TripsTab';
-import { PassportStampsRail } from '../../src/components/PassportStampsRail';
 import { PassportSettingsSheet } from '../../src/components/PassportSettingsSheet';
 import { OwnerActionMenu } from '../../src/components/OwnerActionMenu';
 import { ProfileCompletionCard } from '../../src/components/ProfileCompletionCard';
 import { PassportShareCard } from '../../src/components/PassportShareCard';
+import { PostcardsTab } from '../../src/components/PostcardsTab';
+import { StampsTab } from '../../src/components/StampsTab';
 import type { OwnProfile, PassportPostcard } from '../../src/types/models';
 import type { TripRow } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { CompassStatusCard } from '../../src/components/compass/CompassStatusCard';
 import { CompassPassportSuggestions } from '../../src/components/compass/CompassPassportSuggestions';
 import { getMyBuddyProfile, type BuddyProfile } from '../../src/services/rentABuddy';
+import type { VerificationLevelStatus } from '../../src/components/VerificationLevelsRail';
 
-type Tab = 'all' | 'stamps' | 'plans' | 'postcards';
+// ── New passport design components ──────────────────────────────────────────
+import { PassportIdentityCard } from '../../src/components/passport/PassportIdentityCard';
+import { PassportDivider } from '../../src/components/passport/PassportDivider';
+import { PassportStampCollection } from '../../src/components/passport/PassportStampCollection';
+import { PassportStampsFullView } from '../../src/components/passport/PassportStampsFullView';
+import { PassportHighlightsStrip } from '../../src/components/passport/PassportHighlightsStrip';
+import { PassportAboutSection } from '../../src/components/passport/PassportAboutSection';
+import { PassportSafetySection } from '../../src/components/passport/PassportSafetySection';
+import { PP, PP_LABEL } from '../../src/theme/passportTokens';
+
+type Tab = 'posts' | 'memories' | 'plans' | 'saved';
 const TABS: { key: Tab; label: string }[] = [
-  { key: 'all',       label: 'All' },
-  { key: 'stamps',    label: 'Stamps' },
-  { key: 'plans',     label: 'Plans' },
-  { key: 'postcards', label: 'Postcards' },
+  { key: 'posts',    label: 'Posts' },
+  { key: 'memories', label: 'Memories' },
+  { key: 'plans',    label: 'Plans' },
+  { key: 'saved',    label: 'Saved' },
 ];
 
 export default function PassportScreen() {
   const { profile, postcards, stamps, memories, suggestions, loading, error, reload } = usePassport();
   const { userId: ownUserId } = useSession();
-  const [tab, setTab] = useState<Tab>('all');
+  const [tab, setTab] = useState<Tab>('posts');
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<'profile' | 'passport' | 'preferences' | 'safety'>('profile');
   const [trips, setTrips] = useState<TripRow[]>([]);
   const [tripsLoaded, setTripsLoaded] = useState(false);
+  const [stampsViewOpen, setStampsViewOpen] = useState(false);
   const insets = useSafeAreaInsets();
 
-  // Suggestion modal — show the first pending suggestion automatically once per session
+  // Suggestion modal — show the first pending suggestion once per session
   const [activeSuggestion, setActiveSuggestion] = useState<PassportMemory | null>(null);
   const suggestionShownRef = React.useRef(false);
   React.useEffect(() => {
@@ -68,39 +74,33 @@ export default function PassportScreen() {
     }
   }, [suggestions]);
 
-  // Own highlight ring state — refreshKey forces an immediate cache-bust + re-fetch
-  // after a new highlight is created so the ring activates without waiting for TTL.
+  // Highlight ring state
   const [highlightRefreshKey, setHighlightRefreshKey] = useState(0);
   const ownRingState = useHighlightRingState(ownUserId, highlightRefreshKey);
   const hasOwnHighlights = ownRingState?.hasActive ?? false;
   const allOwnHighlightsViewed = ownRingState?.allViewed ?? false;
   const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
+  const [highlightViewerIndex, setHighlightViewerIndex] = useState(0);
   const [highlightComposerOpen, setHighlightComposerOpen] = useState(false);
   const [postcardComposerOpen, setPostcardComposerOpen] = useState(false);
-
-  // Tracks whether the composer was triggered from inside the viewer (vs. ring/camera)
   const composerFromViewer = useRef(false);
 
-  // Ring press: view existing highlights or open composer to create a new one
   const handleOwnRingPress = useCallback(() => {
     if (hasOwnHighlights) setHighlightViewerOpen(true);
     else setHighlightComposerOpen(true);
   }, [hasOwnHighlights]);
 
-  // Opens the highlight composer directly (shared by camera sheet + viewer "+" button)
   const openHighlightComposer = useCallback(() => {
     composerFromViewer.current = false;
     setHighlightComposerOpen(true);
   }, []);
 
-  // "+" button inside the viewer: close viewer, open composer, then return to viewer
   const handleAddHighlightFromViewer = useCallback(() => {
     composerFromViewer.current = true;
     setHighlightViewerOpen(false);
     setHighlightComposerOpen(true);
   }, []);
 
-  // Change avatar via camera overlay: pick image → upload → reload
   const handleChangeAvatarViaCamera = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
@@ -109,9 +109,7 @@ export default function PassportScreen() {
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.85,
+      allowsEditing: true, aspect: [1, 1], quality: 0.85,
     });
     if (result.canceled || !result.assets?.[0]) return;
     const uri = result.assets[0].uri;
@@ -124,23 +122,17 @@ export default function PassportScreen() {
     reload();
   }, [reload]);
 
-  // Camera overlay button on avatar: action sheet with Change photo / Add highlight / Cancel
   const handleCameraPress = useCallback(() => {
-    Alert.alert(
-      'Profile photo',
-      undefined,
-      [
-        { text: 'Change display photo', onPress: handleChangeAvatarViaCamera },
-        {
-          text: hasOwnHighlights ? 'Add or change highlight' : 'Add highlight',
-          onPress: openHighlightComposer,
-        },
-        { text: 'Cancel', style: 'cancel' },
-      ],
-    );
+    Alert.alert('Profile photo', undefined, [
+      { text: 'Change display photo', onPress: handleChangeAvatarViaCamera },
+      {
+        text: hasOwnHighlights ? 'Add or change highlight' : 'Add highlight',
+        onPress: openHighlightComposer,
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   }, [handleChangeAvatarViaCamera, hasOwnHighlights, openHighlightComposer]);
 
-  // On successful highlight creation: bust the cache and trigger immediate ring refresh
   const handleHighlightSuccess = useCallback(() => {
     if (ownUserId) invalidateHighlightCache(ownUserId);
     setHighlightRefreshKey((k) => k + 1);
@@ -151,17 +143,12 @@ export default function PassportScreen() {
     }
   }, [ownUserId]);
 
-  // On highlight deleted: re-fetch ring state so the ring de-activates immediately
-  // if no highlights remain, without waiting for the 60-second cache TTL.
   const handleHighlightDeleted = useCallback(() => {
     setHighlightRefreshKey((k) => k + 1);
   }, []);
 
   const [localPostcards, setLocalPostcards] = useState<PassportPostcard[]>([]);
-
-  React.useEffect(() => {
-    setLocalPostcards(postcards);
-  }, [postcards]);
+  React.useEffect(() => { setLocalPostcards(postcards); }, [postcards]);
 
   React.useEffect(() => {
     if (tab === 'plans' && !tripsLoaded) {
@@ -177,14 +164,8 @@ export default function PassportScreen() {
     setSettingsOpen(true);
   }, []);
 
-  const handleSaved = useCallback((_updated: OwnProfile) => {
-    reload();
-  }, [reload]);
-
-  const handleEditProfile = useCallback(() => {
-    router.push('/profile/edit' as any);
-  }, []);
-
+  const handleSaved = useCallback((_updated: OwnProfile) => { reload(); }, [reload]);
+  const handleEditProfile = useCallback(() => { router.push('/profile/edit' as any); }, []);
   const handleViewAsPublic = useCallback(() => {
     const username = profile?.username;
     if (username) router.push(`/u/${username}` as any);
@@ -192,53 +173,46 @@ export default function PassportScreen() {
 
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator color={color.signal} />
+      <View style={[s.center, { backgroundColor: PP.paperDeep }]}>
+        <ActivityIndicator color={PP.ink} />
       </View>
     );
   }
 
   if (error || !profile) {
     return (
-      <View style={[styles.center, { paddingTop: insets.top + 32, paddingHorizontal: space.xl, gap: space.lg }]}>
-        <Text style={{ ...t.heading, color: color.ink, textAlign: 'center' }}>
+      <View style={[s.center, { paddingTop: insets.top + 32, paddingHorizontal: space.xl, gap: space.lg, backgroundColor: PP.paperDeep }]}>
+        <Text style={{ ...t.heading, color: PP.ink, textAlign: 'center' }}>
           {error ? 'Could not load your passport' : 'Sign in to view your passport'}
         </Text>
-        <Text style={{ ...t.body, color: color.mute, textAlign: 'center' }}>
-          {error
-            ? 'Check your connection and try again.'
-            : 'Your travel passport, stamps, and memories live here once you sign in.'}
+        <Text style={{ ...t.body, color: PP.inkMuted, textAlign: 'center' }}>
+          {error ? 'Check your connection and try again.' : 'Your travel passport lives here once you sign in.'}
         </Text>
-        {error ? (
-          <Pressable
-            style={{ backgroundColor: color.signal, paddingHorizontal: space.xl, paddingVertical: 12, borderRadius: radius.md }}
-            onPress={reload}
-          >
-            <Text style={{ ...t.bodyStrong, color: '#fff' }}>Retry</Text>
-          </Pressable>
-        ) : (
-          <Pressable
-            style={{ backgroundColor: color.signal, paddingHorizontal: space.xl, paddingVertical: 12, borderRadius: radius.md }}
-            onPress={() => router.push('/sign-in')}
-          >
-            <Text style={{ ...t.bodyStrong, color: '#fff' }}>Sign in</Text>
-          </Pressable>
-        )}
+        <Pressable
+          style={{ backgroundColor: PP.ink, paddingHorizontal: space.xl, paddingVertical: 12, borderRadius: radius.pill }}
+          onPress={error ? reload : () => router.push('/sign-in')}
+        >
+          <Text style={{ ...t.bodyStrong, color: PP.paper }}>{error ? 'Retry' : 'Sign in'}</Text>
+        </Pressable>
       </View>
     );
   }
 
-  const handleSuggestionAccepted = (id: string) => {
-    setActiveSuggestion(null);
-    reload();
-  };
+  const verifiedStamps = stamps.filter((s) => !s.locked).length;
+  const { cardRef, share, sharing } = usePassportShare(profile.username ?? null);
 
-  const handleSuggestionDismissed = (id: string) => {
-    setActiveSuggestion(null);
+  // Compute verification levels for SafetySection
+  const lvl = profile.verificationLevel ?? 'none';
+  const verificationLevels: VerificationLevelStatus = {
+    basicVerified:  ['basic_verified', 'trusted_traveler', 'host_verified', 'buddy_verified'].includes(lvl),
+    trustedTraveler:['trusted_traveler', 'host_verified', 'buddy_verified'].includes(lvl),
+    hostVerified:   !!profile.hostVerifiedAt,
+    buddyVerified:  !!profile.buddyVerifiedAt,
   };
+  const noSafetyFlags = (profile.safetyFlagsCount ?? 0) === 0;
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={[s.root, { backgroundColor: PP.paperDeep }]}>
       <PassportContent
         profile={profile}
         postcards={localPostcards}
@@ -261,13 +235,25 @@ export default function PassportScreen() {
         insets={insets}
         hasHighlights={hasOwnHighlights}
         allHighlightsViewed={allOwnHighlightsViewed}
+        highlights={ownRingState?.highlights ?? []}
         onHighlightRingPress={handleOwnRingPress}
         onNewHighlightPress={handleCameraPress}
+        onHighlightBubblePress={(i) => { setHighlightViewerIndex(i); setHighlightViewerOpen(true); }}
         onAddPostcard={() => setPostcardComposerOpen(true)}
+        stampsViewOpen={stampsViewOpen}
+        setStampsViewOpen={setStampsViewOpen}
+        verificationLevels={verificationLevels}
+        noSafetyFlags={noSafetyFlags}
+        cardRef={cardRef}
+        share={share}
+        sharing={sharing}
       />
+
+      {/* ── Modals ── */}
       <HighlightViewer
         visible={highlightViewerOpen}
         highlights={ownRingState?.highlights ?? []}
+        startIndex={highlightViewerIndex}
         currentUserId={ownUserId ?? undefined}
         onClose={() => setHighlightViewerOpen(false)}
         onAddHighlight={handleAddHighlightFromViewer}
@@ -287,18 +273,22 @@ export default function PassportScreen() {
         suggestion={activeSuggestion}
         visible={activeSuggestion !== null}
         onClose={() => setActiveSuggestion(null)}
-        onAccepted={handleSuggestionAccepted}
-        onDismissed={handleSuggestionDismissed}
+        onAccepted={(_id) => { setActiveSuggestion(null); reload(); }}
+        onDismissed={(_id) => { setActiveSuggestion(null); }}
       />
     </View>
   );
 }
 
+// ─── PassportContent ──────────────────────────────────────────────────────────
+
 function PassportContent({
   profile, postcards, stamps, memories, trips, tab, setTab,
   menuOpen, setMenuOpen, settingsOpen, setSettingsOpen,
-  settingsSection, openSettings, actions, handleSaved, handleEditProfile, handleViewAsPublic, reload, insets,
-  hasHighlights, allHighlightsViewed, onHighlightRingPress, onNewHighlightPress, onAddPostcard,
+  settingsSection, openSettings, actions, handleSaved, handleEditProfile, handleViewAsPublic,
+  reload, insets, hasHighlights, allHighlightsViewed, highlights,
+  onHighlightRingPress, onNewHighlightPress, onHighlightBubblePress, onAddPostcard,
+  stampsViewOpen, setStampsViewOpen, verificationLevels, noSafetyFlags, cardRef, share, sharing,
 }: {
   profile: OwnProfile;
   postcards: PassportPostcard[];
@@ -307,10 +297,8 @@ function PassportContent({
   trips: TripRow[];
   tab: Tab;
   setTab: (t: Tab) => void;
-  menuOpen: boolean;
-  setMenuOpen: (v: boolean) => void;
-  settingsOpen: boolean;
-  setSettingsOpen: (v: boolean) => void;
+  menuOpen: boolean; setMenuOpen: (v: boolean) => void;
+  settingsOpen: boolean; setSettingsOpen: (v: boolean) => void;
   settingsSection: 'profile' | 'passport' | 'preferences' | 'safety';
   openSettings: (s?: 'profile' | 'passport' | 'preferences' | 'safety') => void;
   actions: ReturnType<typeof usePostcardActions>;
@@ -321,14 +309,21 @@ function PassportContent({
   insets: { top: number; bottom: number };
   hasHighlights?: boolean;
   allHighlightsViewed?: boolean;
+  highlights: any[];
   onHighlightRingPress?: () => void;
   onNewHighlightPress?: () => void;
+  onHighlightBubblePress?: (index: number) => void;
   onAddPostcard?: () => void;
+  stampsViewOpen: boolean;
+  setStampsViewOpen: (v: boolean) => void;
+  verificationLevels: VerificationLevelStatus;
+  noSafetyFlags: boolean;
+  cardRef: any;
+  share: () => void;
+  sharing: boolean;
 }) {
-  const verifiedStamps = stamps.filter((s) => !s.locked).length;
-  const { cardRef, share, sharing } = usePassportShare(profile.username ?? null);
+  const verifiedStamps = stamps.filter((st) => !st.locked).length;
   const [pendingCount, setPendingCount] = useState(0);
-  const [coverError, setCoverError] = useState(false);
   const [coverUploading, setCoverUploading] = useState(false);
   const [buddyProfile, setBuddyProfile] = useState<BuddyProfile | null | undefined>(undefined);
   const [, setTrustSheetOpen] = useState(false);
@@ -341,9 +336,7 @@ function PassportContent({
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [16, 9],
-      quality: 0.85,
+      allowsEditing: true, aspect: [16, 9], quality: 0.85,
     });
     if (result.canceled || !result.assets?.[0]) return;
     setCoverUploading(true);
@@ -352,7 +345,7 @@ function PassportContent({
     const res = await uploadCover(uri, mime);
     setCoverUploading(false);
     if (!res.ok) {
-      Alert.alert('Upload failed', res.message ?? 'Could not update your cover photo. Your previous cover is still shown.');
+      Alert.alert('Upload failed', res.message ?? 'Could not update your cover photo.');
       return;
     }
     reload();
@@ -369,189 +362,139 @@ function PassportContent({
   }, [reload]));
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={s.root}>
       <ScrollView
-        style={{ flex: 1, backgroundColor: color.paper }}
-        contentContainerStyle={{ paddingTop: insets.top, paddingBottom: space.xxxl }}
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingTop: insets.top, paddingBottom: 120 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Cover photo band — full-width above the hero card.
-            Owner sees a camera edit button (bottom-right).
-            Fallback (haze) shown when coverPhotoUrl is absent or the URL fails to load. */}
-        <View style={styles.coverBand}>
-          {profile.coverPhotoUrl && !coverError ? (
-            <Image
-              source={{ uri: profile.coverPhotoUrl }}
-              style={StyleSheet.absoluteFill}
-              resizeMode="cover"
-              onError={() => setCoverError(true)}
-            />
-          ) : (
-            <View style={[StyleSheet.absoluteFill, { backgroundColor: color.haze }]} />
-          )}
-          {coverUploading && (
-            <View style={styles.coverUploadingOverlay}>
-              <ActivityIndicator size="large" color="#fff" />
-            </View>
-          )}
-          <Pressable
-            style={styles.coverEditBtn}
-            onPress={handleChangeCover}
-            disabled={coverUploading}
-            hitSlop={8}
-            accessibilityLabel="Change cover photo"
-            accessibilityRole="button"
-          >
-            {coverUploading
-              ? <ActivityIndicator size="small" color="#fff" />
-              : <Camera size={15} color="#fff" />}
-          </Pressable>
-        </View>
-
-        {/* Profile header */}
-        <PassportHero
+        {/* ── Identity Document Card ── */}
+        <PassportIdentityCard
           profile={profile}
           isOwner
-          hasHighlights={hasHighlights}
-          allHighlightsViewed={allHighlightsViewed}
           onMenuPress={() => setMenuOpen(true)}
           onAvatarPress={() => openSettings('profile')}
+          onChangeCover={handleChangeCover}
+          coverUploading={coverUploading}
+          hasHighlights={hasHighlights}
+          allHighlightsViewed={allHighlightsViewed}
           onHighlightRingPress={onHighlightRingPress}
           onNewHighlightPress={onNewHighlightPress}
           trustScore={profile.trustScore ?? undefined}
           trustLabel={profile.trustLabel ?? undefined}
           onTrustInfo={() => setTrustSheetOpen(true)}
-        />
-
-        {/* Verification Stamp — full-width, no longer paired with large trust card */}
-        <PassportVerificationStamp
-          status={profile.verificationStatus}
-          verifiedSince={profile.verifiedAt}
-          idVerified={!!profile.idVerifiedAt}
-          selfieMatched={!!profile.selfieVerifiedAt}
-          homeCountryVerified={!!profile.homeCountryVerifiedAt}
-          noSafetyFlags={(profile.safetyFlagsCount ?? 0) === 0}
-          isOwner
-        />
-
-        {/* Stats strip — Trips | Cities | Postcards | Followers | Following */}
-        <CompactStatsRow
-          tripCount={profile.tripCount ?? trips.length}
-          followersCount={profile.followersCount ?? 0}
-          followingCount={profile.followingCount ?? 0}
-          onCellPress={(label) => {
-            if (label === 'Postcards') setTab('postcards');
-            else if (label === 'Trips')  setTab('plans');
+          onStatPress={(label) => {
+            if (label === 'Trips') setTab('plans');
+            else if (label === 'Stamps') setStampsViewOpen(true);
           }}
         />
 
-        {/* Pending posts entry point — only shown when there are posts waiting */}
+        {/* ── Stamps section ── */}
+        <PassportDivider label="MY STAMPS" />
+        <PassportStampCollection
+          stamps={stamps}
+          isOwner
+          onViewAll={() => setStampsViewOpen(true)}
+          onStampPress={() => setStampsViewOpen(true)}
+        />
+
+        {/* Full stamps modal */}
+        <PassportStampsFullView
+          visible={stampsViewOpen}
+          onClose={() => setStampsViewOpen(false)}
+          stamps={stamps}
+          isOwner
+          totalCount={verifiedStamps}
+        />
+
+        {/* ── Highlights ── */}
+        <PassportDivider label="HIGHLIGHTS" />
+        <PassportHighlightsStrip
+          highlights={highlights}
+          hasActive={hasHighlights ?? false}
+          allViewed={allHighlightsViewed ?? false}
+          isOwner
+          onHighlightPress={onHighlightBubblePress}
+          onAddHighlight={onNewHighlightPress}
+        />
+
+        {/* ── Pending posts ── */}
         {pendingCount > 0 && (
-          <Pressable style={styles.pendingRow} onPress={() => router.push('/pending-posts' as any)}>
-            <View style={[styles.telegraphIcon, { backgroundColor: '#8B5CF620' }]}>
+          <Pressable style={s.pendingRow} onPress={() => router.push('/pending-posts' as any)}>
+            <View style={s.pendingIcon}>
               <Clock size={18} color="#8B5CF6" />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.telegraphTitle}>Pending posts</Text>
-              <Text style={styles.telegraphSub}>Posts waiting to be shared</Text>
+              <Text style={s.pendingTitle}>Pending posts</Text>
+              <Text style={s.pendingSub}>Posts waiting to be shared</Text>
             </View>
-            <View style={styles.pendingBadge}>
-              <Text style={styles.pendingBadgeText}>{pendingCount}</Text>
+            <View style={s.pendingBadge}>
+              <Text style={s.pendingBadgeText}>{pendingCount}</Text>
             </View>
           </Pressable>
         )}
 
-        {/* Profile completion prompt (owner only) */}
-        <ProfileCompletionCard
-          profile={profile}
-          onOpenSettings={() => openSettings('profile')}
-        />
-
-        {/* Compass active-user status (owner only, hides itself when opted out) */}
+        {/* ── Owner utility cards ── */}
+        <ProfileCompletionCard profile={profile} onOpenSettings={() => openSettings('profile')} />
         <CompassStatusCard />
-
-        {/* Compass "Suggested for You" — personalised recommendations (owner only) */}
         <CompassPassportSuggestions isOwner />
 
-        {/* Buddy Profile card — shown when the user has a Buddy profile */}
+        {/* ── Buddy Profile card ── */}
         {buddyProfile != null && buddyProfile.status !== 'rejected' && (
           <Pressable
-            style={bpCard.wrap}
+            style={s.bpCard}
             onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard/' as any)}
           >
-            <View style={bpCard.iconWrap}>
-              <Text style={bpCard.icon}>🤝</Text>
-            </View>
+            <View style={s.bpIcon}><Text style={{ fontSize: 20 }}>🤝</Text></View>
             <View style={{ flex: 1 }}>
-              <Text style={bpCard.title}>
-                {buddyProfile.status === 'active' ? 'Your Buddy Profile' :
-                  buddyProfile.status === 'paused' ? 'Buddy Profile (Paused)' : 'Buddy Application'}
+              <Text style={s.bpTitle}>
+                {buddyProfile.status === 'active' ? 'Your Buddy Profile'
+                  : buddyProfile.status === 'paused' ? 'Buddy Profile (Paused)' : 'Buddy Application'}
               </Text>
-              <Text style={bpCard.sub}>
+              <Text style={s.bpSub}>
                 {buddyProfile.status === 'active'
                   ? `${buddyProfile.city} · ${buddyProfile.reviewCount} review${buddyProfile.reviewCount !== 1 ? 's' : ''}`
                   : buddyProfile.status === 'paused'
                     ? 'Your profile is currently hidden from search'
-                    : 'Application under review — we\'ll notify you soon'}
+                    : "Application under review — we'll notify you soon"}
               </Text>
             </View>
-            <View style={[bpCard.badge, {
-              backgroundColor: buddyProfile.status === 'active' ? '#EEF8F3' :
-                buddyProfile.status === 'paused' ? color.haze : '#FFF8ED',
+            <View style={[s.bpBadge, {
+              backgroundColor: buddyProfile.status === 'active' ? '#EEF8F3'
+                : buddyProfile.status === 'paused' ? color.haze : '#FFF8ED',
             }]}>
-              <Text style={[bpCard.badgeText, {
-                color: buddyProfile.status === 'active' ? color.success :
-                  buddyProfile.status === 'paused' ? color.mute : color.warn,
+              <Text style={[s.bpBadgeText, {
+                color: buddyProfile.status === 'active' ? color.success
+                  : buddyProfile.status === 'paused' ? color.mute : color.warn,
               }]}>
-                {buddyProfile.status === 'active' ? 'Active' :
-                  buddyProfile.status === 'paused' ? 'Paused' : 'In Review'}
+                {buddyProfile.status === 'active' ? 'Active'
+                  : buddyProfile.status === 'paused' ? 'Paused' : 'In Review'}
               </Text>
             </View>
           </Pressable>
         )}
 
-        {/* My Stamps horizontal rail */}
-        <PassportStampsRail
-          stamps={stamps}
-          isVerified={profile.verificationStatus === 'verified'}
-          verifiedSince={profile.verifiedAt}
-          isOwner
-          onViewAll={() => setTab('stamps')}
-          onStampPress={() => setTab('stamps')}
-          onVerificationStampPress={() => setTab('stamps')}
-        />
-
-        {/* Tab bar — full-width segmented control */}
-        <View style={styles.tabBarWrap}>
+        {/* ── Document-style tab bar ── */}
+        <PassportDivider />
+        <View style={s.tabBar}>
           {TABS.map((tb) => (
             <Pressable
               key={tb.key}
-              style={[styles.tab, tab === tb.key && styles.tabActive]}
+              style={s.tabItem}
               onPress={() => setTab(tb.key)}
             >
-              <Text style={[styles.tabText, tab === tb.key && styles.tabTextActive]}>
+              <Text style={[s.tabText, tab === tb.key && s.tabTextActive]}>
                 {tb.label}
               </Text>
+              {tab === tb.key && <View style={s.tabIndicator} />}
             </Pressable>
           ))}
         </View>
+        <View style={s.tabBarRule} />
 
-        {/* Tab content */}
-        <View style={styles.tabContent}>
-          {tab === 'all' && (
-            <>
-              <PostcardsTab
-                postcards={postcards}
-                isOwner
-                actions={actions}
-                onAddPostcard={onAddPostcard}
-              />
-              <MemoriesTab memories={memories} onReload={reload} collapsed />
-            </>
-          )}
-          {tab === 'stamps' && <StampsTab stamps={stamps} isOwner />}
-          {tab === 'plans' && <TripsTab trips={trips} isOwner />}
-          {tab === 'postcards' && (
+        {/* ── Tab content ── */}
+        <View style={s.tabContent}>
+          {tab === 'posts' && (
             <PostcardsTab
               postcards={postcards}
               isOwner
@@ -559,28 +502,58 @@ function PassportContent({
               onAddPostcard={onAddPostcard}
             />
           )}
+          {tab === 'memories' && (
+            <MemoriesTab memories={memories} onReload={reload} />
+          )}
+          {tab === 'plans' && (
+            <TripsTab trips={trips} isOwner />
+          )}
+          {tab === 'saved' && (
+            <View style={s.savedEmpty}>
+              <Text style={s.savedEmptyIcon}>🔖</Text>
+              <Text style={s.savedEmptyTitle}>Saved coming soon</Text>
+              <Text style={s.savedEmptySub}>
+                Bookmarked posts and places will appear here
+              </Text>
+            </View>
+          )}
         </View>
 
-        {/* Verification Levels — always visible at the bottom of the scroll */}
-        {(() => {
-          const lvl = profile.verificationLevel ?? 'none';
-          const levels: VerificationLevelStatus = {
-            basicVerified: ['basic_verified', 'trusted_traveler', 'host_verified', 'buddy_verified'].includes(lvl),
-            trustedTraveler: ['trusted_traveler', 'host_verified', 'buddy_verified'].includes(lvl),
-            hostVerified: !!profile.hostVerifiedAt,
-            buddyVerified: !!profile.buddyVerifiedAt,
-          };
-          return <VerificationLevelsRail levels={levels} />;
-        })()}
+        {/* ── Passport dossier sections ── */}
+        <PassportDivider label="DOSSIER" />
+        <PassportAboutSection
+          profile={profile}
+          isOwner
+          onEdit={handleEditProfile}
+        />
+        <View style={{ height: 16 }} />
+        <PassportSafetySection
+          levels={verificationLevels}
+          trustScore={profile.trustScore}
+          trustLabel={profile.trustLabel}
+          noSafetyFlags={noSafetyFlags}
+          isOwner
+          onPrivacySettings={() => openSettings('safety')}
+        />
+        <View style={{ height: 24 }} />
       </ScrollView>
 
-      {/* Off-screen share card (captured by usePassportShare) */}
-      <View
-        style={styles.offScreen}
-        pointerEvents="none"
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
+      {/* ── Absolute UI: share + bell + menus ── */}
+      <Pressable
+        style={[s.shareBtn, { top: insets.top + space.sm }]}
+        onPress={share}
+        disabled={sharing}
+        hitSlop={8}
+        accessibilityLabel="Share Passport"
       >
+        {sharing
+          ? <ActivityIndicator size="small" color={PP.ink} />
+          : <Share2 size={18} color={PP.ink} />}
+      </Pressable>
+      <NotificationBell style={[s.bellBtn, { top: insets.top + space.sm }]} />
+
+      {/* Off-screen share card */}
+      <View style={s.offScreen} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
         <PassportShareCard
           ref={cardRef}
           displayName={profile.displayName ?? profile.name ?? null}
@@ -611,174 +584,98 @@ function PassportContent({
           onSaved={handleSaved}
         />
       )}
-
-      {/* Share button — top-right, next to bell */}
-      <Pressable
-        style={[styles.shareBtn, { top: insets.top + space.sm }]}
-        onPress={share}
-        disabled={sharing}
-        hitSlop={8}
-        accessibilityLabel="Share Passport"
-      >
-        {sharing ? (
-          <ActivityIndicator size="small" color={color.ink} />
-        ) : (
-          <Share2 size={18} color={color.ink} />
-        )}
-      </Pressable>
-
-      {/* Notifications bell — absolutely positioned top-right, shows popover preview */}
-      <NotificationBell style={[styles.bellBtn, { top: insets.top + space.sm }]} />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paper },
+const s = StyleSheet.create({
+  root: { flex: 1 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
-  coverBand: { width: '100%', height: 140, overflow: 'hidden' },
-  coverUploadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  coverEditBtn: {
-    position: 'absolute',
-    bottom: 10,
-    right: 10,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.35)',
-  },
-
-  offScreen: {
-    position: 'absolute',
-    left: -9999,
-    top: -9999,
-    opacity: 0,
-  },
-
-  shareBtn: {
-    position: 'absolute',
-    right: space.lg + 38 + space.sm,
-    zIndex: 20,
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: color.paperRaised,
-    borderWidth: 1,
-    borderColor: color.haze,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  bellBtn: {
-    position: 'absolute',
-    right: space.lg,
-    zIndex: 20,
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: color.paperRaised,
-    borderWidth: 1,
-    borderColor: color.haze,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  telegraphIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: color.signal + '15',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  telegraphTitle: {
-    ...t.bodyStrong,
-    color: color.ink,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  telegraphSub: {
-    ...t.small,
-    color: color.mute,
-    fontSize: 11,
-    marginTop: 1,
-  },
-
+  // Pending posts row
   pendingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    marginHorizontal: space.lg,
-    marginTop: space.xs,
-    marginBottom: space.xs,
-    backgroundColor: color.paperRaised,
-    borderWidth: 1,
-    borderColor: '#8B5CF630',
-    borderRadius: 14,
-    paddingHorizontal: space.md,
-    paddingVertical: 12,
+    flexDirection: 'row', alignItems: 'center', gap: space.md,
+    marginHorizontal: 16, marginTop: 4, marginBottom: 4,
+    backgroundColor: PP.paper,
+    borderWidth: 1, borderColor: '#8B5CF630',
+    borderRadius: 12, paddingHorizontal: space.md, paddingVertical: 12,
   },
+  pendingIcon: {
+    width: 36, height: 36, borderRadius: 10,
+    backgroundColor: '#8B5CF620',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  pendingTitle: { ...t.bodyStrong, color: PP.ink, fontSize: 14, fontWeight: '700' },
+  pendingSub: { ...t.small, color: PP.inkMuted, fontSize: 11, marginTop: 1 },
   pendingBadge: {
-    minWidth: 22,
-    height: 22,
-    borderRadius: 11,
+    minWidth: 22, height: 22, borderRadius: 11,
     backgroundColor: '#8B5CF6',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 5,
+    alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5,
   },
   pendingBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
 
-  tabBarWrap: {
-    flexDirection: 'row',
-    marginTop: space.md,
-    backgroundColor: color.paperRaised,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: color.haze,
-    padding: 4,
-    overflow: 'hidden',
-  },
-  tab: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: radius.pill,
-  },
-  tabActive: { backgroundColor: color.ink },
-  tabText: { ...t.small, color: color.mute, fontWeight: '700', fontSize: 13 },
-  tabTextActive: { color: color.onInk },
-
-  tabContent: { marginTop: space.md },
-});
-
-const bpCard = StyleSheet.create({
-  wrap: {
+  // Buddy profile card
+  bpCard: {
     flexDirection: 'row', alignItems: 'center', gap: space.md,
-    marginHorizontal: space.lg, marginTop: space.md,
-    backgroundColor: color.paperRaised,
-    borderRadius: radius.md, borderWidth: 1, borderColor: color.haze,
+    marginHorizontal: 16, marginTop: space.md,
+    backgroundColor: PP.paper,
+    borderRadius: 12, borderWidth: 1, borderColor: PP.borderLight,
     padding: space.md,
   },
-  iconWrap: {
+  bpIcon: {
     width: 40, height: 40, borderRadius: 20,
-    backgroundColor: '#EEF8F3',
+    backgroundColor: PP.paperDeep,
     alignItems: 'center', justifyContent: 'center',
   },
-  icon: { fontSize: 20 },
-  title: { ...t.bodyStrong, color: color.ink },
-  sub: { ...t.small, color: color.mute, marginTop: 2 },
-  badge: {
-    borderRadius: radius.pill,
-    paddingHorizontal: space.sm, paddingVertical: 4,
+  bpTitle: { ...t.bodyStrong, color: PP.ink },
+  bpSub: { ...t.small, color: PP.inkMuted, marginTop: 2 },
+  bpBadge: { borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: 4 },
+  bpBadgeText: { fontSize: 10, fontWeight: '800', fontFamily: 'Courier' },
+
+  // Document-style tab bar
+  tabBar: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginTop: 4,
   },
-  badgeText: { fontSize: 10, fontWeight: '800', fontFamily: 'Courier' },
+  tabItem: {
+    flex: 1, alignItems: 'center', paddingVertical: 10, position: 'relative',
+  },
+  tabText: {
+    ...PP_LABEL, fontSize: 10, color: PP.inkMuted, letterSpacing: 1.5,
+  },
+  tabTextActive: { color: PP.ink },
+  tabIndicator: {
+    position: 'absolute', bottom: 0, left: '20%', right: '20%',
+    height: 2, borderRadius: 1, backgroundColor: PP.inkLight,
+  },
+  tabBarRule: { height: 1, backgroundColor: PP.borderLight, marginHorizontal: 16 },
+  tabContent: { marginTop: space.md },
+
+  // Saved empty state
+  savedEmpty: {
+    alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32, gap: 8,
+  },
+  savedEmptyIcon: { fontSize: 40 },
+  savedEmptyTitle: { fontSize: 16, fontWeight: '700', color: PP.ink },
+  savedEmptySub: { fontSize: 13, color: PP.inkMuted, textAlign: 'center', lineHeight: 18 },
+
+  // Floating action buttons
+  shareBtn: {
+    position: 'absolute', right: space.lg + 38 + space.sm, zIndex: 20,
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: PP.paper,
+    borderWidth: 1, borderColor: PP.borderLight,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: PP.ink, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4,
+  },
+  bellBtn: {
+    position: 'absolute', right: space.lg, zIndex: 20,
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: PP.paper,
+    borderWidth: 1, borderColor: PP.borderLight,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: PP.ink, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4,
+  },
+  offScreen: { position: 'absolute', left: -9999, top: -9999, opacity: 0 },
 });

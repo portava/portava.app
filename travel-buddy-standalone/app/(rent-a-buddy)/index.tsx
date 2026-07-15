@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import {
-  Search, MapPin, Users, Shield, ChevronRight,
+  ArrowLeft, Search, MapPin, Users, Shield, ChevronRight,
   ChevronDown, ChevronUp, Star, Plane, ShoppingBag,
   Globe, Camera, Music, BookOpen, HelpCircle, AlertCircle, Bell,
 } from 'lucide-react-native';
@@ -203,9 +203,16 @@ export default function RentABuddyLanding() {
   return (
     <ScrollView
       style={styles.page}
-      contentContainerStyle={{ paddingTop: insets.top, paddingBottom: 40 + insets.bottom }}
+      contentContainerStyle={{ paddingBottom: 40 + insets.bottom }}
       showsVerticalScrollIndicator={false}
     >
+      {/* Back nav */}
+      <View style={[styles.backRow, { paddingTop: insets.top + 8 }]}>
+        <Pressable onPress={() => router.canGoBack() ? router.back() : router.push('/(tabs)/' as any)} hitSlop={8} style={{ padding: 4 }}>
+          <ArrowLeft size={22} color={color.ink} />
+        </Pressable>
+      </View>
+
       {/* Hero */}
       <View style={styles.hero}>
         <View style={styles.stampRow}>
@@ -382,7 +389,8 @@ export default function RentABuddyLanding() {
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: color.paper },
-  hero: { paddingHorizontal: space.lg, paddingTop: space.xl, paddingBottom: space.lg },
+  backRow: { paddingHorizontal: space.lg, paddingBottom: space.sm },
+  hero: { paddingHorizontal: space.lg, paddingTop: space.sm, paddingBottom: space.lg },
   disclaimer: {
     marginHorizontal: space.lg, marginTop: space.xl,
     backgroundColor: '#F7F7F7', borderRadius: radius.md,

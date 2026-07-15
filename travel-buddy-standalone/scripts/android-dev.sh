@@ -42,6 +42,13 @@ export EXPO_PUBLIC_DOMAIN="${REPLIT_DEV_DOMAIN}"
 export EXPO_PUBLIC_REPL_ID="${REPL_ID}"
 export REACT_NATIVE_PACKAGER_HOSTNAME="${REPLIT_DEV_DOMAIN}"
 
+# Derive the API base URL from the current Replit dev domain so it never goes
+# stale when the repl is forked, moved, or the domain rotates.
+# Only override if the env var isn't already set (allows local overrides).
+if [ -z "${EXPO_PUBLIC_API_BASE_URL:-}" ]; then
+  export EXPO_PUBLIC_API_BASE_URL="https://${REPLIT_DEV_DOMAIN}"
+fi
+
 # Guard: Replit may inject PORT=8080 (the API server's port) as the system
 # default. The artifact system sets PORT=20682 via [services.env], but if that
 # override is not applied, fall back to 20682 so Metro never conflicts with the

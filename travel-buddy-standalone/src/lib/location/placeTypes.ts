@@ -31,6 +31,12 @@ export interface Place {
   timezone: string | null;
   source: 'nominatim' | 'gps' | 'manual' | 'legacy' | 'recent';
   confidence?: number;
+  /** Street-level address line (may be null for city-level results) */
+  address?: string | null;
+  /** Postal / ZIP code (may be null for city-level results) */
+  postalCode?: string | null;
+  /** Full human-readable formatted address string */
+  formattedAddress?: string | null;
 }
 
 export interface RecentPlace {
@@ -56,5 +62,8 @@ export function legacyToPlace(city: string, country?: string): Place {
     lng: null,
     timezone: null,
     source: 'legacy',
+    address: null,
+    postalCode: null,
+    formattedAddress: country ? `${city}, ${country}` : city,
   };
 }

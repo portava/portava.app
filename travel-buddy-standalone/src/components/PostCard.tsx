@@ -360,22 +360,22 @@ function ItineraryCard({ post }: { post: Post }) {
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: color.paperRaised, borderRadius: radius.lg, overflow: 'hidden', ...shadow.card },
+  card: { backgroundColor: color.paperRaised, borderRadius: 14, overflow: 'hidden', ...shadow.card },
 
   hero: { height: HERO_HEIGHT },
-  heroTop: { position: 'absolute', top: space.lg, left: space.lg },
-  heroMoreBtn: { position: 'absolute', top: space.lg, right: space.lg, padding: 4 },
-  heroBottom: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: space.lg, gap: space.sm },
-  heroTitle: { ...t.hero, color: color.onInk },
+  heroTop: { position: 'absolute', top: 18, left: 18 },
+  heroMoreBtn: { position: 'absolute', top: 16, right: 16, padding: 6, borderRadius: 20, backgroundColor: 'rgba(17,17,15,0.35)' },
+  heroBottom: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: 20, paddingBottom: 22, gap: 10 },
+  heroTitle: { ...t.hero, fontSize: 28, lineHeight: 32, color: color.onInk },
   heroByRow: { flexDirection: 'row', alignItems: 'center' },
-  heroActions: { marginTop: space.sm },
+  heroActions: { marginTop: 4 },
 
   standard: {},
-  stdHead: { flexDirection: 'row', alignItems: 'center', padding: space.md, gap: space.sm },
+  stdHead: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 },
   stdImageWrap: { width: '100%', aspectRatio: 4 / 5, backgroundColor: color.deep, overflow: 'hidden' },
-  playBadge: { position: 'absolute', top: '50%', left: '50%', transform: [{ translateX: -16 }, { translateY: -16 }] },
-  stdBody: { padding: space.lg, gap: space.md },
-  moreBtn: { padding: 4 },
+  playBadge: { position: 'absolute', top: '50%', left: '50%', transform: [{ translateX: -20 }, { translateY: -20 }] },
+  stdBody: { padding: 16, gap: 10 },
+  moreBtn: { padding: 6 },
 
   imgPlaceholder: { alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: color.deep },
   imgPlaceholderCity: { fontFamily: 'Courier', fontSize: 11, color: color.onInk, fontWeight: '700', letterSpacing: 1.5 },
@@ -397,12 +397,12 @@ const styles = StyleSheet.create({
   itinMeta: { ...t.small, color: color.mute },
 
   stampRow: { flexDirection: 'row', gap: space.sm, alignItems: 'center' },
-  caption: { ...t.body, color: color.ink },
+  caption: { ...t.body, color: color.ink, lineHeight: 22 },
 
   locator: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  locatorText: { ...t.stamp, fontFamily: 'Courier' },
-  byline: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  bylineName: { ...t.bodyStrong },
+  locatorText: { ...t.stamp, fontFamily: 'Courier', fontSize: 11 },
+  byline: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  bylineName: { ...t.bodyStrong, fontSize: 14, letterSpacing: -0.1 },
 
   ghostBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 5,

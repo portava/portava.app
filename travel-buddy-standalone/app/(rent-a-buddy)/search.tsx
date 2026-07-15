@@ -95,6 +95,8 @@ export default function RentABuddySearch() {
         : 'categories'
   );
   const [city, setCity] = useState(params.city ?? '');
+  const [cityLat, setCityLat] = useState<number | undefined>(undefined);
+  const [cityLng, setCityLng] = useState<number | undefined>(undefined);
   const [selectedCategory, setSelectedCategory] = useState<BuddyCategory | undefined>(
     params.category as BuddyCategory | undefined
   );
@@ -116,7 +118,12 @@ export default function RentABuddySearch() {
     const nextPage = reset ? 1 : page + 1;
     if (reset) { setLoading(true); setError(null); }
     const res = await searchBuddies({
-      city, category: selectedCategory, page: nextPage, perPage: 10,
+      city,
+      ...(cityLat != null ? { lat: cityLat } : {}),
+      ...(cityLng != null ? { lng: cityLng } : {}),
+      category: selectedCategory,
+      page: nextPage,
+      perPage: 10,
       ...(bookingDate ? { date: bookingDate } : {}),
     });
     setLoading(false);

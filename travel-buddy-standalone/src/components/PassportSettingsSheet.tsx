@@ -10,8 +10,7 @@ import { router } from 'expo-router';
 import type { OwnProfile } from '../types/models';
 import { updateMyProfile, checkUsername, uploadAvatar } from '../services/profile';
 import { buildPassportSettingsPatch } from '../services/profilePatchBuilder';
-import { getCurrentGps, reverseGeocodeDetailed } from '../services/location';
-import { runFillHomeFromGps } from '../services/fillHomeFromGps.machine';
+import { getCurrentGps, reverseGeocodeToPlace } from '../services/location';
 import { ManualCityPicker } from './ManualCityPicker';
 import { color, space, radius, type as t } from '../theme/tokens';
 
@@ -261,28 +260,30 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
   };
 
   const fillHomeFromGps = useCallback(async () => {
-    await runFillHomeFromGps(
-      {
-        getCurrentGps,
-        reverseGeocodeDetailed,
-        onPermissionDenied: ({ onOpenSettings, onPickFromList }) => {
-          Alert.alert(
-            'Location permission is off',
-            'Enable it in settings or choose a city/place from search.',
-            [
-              { text: 'Open Settings', onPress: () => { onOpenSettings(); Linking.openSettings(); } },
-              { text: 'Choose from list', onPress: () => { onPickFromList(); setShowHomePicker(true); } },
-              { text: 'Cancel', style: 'cancel' },
-            ],
-          );
-        },
-      },
-      {
-        setHomeCity,
-        setHomeCountry,
-        setGpsLoading: setGpsLoadingHome,
-      },
-    );
+    setGpsLoadingHome(true);
+    try {
+      const gps = await getCurrentGps();
+      if (!gps.granted) {
+        Alert.alert(
+          'Location permission is off',
+          'Enable it in settings or choose a city/place from search.',
+          [
+            { text: 'Open Settings', onPress: () => Linking.openSettings() },
+            { text: 'Choose from list', onPress: () => setShowHomePicker(true) },
+            { text: 'Cancel', style: 'cancel' },
+          ],
+        );
+        return;
+      }
+      if (gps.lat == null || gps.lng == null) return;
+      const place = await reverseGeocodeToPlace(gps.lat, gps.lng);
+      if (place.city) setHomeCity(place.city);
+      if (place.country) setHomeCountry(place.country);
+    } catch {
+      // silent — user can still type or pick manually
+    } finally {
+      setGpsLoadingHome(false);
+    }
   }, []);
 
   const pickAvatar = async () => {
@@ -756,9 +757,9 @@ export function PassportSettingsSheet({ visible, profile, onClose, onSaved }: Pr
       <ManualCityPicker
         visible={showHomePicker}
         onClose={() => setShowHomePicker(false)}
-        onSelect={(city, country) => {
-          setHomeCity(city);
-          setHomeCountry(country);
+        onSelect={(place) => {
+          if (place.city) setHomeCity(place.city);
+          if (place.country) setHomeCountry(place.country);
           setShowHomePicker(false);
         }}
       />

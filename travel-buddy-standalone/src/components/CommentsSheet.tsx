@@ -1,16 +1,18 @@
 /**
- * CommentsSheet — bottom-sheet modal for viewing and adding comments.
+ * CommentsSheet — peek-to-full animated bottom sheet for post comments.
  *
- * - Loads root comments when opened (replies excluded from main list)
- * - Sticky input at the bottom, keyboard-aware
- * - Optimistically appends new comment while waiting for server
- * - Comment like / unlike
- * - Threaded one-level replies: tap "Reply" → input shows "Replying to @name"
- *   → submit posts reply via backend; new reply appended immediately to thread
- * - Replies lazy-loaded per comment, toggle open/closed
- * - Reply deletion wired to backend (same delete endpoint as comment)
- * - Handles comments_disabled error gracefully
- * - Safe-area aware; does not clash with bottom nav
+ * Behaviour:
+ *   • Opens at ~48 % screen height so the post stays visible above the sheet.
+ *   • Scrolling down in the comment list smoothly expands the sheet to full-screen.
+ *   • Scrolling back to the top collapses the sheet back to peek height.
+ *   • Tapping the keyboard focuses the input and auto-expands to fill the
+ *     space above the keyboard; dismissing the keyboard restores full height.
+ *   • Tapping the backdrop or pressing X / back animates the sheet closed.
+ *   • Pressing the handle bar collapses (if expanded) or closes (if at peek).
+ *   • On tablets (width > 600) the sheet is centred with a 560 px max-width.
+ *
+ * All comment data logic, like/reply/delete/mention wiring, and CommentsSection
+ * are completely preserved.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
@@ -20,15 +22,22 @@ import {
   Pressable,
   FlatList,
   StyleSheet,
-  KeyboardAvoidingView,
   Keyboard,
   Platform,
   Image,
   ActivityIndicator,
   Alert,
+  useWindowDimensions,
 } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  useAnimatedScrollHandler,
+  withSpring,
+  withTiming,
+  runOnJS,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
 import { X, SendHorizonal, Trash2, Heart, CornerDownRight } from 'lucide-react-native';
 import { ProfilePreviewCard } from './ProfilePreviewCard';
 import { color, space, radius, shadow } from '../theme/tokens';
@@ -53,14 +62,26 @@ import { createSubmitGuard } from '../lib/commentSubmitGuard';
 import { createLikeToggleGuard } from '../lib/likeToggleGuard';
 import { EngagementUserListSheet } from './EngagementUserListSheet';
 
+// ── Shared contexts ───────────────────────────────────────────────────────────
+
 const AuthorPressCtx = React.createContext<(handle: string) => void>(() => {});
 
 /**
  * Controls the hitSlop of like buttons.
- * Default (8) is used in the modal where vertical space is tight.
- * CommentsSection (inline / scrollable) overrides to 12 for thumb comfort.
+ * Default (8) in the modal where vertical space is tight.
+ * CommentsSection (inline) overrides to 12 for thumb comfort.
  */
 const LikeHitSlopCtx = React.createContext<number>(8);
+
+// ── Animated FlatList ─────────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const AnimFlatList = Animated.createAnimatedComponent(FlatList as any);
+
+// Shared spring config for peek ↔ full transitions
+const SHEET_SPRING = { damping: 26, stiffness: 240, mass: 0.85 } as const;
+
+// ── Prop types ────────────────────────────────────────────────────────────────
 
 interface Props {
   visible: boolean;
@@ -69,10 +90,12 @@ interface Props {
   onCountChange: (n: number) => void;
 }
 
+// ── Utility ───────────────────────────────────────────────────────────────────
+
 function timeAgo(iso: string): string {
-  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-  if (s < 60) return 'just now';
-  const m = Math.floor(s / 60);
+  const secs = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (secs < 60) return 'just now';
+  const m = Math.floor(secs / 60);
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h`;
@@ -107,6 +130,8 @@ function CommentAvatar({ uri, name, size = 32 }: { uri?: string | null; name: st
   return <AvatarFallback name={name} size={size} />;
 }
 
+// ── ReplyThread ───────────────────────────────────────────────────────────────
+
 interface ReplyThreadProps {
   replies: EngagementReply[];
   loaded: boolean;
@@ -119,11 +144,8 @@ interface ReplyThreadProps {
 }
 
 function ReplyThread({ replies, loaded, open, loading, postId, onToggle, onDelete, onLikeChange }: ReplyThreadProps) {
-  const { userId: currentUserId } = useSession();
-
   return (
     <View>
-      {/* Toggle button */}
       {(!loaded || replies.length > 0 || loading) && (
         <Pressable style={s.repliesToggle} onPress={onToggle} hitSlop={4}>
           {loading ? (
@@ -140,27 +162,24 @@ function ReplyThread({ replies, loaded, open, loading, postId, onToggle, onDelet
         </Pressable>
       )}
 
-      {/* Inline reply list */}
       {open && replies.length > 0 && (
         <View style={s.repliesContainer}>
-          {replies.map((r) => {
-            const likedByMe = r.likedByMe ?? false;
-            const likeCount = r.likeCount ?? 0;
-            return (
-              <ReplyRow
-                key={r.id}
-                reply={r}
-                postId={postId}
-                onDelete={onDelete}
-                onLikeChange={onLikeChange}
-              />
-            );
-          })}
+          {replies.map((r) => (
+            <ReplyRow
+              key={r.id}
+              reply={r}
+              postId={postId}
+              onDelete={onDelete}
+              onLikeChange={onLikeChange}
+            />
+          ))}
         </View>
       )}
     </View>
   );
 }
+
+// ── ReplyRow ──────────────────────────────────────────────────────────────────
 
 function ReplyRow({
   reply,
@@ -204,62 +223,64 @@ function ReplyRow({
 
   return (
     <>
-    <View style={s.replyRow}>
-      <CornerDownRight size={12} color={color.faint} style={s.replyIcon} />
-      <CommentAvatar uri={reply.author.avatarUrl} name={reply.author.name} size={24} />
-      <View style={s.commentBody}>
-        <View style={s.commentMeta}>
-          <Pressable onPress={() => onAuthorPress(reply.author.handle)} hitSlop={4}>
-            <Text style={s.commentAuthor}>{reply.author.name}</Text>
-          </Pressable>
-          <Text style={s.commentTime}>{timeAgo(reply.createdAt)}</Text>
+      <View style={s.replyRow}>
+        <CornerDownRight size={12} color={color.faint} style={s.replyIcon} />
+        <CommentAvatar uri={reply.author.avatarUrl} name={reply.author.name} size={24} />
+        <View style={s.commentBody}>
+          <View style={s.commentMeta}>
+            <Pressable onPress={() => onAuthorPress(reply.author.handle)} hitSlop={4}>
+              <Text style={s.commentAuthor}>{reply.author.name}</Text>
+            </Pressable>
+            <Text style={s.commentTime}>{timeAgo(reply.createdAt)}</Text>
+          </View>
+          <RichText
+            content={reply.body}
+            tags={reply.tags}
+            hashtagUsages={reply.hashtagUsages}
+            currentUserId={currentUserId ?? undefined}
+            style={s.commentText}
+          />
         </View>
-        <RichText
-          content={reply.body}
-          tags={reply.tags}
-          hashtagUsages={reply.hashtagUsages}
-          currentUserId={currentUserId ?? undefined}
-          style={s.commentText}
+        <View style={s.commentActions}>
+          <Pressable hitSlop={likeHitSlop} onPress={handleLike} disabled={liking} style={s.likeBtn}>
+            <Heart size={12} color={likedByMe ? color.signal : color.faint} fill={likedByMe ? color.signal : 'transparent'} />
+          </Pressable>
+          {likeCount > 0 && (
+            <Pressable onPress={() => setLikerReplyId(reply.id)} hitSlop={5} style={s.likeCountBtn}>
+              <Text style={[s.likeCount, likedByMe && s.likeCountActive]}>{likeCount}</Text>
+            </Pressable>
+          )}
+          {reply.canDelete && (
+            <Pressable
+              hitSlop={8}
+              onPress={() =>
+                Alert.alert('Delete reply?', 'This cannot be undone.', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Delete', style: 'destructive', onPress: () => onDelete(reply.id) },
+                ])
+              }
+              style={s.deleteBtn}
+            >
+              <Trash2 size={12} color={color.faint} />
+            </Pressable>
+          )}
+        </View>
+      </View>
+      {likerReplyId !== null && (
+        <EngagementUserListSheet
+          visible
+          targetType="comment_like"
+          targetId={likerReplyId}
+          title="Liked by"
+          initialTotal={likeCount}
+          onClose={() => setLikerReplyId(null)}
         />
-      </View>
-      <View style={s.commentActions}>
-        <Pressable hitSlop={likeHitSlop} onPress={handleLike} disabled={liking} style={s.likeBtn}>
-          <Heart size={12} color={likedByMe ? color.signal : color.faint} fill={likedByMe ? color.signal : 'transparent'} />
-        </Pressable>
-        {likeCount > 0 && (
-          <Pressable onPress={() => setLikerReplyId(reply.id)} hitSlop={5} style={s.likeCountBtn}>
-            <Text style={[s.likeCount, likedByMe && s.likeCountActive]}>{likeCount}</Text>
-          </Pressable>
-        )}
-        {reply.canDelete && (
-          <Pressable
-            hitSlop={8}
-            onPress={() =>
-              Alert.alert('Delete reply?', 'This cannot be undone.', [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Delete', style: 'destructive', onPress: () => onDelete(reply.id) },
-              ])
-            }
-            style={s.deleteBtn}
-          >
-            <Trash2 size={12} color={color.faint} />
-          </Pressable>
-        )}
-      </View>
-    </View>
-    {likerReplyId !== null && (
-      <EngagementUserListSheet
-        visible
-        targetType="comment_like"
-        targetId={likerReplyId}
-        title="Liked by"
-        initialTotal={likeCount}
-        onClose={() => setLikerReplyId(null)}
-      />
-    )}
+      )}
     </>
   );
 }
+
+// ── CommentItem ───────────────────────────────────────────────────────────────
 
 function CommentItem({
   comment,
@@ -385,21 +406,21 @@ function CommentItem({
         onDelete={(replyId) => onReplyDelete(comment.id, replyId)}
         onLikeChange={(replyId, liked, count) => onReplyLikeChange(comment.id, replyId, liked, count)}
       />
-    {likerCommentId !== null && (
-      <EngagementUserListSheet
-        visible
-        targetType="comment_like"
-        targetId={likerCommentId}
-        title="Liked by"
-        initialTotal={likeCount}
-        onClose={() => setLikerCommentId(null)}
-      />
-    )}
+      {likerCommentId !== null && (
+        <EngagementUserListSheet
+          visible
+          targetType="comment_like"
+          targetId={likerCommentId}
+          title="Liked by"
+          initialTotal={likeCount}
+          onClose={() => setLikerCommentId(null)}
+        />
+      )}
     </View>
   );
 }
 
-// ── Inline comments section (for embedding in a ScrollView, e.g. post detail) ─
+// ── CommentsSection — inline embed (post detail screen) ───────────────────────
 
 interface SectionProps {
   postId: string;
@@ -564,116 +585,140 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
 
   return (
     <LikeHitSlopCtx.Provider value={12}>
-    <AuthorPressCtx.Provider value={setPreviewHandle}>
-      <Pressable onPress={() => Keyboard.dismiss()} accessible={false}>
-      <View style={sec.wrap}>
-        {loading ? (
-          <View style={sec.center}>
-            <ActivityIndicator color={color.signal} />
-          </View>
-        ) : comments.length === 0 ? (
-          <View style={sec.center}>
-            <Text style={sec.empty}>No comments yet. Start the conversation.</Text>
-          </View>
-        ) : (
-          <View style={sec.list}>
-            {comments.map((item) => (
-              <CommentItem
-                key={item.id}
-                comment={item}
-                postId={postId}
-                replies={repliesMap[item.id] ?? []}
-                repliesLoaded={repliesLoaded.has(item.id)}
-                repliesOpen={repliesOpen.has(item.id)}
-                repliesLoading={repliesLoading.has(item.id)}
-                onDelete={handleDelete}
-                onLikeChange={handleLikeChange}
-                onReply={handleReply}
-                onLoadReplies={handleLoadReplies}
-                onToggleReplies={handleToggleReplies}
-                onReplyDelete={handleReplyDelete}
-                onReplyLikeChange={handleReplyLikeChange}
-              />
-            ))}
-          </View>
-        )}
+      <AuthorPressCtx.Provider value={setPreviewHandle}>
+        <Pressable onPress={() => Keyboard.dismiss()} accessible={false}>
+          <View style={sec.wrap}>
+            {loading ? (
+              <View style={sec.center}>
+                <ActivityIndicator color={color.signal} />
+              </View>
+            ) : comments.length === 0 ? (
+              <View style={sec.center}>
+                <Text style={sec.empty}>No comments yet. Start the conversation.</Text>
+              </View>
+            ) : (
+              <View style={sec.list}>
+                {comments.map((item) => (
+                  <CommentItem
+                    key={item.id}
+                    comment={item}
+                    postId={postId}
+                    replies={repliesMap[item.id] ?? []}
+                    repliesLoaded={repliesLoaded.has(item.id)}
+                    repliesOpen={repliesOpen.has(item.id)}
+                    repliesLoading={repliesLoading.has(item.id)}
+                    onDelete={handleDelete}
+                    onLikeChange={handleLikeChange}
+                    onReply={handleReply}
+                    onLoadReplies={handleLoadReplies}
+                    onToggleReplies={handleToggleReplies}
+                    onReplyDelete={handleReplyDelete}
+                    onReplyLikeChange={handleReplyLikeChange}
+                  />
+                ))}
+              </View>
+            )}
 
-        {commentsDisabled && (
-          <View style={s.disabledBanner}>
-            <Text style={s.disabledText}>Comments have been turned off.</Text>
-          </View>
-        )}
+            {commentsDisabled && (
+              <View style={s.disabledBanner}>
+                <Text style={s.disabledText}>Comments have been turned off.</Text>
+              </View>
+            )}
 
-        {replyingTo && (
-          <View style={s.replyContext}>
-            <Text style={s.replyContextText} numberOfLines={1}>
-              Replying to {replyingTo.authorName}
-            </Text>
-            <Pressable onPress={() => setReplyingTo(null)} hitSlop={8}>
-              <X size={14} color={color.faint} />
-            </Pressable>
-          </View>
-        )}
+            {replyingTo && (
+              <View style={s.replyContext}>
+                <Text style={s.replyContextText} numberOfLines={1}>
+                  Replying to {replyingTo.authorName}
+                </Text>
+                <Pressable onPress={() => setReplyingTo(null)} hitSlop={8}>
+                  <X size={14} color={color.faint} />
+                </Pressable>
+              </View>
+            )}
 
-        <MentionSuggestionList
-          suggestions={mentionSuggestions}
-          loading={mentionLoading}
-          visible={mentionVisible}
-          onSelect={(sg) => mentionRef.current?.insertTag(sg)}
-        />
-
-        {!commentsDisabled && (
-          <View style={s.inputRow}>
-            <MentionInput
-              ref={mentionRef}
-              style={s.input}
-              value={text}
-              onChangeText={setText}
-              placeholder={inputPlaceholder}
-              placeholderTextColor={color.faint}
-              multiline
-              maxLength={1000}
-              returnKeyType="default"
-              blurOnSubmit={false}
-              surface="comment"
-              onFocus={onInputFocus}
-              onSuggestionsChange={(items, isLoading, trigger) => {
-                setMentionSuggestions(items);
-                setMentionLoading(isLoading);
-                setMentionVisible(!!trigger && (items.length > 0 || isLoading));
-              }}
+            <MentionSuggestionList
+              suggestions={mentionSuggestions}
+              loading={mentionLoading}
+              visible={mentionVisible}
+              onSelect={(sg) => mentionRef.current?.insertTag(sg)}
             />
-            <Pressable
-              style={[s.sendBtn, (!text.trim() || submitting) && s.sendBtnDisabled]}
-              onPress={handleSubmit}
-              disabled={!text.trim() || submitting}
-              hitSlop={8}
-            >
-              {submitting ? (
-                <ActivityIndicator size="small" color={color.onInk} />
-              ) : (
-                <SendHorizonal size={18} color={color.onInk} />
-              )}
-            </Pressable>
-          </View>
-        )}
-      </View>
-      </Pressable>
 
-      <ProfilePreviewCard
-        username={previewHandle}
-        visible={previewHandle !== null}
-        onClose={() => setPreviewHandle(null)}
-      />
-    </AuthorPressCtx.Provider>
+            {!commentsDisabled && (
+              <View style={s.inputRow}>
+                <MentionInput
+                  ref={mentionRef}
+                  style={s.input}
+                  value={text}
+                  onChangeText={setText}
+                  placeholder={inputPlaceholder}
+                  placeholderTextColor={color.faint}
+                  multiline
+                  maxLength={1000}
+                  returnKeyType="default"
+                  blurOnSubmit={false}
+                  surface="comment"
+                  onFocus={onInputFocus}
+                  onSuggestionsChange={(items, isLoading, trigger) => {
+                    setMentionSuggestions(items);
+                    setMentionLoading(isLoading);
+                    setMentionVisible(!!trigger && (items.length > 0 || isLoading));
+                  }}
+                />
+                <Pressable
+                  style={[s.sendBtn, (!text.trim() || submitting) && s.sendBtnDisabled]}
+                  onPress={handleSubmit}
+                  disabled={!text.trim() || submitting}
+                  hitSlop={8}
+                >
+                  {submitting ? (
+                    <ActivityIndicator size="small" color={color.onInk} />
+                  ) : (
+                    <SendHorizonal size={18} color={color.onInk} />
+                  )}
+                </Pressable>
+              </View>
+            )}
+          </View>
+        </Pressable>
+
+        <ProfilePreviewCard
+          username={previewHandle}
+          visible={previewHandle !== null}
+          onClose={() => setPreviewHandle(null)}
+        />
+      </AuthorPressCtx.Provider>
     </LikeHitSlopCtx.Provider>
   );
 }
 
-// ── Modal sheet wrapper ───────────────────────────────────────────────────────
+// ── CommentsSheet — peek-to-full animated bottom sheet ────────────────────────
 
 export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props) {
+  const { height: SCREEN_H, width: SCREEN_W } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+
+  // Height breakpoints — recomputed on rotation/resize
+  const PEEK_H = Math.round(SCREEN_H * 0.48);
+  const FULL_H = SCREEN_H - Math.max(insets.top, 20);
+  const isWide = SCREEN_W > 600;
+
+  // ── Reanimated shared values ────────────────────────────────────────────────
+  const sheetH = useSharedValue(0);
+  const backdropAlpha = useSharedValue(0);
+  const kbOffset = useSharedValue(0);    // lifts sheet above keyboard
+  const expanded = useSharedValue(false);
+
+  // Sync height breakpoints into shared values for the scroll worklet
+  const peekHSv = useSharedValue(PEEK_H);
+  const fullHSv = useSharedValue(FULL_H);
+  useEffect(() => { peekHSv.value = PEEK_H; }, [PEEK_H]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fullHSv.value = FULL_H; }, [FULL_H]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Mount flag — lets us animate out before unmounting the Modal ────────────
+  const [mounted, setMounted] = useState(false);
+  const isClosingRef = useRef(false);
+
+  // ── Comment data state ──────────────────────────────────────────────────────
   const [comments, setComments] = useState<EngagementComment[]>([]);
   const [loading, setLoading] = useState(false);
   const [commentsDisabled, setCommentsDisabled] = useState(false);
@@ -684,16 +729,14 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
   const [mentionSuggestions, setMentionSuggestions] = useState<AnyMentionSuggestion[]>([]);
   const [mentionLoading, setMentionLoading] = useState(false);
   const [mentionVisible, setMentionVisible] = useState(false);
-
-  // Lifted reply state: keyed by parent comment id
   const [repliesMap, setRepliesMap] = useState<Record<string, EngagementReply[]>>({});
   const [repliesLoaded, setRepliesLoaded] = useState<Set<string>>(new Set());
   const [repliesOpen, setRepliesOpen] = useState<Set<string>>(new Set());
   const [repliesLoading, setRepliesLoading] = useState<Set<string>>(new Set());
-
   const [previewHandle, setPreviewHandle] = useState<string | null>(null);
   const submitGuardRef = useRef(createSubmitGuard());
 
+  // ── Load comments ───────────────────────────────────────────────────────────
   const load = useCallback(async () => {
     setLoading(true);
     const data = await listComments(postId);
@@ -701,19 +744,105 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
     setLoading(false);
   }, [postId]);
 
+  // ── Open: visible → mount → animate in ─────────────────────────────────────
   useEffect(() => {
-    if (visible) {
-      setCommentsDisabled(false);
-      setReplyingTo(null);
-      setRepliesMap({});
-      setRepliesLoaded(new Set());
-      setRepliesOpen(new Set());
-      setRepliesLoading(new Set());
-      load();
-      setText('');
+    if (visible && !mounted) {
+      isClosingRef.current = false;
+      setMounted(true);
     }
-  }, [visible, load]);
+  }, [visible, mounted]);
 
+  useEffect(() => {
+    if (!mounted) return;
+    // Reset per-session state
+    expanded.value = false;
+    kbOffset.value = 0;
+    sheetH.value = 0;
+    backdropAlpha.value = 0;
+    setCommentsDisabled(false);
+    setReplyingTo(null);
+    setRepliesMap({});
+    setRepliesLoaded(new Set());
+    setRepliesOpen(new Set());
+    setRepliesLoading(new Set());
+    setText('');
+    load();
+    // Slide up from bottom
+    sheetH.value = withSpring(PEEK_H, SHEET_SPRING);
+    backdropAlpha.value = withTiming(1, { duration: 280 });
+  // PEEK_H is stable at mount time; intentionally excluded from deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted]);
+
+  // ── Close: animate out → unmount ────────────────────────────────────────────
+  const doClose = useCallback(() => {
+    if (isClosingRef.current) return;
+    isClosingRef.current = true;
+    Keyboard.dismiss();
+    kbOffset.value = withTiming(0, { duration: 160 });
+    backdropAlpha.value = withTiming(0, { duration: 220 });
+    sheetH.value = withTiming(0, { duration: 240 }, () => {
+      runOnJS(setMounted)(false);
+      runOnJS(onClose)();
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onClose]);
+
+  // Stable ref so effects always call the latest doClose without re-subscribing
+  const doCloseRef = useRef(doClose);
+  useEffect(() => { doCloseRef.current = doClose; }, [doClose]);
+
+  // Sync: if parent sets visible=false externally (e.g. navigating away)
+  useEffect(() => {
+    if (!visible && mounted && !isClosingRef.current) {
+      doCloseRef.current();
+    }
+  }, [visible, mounted]);
+
+  // ── Keyboard: lift sheet + fill available space while typing ────────────────
+  useEffect(() => {
+    if (!mounted) return;
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const onKbShow = Keyboard.addListener(showEvt, (e) => {
+      const kb = e.endCoordinates.height;
+      const dur = Platform.OS === 'ios' ? Math.min(e.duration ?? 250, 300) : 200;
+      kbOffset.value = withTiming(kb, { duration: dur });
+      // Shrink height so the sheet fits between status bar and keyboard
+      sheetH.value = withTiming(SCREEN_H - Math.max(insets.top, 20) - kb, { duration: dur });
+      expanded.value = true;
+    });
+
+    const onKbHide = Keyboard.addListener(hideEvt, (e) => {
+      const dur = Platform.OS === 'ios' ? Math.min(e.duration ?? 250, 300) : 200;
+      kbOffset.value = withTiming(0, { duration: dur });
+      // Restore full-screen height so the list fills the space again
+      sheetH.value = withTiming(fullHSv.value, { duration: dur });
+      expanded.value = true;
+    });
+
+    return () => { onKbShow.remove(); onKbHide.remove(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted, SCREEN_H, insets.top]);
+
+  // ── Scroll-driven expand / collapse ─────────────────────────────────────────
+  // Runs entirely on the UI thread — no JS-bridge round-trip per frame.
+  const scrollHandler = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      'worklet';
+      const y = event.contentOffset.y;
+      if (y > 50 && !expanded.value) {
+        expanded.value = true;
+        sheetH.value = withSpring(fullHSv.value, SHEET_SPRING);
+      } else if (y < 15 && expanded.value) {
+        expanded.value = false;
+        sheetH.value = withSpring(peekHSv.value, SHEET_SPRING);
+      }
+    },
+  });
+
+  // ── Reply / like / submit handlers ──────────────────────────────────────────
   const handleLoadReplies = useCallback(async (commentId: string) => {
     setRepliesLoading((prev) => new Set(prev).add(commentId));
     const data = await listReplies(postId, commentId);
@@ -733,15 +862,12 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
   }, []);
 
   const handleReplyDelete = useCallback(async (commentId: string, replyId: string) => {
-    // Optimistic: remove from UI immediately
     setRepliesMap((prev) => ({
       ...prev,
       [commentId]: (prev[commentId] ?? []).filter((r) => r.id !== replyId),
     }));
-    // Persist to server — use same delete endpoint (reply is just a comment with parent)
     const result = await deleteComment(postId, replyId);
     if (!result) {
-      // Rollback on failure — reload replies
       handleLoadReplies(commentId);
       Alert.alert('Error', 'Could not delete reply. Please try again.');
     }
@@ -779,7 +905,6 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
             setText('');
             const parentId = replyingTo.id;
             setReplyingTo(null);
-            // Append new reply immediately to the thread; open the thread if needed
             setRepliesMap((prev) => ({
               ...prev,
               [parentId]: [...(prev[parentId] ?? []), result.reply],
@@ -841,40 +966,96 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
 
   const inputPlaceholder = replyingTo ? `Reply to ${replyingTo.authorName}…` : 'Add a comment…';
 
+  // ── Animated styles ─────────────────────────────────────────────────────────
+  const backdropAnimStyle = useAnimatedStyle(() => ({
+    opacity: backdropAlpha.value * 0.50,
+  }));
+
+  const sheetAnimStyle = useAnimatedStyle(() => ({
+    height: sheetH.value,
+    bottom: kbOffset.value,
+  }));
+
+  // Tablet: centre the sheet with rounded corners on all sides
+  const sheetWideOverride: object | undefined = isWide
+    ? {
+        left: Math.max((SCREEN_W - 560) / 2, 0),
+        right: Math.max((SCREEN_W - 560) / 2, 0),
+        borderRadius: 20,
+      }
+    : undefined;
+
+  // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <AuthorPressCtx.Provider value={setPreviewHandle}>
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent
-      onRequestClose={onClose}
-      statusBarTranslucent
-    >
-      <Pressable style={s.backdrop} onPress={onClose} />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={s.sheetWrapper}
-        keyboardVerticalOffset={0}
+      <Modal
+        visible={mounted}
+        transparent
+        animationType="none"
+        onRequestClose={doClose}
+        statusBarTranslucent
       >
-        <View style={[s.sheet, { paddingBottom: insets.bottom + space.sm }]}>
+        {/*
+         * Z-order (last child = on top):
+         *   1. Dark backdrop  — visual only, pointerEvents="none"
+         *   2. Backdrop Pressable — tap area above/beside the sheet to close
+         *   3. Animated sheet — highest z-index, intercepts all touches in its area
+         *      so backdrop Pressable never fires when user touches the sheet.
+         */}
+
+        {/* ① Visual backdrop */}
+        <Animated.View
+          style={[StyleSheet.absoluteFillObject, s.backdropFill, backdropAnimStyle]}
+          pointerEvents="none"
+        />
+
+        {/* ② Tap-outside-to-close */}
+        <Pressable
+          style={StyleSheet.absoluteFillObject}
+          onPress={doClose}
+          accessible={false}
+        />
+
+        {/* ③ Animated sheet */}
+        <Animated.View style={[s.sheet, sheetAnimStyle, sheetWideOverride]}>
+
+          {/* Drag handle — tap to collapse (if expanded) or close (if at peek) */}
+          <Pressable
+            style={s.handleWrap}
+            onPress={() => {
+              if (expanded.value) {
+                expanded.value = false;
+                sheetH.value = withSpring(peekHSv.value, SHEET_SPRING);
+              } else {
+                doClose();
+              }
+            }}
+            hitSlop={14}
+            accessible={false}
+          >
+            <View style={s.handleBar} />
+          </Pressable>
+
           {/* Header */}
           <View style={s.header}>
             <Text style={s.title}>Comments</Text>
-            <Pressable onPress={onClose} hitSlop={10}>
+            <Pressable onPress={doClose} hitSlop={10}>
               <X size={20} color={color.ink} />
             </Pressable>
           </View>
 
-          {/* Comments list */}
+          {/* Comment list */}
           {loading ? (
             <View style={s.center}>
               <ActivityIndicator color={color.signal} />
             </View>
           ) : (
-            <FlatList
+            <AnimFlatList
+              onScroll={scrollHandler}
+              scrollEventThrottle={16}
               data={comments}
-              keyExtractor={(c) => c.id}
-              renderItem={({ item }) => (
+              keyExtractor={(c: any) => c.id}
+              renderItem={({ item }: any) => (
                 <CommentItem
                   comment={item}
                   postId={postId}
@@ -900,7 +1081,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
               showsVerticalScrollIndicator={false}
               style={s.list}
               keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
+              keyboardDismissMode="interactive"
             />
           )}
 
@@ -923,7 +1104,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
             </View>
           )}
 
-          {/* Mention suggestions — above input row */}
+          {/* Mention suggestions — rendered above input row */}
           <MentionSuggestionList
             suggestions={mentionSuggestions}
             loading={mentionLoading}
@@ -931,9 +1112,9 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
             onSelect={(sg) => mentionRef.current?.insertTag(sg)}
           />
 
-          {/* Input row */}
+          {/* Input row — safe-area-aware bottom padding */}
           {!commentsDisabled && (
-            <View style={s.inputRow}>
+            <View style={[s.inputRow, { paddingBottom: insets.bottom > 0 ? insets.bottom : 8 }]}>
               <MentionInput
                 ref={mentionRef}
                 style={s.input}
@@ -966,17 +1147,19 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
               </Pressable>
             </View>
           )}
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
-    <ProfilePreviewCard
-      username={previewHandle}
-      visible={previewHandle !== null}
-      onClose={() => setPreviewHandle(null)}
-    />
+        </Animated.View>
+      </Modal>
+
+      <ProfilePreviewCard
+        username={previewHandle}
+        visible={previewHandle !== null}
+        onClose={() => setPreviewHandle(null)}
+      />
     </AuthorPressCtx.Provider>
   );
 }
+
+// ── Styles ────────────────────────────────────────────────────────────────────
 
 const sec = StyleSheet.create({
   wrap: { gap: space.md },
@@ -986,27 +1169,46 @@ const sec = StyleSheet.create({
 });
 
 const s = StyleSheet.create({
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(17,17,15,0.45)' },
-  sheetWrapper: { flex: 1, justifyContent: 'flex-end' },
+  // ── Sheet chrome ─────────────────────────────────────────────────────────────
+  backdropFill: { backgroundColor: color.deep },
+
   sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    // `bottom` is driven at runtime by the `kbOffset` shared value
+    bottom: 0,
     backgroundColor: color.paperRaised,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '88%',
-    minHeight: 320,
+    overflow: 'hidden',
     ...shadow.card,
   },
+
+  handleWrap: {
+    alignItems: 'center',
+    paddingTop: 10,
+    paddingBottom: 6,
+  },
+  handleBar: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: color.haze,
+  },
+
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: space.lg,
-    paddingTop: space.md,
+    paddingTop: 4,
     paddingBottom: space.sm,
     borderBottomWidth: 1,
     borderBottomColor: color.haze,
   },
   title: { fontSize: 16, fontWeight: '700', color: color.ink },
+
   list: { flex: 1 },
   listContent: {
     flexGrow: 1,
@@ -1016,6 +1218,8 @@ const s = StyleSheet.create({
   },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: space.xxxl },
   empty: { fontSize: 14, color: color.faint, textAlign: 'center', paddingHorizontal: space.xl },
+
+  // ── Shared comment / reply / input styles ─────────────────────────────────────
   disabledBanner: {
     backgroundColor: color.haze,
     paddingVertical: space.sm,

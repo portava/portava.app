@@ -251,6 +251,44 @@ export type DiscoveryAgeFilter =
   | '30_plus'
   | 'custom';
 
+// ── Client-side stale-while-revalidate cache for discovery results ─────────────
+// Keyed by destination:category:radiusKm:page. Serves previously-fetched data
+// instantly when the user returns to the Explore tab, then lets the caller
+// decide whether to refresh in the background.
+const _CLIENT_CACHE = new Map<string, { data: DiscoveryResult; at: number }>();
+const CLIENT_CACHE_TTL = 4 * 60 * 1_000; // 4 minutes
+
+function _discoveryCacheKey(dest: string, cat: string, radiusKm: number, page: number): string {
+  return `${dest.toLowerCase().trim()}:${cat}:${radiusKm}:${page}`;
+}
+
+/**
+ * Synchronous cache read — returns the last-known result for this query (even
+ * if stale) or `null` when there is no cached entry.  Use this to paint content
+ * immediately before firing a fresh network request.
+ */
+export function getCachedDiscoveryPlaces(
+  destination: string,
+  category: DiscoveryCategory,
+  radiusKm: number,
+  page = 1,
+): DiscoveryResult | null {
+  return _CLIENT_CACHE.get(_discoveryCacheKey(destination, category, radiusKm, page))?.data ?? null;
+}
+
+/**
+ * Returns true when a cached entry exists AND is still within the TTL window.
+ */
+export function isDiscoveryCacheFresh(
+  destination: string,
+  category: DiscoveryCategory,
+  radiusKm: number,
+  page = 1,
+): boolean {
+  const e = _CLIENT_CACHE.get(_discoveryCacheKey(destination, category, radiusKm, page));
+  return !!e && Date.now() - e.at < CLIENT_CACHE_TTL;
+}
+
 export async function getDiscoveryPlaces(
   destination: string,
   category: DiscoveryCategory,
@@ -292,6 +330,8 @@ export async function getDiscoveryPlaces(
     const res = await fetch(`${base}/api/discovery?${params}`);
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
     const data = (await res.json()) as DiscoveryResult;
+    // Populate client cache so the next mount of the same tab is instant.
+    _CLIENT_CACHE.set(_discoveryCacheKey(destination, category, filters.radiusKm, page), { data, at: Date.now() });
     return { ok: true, data };
   } catch {
     return { ok: false, error: 'Network error — check your connection' };
@@ -332,6 +372,35 @@ export async function getDiscoveryCategoryCounts(
     }
   });
   return counts;
+}
+
+/**
+ * Batch counts endpoint — fetches all 7 category counts in ONE HTTP request.
+ *
+ * The server geocodes the destination once (with its own dedup cache) and fans
+ * out to all categories server-side, returning `{ counts: Record<cat, N> }`.
+ * Use this as the default; fall back to `getDiscoveryCategoryCounts` only when
+ * age-filter or other per-request personalisation is needed.
+ */
+export async function getDiscoveryCategoryCountsBatch(
+  destination: string,
+  radiusKm = 10,
+  lat?: number | null,
+  lng?: number | null,
+): Promise<Partial<Record<DiscoveryCategory, number>>> {
+  const base = apiBase();
+  if (!base) return {};
+  const params = new URLSearchParams({ destination, radiusKm: String(radiusKm) });
+  if (lat != null) params.set('lat', String(lat));
+  if (lng != null) params.set('lng', String(lng));
+  try {
+    const res = await fetch(`${base}/api/discovery/counts?${params}`);
+    if (!res.ok) return {};
+    const body = (await res.json()) as { counts?: Record<string, number> };
+    return (body.counts ?? {}) as Partial<Record<DiscoveryCategory, number>>;
+  } catch {
+    return {};
+  }
 }
 
 // ── Unified search ────────────────────────────────────────────────────────────

@@ -107,10 +107,28 @@ interface CommunityDiscoveryState {
 
 const EMPTY: CommunityDiscoveryState = { gems: [], picks: [], places: [], loading: false };
 
+// ── Module-level stale-while-revalidate cache ─────────────────────────────────
+// Persists across navigation so returning to the Explore tab shows content
+// instantly from the previous fetch while a background refresh runs.
+const COMM_CACHE_TTL = 5 * 60 * 1_000; // 5 minutes
+interface CommCacheEntry { state: CommunityDiscoveryState; at: number }
+const _communityCache = new Map<string, CommCacheEntry>();
+
+function commCacheKey(city: string, sortBy?: string | null) {
+  return `${city.toLowerCase().trim()}:${sortBy ?? ''}`;
+}
+
 export function useCommunityDiscovery(city: string | null, sortBy?: string | null): CommunityDiscoveryState {
-  const [state, setState] = useState<CommunityDiscoveryState>(() =>
-    city ? { gems: [], picks: [], places: [], loading: true } : EMPTY,
-  );
+  const cKey = city ? commCacheKey(city, sortBy) : null;
+  const cachedEntry = cKey ? _communityCache.get(cKey) : null;
+
+  // Initialise directly from the module cache so the very first render can show
+  // previously-seen content without waiting for any network call.
+  const [state, setState] = useState<CommunityDiscoveryState>(() => {
+    if (cachedEntry) return { ...cachedEntry.state, loading: false };
+    if (city) return { gems: [], picks: [], places: [], loading: true };
+    return EMPTY;
+  });
   const abortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async (c: string) => {
@@ -125,7 +143,7 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
       if (ctrl.signal.aborted) return;
 
       if (!result.ok) {
-        setState({ gems: [], picks: [], places: [], loading: false });
+        setState((prev) => ({ ...prev, loading: false }));
         return;
       }
 
@@ -142,22 +160,31 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
         }
       }
 
-      setState({ gems, picks, places, loading: false });
+      const fresh: CommunityDiscoveryState = { gems, picks, places, loading: false };
+      setState(fresh);
+      // Update module cache for the next mount
+      if (cKey) _communityCache.set(cKey, { state: fresh, at: Date.now() });
     } catch {
       if (!ctrl.signal.aborted) {
-        setState({ gems: [], picks: [], places: [], loading: false });
+        setState((prev) => ({ ...prev, loading: false }));
       }
     }
-  }, [sortBy]);
+  }, [sortBy, cKey]);
 
   useEffect(() => {
     if (!city) {
       setState(EMPTY);
       return;
     }
+    // Skip the network call if the cache is still fresh
+    const hit = cKey ? _communityCache.get(cKey) : null;
+    if (hit && Date.now() - hit.at < COMM_CACHE_TTL) {
+      setState({ ...hit.state, loading: false });
+      return;
+    }
     load(city);
     return () => { abortRef.current?.abort(); };
-  }, [city, load]);
+  }, [city, load, cKey]);
 
   return state;
 }

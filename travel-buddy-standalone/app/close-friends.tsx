@@ -7,9 +7,9 @@ import {
   ActivityIndicator, Alert, FlatList, Pressable,
   StyleSheet, Text, TextInput, View,
 } from 'react-native';
-import { Stack } from 'expo-router';
+import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Heart, Search, X } from 'lucide-react-native';
+import { ArrowLeft, Heart, Search, X } from 'lucide-react-native';
 import { color, radius, space, type as t } from '../src/theme/tokens';
 import {
   getCloseFriends, addCloseFriend, removeCloseFriend,
@@ -63,8 +63,13 @@ export default function CloseFriendsScreen() {
   }
 
   return (
-    <View style={[s.root, { paddingBottom: insets.bottom }]}>
-      <Stack.Screen options={{ title: 'Close Friends', headerBackTitle: 'Settings' }} />
+    <View style={[s.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      <View style={s.headerRow}>
+        <Pressable style={s.backBtn} onPress={() => router.back()} hitSlop={8}>
+          <ArrowLeft size={22} color={color.ink} />
+        </Pressable>
+        <Text style={[s.headerTitle]}>Trusted Crew</Text>
+      </View>
 
       <View style={s.hero}>
         <Heart size={32} color={color.signal} fill={color.signal} />
@@ -136,6 +141,9 @@ export default function CloseFriendsScreen() {
 
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: color.paper },
+  headerRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.md, paddingVertical: space.sm, borderBottomWidth: 1, borderBottomColor: color.haze },
+  backBtn: { padding: 4 },
+  headerTitle: { ...t.bodyStrong, color: color.ink, fontSize: 17 },
   hero: { alignItems: 'center', gap: space.sm, paddingVertical: space.xl, paddingHorizontal: space.lg },
   heroTitle: { ...t.heading, color: color.ink, fontSize: 20 },
   heroSub: { ...t.small, color: color.mute, textAlign: 'center', lineHeight: 18, maxWidth: 280 },

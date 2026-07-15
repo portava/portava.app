@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
 import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route, ListPlus } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
@@ -8,7 +8,6 @@ import { usePlanPicker } from '../PlanPickerController';
 import type { RouteStopDraft } from '../RouteBuilderSheet';
 import { color, space, radius, type as t, shadow, layout } from '../../theme/tokens';
 import { TripWishlistPicker } from './TripWishlistPicker';
-import { getPlaceReviews } from '../../services/reviews';
 
 interface PlaceCardProps {
   place: DiscoveryPlace;
@@ -23,29 +22,29 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
   const [saved, setSaved]               = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [savedCount, setSavedCount]     = useState(0);
-  const [reviewAvgRating, setReviewAvgRating] = useState<number | null>(null);
   const accent = categoryColor(place.category);
   const { isAdded } = usePlanPicker();
   const alreadyAdded = isAdded(place.id);
+  const savedCountTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // `checkSaved` is the bookmark icon — must be accurate so fires immediately.
   useEffect(() => {
     checkSaved('place', place.id)
       .then(({ saved }) => setSaved(saved))
       .catch(() => {});
   }, [place.id]);
 
+  // `getSavedListIds` drives the "Saved to N trips" badge — secondary info.
+  // Defer 800 ms so it doesn't compete with the initial list-paint requests.
   useEffect(() => {
-    getPlaceReviews(place.id, 1, 1)
-      .then((res) => {
-        if (res.avgRating != null) setReviewAvgRating(res.avgRating);
-      })
-      .catch(() => {});
-  }, [place.id]);
-
-  useEffect(() => {
-    getSavedListIds(place.id)
-      .then((ids) => setSavedCount(ids.size))
-      .catch(() => {});
+    savedCountTimer.current = setTimeout(() => {
+      getSavedListIds(place.id)
+        .then((ids) => setSavedCount(ids.size))
+        .catch(() => {});
+    }, 800);
+    return () => {
+      if (savedCountTimer.current) clearTimeout(savedCountTimer.current);
+    };
   }, [place.id]);
 
   const refreshSavedCount = useCallback(() => {
@@ -98,10 +97,10 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
               </Text>
             </View>
           )}
-          {(reviewAvgRating ?? place.rating) != null && (
+          {place.rating != null && (
             <View style={styles.ratingBadge}>
               <Text style={styles.ratingStar}>★</Text>
-              <Text style={styles.ratingValue}>{(reviewAvgRating ?? place.rating)!.toFixed(1)}</Text>
+              <Text style={styles.ratingValue}>{place.rating.toFixed(1)}</Text>
             </View>
           )}
           {place.openingHours ? (

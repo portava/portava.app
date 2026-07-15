@@ -61,6 +61,7 @@ function AuthorRow({
   const [viewerOpen, setViewerOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [avatarError, setAvatarError] = useState(false);
+  const AVATAR_SIZE = 40;
 
   const handleAuthorPress = item.author?.username
     ? () => router.push(`/u/${item.author!.username}` as any)
@@ -116,7 +117,7 @@ function AuthorRow({
         <HighlightRing
           hasActive={ringState?.hasActive ?? false}
           allViewed={ringState?.allViewed ?? false}
-          size={36}
+          size={AVATAR_SIZE}
           ringWidth={2}
           gap={2}
           onPress={ringState?.hasActive ? () => setViewerOpen(true) : handleAuthorPress}
@@ -623,12 +624,12 @@ export function PulseFeedCard({ item, onDeleteSuccess }: { item: PulseFeedItem; 
 const s = StyleSheet.create({
   card: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: space.sm, ...shadow.card },
   authorRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: color.haze },
+  avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.haze },
   avatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: color.deep },
-  avatarFallbackText: { color: color.onInk, fontSize: 15, fontWeight: '700' },
-  author: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
-  meta: { ...t.small, color: color.faint, fontSize: 11 },
-  kindBadge: { alignSelf: 'flex-start', paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm, marginBottom: 3 },
+  avatarFallbackText: { color: color.onInk, fontSize: 16, fontWeight: '700' },
+  author: { ...t.bodyStrong, color: color.ink, fontSize: 15 },
+  meta: { ...t.small, color: color.faint, fontSize: 12, lineHeight: 16 },
+  kindBadge: { alignSelf: 'flex-start', paddingHorizontal: 7, paddingVertical: 2, borderRadius: radius.sm, marginBottom: 3 },
   kindText: { fontFamily: 'Courier', fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
 
   media: { height: 150, borderRadius: radius.sm, backgroundColor: color.deep, overflow: 'hidden', justifyContent: 'flex-start', padding: space.sm },
@@ -636,7 +637,7 @@ const s = StyleSheet.create({
   mediaTagText: { ...t.stamp, color: color.onInk, fontFamily: 'Courier' },
   gemIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: color.success, alignItems: 'center', justifyContent: 'center' },
 
-  caption: { ...t.body, color: color.ink },
+  caption: { ...t.body, color: color.ink, lineHeight: 22 },
   question: { ...t.heading, color: color.ink, fontSize: 17 },
   title: { ...t.heading, color: color.ink, fontSize: 16 },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -693,28 +694,27 @@ const s = StyleSheet.create({
   safetyHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   safetyLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.warn, letterSpacing: 1 },
 
-  // ── Immersive PostCard (type='post') ─────────────────────────────────────────
-  postCard: { backgroundColor: color.paperRaised, overflow: 'hidden', ...shadow.card },
-  postCardWide: { maxWidth: 600, alignSelf: 'center' as const, width: '100%' },
+  // ── Immersive PostCard (type='post') — full-bleed, edge-to-edge on mobile ─────
+  postCard: { backgroundColor: color.paperRaised, overflow: 'hidden' },
+  postCardWide: { maxWidth: 600, alignSelf: 'center' as const, width: '100%', borderRadius: 14, ...shadow.card },
   postMedia: { overflow: 'hidden', backgroundColor: color.deep },
   videoPlayBadge: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center', justifyContent: 'center',
   },
-  postScrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '60%' },
-  postAuthorOverlay: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: space.md },
+  postScrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '65%' },
+  postAuthorOverlay: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: 16, paddingBottom: 14 },
   postcardLabel: {
-    position: 'absolute', top: 10, left: 10,
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    borderWidth: 1, borderColor: 'rgba(250,249,246,0.70)',
-    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 4,
-    backgroundColor: 'rgba(17,17,15,0.38)',
+    position: 'absolute', top: 14, left: 14,
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: 'rgba(17,17,15,0.48)',
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20,
   },
-  postcardLabelText: { fontFamily: 'Courier', fontSize: 9, fontWeight: '700', color: color.onInk, letterSpacing: 1 },
-  postcardDate: { position: 'absolute', top: 12, right: 12, fontFamily: 'Courier', fontSize: 9, fontWeight: '700', color: 'rgba(250,249,246,0.85)', letterSpacing: 0.5 },
-  tripLabelBadge: { position: 'absolute', bottom: 62, left: 10, backgroundColor: color.signal, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 },
+  postcardLabelText: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: 'rgba(250,249,246,0.95)', letterSpacing: 1.2 },
+  postcardDate: { position: 'absolute', top: 16, right: 14, fontFamily: 'Courier', fontSize: 10, fontWeight: '600', color: 'rgba(250,249,246,0.70)', letterSpacing: 0.5 },
+  tripLabelBadge: { position: 'absolute', bottom: 76, left: 14, backgroundColor: color.signal, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 12 },
   tripLabelBadgeText: { fontFamily: 'Courier', fontSize: 9, fontWeight: '700', color: color.onInk, letterSpacing: 0.5 },
-  postFooter: { padding: space.md, gap: space.sm },
+  postFooter: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16, gap: 10, backgroundColor: color.paperRaised },
   postPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10 },
   postPlaceholderCity: { fontFamily: 'Courier', fontSize: 11, color: color.onInk, fontWeight: '700', letterSpacing: 1.5 },
 });

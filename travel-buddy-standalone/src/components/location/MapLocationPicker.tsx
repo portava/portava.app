@@ -3,7 +3,7 @@
  *
  * The user pans and zooms the map to place the fixed crosshair over their
  * desired location, then taps "Confirm". The current map-center coordinates
- * are reverse-geocoded and returned via `onConfirm`.
+ * are reverse-geocoded and returned via `onConfirm` as a canonical Place.
  *
  * Metro automatically uses MapLocationPicker.web.tsx on web where MapLibre
  * native modules are unavailable.
@@ -22,9 +22,8 @@ import { Map, Camera } from '@maplibre/maplibre-react-native';
 import type { NativeSyntheticEvent } from 'react-native';
 import type { ViewStateChangeEvent } from '@maplibre/maplibre-react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { reverseGeocodeDetailed } from '../../services/location';
-import type { GpsCaptureResult } from './GpsLocationCapture.machine';
-import { resolveMapPickerResult } from './MapLocationPicker.machine';
+import { reverseGeocodeToPlace } from '../../services/location';
+import type { Place } from '../../lib/location/placeTypes';
 
 // ── Map tile style ─────────────────────────────────────────────────────────────
 
@@ -32,8 +31,6 @@ const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '';
 const MAP_STYLE = MAPTILER_KEY
   ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`
   : 'https://demotiles.maplibre.org/style.json';
-
-const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
 // ── Default viewport: world overview ──────────────────────────────────────────
 
@@ -47,7 +44,7 @@ export interface MapLocationPickerProps {
   /** Pre-center the map on an already-captured location, if any. */
   initialLat?: number;
   initialLng?: number;
-  onConfirm: (result: GpsCaptureResult) => void;
+  onConfirm: (place: Place) => void;
   onCancel: () => void;
 }
 
@@ -63,29 +60,12 @@ export function MapLocationPicker({
   const hasInitial = initialLat != null && initialLng != null;
 
   // [lng, lat] — LngLat order for MapLibre.
-  //
-  // Initialised from props once (useRef initialiser runs only on mount).
-  // handleRegionDidChange overwrites centerRef.current on every pan, so by
-  // the time the user taps Confirm, it holds the current map centre — not
-  // the original initialLat/initialLng props.
-  //
-  // initialCenter (below) is a separate const used ONLY for the Camera's
-  // initialViewState (one-time MapLibre viewport setup).  It is never
-  // written back into centerRef, so there is no shared mutable state between
-  // the two.  Audit: resolveMapPickerResult always receives centerRef.current;
-  // the initialLat/initialLng props cannot leak into the confirmed result once
-  // the user has panned.
   const centerRef = useRef<[number, number]>(
     hasInitial
       ? [initialLng as number, initialLat as number]
       : DEFAULT_CENTER,
   );
 
-  // Unmount safety: suppress setState calls from in-flight geocode requests
-  // that complete after the component has been dismissed.  Without this guard,
-  // a slow reverse-geocode response landing after unmount would trigger a React
-  // "setState on unmounted component" warning and, in edge cases, a stale
-  // onConfirm call the parent is no longer expecting.
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -111,13 +91,10 @@ export function MapLocationPicker({
     setGeocodeError(false);
     setConfirming(true);
     try {
-      const result = await resolveMapPickerResult({
-        center: centerRef.current,
-        apiBase: API_BASE,
-        reverseGeocodeDetailed,
-      });
-      // Guard: component may have unmounted while the geocode was in flight.
-      if (mountedRef.current) onConfirm(result);
+      // MapLibre stores coordinates as [lng, lat]; swap to { lat, lng }.
+      const [lng, lat] = centerRef.current;
+      const place = await reverseGeocodeToPlace(lat, lng);
+      if (mountedRef.current) onConfirm(place);
     } catch {
       if (mountedRef.current) setGeocodeError(true);
     } finally {

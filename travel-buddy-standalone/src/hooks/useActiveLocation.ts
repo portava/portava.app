@@ -4,17 +4,17 @@
  * Manages:
  *   - expo-location permission check + request
  *   - One-time GPS capture (getCurrentPositionAsync)
- *   - expo reverse geocode → place object
+ *   - Reverse geocode → canonical Place object
  *   - Sync to /api/me/location-state (persist across sessions)
- *   - Manual city override
+ *   - Manual location override (accepts full Place)
  *   - Permission status tracking
  *   - Freshness tracking (live / recent / stale / unavailable)
  *
  * Does NOT run watchPosition (that belongs to Safe Return / active tracking).
  */
 import { useState, useCallback, useEffect, useRef } from 'react';
-import * as Location from 'expo-location';
-import { getCurrentGps, reverseGeocodeDetailed, checkLocationPermission } from '../services/location';
+import { getCurrentGps, reverseGeocodeToPlace, checkLocationPermission } from '../services/location';
+import type { Place } from '../lib/location/placeTypes';
 import { isSupabaseConfigured } from '../lib/supabase';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -37,6 +37,10 @@ export interface LocationCoords {
   accuracyMeters: number | null;
 }
 
+/**
+ * @deprecated Use Place from placeTypes instead.
+ * Kept for backward compat with any persisted API shapes that still use this format.
+ */
 export interface LocationPlace {
   city: string | null;
   district: string | null;
@@ -51,7 +55,8 @@ export interface ActiveLocationState {
   source: LocationSource;
   freshness: LocationFreshness;
   coords: LocationCoords | null;
-  place: LocationPlace;
+  /** Current active place — always a full canonical Place object. */
+  place: Place;
   lastUpdatedAt: string | null;
   userMessage: string | null;
 }
@@ -61,7 +66,8 @@ export interface UseActiveLocationResult {
   isLoading: boolean;
   requestLocation: () => Promise<void>;
   refreshLocation: () => Promise<void>;
-  setManualCity: (city: string, country?: string) => Promise<void>;
+  /** Set the active location from a full Place object. */
+  setManualCity: (place: Place) => Promise<void>;
   clearManualCity: () => Promise<void>;
   getLocationForFeature: (feature: string) => ActiveLocationState;
 }
@@ -71,12 +77,20 @@ export interface UseActiveLocationResult {
 const RECENT_THRESHOLD_MS = 15 * 60 * 1000;   // 15 min
 const STALE_THRESHOLD_MS  = 60 * 60 * 1000;   // 60 min
 
-const EMPTY_PLACE: LocationPlace = {
-  city: null,
-  district: null,
+const EMPTY_PLACE: Place = {
+  id: '',
+  type: 'city',
+  name: '',
+  displayName: '',
   country: null,
   countryCode: null,
-  formatted: null,
+  region: null,
+  city: null,
+  district: null,
+  lat: null,
+  lng: null,
+  timezone: null,
+  source: 'manual',
 };
 
 const INITIAL_STATE: ActiveLocationState = {
@@ -150,15 +164,44 @@ async function loadLocationFromApi(): Promise<ActiveLocationState | null> {
       ? 'last_known'
       : 'none';
 
+    // Build a Place from the persisted state
+    let place: Place;
+    if (d.manualCity) {
+      const city = d.manualCity as string;
+      const country = d.manualCountry as string | null ?? null;
+      place = {
+        id: `manual-${city.toLowerCase().replace(/\s+/g, '-')}`,
+        type: 'city',
+        name: city,
+        displayName: country ? `${city}, ${country}` : city,
+        country,
+        countryCode: null,
+        region: null,
+        city,
+        district: null,
+        lat: d.coords?.lat ?? null,
+        lng: d.coords?.lng ?? null,
+        timezone: null,
+        source: 'manual',
+      };
+    } else if (d.place && d.place.id) {
+      // Persisted place snapshot — may be a full Place or a legacy LocationPlace
+      place = {
+        ...EMPTY_PLACE,
+        ...(d.place as Partial<Place>),
+        source: 'recent',
+      };
+    } else {
+      place = EMPTY_PLACE;
+    }
+
     return {
       ok: !!(d.coords || d.manualCity),
       permissionStatus: (d.permissionStatus as PermissionStatus) ?? 'unknown',
       source,
       freshness: computeFreshness(d.updatedAt),
       coords: d.coords ?? null,
-      place: d.manualCity
-        ? { city: d.manualCity, district: null, country: d.manualCountry ?? null, countryCode: null, formatted: d.manualCity }
-        : (d.place ?? EMPTY_PLACE),
+      place,
       lastUpdatedAt: d.updatedAt ?? null,
       userMessage: null,
     };
@@ -190,11 +233,11 @@ export function useActiveLocation(): UseActiveLocationResult {
       if (!alive) return;
 
       if (savedState) {
-        setLocationState((prev) => ({
+        setLocationState({
           ...savedState,
           permissionStatus: permStatus,
           freshness: computeFreshness(savedState.lastUpdatedAt),
-        }));
+        });
       } else {
         setLocationState((prev) => ({ ...prev, permissionStatus: permStatus }));
       }
@@ -222,7 +265,7 @@ export function useActiveLocation(): UseActiveLocationResult {
         return;
       }
 
-      const place = await reverseGeocodeDetailed(gps.lat!, gps.lng!);
+      const place = await reverseGeocodeToPlace(gps.lat!, gps.lng!);
       const now = new Date().toISOString();
       const isCached = gps.cached === true;
       const source: LocationSource = isCached ? 'gps_cached' : 'gps_fresh';
@@ -232,7 +275,7 @@ export function useActiveLocation(): UseActiveLocationResult {
         source,
         freshness: isCached ? 'recent' : 'live',
         coords: { lat: gps.lat!, lng: gps.lng!, accuracyMeters: gps.accuracyMeters },
-        place,
+        place: { ...place, lat: gps.lat!, lng: gps.lng! },
         lastUpdatedAt: now,
         userMessage: isCached
           ? (place.city ? `Showing recent location near ${place.city}.` : 'Showing a recent location. Live GPS unavailable.')
@@ -246,7 +289,7 @@ export function useActiveLocation(): UseActiveLocationResult {
         source,
         permissionStatus: 'granted',
         coords: { lat: gps.lat, lng: gps.lng, accuracyMeters: gps.accuracyMeters },
-        place,
+        place: next.place,
       });
     } finally {
       if (mountedRef.current) setIsLoading(false);
@@ -262,22 +305,27 @@ export function useActiveLocation(): UseActiveLocationResult {
     await requestLocation();
   }, [requestLocation]);
 
-  const setManualCity = useCallback(async (city: string, country?: string) => {
-    const trimmedCity = city.trim();
-    if (!trimmedCity) return;
+  const setManualCity = useCallback(async (place: Place) => {
     const now = new Date().toISOString();
     const next: ActiveLocationState = {
       ok: true,
       permissionStatus: locationState.permissionStatus,
       source: 'manual_city',
       freshness: 'live',
-      coords: locationState.coords,
-      place: { city: trimmedCity, district: null, country: country ?? null, countryCode: null, formatted: trimmedCity },
+      coords: place.lat != null && place.lng != null
+        ? { lat: place.lat, lng: place.lng, accuracyMeters: null }
+        : locationState.coords,
+      place,
       lastUpdatedAt: now,
       userMessage: null,
     };
     setLocationState(next);
-    await saveLocationToApi({ source: 'manual_city', manualCity: trimmedCity, manualCountry: country ?? null });
+    await saveLocationToApi({
+      source: 'manual_city',
+      manualCity: place.city ?? place.name,
+      manualCountry: place.country ?? null,
+      place,
+    });
   }, [locationState]);
 
   const clearManualCity = useCallback(async () => {

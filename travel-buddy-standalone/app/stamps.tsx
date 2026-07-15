@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, Pressable, Modal, StyleSheet, ActivityIndicator } from 'react-native';
 import { X } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
-import { Chip } from '../src/components/ui';
+import { PulseFilterRail } from '../src/components/PulseFilterRail';
 import { StampArtwork } from '../src/components/StampArtwork';
 import { getMyPassportStamps, updateStampVisibility } from '../src/services/passportStamps';
 import type { PassportStampNew, StampVisibility } from '../src/services/passportStamps';
@@ -91,15 +91,11 @@ export default function StampsPage() {
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       <ScreenHeader title="Passport Stamps" back />
 
-      <ScrollView
-        horizontal showsHorizontalScrollIndicator={false}
-        style={{ flexGrow: 0 }}
-        contentContainerStyle={{ gap: space.sm, padding: space.lg }}
-      >
-        {FILTERS.map((f) => (
-          <Chip key={f.label} label={f.label} active={f.label === filter} onPress={() => setFilter(f.label)} />
-        ))}
-      </ScrollView>
+      <PulseFilterRail
+        filters={FILTERS.map((f) => f.label)}
+        active={[filter]}
+        onPress={(label) => setFilter(label)}
+      />
 
       {loading ? (
         <View style={styles.center}><ActivityIndicator color={color.signal} /></View>

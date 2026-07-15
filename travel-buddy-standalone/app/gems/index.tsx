@@ -321,6 +321,9 @@ export default function GemsScreen() {
     <SafeAreaView style={styles.root} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} hitSlop={8}>
+          <Ionicons name="arrow-back" size={22} color="#E8F0FE" />
+        </TouchableOpacity>
         <Text style={styles.headerTitle}>Hidden Gems</Text>
         <View style={styles.headerActions}>
           {/* Map / List toggle — only shown on Discover tab */}
@@ -401,6 +404,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 14,
   },
+  backBtn: { padding: 4, marginRight: 4 },
   headerTitle: { fontSize: 24, fontWeight: '700', color: '#E8F0FE' },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   viewToggle: { padding: 8, borderRadius: 20, backgroundColor: '#1E2D45' },

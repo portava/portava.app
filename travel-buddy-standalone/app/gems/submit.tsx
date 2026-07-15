@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { submitGem, type GemCategory, type GemSensitivity } from '../../src/services/hiddenGems';
 import { GpsLocationCapture } from '../../src/components/location/GpsLocationCapture';
-import { mapCaptureToFormCoords, type GpsCaptureResult } from '../../src/components/location/GpsLocationCapture.machine';
+import type { Place } from '../../src/lib/location/placeTypes';
 import { canNext as wizardCanNext, buildSubmitPayload } from './submit.machine';
 import { GemLocationPreview } from '../../src/components/gems/GemLocationPreview';
 
@@ -88,11 +88,10 @@ const STEPS = ['Location', 'Details', 'Privacy', 'Review'];
 // ── Step components ────────────────────────────────────────────────────────────
 
 function LocationStep({ form, update }: { form: FormState; update: (k: keyof FormState, v: any) => void }) {
-  const handleCapture = useCallback((result: GpsCaptureResult | null) => {
-    const coords = mapCaptureToFormCoords(result);
-    update('gpsLat', coords.gpsLat);
-    update('gpsLng', coords.gpsLng);
-    update('gpsLabel', coords.gpsLabel);
+  const handleCapture = useCallback((place: Place | null) => {
+    update('gpsLat', place?.lat ?? undefined);
+    update('gpsLng', place?.lng ?? undefined);
+    update('gpsLabel', place?.displayName ?? undefined);
   }, [update]);
 
   return (

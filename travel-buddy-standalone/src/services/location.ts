@@ -10,6 +10,7 @@
  * The backend decides verification; this only supplies the user's real GPS.
  */
 import * as Location from 'expo-location';
+import type { Place } from '../lib/location/placeTypes';
 
 export interface GpsResult {
   granted: boolean;
@@ -110,39 +111,115 @@ export async function checkLocationPermission(): Promise<'granted' | 'denied' | 
   }
 }
 
-/** Full reverse geocode with district + countryCode — uses expo's built-in geocoder. */
+/**
+ * Canonical reverse geocode — returns a full Place object.
+ *
+ * Tries the backend /api/places/reverse endpoint first (supports Nominatim
+ * with Mapbox fallback). Falls back to expo's built-in geocoder if the API
+ * is unreachable or returns no result.
+ */
+export async function reverseGeocodeToPlace(lat: number, lng: number): Promise<Place> {
+  const apiBase = (process.env as any).EXPO_PUBLIC_API_BASE_URL ?? '';
+
+  // Stage 1: backend API
+  try {
+    const res = await fetch(`${apiBase}/api/places/reverse?lat=${lat}&lng=${lng}`);
+    if (res.ok) {
+      const body = await res.json() as any;
+      const p = body?.place;
+      if (p && p.id) {
+        return {
+          ...p,
+          lat,
+          lng,
+          source: 'gps' as const,
+        } as Place;
+      }
+    }
+  } catch {
+    // Fall through to expo geocoder.
+  }
+
+  // Stage 2: expo's built-in geocoder
+  try {
+    const results = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+    const r = results?.[0];
+    if (r) {
+      const city = r.city ?? r.subregion ?? r.region ?? null;
+      const district = r.district ?? (r.subregion !== city ? r.subregion ?? null : null);
+      const country = r.country ?? null;
+      const countryCode = r.isoCountryCode ?? null;
+      const addressLine = [r.name, r.street].filter(Boolean).join(' ') || null;
+      const displayName = [city, country].filter(Boolean).join(', ') || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+      const formattedAddress = [addressLine, city, country].filter(Boolean).join(', ') || displayName;
+      return {
+        id: `gps-${lat.toFixed(4)}-${lng.toFixed(4)}`,
+        type: 'city' as const,
+        name: city ?? displayName,
+        displayName,
+        country,
+        countryCode,
+        region: r.region ?? null,
+        city,
+        district: district ?? null,
+        lat,
+        lng,
+        timezone: null,
+        source: 'gps' as const,
+        address: addressLine,
+        postalCode: r.postalCode ?? null,
+        formattedAddress,
+      };
+    }
+  } catch {
+    // Fall through to static fallback.
+  }
+
+  // Stage 3: coordinate-only fallback
+  return {
+    id: `gps-${lat.toFixed(4)}-${lng.toFixed(4)}`,
+    type: 'place' as const,
+    name: 'Current Location',
+    displayName: `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+    country: null,
+    countryCode: null,
+    region: null,
+    city: null,
+    district: null,
+    lat,
+    lng,
+    timezone: null,
+    source: 'gps' as const,
+    address: null,
+    postalCode: null,
+    formattedAddress: null,
+  };
+}
+
+/**
+ * Full reverse geocode with district + countryCode.
+ * @deprecated Use reverseGeocodeToPlace() instead — it returns a canonical Place.
+ */
 export async function reverseGeocodeDetailed(lat: number, lng: number): Promise<PlaceResult> {
-  try {
-    const results = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
-    const r = results?.[0];
-    if (!r) return nullPlace();
-    const city = r.city ?? r.subregion ?? r.region ?? null;
-    const district = r.district ?? r.subregion !== city ? r.subregion ?? null : null;
-    const country = r.country ?? null;
-    const countryCode = r.isoCountryCode ?? null;
-    const parts = [r.name, r.street, city, country].filter(Boolean);
-    const formatted = parts.slice(0, 3).join(', ') || null;
-    return { city, district: district ?? null, country, countryCode, formatted };
-  } catch {
-    return nullPlace();
-  }
+  const place = await reverseGeocodeToPlace(lat, lng);
+  return {
+    city: place.city ?? null,
+    district: place.district ?? null,
+    country: place.country ?? null,
+    countryCode: place.countryCode ?? null,
+    formatted: place.formattedAddress ?? place.displayName ?? null,
+  };
 }
 
-/** Slim reverse geocode — kept for backward compat with the composer. */
+/**
+ * Slim reverse geocode — kept for backward compat with the composer.
+ * @deprecated Use reverseGeocodeToPlace() instead.
+ */
 export async function reverseGeocode(lat: number, lng: number): Promise<ReverseGeocodeResult> {
-  try {
-    const results = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
-    const r = results?.[0];
-    if (!r) return { city: null, country: null, name: null };
-    const city = r.city ?? r.subregion ?? r.region ?? null;
-    const country = r.country ?? null;
-    const name = [r.name, r.street].filter(Boolean).join(' ') || city || null;
-    return { city, country, name };
-  } catch {
-    return { city: null, country: null, name: null };
-  }
-}
-
-function nullPlace(): PlaceResult {
-  return { city: null, district: null, country: null, countryCode: null, formatted: null };
+  const place = await reverseGeocodeToPlace(lat, lng);
+  return {
+    city: place.city ?? null,
+    country: place.country ?? null,
+    name: place.displayName ?? null,
+  };
 }

@@ -1,9 +1,21 @@
 /**
  * usePlaceSearch — debounced place search against /api/places/search.
  * Falls back to an empty list if the server is unavailable.
+ *
+ * Results are cached in-memory for 5 minutes (keyed on query + options) and
+ * in-flight requests are deduplicated so two simultaneous identical queries
+ * share one Promise.
  */
 import { useState, useEffect, useRef } from 'react';
 import type { Place } from '../lib/location/placeTypes';
+import {
+  getCached,
+  setCached,
+  getInFlight,
+  setInFlight,
+  deleteInFlight,
+  makeCacheKey,
+} from '../lib/location/placeSearchCache';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -15,6 +27,42 @@ export interface UsePlaceSearchResult {
   results: Place[];
   loading: boolean;
   error: string | null;
+}
+
+export async function fetchPlacesFromApi(
+  query: string,
+  opts?: { countryCode?: string; type?: string; lat?: number; lng?: number },
+): Promise<Place[]> {
+  const cacheKey = makeCacheKey(query, opts);
+
+  // Return warm cache entry synchronously
+  const cached = getCached(cacheKey);
+  if (cached) return cached;
+
+  // Deduplicate in-flight requests
+  const existing = getInFlight(cacheKey);
+  if (existing) return existing;
+
+  const params = new URLSearchParams({ q: query.trim() });
+  if (opts?.countryCode) params.set('countryCode', opts.countryCode);
+  if (opts?.type) params.set('type', opts.type);
+  if (opts?.lat != null) params.set('lat', String(opts.lat));
+  if (opts?.lng != null) params.set('lng', String(opts.lng));
+
+  const promise = fetch(`${apiBase()}/api/places/search?${params}`)
+    .then(async (res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = await res.json();
+      const results: Place[] = body.places ?? [];
+      setCached(cacheKey, results);
+      return results;
+    })
+    .finally(() => {
+      deleteInFlight(cacheKey);
+    });
+
+  setInFlight(cacheKey, promise);
+  return promise;
 }
 
 export function usePlaceSearch(
@@ -36,6 +84,16 @@ export function usePlaceSearch(
       return;
     }
 
+    // Check cache immediately (synchronous warm hit)
+    const cacheKey = makeCacheKey(query, opts);
+    const cached = getCached(cacheKey);
+    if (cached) {
+      setResults(cached);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     setLoading(true);
     timerRef.current = setTimeout(async () => {
       if (abortRef.current) abortRef.current.abort();
@@ -49,12 +107,21 @@ export function usePlaceSearch(
         if (opts?.lat != null) params.set('lat', String(opts.lat));
         if (opts?.lng != null) params.set('lng', String(opts.lng));
 
-        const res = await fetch(`${apiBase()}/api/places/search?${params}`, {
-          signal: ctrl.signal,
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const body = await res.json();
-        setResults(body.places ?? []);
+        // Check in-flight dedup before issuing a new request
+        const existing = getInFlight(cacheKey);
+        let places: Place[];
+        if (existing) {
+          places = await existing;
+        } else {
+          const res = await fetch(`${apiBase()}/api/places/search?${params}`, {
+            signal: ctrl.signal,
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const body = await res.json();
+          places = body.places ?? [];
+          setCached(cacheKey, places);
+        }
+        setResults(places);
         setError(null);
       } catch (e: any) {
         if (e?.name === 'AbortError') return;
@@ -69,7 +136,7 @@ export function usePlaceSearch(
       if (timerRef.current) clearTimeout(timerRef.current);
       if (abortRef.current) abortRef.current.abort();
     };
-  }, [query]);
+  }, [query]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { results, loading, error };
 }

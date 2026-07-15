@@ -2,7 +2,7 @@
  * ManualCityPicker — bottom-sheet city selector.
  *
  * Shows a text input + quick-pick list of popular travel cities.
- * Calls setManualCity() from LocationContext on selection.
+ * Emits a canonical Place on selection (via onSelect or via LocationContext).
  */
 import React, { useState, useMemo } from 'react';
 import {
@@ -12,6 +12,7 @@ import {
 import { X, MapPin, Search } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { useLocationContext } from '../context/LocationContext';
+import type { Place } from '../lib/location/placeTypes';
 
 // ── Popular cities ────────────────────────────────────────────────────────────
 
@@ -36,11 +37,30 @@ const POPULAR: { city: string; country: string; emoji: string }[] = [
   { city: 'Kuala Lumpur',  country: 'Malaysia',     emoji: '🇲🇾' },
 ];
 
+function popularToPlace(item: { city: string; country: string }): Place {
+  return {
+    id: `manual-${item.city.toLowerCase().replace(/\s+/g, '-')}`,
+    type: 'city',
+    name: item.city,
+    displayName: `${item.city}, ${item.country}`,
+    country: item.country,
+    countryCode: null,
+    region: null,
+    city: item.city,
+    district: null,
+    lat: null,
+    lng: null,
+    timezone: null,
+    source: 'manual',
+  };
+}
+
 interface Props {
   /** When provided, replaces the context's showCityPicker flag (standalone use). */
   visible?: boolean;
   onClose?: () => void;
-  onSelect?: (city: string, country: string) => void;
+  /** Called with a canonical Place on selection. */
+  onSelect?: (place: Place) => void;
 }
 
 export function ManualCityPicker({ visible, onClose, onSelect }: Props) {
@@ -58,11 +78,11 @@ export function ManualCityPicker({ visible, onClose, onSelect }: Props) {
     );
   }, [query]);
 
-  async function pick(city: string, country: string) {
+  async function pick(place: Place) {
     if (onSelect) {
-      onSelect(city, country);
+      onSelect(place);
     } else {
-      await ctx.setManualCity(city, country);
+      await ctx.setManualCity(place);
     }
     setQuery('');
     handleClose();
@@ -71,7 +91,22 @@ export function ManualCityPicker({ visible, onClose, onSelect }: Props) {
   async function confirmCustom() {
     const trimmed = query.trim();
     if (!trimmed) return;
-    await pick(trimmed, '');
+    const place: Place = {
+      id: `manual-${trimmed.toLowerCase().replace(/\s+/g, '-')}`,
+      type: 'city',
+      name: trimmed,
+      displayName: trimmed,
+      country: null,
+      countryCode: null,
+      region: null,
+      city: trimmed,
+      district: null,
+      lat: null,
+      lng: null,
+      timezone: null,
+      source: 'manual',
+    };
+    await pick(place);
   }
 
   return (
@@ -133,7 +168,7 @@ export function ManualCityPicker({ visible, onClose, onSelect }: Props) {
             renderItem={({ item }) => (
               <Pressable
                 style={({ pressed }) => [s.row, pressed && s.rowPressed]}
-                onPress={() => pick(item.city, item.country)}
+                onPress={() => pick(popularToPlace(item))}
               >
                 <Text style={s.rowEmoji}>{item.emoji}</Text>
                 <View style={s.rowText}>

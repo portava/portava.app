@@ -4,6 +4,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,6 +13,8 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ArrowLeft } from 'lucide-react-native';
 import { fetchTrustSettings, updateTrustSetting, type TrustSettingKey } from '../../src/services/trustAdmin';
 import { useSession } from '../../src/context/SessionContext';
 import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
@@ -140,6 +143,7 @@ function SettingRow({
 }
 
 export default function TrustSettingsScreen() {
+  const insets = useSafeAreaInsets();
   const { isAuthed, loading: sessionLoading } = useSession();
   useRequireAdmin();
   const [settings, setSettings]   = useState<Record<string, number>>({});
@@ -188,11 +192,14 @@ export default function TrustSettingsScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1 }}
+      style={{ flex: 1, paddingTop: insets.top }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 48 }}>
         <View style={styles.header}>
+          <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
+            <ArrowLeft size={20} color="#111827" />
+          </Pressable>
           <Text style={styles.title}>Trust Settings</Text>
           <Text style={styles.subtitle}>Engine-wide configuration. Changes take effect on the next score recalculation.</Text>
         </View>
@@ -222,6 +229,7 @@ export default function TrustSettingsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
   header:    { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 4 },
+  backBtn:   { padding: 4, marginBottom: 6 },
   title:     { fontSize: 22, fontWeight: '700', color: '#111827' },
   subtitle:  { fontSize: 13, color: '#6B7280', marginTop: 4, lineHeight: 18 },
 

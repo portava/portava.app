@@ -11,7 +11,9 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ArrowLeft } from 'lucide-react-native';
 import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
 import {
   fetchUserTrustDetail,
@@ -192,6 +194,7 @@ function RestrictModal({
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function TrustDetailScreen() {
+  const insets = useSafeAreaInsets();
   useRequireAdmin();
   const { userId } = useLocalSearchParams<{ userId: string }>();
   const [detail, setDetail]           = useState<TrustUserDetail | null>(null);
@@ -301,10 +304,13 @@ export default function TrustDetailScreen() {
 
   return (
     <>
-      <ScrollView style={s.container} contentContainerStyle={{ paddingBottom: 48 }}>
+      <ScrollView style={[s.container, { paddingTop: insets.top }]} contentContainerStyle={{ paddingBottom: 48 }}>
 
         {/* ── Header ── */}
         <View style={s.header}>
+          <Pressable style={s.backBtn} onPress={() => router.back()} hitSlop={8}>
+            <ArrowLeft size={20} color="#111827" />
+          </Pressable>
           <Text style={s.userId} numberOfLines={1}>{userId}</Text>
           <View style={[s.levelBadge, { backgroundColor: levelColor + '22', borderColor: levelColor }]}>
             <Text style={[s.levelText, { color: levelColor }]}>
@@ -439,6 +445,7 @@ const s = StyleSheet.create({
   retryText: { color: '#fff', fontWeight: '600' },
 
   header:      { padding: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  backBtn:     { padding: 4, marginBottom: 8 },
   userId:      { fontSize: 13, color: '#6B7280', marginBottom: 6 },
   levelBadge:  { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12, borderWidth: 1, marginBottom: 6 },
   levelText:   { fontSize: 13, fontWeight: '700', textTransform: 'capitalize' },

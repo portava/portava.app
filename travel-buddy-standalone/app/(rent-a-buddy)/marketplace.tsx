@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Search, Sparkles, MapPin, SlidersHorizontal } from 'lucide-react-native';
+import { ArrowLeft, Search, Sparkles, MapPin, SlidersHorizontal } from 'lucide-react-native';
 import { color, space, radius, type as t, layout } from '../../src/theme/tokens';
 import { TravelErrorState, TravelLoadingState } from '../../src/components/primitives';
 import { BuddyCard } from '../../src/components/BuddyCard';
@@ -61,6 +61,8 @@ export default function Marketplace() {
   const { fromQuiz, city: cityParam } = useLocalSearchParams<{ fromQuiz?: string; city?: string }>();
 
   const [city, setCity]                       = useState(cityParam ?? '');
+  const [cityLat, setCityLat]                 = useState<number | undefined>(undefined);
+  const [cityLng, setCityLng]                 = useState<number | undefined>(undefined);
   const [category, setCategory]               = useState<BuddyCategory | 'all'>('all');
   const [sortBy, setSortBy]                   = useState<BuddySortBy>('best_match');
   const [language, setLanguage]               = useState('');
@@ -93,6 +95,8 @@ export default function Marketplace() {
     }
     const res = await searchBuddies({
       city: city.trim(),
+      ...(cityLat != null ? { lat: cityLat } : {}),
+      ...(cityLng != null ? { lng: cityLng } : {}),
       ...(category !== 'all' ? { category: category as BuddyCategory } : {}),
       sortBy,
       verifiedOnly: verifiedOnly || undefined,
@@ -140,6 +144,9 @@ export default function Marketplace() {
       {/* Header */}
       <View style={s.header}>
         <View style={s.titleRow}>
+          <Pressable onPress={() => router.back()} hitSlop={8} style={{ padding: 4, marginRight: 4 }}>
+            <ArrowLeft size={22} color={color.ink} />
+          </Pressable>
           <Text style={s.title}>Find a Buddy</Text>
           {fromQuiz === '1' && (
             <View style={s.quizBadge}><Text style={s.quizBadgeText}>Quiz matched</Text></View>

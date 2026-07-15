@@ -10,6 +10,8 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ArrowLeft } from 'lucide-react-native';
 import { fetchReviews, type TrustReview } from '../../src/services/trustAdmin';
 import { useSession } from '../../src/context/SessionContext';
 import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
@@ -50,6 +52,7 @@ function ReviewRow({ item, onPress }: { item: TrustReview; onPress: () => void }
 }
 
 export default function TrustReviewsScreen() {
+  const insets = useSafeAreaInsets();
   const { isAuthed, loading: sessionLoading } = useSession();
   useRequireAdmin();
   const [reviews, setReviews]       = useState<TrustReview[]>([]);
@@ -106,8 +109,11 @@ export default function TrustReviewsScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
+        <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
+          <ArrowLeft size={20} color="#111827" />
+        </Pressable>
         <Text style={styles.title}>Trust Review Queue</Text>
         <Text style={styles.subtitle}>{total} open item{total !== 1 ? 's' : ''}</Text>
       </View>
@@ -186,6 +192,7 @@ export default function TrustReviewsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
   header:    { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 8 },
+  backBtn:   { padding: 4, marginBottom: 6 },
   title:     { fontSize: 22, fontWeight: '700', color: '#111827' },
   subtitle:  { fontSize: 13, color: '#6B7280', marginTop: 2 },
 
