@@ -3,7 +3,10 @@ import {
   View, Text, ScrollView, Pressable, StyleSheet, TextInput, Alert,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Bell, MapPin, CheckCircle } from 'lucide-react-native';
+import { ArrowLeft, Bell, MapPin, CheckCircle, Calendar, Clock } from 'lucide-react-native';
+import { GlobalCalendarPicker } from '../../src/components/selectors/GlobalCalendarPicker';
+import { GlobalTimePicker } from '../../src/components/selectors/GlobalTimePicker';
+import { formatDisplayDate, fromISODate, fromHHmm, formatDisplayTime } from '../../src/lib/dateTime/formatters';
 import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
 import { Stamp } from '../../src/components/ui';
 import { joinWaitlist, type BuddyCategory } from '../../src/services/rentABuddy';
@@ -30,6 +33,8 @@ export default function RentABuddyWaitlist() {
   const [selectedCategory, setSelectedCategory] = useState<BuddyCategory | null>(null);
   const [desiredDate, setDesiredDate] = useState('');
   const [desiredTime, setDesiredTime] = useState('');
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
   const [budget, setBudget] = useState('');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -150,21 +155,39 @@ export default function RentABuddyWaitlist() {
         <View style={styles.field}>
           <Text style={styles.fieldLabel}>Desired date & time (optional)</Text>
           <View style={styles.dateTimeRow}>
-            <TextInput
-              style={[styles.inputRow, styles.dateInput]}
-              value={desiredDate}
-              onChangeText={setDesiredDate}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={color.haze}
-            />
-            <TextInput
-              style={[styles.inputRow, styles.timeInput]}
-              value={desiredTime}
-              onChangeText={setDesiredTime}
-              placeholder="HH:MM"
-              placeholderTextColor={color.haze}
-            />
+            <Pressable style={[styles.inputRow, styles.dateInput]} onPress={() => setShowDatePicker(true)}>
+              <Calendar size={14} color={desiredDate ? color.ink : color.mute} />
+              <Text style={[styles.input, !desiredDate && { color: color.haze }]} numberOfLines={1}>
+                {desiredDate
+                  ? (() => { const d = fromISODate(desiredDate); return d ? formatDisplayDate(d) : desiredDate; })()
+                  : 'Select date'}
+              </Text>
+            </Pressable>
+            <Pressable style={[styles.inputRow, styles.timeInput]} onPress={() => setShowTimePicker(true)}>
+              <Clock size={14} color={desiredTime ? color.ink : color.mute} />
+              <Text style={[styles.input, !desiredTime && { color: color.haze }]} numberOfLines={1}>
+                {desiredTime
+                  ? (() => { const d = fromHHmm(desiredTime); return d ? formatDisplayTime(d) : desiredTime; })()
+                  : 'Time'}
+              </Text>
+            </Pressable>
           </View>
+          <GlobalCalendarPicker
+            visible={showDatePicker}
+            mode="single"
+            value={desiredDate || null}
+            title="Desired date"
+            onConfirm={(v) => { setDesiredDate(v ?? ''); setShowDatePicker(false); }}
+            onCancel={() => setShowDatePicker(false)}
+          />
+          <GlobalTimePicker
+            visible={showTimePicker}
+            value={desiredTime || null}
+            title="Desired time"
+            allowClear
+            onChange={(v) => setDesiredTime(v ?? '')}
+            onClose={() => setShowTimePicker(false)}
+          />
         </View>
 
         {/* Budget */}

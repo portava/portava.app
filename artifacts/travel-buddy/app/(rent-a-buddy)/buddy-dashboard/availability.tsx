@@ -10,6 +10,8 @@ import {
 } from '../../../src/components/primitives';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
+import { GlobalCalendarPicker } from '../../../src/components/selectors/GlobalCalendarPicker';
+import { fromISODate, formatDisplayDate } from '../../../src/lib/dateTime/formatters';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const WEEKS_AHEAD = 8;
@@ -53,6 +55,7 @@ export default function BuddyAvailabilityScreen() {
   const [maxPerDay, setMaxPerDay] = useState(3);
   const [vacStart, setVacStart] = useState('');
   const [vacEnd, setVacEnd] = useState('');
+  const [showVacPicker, setShowVacPicker] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -250,24 +253,33 @@ export default function BuddyAvailabilityScreen() {
         <View style={{ flexDirection: 'row', gap: space.sm, marginTop: space.sm }}>
           <View style={{ flex: 1 }}>
             <Text style={s.inputLabel}>From</Text>
-            <View style={fi.input}>
+            <Pressable style={fi.input} onPress={() => setShowVacPicker(true)}>
               <Text style={vacStart ? fi.inputText : fi.inputPlaceholder}>
-                {vacStart || 'YYYY-MM-DD'}
+                {vacStart ? (() => { const d = fromISODate(vacStart); return d ? formatDisplayDate(d) : vacStart; })() : 'Select date'}
               </Text>
-            </View>
+            </Pressable>
           </View>
           <View style={{ flex: 1 }}>
             <Text style={s.inputLabel}>To</Text>
-            <View style={fi.input}>
+            <Pressable style={fi.input} onPress={() => setShowVacPicker(true)}>
               <Text style={vacEnd ? fi.inputText : fi.inputPlaceholder}>
-                {vacEnd || 'YYYY-MM-DD'}
+                {vacEnd ? (() => { const d = fromISODate(vacEnd); return d ? formatDisplayDate(d) : vacEnd; })() : 'Select date'}
               </Text>
-            </View>
+            </Pressable>
           </View>
         </View>
-        <Text style={[s.sectionSub, { marginTop: space.xs }]}>
-          Date picker coming soon. Enter dates manually above.
-        </Text>
+        <GlobalCalendarPicker
+          visible={showVacPicker}
+          mode="range"
+          value={{ start: vacStart || null, end: vacEnd || null }}
+          title="Blocked dates"
+          onConfirm={({ start, end }) => {
+            setVacStart(start ?? '');
+            setVacEnd(end ?? '');
+            setShowVacPicker(false);
+          }}
+          onCancel={() => setShowVacPicker(false)}
+        />
       </ScrollView>
 
       <View style={[s.footer, { paddingBottom: insets.bottom + space.md }]}>

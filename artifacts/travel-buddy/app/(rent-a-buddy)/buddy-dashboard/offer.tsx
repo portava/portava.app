@@ -6,6 +6,8 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Send, Plus, X } from 'lucide-react-native';
 import { TravelButton, TravelCard, TravelChip } from '../../../src/components/primitives';
+import { DatePickerField } from '../../../src/components/DatePickerField';
+import { DatePickerField as TimePickerField } from '../../../src/components/DateTimePickerField';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyCategory } from '../../../src/services/rentABuddy';
@@ -173,22 +175,21 @@ export default function BuddyOffer() {
           <View style={{ flex: 1 }}>
             <FieldLabel label="Proposed date" />
             {errors.date ? <Text style={s.err}>{errors.date}</Text> : null}
-            <TextInput
-              style={[fi.input, errors.date ? fi.inputError : undefined]}
+            <DatePickerField
               value={date}
-              onChangeText={(v) => { setDate(v); setErrors((e) => ({ ...e, date: '' })); }}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={color.haze}
+              onChange={(v) => { setDate(v); setErrors((e) => ({ ...e, date: '' })); }}
+              placeholder="Select date"
+              style={errors.date ? fi.inputError : undefined}
             />
           </View>
           <View style={{ flex: 1 }}>
             <FieldLabel label="Start time" optional />
-            <TextInput
-              style={fi.input}
-              value={time}
-              onChangeText={setTime}
-              placeholder="e.g. 10:00"
-              placeholderTextColor={color.haze}
+            <TimePickerField
+              mode="time"
+              value={time ? new Date(`1970-01-01T${time.length === 5 ? time : time.slice(0, 5)}:00`) : null}
+              onChange={(d) => setTime(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`)}
+              onClear={() => setTime('')}
+              placeholder="Select time"
             />
           </View>
         </View>
