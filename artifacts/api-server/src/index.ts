@@ -17,6 +17,7 @@ import { startInviteSlotReconciler } from "./lib/inviteSlotReconciler";
 import { startInviteSlotSweeper } from "./lib/inviteSlotSweeper";
 import { getServiceClient } from "./lib/supabase";
 import { assertRequiredEnv } from "./lib/envValidation";
+import { startWorkerLoop } from "./lib/stamps/generationWorker";
 
 assertRequiredEnv(logger);
 
@@ -58,6 +59,12 @@ app.listen(port, (err) => {
   warmUpDiscoveryCache(port).catch((e) =>
     logger.warn({ err: e }, "discovery warm-up: unhandled error"),
   );
+
+  // Stamp generation worker — only when explicitly enabled via env var
+  if (process.env.STAMP_WORKER_ENABLED === "true") {
+    const intervalMs = Number(process.env.STAMP_WORKER_INTERVAL_MS) || 30_000;
+    startWorkerLoop(intervalMs);
+  }
 
   // Startup check: verify the toggle_feature_flag_with_audit SQL function
   // exists (introduced by migration 0119).  If it is missing the PATCH

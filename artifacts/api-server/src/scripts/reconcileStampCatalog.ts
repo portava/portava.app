@@ -1,0 +1,285 @@
+/**
+ * Stamp Catalog Reconciliation Script
+ *
+ * Reads every distinct (stamp_type, country, city) combination from both
+ * `passport_stamps` and `user_stamps`, resolves to canonical catalog entries,
+ * and updates ownership rows with catalog_id.
+ *
+ * Idempotent — safe to re-run.
+ *
+ * Usage:
+ *   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... npx tsx src/scripts/reconcileStampCatalog.ts
+ */
+
+import { createClient } from "@supabase/supabase-js";
+import { canonicalLocationKeyFromStrings } from "../lib/stamps/locationKey.js";
+import { STYLE_VERSION } from "../lib/stamps/artDirection.js";
+
+const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.EXPO_PUBLIC_SUPABASE_URL ?? "";
+const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+if (!SUPABASE_URL || !SERVICE_KEY) {
+  console.error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required");
+  process.exit(1);
+}
+
+const sc = createClient(SUPABASE_URL, SERVICE_KEY, {
+  auth: { persistSession: false },
+});
+
+interface LocationCombo {
+  stamp_type:            string;
+  country:               string | null;
+  city:                  string | null;
+  neighborhood?:         string | null;
+  // definition IDs collected from user_stamps rows — used for the write-side
+  // update because user_stamps has no stamp_type column; we filter by definition.
+  userStampDefIds:       string[];
+}
+
+interface ReconcileStats {
+  resolved:  number;
+  flagged:   number;
+  skipped:   number;
+  enqueued:  number;
+}
+
+async function main() {
+  console.log("[reconcile] Starting stamp catalog reconciliation…");
+  const stats: ReconcileStats = { resolved: 0, flagged: 0, skipped: 0, enqueued: 0 };
+
+  // Collect distinct combos from both tables
+  const combos = new Map<string, LocationCombo>();
+
+  // From user_stamps — join stamp_definitions to get the canonical stamp_type.
+  // user_stamps has NO stamp_type column; the type lives on the definition row.
+  // We also collect stamp_definition_id so the write-side update can filter by
+  // definition rather than the nonexistent stamp_type column.
+  const { data: userStamps, error: usErr } = await sc
+    .from("user_stamps")
+    .select("stamp_definition_id, country, city, stamp_definitions!stamp_definition_id(stamp_type)")
+    .not("country", "is", null);
+
+  if (usErr) { console.error("[reconcile] Failed to read user_stamps:", usErr.message); process.exit(1); }
+
+  for (const row of (userStamps ?? []) as any[]) {
+    const stampType: string = (row.stamp_definitions as any)?.stamp_type ?? "city";
+    const key = `${stampType}|${row.country ?? ""}|${row.city ?? ""}`;
+    const existing = combos.get(key);
+    if (existing) {
+      // Accumulate additional definition IDs for this combo
+      if (row.stamp_definition_id && !existing.userStampDefIds.includes(row.stamp_definition_id)) {
+        existing.userStampDefIds.push(row.stamp_definition_id);
+      }
+    } else {
+      combos.set(key, {
+        stamp_type:       stampType,
+        country:          row.country ?? null,
+        city:             row.city ?? null,
+        userStampDefIds:  row.stamp_definition_id ? [row.stamp_definition_id] : [],
+      });
+    }
+  }
+
+  // From passport_stamps (v1) — uses country/city columns (not location_country/location_city)
+  const { data: passportStamps, error: psErr } = await sc
+    .from("passport_stamps")
+    .select("stamp_type, country, city")
+    .not("country", "is", null);
+
+  if (psErr) {
+    console.warn("[reconcile] passport_stamps read failed (may not exist):", psErr.message);
+  } else {
+    for (const row of (passportStamps ?? []) as any[]) {
+      const stampType = row.stamp_type ?? "city";
+      const key = `${stampType}|${row.country ?? ""}|${row.city ?? ""}`;
+      if (!combos.has(key)) {
+        combos.set(key, {
+          stamp_type:       stampType,
+          country:          row.country ?? null,
+          city:             row.city ?? null,
+          userStampDefIds:  [], // passport_stamps-only combo; no user_stamps definitions
+        });
+      }
+    }
+  }
+
+  console.log(`[reconcile] Found ${combos.size} distinct location combinations`);
+
+  const newCatalogIds: string[] = [];
+
+  for (const [_key, combo] of combos) {
+    // Skip combos without enough data to build a canonical key
+    if (!combo.country && !combo.city) {
+      stats.skipped++;
+      continue;
+    }
+
+    let canonKey: string;
+    let displayName: string;
+    let countryCode: string;
+
+    try {
+      canonKey = canonicalLocationKeyFromStrings({
+        stampType:    combo.stamp_type ?? "city",
+        country:      combo.country,
+        city:         combo.city,
+        neighborhood: combo.neighborhood ?? null,
+      });
+
+      displayName = combo.city ?? combo.country ?? "Unknown";
+      // Very rough country code: if country looks like 2 chars, use it; else abbreviate
+      const rawCountry = combo.country ?? "XX";
+      countryCode = rawCountry.length === 2
+        ? rawCountry.toUpperCase()
+        : rawCountry.slice(0, 2).toUpperCase();
+    } catch (e: any) {
+      console.warn("[reconcile] Failed to build key:", combo, e?.message);
+      stats.flagged++;
+      continue;
+    }
+
+    // Upsert catalog entry
+    const { data: existingEntry } = await sc
+      .from("universal_stamp_catalog")
+      .select("id")
+      .eq("canonical_location_key", canonKey)
+      .eq("stamp_type", combo.stamp_type ?? "city")
+      .maybeSingle();
+
+    let catalogId: string;
+
+    if (existingEntry) {
+      catalogId = (existingEntry as any).id;
+    } else {
+      const { data: newEntry, error: insertErr } = await sc
+        .from("universal_stamp_catalog")
+        .insert({
+          canonical_location_key:  canonKey,
+          stamp_type:              combo.stamp_type ?? "city",
+          display_name:            displayName,
+          country:                 combo.country ?? "Unknown",
+          country_code:            countryCode,
+          city:                    combo.city ?? null,
+          status:                  "pending_artwork",
+          prompt_template_version: STYLE_VERSION,
+        })
+        .select("id")
+        .single();
+
+      if (insertErr) {
+        // Unique constraint race
+        if ((insertErr as any).code === "23505") {
+          const { data: retry } = await sc
+            .from("universal_stamp_catalog")
+            .select("id")
+            .eq("canonical_location_key", canonKey)
+            .eq("stamp_type", combo.stamp_type ?? "city")
+            .maybeSingle();
+          if (!retry) { stats.flagged++; continue; }
+          catalogId = (retry as any).id;
+        } else {
+          console.warn("[reconcile] Catalog insert failed:", insertErr.message, combo);
+          stats.flagged++;
+
+          // Log for admin review
+          void sc.from("stamp_reconciliation_log").insert({
+            source_table:       "universal_stamp_catalog",
+            source_id:          "00000000-0000-0000-0000-000000000000",
+            raw_country:        combo.country,
+            raw_city:           combo.city,
+            stamp_type:         combo.stamp_type,
+            canonical_key:      canonKey,
+            needs_admin_review: true,
+            review_reason:      insertErr.message,
+          });
+
+          continue;
+        }
+      } else {
+        catalogId = (newEntry as any).id;
+        newCatalogIds.push(catalogId);
+      }
+    }
+
+    // Update user_stamps.catalog_id.
+    // user_stamps has NO stamp_type column, so we filter by stamp_definition_id
+    // (collected during the read phase) plus country/city for safety.
+    // If no definition IDs were collected (passport_stamps-only combos), skip.
+    if (combo.userStampDefIds.length > 0) {
+      let usQuery = sc
+        .from("user_stamps")
+        .update({ catalog_id: catalogId })
+        .is("catalog_id", null)
+        .in("stamp_definition_id", combo.userStampDefIds);
+      if (combo.country != null && combo.country !== "") {
+        usQuery = usQuery.eq("country", combo.country) as typeof usQuery;
+      } else {
+        usQuery = usQuery.is("country", null) as typeof usQuery;
+      }
+      if (combo.city != null && combo.city !== "") {
+        usQuery = usQuery.eq("city", combo.city) as typeof usQuery;
+      } else {
+        usQuery = usQuery.is("city", null) as typeof usQuery;
+      }
+      const { error: usUpdateErr } = await usQuery;
+      if (usUpdateErr) {
+        console.warn("[reconcile] user_stamps update failed:", usUpdateErr.message);
+      }
+    }
+
+    // Update passport_stamps.catalog_id (v1 path) — match on stamp_type + country + city.
+    let psQuery = sc
+      .from("passport_stamps")
+      .update({ catalog_id: catalogId })
+      .is("catalog_id", null)
+      .eq("stamp_type", combo.stamp_type ?? "city");
+    if (combo.country != null && combo.country !== "") {
+      psQuery = psQuery.eq("country", combo.country) as typeof psQuery;
+    } else {
+      psQuery = psQuery.is("country", null) as typeof psQuery;
+    }
+    if (combo.city != null && combo.city !== "") {
+      psQuery = psQuery.eq("city", combo.city) as typeof psQuery;
+    } else {
+      psQuery = psQuery.is("city", null) as typeof psQuery;
+    }
+    const { error: psUpdateErr } = await psQuery;
+
+    if (psUpdateErr && psUpdateErr.message !== "relation does not exist") {
+      console.warn("[reconcile] passport_stamps update failed:", psUpdateErr.message);
+    }
+
+    stats.resolved++;
+  }
+
+  // Enqueue generation jobs for all new catalog entries
+  console.log(`[reconcile] Enqueueing generation jobs for ${newCatalogIds.length} new catalog entries…`);
+
+  for (const catalogId of newCatalogIds) {
+    const { error: queueErr } = await sc
+      .from("stamp_generation_queue")
+      .insert({
+        catalog_id:          catalogId,
+        status:              "queued",
+        priority:            5,
+        triggered_by_action: "reconciliation_script",
+      });
+
+    if (!queueErr) {
+      stats.enqueued++;
+    }
+    // Unique constraint fires if a job already exists — ok
+  }
+
+  console.log("[reconcile] Complete:", stats);
+  console.log(`  Resolved:  ${stats.resolved}`);
+  console.log(`  Flagged:   ${stats.flagged}`);
+  console.log(`  Skipped:   ${stats.skipped}`);
+  console.log(`  Enqueued:  ${stats.enqueued}`);
+}
+
+main().catch((e) => {
+  console.error("[reconcile] Fatal error:", e);
+  process.exit(1);
+});

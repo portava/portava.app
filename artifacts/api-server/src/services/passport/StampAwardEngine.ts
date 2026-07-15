@@ -12,6 +12,8 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
+import { resolveOrEnqueue } from "../../lib/stamps/StampCatalogService.js";
+import { canonicalLocationKeyFromStrings } from "../../lib/stamps/locationKey.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -164,7 +166,7 @@ async function _awardStampCore(
   // 1. Load definition
   const { data: def, error: defErr } = await sc
     .from("stamp_definitions")
-    .select("id, slug, is_active, is_repeatable, max_awards_per_user, visibility_default, criteria_type")
+    .select("id, slug, stamp_type, is_active, is_repeatable, max_awards_per_user, visibility_default, criteria_type")
     .eq("slug", definitionSlug)
     .maybeSingle();
 
@@ -327,6 +329,60 @@ async function _awardStampCore(
   }
 
   const newStampId = (stampRow as any).id;
+
+  // 7b. Fire-and-forget: resolve universal catalog entry for this stamp location.
+  // This never blocks the award or throws — any failure is logged and ignored.
+  Promise.resolve().then(async () => {
+    try {
+      const countryCode = (country ?? "").trim().length === 2
+        ? (country ?? "").trim()
+        : (country ?? "XX").trim().slice(0, 2);
+
+      const displayName = city ?? country ?? definitionSlug;
+      // Use the definition's actual stamp_type column — never infer from slug.
+      // Fall back to "city" only if the row somehow lacks the field.
+      const defType: string = (definition as any).stamp_type ?? "city";
+
+      const canonKey = canonicalLocationKeyFromStrings({
+        stampType: defType,
+        country,
+        city,
+      });
+
+      const { catalogEntry } = await resolveOrEnqueue(
+        sc,
+        {
+          stampType:    defType,
+          country:      country ?? "Unknown",
+          country_code: countryCode,
+          city:         city ?? null,
+          displayName,
+        },
+        defType,
+        `user_stamp:${newStampId}`,
+      );
+
+      // Back-fill catalog_id on the newly inserted user_stamp row
+      if (catalogEntry?.id) {
+        await sc
+          .from("user_stamps")
+          .update({ catalog_id: catalogEntry.id })
+          .eq("id", newStampId);
+
+        console.log(JSON.stringify({
+          event:      "stamp.award.catalog_linked",
+          stamp_id:   newStampId,
+          catalog_id: catalogEntry.id,
+        }));
+      }
+    } catch (e: any) {
+      console.error(JSON.stringify({
+        event:    "stamp.award.catalog_link_failed",
+        stamp_id: newStampId,
+        error:    e?.message ?? String(e),
+      }));
+    }
+  }).catch(() => {});
 
   // 8. Update stamp_progress for repeatable stamps (fire-and-forget, non-fatal)
   if (definition.is_repeatable) {

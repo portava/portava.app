@@ -74,10 +74,10 @@ const VISIBILITY = z.enum(["public", "friends_only", "private"]);
 // PUBLIC_STAMP_COLS — used for all non-owner reads (metadata excluded)
 const OWNER_STAMP_COLS =
   "id, user_id, stamp_definition_id, source_type, earned_at, city, country, " +
-  "title_override, metadata, visibility, display_on_passport, is_revoked, created_at";
+  "title_override, metadata, visibility, display_on_passport, is_revoked, created_at, catalog_id";
 const PUBLIC_STAMP_COLS =
   "id, user_id, stamp_definition_id, source_type, earned_at, city, country, " +
-  "title_override, visibility, display_on_passport, is_revoked, created_at";
+  "title_override, visibility, display_on_passport, is_revoked, created_at, catalog_id";
 
 // ── Friendship helper ─────────────────────────────────────────────────────────
 // Returns true if caller and target have an accepted friendship.
@@ -218,7 +218,7 @@ router.get("/stamps/me", async (req, res) => {
     return;
   }
 
-  res.json({ stamps: (data ?? []).map(formatStamp) });
+  res.json({ stamps: await formatStamps(sc, data ?? []) });
 });
 
 // ── GET /stamps/me/progress ───────────────────────────────────────────────────
@@ -317,7 +317,7 @@ router.get("/stamps/user/:userId", async (req, res) => {
       .order("earned_at", { ascending: false })
       .limit(200);
     if (error) { sendError(res, "db_error", error.message); return; }
-    res.json({ stamps: (data ?? []).map(formatStamp) });
+    res.json({ stamps: await formatStamps(sc, data ?? []) });
     return;
   }
 
@@ -344,7 +344,7 @@ router.get("/stamps/user/:userId", async (req, res) => {
   const { data, error } = await query;
   if (error) { sendError(res, "db_error", error.message); return; }
 
-  res.json({ stamps: (data ?? []).map(formatStamp) });
+  res.json({ stamps: await formatStamps(sc, data ?? []) });
 });
 
 // ── GET /stamps/profile/:username ─────────────────────────────────────────────
@@ -420,11 +420,12 @@ router.get("/stamps/profile/:username", async (req, res) => {
   if (error) { sendError(res, "db_error", error.message); return; }
 
   // Apply PassportPrivacyGuard filterStampsV2 — uses CallerContext-based visibility
-  const stamps = filterStampsV2(
+  const filtered = filterStampsV2(
     (rows ?? []) as unknown as Array<{ visibility: string }>,
     callerCtx,
-  ).map(formatStamp);
+  ) as any[];
 
+  const stamps = await formatStamps(sc, filtered);
   res.json({ stamps });
 });
 
@@ -446,7 +447,7 @@ router.get("/stamps/recent", async (req, res) => {
     .limit(limit);
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ stamps: (data ?? []).map(formatStamp) });
+  res.json({ stamps: await formatStamps(sc, data ?? []) });
 });
 
 // ── GET /stamps/city/:city ────────────────────────────────────────────────────
@@ -467,7 +468,7 @@ router.get("/stamps/city/:city", async (req, res) => {
     .limit(limit);
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ stamps: (data ?? []).map(formatStamp) });
+  res.json({ stamps: await formatStamps(sc, data ?? []) });
 });
 
 // ── GET /stamps/country/:country ──────────────────────────────────────────────
@@ -488,7 +489,7 @@ router.get("/stamps/country/:country", async (req, res) => {
     .limit(limit);
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ stamps: (data ?? []).map(formatStamp) });
+  res.json({ stamps: await formatStamps(sc, data ?? []) });
 });
 
 // ── GET /stamps/:stampId ──────────────────────────────────────────────────────
@@ -520,7 +521,8 @@ router.get("/stamps/:stampId", async (req, res) => {
 
   if (isOwner) {
     // Owner gets full metadata-included response
-    res.json({ stamp: formatStamp(stamp) });
+    const [formatted] = await formatStamps(sc, [stamp]);
+    res.json({ stamp: formatted });
     return;
   }
 
@@ -542,7 +544,8 @@ router.get("/stamps/:stampId", async (req, res) => {
 
   // Non-owner: strip metadata from response (same as PUBLIC_STAMP_COLS exclusion)
   const { metadata: _stripped, ...publicStamp } = stamp;
-  res.json({ stamp: formatStamp(publicStamp) });
+  const [formattedPublic] = await formatStamps(sc, [publicStamp]);
+  res.json({ stamp: formattedPublic });
 });
 
 // ── PATCH /stamps/:userStampId/visibility ─────────────────────────────────────
@@ -749,10 +752,52 @@ router.post("/stamps/recalculate/:userId", async (req, res) => {
   res.json(result);
 });
 
+// ── Catalog artwork batch enrichment ──────────────────────────────────────────
+// Resolves active_artwork_url for every stamp that has a catalog_id, using a
+// single batch query against universal_stamp_catalog + stamp_artwork_versions.
+// Falls back gracefully when the tables do not yet exist.
+
+async function buildCatalogArtworkMap(
+  sc: ReturnType<typeof getServiceClient>,
+  rows: any[],
+): Promise<Map<string, string | null>> {
+  const artworkMap = new Map<string, string | null>();
+  if (!sc) return artworkMap;
+
+  const catalogIds = [...new Set(
+    rows.map((r) => r.catalog_id).filter((id): id is string => typeof id === "string"),
+  )];
+  if (catalogIds.length === 0) return artworkMap;
+
+  try {
+    // Join via active_version_id FK to stamp_artwork_versions to get public_url
+    const { data, error } = await sc
+      .from("universal_stamp_catalog")
+      .select("id, stamp_artwork_versions!active_version_id(public_url)")
+      .in("id", catalogIds)
+      .eq("status", "approved");
+
+    if (error) return artworkMap; // Tables may not exist yet — degrade silently
+
+    for (const row of (data ?? []) as any[]) {
+      const url: string | null = row.stamp_artwork_versions?.public_url ?? null;
+      artworkMap.set(row.id, url);
+    }
+  } catch {
+    // Never surface artwork lookup failures to the caller
+  }
+
+  return artworkMap;
+}
+
 // ── Formatter ─────────────────────────────────────────────────────────────────
 // lat/lng are intentionally omitted from all responses.
 
-function formatStamp(row: any) {
+function formatStamp(row: any, artworkMap?: Map<string, string | null>) {
+  const catalogId: string | null = row.catalog_id ?? null;
+  const activeArtworkUrl: string | null =
+    (catalogId && artworkMap ? (artworkMap.get(catalogId) ?? null) : null);
+
   return {
     id:                row.id,
     userId:            row.user_id,
@@ -768,7 +813,18 @@ function formatStamp(row: any) {
     displayOnPassport: row.display_on_passport,
     isRevoked:         row.is_revoked,
     createdAt:         row.created_at,
+    catalogId,
+    activeArtworkUrl,
   };
+}
+
+/** Enriches a stamp array with catalog artwork in one batch query, then formats. */
+async function formatStamps(
+  sc: ReturnType<typeof getServiceClient>,
+  rows: any[],
+): Promise<ReturnType<typeof formatStamp>[]> {
+  const artworkMap = await buildCatalogArtworkMap(sc, rows);
+  return rows.map((r) => formatStamp(r, artworkMap));
 }
 
 export default router;

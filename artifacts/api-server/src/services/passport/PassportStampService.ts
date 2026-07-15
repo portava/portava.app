@@ -9,6 +9,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { VisibilityTier } from "./PassportPrivacyGuard.js";
 import { recordTrustEvent } from "../trust/TrustEventService.js";
+import { resolveOrEnqueue } from "../../lib/stamps/StampCatalogService.js";
 
 export type StampType =
   | "city"
@@ -129,6 +130,33 @@ export async function createStamp(
 
   if (error) return null;
   const stampId = (data as any).id;
+
+  // Fire-and-forget: resolve universal catalog entry for v1 passport_stamps path
+  Promise.resolve().then(async () => {
+    try {
+      const cc = (country ?? "XX").trim().slice(0, 2).toUpperCase();
+      const { catalogEntry } = await resolveOrEnqueue(
+        db,
+        {
+          stampType:    stampType,
+          country:      country ?? "Unknown",
+          country_code: cc,
+          city:         city ?? null,
+          displayName:  city ?? country ?? stampType,
+        },
+        stampType,
+        `passport_stamp:${stampId}`,
+      );
+      if (catalogEntry?.id) {
+        await db
+          .from("passport_stamps")
+          .update({ catalog_id: catalogEntry.id })
+          .eq("id", stampId);
+      }
+    } catch {
+      // Never block the v1 award path
+    }
+  }).catch(() => {});
 
   // Feed new passport stamp into Trust Engine (fire-and-forget; flag-gated internally)
   void recordTrustEvent(db, {

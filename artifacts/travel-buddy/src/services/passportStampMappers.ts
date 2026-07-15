@@ -40,5 +40,8 @@ export function mapStamp(r: any): PassportStampNew {
     isRevoked:          r.is_revoked ?? r.isRevoked ?? false,
     earnedAt:           r.earned_at ?? r.earnedAt ?? new Date().toISOString(),
     createdAt:          r.created_at ?? r.createdAt ?? new Date().toISOString(),
+    catalogId:          r.catalog_id ?? r.catalogId ?? null,
+    // Active artwork URL sourced from joined catalog row or pre-fetched batch map
+    activeArtworkUrl:   r.activeArtworkUrl ?? r.active_artwork_url ?? r.universal_stamp_catalog?.active_artwork_url ?? null,
   };
 }
