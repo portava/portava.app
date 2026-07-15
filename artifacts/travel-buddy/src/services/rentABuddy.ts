@@ -141,6 +141,10 @@ export type BuddySortBy =
 
 export interface BuddySearchParams {
   city: string;
+  /** Latitude of the user's current location — enables proximity-based ranking on the server. */
+  lat?: number;
+  /** Longitude of the user's current location — enables proximity-based ranking on the server. */
+  lng?: number;
   category?: BuddyCategory;
   date?: string;
   groupSize?: number;

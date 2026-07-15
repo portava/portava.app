@@ -6,7 +6,7 @@ import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker';
 import type { Place } from '../../lib/location/placeTypes';
 
 interface DestinationBarProps {
-  destination: string;
+  destination: string | null;
   onSelectPlace: (place: Place) => void;
 }
 

@@ -75,7 +75,7 @@ export default function DiscoveryHub() {
   const insets = useSafeAreaInsets();
   const { isAuthed } = useSession();
   const { open: openPlanPicker } = usePlanPicker();
-  const { locationState, showCityPicker, openCityPicker, closeCityPicker, setManualCity } = useLocationContext();
+  const { locationState, showCityPicker, openCityPicker, closeCityPicker, setManualCity, isLoading } = useLocationContext();
   const { users: highlightUsers, sessionViewedIds, markSessionViewed } = useFollowingHighlights();
   const currentCity = locationState.place.city ?? null;
 
@@ -95,10 +95,9 @@ export default function DiscoveryHub() {
   );
 
   const [activeTab, setActiveTab] = useState<DiscoveryCategory>(initialCategory);
-  // Seed from location context city if available; fall back to 'Paris' so
-  // content fetches start immediately without a blank screen.
-  const [destination, setDestination] = useState(
-    () => locationState.place.city ?? 'Paris'
+  // Seed from location context city if available; null when no location is set yet.
+  const [destination, setDestination] = useState<string | null>(
+    () => locationState.place.city ?? null
   );
   const [destinationLat, setDestinationLat] = useState<number | null>(
     () => locationState.coords?.lat ?? null
@@ -196,6 +195,11 @@ export default function DiscoveryHub() {
   //   2. For the default case (no age filter), use the single-request batch
   //      endpoint instead of 7 parallel /api/discovery requests.
   useEffect(() => {
+    // Don't fetch counts until a destination is set — no "Paris" fallback anymore.
+    if (!destination) {
+      setCountsLoading(false);
+      return;
+    }
     setCountsLoading(true);
     let cancelled = false;
 
@@ -274,12 +278,12 @@ export default function DiscoveryHub() {
     setDetailVisible(true);
   };
 
-  const handlePickDestination = useCallback((city: string) => {
-    setDestination(city);
-    setDestinationLat(null);
-    setDestinationLng(null);
+  const handlePickDestination = useCallback((place: import('../../src/lib/location/placeTypes').Place) => {
+    setDestination(place.city ?? place.name);
+    setDestinationLat(place.lat ?? null);
+    setDestinationLng(place.lng ?? null);
     // Also persist as manual city in the location system
-    setManualCity(city).catch(() => {});
+    setManualCity(place).catch(() => {});
   }, [setManualCity]);
 
   // MapTiler geocode on load:
@@ -315,7 +319,7 @@ export default function DiscoveryHub() {
     setDestination(place.city ?? place.name);
     setDestinationLat(place.lat ?? null);
     setDestinationLng(place.lng ?? null);
-    setManualCity(place.city ?? place.name).catch(() => {});
+    setManualCity(place).catch(() => {});
   }, [setManualCity]);
 
   return (
@@ -466,6 +470,21 @@ export default function DiscoveryHub() {
         </View>
       </Modal>
 
+      {/* ── Location nudge — shown when no destination is set ── */}
+      {!destination && !isLoading && (
+        <Pressable
+          style={styles.locationNudge}
+          onPress={openCityPicker}
+          accessibilityRole="button"
+          accessibilityLabel="Set your location to discover nearby places"
+        >
+          <MapPin size={16} color={color.signal} />
+          <Text style={styles.locationNudgeText}>
+            Enable location or <Text style={styles.locationNudgeLink}>choose a city</Text> to discover nearby places
+          </Text>
+        </Pressable>
+      )}
+
       {/* ── Tab bar + list/map toggle ── */}
       <View style={styles.tabRow}>
         <ScrollView
@@ -609,7 +628,7 @@ export default function DiscoveryHub() {
             <CompassBuddyRow city={currentCity} />
             <ForYouTab
               key={`${destination}-${contextMode}-${communityRefreshKey}`}
-              destination={destination}
+              destination={destination ?? ''}
               onAddToPlan={handleAddToPlan}
               onAddToRoute={handleAddToRoute}
               contextMode={contextMode}
@@ -627,11 +646,11 @@ export default function DiscoveryHub() {
           <DiscoveryCategoryTab
             key={`${activeTab}-${destination}-${contextMode}`}
             category={activeTab}
-            destination={destination}
+            destination={destination ?? ''}
             onSelectPlace={handleSelectPlace}
             onAddToPlan={handleAddToPlanFromPlace}
             onAddToRoute={handleAddToRoute}
-            onPickDestination={handlePickDestination}
+            onPickDestination={(city: string) => handlePickDestination({ id: `manual-${city.toLowerCase().replace(/\s+/g, '-')}`, type: 'city', name: city, displayName: city, city, country: null, countryCode: null, region: null, district: null, lat: null, lng: null, timezone: null, source: 'manual' as const })}
             contextMode={contextMode}
             viewMode={viewMode}
             ageFilter={ageFilter}
@@ -672,7 +691,7 @@ export default function DiscoveryHub() {
       <LayoverModeSheet
         visible={layoverOpen}
         onClose={() => setLayoverOpen(false)}
-        initialCity={destination}
+        initialCity={destination ?? ''}
       />
 
       {/* Route builder — opened from any "Add to Route" button in this tab */}
@@ -690,7 +709,7 @@ export default function DiscoveryHub() {
       {/* Submit a community place */}
       <SubmitPlaceSheet
         visible={submitPlaceOpen}
-        city={destination}
+        city={destination ?? ''}
         onClose={() => setSubmitPlaceOpen(false)}
         onSubmitted={() => {
           setSubmitPlaceOpen(false);
@@ -742,6 +761,26 @@ const styles = StyleSheet.create({
     ...t.heading,
     color: color.ink,
     fontSize: 20,
+  },
+  locationNudge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+    backgroundColor: color.signal + '10',
+    borderBottomWidth: 1,
+    borderBottomColor: color.signal + '30',
+  },
+  locationNudgeText: {
+    ...t.small,
+    color: color.mute,
+    flex: 1,
+    lineHeight: 18,
+  },
+  locationNudgeLink: {
+    color: color.signal,
+    fontWeight: '700',
   },
   tabRow: {
     flexDirection: 'row',

@@ -10,7 +10,7 @@ import { ArrowLeft, Camera, ImagePlus, Check, X, AlertCircle, ChevronDown } from
 import * as ImagePicker from 'expo-image-picker';
 import { renderAvatarImage, renderCoverImage, MAX_ORIGINAL_BYTES } from '../../src/lib/imageRender';
 import { getMyProfile, updateMyProfile, uploadAvatar, uploadCover, checkUsername, deleteOrphanedAvatar, deleteOrphanedCover } from '../../src/services/profile';
-import { getCurrentGps, reverseGeocodeDetailed } from '../../src/services/location';
+import { getCurrentGps, reverseGeocodeToPlace } from '../../src/services/location';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { DatePickerField } from '../../src/components/DatePickerField';
 import type { OwnProfile } from '../../src/types/models';
@@ -375,7 +375,7 @@ export default function EditProfileScreen() {
         return;
       }
       if (gps.lat == null || gps.lng == null) return;
-      const place = await reverseGeocodeDetailed(gps.lat, gps.lng);
+      const place = await reverseGeocodeToPlace(gps.lat, gps.lng);
       setForm((f) => ({
         ...f,
         homeCity: place.city ?? f.homeCity,
@@ -405,7 +405,7 @@ export default function EditProfileScreen() {
         return;
       }
       if (gps.lat == null || gps.lng == null) return;
-      const place = await reverseGeocodeDetailed(gps.lat, gps.lng);
+      const place = await reverseGeocodeToPlace(gps.lat, gps.lng);
       setForm((f) => ({
         ...f,
         currentCity: place.city ?? f.currentCity,
@@ -1240,8 +1240,8 @@ export default function EditProfileScreen() {
       <ManualCityPicker
         visible={showHomePicker}
         onClose={() => setShowHomePicker(false)}
-        onSelect={(city, country) => {
-          setForm((f) => ({ ...f, homeCity: city, homeCountry: country }));
+        onSelect={(place) => {
+          setForm((f) => ({ ...f, homeCity: place.city ?? place.name, homeCountry: place.country ?? f.homeCountry }));
           setShowHomePicker(false);
         }}
       />
@@ -1250,8 +1250,8 @@ export default function EditProfileScreen() {
       <ManualCityPicker
         visible={showCurrentPicker}
         onClose={() => setShowCurrentPicker(false)}
-        onSelect={(city) => {
-          setForm((f) => ({ ...f, currentCity: city }));
+        onSelect={(place) => {
+          setForm((f) => ({ ...f, currentCity: place.city ?? place.name }));
           setShowCurrentPicker(false);
         }}
       />

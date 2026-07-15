@@ -3,7 +3,7 @@
  *
  * Wrap the root layout with <LocationProvider>. Any screen or component
  * can then call useLocationContext() to get the current city, request GPS,
- * or set a manual city.
+ * or set a location via a Place object.
  *
  * showPermissionPrompt is set to true when a location-required feature is
  * first loaded and no location has been captured yet.
@@ -14,6 +14,7 @@ import type { ActiveLocationState, UseActiveLocationResult } from '../hooks/useA
 import { useLocationPreferences } from '../hooks/useLocationPreferences';
 import type { LocationPreferences } from '../hooks/useLocationPreferences';
 import { useSession } from './SessionContext';
+import type { Place } from '../lib/location/placeTypes';
 
 // ── Context shape ─────────────────────────────────────────────────────────────
 
@@ -112,4 +113,4 @@ export function useLocationContext(): LocationContextValue {
 }
 
 // Re-export types so consumers don't need to import from the hook directly
-export type { ActiveLocationState, LocationContextValue, LocationPreferences };
+export type { ActiveLocationState, LocationContextValue, LocationPreferences, Place };

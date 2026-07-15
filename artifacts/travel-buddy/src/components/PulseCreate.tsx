@@ -10,8 +10,9 @@ import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import {
   X, Check, PenLine, HelpCircle, Gem, Camera, Mail, UtensilsCrossed,
-  MapPin, Navigation, SlidersHorizontal, Video as VideoIcon,
+  MapPin, SlidersHorizontal, Video as VideoIcon,
 } from 'lucide-react-native';
+import { GlobalPlacePicker } from './selectors/GlobalPlacePicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PULSE_FILTERS } from '../types/models';
 import type { PulseFilter, PostCategory } from '../types/models';
@@ -20,7 +21,7 @@ import { usePostActions } from '../hooks/usePosts';
 import type { PostVisibility, LocationPrivacyMode } from '../services/posts';
 import { uploadMedia, validateMedia, type PickedMedia } from '../services/media';
 import { useSession } from '../context/SessionContext';
-import { getCurrentGps, reverseGeocode } from '../services/location';
+import type { Place } from '../lib/location/placeTypes';
 import { HighlightComposer } from './HighlightComposer';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -59,11 +60,6 @@ const SUBMIT_LABEL: Record<PostTypeId, string> = {
 const DEDICATED_COMPOSERS: Partial<Record<PostTypeId, true>> = {
   share_highlight: true,
 };
-
-type LocState =
-  | { source: 'none' }
-  | { source: 'gps'; lat: number; lng: number; name: string | null; city: string | null; country: string | null }
-  | { source: 'manual'; name: string; city: string | null; country: string | null };
 
 function needsPlace(t: PostTypeId)  { return t === 'share_hidden_gem' || t === 'share_food_spot'; }
 function requiresMedia(t: PostTypeId) { return t === 'share_postcard'; }
@@ -192,9 +188,8 @@ export function UnifiedPostComposer({
   const [postTags, setPostTags] = useState<TagSpan[]>([]);
   const [media, setMedia] = useState<PickedMedia | null>(null);
   const [vis, setVis] = useState<PostVisibility>('public');
-  const [loc, setLoc] = useState<LocState>({ source: 'none' });
-  const [manualText, setManualText] = useState('');
-  const [gpsBusy, setGpsBusy] = useState(false);
+  const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
+  const [locationPickerOpen, setLocationPickerOpen] = useState(false);
   const [addToPassport, setAddToPassport] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [highlightComposerOpen, setHighlightComposerOpen] = useState(false);
@@ -219,15 +214,15 @@ export function UnifiedPostComposer({
     return () => { cancelled = true; };
   }, [selectedType]);
 
-  // Auto-select delayed_until_exit when the user attaches a GPS location
+  // Auto-select delayed_until_exit when the user attaches a location
   useEffect(() => {
-    if (loc.source === 'none') {
+    if (!selectedPlace) {
       setLocationPrivacyMode('none');
     } else if (locationPrivacyMode === 'none') {
       setLocationPrivacyMode('delayed_until_exit');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loc.source]);
+  }, [selectedPlace]);
 
   // Pre-fill scheduledTime when switching to "At a time" so the submit
   // always has a value even if the user never touches the spinner.
@@ -246,8 +241,8 @@ export function UnifiedPostComposer({
       setPlaceName('');
       setMedia(null);
       setVis('public');
-      setLoc({ source: 'none' });
-      setManualText('');
+      setSelectedPlace(null);
+      setLocationPickerOpen(false);
       setLocationPrivacyMode('none');
       setScheduledTime(null);
       setAddToPassport(false);
@@ -309,30 +304,8 @@ export function UnifiedPostComposer({
     );
   }, [filterEditorPending]);
 
-  async function useGps() {
-    setGpsBusy(true);
-    setError(null);
-    try {
-      const gps = await getCurrentGps();
-      if (!gps.granted || gps.lat == null || gps.lng == null) {
-        setError('Location unavailable — type one manually below.');
-        return;
-      }
-      const geo = await reverseGeocode(gps.lat, gps.lng);
-      setLoc({ source: 'gps', lat: gps.lat, lng: gps.lng, name: geo.name, city: geo.city, country: geo.country });
-    } finally {
-      setGpsBusy(false);
-    }
-  }
-
-  function applyManual() {
-    const name = manualText.trim();
-    setLoc(name ? { source: 'manual', name, city: null, country: null } : { source: 'none' });
-  }
-
-  const locLabel =
-    loc.source === 'gps' ? `${loc.name ?? loc.city ?? 'Current location'} · GPS`
-    : loc.source === 'manual' ? `${loc.name} · Manual`
+  const locLabel = selectedPlace
+    ? `${selectedPlace.displayName}${selectedPlace.source === 'gps' ? ' · GPS' : ''}`
     : null;
 
   async function handleSubmit() {
@@ -377,14 +350,17 @@ export function UnifiedPostComposer({
       const content = `[${cat}] ${placePrefix}${text.trim()}`.trim();
 
       let locationFields: Record<string, unknown> = { locationSource: 'none' };
-      if (loc.source === 'gps') {
+      if (selectedPlace) {
+        const isGps = selectedPlace.source === 'gps';
         locationFields = {
-          locationSource: 'gps', locationName: loc.name, locationCity: loc.city,
-          locationCountry: loc.country, locationLat: loc.lat, locationLng: loc.lng,
-          userGpsLat: loc.lat, userGpsLng: loc.lng,
+          locationSource: isGps ? 'gps' : 'manual',
+          locationName: selectedPlace.displayName,
+          locationCity: selectedPlace.city,
+          locationCountry: selectedPlace.country,
+          locationLat: selectedPlace.lat,
+          locationLng: selectedPlace.lng,
+          ...(isGps ? { userGpsLat: selectedPlace.lat, userGpsLng: selectedPlace.lng } : {}),
         };
-      } else if (loc.source === 'manual') {
-        locationFields = { locationSource: 'manual', locationName: loc.name, locationCity: loc.city, locationCountry: loc.country };
       }
 
       const autoPassport = selectedType === 'share_postcard';
@@ -643,37 +619,32 @@ export function UnifiedPostComposer({
                 {/* location */}
                 <View style={uc.field}>
                   <Text style={uc.fieldLabel}>Location (optional)</Text>
-                  <View style={uc.locRow}>
-                    <Pressable style={uc.locBtn} onPress={useGps} disabled={gpsBusy || submitting}>
-                      {gpsBusy
-                        ? <ActivityIndicator size="small" color={color.deep} />
-                        : <Navigation size={14} color={color.deep} />}
-                      <Text style={uc.locBtnText}>Use GPS</Text>
+                  {selectedPlace ? (
+                    <View style={uc.locChip}>
+                      <MapPin size={13} color={color.signal} />
+                      <Text style={uc.locChipText} numberOfLines={1}>{locLabel}</Text>
+                      <Pressable
+                        onPress={() => setSelectedPlace(null)}
+                        hitSlop={8}
+                        style={uc.locChipRemove}
+                      >
+                        <X size={13} color={color.mute} />
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <Pressable
+                      style={uc.locBtn}
+                      onPress={() => setLocationPickerOpen(true)}
+                      disabled={submitting}
+                    >
+                      <MapPin size={14} color={color.deep} />
+                      <Text style={uc.locBtnText}>Add location</Text>
                     </Pressable>
-                  </View>
-                  <View style={uc.manualRow}>
-                    <MapPin size={14} color={color.mute} />
-                    <TextInput
-                      style={uc.manualInput}
-                      placeholder="Or type a place name"
-                      placeholderTextColor={color.faint}
-                      value={manualText}
-                      onChangeText={setManualText}
-                      onBlur={applyManual}
-                      onSubmitEditing={applyManual}
-                      editable={!submitting}
-                    />
-                    {manualText.trim() ? (
-                      <Pressable onPress={applyManual} hitSlop={8}><Check size={16} color={color.success} /></Pressable>
-                    ) : null}
-                  </View>
-                  {locLabel && (
-                    <Text style={uc.locLabel}>{locLabel}</Text>
                   )}
                 </View>
 
                 {/* location privacy — only shown when a location is attached */}
-                {loc.source !== 'none' && (
+                {selectedPlace !== null && (
                   <View style={uc.field}>
                     <Text style={uc.fieldLabel}>Share location</Text>
                     <View style={uc.chipRowWrap}>
@@ -781,6 +752,18 @@ export function UnifiedPostComposer({
           )}
         </View>
       </KeyboardAvoidingView>
+
+      {/* Location picker */}
+      <GlobalPlacePicker
+        visible={locationPickerOpen}
+        title="Add location"
+        onSelect={(place) => {
+          setSelectedPlace(place);
+          setLocationPickerOpen(false);
+        }}
+        onClose={() => setLocationPickerOpen(false)}
+        usedFor="pulse_location"
+      />
 
       {/* Dedicated Highlight Composer — slides in over the type-picker */}
       <HighlightComposer
@@ -953,20 +936,22 @@ const uc = StyleSheet.create({
   toggleSub: { ...t.small, color: color.mute, marginTop: 2 },
 
   /* location */
-  locRow: { flexDirection: 'row', gap: 8 },
   locBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     paddingHorizontal: 12, paddingVertical: 8,
     borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised,
+    alignSelf: 'flex-start',
   },
   locBtnText: { ...t.small, fontWeight: '700', color: color.deep },
-  manualRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6,
-    borderWidth: 1, borderColor: color.haze, borderRadius: radius.md,
-    paddingHorizontal: 10, paddingVertical: 2, backgroundColor: color.paper,
+  locChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 12, paddingVertical: 8,
+    borderRadius: radius.pill, borderWidth: 1,
+    borderColor: color.signal + '50', backgroundColor: color.signal + '10',
+    alignSelf: 'flex-start', maxWidth: '100%',
   },
-  manualInput: { ...t.body, color: color.ink, flex: 1, paddingVertical: 8 },
-  locLabel: { ...t.small, color: color.deep, fontWeight: '600', marginTop: 4 },
+  locChipText: { ...t.small, fontWeight: '600', color: color.signal, flex: 1 },
+  locChipRemove: { padding: 2 },
   privacyHint: { ...t.small, color: color.mute, marginTop: 4, fontStyle: 'italic' },
 
   /* visibility */

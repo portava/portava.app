@@ -2,14 +2,8 @@
  * GpsLocationCapture — one-tap GPS capture for forms, with an alternate
  * "Pick on map" flow so users can pin any location (not just their current one).
  *
- * Coordinate Input Matrix (as of initial implementation):
- *   - gems/submit.tsx (LocationStep): replaced with this component
- *   - All other GPS-dependent features (check-in, geofence, meetup, Safe Return,
- *     route checkpoint) already capture GPS via device APIs — no TextInput for
- *     raw coordinates exists elsewhere in the app.
- *
  * Props:
- *   onCapture  — called with { lat, lng, label } on success, or null when the
+ *   onCapture  — called with a canonical Place on success, or null when the
  *                user explicitly clears a previously captured location.
  *   initialLabel — optional label to pre-populate (e.g. when editing a draft).
  *
@@ -19,25 +13,21 @@
  *   success — confirmation label + "Change" button
  *   denied  — permission was refused; shows settings link copy
  *   error   — GPS timed out or failed; shows retry button
- *
- * State-transition logic lives in GpsLocationCapture.machine.ts so it can be
- * tested with jest (node:test) without a React Native renderer.
  */
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { getCurrentGps, reverseGeocodeDetailed } from '../../services/location';
-import { runGpsCapture } from './GpsLocationCapture.machine';
+import { getCurrentGps, reverseGeocodeToPlace } from '../../services/location';
 import { MapLocationPicker } from './MapLocationPicker';
+import type { Place } from '../../lib/location/placeTypes';
 
-const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-
+// Keep GpsCaptureResult exported for backward compat with machines/tests.
 export type { GpsCaptureResult } from './GpsLocationCapture.machine';
 
 interface Props {
-  onCapture: (result: import('./GpsLocationCapture.machine').GpsCaptureResult | null) => void;
+  onCapture: (place: Place | null) => void;
   initialLabel?: string;
   initialLat?: number;
   initialLng?: number;
@@ -55,21 +45,24 @@ export function GpsLocationCapture({ onCapture, initialLabel, initialLat, initia
   const capture = useCallback(async () => {
     setState('loading');
     try {
-      const outcome = await runGpsCapture({
-        getCurrentGps,
-        reverseGeocodeDetailed,
-        apiBase: API_BASE,
-      });
+      const gps = await getCurrentGps();
 
-      if (outcome.nextState === 'success') {
-        setLabel(outcome.result.label);
-        setPickedLat(outcome.result.lat);
-        setPickedLng(outcome.result.lng);
-        setState('success');
-        onCapture(outcome.result);
-      } else {
-        setState(outcome.nextState);
+      if (!gps.granted) {
+        setState(gps.error === 'permission_denied' ? 'denied' : 'error');
+        return;
       }
+
+      if (gps.lat === null || gps.lng === null) {
+        setState('error');
+        return;
+      }
+
+      const place = await reverseGeocodeToPlace(gps.lat, gps.lng);
+      setLabel(place.displayName);
+      setPickedLat(gps.lat);
+      setPickedLng(gps.lng);
+      setState('success');
+      onCapture(place);
     } catch {
       setState('error');
     }
@@ -84,13 +77,13 @@ export function GpsLocationCapture({ onCapture, initialLabel, initialLat, initia
   }, [onCapture]);
 
   const handleMapConfirm = useCallback(
-    (result: import('./GpsLocationCapture.machine').GpsCaptureResult) => {
+    (place: Place) => {
       setPickerOpen(false);
-      setLabel(result.label);
-      setPickedLat(result.lat);
-      setPickedLng(result.lng);
+      setLabel(place.displayName);
+      setPickedLat(place.lat ?? undefined);
+      setPickedLng(place.lng ?? undefined);
       setState('success');
-      onCapture(result);
+      onCapture(place);
     },
     [onCapture],
   );

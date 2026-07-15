@@ -24,6 +24,45 @@ async function nominatimRateLimit() {
   nominatimLastCall = Date.now();
 }
 
+// ── Server-side search result cache (5-minute TTL) ────────────────────────────
+
+const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
+
+interface SearchCacheEntry {
+  places: any[];
+  ts: number;
+}
+
+const searchCache = new Map<string, SearchCacheEntry>();
+
+function makeSearchCacheKey(
+  q: string,
+  countryCode: string | undefined,
+  lat: number | undefined,
+  lng: number | undefined,
+): string {
+  // Round lat/lng to 2 decimal places (~1 km) so nearby identical queries share a cache entry
+  const latKey = lat != null ? lat.toFixed(2) : "";
+  const lngKey = lng != null ? lng.toFixed(2) : "";
+  return `${q.toLowerCase()}:${countryCode ?? ""}:${latKey}:${lngKey}`;
+}
+
+function getSearchCached(key: string): any[] | null {
+  const entry = searchCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > SEARCH_CACHE_TTL_MS) {
+    searchCache.delete(key);
+    return null;
+  }
+  return entry.places;
+}
+
+function setSearchCached(key: string, places: any[]): void {
+  searchCache.set(key, { places, ts: Date.now() });
+}
+
+// ── Nominatim helpers ─────────────────────────────────────────────────────────
+
 async function searchNominatim(
   q: string,
   opts: { countryCode?: string; lat?: number; lng?: number; limit?: number },
@@ -113,9 +152,18 @@ router.get("/places/search", async (req, res) => {
     return;
   }
 
+  // Check server-side cache
+  const cacheKey = makeSearchCacheKey(q, countryCode, lat, lng);
+  const cached = getSearchCached(cacheKey);
+  if (cached) {
+    res.json({ places: cached });
+    return;
+  }
+
   try {
     const raw = await searchNominatim(q, { countryCode, lat, lng });
     const places = Array.isArray(raw) ? raw.map(normalizeNominatim) : [];
+    setSearchCached(cacheKey, places);
     res.json({ places });
   } catch (err) {
     logger.warn({ err, q }, "place search failed — returning empty");

@@ -61,6 +61,8 @@ export default function Marketplace() {
   const { fromQuiz, city: cityParam } = useLocalSearchParams<{ fromQuiz?: string; city?: string }>();
 
   const [city, setCity]                       = useState(cityParam ?? '');
+  const [cityLat, setCityLat]                 = useState<number | undefined>(undefined);
+  const [cityLng, setCityLng]                 = useState<number | undefined>(undefined);
   const [category, setCategory]               = useState<BuddyCategory | 'all'>('all');
   const [sortBy, setSortBy]                   = useState<BuddySortBy>('best_match');
   const [language, setLanguage]               = useState('');
@@ -93,6 +95,8 @@ export default function Marketplace() {
     }
     const res = await searchBuddies({
       city: city.trim(),
+      ...(cityLat != null ? { lat: cityLat } : {}),
+      ...(cityLng != null ? { lng: cityLng } : {}),
       ...(category !== 'all' ? { category: category as BuddyCategory } : {}),
       sortBy,
       verifiedOnly: verifiedOnly || undefined,
