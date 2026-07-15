@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { Compass, MapPin } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
+import { TG } from '../theme/telegraphTokens';
 
 export interface CompassCardPayload {
   id:          string;
@@ -91,10 +92,10 @@ export function CompassCardMessage({ body, mine }: Props) {
 
 const card = StyleSheet.create({
   wrap: {
-    backgroundColor: color.paperRaised,
+    backgroundColor: TG.surfaceRaised,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: color.haze,
+    borderColor: TG.recvBorder,
     borderBottomLeftRadius: 4,
     padding: space.md,
     gap: 6,

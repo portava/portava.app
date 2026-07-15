@@ -12,6 +12,7 @@ import {
   Star, AlertCircle, UserCheck, PlusCircle,
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens';
+import { TG } from '../../theme/telegraphTokens';
 
 type MilestoneSubtype =
   | 'rent_buddy_confirmed'
@@ -126,9 +127,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.xs,
-    backgroundColor: color.paperRaised,
+    backgroundColor: TG.surfaceRaised,
     borderWidth: 1,
-    borderColor: color.haze,
+    borderColor: TG.recvBorder,
     borderRadius: radius.pill,
     paddingHorizontal: space.md,
     paddingVertical: 5,
@@ -141,7 +142,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.sm,
-    backgroundColor: color.paperRaised,
+    backgroundColor: TG.surfaceRaised,
     borderWidth: 1,
     borderRadius: radius.pill,
     paddingHorizontal: space.md,

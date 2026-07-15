@@ -14,6 +14,8 @@ import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';
 import { useHighlightRingState } from '../hooks/useHighlightRingState';
 import { color, space, radius, type as t } from '../theme/tokens';
+import { TG, TG_AVATAR } from '../theme/telegraphTokens';
+import { TelegraphAvatar, TelegraphRow } from './telegraph/TelegraphPrimitives';
 import type { ThreadSummary, MessageRequest } from '../services/messaging';
 import { circleCardInboxPreview } from './CircleStatusCardMessage.logic';
 
@@ -104,7 +106,7 @@ function DmThreadAvatar({ item, currentUserId }: { item: ThreadSummary; currentU
 
   return (
     <>
-      <HighlightRing size={50} hasActive allViewed={ringState.allViewed} onPress={() => setViewerOpen(true)}>
+      <HighlightRing size={48} hasActive allViewed={ringState.allViewed} onPress={() => setViewerOpen(true)}>
         {inner}
       </HighlightRing>
       <HighlightViewer
@@ -118,20 +120,8 @@ function DmThreadAvatar({ item, currentUserId }: { item: ThreadSummary; currentU
 }
 
 function ThreadAvatarIcon({ item, currentUserId }: { item: ThreadSummary; currentUserId: string | null }) {
-  if (item.threadType === 'trip') {
-    return (
-      <View style={[s.avatar, s.groupAvatar, { backgroundColor: '#E0EFEC' }]}>
-        <Globe size={22} color={color.deep} />
-      </View>
-    );
-  }
-  if (item.threadType === 'circle') {
-    return (
-      <View style={[s.avatar, s.groupAvatar, { backgroundColor: '#F2EBE0' }]}>
-        <Users size={22} color="#7A4C20" />
-      </View>
-    );
-  }
+  if (item.threadType === 'trip') return <TelegraphAvatar kind="trip" size={TG_AVATAR.row} />;
+  if (item.threadType === 'circle') return <TelegraphAvatar kind="circle" size={TG_AVATAR.row} />;
   return <DmThreadAvatar item={item} currentUserId={currentUserId} />;
 }
 
@@ -154,12 +144,10 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
   const isAi = item.isAiLastMessage ?? (lmp?.msgType === 'ai_recommendation');
 
   return (
-    <Pressable
-      style={({ pressed }) => [s.row, pressed && s.rowPressed]}
+    <TelegraphRow
+      avatar={<ThreadAvatarIcon item={item} currentUserId={userId} />}
       onPress={() => navigateToThread(item)}
     >
-      <ThreadAvatarIcon item={item} currentUserId={userId} />
-
       <View style={{ flex: 1, gap: 3 }}>
         <View style={s.nameRow}>
           <View style={s.nameLeft}>
@@ -200,8 +188,53 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
           </View>
         ) : null}
       </View>
-    </Pressable>
+    </TelegraphRow>
   );
+}
+
+/** Slim uppercase divider label between inbox sections (DMs / group threads). */
+function SectionDivider({ label }: { label: string }) {
+  return (
+    <View style={s.sectionDivider}>
+      <Text style={s.sectionDividerText}>{label}</Text>
+      <View style={s.sectionDividerLine} />
+    </View>
+  );
+}
+
+// ── Inbox list assembly (visual sectioning only) ─────────────────────────────
+
+type InboxItem =
+  | { _t: 'thread'; thread: ThreadSummary }
+  | { _t: 'divider'; key: string; label: string }
+  | { _t: 'requests'; key: string; count: number };
+
+/**
+ * Splits threads into DMs first, then group threads (trips/circles), with a
+ * divider between the sections, and appends a pending-requests row at the
+ * bottom. Only applies sectioning in the 'all' filter; other filters keep the
+ * original flat ordering.
+ */
+function buildInboxItems(
+  threads: ThreadSummary[],
+  filter: FilterKey,
+  requestCount: number,
+): InboxItem[] {
+  if (filter !== 'all') {
+    return threads.map((thread) => ({ _t: 'thread', thread }));
+  }
+  const dms = threads.filter((th) => th.threadType === 'direct' || th.threadType === 'rent_buddy_booking');
+  const groups = threads.filter((th) => th.threadType !== 'direct' && th.threadType !== 'rent_buddy_booking');
+  const items: InboxItem[] = dms.map((thread) => ({ _t: 'thread', thread }));
+  if (groups.length > 0) {
+    if (dms.length > 0) items.push({ _t: 'divider', key: 'div-groups', label: 'Trips & Circles' });
+    items.push(...groups.map((thread) => ({ _t: 'thread', thread } as InboxItem)));
+  }
+  if (requestCount > 0) {
+    items.push({ _t: 'divider', key: 'div-requests', label: 'Requests' });
+    items.push({ _t: 'requests', key: 'requests-row', count: requestCount });
+  }
+  return items;
 }
 
 const FILTER_EMPTY: Record<FilterKey, string> = {
@@ -382,11 +415,36 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
             <EmptyState filter={filter} />
           ) : (
             <FlatList
-              data={filtered}
-              keyExtractor={(item) => item.id}
+              data={buildInboxItems(filtered, filter, requestCount)}
+              keyExtractor={(item) =>
+                item._t === 'thread' ? item.thread.id : item.key}
               contentContainerStyle={{ paddingBottom: space.xxxl }}
-              renderItem={({ item }) => <ThreadRow item={item} userId={userId} />}
-              ItemSeparatorComponent={() => <View style={s.sep} />}
+              renderItem={({ item }) => {
+                if (item._t === 'divider') return <SectionDivider label={item.label} />;
+                if (item._t === 'requests') {
+                  return (
+                    <TelegraphRow
+                      avatar={
+                        <View style={s.requestsRowIcon}>
+                          <UserCheck size={20} color={color.signal} />
+                        </View>
+                      }
+                      onPress={() => setFilter('requests')}
+                    >
+                      <View style={s.nameRow}>
+                        <Text style={[s.name, s.nameBold]}>Message requests</Text>
+                        <View style={s.unreadBubble}>
+                          <Text style={s.unreadText}>{item.count > 99 ? '99+' : item.count}</Text>
+                        </View>
+                      </View>
+                      <Text style={s.preview} numberOfLines={1}>
+                        People you haven't chatted with yet
+                      </Text>
+                    </TelegraphRow>
+                  );
+                }
+                return <ThreadRow item={item.thread} userId={userId} />;
+              }}
             />
           )}
         </>
@@ -532,15 +590,27 @@ const rc = StyleSheet.create({
   card: {
     marginHorizontal: space.xl,
     marginTop: space.md,
-    padding: space.md,
-    backgroundColor: color.paperRaised,
+    padding: space.lg,
+    backgroundColor: TG.surfaceRaised,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: color.haze,
+    borderColor: TG.recvBorder,
     gap: space.sm,
   },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: color.haze, flexShrink: 0 },
+  avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: color.haze, flexShrink: 0 },
+  safetyBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginHorizontal: space.xl,
+    marginTop: space.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: 8,
+    backgroundColor: TG.chipFill,
+    borderRadius: radius.md,
+  },
+  safetyText: { ...t.small, color: color.mute, fontSize: 11, flex: 1, lineHeight: 15 },
   avatarFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#E8E5DE' },
   avatarInitial: { ...t.bodyStrong, color: color.ink, fontSize: 18 },
   name: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
@@ -625,6 +695,14 @@ function RequestsPane({
       data={uniqueRequests}
       keyExtractor={(item) => item.requestId}
       contentContainerStyle={{ paddingBottom: space.xxxl }}
+      ListHeaderComponent={
+        <View style={rc.safetyBar}>
+          <ShieldOff size={13} color={color.mute} />
+          <Text style={rc.safetyText}>
+            These people aren't in your circles yet. They won't know you've seen their request until you accept.
+          </Text>
+        </View>
+      }
       renderItem={({ item }) => (
         <RequestCard
           request={item}
@@ -648,7 +726,7 @@ function RequestsPane({
 }
 
 const s = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: color.paper },
+  screen: { flex: 1, backgroundColor: TG.surface },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl },
 
   header: {
@@ -672,8 +750,10 @@ const s = StyleSheet.create({
     alignItems: 'center',
     marginHorizontal: space.xl,
     marginVertical: space.sm,
-    backgroundColor: color.haze,
-    borderRadius: 12,
+    backgroundColor: TG.surfaceRaised,
+    borderWidth: 1,
+    borderColor: TG.hairline,
+    borderRadius: radius.pill,
     paddingHorizontal: space.md,
     height: 40,
   },
@@ -719,7 +799,7 @@ const s = StyleSheet.create({
   },
   rowPressed: { opacity: 0.6 },
 
-  avatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: color.haze, flexShrink: 0 },
+  avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: color.haze, flexShrink: 0 },
   groupAvatar: { borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   avatarPlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#E8E5DE' },
   avatarInitial: { ...t.bodyStrong, color: color.ink },
@@ -727,7 +807,7 @@ const s = StyleSheet.create({
   nameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
   nameLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 5, flexShrink: 1 },
   nameMeta: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 },
-  name: { ...t.body, color: color.ink, flexShrink: 1 },
+  name: { ...t.bodyStrong, color: color.ink, flexShrink: 1, fontWeight: '600' },
   nameBold: { fontWeight: '700' },
   time: { ...t.small, color: color.faint, fontSize: 11 },
 
@@ -774,6 +854,33 @@ const s = StyleSheet.create({
   cityTagText: { fontSize: 10, color: color.deep, fontWeight: '500' },
 
   sep: { height: 1, backgroundColor: color.haze, marginHorizontal: space.xl, opacity: 0.5 },
+
+  sectionDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.xl,
+    paddingTop: space.md,
+    paddingBottom: 4,
+  },
+  sectionDividerText: {
+    fontSize: 10,
+    fontFamily: 'Courier',
+    fontWeight: '700',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    color: color.faint,
+  },
+  sectionDividerLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: TG.hairline },
+
+  requestsRowIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: color.signal + '14',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.md },
   emptyIcon: {
