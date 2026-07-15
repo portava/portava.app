@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
-import { X, Camera, ImageIcon, PlayCircle, ChevronDown } from 'lucide-react-native';
+import { X, Camera, ImageIcon, PlayCircle, ChevronDown, MapPin } from 'lucide-react-native';
 import {
   createPostcard,
   getUploadUrl,
@@ -26,6 +26,8 @@ import {
   type UploadCancelRef,
 } from '../services/postcards';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
+import { GlobalPlacePicker } from './selectors/GlobalPlacePicker';
+import type { Place } from '../lib/location/placeTypes';
 
 type Phase = 'pick' | 'uploading';
 
@@ -57,7 +59,10 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
   const [phase, setPhase] = useState<Phase>('pick');
   const [asset, setAsset] = useState<PickedAsset | null>(null);
   const [caption, setCaption] = useState('');
-  const [city, setCity] = useState('');
+  // Canonical location from the universal picker (replaces the old free-text
+  // city field). Null = no location tagged; the postcard still posts.
+  const [place, setPlace] = useState<Place | null>(null);
+  const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const [visibility, setVisibility] = useState<PostcardVisibility>('public');
   const [showVis, setShowVis] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -69,7 +74,8 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     setPhase('pick');
     setAsset(null);
     setCaption('');
-    setCity('');
+    setPlace(null);
+    setCityPickerOpen(false);
     setVisibility('public');
     setShowVis(false);
     setProgress(0);
@@ -176,10 +182,16 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     setProgress(0);
     abortedRef.current = false;
 
+    // Structured canonical location: city/country strings for display and
+    // stamps, placeId for the provider reference, canonicalId linking to the
+    // universal location registry. All optional — posting works without one.
     const postRes = await createPostcard({
       caption: caption.trim() || undefined,
       visibility,
-      locationCity: city.trim() || undefined,
+      locationCity: place ? place.city ?? place.name : undefined,
+      locationCountry: place?.country ?? undefined,
+      placeId: place?.id,
+      canonicalLocationId: place?.canonicalId ?? undefined,
       addToPassport: true,
     });
 
@@ -329,17 +341,36 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
                   maxLength={2000}
                 />
 
-                {/* City */}
+                {/* City — universal canonical location picker */}
                 <Text style={s.label}>City</Text>
-                <TextInput
-                  style={s.textInput}
-                  value={city}
-                  onChangeText={setCity}
-                  placeholder="e.g. Tokyo, Japan"
-                  placeholderTextColor={color.faint}
-                  returnKeyType="done"
-                  maxLength={100}
-                />
+                <Pressable style={s.visSelector} onPress={() => setCityPickerOpen(true)}>
+                  <View style={s.cityValue}>
+                    <MapPin size={16} color={place ? color.signal : color.mute} />
+                    <Text
+                      style={[s.visSelectorText, s.cityValueText, !place && s.cityPlaceholder]}
+                      numberOfLines={1}
+                    >
+                      {place
+                        ? place.country ? `${place.name}, ${place.country}` : place.name
+                        : 'Search for a city'}
+                    </Text>
+                  </View>
+                  {place ? (
+                    <Pressable
+                      onPress={(e) => {
+                        // RN-web bubbles nested presses to the parent Pressable —
+                        // without this, clearing would immediately reopen the picker.
+                        e.stopPropagation();
+                        setPlace(null);
+                      }}
+                      hitSlop={10}
+                    >
+                      <X size={16} color={color.mute} />
+                    </Pressable>
+                  ) : (
+                    <ChevronDown size={16} color={color.mute} />
+                  )}
+                </Pressable>
 
                 {/* Visibility */}
                 <Text style={s.label}>Visibility</Text>
@@ -394,6 +425,19 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
             </Pressable>
           </View>
         )}
+        {/* Universal location picker — canonical city search with Popular /
+            Nearby / Recent suggestions. Renders its own transparent Modal. */}
+        <GlobalPlacePicker
+          visible={cityPickerOpen}
+          title="Where was this?"
+          mode="city"
+          usedFor="postcard_location"
+          onSelect={(selected) => {
+            setPlace(selected);
+            setCityPickerOpen(false);
+          }}
+          onClose={() => setCityPickerOpen(false)}
+        />
       </View>
     </Modal>
   );
@@ -464,6 +508,9 @@ const s = StyleSheet.create({
     padding: space.md, height: 48,
   },
   visSelectorText: { ...t.body, color: color.ink },
+  cityValue: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flex: 1, marginRight: space.sm },
+  cityValueText: { flexShrink: 1 },
+  cityPlaceholder: { color: color.faint },
   visDropdown: {
     borderWidth: 1, borderColor: color.haze, borderRadius: radius.md,
     overflow: 'hidden', ...shadow.card,

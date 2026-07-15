@@ -100,10 +100,15 @@ const createPostcardSchema = z.object({
   locationLat:     z.number().min(-90).max(90).optional(),
   locationLng:     z.number().min(-180).max(180).optional(),
   tripId:          z.string().uuid().optional(),
-  eventId:         z.string().uuid().optional(),
   placeId:         z.string().max(200).optional(),
+  /** Universal canonical location registry id (canonical_locations.id — migrations 0125/0128). */
+  canonicalLocationId: z.string().uuid().optional(),
   addToPassport:   z.boolean().optional().default(true),
 });
+// NOTE: `eventId` was removed from this schema. posts has no event_id column
+// (event feeds live in the separate event_posts table); writing it made
+// PostgREST reject EVERY composer insert with PGRST204 → db_error. zod objects
+// are non-strict, so legacy clients still sending eventId are ignored safely.
 
 router.post('/postcards', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -120,36 +125,63 @@ router.post('/postcards', async (req, res) => {
   }
   const p = parsed.data;
 
-  const { data: post, error: postErr } = await sc
+  // Column mapping: provider place refs go to location_place_id (same column
+  // the /api/posts flow writes — a bare `place_id` column does not exist).
+  const baseRow = {
+    author_id:          user.id,
+    content:            p.caption ?? '',
+    media_urls:         [],
+    media_count:        0,
+    has_video:          false,
+    primary_media_type: 'none',
+    visibility:         p.visibility,
+    status:             'active',
+    location_name:      p.locationName ?? null,
+    location_city:      p.locationCity ?? null,
+    location_country:   p.locationCountry ?? null,
+    location_lat:       p.locationLat ?? null,
+    location_lng:       p.locationLng ?? null,
+    trip_id:            p.tripId ?? null,
+    location_place_id:  p.placeId ?? null,
+    add_to_passport:    p.addToPassport,
+    created_by:         user.id,
+    updated_by:         user.id,
+    source:             'api_server',
+  };
+
+  // Cast note: canonical_location_id exists in the live DB (migration 0128,
+  // applied) but src/lib/database.types.ts predates the canonical registry —
+  // the same staleness that let the old nonexistent event_id/place_id writes
+  // compile. Regenerating the types removes this cast; until then keep baseRow
+  // itself strictly checked and widen only here.
+  let ins = await sc
     .from('posts')
-    .insert({
-      author_id:          user.id,
-      content:            p.caption ?? '',
-      media_urls:         [],
-      media_count:        0,
-      has_video:          false,
-      primary_media_type: 'none',
-      visibility:         p.visibility,
-      status:             'active',
-      location_name:      p.locationName ?? null,
-      location_city:      p.locationCity ?? null,
-      location_country:   p.locationCountry ?? null,
-      location_lat:       p.locationLat ?? null,
-      location_lng:       p.locationLng ?? null,
-      trip_id:            p.tripId ?? null,
-      event_id:           p.eventId ?? null,
-      place_id:           p.placeId ?? null,
-      add_to_passport:    p.addToPassport,
-      created_by:         user.id,
-      updated_by:         user.id,
-      source:             'api_server',
-    })
+    .insert((p.canonicalLocationId
+      ? { ...baseRow, canonical_location_id: p.canonicalLocationId }
+      : baseRow) as typeof baseRow)
     .select('id')
     .single();
 
+  // Graceful fallback: the canonical reference is optional. If the column is
+  // missing in this environment (migration 0128 not applied), retry without it
+  // — an optional location link must never block posting.
+  if (
+    ins.error && p.canonicalLocationId &&
+    (ins.error as any).code === 'PGRST204' &&
+    typeof ins.error.message === 'string' &&
+    ins.error.message.includes('canonical_location_id')
+  ) {
+    req.log.warn({ err: ins.error }, 'postcards: canonical_location_id column missing — posting without it (apply migration 0128)');
+    ins = await sc.from('posts').insert(baseRow).select('id').single();
+  }
+
+  const { data: post, error: postErr } = ins;
+
   if (postErr) {
+    // Full technical detail stays server-side; the client gets a readable
+    // sentence, never a raw database error string.
     req.log.error({ err: postErr }, 'postcards: failed to create post');
-    sendError(res, 'db_error', postErr.message);
+    sendError(res, 'db_error', "We couldn't create your postcard. Please try again.");
     return;
   }
 
@@ -225,7 +257,11 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
     .eq('status', 'active')
     .maybeSingle();
 
-  if (postErr) { sendError(res, 'db_error', postErr.message); return; }
+  if (postErr) {
+    req.log.error({ err: postErr }, 'postcards: failed to load post for upload-url');
+    sendError(res, 'db_error', "We couldn't prepare your upload. Please try again.");
+    return;
+  }
   if (!postRow) { sendError(res, 'not_found', 'Postcard not found'); return; }
   if ((postRow as any).author_id !== user.id) { sendError(res, 'forbidden', 'Not your postcard'); return; }
 
@@ -263,7 +299,7 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
 
   if (mediaErr) {
     req.log.error({ err: mediaErr }, 'postcards: failed to create post_media row');
-    sendError(res, 'db_error', mediaErr.message);
+    sendError(res, 'db_error', "We couldn't prepare your upload. Please try again.");
     return;
   }
 
@@ -289,7 +325,7 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
       .update({ processing_status: 'failed' })
       .eq('id', mediaId)
       .then(undefined, () => {});
-    sendError(res, 'db_error', 'Could not generate upload URL');
+    sendError(res, 'db_error', "We couldn't prepare your upload. Please try again.");
     return;
   }
 
@@ -345,7 +381,11 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     .eq('post_id', postId)
     .maybeSingle();
 
-  if (mediaErr) { sendError(res, 'db_error', mediaErr.message); return; }
+  if (mediaErr) {
+    req.log.error({ err: mediaErr }, 'postcards: failed to load media for complete');
+    sendError(res, 'db_error', "We couldn't finish your upload. Please try again.");
+    return;
+  }
   if (!mediaRow) { sendError(res, 'not_found', 'Media not found'); return; }
   if ((mediaRow as any).user_id !== user.id) { sendError(res, 'forbidden', 'Not your media'); return; }
 
@@ -387,7 +427,7 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
 
   if (updateErr) {
     req.log.error({ err: updateErr }, 'postcards: failed to complete media upload');
-    sendError(res, 'db_error', updateErr.message);
+    sendError(res, 'db_error', "We couldn't finish your upload. Please try again.");
     return;
   }
 
@@ -472,7 +512,11 @@ router.delete('/postcards/:id/media/:mediaId', async (req, res) => {
     .eq('post_id', postId)
     .maybeSingle();
 
-  if (loadErr) { sendError(res, 'db_error', loadErr.message); return; }
+  if (loadErr) {
+    req.log.error({ err: loadErr }, 'postcards: failed to load media for delete');
+    sendError(res, 'db_error', "We couldn't remove that media. Please try again.");
+    return;
+  }
   if (!mediaRow) { sendError(res, 'not_found', 'Media not found'); return; }
 
   // Owner or admin check
@@ -497,7 +541,7 @@ router.delete('/postcards/:id/media/:mediaId', async (req, res) => {
 
   if (deleteErr) {
     req.log.error({ err: deleteErr }, 'postcards: failed to delete media row');
-    sendError(res, 'db_error', deleteErr.message);
+    sendError(res, 'db_error', "We couldn't remove that media. Please try again.");
     return;
   }
 

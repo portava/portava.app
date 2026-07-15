@@ -33,6 +33,10 @@ export interface CreatePostcardParams {
   locationLat?: number;
   locationLng?: number;
   tripId?: string;
+  /** Provider place reference (e.g. "nominatim:123") — stored as posts.location_place_id. */
+  placeId?: string;
+  /** Universal canonical location registry id from the GlobalPlacePicker resolution. */
+  canonicalLocationId?: string;
   addToPassport?: boolean;
 }
 
@@ -57,6 +61,34 @@ export interface UploadCancelRef {
 }
 
 type ApiResult<T> = { ok: true; data: T } | { ok: false; message: string };
+
+/**
+ * Convert a server error payload into text safe to show users.
+ * sendError() on the API puts the machine code in `error` and (sometimes) a
+ * human sentence in `message`; when message is omitted the server defaults it
+ * to the code, so `message === code` means "no human text provided" and we
+ * substitute a friendly fallback instead of surfacing a raw code like
+ * "db_error" in the UI.
+ */
+const FRIENDLY_BY_CODE: Record<string, string> = {
+  db_error: 'Something went wrong while saving. Please try again.',
+  server_not_configured: 'The server is temporarily unavailable. Please try again shortly.',
+  feature_disabled: 'Posting is temporarily disabled. Please try again later.',
+  rate_limited: 'Too many requests — give it a moment and try again.',
+  unauthenticated: 'Please sign in to continue.',
+  forbidden: "You don't have access to this postcard.",
+  not_found: "We couldn't find that postcard.",
+  invalid_payload: "Something about this postcard isn't valid. Please review and try again.",
+};
+
+function readableError(json: unknown, status: number): string {
+  const j = json as { error?: unknown; message?: unknown } | null;
+  const code = typeof j?.error === 'string' ? j.error : undefined;
+  const message = typeof j?.message === 'string' ? j.message : undefined;
+  if (message && message !== code) return message;
+  if (code && FRIENDLY_BY_CODE[code]) return FRIENDLY_BY_CODE[code];
+  return `Something went wrong (${code ?? `HTTP ${status}`}). Please try again.`;
+}
 
 export const POSTCARD_ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic'];
 export const POSTCARD_ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'];
@@ -107,7 +139,7 @@ async function apiPost<T>(path: string, body: unknown): Promise<ApiResult<T>> {
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
-      return { ok: false, message: (json as any)?.error ?? (json as any)?.message ?? `HTTP ${res.status}` };
+      return { ok: false, message: readableError(json, res.status) };
     }
     return { ok: true, data: json as T };
   } catch (e) {
@@ -128,7 +160,7 @@ async function apiDelete(path: string): Promise<ApiResult<unknown>> {
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
-      return { ok: false, message: (json as any)?.error ?? (json as any)?.message ?? `HTTP ${res.status}` };
+      return { ok: false, message: readableError(json, res.status) };
     }
     return { ok: true, data: json };
   } catch (e) {
@@ -149,6 +181,8 @@ export async function createPostcard(
     locationLat:     params.locationLat,
     locationLng:     params.locationLng,
     tripId:          params.tripId,
+    placeId:         params.placeId,
+    canonicalLocationId: params.canonicalLocationId,
     addToPassport:   params.addToPassport ?? true,
   });
 }

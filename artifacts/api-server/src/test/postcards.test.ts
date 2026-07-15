@@ -37,6 +37,9 @@ let posts: Record<string, any> = {};
 let allPostMedia: any[] = [];
 let allPostcards: any[] = [];
 let allProfiles: any[] = [];
+// One-shot failure injection for the next posts INSERT (simulates PostgREST
+// schema-cache errors like PGRST204). Consumed by builder.single().
+let failNextPostsInsert: { code: string; message: string } | null = null;
 
 function resetDb() {
   posts = {
@@ -49,6 +52,7 @@ function resetDb() {
   };
   allPostMedia = [];
   allPostcards = [];
+  failNextPostsInsert = null;
   allProfiles = [
     { id: OWNER_ID, role: 'user', username: 'owner' },
     { id: OTHER_ID, role: 'user', username: 'other' },
@@ -88,6 +92,11 @@ function buildFakeClient(tokenToId: Record<string, string>) {
 
       async single() {
         if (insertData !== null) {
+          if (table === 'posts' && failNextPostsInsert) {
+            const error = failNextPostsInsert;
+            failNextPostsInsert = null; // one-shot: the retry succeeds
+            return { data: null, error };
+          }
           const row = { ...insertData[0], id: insertData[0].id ?? globalThis.crypto.randomUUID() };
           _storeInsert(table, row);
           return { data: row, error: null };
@@ -261,6 +270,86 @@ describe('POST /api/postcards', () => {
     const stored = Object.values(posts).find((p: any) => p.author_id === OWNER_ID && p.content === 'Hello #travel') as any;
     assert.ok(stored, 'post should be in the in-memory store');
     assert.equal(stored.media_count, 0);
+  });
+
+  it('maps placeId → location_place_id and stores the canonical location ref (composer regression)', async () => {
+    const CANONICAL_ID = '30000000-0000-0000-0000-000000000c99';
+    const { status, body } = await apiReq(
+      'POST', '/postcards',
+      {
+        caption: 'Sunset session',
+        locationCity: 'Siargao',
+        locationCountry: 'Philippines',
+        placeId: 'nominatim:12345',
+        canonicalLocationId: CANONICAL_ID,
+      },
+      TOKEN_OWNER,
+    );
+    assert.equal(status, 201);
+    const stored = posts[body.id];
+    assert.ok(stored, 'post should be in the in-memory store');
+    assert.equal(stored.location_place_id, 'nominatim:12345');
+    assert.equal(stored.canonical_location_id, CANONICAL_ID);
+    assert.equal(stored.location_city, 'Siargao');
+    assert.equal(stored.location_country, 'Philippines');
+    // Regression guard: posts has NO place_id / event_id columns. Writing them
+    // made PostgREST reject every composer insert (PGRST204 → raw db_error
+    // banner in the app). The route must never emit these keys again.
+    assert.ok(!('place_id' in stored), 'must not write a bare place_id column');
+    assert.ok(!('event_id' in stored), 'must not write an event_id column');
+  });
+
+  it('ignores legacy eventId payloads instead of failing (non-strict schema)', async () => {
+    const { status, body } = await apiReq(
+      'POST', '/postcards',
+      { caption: 'From an old client', eventId: '40000000-0000-0000-0000-000000000c01' },
+      TOKEN_OWNER,
+    );
+    assert.equal(status, 201);
+    assert.ok(!('event_id' in (posts[body.id] ?? {})), 'eventId must be dropped, not written');
+  });
+
+  it('falls back to inserting without canonical_location_id when the column is missing (PGRST204)', async () => {
+    failNextPostsInsert = {
+      code: 'PGRST204',
+      message: "Could not find the 'canonical_location_id' column of 'posts' in the schema cache",
+    };
+    const { status, body } = await apiReq(
+      'POST', '/postcards',
+      {
+        caption: 'Fallback probe',
+        placeId: 'nominatim:777',
+        canonicalLocationId: '30000000-0000-0000-0000-000000000c98',
+      },
+      TOKEN_OWNER,
+    );
+    assert.equal(status, 201, 'optional canonical link must never block posting');
+    const matching = Object.values(posts).filter((p: any) => p.content === 'Fallback probe');
+    assert.equal(matching.length, 1, 'exactly one post persisted — retry must not duplicate');
+    const stored = matching[0] as any;
+    assert.equal(body.id, stored.id);
+    assert.ok(!('canonical_location_id' in stored), 'canonical column dropped on the retry');
+    assert.equal(stored.location_place_id, 'nominatim:777', 'rest of the row survives the retry');
+  });
+
+  it('does NOT retry on unrelated DB errors — returns a readable db_error instead', async () => {
+    failNextPostsInsert = {
+      code: '23503',
+      message: 'insert or update on table "posts" violates foreign key constraint "posts_trip_id_fkey"',
+    };
+    const { status, body } = await apiReq(
+      'POST', '/postcards',
+      { caption: 'FK failure probe', canonicalLocationId: '30000000-0000-0000-0000-000000000c97' },
+      TOKEN_OWNER,
+    );
+    assert.ok(status >= 400, 'must fail');
+    assert.equal(body.error, 'db_error');
+    assert.match(body.message ?? '', /couldn't create your postcard/i, 'client gets a readable sentence');
+    assert.ok(!JSON.stringify(body).includes('foreign key'), 'raw DB detail must never leak to the client');
+    assert.equal(
+      Object.values(posts).filter((p: any) => p.content === 'FK failure probe').length,
+      0, 'nothing persisted on a real failure',
+    );
   });
 
   it('returns 401 when no auth token', async () => {
