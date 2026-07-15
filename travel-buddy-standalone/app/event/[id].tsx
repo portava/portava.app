@@ -51,6 +51,7 @@ import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { getWaitlistUiState } from '../../src/lib/waitlistState';
 import { getAttendeeActionSet, type EventLifecycleState } from '../../src/lib/eventRoleActions';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 const STATE_BADGE: Record<string, { label: string; bg: string; fg: string }> = {
   draft:     { label: 'Draft',          bg: color.haze, fg: color.mute },
@@ -111,6 +112,7 @@ export default function EventDetailScreen() {
   const { id, tripId: tripIdParam } = useLocalSearchParams<{ id: string; tripId?: string }>();
   const { userId } = useSession();
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const [event, setEvent] = useState<EventDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -406,7 +408,7 @@ export default function EventDetailScreen() {
           <Pressable onPress={load} style={styles.retryBtn}><Text style={styles.retryText}>Retry</Text></Pressable>
         </View>
       ) : event ? (
-        <ScrollView contentContainerStyle={styles.scroll}>
+        <ScrollView contentContainerStyle={styles.scroll} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
           {/* Cover photo */}
           {event.coverUrl ? (
             <Image source={{ uri: event.coverUrl }} style={styles.cover} resizeMode="cover" />
@@ -764,6 +766,7 @@ export default function EventDetailScreen() {
               />
             )}
           </View>
+          <NavBarFiller />
         </ScrollView>
       ) : null}
 
