@@ -14,6 +14,7 @@ import { color, space, radius, type as t } from '../src/theme/tokens';
 import { getHistory, type SafeReturnSession, type SafeReturnSessionEvents } from '../src/services/safeReturn';
 import { SafeReturnSetupSheet } from '../src/components/safeReturn/SafeReturnSetupSheet';
 import { useSession } from '../src/context/SessionContext';
+import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 
 // ── Status display map ────────────────────────────────────────────────────────
 
@@ -153,6 +154,7 @@ function SessionRow({ session }: { session: SafeReturnSession }) {
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 export default function SafetyHistoryScreen() {
+  const navBarScrollHandler = useNavBarScrollHandler();
   const { isAuthed, configured } = useSession();
   const [sessions, setSessions] = useState<SafeReturnSession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -214,6 +216,8 @@ export default function SafetyHistoryScreen() {
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={color.deep} />}
           showsVerticalScrollIndicator={false}
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
         >
           <Text style={styles.privacy}>
             🔒 Only you can see this history. Sessions older than 90 days are automatically removed.
@@ -234,6 +238,7 @@ export default function SafetyHistoryScreen() {
           </View>
 
           {sessions.map((s) => <SessionRow key={s.id} session={s} />)}
+          <NavBarFiller />
         </ScrollView>
       )}
 

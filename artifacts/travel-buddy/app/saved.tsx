@@ -19,6 +19,7 @@ import {
   type Collection, type CollectionItem,
 } from '../src/services/collections';
 import { withOptimisticRemoveBool } from '../src/utils/optimisticRemove';
+import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 import {
   Bookmark, FolderPlus, Folder, Trash2, X, ChevronRight,
   ChevronLeft, MapPin, User, Image as ImageIcon, Hash, CalendarDays,
@@ -139,6 +140,7 @@ interface CollectionItemsViewProps {
 }
 
 function CollectionItemsView({ collection, onBack }: CollectionItemsViewProps) {
+  const navBarScrollHandler = useNavBarScrollHandler();
   const [items, setItems]     = useState<CollectionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(false);
@@ -195,13 +197,20 @@ function CollectionItemsView({ collection, onBack }: CollectionItemsViewProps) {
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ padding: space.lg, gap: space.sm }}
           renderItem={({ item }) => <CollectionItemRow item={item} />}
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
           onEndReached={loadMore}
           onEndReachedThreshold={0.3}
-          ListFooterComponent={loadingMore ? (
-            <View style={{ paddingVertical: space.lg, alignItems: 'center' }}>
-              <ActivityIndicator color={color.signal} />
-            </View>
-          ) : null}
+          ListFooterComponent={
+            <>
+              {loadingMore ? (
+                <View style={{ paddingVertical: space.lg, alignItems: 'center' }}>
+                  <ActivityIndicator color={color.signal} />
+                </View>
+              ) : null}
+              <NavBarFiller />
+            </>
+          }
         />
       )}
     </View>
@@ -341,6 +350,7 @@ function RenameCollectionModal({ collection, onClose, onRenamed }: RenameCollect
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function SavedScreen() {
+  const navBarScrollHandler = useNavBarScrollHandler();
   const [collections, setCollections]           = useState<Collection[]>([]);
   const [loading, setLoading]                   = useState(true);
   const [activeCollection, setActiveCollection] = useState<Collection | null>(null);
@@ -403,7 +413,11 @@ export default function SavedScreen() {
           {loading ? (
             <View style={s.center}><ActivityIndicator color={color.signal} /></View>
           ) : collections.length === 0 ? (
-            <ScrollView contentContainerStyle={s.emptyState}>
+            <ScrollView
+              contentContainerStyle={s.emptyState}
+              onScroll={navBarScrollHandler}
+              scrollEventThrottle={16}
+            >
               <Bookmark size={40} color={color.haze} />
               <Text style={s.emptyTitle}>Nothing saved yet</Text>
               <Text style={s.emptySub}>
@@ -428,12 +442,15 @@ export default function SavedScreen() {
                   </Pressable>
                 ))}
               </View>
+              <NavBarFiller />
             </ScrollView>
           ) : (
             <FlatList
               data={collections}
               keyExtractor={(c) => c.id}
               contentContainerStyle={{ padding: space.lg, gap: space.md }}
+              onScroll={navBarScrollHandler}
+              scrollEventThrottle={16}
               ListHeaderComponent={
                 <Pressable style={s.newCollectionRow} onPress={() => setCreateOpen(true)}>
                   <FolderPlus size={18} color={color.deep} />
@@ -448,6 +465,7 @@ export default function SavedScreen() {
                   onRename={col.isDefault ? undefined : () => setRenameTarget(col)}
                 />
               )}
+              ListFooterComponent={<NavBarFiller />}
             />
           )}
         </>

@@ -27,6 +27,7 @@ import {
 } from '../../src/services/hashtag';
 import { RichText } from '../../src/components/RichText';
 import { useLocationContext } from '../../src/context/LocationContext';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 // ── Tab config ─────────────────────────────────────────────────────────────────
 
@@ -213,6 +214,7 @@ export default function HashtagFeedScreen() {
   const { slug } = useLocalSearchParams<{ slug: string }>();
   const insets = useSafeAreaInsets();
   const { locationState } = useLocationContext();
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const [meta, setMeta] = useState<HashtagMeta | null>(null);
   const [metaLoading, setMetaLoading] = useState(true);
@@ -452,6 +454,8 @@ export default function HashtagFeedScreen() {
           renderItem={({ item }) => <FeedRow item={item} />}
           contentContainerStyle={s.list}
           showsVerticalScrollIndicator={false}
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
           ItemSeparatorComponent={() => <View style={s.divider} />}
           onEndReached={() => {
             if (hasMore && !loadingMore && cursor) {
@@ -460,11 +464,14 @@ export default function HashtagFeedScreen() {
           }}
           onEndReachedThreshold={0.4}
           ListFooterComponent={
-            loadingMore ? (
-              <View style={s.footerLoader}>
-                <ActivityIndicator size="small" color={color.signal} />
-              </View>
-            ) : null
+            <>
+              {loadingMore ? (
+                <View style={s.footerLoader}>
+                  <ActivityIndicator size="small" color={color.signal} />
+                </View>
+              ) : null}
+              <NavBarFiller />
+            </>
           }
           ListEmptyComponent={
             <View style={s.emptyWrap}>

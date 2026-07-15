@@ -22,6 +22,7 @@ import {
   type EmergencyContactInput,
 } from '../../src/services/emergencyContacts';
 import { useSession } from '../../src/context/SessionContext';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 // ── Method labels ─────────────────────────────────────────────────────────────
 
@@ -269,6 +270,7 @@ export default function EmergencyContactsScreen() {
   const [editing, setEditing]   = useState<EmergencyContact | null>(null);
   const [saving, setSaving]     = useState(false);
   const saveLock = useRef(false);
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const load = useCallback(async () => {
     const result = await listEmergencyContacts();
@@ -376,6 +378,8 @@ export default function EmergencyContactsScreen() {
         <ScrollView
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
         >
           <Text style={styles.hint}>
             🔒 These contacts are only notified when you miss a Safe Return check-in — and only if you choose to alert them during setup.
@@ -395,6 +399,8 @@ export default function EmergencyContactsScreen() {
           {contacts.length >= 10 && (
             <Text style={styles.limitNote}>Maximum 10 contacts reached.</Text>
           )}
+
+          <NavBarFiller />
         </ScrollView>
       )}
 

@@ -20,6 +20,7 @@ import {
   type LocationVisibility,
   type LocationPrivacy,
 } from '../../src/services/map';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 const MODE_INFO: Record<LocationMode, { label: string; description: string; Icon: React.ComponentType<any> }> = {
   off: {
@@ -103,6 +104,7 @@ function useLocationPrefs() {
 export default function LocationSettingsScreen() {
   const insets = useSafeAreaInsets();
   const { prefs, loading, saving, save } = useLocationPrefs();
+  const navBarScrollHandler = useNavBarScrollHandler();
   const [showModeSheet, setShowModeSheet] = useState(false);
   const [showPulseSheet, setShowPulseSheet] = useState(false);
   const [showDiscoverySheet, setShowDiscoverySheet] = useState(false);
@@ -139,7 +141,7 @@ export default function LocationSettingsScreen() {
         {saving && <ActivityIndicator size="small" color={color.signal} style={{ marginLeft: 'auto' }} />}
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + space.xl }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + space.xl }} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
         {/* Pause sharing */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>SHARING</Text>
@@ -255,6 +257,8 @@ export default function LocationSettingsScreen() {
         <Text style={styles.privacyNote}>
           Your exact GPS coordinates are never shared publicly. All public surfaces show only city, neighborhood, or approximate distance.
         </Text>
+
+        <NavBarFiller />
       </ScrollView>
 
       {/* Mode sheet */}

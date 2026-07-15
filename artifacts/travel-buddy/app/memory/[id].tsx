@@ -24,6 +24,7 @@ import {
 import { useSession } from '../../src/context/SessionContext';
 import { EngagementUserListSheet } from '../../src/components/EngagementUserListSheet';
 import * as ImagePicker from 'expo-image-picker';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -59,6 +60,7 @@ export default function MemoryDetailScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { userId } = useSession();
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const [memory, setMemory] = useState<Memory | null>(null);
   const [loading, setLoading] = useState(true);
@@ -243,6 +245,8 @@ export default function MemoryDetailScreen() {
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: insets.bottom + space.xxl }}
+        onScroll={navBarScrollHandler}
+        scrollEventThrottle={16}
       >
 
         {/* Media items */}
@@ -345,6 +349,7 @@ export default function MemoryDetailScreen() {
           </View>
         </View>
 
+        <NavBarFiller />
       </ScrollView>
 
       {likerSheetOpen && (

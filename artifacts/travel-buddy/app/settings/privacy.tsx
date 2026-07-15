@@ -13,6 +13,7 @@ import {
 } from '../../src/services/profile';
 import { applyPrivacyChange } from '../../src/services/privacySettingsLogic';
 import { useSession } from '../../src/context/SessionContext';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 export default function PrivacySettingsScreen() {
   const insets = useSafeAreaInsets();
@@ -24,6 +25,7 @@ export default function PrivacySettingsScreen() {
   const [privacy, setPrivacy] = useState<PrivacySettings | null>(null);
   const [loadError, setLoadError] = useState(false);
   const saveLock = useRef(false);
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const loadSettings = useCallback(() => {
     setLoading(true);
@@ -88,7 +90,7 @@ export default function PrivacySettingsScreen() {
         )}
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + space.xl }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + space.xl }} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
         {!privacy ? (
           live && loadError ? (
             <View style={styles.errorState}>
@@ -220,6 +222,8 @@ export default function PrivacySettingsScreen() {
         <Text style={styles.footerNote}>
           Your exact GPS coordinates are never shared publicly. All public surfaces show only city, neighborhood, or approximate distance.
         </Text>
+
+        <NavBarFiller />
       </ScrollView>
     </View>
   );

@@ -12,9 +12,11 @@ import { deactivateAccount, requestAccountDeletion, reactivateAccount } from '..
 import { SUPPORTED_LANGUAGES } from '../language-picker';
 import { useLanguagePreference } from '../../src/context/LanguagePreferenceContext';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 export default function Settings() {
   const { signOut, isAuthed, configured } = useSession();
+  const navBarScrollHandler = useNavBarScrollHandler();
   const [isAdmin, setIsAdmin] = useState(false);
   const [accountStatus, setAccountStatus] = useState<string | null>(null);
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
@@ -274,7 +276,7 @@ export default function Settings() {
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       <ScreenHeader title="Settings" back />
-      <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.xl, paddingBottom: space.xxxl }}>
+      <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.xl, paddingBottom: space.xxxl }} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
 
         {/* Telegraph suggestions section */}
         <View style={{ gap: space.sm }}>
@@ -594,6 +596,7 @@ export default function Settings() {
             </>
           )}
         </View>
+        <NavBarFiller />
       </ScrollView>
     </View>
   );

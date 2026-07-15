@@ -17,6 +17,7 @@ import type { UnifiedSearchResult, SearchHistoryEntry } from '../src/services/di
 import { useActiveLocation } from '../src/hooks/useActiveLocation';
 import { CompassTravelerRow } from '../src/components/compass/CompassTravelerRow';
 import { color, space, radius, type as t } from '../src/theme/tokens';
+import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 
 type TabKey = 'all' | 'travelers' | 'events' | 'trips' | 'places' | 'hashtags' | 'buddies';
 
@@ -42,6 +43,7 @@ const RECOVERY_CHIPS_BASE = [
 export default function SearchScreen() {
   const params = useLocalSearchParams<{ q?: string; type?: string }>();
   const { locationState, requestLocation } = useActiveLocation();
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const [query, setQuery] = useState(params.q ?? '');
   const [activeTab, setActiveTab] = useState<TabKey>(
@@ -333,6 +335,8 @@ export default function SearchScreen() {
         <ScrollView
           contentContainerStyle={[styles.center, { justifyContent: 'flex-start', paddingTop: space.xl }]}
           keyboardShouldPersistTaps="handled"
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
         >
           <Text style={styles.emptyTitle}>No results found.</Text>
           <Text style={styles.emptySub}>
@@ -382,12 +386,15 @@ export default function SearchScreen() {
               </Pressable>
             ))}
           </View>
+          <NavBarFiller />
         </ScrollView>
       ) : showEmptyStart ? (
         /* Pre-search — recent history + quick suggestions */
         <ScrollView
           contentContainerStyle={{ paddingBottom: 100 }}
           keyboardShouldPersistTaps="handled"
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
         >
           {historyLoaded && recentSearches.length > 0 && (
             <View style={styles.historySection}>
@@ -443,6 +450,7 @@ export default function SearchScreen() {
 
           {/* Compass traveler matches — below search suggestions */}
           <CompassTravelerRow city={userCoords?.city ?? null} limit={6} />
+          <NavBarFiller />
         </ScrollView>
       ) : (
         <FlatList
@@ -456,14 +464,19 @@ export default function SearchScreen() {
           )}
           contentContainerStyle={{ paddingBottom: 100 }}
           keyboardShouldPersistTaps="handled"
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.4}
           ListFooterComponent={
-            loadingMore ? (
-              <View style={styles.loadingMore}>
-                <ActivityIndicator size="small" color={color.signal} />
-              </View>
-            ) : null
+            <>
+              {loadingMore ? (
+                <View style={styles.loadingMore}>
+                  <ActivityIndicator size="small" color={color.signal} />
+                </View>
+              ) : null}
+              <NavBarFiller />
+            </>
           }
         />
       )}
