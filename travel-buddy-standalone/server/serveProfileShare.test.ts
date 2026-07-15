@@ -202,6 +202,148 @@ describe("serveProfileSharePage OG metadata visibility", () => {
   });
 });
 
+// ── Stamp share variant ───────────────────────────────────────────────────────
+
+const STAMP_ID = "3f2b8a1c-9d4e-4f6a-8b2c-1e5d7a9c0b34";
+
+/**
+ * Stub fetch with separate handlers for the profile endpoint and the stamp
+ * preview endpoint, keyed on the URL.
+ */
+function stubFetchByUrl(handlers: {
+  profile: () => Promise<{ ok: boolean; json?: any }>;
+  stamp: () => Promise<{ ok: boolean; json?: any }>;
+}) {
+  globalThis.fetch = (async (url: string) => {
+    const r = String(url).includes("/preview")
+      ? await handlers.stamp()
+      : await handlers.profile();
+    return { ok: r.ok, json: async () => r.json } as any;
+  }) as any;
+}
+
+async function renderWithStamp(
+  username: string,
+  stampId: string | null,
+): Promise<{ html: string; headers: Record<string, string> }> {
+  const res = fakeRes();
+  await serveProfileSharePage(fakeReq(), res, username, APP_NAME, stampId);
+  assert.equal(res.statusCode, 200);
+  return { html: res.body as string, headers: res.headers };
+}
+
+const PUBLIC_CARD = {
+  username: "wanda",
+  displayName: "Wanda Wanderer",
+  tripCount: 3,
+  stampCount: 1,
+  visibility: "public",
+};
+
+describe("serveProfileSharePage stamp share variant", () => {
+  it("public profile + public stamp → stamp title, description, and stamp og-image", async () => {
+    stubFetchByUrl({
+      profile: async () => ({ ok: true, json: PUBLIC_CARD }),
+      stamp: async () => ({
+        ok: true,
+        json: { label: "Golden Gate", city: "San Francisco" },
+      }),
+    });
+    const { html, headers } = await renderWithStamp("wanda", STAMP_ID);
+    assert.equal(cacheControlOf(headers), NO_STORE, "stamp page must be no-store");
+    assert.equal(
+      metaContent(html, "og:title"),
+      `&quot;Golden Gate&quot; Stamp · ${APP_NAME}`,
+    );
+    assert.equal(
+      metaContent(html, "og:description"),
+      `Wanda Wanderer earned the &quot;Golden Gate&quot; passport stamp in San Francisco on ${APP_NAME}.`,
+    );
+    assert.equal(
+      metaContent(html, "og:image"),
+      `https://api.test/api/users/wanda/og-image.png?stamp=${STAMP_ID}`,
+    );
+  });
+
+  it("public profile + 404 from the stamp preview endpoint → falls back to passport title", async () => {
+    stubFetchByUrl({
+      profile: async () => ({ ok: true, json: PUBLIC_CARD }),
+      stamp: async () => ({ ok: false }),
+    });
+    const { html, headers } = await renderWithStamp("wanda", STAMP_ID);
+    assert.equal(cacheControlOf(headers), NO_STORE);
+    assert.equal(metaContent(html, "og:title"), `Wanda Wanderer · ${APP_NAME} Passport`);
+    assert.ok(!html.includes("Stamp ·"), "must not render the stamp variant");
+    assert.equal(
+      metaContent(html, "og:image"),
+      "https://api.test/api/users/wanda/og-image.png",
+      "og-image must not carry the stamp query",
+    );
+  });
+
+  it("public profile + blank/invalid stamp label → falls back to passport title", async () => {
+    stubFetchByUrl({
+      profile: async () => ({ ok: true, json: PUBLIC_CARD }),
+      stamp: async () => ({ ok: true, json: { label: "   " } }),
+    });
+    const { html } = await renderWithStamp("wanda", STAMP_ID);
+    assert.equal(metaContent(html, "og:title"), `Wanda Wanderer · ${APP_NAME} Passport`);
+  });
+
+  it("non-UUID stamp id → passport preview, stamp endpoint never contacted", async () => {
+    let stampFetches = 0;
+    stubFetchByUrl({
+      profile: async () => ({ ok: true, json: PUBLIC_CARD }),
+      stamp: async () => {
+        stampFetches += 1;
+        return { ok: true, json: { label: "Should Not Appear" } };
+      },
+    });
+    const { html } = await renderWithStamp("wanda", "not-a-uuid");
+    assert.equal(stampFetches, 0, "invalid stamp id must not hit the preview API");
+    assert.equal(metaContent(html, "og:title"), `Wanda Wanderer · ${APP_NAME} Passport`);
+    assert.ok(!html.includes("Should Not Appear"));
+  });
+
+  for (const [label, profileJson] of [
+    ["private", { private: true, displayName: "Secret Name", visibility: "private" }],
+    ["blocked", { blocked: true }],
+    ["unavailable", { unavailable: true }],
+  ] as const) {
+    it(`${label} profile + stamp id → generic page, stamp label never leaks`, async () => {
+      stubFetchByUrl({
+        profile: async () => ({ ok: true, json: profileJson }),
+        stamp: async () => ({
+          ok: true,
+          json: { label: "Secret Stamp Label", city: "Hidden City" },
+        }),
+      });
+      const { html, headers } = await renderWithStamp("hidden", STAMP_ID);
+      assert.equal(
+        cacheControlOf(headers),
+        GENERIC_CACHE,
+        "generic page stays cacheable",
+      );
+      assert.equal(metaContent(html, "og:title"), GENERIC_TITLE);
+      assert.equal(metaContent(html, "og:description"), GENERIC_DESC);
+      assert.equal(metaContent(html, "og:image"), GENERIC_IMAGE);
+      assert.ok(!html.includes("Secret Stamp Label"), "stamp label must not leak");
+      assert.ok(!html.includes("Hidden City"), "stamp place must not leak");
+      assert.ok(!html.includes("Secret"), "no personal data anywhere");
+    });
+  }
+
+  it("unknown user (profile 404) + stamp id → generic even if preview returns data", async () => {
+    stubFetchByUrl({
+      profile: async () => ({ ok: false }),
+      stamp: async () => ({ ok: true, json: { label: "Leaky Label" } }),
+    });
+    const { html } = await renderWithStamp("nobody", STAMP_ID);
+    assert.equal(metaContent(html, "og:title"), GENERIC_TITLE);
+    assert.ok(!html.includes("Leaky Label"));
+  });
+});
+
 describe("fetchProfileCard", () => {
   it("returns parsed JSON on success", async () => {
     stubFetch(async () => ({ ok: true, json: { username: "ok" } }));

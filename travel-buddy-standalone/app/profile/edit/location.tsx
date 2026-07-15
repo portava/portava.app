@@ -459,7 +459,7 @@ export default function LocationAvailabilityScreen() {
           icon={<Users size={18} color={PP.ink} />}
           title="Who Can See Me"
           subtitle="See who in each trip and event can view your status"
-          onPress={() => router.push('/settings/who-can-see-me' as any)}
+          onPress={() => router.push('/profile/edit/who-can-see-me' as any)}
         />
       </SettingsSection>
 

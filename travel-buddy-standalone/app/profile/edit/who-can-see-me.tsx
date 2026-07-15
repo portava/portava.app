@@ -13,17 +13,17 @@ import {
 import { router } from 'expo-router';
 import { ArrowLeft, Users, Settings, PauseCircle, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t } from '../../src/theme/tokens';
-import { supabase, isSupabaseConfigured } from '../../src/lib/supabase';
+import { color, space, radius, type as t } from '../../../src/theme/tokens';
+import { supabase, isSupabaseConfigured } from '../../../src/lib/supabase';
 import {
   getCircleSettings,
   getWhoCanSeeMe,
   pauseAllCircleSharing,
   patchCircleContextSettings,
   type CircleWatcher,
-} from '../../src/services/circle';
-import { useSession } from '../../src/context/SessionContext';
-import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+} from '../../../src/services/circle';
+import { useSession } from '../../../src/context/SessionContext';
+import { NavBarFiller, useNavBarScrollHandler } from '../../../src/hooks/useNavBarCollapse';
 
 interface ContextGroup {
   contextType: 'trip' | 'event';
@@ -238,7 +238,7 @@ export default function WhoCanSeeMeScreen() {
           </Text>
           <Pressable
             style={s.deepBtn}
-            onPress={() => router.push('/settings/find-your-circle' as any)}
+            onPress={() => router.push('/profile/edit/location' as any)}
           >
             <Settings size={16} color={color.onInk} />
             <Text style={s.deepBtnText}>Open Circle settings</Text>
@@ -318,7 +318,7 @@ export default function WhoCanSeeMeScreen() {
 
             <Pressable
               style={s.circleSettingsBtn}
-              onPress={() => router.push('/settings/find-your-circle' as any)}
+              onPress={() => router.push('/profile/edit/location' as any)}
             >
               <Settings size={16} color={color.deep} />
               <Text style={s.circleSettingsBtnText}>Circle settings</Text>
