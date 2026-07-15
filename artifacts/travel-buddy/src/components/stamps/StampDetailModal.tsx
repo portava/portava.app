@@ -3,9 +3,9 @@
  * Owner sees visibility controls (Public / Friends only / Private)
  * and a display_on_passport toggle. Non-owner view is read-only.
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
-  Modal, View, Text, Pressable, StyleSheet, ScrollView, Switch, ActivityIndicator,
+  Modal, View, Text, Pressable, StyleSheet, ScrollView, Switch, ActivityIndicator, Image,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { X, Share2, Link } from 'lucide-react-native';
@@ -60,6 +60,17 @@ export function StampDetailModal({ stamp, isOwner, visible, onClose, onStampUpda
   const [displayUpdating, setDisplayUpdating] = useState(false);
   const { cardRef, share, sharing, onArtworkSettled } = useStampShare(stamp, username ?? null);
   const [copied, setCopied] = useState(false);
+
+  /* Prefetch the AI artwork as soon as the modal opens so the share capture
+     (which waits for the artwork to load) is nearly always instant. */
+  const artworkUrl = stamp?.definition?.universalArtworkUrl ?? null;
+  useEffect(() => {
+    if (visible && artworkUrl) {
+      Image.prefetch(artworkUrl).catch(() => {
+        /* best-effort warm-up; share flow has its own bounded wait + fallback */
+      });
+    }
+  }, [visible, artworkUrl]);
 
   const copyLink = useCallback(async () => {
     if (!stamp) return;
