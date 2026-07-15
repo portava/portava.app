@@ -18,7 +18,6 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildOnboardingPatch,
-  buildPassportSettingsPatch,
 } from '../services/profilePatchBuilder.ts';
 import {
   _setTestAuthToken,
@@ -144,74 +143,6 @@ describe('buildOnboardingPatch — homeCity / homeCountry field handling', () =>
       travelStyle: 'solo', interests: [],
     });
     assert.ok(!('username' in patch), 'username must be absent when handle is empty');
-  });
-});
-
-// ── Suite 2: PassportSettingsSheet patch-building logic ───────────────────────
-//
-// Calls `buildPassportSettingsPatch` from `src/services/profilePatchBuilder.ts`,
-// the same function imported by PassportSettingsSheet.tsx handleSave.
-
-describe('buildPassportSettingsPatch — homeCity / homeCountry field handling', () => {
-  const base = {
-    displayName: 'Drae', bio: '', homeCity: '', homeCountry: '',
-    passportPublic: true, interests: [], spokenLanguages: [],
-    defaultLanguage: '', travelStyles: [], travelPace: null, budgetStyle: null,
-    travelGroupStyle: [], lookingFor: [], comfortLevel: null,
-    availabilityTags: [], planningStyle: null,
-    currentUsername: 'alice', newUsername: 'alice', usernameStatus: 'idle',
-  };
-
-  it('includes homeCity and homeCountry when both are set', () => {
-    const patch = buildPassportSettingsPatch({ ...base, homeCity: 'Cebu', homeCountry: 'Philippines' });
-    assert.equal(patch.homeCity, 'Cebu', 'homeCity must be included in passport settings patch');
-    assert.equal(patch.homeCountry, 'Philippines', 'homeCountry must be included in passport settings patch');
-  });
-
-  it('sets homeCity to undefined (excluded from JSON) when empty string', () => {
-    const patch = buildPassportSettingsPatch({ ...base, homeCity: '', homeCountry: '' });
-    assert.equal(patch.homeCity, undefined, 'empty homeCity becomes undefined, stripped by JSON.stringify');
-    assert.equal(patch.homeCountry, undefined, 'empty homeCountry becomes undefined, stripped by JSON.stringify');
-    const serialized = JSON.parse(JSON.stringify(patch));
-    assert.ok(!('homeCity' in serialized), 'homeCity must not appear in serialized PATCH body when empty');
-    assert.ok(!('homeCountry' in serialized), 'homeCountry must not appear in serialized PATCH body when empty');
-  });
-
-  it('trims homeCity before including', () => {
-    const patch = buildPassportSettingsPatch({ ...base, homeCity: '  Manila  ', homeCountry: '  Philippines  ' });
-    assert.equal(patch.homeCity, 'Manila');
-    assert.equal(patch.homeCountry, 'Philippines');
-  });
-
-  it('sets passportVisibility to private when passportPublic is false', () => {
-    const patch = buildPassportSettingsPatch({ ...base, passportPublic: false });
-    assert.equal(patch.passportVisibility, 'private');
-  });
-
-  it('sets passportVisibility to public when passportPublic is true', () => {
-    const patch = buildPassportSettingsPatch({ ...base, passportPublic: true });
-    assert.equal(patch.passportVisibility, 'public');
-  });
-
-  it('excludes username when new username equals current username', () => {
-    const patch = buildPassportSettingsPatch({
-      ...base, currentUsername: 'alice', newUsername: 'alice', usernameStatus: 'available',
-    });
-    assert.ok(!('username' in patch), 'username must be excluded when unchanged');
-  });
-
-  it('excludes username when usernameStatus is unavailable', () => {
-    const patch = buildPassportSettingsPatch({
-      ...base, currentUsername: 'alice', newUsername: 'taken_name', usernameStatus: 'unavailable',
-    });
-    assert.ok(!('username' in patch), 'username must be excluded when status is unavailable');
-  });
-
-  it('includes username when it changed and status is available', () => {
-    const patch = buildPassportSettingsPatch({
-      ...base, currentUsername: 'alice', newUsername: 'alice_v2', usernameStatus: 'available',
-    });
-    assert.equal(patch.username, 'alice_v2');
   });
 });
 

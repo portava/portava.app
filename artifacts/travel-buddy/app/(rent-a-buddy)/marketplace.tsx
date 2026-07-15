@@ -132,7 +132,7 @@ export default function Marketplace() {
     }
     setTotal(res.data.total);
     setPage(pg);
-  }, [city, category, sortBy, verifiedOnly, language, budget, rating, sessionMode]);
+  }, [city, cityLat, cityLng, category, sortBy, verifiedOnly, language, budget, rating, sessionMode]);
 
   useEffect(() => {
     if (city.trim().length > 1) load(1);

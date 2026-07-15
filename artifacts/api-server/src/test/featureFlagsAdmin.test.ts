@@ -65,6 +65,7 @@ function makeFakeClient(opts: {
   featureFlags?: Record<string, unknown>[];
 }) {
   const { role = "admin", featureFlags = [] } = opts;
+  const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
 
   function builder(rows: unknown[]) {
     let _rows = [...rows];
@@ -88,8 +89,6 @@ function makeFakeClient(opts: {
     return b;
   }
 
-  const rpcCalls: { fn: string; args: any }[] = [];
-
   return {
     from: (table: string) => {
       if (table === "profiles")      return builder([{ id: "uid1", role }]);
@@ -105,13 +104,18 @@ function makeFakeClient(opts: {
       }
       const row: any = featureFlags.find((f: any) => f.flag === args.p_flag);
       if (!row) {
-        return Promise.resolve({ data: null, error: { code: "P0002", message: "Flag not found" } });
+        return Promise.resolve({ data: null, error: { code: "P0002", message: `Flag not found: ${args.p_flag}` } });
       }
       const oldEnabled = row.enabled;
       row.enabled = args.p_new_enabled;
       row.updated_at = new Date().toISOString();
       return Promise.resolve({
-        data: [{ ...row, old_enabled: oldEnabled, changed_at: row.updated_at }],
+        data: [{
+          ...row,
+          old_enabled: oldEnabled,
+          changed_at: row.updated_at,
+          changed_by_user_id: args.p_changed_by_id,
+        }],
         error: null,
       });
     },
@@ -264,7 +268,7 @@ describe("PATCH /admin/feature-flags/:flag", () => {
     assert.equal(body.error, "invalid_payload");
   });
 
-  it("sends enabled and updated_at to the database (not extra columns)", async () => {
+  it("toggles atomically via toggle_feature_flag_with_audit RPC with the right args", async () => {
     // The toggle now runs through the atomic toggle_feature_flag_with_audit
     // RPC (migration 0119) instead of a raw update — assert the RPC contract.
     const client = makeFakeClient({
@@ -274,7 +278,8 @@ describe("PATCH /admin/feature-flags/:flag", () => {
     _setTestClient(client, true);
     _setTestServiceClient(client);
 
-    await req("PATCH", "/admin/feature-flags/trip_crew_map_enabled", { enabled: true });
+    const { status } = await req("PATCH", "/admin/feature-flags/trip_crew_map_enabled", { enabled: true });
+    assert.equal(status, 200);
 
     const toggles = client._rpcCalls.filter((c: any) => c.fn === "toggle_feature_flag_with_audit");
     assert.equal(toggles.length, 1, "toggle RPC must be called exactly once");
@@ -287,5 +292,21 @@ describe("PATCH /admin/feature-flags/:flag", () => {
       ["p_changed_by_id", "p_flag", "p_new_enabled"],
       "RPC payload must contain only the toggle arguments",
     );
+  });
+
+  it("returns 503 server_not_configured when the audit RPC is missing", async () => {
+    const client = makeFakeClient({
+      role: "admin",
+      featureFlags: [{ flag: "some_flag", enabled: false }],
+    });
+    // Simulate migration 0119 not applied: Postgres "function does not exist"
+    (client as any).rpc = () =>
+      Promise.resolve({ data: null, error: { code: "42883", message: "function toggle_feature_flag_with_audit does not exist" } });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const { status, body } = await req("PATCH", "/admin/feature-flags/some_flag", { enabled: true });
+    assert.equal(status, 503);
+    assert.equal(body.error, "server_not_configured");
   });
 });
