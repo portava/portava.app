@@ -68,11 +68,19 @@ function fakeRes() {
   return res;
 }
 
-async function renderPage(username: string): Promise<string> {
+async function render(username: string): Promise<{ html: string; headers: Record<string, string> }> {
   const res = fakeRes();
   await serveProfileSharePage(fakeReq(), res, username, APP_NAME);
   assert.equal(res.statusCode, 200);
-  return res.body as string;
+  return { html: res.body as string, headers: res.headers };
+}
+
+const NO_STORE = "no-store, no-cache, must-revalidate";
+const GENERIC_CACHE = "public, max-age=300";
+
+function cacheControlOf(headers: Record<string, string>): string {
+  const key = Object.keys(headers).find((k) => k.toLowerCase() === "cache-control");
+  return key ? headers[key] : "";
 }
 
 function metaContent(html: string, property: string): string | null {
@@ -80,6 +88,16 @@ function metaContent(html: string, property: string): string | null {
     `<meta (?:property|name)="${property}" content="([^"]*)"`,
   ).exec(html);
   return m ? m[1] : null;
+}
+
+async function renderGeneric(username: string): Promise<string> {
+  const { html, headers } = await render(username);
+  assert.equal(
+    cacheControlOf(headers),
+    GENERIC_CACHE,
+    "generic pages must stay publicly cacheable",
+  );
+  return html;
 }
 
 function assertGeneric(html: string, username: string) {
@@ -110,7 +128,12 @@ describe("serveProfileSharePage OG metadata visibility", () => {
         visibility: "public",
       },
     }));
-    const html = await renderPage("wanda");
+    const { html, headers } = await render("wanda");
+    assert.equal(
+      cacheControlOf(headers),
+      NO_STORE,
+      "personalized page must send no-store cache headers",
+    );
     assert.equal(metaContent(html, "og:title"), `Wanda Wanderer · ${APP_NAME} Passport`);
     assert.equal(
       metaContent(html, "og:description"),
@@ -128,7 +151,8 @@ describe("serveProfileSharePage OG metadata visibility", () => {
       ok: true,
       json: { username: "sam", displayName: "Sam", tripCount: 1, stampCount: 2, visibility: "public" },
     }));
-    const html = await renderPage("sam");
+    const { html, headers } = await render("sam");
+    assert.equal(cacheControlOf(headers), NO_STORE);
     assert.equal(metaContent(html, "og:description"), `1 trip · 2 stamps on ${APP_NAME}.`);
   });
 
@@ -144,7 +168,7 @@ describe("serveProfileSharePage OG metadata visibility", () => {
         visibility: "private",
       },
     }));
-    assertGeneric(await renderPage("hidden"), "hidden");
+    assertGeneric(await renderGeneric("hidden"), "hidden");
   });
 
   it('private profile (visibility:"private" only) → generic', async () => {
@@ -152,29 +176,29 @@ describe("serveProfileSharePage OG metadata visibility", () => {
       ok: true,
       json: { username: "hidden2", displayName: "Secret Two", visibility: "private" },
     }));
-    assertGeneric(await renderPage("hidden2"), "hidden2");
+    assertGeneric(await renderGeneric("hidden2"), "hidden2");
   });
 
   it("blocked profile → generic", async () => {
     stubFetch(async () => ({ ok: true, json: { blocked: true } }));
-    assertGeneric(await renderPage("blocky"), "blocky");
+    assertGeneric(await renderGeneric("blocky"), "blocky");
   });
 
   it("unavailable account → generic", async () => {
     stubFetch(async () => ({ ok: true, json: { unavailable: true } }));
-    assertGeneric(await renderPage("gone"), "gone");
+    assertGeneric(await renderGeneric("gone"), "gone");
   });
 
   it("unknown user (API 404) → generic", async () => {
     stubFetch(async () => ({ ok: false }));
-    assertGeneric(await renderPage("nobody"), "nobody");
+    assertGeneric(await renderGeneric("nobody"), "nobody");
   });
 
   it("API failure (network error) → generic", async () => {
     globalThis.fetch = (async () => {
       throw new Error("connection refused");
     }) as any;
-    assertGeneric(await renderPage("whoever"), "whoever");
+    assertGeneric(await renderGeneric("whoever"), "whoever");
   });
 });
 

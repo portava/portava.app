@@ -1079,7 +1079,9 @@ router.get("/users/:username/og-image.png", async (req, res) => {
           });
           res
             .status(200)
-            .set({ "Content-Type": "image/png", "Cache-Control": "public, max-age=600" })
+            // Personalized stamp preview (owner name, stamp label, artwork)
+            // must expire fast, same as the personalized passport card.
+            .set({ "Content-Type": "image/png", "Cache-Control": "no-store, no-cache, must-revalidate" })
             .send(png);
           return;
         } catch (e: any) {

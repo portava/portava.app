@@ -25,7 +25,7 @@ const CARL  = "dd000000-0000-4000-a000-000000000004"; // deactivated
 function getRaw(
   server: ReturnType<typeof createServer>,
   path: string,
-): Promise<{ status: number; contentType: string; body: Buffer }> {
+): Promise<{ status: number; contentType: string; cacheControl: string; body: Buffer }> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as import("net").AddressInfo;
     const r = http.request(
@@ -37,6 +37,7 @@ function getRaw(
           resolve({
             status: res.statusCode ?? 0,
             contentType: String(res.headers["content-type"] ?? ""),
+            cacheControl: String(res.headers["cache-control"] ?? ""),
             body: Buffer.concat(chunks),
           }),
         );
@@ -131,7 +132,30 @@ const baseState: FakeState = {
     { id: "t2", owner_id: ALICE },
   ],
   stamps: [{ id: "s1", user_id: ALICE, locked: false }],
+  user_stamps: [
+    {
+      id: "aa000000-0000-4000-a000-000000001001",
+      user_id: ALICE,
+      city: "Lisbon", country: "Portugal",
+      earned_at: "2026-05-01T00:00:00Z",
+      title_override: "Lisbon Explorer",
+      visibility: "public", is_revoked: false,
+      stamp_definitions: { name: "Lisbon", stamp_type: "city", universal_artwork_url: null },
+    },
+    {
+      id: "aa000000-0000-4000-a000-000000002002",
+      user_id: ALICE,
+      city: "Hidden City", country: "Nowhere",
+      earned_at: "2026-05-02T00:00:00Z",
+      title_override: "Secret Stamp",
+      visibility: "private", is_revoked: false,
+      stamp_definitions: { name: "Hidden", stamp_type: "city", universal_artwork_url: null },
+    },
+  ],
 };
+
+const PUBLIC_STAMP_ID = baseState.user_stamps[0].id;
+const PRIVATE_STAMP_ID = baseState.user_stamps[1].id;
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
@@ -160,6 +184,9 @@ after(async () => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+const NO_STORE = "no-store, no-cache, must-revalidate";
+const GENERIC_CACHE = "public, max-age=600";
+
 describe("GET /users/:username/og-image.png visibility enforcement", () => {
   let genericPng: Buffer;
 
@@ -168,6 +195,7 @@ describe("GET /users/:username/og-image.png visibility enforcement", () => {
     assert.equal(r.status, 200);
     assert.match(r.contentType, /^image\/png/);
     assert.ok(r.body.length > 0, "should have image bytes");
+    assert.equal(r.cacheControl, GENERIC_CACHE, "generic image must stay publicly cacheable");
     genericPng = r.body;
   });
 
@@ -175,6 +203,7 @@ describe("GET /users/:username/og-image.png visibility enforcement", () => {
     const r = await getRaw(server, "/users/bob_private/og-image.png");
     assert.equal(r.status, 200);
     assert.match(r.contentType, /^image\/png/);
+    assert.equal(r.cacheControl, GENERIC_CACHE, "generic image must stay publicly cacheable");
     assert.ok(
       r.body.equals(genericPng),
       "private profile image must be identical to the unknown-user generic card",
@@ -184,6 +213,7 @@ describe("GET /users/:username/og-image.png visibility enforcement", () => {
   it("unavailable (deactivated) account → byte-identical generic PNG", async () => {
     const r = await getRaw(server, "/users/carl_gone/og-image.png");
     assert.equal(r.status, 200);
+    assert.equal(r.cacheControl, GENERIC_CACHE);
     assert.ok(
       r.body.equals(genericPng),
       "unavailable account image must be identical to the generic card",
@@ -193,6 +223,7 @@ describe("GET /users/:username/og-image.png visibility enforcement", () => {
   it("@-prefixed private handle → still generic", async () => {
     const r = await getRaw(server, "/users/@bob_private/og-image.png");
     assert.equal(r.status, 200);
+    assert.equal(r.cacheControl, GENERIC_CACHE);
     assert.ok(r.body.equals(genericPng));
   });
 
@@ -200,9 +231,36 @@ describe("GET /users/:username/og-image.png visibility enforcement", () => {
     const r = await getRaw(server, "/users/alice_public/og-image.png");
     assert.equal(r.status, 200);
     assert.match(r.contentType, /^image\/png/);
+    assert.equal(r.cacheControl, NO_STORE, "personalized image must send no-store cache headers");
     assert.ok(
       !r.body.equals(genericPng),
       "public profile should get a personalized (different) image",
     );
+  });
+
+  it("?stamp=<public id> → personalized stamp PNG with no-store cache headers", async () => {
+    const r = await getRaw(server, `/users/alice_public/og-image.png?stamp=${PUBLIC_STAMP_ID}`);
+    assert.equal(r.status, 200);
+    assert.match(r.contentType, /^image\/png/);
+    assert.equal(
+      r.cacheControl,
+      NO_STORE,
+      "personalized stamp preview must send no-store cache headers",
+    );
+    assert.ok(!r.body.equals(genericPng), "stamp preview should differ from the generic card");
+  });
+
+  it("?stamp=<private id> → falls back to passport card, still no-store", async () => {
+    const r = await getRaw(server, `/users/alice_public/og-image.png?stamp=${PRIVATE_STAMP_ID}`);
+    assert.equal(r.status, 200);
+    assert.equal(r.cacheControl, NO_STORE, "fallback passport card is still personalized");
+    assert.ok(!r.body.equals(genericPng));
+  });
+
+  it("?stamp on a private profile → generic PNG stays publicly cacheable", async () => {
+    const r = await getRaw(server, `/users/bob_private/og-image.png?stamp=${PUBLIC_STAMP_ID}`);
+    assert.equal(r.status, 200);
+    assert.equal(r.cacheControl, GENERIC_CACHE);
+    assert.ok(r.body.equals(genericPng));
   });
 });
