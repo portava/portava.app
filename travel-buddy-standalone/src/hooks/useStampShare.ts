@@ -14,7 +14,7 @@
  *
  * Mirrors the pattern established by usePassportShare.ts.
  */
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import { View } from 'react-native';
 import { captureRef } from 'react-native-view-shot';
 import NativeShare from 'react-native-share';
@@ -26,9 +26,47 @@ export interface StampShareState {
   error: string | null;
 }
 
+/** Max time to wait for the artwork image to load before capturing anyway. */
+const ARTWORK_WAIT_TIMEOUT_MS = 4000;
+
 export function useStampShare(stamp: PassportStampNew | null, username: string | null) {
   const cardRef = useRef<View>(null);
   const [state, setState] = useState<StampShareState>({ sharing: false, error: null });
+
+  /**
+   * Artwork readiness gate: the StampShareCard reports (via onArtworkSettled)
+   * when its remote artwork has loaded, failed (procedural fallback rendered),
+   * or when there is no remote artwork at all. Capture waits on this so shared
+   * images never go out with an empty artwork area.
+   */
+  const artworkSettledRef = useRef(false);
+  const settleWaitersRef = useRef<Array<() => void>>([]);
+
+  /* Reset the readiness gate whenever the stamp changes: a previously settled
+     card must not let a new stamp's capture skip the wait. Pending waiters are
+     released (their timeout still bounds the wait for the new artwork). */
+  const stampId = stamp?.id ?? null;
+  useEffect(() => {
+    if (stampId !== null) artworkSettledRef.current = false;
+  }, [stampId]);
+
+  const onArtworkSettled = useCallback(() => {
+    artworkSettledRef.current = true;
+    const waiters = settleWaitersRef.current;
+    settleWaitersRef.current = [];
+    waiters.forEach((resolve) => resolve());
+  }, []);
+
+  const waitForArtwork = useCallback((): Promise<void> => {
+    if (artworkSettledRef.current) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, ARTWORK_WAIT_TIMEOUT_MS);
+      settleWaitersRef.current.push(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  }, []);
 
   const share = useCallback(async () => {
     if (!stamp || stamp.visibility !== 'public' || stamp.isRevoked) return;
@@ -45,6 +83,9 @@ export function useStampShare(stamp: PassportStampNew | null, username: string |
 
       if (cardRef.current) {
         try {
+          /* Wait for artwork to load/fail (bounded) so the capture never
+             shows an empty artwork area. */
+          await waitForArtwork();
           const raw = await captureRef(cardRef, {
             format: 'jpg',
             quality: 0.9,
@@ -83,7 +124,7 @@ export function useStampShare(stamp: PassportStampNew | null, username: string |
     } finally {
       setState((s) => ({ ...s, sharing: false }));
     }
-  }, [stamp, username]);
+  }, [stamp, username, waitForArtwork]);
 
-  return { cardRef, share, sharing: state.sharing, error: state.error };
+  return { cardRef, share, sharing: state.sharing, error: state.error, onArtworkSettled };
 }
