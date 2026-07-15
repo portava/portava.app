@@ -40,6 +40,12 @@ interface StampShareCardProps {
   /** Card width. Default 320. */
   width?: number;
   username?: string | null;
+  /**
+   * Called once the artwork area is settled: the remote AI artwork loaded,
+   * it failed (procedural fallback is rendered), or there is no remote
+   * artwork at all. Lets capture flows wait before snapshotting the card.
+   */
+  onArtworkSettled?: () => void;
 }
 
 export function StampShareCard({
@@ -47,11 +53,28 @@ export function StampShareCard({
   visibility = 'public',
   width = 320,
   username,
+  onArtworkSettled,
 }: StampShareCardProps) {
   const art = resolveArtwork(stamp);
   const Icon = resolveIcon(art.iconKey);
   const [artFailed, setArtFailed] = useState(false);
-  const showAiArtwork = Boolean(stamp.universalArtworkUrl) && !artFailed;
+  const hasRemoteArtwork = Boolean(stamp.universalArtworkUrl);
+  const showAiArtwork = hasRemoteArtwork && !artFailed;
+
+  const settledRef = React.useRef(false);
+  const settle = React.useCallback(() => {
+    if (settledRef.current) return;
+    settledRef.current = true;
+    onArtworkSettled?.();
+  }, [onArtworkSettled]);
+
+  // Settle once the procedural design is committed: either there was no
+  // remote artwork at all, or the remote image failed and the fallback has
+  // now rendered (this effect runs after that commit, avoiding a capture
+  // race against a pre-rerender frame).
+  React.useEffect(() => {
+    if (!hasRemoteArtwork || artFailed) settle();
+  }, [hasRemoteArtwork, artFailed, settle]);
   const isPublic = visibility === 'public';
   const stampSize = Math.round(width * 0.42);
   const iconSize = Math.round(stampSize * 0.28);
@@ -92,6 +115,7 @@ export function StampShareCard({
               source={{ uri: stamp.universalArtworkUrl }}
               style={{ width: '100%', height: '100%' }}
               resizeMode="cover"
+              onLoad={settle}
               onError={() => setArtFailed(true)}
               accessibilityIgnoresInvertColors
             />

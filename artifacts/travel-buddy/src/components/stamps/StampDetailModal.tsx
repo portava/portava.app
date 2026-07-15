@@ -58,7 +58,7 @@ interface Props {
 export function StampDetailModal({ stamp, isOwner, visible, onClose, onStampUpdated, username }: Props) {
   const [visUpdating, setVisUpdating] = useState(false);
   const [displayUpdating, setDisplayUpdating] = useState(false);
-  const { cardRef, share, sharing } = useStampShare(stamp, username ?? null);
+  const { cardRef, share, sharing, onArtworkSettled } = useStampShare(stamp, username ?? null);
   const [copied, setCopied] = useState(false);
 
   const copyLink = useCallback(async () => {
@@ -249,7 +249,7 @@ export function StampDetailModal({ stamp, isOwner, visible, onClose, onStampUpda
 
       {/* Off-screen StampShareCard — captured by useStampShare for the native share sheet */}
       <View ref={cardRef} style={styles.offscreen} collapsable={false}>
-        <StampShareCard stamp={legacy} visibility="public" username={username ?? undefined} />
+        <StampShareCard key={stamp.id} stamp={legacy} visibility="public" username={username ?? undefined} onArtworkSettled={onArtworkSettled} />
       </View>
     </Modal>
   );
