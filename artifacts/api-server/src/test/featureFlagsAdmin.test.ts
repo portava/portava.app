@@ -88,12 +88,34 @@ function makeFakeClient(opts: {
     return b;
   }
 
+  const rpcCalls: { fn: string; args: any }[] = [];
+
   return {
     from: (table: string) => {
       if (table === "profiles")      return builder([{ id: "uid1", role }]);
       if (table === "feature_flags") return builder(featureFlags);
       return builder([]);
     },
+    // Emulates the toggle_feature_flag_with_audit SQL function (migration 0119):
+    // atomically toggles the flag and returns the updated row + audit fields.
+    rpc: (fn: string, args: any) => {
+      rpcCalls.push({ fn, args });
+      if (fn !== "toggle_feature_flag_with_audit") {
+        return Promise.resolve({ data: null, error: { code: "42883", message: `function ${fn} does not exist` } });
+      }
+      const row: any = featureFlags.find((f: any) => f.flag === args.p_flag);
+      if (!row) {
+        return Promise.resolve({ data: null, error: { code: "P0002", message: "Flag not found" } });
+      }
+      const oldEnabled = row.enabled;
+      row.enabled = args.p_new_enabled;
+      row.updated_at = new Date().toISOString();
+      return Promise.resolve({
+        data: [{ ...row, old_enabled: oldEnabled, changed_at: row.updated_at }],
+        error: null,
+      });
+    },
+    _rpcCalls: rpcCalls,
     auth: {
       getUser: () => Promise.resolve({ data: { user: { id: "uid1" } }, error: null }),
     },
@@ -243,30 +265,27 @@ describe("PATCH /admin/feature-flags/:flag", () => {
   });
 
   it("sends enabled and updated_at to the database (not extra columns)", async () => {
-    const captured: any[] = [];
+    // The toggle now runs through the atomic toggle_feature_flag_with_audit
+    // RPC (migration 0119) instead of a raw update — assert the RPC contract.
     const client = makeFakeClient({
       role: "admin",
       featureFlags: [{ flag: "trip_crew_map_enabled", enabled: false, description: "Crew map" }],
     });
-    const origFrom = client.from.bind(client);
-    client.from = (table: string) => {
-      const b = origFrom(table);
-      if (table === "feature_flags") {
-        const origUpdate = b.update.bind(b);
-        b.update = (data: any) => { captured.push(data); return origUpdate(data); };
-      }
-      return b;
-    };
     _setTestClient(client, true);
     _setTestServiceClient(client);
 
     await req("PATCH", "/admin/feature-flags/trip_crew_map_enabled", { enabled: true });
 
-    assert.equal(captured.length, 1, "update must be called exactly once");
-    const patch = captured[0];
-    assert.equal(patch.enabled, true, "enabled must be set to the requested value");
-    assert.ok("updated_at" in patch, "updated_at must be stamped on every toggle");
-    assert.ok(!("flag" in patch),        "flag PK must not be overwritten in the update payload");
-    assert.ok(!("description" in patch), "description must not be modified by a toggle");
+    const toggles = client._rpcCalls.filter((c: any) => c.fn === "toggle_feature_flag_with_audit");
+    assert.equal(toggles.length, 1, "toggle RPC must be called exactly once");
+    const args = toggles[0].args;
+    assert.equal(args.p_flag, "trip_crew_map_enabled", "RPC must target the requested flag");
+    assert.equal(args.p_new_enabled, true, "enabled must be set to the requested value");
+    assert.equal(args.p_changed_by_id, "uid1", "audit must record the acting admin");
+    assert.deepEqual(
+      Object.keys(args).sort(),
+      ["p_changed_by_id", "p_flag", "p_new_enabled"],
+      "RPC payload must contain only the toggle arguments",
+    );
   });
 });

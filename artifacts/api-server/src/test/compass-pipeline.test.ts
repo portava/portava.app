@@ -923,8 +923,10 @@ describe("CompassScoringEngine — per-type scoring formulas", () => {
   });
 
   it("safety-compatible item (standard/standard) scores higher than mismatched (relaxed viewer=cautious)", () => {
-    const match    = makeItem({ id: "sc-sa-m", type: "event", safetyTier: "standard" });
-    const mismatch = makeItem({ id: "sc-sa-x", type: "event", safetyTier: "relaxed" });
+    // Use a type whose weights give safetyCompatibility a non-zero budget
+    // (event weights set it to 0, which makes the comparison meaningless).
+    const match    = makeItem({ id: "sc-sa-m", type: "post", safetyTier: "standard" });
+    const mismatch = makeItem({ id: "sc-sa-x", type: "post", safetyTier: "relaxed" });
     const cautious = baseProfile({ safetyPreference: "cautious" });
     assert.ok(
       scoreItem(match, cautious, ctx).finalScore > scoreItem(mismatch, cautious, ctx).finalScore,

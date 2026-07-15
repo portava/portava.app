@@ -242,25 +242,25 @@ export default function Settings() {
     } else if (label === 'Saved profiles') {
       router.push('/saved-profiles' as any);
     } else if (label === 'Safety & Privacy') {
-      router.push('/settings/safety' as any);
+      router.push('/profile/edit/safety' as any);
     } else if (label === 'Edit profile') {
       router.push('/profile/edit');
     } else if (label === 'Change password') {
       router.push('/profile/change-password' as any);
     } else if (label === 'Notifications') {
-      router.push('/settings/notifications' as any);
+      router.push('/profile/edit/notifications' as any);
     } else if (label === 'Location settings') {
-      router.push('/settings/location' as any);
+      router.push('/profile/edit/location' as any);
     } else if (label === 'Hide current location') {
-      router.push('/settings/location' as any);
+      router.push('/profile/edit/location' as any);
     } else if (label === 'Nearby visibility') {
-      router.push('/settings/location' as any);
+      router.push('/profile/edit/location' as any);
     } else if (label === 'Private account' || label === 'Hide upcoming trips' || label === 'Message permissions') {
-      router.push('/settings/privacy' as any);
+      router.push('/profile/edit/privacy' as any);
     } else if (label === 'Safe Return history') {
       router.push('/safety-history' as any);
     } else if (label === 'Emergency Contacts') {
-      router.push('/settings/emergency-contacts' as any);
+      router.push('/profile/edit/emergency-contacts' as any);
     } else if (label === 'Report history') {
       router.push('/report-history' as any);
     } else if (label === 'Compass Preferences') {
@@ -554,7 +554,7 @@ export default function Settings() {
           <Text style={styles.h}>Find Your Circle</Text>
           <Pressable
             style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
-            onPress={() => router.push('/settings/find-your-circle' as any)}
+            onPress={() => router.push('/profile/edit/location' as any)}
           >
             <Text style={styles.item}>Find Your Circle settings</Text>
           </Pressable>
@@ -565,7 +565,7 @@ export default function Settings() {
           <Text style={styles.h}>Privacy</Text>
           <Pressable
             style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
-            onPress={() => router.push('/settings/privacy' as any)}
+            onPress={() => router.push('/profile/edit/privacy' as any)}
           >
             <Text style={styles.item}>Privacy settings</Text>
           </Pressable>

@@ -91,7 +91,7 @@ async function handleAction(
     // ── Safe Return — routes to /settings/safety (the safety hub screen) ─────
     case 'confirm_safe_return':
     case 'extend_safe_return':
-      router.push('/settings/safety' as any);
+      router.push('/profile/edit/safety' as any);
       break;
 
     // ── Buddy booking actions ─────────────────────────────────────────────────

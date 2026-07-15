@@ -526,6 +526,10 @@ describe("Host attendance dashboard", () => {
             in: () => ({
               then: (f: any) => Promise.resolve({ data: [{ id: MEMBER_ID, handle: "alice", name: "Alice", avatar_url: null }], error: null }).then(f),
             }),
+            // requireUser account-status check: .select("account_status").eq("id", uid).maybeSingle()
+            eq: () => ({
+              maybeSingle: () => Promise.resolve({ data: { account_status: "active" }, error: null }),
+            }),
           }),
         };
       }

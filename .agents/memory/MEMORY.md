@@ -7,4 +7,5 @@
 - [API server test suite](api-server-testing.md) — node:test not vitest; suite >5min, run via api-test workflow; fake-client pitfalls.
 - [Display-name privacy rule](display-name-privacy.md) — @handle default, real name only if opted in; exemptions listed inside.
 - [Edit-tool $ metacharacters](edit-tool-metacharacters.md) — never put JS replace patterns ($ followed by &, ', backtick, digit, $) in Edit new_string; they expand and corrupt files. WriteFile is verbatim-safe.
+- [E2E signed-in verification](e2e-signed-in-verification.md) — verify auth-gated flows by creating ephemeral Supabase users via admin API and scripting the local API; no human session needed.
 - [Mobile test import extensions](mobile-test-ts-extensions.md) — travel-buddy node:test files need explicit .ts import extensions and manual registration in the package.json test list.

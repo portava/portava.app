@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMyThreads, useIncomingMessageRequests } from '../hooks/useMessaging';
 import { useSession } from '../context/SessionContext';
 import { blockUser, getBlockList } from '../services/blocks';
+import { reportContent, type ReportReason } from '../services/reports';
 import { useBlockedIds } from '../context/BlockedIdsContext';
 import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';
@@ -510,7 +511,26 @@ function RequestCard({
   }
 
   function handleReport() {
-    Alert.alert('Report', 'Thank you — our team will review this request.');
+    if (!request.sender?.id) return;
+    const senderId = request.sender.id;
+    const submit = async (reason: ReportReason) => {
+      const res = await reportContent({
+        target_type: 'user',
+        target_id: senderId,
+        reason_code: reason,
+      });
+      if (res.ok) {
+        Alert.alert('Report submitted', 'Thank you — our team will review this request.');
+      } else {
+        Alert.alert('Error', res.error ?? 'Could not submit report');
+      }
+    };
+    Alert.alert('Report this person', 'Why are you reporting this request?', [
+      { text: 'Spam', onPress: () => void submit('spam') },
+      { text: 'Harassment', onPress: () => void submit('harassment') },
+      { text: 'Something else', onPress: () => void submit('other') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   }
 
   const { sender, previewText, createdAt } = request;
