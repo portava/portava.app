@@ -803,11 +803,17 @@ router.get("/users/:username/og-image.png", async (req, res) => {
   const sendPng = async (card: OgCardData | null) => {
     try {
       const png = await renderOgPng(card);
+      // Personalized renders (name/stats/avatar) must expire fast so a
+      // visibility flip to private stops showing the old preview quickly.
+      // Generic renders contain no personal data and can be cached longer.
+      const cacheControl = card
+        ? "no-store, no-cache, must-revalidate"
+        : "public, max-age=600";
       res
         .status(200)
         .set({
           "Content-Type": "image/png",
-          "Cache-Control": "public, max-age=600",
+          "Cache-Control": cacheControl,
         })
         .send(png);
     } catch (e: any) {

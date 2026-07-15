@@ -190,9 +190,16 @@ async function serveProfileSharePage(req, res, username, appName) {
 </body>
 </html>`;
 
+  // Personalized pages must not linger in CDN/crawler caches: when a profile
+  // flips to private, the old name/stats/avatar preview should stop showing
+  // quickly. Generic (private/unavailable) pages carry no personal data and
+  // can stay cacheable.
+  const cacheControl = isPublic
+    ? "no-store, no-cache, must-revalidate"
+    : "public, max-age=300";
   res.writeHead(200, {
     "content-type": "text/html; charset=utf-8",
-    "cache-control": "public, max-age=300",
+    "cache-control": cacheControl,
   });
   res.end(html);
 }
