@@ -7,6 +7,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Info } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
+import { TG } from '../theme/telegraphTokens';
 
 interface Props {
   text: string;
@@ -32,9 +33,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.xs,
-    backgroundColor: color.paperRaised,
+    backgroundColor: TG.surfaceRaised,
     borderWidth: 1,
-    borderColor: color.haze,
+    borderColor: TG.recvBorder,
     borderRadius: radius.pill,
     paddingHorizontal: space.md,
     paddingVertical: 5,

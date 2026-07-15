@@ -110,20 +110,54 @@ async function fetchProfileCard(baseUrl, username) {
   }
 }
 
+const STAMP_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Fetch the public stamp preview card (label + artwork) for a
+ * /u/<username>?stamp=<id> share link. The API enforces the same visibility
+ * rules as the passport preview and 404s for missing/locked/private stamps,
+ * so a null return simply means "fall back to the passport preview".
+ * Never throws.
+ */
+async function fetchStampPreview(baseUrl, username, stampId) {
+  if (!stampId || !STAMP_UUID_RE.test(stampId)) return null;
+  const apiOrigin = (process.env.API_ORIGIN || baseUrl).replace(/\/$/, "");
+  try {
+    const resp = await fetch(
+      `${apiOrigin}/api/users/${encodeURIComponent(username)}/stamps/${encodeURIComponent(stampId)}/preview`,
+      { signal: AbortSignal.timeout(4000), headers: { accept: "application/json" } },
+    );
+    if (!resp.ok) return null;
+    const card = await resp.json();
+    if (!card || typeof card.label !== "string" || !card.label.trim()) return null;
+    return card;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Serve HTML for /u/<username> with Open Graph metadata so chat apps render a
  * rich preview. Private / blocked / unavailable / unknown profiles get generic
  * metadata (no name, no counts) so link previews never leak account state.
+ * When a valid ?stamp=<id> is present and publicly visible, the preview shows
+ * that stamp's label and artwork instead of the generic passport card.
  */
-async function serveProfileSharePage(req, res, username, appName) {
+async function serveProfileSharePage(req, res, username, appName, stampId) {
   const forwardedProto = req.headers["x-forwarded-proto"];
   const protocol = forwardedProto || "https";
   const host = req.headers["x-forwarded-host"] || req.headers["host"];
   const baseUrl = `${protocol}://${host}`;
-  const pageUrl = `${baseUrl}${basePath}/u/${encodeURIComponent(username)}`;
+  const validStampId = stampId && STAMP_UUID_RE.test(stampId) ? stampId : null;
+  const pageUrl =
+    `${baseUrl}${basePath}/u/${encodeURIComponent(username)}` +
+    (validStampId ? `?stamp=${encodeURIComponent(validStampId)}` : "");
   const apiOrigin = (process.env.API_ORIGIN || baseUrl).replace(/\/$/, "");
 
-  const card = await fetchProfileCard(baseUrl, username);
+  const [card, stampCard] = await Promise.all([
+    fetchProfileCard(baseUrl, username),
+    validStampId ? fetchStampPreview(baseUrl, username, validStampId) : Promise.resolve(null),
+  ]);
   const isPublic =
     card &&
     !card.unavailable &&
@@ -135,7 +169,17 @@ async function serveProfileSharePage(req, res, username, appName) {
   let description = "A traveler's passport of trips, stamps & postcards.";
   let imageUrl = `${apiOrigin}/api/users/${encodeURIComponent(username)}/og-image.png`;
 
-  if (isPublic) {
+  if (isPublic && stampCard) {
+    // Stamp share variant — the API already enforced visibility for the
+    // stamp itself; a missing/locked/private stamp yields stampCard=null and
+    // falls into the regular passport branch below.
+    const name = card.displayName || (card.username ? `@${card.username}` : username);
+    const label = String(stampCard.label).slice(0, 80);
+    title = `"${label}" Stamp · ${appName}`;
+    const place = stampCard.city || stampCard.country || null;
+    description = `${name} earned the "${label}" passport stamp${place ? ` in ${place}` : ""} on ${appName}.`;
+    imageUrl = `${apiOrigin}/api/users/${encodeURIComponent(username)}/og-image.png?stamp=${encodeURIComponent(validStampId)}`;
+  } else if (isPublic) {
     const name = card.displayName || (card.username ? `@${card.username}` : username);
     title = `${name} · ${appName} Passport`;
     const trips = Number(card.tripCount) || 0;
@@ -148,7 +192,9 @@ async function serveProfileSharePage(req, res, username, appName) {
     imageUrl = `${apiOrigin}/api/users/_/og-image.png`;
   }
 
-  const deepLink = `travelbuddy://passport/@${encodeURIComponent(username)}`;
+  const deepLink =
+    `travelbuddy://passport/@${encodeURIComponent(username)}` +
+    (validStampId ? `?stamp=${encodeURIComponent(validStampId)}` : "");
   const safeTitle = escapeHtml(title);
   const safeDesc = escapeHtml(description);
 
@@ -257,7 +303,8 @@ function createRequestHandler(landingPageTemplate, appName) {
   const shareMatch = /^\/u\/(@?[A-Za-z0-9_]{1,64})\/?$/.exec(decodedPathname);
   if (shareMatch && (req.method === "GET" || req.method === "HEAD")) {
     const username = shareMatch[1].replace(/^@/, "").toLowerCase();
-    serveProfileSharePage(req, res, username, appName).catch(() => {
+    const stampId = url.searchParams.get("stamp");
+    serveProfileSharePage(req, res, username, appName, stampId).catch(() => {
       res.writeHead(500);
       res.end("Internal Server Error");
     });

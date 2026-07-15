@@ -19,6 +19,7 @@ import {
 import { router } from 'expo-router';
 import { Compass, MapPin, Bookmark, CalendarPlus, ExternalLink } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
+import { TG } from '../theme/telegraphTokens';
 import { TripWishlistPicker, type AddToTripPayload } from './discovery/TripWishlistPicker';
 
 export interface DiscoveryCardPayload {
@@ -177,10 +178,10 @@ export function DiscoveryCardMessage({ body, mine }: Props) {
 
 const card = StyleSheet.create({
   wrap: {
-    backgroundColor: color.paperRaised,
+    backgroundColor: TG.surfaceRaised,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: color.haze,
+    borderColor: TG.recvBorder,
     borderBottomLeftRadius: 4,
     padding: space.md,
     gap: 6,

@@ -23,6 +23,7 @@ import {
   Modal,
   Share,
   Switch,
+  Animated,
 } from 'react-native';
 import { MentionInput, type MentionInputHandle } from './MentionInput';
 import { MentionSuggestionList } from './MentionSuggestionList';
@@ -38,6 +39,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGroupChat } from '../hooks/useGroupChat';
 import { useSession } from '../context/SessionContext';
 import { color, space, radius, type as t } from '../theme/tokens';
+import { TG, TG_SPACING } from '../theme/telegraphTokens';
 import { TelegraphSystemNotice } from './TelegraphSystemNotice';
 import { TranslationSettingsSheet } from './TranslationSettingsSheet';
 import { TripMembersSheet } from './TripMembersSheet';
@@ -342,6 +344,17 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   const { userId } = useSession();
   const { state, thread, messages, sending, errorMessage, reload, send, retrySend, notifyTyping, typingUserIds } = useGroupChat(type, id);
   const [input, setInput] = useState('');
+
+  // Send button springs in/out with input content
+  const sendAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.spring(sendAnim, {
+      toValue: input.trim().length > 0 ? 1 : 0,
+      useNativeDriver: true,
+      friction: 6,
+      tension: 120,
+    }).start();
+  }, [input, sendAnim]);
   const [sendFailed, setSendFailed] = useState(false);
   const [lastSentText, setLastSentText] = useState<string | undefined>(undefined);
   const mentionRef = useRef<MentionInputHandle>(null);
@@ -780,20 +793,27 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
                 setMentionVisible(!!trigger && (items.length > 0 || isLoading));
               }}
             />
-            <Pressable
-              style={[
-                styles.sendBtn,
-                (input.trim() && !sending) ? styles.sendBtnActive : styles.sendBtnDisabled,
-              ]}
-              onPress={handleSend}
-              disabled={!input.trim() || sending}
+            <Animated.View
+              style={{
+                transform: [{ scale: sendAnim.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) }],
+                opacity: sendAnim.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] }),
+              }}
             >
-              {sending ? (
-                <ActivityIndicator size="small" color={color.onInk} />
-              ) : (
-                <Send size={16} color={input.trim() ? color.onInk : color.faint} />
-              )}
-            </Pressable>
+              <Pressable
+                style={[
+                  styles.sendBtn,
+                  (input.trim() && !sending) ? styles.sendBtnActive : styles.sendBtnDisabled,
+                ]}
+                onPress={handleSend}
+                disabled={!input.trim() || sending}
+              >
+                {sending ? (
+                  <ActivityIndicator size="small" color={color.onInk} />
+                ) : (
+                  <Send size={16} color={input.trim() ? '#FFFFFF' : color.faint} />
+                )}
+              </Pressable>
+            </Animated.View>
           </>
         )}
       </View>
@@ -843,7 +863,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: color.paper },
+  screen: { flex: 1, backgroundColor: TG.surface },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl },
 
   header: {
@@ -904,28 +924,28 @@ const styles = StyleSheet.create({
   avatarInitial: { fontSize: 12, color: color.ink, textAlign: 'center', lineHeight: 28 },
 
   bubble: {
-    borderRadius: radius.lg,
-    paddingHorizontal: space.md,
-    paddingTop: space.sm,
+    borderRadius: TG_SPACING.bubbleRadius,
+    paddingHorizontal: 13,
+    paddingTop: 8,
     paddingBottom: 6,
     flexShrink: 1,
     maxWidth: '100%',
   },
   bubbleOther: {
-    backgroundColor: color.paperRaised,
+    backgroundColor: TG.recvBubble,
     borderWidth: 1,
-    borderColor: color.haze,
-    borderBottomLeftRadius: 4,
+    borderColor: TG.recvBorder,
+    borderBottomLeftRadius: TG_SPACING.bubbleTail,
   },
-  bubbleMine: { backgroundColor: color.signal, borderBottomRightRadius: 4 },
+  bubbleMine: { backgroundColor: TG.sentBubble, borderBottomRightRadius: TG_SPACING.bubbleTail },
 
   senderName: { ...t.stamp, fontFamily: 'Courier', color: color.mute, fontSize: 10, marginBottom: 2, letterSpacing: 0.2 },
 
-  bubbleText: { ...t.body, color: color.ink, lineHeight: 20, flexShrink: 1, flexWrap: 'wrap' },
-  bubbleTextMine: { color: color.onInk },
+  bubbleText: { ...t.body, color: TG.recvText, lineHeight: 21, flexShrink: 1, flexWrap: 'wrap' },
+  bubbleTextMine: { color: TG.sentText },
 
   bubbleTime: { ...t.stamp, fontFamily: 'Courier', color: color.faint, fontSize: 10, marginTop: 2, textAlign: 'right' },
-  bubbleTimeMine: { color: color.onInk + '88' },
+  bubbleTimeMine: { color: TG.sentTextMute },
 
   receiptRow: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
   receiptSent: { fontSize: 10, color: color.signal, fontFamily: 'Courier' },
@@ -980,19 +1000,19 @@ const styles = StyleSheet.create({
   composeIconBtn: { width: 32, height: 38, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   inputField: {
     flex: 1,
-    minHeight: 38,
-    maxHeight: 110,
-    backgroundColor: color.paper,
-    borderRadius: radius.lg,
+    minHeight: 40,
+    maxHeight: 120, // ~5 lines
+    backgroundColor: TG.surface,
+    borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: color.haze,
-    paddingHorizontal: space.md,
+    borderColor: TG.hairline,
+    paddingHorizontal: space.lg,
     paddingVertical: 9,
     ...t.body,
     color: color.ink,
   },
-  sendBtn: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-  sendBtnActive: { backgroundColor: color.signal },
+  sendBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  sendBtnActive: { backgroundColor: TG.sentBubble },
   sendBtnDisabled: { backgroundColor: color.haze },
 
   noAccessBar: { flex: 1, paddingVertical: space.md, alignItems: 'center' },

@@ -1,6 +1,6 @@
-import React from 'react';
-import { SocialSafetyControlsScreen } from '../../src/components/interaction/SocialSafetyControlsScreen';
+/** Legacy route — content moved into the Edit Profile & Settings hub. */
+import { Redirect } from 'expo-router';
 
-export default function SafetyScreen() {
-  return <SocialSafetyControlsScreen />;
+export default function LegacyRedirect() {
+  return <Redirect href={"/profile/edit/safety" as any} />;
 }
