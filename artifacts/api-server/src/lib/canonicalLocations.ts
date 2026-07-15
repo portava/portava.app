@@ -358,3 +358,47 @@ async function doResolve(db: SupabaseClient, place: PlaceInput, retried = false)
   const row = data as CanonicalRow;
   return { canonicalId: row.id, canonical: rowToCanonicalFields(row) };
 }
+
+// ── Typeahead: canonical city/admin suggestions ───────────────────────────────
+//
+// Powers the global search bar's Cities group so location suggestions come
+// from the normalized canonical registry (not raw profile text). Venue-class
+// rows are excluded — venue typeahead belongs to /api/places/search.
+// Prefix matches are listed ahead of contains matches; rows are deduped by
+// normalized_name. Fail-soft: any error returns [].
+export async function suggestCanonicalLocations(
+  db: SupabaseClient,
+  q: string,
+  limit = 5,
+): Promise<CanonicalRow[]> {
+  const norm = normalizeLocationName(q);
+  if (!norm || norm.length < 2) return [];
+  try {
+    const esc = norm.replace(/[%_]/g, "\\$&");
+    const [prefix, contains] = await Promise.all([
+      db.from(TABLE).select("*").ilike("normalized_name", `${esc}%`).limit(limit * 3),
+      db.from(TABLE).select("*").ilike("normalized_name", `%${esc}%`).limit(limit * 3),
+    ]);
+    if (prefix.error && contains.error) return [];
+    const rows = [
+      ...((prefix.data ?? []) as CanonicalRow[]),
+      ...((contains.data ?? []) as CanonicalRow[]),
+    ];
+    const seen = new Set<string>();
+    const out: CanonicalRow[] = [];
+    for (const r of rows) {
+      // City-class rows only: admin rows (regions/countries) would be
+      // mislabeled by callers that group these under "Cities" (countries
+      // already surface via their own search type), and venues are handled
+      // by the places search path.
+      if (kindClass(r.kind) !== "city") continue;
+      if (seen.has(r.normalized_name)) continue;
+      seen.add(r.normalized_name);
+      out.push(r);
+      if (out.length >= limit) break;
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}

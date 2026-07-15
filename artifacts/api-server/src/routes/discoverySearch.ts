@@ -59,6 +59,10 @@ import {
   haversineKm,
   type SearchQueryContext,
 } from "./discoverySearchHelpers.js";
+import {
+  suggestCanonicalLocations,
+  type CanonicalRow,
+} from "../lib/canonicalLocations";
 
 const router = Router();
 const logger = rootLogger.child({ route: "discoverySearch" });
@@ -1367,6 +1371,209 @@ router.get("/discovery/search", async (req, res) => {
   } catch (err) {
     logger.warn({ err, q: effectiveQ, type }, "discovery/search failed");
     res.status(200).json({ results: [], nextCursor: null, hasMore: false, query: effectiveQ, type, timeLabel: null });
+  }
+});
+
+// ── GET /api/discovery/suggest — grouped live typeahead ──────────────────────
+//
+// Lightweight sibling of /discovery/search for as-you-type assistance.
+// Reuses dispatchSearch (same per-type query + privacy + ranking code paths —
+// deliberately NOT a parallel search implementation) with small per-type
+// limits, then merges canonical-location city suggestions so location rows
+// normalize to the canonical registry instead of raw profile text.
+//
+// Groups are ordered by best match tier (exact > prefix > contains) so the
+// group containing an exact hit surfaces first; ties keep the plan order
+// below. Fail-soft: any internal error returns empty groups with 200 —
+// typeahead must never surface an error state mid-keystroke.
+
+const SUGGEST_PLAN: Array<{ type: Exclude<SearchType, "all">; label: string; limit: number }> = [
+  { type: "travelers",   label: "Travelers",  limit: 4 },
+  { type: "cities",      label: "Cities",     limit: 4 },
+  { type: "hidden_gems", label: "Gems",       limit: 3 },
+  { type: "events",      label: "Events",     limit: 3 },
+  { type: "trips",       label: "Trips",      limit: 3 },
+  { type: "buddies",     label: "Buddies",    limit: 3 },
+  { type: "places",      label: "Places",     limit: 3 },
+  { type: "hashtags",    label: "Hashtags",   limit: 3 },
+  { type: "posts",       label: "Posts",      limit: 2 },
+  { type: "stamps",      label: "Stamps",     limit: 2 },
+  { type: "circles",     label: "Circles",    limit: 2 },
+  { type: "plans",       label: "Plans",      limit: 2 },
+  { type: "activities",  label: "Activities", limit: 2 },
+  { type: "countries",   label: "Countries",  limit: 2 },
+];
+
+const MAX_SUGGEST_GROUPS = 8;
+
+export interface SuggestGroupPayload {
+  type: Exclude<SearchType, "all">;
+  label: string;
+  items: SearchResult[];
+}
+
+/**
+ * Map a canonical-location row to a city SearchResult. Canonical rows are
+ * public geo registry data with no user linkage, so nothing here can leak
+ * a private user's location. Route matches searchCities' /city/:slug shape.
+ */
+export function canonicalToCityResult(row: CanonicalRow): SearchResult {
+  const title = row.name || row.display_name;
+  return {
+    id: `city:${row.normalized_name}`,
+    type: "cities",
+    title,
+    subtitle: [row.region, row.country].filter(Boolean).join(", ") || null,
+    avatarUrl: null,
+    imageUrl: null,
+    fallbackInitials: initials(title),
+    locationPreview: [title, row.country].filter(Boolean).join(", ") || null,
+    matchedReason: null,
+    actionState: null,
+    privacyState: null,
+    accessState: { canAccess: true },
+    destinationRoute: `/city/${encodeURIComponent(title.toLowerCase())}`,
+    metadata: { canonicalId: row.id, lat: row.lat, lng: row.lng, source: "canonical" },
+    createdAt: null,
+    startsAt: null,
+  };
+}
+
+/**
+ * Canonical city suggestions take precedence over profile-derived city rows
+ * with the same name (canonical rows are normalized + carry centroids).
+ * Case-insensitive title dedupe; capped at `limit`.
+ */
+export function mergeCitySuggestions(
+  canonical: SearchResult[],
+  profileCities: SearchResult[],
+  limit: number,
+): SearchResult[] {
+  const out: SearchResult[] = [];
+  const seen = new Set<string>();
+  for (const r of [...canonical, ...profileCities]) {
+    const key = r.title.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/**
+ * Order groups so the one holding the best match leads. matchTier is
+ * higher-is-better (3 exact > 2 prefix > 1 substring > 0 none), so groups
+ * sort by descending best tier. Stable: equal best tiers keep SUGGEST_PLAN
+ * order.
+ */
+export function orderSuggestGroups(
+  groups: SuggestGroupPayload[],
+  q: string,
+): SuggestGroupPayload[] {
+  return groups
+    .map((g, i) => ({
+      g,
+      i,
+      tier: g.items.length
+        ? Math.max(...g.items.map((it) => matchTier(it.title, q, it.subtitle)))
+        : -1,
+    }))
+    .sort((a, b) => (b.tier - a.tier) || (a.i - b.i))
+    .map((x) => x.g);
+}
+
+router.get("/discovery/suggest", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const rawInput = typeof req.query.q === "string" ? req.query.q : "";
+  // @handle queries suggest people only, mirroring /discovery/search behavior
+  const isHandleQuery = rawInput.startsWith("@");
+  const q = sanitizeQuery(applyAliases(isHandleQuery ? rawInput.slice(1) : rawInput)).slice(0, 80);
+  if (q.length < 2) {
+    res.status(200).json({ query: q, groups: [] });
+    return;
+  }
+
+  // Separate bucket from discovery_search: typeahead legitimately fires more
+  // often (client debounces at 250ms and caches, but fast typists still burst).
+  const rl = checkRateLimit("discovery_suggest", user.id, 90, 60_000);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+    sendError(res, "rate_limited", "Too many suggestion requests. Please wait.");
+    return;
+  }
+
+  const latRaw = parseFloat(String(req.query.lat));
+  const lat = Number.isFinite(latRaw) && Math.abs(latRaw) <= 90 ? latRaw : null;
+  const lngRaw = parseFloat(String(req.query.lng));
+  const lng = Number.isFinite(lngRaw) && Math.abs(lngRaw) <= 180 ? lngRaw : null;
+  const city = typeof req.query.city === "string"
+    ? (sanitizeQuery(req.query.city).slice(0, 100) || null)
+    : null;
+
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not ready");
+    return;
+  }
+
+  try {
+    // Fail-closed: if block/age-restriction state is unknown, return no
+    // suggestions at all — including canonical city rows — rather than
+    // guessing. (The per-type search functions would already collapse to []
+    // on null sets; the early return keeps canonical merging equally strict.)
+    const [blockedSet, ageRestrictedSet] = await Promise.all([
+      fetchBlockedSet(sc, user.id),
+      fetchAgeRestrictedSet(sc),
+    ]);
+    if (!blockedSet || !ageRestrictedSet) {
+      res.status(200).json({ query: q, groups: [] });
+      return;
+    }
+
+    const ctx: SearchQueryContext = { lat, lng, userCity: city, nearbyIntent: false };
+    const plan = isHandleQuery
+      ? SUGGEST_PLAN.filter((p) => p.type === "travelers" || p.type === "buddies")
+      : SUGGEST_PLAN;
+
+    const [typedResults, canonicalRows] = await Promise.all([
+      Promise.all(plan.map((p) =>
+        dispatchSearch(sc, q, user.id, blockedSet, ageRestrictedSet, p.type, 0, p.limit, ctx)
+          .catch(() => [] as SearchResult[]),
+      )),
+      isHandleQuery
+        ? Promise.resolve([] as CanonicalRow[])
+        : suggestCanonicalLocations(sc, q, 4),
+    ]);
+
+    // Cross-group dedupe by entity id: a profile must not appear in both
+    // Travelers and Buddies; a discovery_place must not appear in both
+    // Places and Activities. First group in plan order wins.
+    const seenIds = new Set<string>();
+    const groups: SuggestGroupPayload[] = [];
+    plan.forEach((p, i) => {
+      let items = typedResults[i] ?? [];
+      if (p.type === "cities") {
+        items = mergeCitySuggestions(canonicalRows.map(canonicalToCityResult), items, p.limit);
+      }
+      items = items.filter((it) => {
+        if (seenIds.has(it.id)) return false;
+        seenIds.add(it.id);
+        return true;
+      }).slice(0, p.limit);
+      if (items.length > 0) groups.push({ type: p.type, label: p.label, items });
+    });
+
+    res.status(200).json({
+      query: q,
+      groups: orderSuggestGroups(groups, q).slice(0, MAX_SUGGEST_GROUPS),
+    });
+  } catch (err) {
+    logger.warn({ err, q }, "discovery/suggest failed");
+    res.status(200).json({ query: q, groups: [] });
   }
 });
 

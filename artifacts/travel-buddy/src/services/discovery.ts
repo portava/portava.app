@@ -488,6 +488,49 @@ export async function searchUnified(
   }
 }
 
+// ── Live search suggestions (typeahead) ────────────────────────────────────────
+
+export interface SuggestGroup {
+  type: string;
+  label: string;
+  items: UnifiedSearchResult[];
+}
+
+/**
+ * Grouped typeahead suggestions for the global search bar.
+ * Lighter than searchUnified — small per-type limits, single round trip,
+ * same backend privacy filtering. Supports AbortSignal so the caller can
+ * cancel superseded keystrokes.
+ */
+export async function getSearchSuggestions(
+  query: string,
+  opts?: { lat?: number; lng?: number; city?: string },
+  signal?: AbortSignal,
+): Promise<{ ok: true; groups: SuggestGroup[] } | { ok: false; aborted: boolean; error: string }> {
+  const base = apiBase();
+  if (!base) return { ok: false, aborted: false, error: 'API not configured' };
+  const token = await freshToken();
+  if (!token) return { ok: false, aborted: false, error: 'Not signed in' };
+
+  const params = new URLSearchParams({ q: query });
+  if (opts?.lat != null) params.set('lat', String(opts.lat));
+  if (opts?.lng != null) params.set('lng', String(opts.lng));
+  if (opts?.city) params.set('city', opts.city);
+
+  try {
+    const res = await fetch(`${base}/api/discovery/suggest?${params}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal,
+    });
+    if (!res.ok) return { ok: false, aborted: false, error: `HTTP ${res.status}` };
+    const data = (await res.json()) as { groups?: SuggestGroup[] };
+    return { ok: true, groups: Array.isArray(data.groups) ? data.groups : [] };
+  } catch (e) {
+    const aborted = e instanceof Error && e.name === 'AbortError';
+    return { ok: false, aborted, error: 'Network error' };
+  }
+}
+
 // ── Search history ─────────────────────────────────────────────────────────────
 
 export interface SearchHistoryEntry {

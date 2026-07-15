@@ -18,6 +18,9 @@ import { useActiveLocation } from '../src/hooks/useActiveLocation';
 import { CompassTravelerRow } from '../src/components/compass/CompassTravelerRow';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { SearchSuggestionsPanel } from '../src/components/search/SearchSuggestionsPanel';
+import { useSearchSuggestions } from '../src/hooks/useSearchSuggestions';
+import { resolveRoute } from '../src/components/search/searchNav';
 
 type TabKey = 'all' | 'travelers' | 'events' | 'trips' | 'places' | 'hashtags' | 'buddies';
 
@@ -49,6 +52,11 @@ export default function SearchScreen() {
   const [activeTab, setActiveTab] = useState<TabKey>(
     VALID_TAB_KEYS.has(params.type ?? '') ? (params.type as TabKey) : 'all',
   );
+  // suggest vs results mode: typing shows live grouped suggestions; a full
+  // search runs only after an explicit submit (return key, "Search for" row,
+  // tab tap, recent-search tap, or deep link ?q=). Typing again after a
+  // submit returns to suggest mode.
+  const [submitted, setSubmitted] = useState(!!params.q);
 
   const [results, setResults] = useState<UnifiedSearchResult[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -83,6 +91,15 @@ export default function SearchScreen() {
   const tz = useMemo(() => {
     try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; }
   }, []);
+
+  // Live typeahead — active only in suggest mode with a viable query
+  const suggestActive = !submitted && query.trim().length >= 2;
+  const { groups: suggestGroups, loading: suggestLoading } = useSearchSuggestions(query, {
+    lat: userCoords?.lat,
+    lng: userCoords?.lng,
+    city: userCoords?.city,
+    enabled: suggestActive,
+  });
 
   // Load recent searches on mount
   useEffect(() => {
@@ -179,6 +196,14 @@ export default function SearchScreen() {
       return;
     }
 
+    // Suggest mode: the typeahead hook owns fetching; no full search yet.
+    if (!submitted) {
+      setLoading(false);
+      setSearched(false);
+      setError(null);
+      return;
+    }
+
     setLoading(true);
     debounceRef.current = setTimeout(() => {
       router.setParams({ q: query.trim(), type: activeTab });
@@ -188,10 +213,11 @@ export default function SearchScreen() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [query, activeTab, runSearch]);
+  }, [query, activeTab, runSearch, submitted]);
 
   function handleTabChange(tab: TabKey) {
     setActiveTab(tab);
+    setSubmitted(true); // tab tap while suggesting = run the full search scoped to it
     setResults([]);
     setNextCursor(null);
     setSearched(false);
@@ -201,12 +227,61 @@ export default function SearchScreen() {
 
   function clearQuery() {
     setQuery('');
+    setSubmitted(false);
+    activeQueryRef.current = ''; // invalidate in-flight search responses
     setResults([]);
     setNextCursor(null);
     setSearched(false);
     setError(null);
     setTimeLabel(null);
     inputRef.current?.focus();
+  }
+
+  function handleQueryChange(text: string) {
+    setQuery(text);
+    setSubmitted(false);
+    // Invalidate any in-flight full search: its response guard compares
+    // against activeQueryRef, so blanking it prevents a superseded request
+    // from committing stale results/history while we're back in suggest mode.
+    activeQueryRef.current = '';
+  }
+
+  const submitSearch = useCallback((q: string, tab?: TabKey) => {
+    const trimmed = q.trim();
+    if (trimmed.length < 2) return;
+    if (tab) setActiveTab(tab);
+    setQuery(trimmed);
+    setSubmitted(true);
+  }, []);
+
+  function handlePickRecent(entry: SearchHistoryEntry) {
+    const tab = VALID_TAB_KEYS.has(entry.search_type) ? (entry.search_type as TabKey) : 'all';
+    submitSearch(entry.query, tab);
+  }
+
+  // Tapping a suggestion navigates straight to the entity. The typed query
+  // is saved to history (fire-and-forget) so it shows up under Recent.
+  function handleSuggestionPick(result: UnifiedSearchResult) {
+    const trimmed = query.trim();
+    if (trimmed.length >= 2) {
+      saveSearchHistory(trimmed, 'all').then((serverId) => {
+        if (!serverId) return;
+        setRecentSearches((prev) => {
+          const deduped = prev.filter((r) => !(r.query === trimmed && r.search_type === 'all'));
+          const entry: SearchHistoryEntry = {
+            id: serverId, query: trimmed, search_type: 'all',
+            searched_at: new Date().toISOString(),
+          };
+          return [entry, ...deduped].slice(0, 10);
+        });
+      }).catch(() => {/* non-fatal */});
+    }
+    const route = resolveRoute(result);
+    if (route) {
+      router.push(route as any);
+    } else {
+      submitSearch(trimmed);
+    }
   }
 
   function handleLoadMore() {
@@ -263,7 +338,8 @@ export default function SearchScreen() {
           ref={inputRef}
           style={styles.searchInput}
           value={query}
-          onChangeText={setQuery}
+          onChangeText={handleQueryChange}
+          onSubmitEditing={() => submitSearch(query)}
           placeholder="Search travelers, trips, events, places…"
           placeholderTextColor={color.faint}
           autoFocus
@@ -321,7 +397,18 @@ export default function SearchScreen() {
       )}
 
       {/* Content area */}
-      {loading ? (
+      {suggestActive ? (
+        <SearchSuggestionsPanel
+          query={query}
+          groups={suggestGroups}
+          loading={suggestLoading}
+          recentSearches={recentSearches}
+          onSubmit={submitSearch}
+          onPickRecent={handlePickRecent}
+          onPickResult={handleSuggestionPick}
+          onScroll={navBarScrollHandler}
+        />
+      ) : loading ? (
         <View style={styles.center}>
           <ActivityIndicator color={color.signal} />
         </View>
@@ -350,7 +437,7 @@ export default function SearchScreen() {
             {locationGranted && (
               <Pressable
                 style={[styles.chip, styles.chipPrimary]}
-                onPress={() => setQuery('travelers nearby')}
+                onPress={() => submitSearch('travelers nearby')}
               >
                 <MapPin size={12} color={color.onInk} />
                 <Text style={[styles.chipText, { color: color.onInk }]}>Search nearby</Text>
@@ -380,7 +467,7 @@ export default function SearchScreen() {
               <Pressable
                 key={chip}
                 style={styles.chip}
-                onPress={() => setQuery(chip)}
+                onPress={() => submitSearch(chip)}
               >
                 <Text style={styles.chipText}>{chip}</Text>
               </Pressable>
@@ -408,7 +495,7 @@ export default function SearchScreen() {
                 <Pressable
                   key={item.id}
                   style={styles.historyRow}
-                  onPress={() => setQuery(item.query)}
+                  onPress={() => handlePickRecent(item)}
                 >
                   <Clock size={14} color={color.mute} />
                   <Text style={styles.historyRowText} numberOfLines={1}>{item.query}</Text>
@@ -433,13 +520,13 @@ export default function SearchScreen() {
               <Text style={styles.historyTitle}>Try searching for</Text>
               <View style={[styles.chipsRow, { marginTop: space.sm }]}>
                 {locationGranted && (
-                  <Pressable style={[styles.chip, styles.chipPrimary]} onPress={() => setQuery('travelers nearby')}>
+                  <Pressable style={[styles.chip, styles.chipPrimary]} onPress={() => submitSearch('travelers nearby')}>
                     <MapPin size={12} color={color.onInk} />
                     <Text style={[styles.chipText, { color: color.onInk }]}>Travelers nearby</Text>
                   </Pressable>
                 )}
                 {recoveryChips.map((chip) => (
-                  <Pressable key={chip} style={styles.chip} onPress={() => setQuery(chip)}>
+                  <Pressable key={chip} style={styles.chip} onPress={() => submitSearch(chip)}>
                     <Zap size={12} color={color.signal} />
                     <Text style={styles.chipText}>{chip}</Text>
                   </Pressable>
