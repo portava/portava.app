@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform, useColorScheme } from 'react-native';
+import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
 import { Tabs, router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,6 +14,7 @@ import { getIncomingMessageRequests } from '../../src/services/messaging';
 import { getPendingTripInvites } from '../../src/services/trips';
 import { getMyProfile } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
+import { navBarProgress } from '../../src/hooks/useNavBarCollapse';
 
 const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
@@ -99,12 +101,35 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
   const isActive = (match: readonly string[]) =>
     match.some((m) => pathname === m || pathname.startsWith(m + '/'));
 
+  // Animated styles driven by the module-level navBarProgress shared value.
+  const animatedPillStyle = useAnimatedStyle(() => {
+    const progress = navBarProgress.value;
+    return {
+      height:         interpolate(progress, [0, 1], [64, 20]),
+      borderRadius:   interpolate(progress, [0, 1], [36, 14]),
+      paddingVertical: interpolate(progress, [0, 1], [6, 0]),
+    };
+  });
+
+  const animatedLabelStyle = useAnimatedStyle(() => {
+    // Labels fade out before progress reaches 0.5
+    const opacity = interpolate(navBarProgress.value, [0, 0.4], [1, 0], 'clamp');
+    return { opacity };
+  });
+
+  const animatedIconStyle = useAnimatedStyle(() => {
+    const scale = interpolate(navBarProgress.value, [0, 1], [1, 0.72]);
+    return { transform: [{ scaleY: scale }] };
+  });
+
+  const TAB_HITSLOP = { top: 10, bottom: 10, left: 6, right: 6 };
+
   return (
     <View
       style={[fb.wrapper, { bottom: insets.bottom + 12 }]}
       pointerEvents="box-none"
     >
-      <View style={[fb.pill, { backgroundColor: pillBg, borderColor: pillBorder }]}>
+      <Animated.View style={[fb.pill, { backgroundColor: pillBg, borderColor: pillBorder }, animatedPillStyle]}>
         {/* Glass blur layer — iOS: real blur; Android: rgba only */}
         {Platform.OS === 'ios' && (
           <BlurView
@@ -122,20 +147,22 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
               key={href}
               style={fb.item}
               onPress={() => router.push(href as any)}
-              hitSlop={4}
+              hitSlop={TAB_HITSLOP}
               accessibilityRole="button"
               accessibilityLabel={label}
             >
               <View style={[fb.itemInner, active && { backgroundColor: activeHighlight }]}>
-                <View>
-                  <Icon size={20} color={active ? iconActive : iconMuted} />
-                  {badge > 0 && (
-                    <View style={fb.dot}>
-                      <Text style={fb.dotText}>{badge > 9 ? '9+' : String(badge)}</Text>
-                    </View>
-                  )}
-                </View>
-                <Text style={[fb.label, active && fb.labelActive, { color: active ? iconActive : iconMuted }]}>{label}</Text>
+                <Animated.View style={animatedIconStyle}>
+                  <View>
+                    <Icon size={20} color={active ? iconActive : iconMuted} />
+                    {badge > 0 && (
+                      <View style={fb.dot}>
+                        <Text style={fb.dotText}>{badge > 9 ? '9+' : String(badge)}</Text>
+                      </View>
+                    )}
+                  </View>
+                </Animated.View>
+                <Animated.Text style={[fb.label, active && fb.labelActive, { color: active ? iconActive : iconMuted }, animatedLabelStyle]}>{label}</Animated.Text>
               </View>
             </Pressable>
           );
@@ -145,13 +172,13 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
         <Pressable
           style={fb.plusWrap}
           onPress={() => router.push('/create')}
-          hitSlop={4}
+          hitSlop={TAB_HITSLOP}
           accessibilityRole="button"
           accessibilityLabel="Create a post"
         >
-          <View style={fb.plusBtn}>
+          <Animated.View style={[fb.plusBtn, animatedIconStyle]}>
             <Plus size={22} color="#fff" strokeWidth={2.5} />
-          </View>
+          </Animated.View>
         </Pressable>
 
         {/* Right items: Trips, Passport */}
@@ -166,25 +193,27 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
               key={href}
               style={fb.item}
               onPress={() => router.push(href as any)}
-              hitSlop={4}
+              hitSlop={TAB_HITSLOP}
               accessibilityRole="button"
               accessibilityLabel={label}
             >
               <View style={[fb.itemInner, active && { backgroundColor: activeHighlight }]}>
-                <View>
-                  <Icon size={20} color={active ? iconActive : iconMuted} />
-                  {badge > 0 && (
-                    <View style={fb.dot}>
-                      <Text style={fb.dotText}>{badge > 9 ? '9+' : String(badge)}</Text>
-                    </View>
-                  )}
-                </View>
-                <Text style={[fb.label, active && fb.labelActive, { color: active ? iconActive : iconMuted }]}>{label}</Text>
+                <Animated.View style={animatedIconStyle}>
+                  <View>
+                    <Icon size={20} color={active ? iconActive : iconMuted} />
+                    {badge > 0 && (
+                      <View style={fb.dot}>
+                        <Text style={fb.dotText}>{badge > 9 ? '9+' : String(badge)}</Text>
+                      </View>
+                    )}
+                  </View>
+                </Animated.View>
+                <Animated.Text style={[fb.label, active && fb.labelActive, { color: active ? iconActive : iconMuted }, animatedLabelStyle]}>{label}</Animated.Text>
               </View>
             </Pressable>
           );
         })}
-      </View>
+      </Animated.View>
     </View>
   );
 }

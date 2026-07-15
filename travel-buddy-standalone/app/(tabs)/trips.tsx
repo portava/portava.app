@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import { useFocusEffect } from 'expo-router';
+import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 import { postCompassFrontloadEvent } from '../../src/services/compass';
 import {
   View, Text, ScrollView, Pressable, Image,
@@ -194,6 +195,7 @@ function TripsScreen() {
   const [layoverOpen, setLayoverOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TripsTab>('trips');
   const insets = useSafeAreaInsets();
+  const navScrollHandler = useNavBarScrollHandler();
 
   useFocusEffect(useCallback(() => {
     postCompassFrontloadEvent({ eventType: 'navigation', screen: 'trips' }).catch(() => {});
@@ -236,7 +238,11 @@ function TripsScreen() {
 
       {activeTab === 'trips' ? (
         <>
-          <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.lg, paddingBottom: space.xxxl }}>
+          <ScrollView
+            onScroll={navScrollHandler}
+            scrollEventThrottle={16}
+            contentContainerStyle={{ padding: space.lg, gap: space.lg }}
+          >
             <MeetupsShortcut count={meetupCount} />
 
             {/* Layover Mode quick-access banner */}
@@ -258,6 +264,7 @@ function TripsScreen() {
               <Plus size={20} color={color.deep} />
               <Text style={styles.emptyText}>Start a new trip</Text>
             </Pressable>
+            <NavBarFiller />
           </ScrollView>
 
           <LayoverModeSheet
