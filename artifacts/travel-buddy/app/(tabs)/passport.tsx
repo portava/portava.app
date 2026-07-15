@@ -21,7 +21,6 @@ import { SuggestedMemoryModal } from '../../src/components/SuggestedMemoryModal'
 import type { PassportMemory } from '../../src/services/passportStamps';
 import { useSession } from '../../src/context/SessionContext';
 import { listMyTrips } from '../../src/services/trips';
-import { PassportSettingsSheet } from '../../src/components/PassportSettingsSheet';
 import { OwnerActionMenu } from '../../src/components/OwnerActionMenu';
 import { ProfileCompletionCard } from '../../src/components/ProfileCompletionCard';
 import { PassportShareCard } from '../../src/components/PassportShareCard';
@@ -60,8 +59,6 @@ export default function PassportScreen() {
   const { userId: ownUserId } = useSession();
   const [tab, setTab] = useState<Tab>('posts');
   const [menuOpen, setMenuOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<'profile' | 'passport' | 'preferences' | 'safety'>('profile');
   const [trips, setTrips] = useState<TripRow[]>([]);
   const [tripsLoaded, setTripsLoaded] = useState(false);
   const [stampsViewOpen, setStampsViewOpen] = useState(false);
@@ -164,12 +161,16 @@ export default function PassportScreen() {
 
   const actions = usePostcardActions(setLocalPostcards);
 
-  const openSettings = useCallback((section: typeof settingsSection = 'profile') => {
-    setSettingsSection(section);
-    setSettingsOpen(true);
+  // Settings hub routes — the old PassportSettingsSheet sections map to hub sub-pages.
+  const openSettings = useCallback((section: 'profile' | 'passport' | 'preferences' | 'safety' = 'profile') => {
+    const route =
+      section === 'passport' ? '/profile/edit/privacy'
+      : section === 'preferences' ? '/profile/edit/about'
+      : section === 'safety' ? '/profile/edit/safety'
+      : '/profile/edit/identity';
+    router.push(route as any);
   }, []);
 
-  const handleSaved = useCallback((_updated: OwnProfile) => { reload(); }, [reload]);
   const handleEditProfile = useCallback(() => { router.push('/profile/edit' as any); }, []);
   const handleViewAsPublic = useCallback(() => {
     const username = profile?.username;
@@ -228,12 +229,8 @@ export default function PassportScreen() {
         setTab={setTab}
         menuOpen={menuOpen}
         setMenuOpen={setMenuOpen}
-        settingsOpen={settingsOpen}
-        setSettingsOpen={setSettingsOpen}
-        settingsSection={settingsSection}
         openSettings={openSettings}
         actions={actions}
-        handleSaved={handleSaved}
         handleEditProfile={handleEditProfile}
         handleViewAsPublic={handleViewAsPublic}
         reload={reload}
@@ -297,8 +294,8 @@ export default function PassportScreen() {
 
 function PassportContent({
   profile, postcards, stamps, memories, trips, tab, setTab,
-  menuOpen, setMenuOpen, settingsOpen, setSettingsOpen,
-  settingsSection, openSettings, actions, handleSaved, handleEditProfile, handleViewAsPublic,
+  menuOpen, setMenuOpen,
+  openSettings, actions, handleEditProfile, handleViewAsPublic,
   reload, insets, hasHighlights, allHighlightsViewed, highlights,
   onHighlightRingPress, onNewHighlightPress, onHighlightBubblePress, onAddPostcard,
   stampsViewOpen, setStampsViewOpen, verificationLevels, noSafetyFlags, cardRef, share, sharing,
@@ -312,11 +309,8 @@ function PassportContent({
   tab: Tab;
   setTab: (t: Tab) => void;
   menuOpen: boolean; setMenuOpen: (v: boolean) => void;
-  settingsOpen: boolean; setSettingsOpen: (v: boolean) => void;
-  settingsSection: 'profile' | 'passport' | 'preferences' | 'safety';
   openSettings: (s?: 'profile' | 'passport' | 'preferences' | 'safety') => void;
   actions: ReturnType<typeof usePostcardActions>;
-  handleSaved: (p: OwnProfile) => void;
   handleEditProfile: () => void;
   handleViewAsPublic: () => void;
   reload: () => void;
@@ -621,20 +615,10 @@ function PassportContent({
         onClose={() => setMenuOpen(false)}
         username={profile.username}
         onEditProfile={() => { setMenuOpen(false); handleEditProfile(); }}
-        onSettings={() => openSettings('passport')}
+        onSettings={() => { setMenuOpen(false); router.push('/profile/edit' as any); }}
         onViewAsPublic={handleViewAsPublic}
         onArrangeSections={onArrangeSections}
       />
-
-      {/* Settings sheet */}
-      {settingsOpen && (
-        <PassportSettingsSheet
-          visible={settingsOpen}
-          profile={profile}
-          onClose={() => setSettingsOpen(false)}
-          onSaved={handleSaved}
-        />
-      )}
     </View>
   );
 }

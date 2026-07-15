@@ -79,7 +79,7 @@ const ACTIONS = [
     icon: Shield,
     bg: '#FEECEC',
     iconColor: '#D94040',
-    onPress: (handlers: Props) => { handlers.onClose(); router.push('/settings/privacy' as any); },
+    onPress: (handlers: Props) => { handlers.onClose(); router.push('/profile/edit/safety' as any); },
   },
   {
     label: 'Settings',
