@@ -21,6 +21,7 @@ import { useLocationContext } from '../context/LocationContext';
 import { useRecentPlaces } from './useRecentPlaces';
 import { reverseGeocodeToPlace } from '../services/location';
 import { fetchPlacesFromApi } from './usePlaceSearch';
+import { deriveUniversalLocation } from './activeLocation.state';
 import type { Place } from '../lib/location/placeTypes';
 
 export interface UseUniversalLocationResult {
@@ -56,7 +57,7 @@ export function useUniversalLocation(): UseUniversalLocationResult {
   // Derive a Place | null from the context state.
   // locationState.place is already a Place (after useActiveLocation migration).
   // We return null when the location is not yet set / ok.
-  const location: Place | null = locationState.ok ? locationState.place : null;
+  const location: Place | null = deriveUniversalLocation(locationState);
 
   const setLocation = useCallback(
     async (place: Place) => {

@@ -16,6 +16,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { getCurrentGps, reverseGeocodeToPlace, checkLocationPermission } from '../services/location';
 import type { Place } from '../lib/location/placeTypes';
 import { isSupabaseConfigured } from '../lib/supabase';
+import { buildManualCityState, buildManualCityPayload } from './activeLocation.state';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -306,26 +307,11 @@ export function useActiveLocation(): UseActiveLocationResult {
   }, [requestLocation]);
 
   const setManualCity = useCallback(async (place: Place) => {
-    const now = new Date().toISOString();
-    const next: ActiveLocationState = {
-      ok: true,
-      permissionStatus: locationState.permissionStatus,
-      source: 'manual_city',
-      freshness: 'live',
-      coords: place.lat != null && place.lng != null
-        ? { lat: place.lat, lng: place.lng, accuracyMeters: null }
-        : locationState.coords,
-      place,
-      lastUpdatedAt: now,
-      userMessage: null,
-    };
+    // Pure transition + payload builders are unit-tested in
+    // src/hooks/__tests__/universalLocation.setLocation.test.ts.
+    const next = buildManualCityState(locationState, place, new Date().toISOString());
     setLocationState(next);
-    await saveLocationToApi({
-      source: 'manual_city',
-      manualCity: place.city ?? place.name,
-      manualCountry: place.country ?? null,
-      place,
-    });
+    await saveLocationToApi(buildManualCityPayload(place));
   }, [locationState]);
 
   const clearManualCity = useCallback(async () => {

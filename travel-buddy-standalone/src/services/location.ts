@@ -11,6 +11,7 @@
  */
 import * as Location from 'expo-location';
 import type { Place } from '../lib/location/placeTypes';
+import { reverseGeocodeToPlaceCore } from './reverseGeocodePlace.core';
 
 export interface GpsResult {
   granted: boolean;
@@ -120,80 +121,17 @@ export async function checkLocationPermission(): Promise<'granted' | 'denied' | 
  */
 export async function reverseGeocodeToPlace(lat: number, lng: number): Promise<Place> {
   const apiBase = (process.env as any).EXPO_PUBLIC_API_BASE_URL ?? '';
-
-  // Stage 1: backend API
-  try {
-    const res = await fetch(`${apiBase}/api/places/reverse?lat=${lat}&lng=${lng}`);
-    if (res.ok) {
-      const body = await res.json() as any;
-      const p = body?.place;
-      if (p && p.id) {
-        return {
-          ...p,
-          lat,
-          lng,
-          source: 'gps' as const,
-        } as Place;
-      }
-    }
-  } catch {
-    // Fall through to expo geocoder.
-  }
-
-  // Stage 2: expo's built-in geocoder
-  try {
-    const results = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
-    const r = results?.[0];
-    if (r) {
-      const city = r.city ?? r.subregion ?? r.region ?? null;
-      const district = r.district ?? (r.subregion !== city ? r.subregion ?? null : null);
-      const country = r.country ?? null;
-      const countryCode = r.isoCountryCode ?? null;
-      const addressLine = [r.name, r.street].filter(Boolean).join(' ') || null;
-      const displayName = [city, country].filter(Boolean).join(', ') || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-      const formattedAddress = [addressLine, city, country].filter(Boolean).join(', ') || displayName;
-      return {
-        id: `gps-${lat.toFixed(4)}-${lng.toFixed(4)}`,
-        type: 'city' as const,
-        name: city ?? displayName,
-        displayName,
-        country,
-        countryCode,
-        region: r.region ?? null,
-        city,
-        district: district ?? null,
-        lat,
-        lng,
-        timezone: null,
-        source: 'gps' as const,
-        address: addressLine,
-        postalCode: r.postalCode ?? null,
-        formattedAddress,
-      };
-    }
-  } catch {
-    // Fall through to static fallback.
-  }
-
-  // Stage 3: coordinate-only fallback
-  return {
-    id: `gps-${lat.toFixed(4)}-${lng.toFixed(4)}`,
-    type: 'place' as const,
-    name: 'Current Location',
-    displayName: `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
-    country: null,
-    countryCode: null,
-    region: null,
-    city: null,
-    district: null,
+  // Delegate to the pure core (unit-tested in reverseGeocodePlace.test.ts),
+  // wiring in the real fetch + expo geocoder.
+  return reverseGeocodeToPlaceCore(
+    {
+      apiBase,
+      fetchFn: (url) => fetch(url),
+      expoReverseGeocode: (coords) => Location.reverseGeocodeAsync(coords),
+    },
     lat,
     lng,
-    timezone: null,
-    source: 'gps' as const,
-    address: null,
-    postalCode: null,
-    formattedAddress: null,
-  };
+  );
 }
 
 /**

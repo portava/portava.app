@@ -25,6 +25,7 @@ import type { Place } from '../../lib/location/placeTypes';
 
 // Keep GpsCaptureResult exported for backward compat with machines/tests.
 export type { GpsCaptureResult } from './GpsLocationCapture.machine';
+import { runPlaceCapture } from './GpsLocationCapture.machine';
 
 interface Props {
   onCapture: (place: Place | null) => void;
@@ -44,28 +45,17 @@ export function GpsLocationCapture({ onCapture, initialLabel, initialLat, initia
 
   const capture = useCallback(async () => {
     setState('loading');
-    try {
-      const gps = await getCurrentGps();
-
-      if (!gps.granted) {
-        setState(gps.error === 'permission_denied' ? 'denied' : 'error');
-        return;
-      }
-
-      if (gps.lat === null || gps.lng === null) {
-        setState('error');
-        return;
-      }
-
-      const place = await reverseGeocodeToPlace(gps.lat, gps.lng);
-      setLabel(place.displayName);
-      setPickedLat(gps.lat);
-      setPickedLng(gps.lng);
-      setState('success');
-      onCapture(place);
-    } catch {
-      setState('error');
+    const outcome = await runPlaceCapture({
+      getCurrentGps,
+      reverseGeocodeToPlace,
+      onCapture,
+    });
+    if (outcome.nextState === 'success') {
+      setLabel(outcome.place.displayName);
+      setPickedLat(outcome.place.lat ?? undefined);
+      setPickedLng(outcome.place.lng ?? undefined);
     }
+    setState(outcome.nextState);
   }, [onCapture]);
 
   const reset = useCallback(() => {

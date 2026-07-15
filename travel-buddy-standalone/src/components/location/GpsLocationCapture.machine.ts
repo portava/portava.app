@@ -167,3 +167,48 @@ export function mapCaptureToFormCoords(result: GpsCaptureResult | null): {
     gpsLabel: result != null ? result.label : undefined,
   };
 }
+
+// ── Place-based capture flow (universal location system) ──────────────────────
+
+import type { Place } from '../../lib/location/placeTypes';
+
+/** Discriminated union of outcomes from runPlaceCapture(). */
+export type PlaceCaptureOutcome =
+  | { nextState: 'denied' }
+  | { nextState: 'error' }
+  | { nextState: 'success'; place: Place };
+
+/**
+ * Pure async flow behind GpsLocationCapture's capture() handler.
+ *
+ * Mirrors the component contract exactly:
+ *   - permission denied            → { nextState: 'denied' }, onCapture NOT called
+ *   - GPS failed / null coords     → { nextState: 'error' },  onCapture NOT called
+ *   - reverseGeocodeToPlace throws → { nextState: 'error' },  onCapture NOT called
+ *   - success                      → { nextState: 'success', place }, onCapture(place)
+ *
+ * onCapture is only ever invoked with a full Place (never null/partial) —
+ * tested in src/components/location/__tests__/locationCaptureFlow.test.ts.
+ */
+export async function runPlaceCapture(opts: {
+  getCurrentGps: () => Promise<GpsResultShape>;
+  reverseGeocodeToPlace: (lat: number, lng: number) => Promise<Place>;
+  onCapture: (place: Place) => void;
+}): Promise<PlaceCaptureOutcome> {
+  try {
+    const gps = await opts.getCurrentGps();
+
+    if (!gps.granted) {
+      return { nextState: gps.error === 'permission_denied' ? 'denied' : 'error' };
+    }
+    if (gps.lat === null || gps.lng === null) {
+      return { nextState: 'error' };
+    }
+
+    const place = await opts.reverseGeocodeToPlace(gps.lat, gps.lng);
+    opts.onCapture(place);
+    return { nextState: 'success', place };
+  } catch {
+    return { nextState: 'error' };
+  }
+}
