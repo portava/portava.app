@@ -13,6 +13,9 @@ import { color, space, radius, type as t, shadow, layout } from '../../../src/th
 import { TravelLoadingState, TravelErrorState, TravelCard } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
 import { getBooking, cancelBooking, getOrCreateBookingThread, addExtraTime, optInStayConnected, reportBooking, rebookBooking, type BuddyBooking } from '../../../src/services/rentABuddy';
+import { GlobalCalendarPicker } from '../../../src/components/selectors/GlobalCalendarPicker';
+import { GlobalTimePicker } from '../../../src/components/selectors/GlobalTimePicker';
+import { formatDisplayDate, fromISODate, fromHHmm, formatDisplayTime } from '../../../src/lib/dateTime/formatters';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type BookingStatus = BuddyBooking['status'];
@@ -175,32 +178,50 @@ function AddTimeModal({ visible, onClose, onAdd }: { visible: boolean; onClose: 
 function RebookModal({ visible, onClose, onRebook }: { visible: boolean; onClose: () => void; onRebook: (date: string, time: string) => void }) {
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
   const today = new Date().toISOString().slice(0, 10);
-  const dateValid = /^\d{4}-\d{2}-\d{2}$/.test(date);
-  const timeValid = /^\d{1,2}:\d{2}$/.test(time);
+  const dateValid = date.length > 0;
+  const timeValid = time.length > 0;
+  const dateLabel = date ? (() => { const d = fromISODate(date); return d ? formatDisplayDate(d) : date; })() : null;
+  const timeLabel = time ? (() => { const d = fromHHmm(time); return d ? formatDisplayTime(d) : time; })() : null;
   return (
     <Modal visible={visible} transparent animationType="slide">
       <View style={modal.overlay}>
         <View style={modal.sheet}>
           <Text style={modal.title}>Book again?</Text>
           <Text style={modal.sub}>Same Buddy, same service. Choose a new date and start time.</Text>
-          <TextInput
-            style={modal.input}
-            value={date}
-            onChangeText={setDate}
-            placeholder={`Date (YYYY-MM-DD), e.g. ${today}`}
-            placeholderTextColor={color.haze}
-            autoCapitalize="none"
-            keyboardType="numbers-and-punctuation"
+          <Pressable style={modal.input} onPress={() => setShowDatePicker(true)}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Calendar size={14} color={date ? color.ink : color.haze} />
+              <Text style={{ color: date ? color.ink : color.haze }}>
+                {dateLabel ?? 'Select date'}
+              </Text>
+            </View>
+          </Pressable>
+          <Pressable style={[modal.input, { marginTop: 8 }]} onPress={() => setShowTimePicker(true)}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Clock size={14} color={time ? color.ink : color.haze} />
+              <Text style={{ color: time ? color.ink : color.haze }}>
+                {timeLabel ?? 'Select start time'}
+              </Text>
+            </View>
+          </Pressable>
+          <GlobalCalendarPicker
+            visible={showDatePicker}
+            mode="single"
+            value={date || null}
+            minDate={today}
+            title="New booking date"
+            onConfirm={(v) => { setDate(v ?? ''); setShowDatePicker(false); }}
+            onCancel={() => setShowDatePicker(false)}
           />
-          <TextInput
-            style={[modal.input, { marginTop: 8 }]}
-            value={time}
-            onChangeText={setTime}
-            placeholder="Start time (HH:MM), e.g. 09:00"
-            placeholderTextColor={color.haze}
-            autoCapitalize="none"
-            keyboardType="numbers-and-punctuation"
+          <GlobalTimePicker
+            visible={showTimePicker}
+            value={time || null}
+            title="Start time"
+            onChange={(v) => setTime(v ?? '')}
+            onClose={() => setShowTimePicker(false)}
           />
           <View style={modal.actions}>
             <Pressable style={modal.cancelBtn} onPress={onClose}>

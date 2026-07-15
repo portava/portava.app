@@ -11,6 +11,7 @@ import {
   TravelErrorState, TravelEmptyState,
 } from '../../../src/components/primitives';
 import { DatePickerField } from '../../../src/components/DateTimePickerField';
+import { DatePickerField as DateStringPickerField } from '../../../src/components/DatePickerField';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyBooking } from '../../../src/services/rentABuddy';
@@ -125,12 +126,11 @@ function SuggestSheet({
           <Text style={modal.sub}>Propose alternative details. The traveller can accept or decline your suggestion.</Text>
 
           <Text style={modal.fieldLabel}>Proposed date</Text>
-          <TextInput
-            style={[modal.input, { marginBottom: space.lg }]}
+          <DateStringPickerField
             value={date}
-            onChangeText={setDate}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor={color.haze}
+            onChange={setDate}
+            placeholder="Select date"
+            style={{ marginBottom: space.lg }}
           />
 
           <View style={{ flexDirection: 'row', gap: space.sm, marginBottom: space.lg }}>

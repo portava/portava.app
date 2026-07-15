@@ -24,12 +24,13 @@ import {
   ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight,
   CheckCircle, MoreVertical, Info, VolumeX, Languages, Paperclip, Compass,
   Bot, Reply, Copy, Trash2, Flag, CheckCheck, AlertCircle, Search, BookmarkPlus,
-  RefreshCw, Clock,
+  RefreshCw, Clock, ChevronDown,
 } from 'lucide-react-native';
 import { useThreadMessages, useLanguageSettings, useOutgoingRequestStatus, markThreadRead } from '../../src/hooks/useMessaging';
 import { useTrip } from '../../src/hooks/useBackend';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { TG, TG_SPACING } from '../../src/theme/telegraphTokens';
 import { TelegraphSuggestionTray, clearTelegraphSuggestionsCache } from '../../src/components/TelegraphSuggestionTray';
 import { TelegraphSystemNotice } from '../../src/components/TelegraphSystemNotice';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
@@ -665,6 +666,8 @@ const mc = StyleSheet.create({
 function MessageBubble({
   item,
   mine,
+  groupStart = true,
+  groupEnd = true,
   autoTranslate,
   defaultShowOriginal,
   isGroupThread,
@@ -681,6 +684,8 @@ function MessageBubble({
 }: {
   item: Message;
   mine: boolean;
+  groupStart?: boolean;
+  groupEnd?: boolean;
   autoTranslate: boolean;
   defaultShowOriginal: boolean;
   isGroupThread: boolean;
@@ -834,7 +839,7 @@ function MessageBubble({
 
   return (
     <View>
-      {isGroupThread && !mine && item.senderName && (
+      {isGroupThread && !mine && item.senderName && groupStart && (
         <Text style={styles.senderLabel}>
           {item.senderName}
           {item.senderHandle ? ` @${item.senderHandle}` : ''}
@@ -843,7 +848,11 @@ function MessageBubble({
       <Pressable
         onLongPress={onLongPress}
         delayLongPress={300}
-        style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleOther]}
+        style={[
+          styles.bubble,
+          mine ? styles.bubbleMine : styles.bubbleOther,
+          !groupEnd && (mine ? styles.bubbleMineMid : styles.bubbleOtherMid),
+        ]}
       >
         <Animated.View
           style={[styles.translationFlash, StyleSheet.absoluteFillObject, { opacity: flashAnim }]}
@@ -863,10 +872,12 @@ function MessageBubble({
           hashtagColor={mine ? 'rgba(255,255,255,0.80)' : undefined}
         />
 
-        <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>
-          {formatTime(item.createdAt)}
-          {item.editedAt ? '  ·  edited' : ''}
-        </Text>
+        {(groupEnd || item.editedAt) ? (
+          <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>
+            {formatTime(item.createdAt)}
+            {item.editedAt ? '  ·  edited' : ''}
+          </Text>
+        ) : null}
 
         {showLabel && (
           <View style={styles.translationRow}>
@@ -874,10 +885,13 @@ function MessageBubble({
               <Text style={[styles.transLabel, mine && styles.transLabelMine]}>
                 Translating…
               </Text>
-            ) : isTranslated && item.translationLabel ? (
-              <Text style={[styles.transLabel, mine && styles.transLabelMine]}>
-                {item.translationLabel}
-              </Text>
+            ) : isTranslated ? (
+              <View style={[styles.transPill, mine && styles.transPillMine]}>
+                <Languages size={9} color={mine ? color.onInk : color.mute} />
+                <Text style={[styles.transLabel, mine && styles.transLabelMine]}>
+                  {item.translationLabel ?? 'Translated'}
+                </Text>
+              </View>
             ) : null}
 
             {item.canShowOriginal && autoTranslate && (
@@ -1269,24 +1283,47 @@ export default function TelegraphThread() {
     }
   }, [messages.length]);
 
-  // Build list items with day separators interspersed
+  // Build list items with day separators interspersed. Consecutive messages
+  // from the same sender (within the same day) are visually grouped:
+  // groupStart shows the sender label, groupEnd shows the timestamp/tail.
   type ListItem =
-    | { _t: 'msg'; data: Message }
+    | { _t: 'msg'; data: Message; groupStart: boolean; groupEnd: boolean }
     | { _t: 'day'; label: string; key: string };
 
   const listItems = useMemo<ListItem[]>(() => {
     const items: ListItem[] = [];
     let lastDay = '';
-    for (const m of messages) {
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
       const day = m.createdAt.slice(0, 10);
-      if (day !== lastDay) {
+      const dayBreak = day !== lastDay;
+      if (dayBreak) {
         lastDay = day;
         items.push({ _t: 'day', label: formatDayLabel(day), key: `day-${day}` });
       }
-      items.push({ _t: 'msg', data: m });
+      const prev = messages[i - 1];
+      const next = messages[i + 1];
+      const sameSenderPrev = !dayBreak && prev && prev.senderId === m.senderId && prev.msgType === m.msgType && m.msgType === 'text';
+      const sameSenderNext = next && next.senderId === m.senderId && next.createdAt.slice(0, 10) === day && next.msgType === m.msgType && m.msgType === 'text';
+      items.push({ _t: 'msg', data: m, groupStart: !sameSenderPrev, groupEnd: !sameSenderNext });
     }
     return items;
   }, [messages]);
+
+  // Scroll-to-bottom FAB — shown when the user has scrolled away from newest
+  const [showJumpFab, setShowJumpFab] = useState(false);
+
+  // Send button springs in/out with input content
+  const hasInput = input.trim().length > 0;
+  const sendAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.spring(sendAnim, {
+      toValue: hasInput ? 1 : 0,
+      useNativeDriver: true,
+      friction: 6,
+      tension: 120,
+    }).start();
+  }, [hasInput, sendAnim]);
 
   // ID of the last message sent by the current user (for read receipts)
   const lastOwnMsgId = useMemo(() => {
@@ -1549,6 +1586,12 @@ export default function TelegraphThread() {
             <Text style={styles.emptyText}>No messages yet. Say hello!</Text>
           </View>
         }
+        onScroll={(e) => {
+          const { contentSize, layoutMeasurement, contentOffset } = e.nativeEvent;
+          const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
+          setShowJumpFab(distanceFromBottom > 320);
+        }}
+        scrollEventThrottle={120}
         renderItem={({ item }) => {
           if (item._t === 'day') {
             return <DayDivider label={item.label} />;
@@ -1564,10 +1607,18 @@ export default function TelegraphThread() {
             return <TelegraphSystemNotice text={m.body ?? ''} />;
           }
           return (
-            <View style={[styles.bubbleRow, mine && styles.bubbleRowMine]}>
+            <View
+              style={[
+                styles.bubbleRow,
+                mine && styles.bubbleRowMine,
+                { marginTop: item.groupStart ? TG_SPACING.groupGap : TG_SPACING.intraGap },
+              ]}
+            >
               <MessageBubble
                 item={m}
                 mine={mine}
+                groupStart={item.groupStart}
+                groupEnd={item.groupEnd}
                 autoTranslate={autoTranslate}
                 defaultShowOriginal={defaultShowOriginal}
                 isGroupThread={isGroupThread}
@@ -1590,8 +1641,18 @@ export default function TelegraphThread() {
           );
         }}
         onLayout={() => listRef.current?.scrollToEnd({ animated: false })}
-        ItemSeparatorComponent={() => <View style={{ height: space.sm }} />}
       />
+
+      {/* Scroll-to-bottom FAB */}
+      {showJumpFab && (
+        <Pressable
+          style={styles.jumpFab}
+          onPress={() => listRef.current?.scrollToEnd({ animated: true })}
+          hitSlop={8}
+        >
+          <ChevronDown size={18} color={color.ink} />
+        </Pressable>
+      )}
 
       {/* Typing indicator */}
       {typingUserIds.length > 0 && (
@@ -1704,17 +1765,24 @@ export default function TelegraphThread() {
             setMentionVisible(!!trigger && (items.length > 0 || isLoading));
           }}
         />
-        <Pressable
-          style={[styles.sendBtn, (input.trim() && !sending && !isWaitingForReply) ? styles.sendBtnActive : styles.sendBtnDisabled]}
-          onPress={handleSend}
-          disabled={!input.trim() || sending || isWaitingForReply}
+        <Animated.View
+          style={{
+            transform: [{ scale: sendAnim.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) }],
+            opacity: sendAnim.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] }),
+          }}
         >
-          {sending ? (
-            <ActivityIndicator size="small" color={color.onInk} />
-          ) : (
-            <Send size={16} color={input.trim() ? color.onInk : color.faint} />
-          )}
-        </Pressable>
+          <Pressable
+            style={[styles.sendBtn, (hasInput && !sending && !isWaitingForReply) ? styles.sendBtnActive : styles.sendBtnDisabled]}
+            onPress={handleSend}
+            disabled={!hasInput || sending || isWaitingForReply}
+          >
+            {sending ? (
+              <ActivityIndicator size="small" color={color.onInk} />
+            ) : (
+              <Send size={16} color={hasInput ? '#FFFFFF' : color.faint} />
+            )}
+          </Pressable>
+        </Animated.View>
       </View>
 
       {/* Meetup creation sheet — triggered by button or Telegraph suggestion */}
@@ -1834,7 +1902,7 @@ export default function TelegraphThread() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: color.paper },
+  screen: { flex: 1, backgroundColor: TG.surface },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   errText: { ...t.body, color: color.mute },
   emptyText: { ...t.small, color: color.mute },
@@ -1878,17 +1946,20 @@ const styles = StyleSheet.create({
   bubbleRow: { alignSelf: 'flex-start', maxWidth: '82%' },
   bubbleRowMine: { alignSelf: 'flex-end' },
 
-  bubble: { borderRadius: radius.lg, paddingHorizontal: space.md, paddingTop: space.sm, paddingBottom: 6 },
+  bubble: { borderRadius: TG_SPACING.bubbleRadius, paddingHorizontal: 13, paddingTop: 8, paddingBottom: 6 },
   bubbleOther: {
-    backgroundColor: color.paperRaised,
+    backgroundColor: TG.recvBubble,
     borderWidth: 1,
-    borderColor: color.haze,
-    borderBottomLeftRadius: 4,
+    borderColor: TG.recvBorder,
+    borderBottomLeftRadius: TG_SPACING.bubbleTail,
   },
-  bubbleMine: { backgroundColor: color.signal, borderBottomRightRadius: 4 },
+  bubbleMine: { backgroundColor: TG.sentBubble, borderBottomRightRadius: TG_SPACING.bubbleTail },
+  // Middle-of-group bubbles keep fully rounded corners (no tail)
+  bubbleOtherMid: { borderBottomLeftRadius: TG_SPACING.bubbleRadius },
+  bubbleMineMid: { borderBottomRightRadius: TG_SPACING.bubbleRadius },
 
-  bubbleText: { ...t.body, color: color.ink, lineHeight: 20, flexShrink: 1, flexWrap: 'wrap' },
-  bubbleTextMine: { color: color.onInk },
+  bubbleText: { ...t.body, color: TG.recvText, lineHeight: 21, flexShrink: 1, flexWrap: 'wrap' },
+  bubbleTextMine: { color: TG.sentText },
 
   bubbleTime: {
     ...t.stamp,
@@ -1898,7 +1969,38 @@ const styles = StyleSheet.create({
     marginTop: 2,
     textAlign: 'right',
   },
-  bubbleTimeMine: { color: color.onInk + '88' },
+  bubbleTimeMine: { color: TG.sentTextMute },
+
+  transPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    backgroundColor: TG.chipFill,
+    borderRadius: radius.pill,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  transPillMine: { backgroundColor: 'rgba(255,255,255,0.14)' },
+
+  jumpFab: {
+    position: 'absolute',
+    right: space.lg,
+    bottom: 130,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: TG.surfaceRaised,
+    borderWidth: 1,
+    borderColor: TG.hairline,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#11110F',
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+  },
 
   translationRow: {
     flexDirection: 'row',
@@ -1920,7 +2022,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
     flexShrink: 1,
   },
-  transLabelMine: { color: color.onInk + '99' },
+  transLabelMine: { color: 'rgba(255,255,255,0.75)' },
 
   transToggle: {
     fontSize: 10,
@@ -1953,22 +2055,22 @@ const styles = StyleSheet.create({
   },
   inputField: {
     flex: 1,
-    minHeight: 38,
-    maxHeight: 110,
-    backgroundColor: color.paper,
-    borderRadius: radius.lg,
+    minHeight: 40,
+    maxHeight: 120, // ~5 lines
+    backgroundColor: TG.surface,
+    borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: color.haze,
-    paddingHorizontal: space.md,
+    borderColor: TG.hairline,
+    paddingHorizontal: space.lg,
     paddingVertical: 9,
     ...t.body,
     color: color.ink,
   },
   // DM avatar in header
   dmAvatarWrap: { flexShrink: 0 },
-  dmAvatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: color.haze },
-  dmAvatarFallback: { width: 32, height: 32, borderRadius: 16, backgroundColor: color.signal + '22', alignItems: 'center', justifyContent: 'center' },
-  dmAvatarInitial: { fontSize: 13, fontWeight: '700', color: color.signal },
+  dmAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: color.haze },
+  dmAvatarFallback: { width: 36, height: 36, borderRadius: 18, backgroundColor: color.signal + '22', alignItems: 'center', justifyContent: 'center' },
+  dmAvatarInitial: { fontSize: 14, fontWeight: '700', color: color.signal },
 
   // Header right-side action row
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 0 },
@@ -2028,8 +2130,8 @@ const styles = StyleSheet.create({
   failedRetryBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.pill, borderWidth: 1, borderColor: '#FECACA' },
   failedRetryText: { ...t.stamp, color: '#EF4444', fontSize: 10, fontWeight: '600' },
 
-  sendBtn: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-  sendBtnActive: { backgroundColor: color.signal },
+  sendBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  sendBtnActive: { backgroundColor: TG.sentBubble },
   sendBtnDisabled: { backgroundColor: color.haze },
 });
 

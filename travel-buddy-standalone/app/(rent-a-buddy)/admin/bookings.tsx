@@ -15,6 +15,7 @@ import { ArrowLeft, DollarSign, AlertTriangle } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import { useRentABuddyFlag } from '../../../src/hooks/useRentABuddyFlag';
 import { listAdminBookings, type AdminBooking } from '../../../src/services/rentABuddyAdmin';
+import { DatePickerField } from '../../../src/components/DatePickerField';
 
 const STATUS_FILTERS = ['all', 'pending', 'confirmed', 'in_progress', 'completed', 'cancelled', 'disputed'] as const;
 type StatusFilter = typeof STATUS_FILTERS[number];
@@ -177,21 +178,17 @@ export default function AdminBookingsScreen() {
           onChangeText={setPaymentFilter}
           returnKeyType="search"
         />
-        <TextInput
-          style={[styles.cityInput, { flex: 1 }]}
-          placeholder="From YYYY-MM-DD…"
-          placeholderTextColor={color.faint}
+        <DatePickerField
           value={dateFrom}
-          onChangeText={setDateFrom}
-          returnKeyType="search"
+          onChange={setDateFrom}
+          placeholder="From date"
+          style={{ flex: 1 }}
         />
-        <TextInput
-          style={[styles.cityInput, { flex: 1 }]}
-          placeholder="To YYYY-MM-DD…"
-          placeholderTextColor={color.faint}
+        <DatePickerField
           value={dateTo}
-          onChangeText={setDateTo}
-          returnKeyType="search"
+          onChange={setDateTo}
+          placeholder="To date"
+          style={{ flex: 1 }}
         />
       </View>
 
