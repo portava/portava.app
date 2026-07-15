@@ -62,6 +62,7 @@ import { sendMessage } from '../../src/services/messaging';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { RentABuddyThreadHeader } from '../../src/components/rentabuddy/BookingThreadHeader';
+import { MessageEntrance, useMessageEntranceGate } from '../../src/components/MessageEntrance';
 import { BookingMilestoneMessage } from '../../src/components/rentabuddy/BookingMilestoneMessage';
 
 function formatTime(iso: string): string {
@@ -1079,6 +1080,7 @@ export default function TelegraphThread() {
   // Member count for trip/circle threads
   const [memberCount, setMemberCount] = useState<number | null>(null);
   const listRef = useRef<FlatList>(null);
+  const shouldAnimateMessage = useMessageEntranceGate();
 
   function handleBlockPress() {
     if (!otherUserId || blockingUser) return;
@@ -1607,7 +1609,8 @@ export default function TelegraphThread() {
             return <TelegraphSystemNotice text={m.body ?? ''} />;
           }
           return (
-            <View
+            <MessageEntrance
+              animate={shouldAnimateMessage(m.clientId ?? m.id, m.createdAt)}
               style={[
                 styles.bubbleRow,
                 mine && styles.bubbleRowMine,
@@ -1637,7 +1640,7 @@ export default function TelegraphThread() {
                 isCircleMember={isCircleMember}
                 onCircleCardPress={m.msgType === 'circle_status_card' ? onCircleCardPress : undefined}
               />
-            </View>
+            </MessageEntrance>
           );
         }}
         onLayout={() => listRef.current?.scrollToEnd({ animated: false })}
