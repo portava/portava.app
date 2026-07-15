@@ -141,7 +141,7 @@ export default function RentABuddySearch() {
     setTotal(res.data.total);
     setPage(nextPage);
     setHasMore(newBuddies.length === 10 && (nextPage * 10) < res.data.total);
-  }, [city, selectedCategory, page, bookingDate]);
+  }, [city, cityLat, cityLng, selectedCategory, page, bookingDate]);
 
   useEffect(() => {
     if (mode === 'results') doSearch(true);
