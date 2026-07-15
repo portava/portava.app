@@ -52,7 +52,7 @@ function validateUsername(u: string): { valid: boolean; reason?: string } {
 }
 
 const PROFILE_COLUMNS =
-  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language, verification_level, id_verified_at, selfie_verified_at, home_country_verified_at, safety_flags_count, host_verified_at, buddy_verified_at, passport_section_order";
+  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language, date_of_birth, verification_level, id_verified_at, selfie_verified_at, home_country_verified_at, safety_flags_count, host_verified_at, buddy_verified_at, passport_section_order";
 
 /**
  * Fallback column list for older DB schemas that may not have the full set of columns
@@ -115,6 +115,7 @@ function mapProfile(r: any) {
     planningStyle: r.planning_style ?? null,
     publicSocialLinks: r.public_social_links ?? {},
     preferredLanguage: r.preferred_language ?? null,
+    dateOfBirth: r.date_of_birth ?? null,
     passportSectionOrder: r.passport_section_order ?? null,
     verificationLevel: r.verification_level ?? null,
     idVerifiedAt: r.id_verified_at ?? null,
@@ -976,10 +977,17 @@ router.post("/me/reactivate", async (req, res) => {
     .eq("status", "pending")
     .then(undefined, () => {});
 
-  // Secondary writes are best-effort after the primary write succeeds
-  sc.from("user_account_states")
-    .upsert({ user_id: user.id, state: "active", updated_at: now }, { onConflict: "user_id" })
-    .then(undefined, () => {});
+  // Secondary writes are best-effort after the primary write succeeds.
+  // Note: user_account_states is unique on (user_id, state), so clear the
+  // 'deactivated' row rather than upserting on user_id alone. try/catch keeps
+  // this fire-and-forget even if the client shim lacks .delete().
+  try {
+    sc.from("user_account_states")
+      .delete()
+      .eq("user_id", user.id)
+      .eq("state", "deactivated")
+      .then(undefined, () => {});
+  } catch { /* best-effort */ }
 
   sc.from("profile_privacy_settings")
     .upsert({ user_id: user.id, allow_profile_discovery: true, updated_at: now }, { onConflict: "user_id" })
@@ -1002,9 +1010,10 @@ router.post("/me/deactivate", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
   const now = new Date().toISOString();
+  // user_account_states is unique on (user_id, state), not user_id alone.
   const { error } = await sc
     .from("user_account_states")
-    .upsert({ user_id: user.id, state: "deactivated", updated_at: now }, { onConflict: "user_id" });
+    .upsert({ user_id: user.id, state: "deactivated", updated_at: now }, { onConflict: "user_id,state" });
 
   if (error) {
     req.log.error({ err: error }, "deactivate: failed to update account state");
@@ -1076,7 +1085,7 @@ router.post("/me/delete-request", async (req, res) => {
   // Deactivate so profile is unavailable to others during the hold period
   await sc
     .from("user_account_states")
-    .upsert({ user_id: user.id, state: "deactivated", updated_at: now }, { onConflict: "user_id" })
+    .upsert({ user_id: user.id, state: "deactivated", updated_at: now }, { onConflict: "user_id,state" })
     .then(undefined, () => {});
 
   // Update profile-level account_status (awaited; fail-open if column not yet migrated)
@@ -1187,10 +1196,17 @@ router.delete("/me/delete-request", async (req, res) => {
     return;
   }
 
-  // Secondary writes are best-effort after the primary write succeeds
-  sc.from("user_account_states")
-    .upsert({ user_id: user.id, state: "active", updated_at: now }, { onConflict: "user_id" })
-    .then(undefined, () => {});
+  // Secondary writes are best-effort after the primary write succeeds.
+  // Note: user_account_states is unique on (user_id, state), so clear the
+  // 'deactivated' row rather than upserting on user_id alone. try/catch keeps
+  // this fire-and-forget even if the client shim lacks .delete().
+  try {
+    sc.from("user_account_states")
+      .delete()
+      .eq("user_id", user.id)
+      .eq("state", "deactivated")
+      .then(undefined, () => {});
+  } catch { /* best-effort */ }
 
   sc.from("profile_privacy_settings")
     .upsert({ user_id: user.id, allow_profile_discovery: true, updated_at: now }, { onConflict: "user_id" })

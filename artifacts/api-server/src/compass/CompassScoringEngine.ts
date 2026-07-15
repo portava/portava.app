@@ -66,10 +66,10 @@ const TYPE_WEIGHTS: Record<string, TypeWeights> = {
     qualitySignal:         10,
     contextBoost:           3,
     socialCompatibility:    4,
-    safetyCompatibility:    0,
+    safetyCompatibility:    2,
     diversityBoost:         0,
     fairExposureBoost:      0,
-    attendanceBoost:        8,
+    attendanceBoost:        6,
   },
   post: {
     freshnessHalfLifeDays: 7,
