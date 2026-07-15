@@ -4,7 +4,8 @@ import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated
 import { BlurView } from 'expo-blur';
 import { Tabs, router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Activity, Compass, Map, User, Plus, Plane } from 'lucide-react-native';
+import { Activity, Compass, Plus, Plane } from 'lucide-react-native';
+import { PassportIcon } from '../../src/components/icons/PassportIcon';
 import { NotificationBell } from '../../src/components/NotificationBell';
 import { color, space, type as t, shadow } from '../../src/theme/tokens';
 import { useIsDesktop } from '../../src/hooks/useBreakpoint';
@@ -19,8 +20,8 @@ import { navBarProgress } from '../../src/hooks/useNavBarCollapse';
 const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
   { href: '/(tabs)/discovery', label: 'Explore', icon: Compass, match: ['/(tabs)/discovery'] },
-  { href: '/(tabs)/trips', label: 'Trips', icon: Map, match: ['/(tabs)/trips'] },
-  { href: '/(tabs)/passport', label: 'Passport', icon: User, match: ['/(tabs)/passport'] },
+  { href: '/(tabs)/trips', label: 'Trips', icon: Plane, match: ['/(tabs)/trips'] },
+  { href: '/(tabs)/passport', label: 'Passport', icon: PassportIcon, match: ['/(tabs)/passport'] },
 ] as const;
 
 /* ─── Desktop sidebar ──────────────────────────────────────────────────── */
