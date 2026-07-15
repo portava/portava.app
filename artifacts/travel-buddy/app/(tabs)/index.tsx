@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, ActivityIndicator, RefreshControl } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
+import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated';
+import { useNavBarScrollHandler, NavBarFiller, navBarProgress } from '../../src/hooks/useNavBarCollapse';
 import { PostCard } from '../../src/components/PostCard';
 import { PulseHeader } from '../../src/components/PulseHeader';
 import { FitsCard, FlexibleStrip } from '../../src/components/PulseFits';
@@ -23,10 +24,19 @@ import { useLocationContext } from '../../src/context/LocationContext';
 import { LocationPermissionPrompt } from '../../src/components/LocationPermissionPrompt';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
-import { Users, MapPin } from 'lucide-react-native';
+import { Users, MapPin, LayoutGrid, CalendarDays, FileText, Gem } from 'lucide-react-native';
 import { PeopleYouMayKnow } from '../../src/components/PeopleYouMayKnow';
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Hidden Gems', 'Circle'];
+
+/** Per-category icons for the filter rail (icon-above-label tabs). */
+const FILTER_ICONS: Record<string, React.ComponentType<{ size?: number; color?: string }>> = {
+  All: LayoutGrid,
+  Plans: CalendarDays,
+  Posts: FileText,
+  'Hidden Gems': Gem,
+  Circle: Users,
+};
 
 type FeedMode = 'forYou' | 'following';
 
@@ -79,6 +89,19 @@ function timeAgo(iso: string): string {
 
 export default function Pulse() {
   const navScrollHandler = useNavBarScrollHandler();
+
+  // For You / Following toggle collapses with the nav bar on scroll-down,
+  // leaving just the compact icon rail. Natural height 46 px:
+  // lineHeight 22 (t.bodyStrong) + modeBtn paddingVertical 8×2
+  // + modeRow padding 3×2 + border 1×2.
+  const animatedModeRow = useAnimatedStyle(() => {
+    const p = navBarProgress.value;
+    return {
+      height: interpolate(p, [0, 1], [46, 0]),
+      marginBottom: interpolate(p, [0, 1], [8, 0]),
+      opacity: interpolate(p, [0, 0.5], [1, 0], 'clamp'),
+    };
+  });
   const [feedMode, setFeedMode] = useState<FeedMode>('forYou');
   const [active, setActive] = useState<PulseFilter[]>(['All']);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -318,28 +341,34 @@ export default function Pulse() {
         onCityPress={openCityPicker}
       />
 
-      {/* ── Sticky wall controls: mode toggle + category filter rail ── */}
+      {/* ── Sticky wall controls: mode toggle + category filter rail ──
+           Both collapse in sync with the floating nav bar on scroll-down:
+           the mode toggle folds away entirely; the rail keeps icons and
+           collapses its labels. Everything restores on scroll-up. */}
       <View style={styles.stickyControls}>
-        <View style={styles.modeRow}>
-          <Pressable
-            style={[styles.modeBtn, feedMode === 'forYou' && styles.modeBtnActive]}
-            onPress={() => handleFeedMode('forYou')}
-          >
-            <Text style={[styles.modeBtnText, feedMode === 'forYou' && styles.modeBtnTextActive]}>For You</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.modeBtn, feedMode === 'following' && styles.modeBtnActive]}
-            onPress={() => handleFeedMode('following')}
-          >
-            <Text style={[styles.modeBtnText, feedMode === 'following' && styles.modeBtnTextActive]}>Following</Text>
-          </Pressable>
-        </View>
+        <Animated.View style={[styles.modeRowClip, animatedModeRow]}>
+          <View style={styles.modeRow}>
+            <Pressable
+              style={[styles.modeBtn, feedMode === 'forYou' && styles.modeBtnActive]}
+              onPress={() => handleFeedMode('forYou')}
+            >
+              <Text style={[styles.modeBtnText, feedMode === 'forYou' && styles.modeBtnTextActive]}>For You</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modeBtn, feedMode === 'following' && styles.modeBtnActive]}
+              onPress={() => handleFeedMode('following')}
+            >
+              <Text style={[styles.modeBtnText, feedMode === 'following' && styles.modeBtnTextActive]}>Following</Text>
+            </Pressable>
+          </View>
+        </Animated.View>
         {feedMode === 'forYou' && (
           <PulseFilterRail
             filters={QUICK_FILTERS}
             active={active}
             onPress={(f) => toggleQuick(f as PulseFilter)}
             labels={{ 'Hidden Gems': 'Gems' }}
+            icons={FILTER_ICONS}
           />
         )}
       </View>
@@ -418,7 +447,11 @@ const styles = StyleSheet.create({
   emptyTitle: { ...t.bodyStrong, color: color.ink },
   emptySub: { ...t.small, color: color.mute, marginTop: 4 },
   wallTitle: { ...t.title, color: color.ink, fontSize: 20, paddingHorizontal: space.lg, marginTop: 24, marginBottom: space.sm },
-  modeRow: { flexDirection: 'row', marginHorizontal: space.lg, marginBottom: space.sm, borderRadius: 12, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised, padding: 3, gap: 3 },
+  // Clip container for the collapsing mode row — height/margin/opacity are
+  // animated; the inner modeRow keeps its natural 42 px layout and gets
+  // clipped as the container folds.
+  modeRowClip: { overflow: 'hidden' },
+  modeRow: { flexDirection: 'row', marginHorizontal: space.lg, borderRadius: 12, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised, padding: 3, gap: 3 },
   modeBtn: { flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center' },
   modeBtnActive: { backgroundColor: color.paperRaised, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 1 }, elevation: 2 },
   modeBtnText: { ...t.bodyStrong, fontSize: 14, color: color.mute },

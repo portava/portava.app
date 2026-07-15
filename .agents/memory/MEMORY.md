@@ -1,3 +1,4 @@
 - [Env/secrets audit gotchas](env-secrets-gotchas.md) — shared env vars can shadow same-name secrets with corrupted values; user-typed secret names often have typos the app can't see.
 - [Supabase migration access](supabase-migration-access.md) — SUPABASE_ACCESS_TOKEN is truncated/invalid; migrations need a fresh token or SQL-editor paste, and unapplied profile columns fail silently.
 - [Explore page performance fixes](explore-perf-fixes.md) — 6 targeted fixes for Discover tab cold-start; geocode dedup, batch counts endpoint, client cache, FlatList virtualisation, community cache, deferred PlaceCard fetches.
+- [Scroll-collapse animation gotchas](scroll-collapse-gotchas.md) — size collapse rows from token lineHeight (fontSize overrides don't shrink it); animate height on a View clip wrapper, never on Text (RN web).

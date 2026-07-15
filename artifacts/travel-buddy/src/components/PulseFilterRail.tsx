@@ -1,22 +1,32 @@
 /**
  * PulseFilterRail — compact underline-tab row for feed/content category filters.
  *
- * Replaces bulky pill-button chip rows with a clean, low-chrome tab-bar pattern:
+ * Tab anatomy (icon mode):
+ *   • Per-category icon on top, label underneath
  *   • Active tab: heavy-weight ink text + 2.5 px signal-red pill underline
- *   • Inactive tab: muted-weight text, zero chrome (no borders, no backgrounds)
- *   • Full-height pressable with hitSlop for comfortable one-handed use
- *   • Hairline bottom border anchors the indicator to the section visually
+ *   • Inactive tab: muted text/icon, zero chrome
+ *   • Row is CENTERED across the rail width (scrolls only on overflow)
+ *
+ * Scroll collapse:
+ *   Labels collapse (height + opacity → 0) in sync with the floating nav bar
+ *   (navBarProgress 0 → 1), leaving a compact icon-only strip while the user
+ *   scrolls down the feed. Restores on scroll-up. Only applies when `icons`
+ *   are provided — text-only rails keep their labels visible.
  *
  * Usage:
  *   <PulseFilterRail
  *     filters={['All', 'Plans', 'Posts', 'Hidden Gems', 'Circle']}
- *     active={active}            // string[]
- *     onPress={(f) => toggle(f)} // parent owns toggle/single-select logic
+ *     active={active}                    // string[]
+ *     onPress={(f) => toggle(f)}         // parent owns toggle logic
+ *     labels={{ 'Hidden Gems': 'Gems' }} // display-only rename
+ *     icons={{ All: LayoutGrid, ... }}   // per-value icon components
  *   />
  */
 import React from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
+import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated';
 import { color, space } from '../theme/tokens';
+import { navBarProgress } from '../hooks/useNavBarCollapse';
 
 export interface PulseFilterRailProps {
   /** Ordered list of filter values. These are also matched by string equality for active state. */
@@ -26,9 +36,8 @@ export interface PulseFilterRailProps {
   /** Called when a filter is tapped — receives the filter value (not the display label). */
   onPress: (filter: string) => void;
   /**
-   * Horizontal padding for the first tab so its text aligns with the page grid.
-   * Default: space.lg (16). Subtract TAB_PAD_H internally so the text left-edge
-   * lands exactly at this value.
+   * Horizontal padding at both ends of the rail. Kept symmetric so the
+   * centered layout stays balanced. Default: space.lg (16).
    */
   leadingPad?: number;
   /**
@@ -38,11 +47,19 @@ export interface PulseFilterRailProps {
    * onPress and matched in `active` is still 'Hidden Gems'.
    */
   labels?: Record<string, string>;
+  /**
+   * Optional per-value icon components (e.g. lucide icons). When provided,
+   * each tab renders icon-above-label and the labels collapse on scroll-down
+   * leaving an icon-only strip.
+   */
+  icons?: Record<string, React.ComponentType<{ size?: number; color?: string }>>;
 }
 
 // The internal horizontal padding of each tab. The indicator is inset by 2 px
 // so it feels narrower than the touch target but wider than the text.
 const TAB_PAD_H = 12;
+// Label line box height — the collapse animation shrinks exactly this.
+const LABEL_H = 18;
 
 export function PulseFilterRail({
   filters,
@@ -50,7 +67,22 @@ export function PulseFilterRail({
   onPress,
   leadingPad = space.lg,
   labels,
+  icons,
 }: PulseFilterRailProps) {
+  const hasIcons = !!icons;
+
+  // Label block collapses when the nav bar collapses. Static (full) when the
+  // rail has no icons — otherwise collapsing would leave empty tabs.
+  const animatedLabelWrap = useAnimatedStyle(() => {
+    if (!hasIcons) return { height: LABEL_H, marginTop: 0, opacity: 1 };
+    const p = navBarProgress.value;
+    return {
+      height: interpolate(p, [0, 1], [LABEL_H, 0]),
+      marginTop: interpolate(p, [0, 1], [3, 0]),
+      opacity: interpolate(p, [0, 0.5], [1, 0], 'clamp'),
+    };
+  }, [hasIcons]);
+
   return (
     <View style={s.wrap}>
       <ScrollView
@@ -58,12 +90,13 @@ export function PulseFilterRail({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={[
           s.row,
-          { paddingLeft: Math.max(0, leadingPad - TAB_PAD_H) },
+          { paddingHorizontal: Math.max(0, leadingPad - TAB_PAD_H) },
         ]}
       >
         {filters.map((f) => {
           const isActive = active.includes(f);
           const displayLabel = labels?.[f] ?? f;
+          const Icon = icons?.[f];
           return (
             <Pressable
               key={f}
@@ -74,12 +107,20 @@ export function PulseFilterRail({
               accessibilityState={{ selected: isActive }}
               accessibilityLabel={`${displayLabel} filter${isActive ? ', selected' : ''}`}
             >
-              <Text
-                style={[s.label, isActive && s.labelActive]}
-                numberOfLines={1}
-              >
-                {displayLabel}
-              </Text>
+              {Icon ? (
+                <>
+                  <Icon size={16} color={isActive ? color.ink : color.mute} />
+                  <Animated.View style={[s.labelClip, animatedLabelWrap]}>
+                    <Text style={[s.label, isActive && s.labelActive]} numberOfLines={1}>
+                      {displayLabel}
+                    </Text>
+                  </Animated.View>
+                </>
+              ) : (
+                <Text style={[s.label, isActive && s.labelActive]} numberOfLines={1}>
+                  {displayLabel}
+                </Text>
+              )}
               {isActive && <View style={s.indicator} />}
             </Pressable>
           );
@@ -95,20 +136,26 @@ const s = StyleSheet.create({
     borderBottomColor: color.haze,
   },
   row: {
-    paddingRight: space.lg,
+    // Center the tab group; ScrollView still scrolls if tabs overflow.
+    flexGrow: 1,
+    justifyContent: 'center',
     paddingTop: 2,
     // No paddingBottom — indicator sits flush at bottom: 0 of each tab
   },
   tab: {
     paddingHorizontal: TAB_PAD_H,
-    paddingTop: 10,
-    paddingBottom: 13,
+    paddingTop: 8,
+    paddingBottom: 10,
     alignItems: 'center',
     // RN default position: 'relative' is the containing block for the indicator
   },
+  labelClip: {
+    overflow: 'hidden',
+    alignItems: 'center',
+  },
   label: {
-    fontSize: 14,
-    lineHeight: 18,
+    fontSize: 13,
+    lineHeight: LABEL_H,
     fontWeight: '500',
     color: color.mute,
     letterSpacing: 0.15,

@@ -102,34 +102,51 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
     match.some((m) => pathname === m || pathname.startsWith(m + '/'));
 
   // Animated styles driven by the module-level navBarProgress shared value.
+  // Collapse is primarily VERTICAL: 64 → 40 px. Anything below ~40 px clips
+  // the icons (their layout box stays 20 px + label height even at opacity 0).
   const animatedPillStyle = useAnimatedStyle(() => {
     const progress = navBarProgress.value;
     return {
-      height:         interpolate(progress, [0, 1], [64, 20]),
-      borderRadius:   interpolate(progress, [0, 1], [36, 14]),
-      paddingVertical: interpolate(progress, [0, 1], [6, 0]),
+      height:         interpolate(progress, [0, 1], [64, 40]),
+      borderRadius:   interpolate(progress, [0, 1], [36, 22]),
+      paddingVertical: interpolate(progress, [0, 1], [6, 2]),
     };
   });
 
   const animatedLabelStyle = useAnimatedStyle(() => {
-    // Labels fade out before progress reaches 0.5
-    const opacity = interpolate(navBarProgress.value, [0, 0.4], [1, 0], 'clamp');
-    return { opacity };
+    // Labels fade out fast, then their LAYOUT height collapses to 0 so the
+    // icon re-centres inside the shorter pill. Without the height collapse the
+    // invisible label keeps 13 px of layout and pushes the icon off-centre —
+    // that's what caused the clipped/cut-off look at the old 20 px height.
+    // Applied to a clip WRAPPER (not the Text itself) — animating height
+    // directly on text is unreliable on RN web.
+    const progress = navBarProgress.value;
+    return {
+      opacity: interpolate(progress, [0, 0.4], [1, 0], 'clamp'),
+      height:  interpolate(progress, [0, 1], [13, 0]),
+    };
   });
 
   // Nav icons shrink uniformly (scale, not scaleY) so they look like miniature
-  // icons rather than vertically-squished glyphs.
+  // icons rather than vertically-squished glyphs. 0.80 keeps them clearly
+  // recognisable — 20 px × 0.80 = 16 px rendered.
   const animatedIconStyle = useAnimatedStyle(() => {
-    const scale = interpolate(navBarProgress.value, [0, 1], [1, 0.65]);
+    const scale = interpolate(navBarProgress.value, [0, 1], [1, 0.80]);
     return { transform: [{ scale }] };
   });
 
-  // The plus button is 44×44 px and needs a steeper scale so it fits inside the
-  // 20 px collapsed pill without being clipped into an unrecognisable smear.
-  // 44 × 0.34 ≈ 15 px — a coherent mini-circle centred in a 20 px pill.
+  // The plus button is 44×44 px. 44 × 0.62 ≈ 27 px — a coherent mini-circle
+  // centred inside the 40 px collapsed pill (36 px inner space).
   const animatedPlusStyle = useAnimatedStyle(() => {
-    const scale = interpolate(navBarProgress.value, [0, 1], [1, 0.34]);
+    const scale = interpolate(navBarProgress.value, [0, 1], [1, 0.62]);
     return { transform: [{ scale }] };
+  });
+
+  // Item inner padding compresses vertically so icon + (collapsed) label fit
+  // the 40 px pill: 3 + 20 + 3 + 0 + 3 = 29 px < 36 px inner space.
+  const animatedItemInnerStyle = useAnimatedStyle(() => {
+    const paddingVertical = interpolate(navBarProgress.value, [0, 1], [7, 3]);
+    return { paddingVertical };
   });
 
   const TAB_HITSLOP = { top: 10, bottom: 10, left: 6, right: 6 };
@@ -161,7 +178,7 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
               accessibilityRole="button"
               accessibilityLabel={label}
             >
-              <View style={[fb.itemInner, active && { backgroundColor: activeHighlight }]}>
+              <Animated.View style={[fb.itemInner, active && { backgroundColor: activeHighlight }, animatedItemInnerStyle]}>
                 <Animated.View style={animatedIconStyle}>
                   <View>
                     <Icon size={20} color={active ? iconActive : iconMuted} />
@@ -172,8 +189,10 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
                     )}
                   </View>
                 </Animated.View>
-                <Animated.Text style={[fb.label, active && fb.labelActive, { color: active ? iconActive : iconMuted }, animatedLabelStyle]}>{label}</Animated.Text>
-              </View>
+                <Animated.View style={[fb.labelClip, animatedLabelStyle]}>
+                  <Text style={[fb.label, active && fb.labelActive, { color: active ? iconActive : iconMuted }]}>{label}</Text>
+                </Animated.View>
+              </Animated.View>
             </Pressable>
           );
         })}
@@ -207,7 +226,7 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
               accessibilityRole="button"
               accessibilityLabel={label}
             >
-              <View style={[fb.itemInner, active && { backgroundColor: activeHighlight }]}>
+              <Animated.View style={[fb.itemInner, active && { backgroundColor: activeHighlight }, animatedItemInnerStyle]}>
                 <Animated.View style={animatedIconStyle}>
                   <View>
                     <Icon size={20} color={active ? iconActive : iconMuted} />
@@ -218,8 +237,10 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
                     )}
                   </View>
                 </Animated.View>
-                <Animated.Text style={[fb.label, active && fb.labelActive, { color: active ? iconActive : iconMuted }, animatedLabelStyle]}>{label}</Animated.Text>
-              </View>
+                <Animated.View style={[fb.labelClip, animatedLabelStyle]}>
+                  <Text style={[fb.label, active && fb.labelActive, { color: active ? iconActive : iconMuted }]}>{label}</Text>
+                </Animated.View>
+              </Animated.View>
             </Pressable>
           );
         })}
@@ -393,8 +414,15 @@ const fb = StyleSheet.create({
   itemInnerActive: {
     backgroundColor: 'rgba(0,0,0,0.07)',
   },
+  labelClip: {
+    // Carries the animated height (13 → 0) + opacity; clips the static Text
+    // inside. Web-safe: RN web handles height animation on Views reliably.
+    overflow: 'hidden',
+    alignItems: 'center',
+  },
   label: {
     fontSize: 10,
+    lineHeight: 13, // matches labelClip's full animated height
     fontWeight: '600',
     color: color.mute,
     letterSpacing: 0.1,

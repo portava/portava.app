@@ -1,13 +1,22 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
+import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Activity, SlidersHorizontal, MapPin, Pencil, MessageCircle } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
 import { useUnreadCounts } from '../hooks/useMessaging';
 import { NotificationBell } from './NotificationBell';
+import { navBarProgress } from '../hooks/useNavBarCollapse';
 
-/** Pulse Wall header — compact city title, status chips, and action icons. */
+/**
+ * Pulse Wall header — compact city title, status chips, and action icons.
+ *
+ * The status-chip row (city + availability) collapses in sync with the
+ * floating nav bar (navBarProgress 0 → 1) on scroll-down and restores on
+ * scroll-up, so the fixed header area shrinks to just the title row while
+ * the user is reading the feed.
+ */
 export function PulseHeader({
   city = 'Cebu',
   cityFull = 'Cebu City',
@@ -31,8 +40,25 @@ export function PulseHeader({
   const insets = useSafeAreaInsets();
   const { messages: unreadMessages } = useUnreadCounts();
 
+  // Chip row natural height 30 px: lineHeight 18 (t.small — fontSize override
+  // does not shrink it) + chip paddingVertical 5×2 + border 1×2. Plus 6 px
+  // marginTop. Collapses to 0; opacity leads so text never squishes.
+  const animatedChipRow = useAnimatedStyle(() => {
+    const p = navBarProgress.value;
+    return {
+      height: interpolate(p, [0, 1], [30, 0]),
+      marginTop: interpolate(p, [0, 1], [6, 0]),
+      opacity: interpolate(p, [0, 0.6], [1, 0], 'clamp'),
+    };
+  });
+
+  // Header bottom padding tightens as the chips collapse.
+  const animatedWrap = useAnimatedStyle(() => ({
+    paddingBottom: interpolate(navBarProgress.value, [0, 1], [8, 3]),
+  }));
+
   return (
-    <View style={[styles.wrap, { paddingTop: insets.top + 4 }]}>
+    <Animated.View style={[styles.wrap, { paddingTop: insets.top + 4 }, animatedWrap]}>
       {/* title row */}
       <View style={styles.titleRow}>
         <Activity size={16} color={color.signal} />
@@ -61,8 +87,8 @@ export function PulseHeader({
         </Pressable>
       </View>
 
-      {/* compact status chips */}
-      <View style={styles.statusRow}>
+      {/* compact status chips — collapse on scroll-down */}
+      <Animated.View style={[styles.statusRow, animatedChipRow]}>
         <Pressable style={styles.chip} onPress={onCityPress ?? (() => router.push('/(tabs)/discovery'))}>
           <MapPin size={11} color={color.deep} />
           <Text style={styles.chipText} numberOfLines={1}>{cityFull || city}</Text>
@@ -73,8 +99,8 @@ export function PulseHeader({
           <Text style={styles.chipText} numberOfLines={1}>{availabilityText}</Text>
           <Pencil size={10} color={color.faint} />
         </Pressable>
-      </View>
-    </View>
+      </Animated.View>
+    </Animated.View>
   );
 }
 
@@ -82,7 +108,7 @@ const styles = StyleSheet.create({
   wrap: {
     backgroundColor: color.paper,
     paddingHorizontal: space.lg,
-    paddingBottom: 8,
+    // paddingBottom is animated (8 → 3) via animatedWrap
     borderBottomWidth: 1,
     borderBottomColor: color.haze,
   },
@@ -128,8 +154,8 @@ const styles = StyleSheet.create({
   statusRow: {
     flexDirection: 'row',
     gap: 6,
-    marginTop: 6,
-    flexWrap: 'wrap',
+    // marginTop is animated (6 → 0) via animatedChipRow
+    overflow: 'hidden',
   },
   chip: {
     flexDirection: 'row',
