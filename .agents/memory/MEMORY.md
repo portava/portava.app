@@ -2,3 +2,4 @@
 - [Supabase migration access](supabase-migration-access.md) — apply migrations via the Supabase Management API query endpoint; direct psql/pooler connections are unreachable from this workspace.
 - [Explore page performance fixes](explore-perf-fixes.md) — 6 targeted fixes for Discover tab cold-start; geocode dedup, batch counts endpoint, client cache, FlatList virtualisation, community cache, deferred PlaceCard fetches.
 - [Scroll-collapse animation gotchas](scroll-collapse-gotchas.md) — size collapse rows from token lineHeight (fontSize overrides don't shrink it); animate height on a View clip wrapper, never on Text (RN web).
+- [DB column-drift trap](db-column-drift.md) — check generated database.types.ts for column names (lat/lng vs latitude/longitude differ by table) and Pick<>-type query rows; fail-closed code hides wrong columns as silent empties.

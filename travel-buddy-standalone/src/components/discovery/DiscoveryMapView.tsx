@@ -16,7 +16,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
-import { Layers, MapPin, Navigation, Star } from 'lucide-react-native';
+import { Layers, MapPin, Navigation, Star, Users } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery';
 import { color, space, radius, type as t } from '../../theme/tokens';
 import {
@@ -26,7 +26,14 @@ import {
   getCachedFilter,
   type MapFilter,
 } from './discoverMapFilterStorage';
+import { useMapTravelers } from '../../hooks/useMapTravelers';
+import { TravelerClusterMarkers } from './TravelerMapLayer';
+import { TravelerPreviewCard } from './TravelerPreviewCard';
+import type { MapTraveler } from '../../services/mapTravelers';
 export type { MapFilter } from './discoverMapFilterStorage';
+
+/** AsyncStorage key for the travelers-layer toggle ('1' on / '0' off). */
+const TRAVELERS_TOGGLE_KEY = 'discovery_map_travelers';
 
 // ── Map tile style ─────────────────────────────────────────────────────────────
 
@@ -177,6 +184,60 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
   const cameraRef = useRef<any>(null);
   const hasUser = userLat != null && userLng != null;
 
+  // ── Travelers layer (users sharing their location in discovery) ──────────
+  const [travelersOn, setTravelersOnRaw] = useState(true);
+  const [zoom, setZoom] = useState<number | null>(null);
+  // Camera centre as the user pans, rounded to ~1km so small drags don't
+  // re-render or re-trigger the fetch hook. [lng, lat] (MapLibre order).
+  const [mapCenter, setMapCenter] = useState<[number, number] | null>(null);
+  const zoomAt = useRef(0);
+  const [selectedTraveler, setSelectedTraveler] = useState<MapTraveler | null>(null);
+  const [emptyHint, setEmptyHint] = useState(false);
+  const emptyHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    AsyncStorage.getItem(TRAVELERS_TOGGLE_KEY)
+      .then((v) => { if (v === '0') setTravelersOnRaw(false); })
+      .catch(() => {});
+    return () => { if (emptyHintTimer.current) clearTimeout(emptyHintTimer.current); };
+  }, []);
+
+  const { travelers, loading: travelersLoading } = useMapTravelers({
+    lat: mapCenter ? mapCenter[1] : vp ? vp.center[1] : null,
+    lng: mapCenter ? mapCenter[0] : vp ? vp.center[0] : null,
+    radiusKm: 50,
+    enabled: travelersOn,
+  });
+
+  const setTravelersOn = (on: boolean) => {
+    setTravelersOnRaw(on);
+    if (!on) setSelectedTraveler(null);
+    AsyncStorage.setItem(TRAVELERS_TOGGLE_KEY, on ? '1' : '0').catch(() => {});
+    if (on) {
+      // Brief "no travelers here yet" hint so an empty layer doesn't look broken.
+      setEmptyHint(true);
+      if (emptyHintTimer.current) clearTimeout(emptyHintTimer.current);
+      emptyHintTimer.current = setTimeout(() => setEmptyHint(false), 4000);
+    }
+  };
+
+  // Throttled camera tracking (250ms): zoom feeds cluster bucketing, centre
+  // feeds the travelers fetch so panning to a new city loads its travelers.
+  const handleRegionChange = (e: any) => {
+    const now = Date.now();
+    if (now - zoomAt.current <= 250) return;
+    zoomAt.current = now;
+    const z = e?.nativeEvent?.zoom;
+    if (typeof z === 'number') setZoom(z);
+    const c = e?.nativeEvent?.center;
+    if (Array.isArray(c) && typeof c[0] === 'number' && typeof c[1] === 'number') {
+      setMapCenter((prev) => {
+        const next: [number, number] = [Math.round(c[0] * 100) / 100, Math.round(c[1] * 100) / 100];
+        return prev && prev[0] === next[0] && prev[1] === next[1] ? prev : next;
+      });
+    }
+  };
+
   const recenterOnMe = () => {
     if (hasUser && cameraRef.current) {
       cameraRef.current.setCamera({
@@ -204,6 +265,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
         mapStyle={MAP_STYLE}
         logo={false}
         attribution={false}
+        onRegionDidChange={handleRegionChange}
       >
         <Camera
           ref={cameraRef}
@@ -231,6 +293,20 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
             </Marker>
           );
         })}
+        {travelersOn && travelers.length > 0 && (
+          <TravelerClusterMarkers
+            travelers={travelers}
+            zoom={zoom ?? vp.zoom}
+            onPressTraveler={setSelectedTraveler}
+            onPressCluster={(c) => {
+              cameraRef.current?.setCamera({
+                centerCoordinate: [c.lng, c.lat],
+                zoomLevel: Math.min((zoom ?? vp.zoom) + 1.8, 17),
+                animationDuration: 450,
+              });
+            }}
+          />
+        )}
         {hasUser && (
           <Marker key="me-marker" lngLat={[userLng as number, userLat as number]}>
             <View style={s.meDotOuter}>
@@ -288,6 +364,26 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
             </Text>
           </View>
         )}
+        {travelersOn && travelersLoading && (
+          <View style={s.badge}>
+            <Users size={10} color="#fff" />
+            <Text style={s.badgeText}>Finding travelers…</Text>
+          </View>
+        )}
+        {travelersOn && !travelersLoading && travelers.length > 0 && (
+          <View style={s.badge}>
+            <Users size={10} color="#fff" />
+            <Text style={s.badgeText}>
+              {travelers.length} {travelers.length === 1 ? 'traveler' : 'travelers'}
+            </Text>
+          </View>
+        )}
+        {travelersOn && !travelersLoading && travelers.length === 0 && emptyHint && (
+          <View style={s.badge}>
+            <Users size={10} color="#fff" />
+            <Text style={s.badgeText}>No travelers sharing here yet</Text>
+          </View>
+        )}
       </View>
 
       {hasUser && (
@@ -305,19 +401,35 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
         <Layers size={18} color={legendOpen ? color.signal : color.mute} />
       </Pressable>
 
+      {/* ── Travelers layer toggle ──────────────────────────────────────────── */}
+      <Pressable
+        style={[s.travelersBtn, { top: 58 + topInset }]}
+        onPress={() => setTravelersOn(!travelersOn)}
+        hitSlop={8}
+        accessibilityLabel={travelersOn ? 'Hide travelers on map' : 'Show travelers on map'}
+      >
+        <Users size={18} color={travelersOn ? color.signal : color.faint} />
+      </Pressable>
+
       {/* ── Legend dismiss overlay + panel ──────────────────────────────────── */}
       {legendOpen && (
         <>
           {/* Transparent overlay — tap anywhere outside the panel to close */}
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setLegendOpen(false)} />
 
-          <View style={[s.legendPanel, { top: 58 + topInset }]}>
+          <View style={[s.legendPanel, { top: 102 + topInset }]}>
             {/* Traveler picks entry listed first per spec */}
             <View style={s.legendRow}>
               <View style={[s.legendDot, { backgroundColor: DB_PIN_COLOR }]}>
                 <Star size={8} color="#fff" fill="#fff" />
               </View>
               <Text style={s.legendLabel}>⭐ Traveler picks</Text>
+            </View>
+            <View style={s.legendRow}>
+              <View style={[s.legendDot, { backgroundColor: color.deep }]}>
+                <Users size={8} color="#fff" />
+              </View>
+              <Text style={s.legendLabel}>Travelers sharing location</Text>
             </View>
             {LEGEND_ENTRIES.map((entry) => (
               <View key={entry.key} style={s.legendRow}>
@@ -327,6 +439,14 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
             ))}
           </View>
         </>
+      )}
+
+      {/* ── Traveler preview card ───────────────────────────────────────────── */}
+      {travelersOn && selectedTraveler && (
+        <TravelerPreviewCard
+          traveler={selectedTraveler}
+          onClose={() => setSelectedTraveler(null)}
+        />
       )}
     </View>
   );
@@ -481,6 +601,22 @@ const s = StyleSheet.create({
   legendBtn: {
     position: 'absolute',
     top: 14,
+    right: 14,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
+  },
+  travelersBtn: {
+    position: 'absolute',
+    top: 58,
     right: 14,
     width: 36,
     height: 36,
