@@ -8,7 +8,7 @@ import { PulseHeader } from '../../src/components/PulseHeader';
 import { FitsCard, FlexibleStrip } from '../../src/components/PulseFits';
 import { PulseFeedCard } from '../../src/components/PulseFeedCard';
 import { PulseFilterSheet, UnifiedPostComposer } from '../../src/components/PulseCreate';
-import { PulseFilterRail } from '../../src/components/PulseFilterRail';
+import { PulseLiveBanner } from '../../src/components/PulseLiveBanner';
 import { TravelEmptyState } from '../../src/components/primitives';
 import { useCityPulse } from '../../src/hooks/useCityPulse';
 import { useGlobalFeed, useFollowingFeed } from '../../src/hooks/usePosts';
@@ -26,18 +26,22 @@ import { LocationPermissionPrompt } from '../../src/components/LocationPermissio
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { ActiveLayoverPill } from '../../src/components/layover/ActiveLayoverPill';
-import { Users, MapPin, LayoutGrid, CalendarDays, FileText, Gem } from 'lucide-react-native';
 import { PeopleYouMayKnow } from '../../src/components/PeopleYouMayKnow';
+import { pv } from '../../src/theme/pulseTheme';
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Hidden Gems', 'Circle'];
 
-/** Per-category icons for the filter rail (icon-above-label tabs). */
-const FILTER_ICONS: Record<string, React.ComponentType<{ size?: number; color?: string }>> = {
-  All: LayoutGrid,
-  Plans: CalendarDays,
-  Posts: FileText,
-  'Hidden Gems': Gem,
-  Circle: Users,
+/**
+ * Display labels for the Portava chip row. The VALUES stay the internal
+ * PulseFilter truth ('All', 'Plans', …) — only the visible label changes,
+ * so toggle logic, sheet filters, and feed filtering are untouched.
+ */
+const CHIP_LABELS: Partial<Record<PulseFilter, string>> = {
+  All: 'For You',
+  Plans: 'Events',
+  Posts: 'Posts',
+  'Hidden Gems': 'Gems',
+  Circle: 'People',
 };
 
 type FeedMode = 'forYou' | 'following';
@@ -55,6 +59,16 @@ export default function Pulse() {
       height: interpolate(p, [0, 1], [46, 0]),
       marginBottom: interpolate(p, [0, 1], [8, 0]),
       opacity: interpolate(p, [0, 0.5], [1, 0], 'clamp'),
+    };
+  });
+
+  // Chip row shrinks slightly (mostly vertical) in sync with the nav bar;
+  // chips scale proportionally so labels never clip.
+  const animatedChipRow = useAnimatedStyle(() => {
+    const p = navBarProgress.value;
+    return {
+      height: interpolate(p, [0, 1], [46, 38]),
+      transform: [{ scale: interpolate(p, [0, 1], [1, 0.9]) }],
     };
   });
   const [feedMode, setFeedMode] = useState<FeedMode>('forYou');
@@ -167,10 +181,17 @@ export default function Pulse() {
 
   const Header = (
     <View>
-      {/* Fits your time */}
+      {/* Live multi-status banner — computed from real event buckets + availability */}
+      <PulseLiveBanner
+        city={activeCity}
+        events={[...fits, ...buckets.flexible]}
+        availabilityLabel={status === 'not_set' ? 'Set availability' : STATUS_LABEL[status]}
+      />
+
+      {/* Postcards — event/gem/trip cards that fit your time */}
       <View style={styles.fitsHead}>
-        <Text style={styles.sectionTitle}>Fits your time</Text>
-        <View style={styles.insideBadge}><Text style={styles.insideText}>Inside your availability</Text></View>
+        <Text style={styles.sectionTitle}>Postcards</Text>
+        <View style={styles.insideBadge}><Text style={styles.insideText}>Fits your time</Text></View>
         <View style={{ flex: 1 }} />
         {fits.length > 0 && (
           <Pressable onPress={() => router.push('/(tabs)/trips')}><Text style={styles.viewAll}>View all ({fits.length})</Text></Pressable>
@@ -285,7 +306,7 @@ export default function Pulse() {
   );
 
   return (
-    <View style={{ flex: 1, backgroundColor: color.paper }}>
+    <View style={{ flex: 1, backgroundColor: pv.navy }}>
       <PulseHeader
         city={activeCity}
         cityFull={activeCity}
@@ -318,13 +339,27 @@ export default function Pulse() {
           </View>
         </Animated.View>
         {feedMode === 'forYou' && (
-          <PulseFilterRail
-            filters={QUICK_FILTERS}
-            active={active}
-            onPress={(f) => toggleQuick(f as PulseFilter)}
-            labels={{ 'Hidden Gems': 'Gems' }}
-            icons={FILTER_ICONS}
-          />
+          <Animated.View style={[styles.chipRowClip, animatedChipRow]}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+              {QUICK_FILTERS.map((f) => {
+                const isChipActive = active.includes(f);
+                const label = CHIP_LABELS[f] ?? f;
+                return (
+                  <Pressable
+                    key={f}
+                    style={[styles.chip, isChipActive && styles.chipActive]}
+                    onPress={() => toggleQuick(f)}
+                    hitSlop={{ top: 6, bottom: 6, left: 0, right: 0 }}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isChipActive }}
+                    accessibilityLabel={`${label} filter${isChipActive ? ', selected' : ''}`}
+                  >
+                    <Text style={[styles.chipText, isChipActive && styles.chipTextActive]}>{label}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </Animated.View>
         )}
       </View>
 
@@ -352,7 +387,7 @@ export default function Pulse() {
           <RefreshControl
             refreshing={feedMode === 'following' ? followingFeed.loading : realFeed.loading}
             onRefresh={handleRefresh}
-            tintColor={color.signal}
+            tintColor={pv.teal}
           />
         }
       />
@@ -385,38 +420,45 @@ export default function Pulse() {
 
 const styles = StyleSheet.create({
   stickyControls: {
-    backgroundColor: color.paper,
+    backgroundColor: pv.navy,
     paddingTop: space.sm,
     // Subtle bottom shadow so the sticky bar reads as a layer above the feed
     shadowColor: '#000',
-    shadowOpacity: 0.05,
+    shadowOpacity: 0.3,
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
     elevation: 3,
     zIndex: 10,
   },
   fitsHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, marginTop: space.lg, marginBottom: space.md, flexWrap: 'wrap' },
-  sectionTitle: { ...t.title, color: color.ink, fontSize: 20 },
-  insideBadge: { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: 999, paddingHorizontal: space.sm, paddingVertical: 3 },
-  insideText: { ...t.small, color: color.deep, fontSize: 11, fontWeight: '600' },
-  viewAll: { ...t.small, color: color.signal, fontWeight: '700' },
+  sectionTitle: { ...t.title, color: pv.text, fontSize: 20 },
+  insideBadge: { backgroundColor: pv.navySoft, borderWidth: 1, borderColor: pv.navyEdge, borderRadius: 999, paddingHorizontal: space.sm, paddingVertical: 3 },
+  insideText: { ...t.small, color: pv.teal, fontSize: 11, fontWeight: '600' },
+  viewAll: { ...t.small, color: pv.teal, fontWeight: '700' },
   fitsStrip: { gap: space.md, paddingHorizontal: space.lg, paddingBottom: space.sm },
-  empty: { marginHorizontal: space.lg, padding: space.lg, borderRadius: 14, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
-  emptyTitle: { ...t.bodyStrong, color: color.ink },
-  emptySub: { ...t.small, color: color.mute, marginTop: 4 },
-  wallTitle: { ...t.title, color: color.ink, fontSize: 20, paddingHorizontal: space.lg, marginTop: 24, marginBottom: space.sm },
+  empty: { marginHorizontal: space.lg, padding: space.lg, borderRadius: 14, borderWidth: 1, borderColor: pv.navyEdge, backgroundColor: pv.navyRaised },
+  emptyTitle: { ...t.bodyStrong, color: pv.text },
+  emptySub: { ...t.small, color: pv.textMute, marginTop: 4 },
+  wallTitle: { ...t.title, color: pv.text, fontSize: 20, paddingHorizontal: space.lg, marginTop: 24, marginBottom: space.sm },
   // Clip container for the collapsing mode row — height/margin/opacity are
   // animated; the inner modeRow keeps its natural 42 px layout and gets
   // clipped as the container folds.
   modeRowClip: { overflow: 'hidden' },
-  modeRow: { flexDirection: 'row', marginHorizontal: space.lg, borderRadius: 12, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised, padding: 3, gap: 3 },
+  modeRow: { flexDirection: 'row', marginHorizontal: space.lg, borderRadius: 12, borderWidth: 1, borderColor: pv.navyEdge, backgroundColor: pv.navyRaised, padding: 3, gap: 3 },
   modeBtn: { flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center' },
-  modeBtnActive: { backgroundColor: color.paperRaised, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 1 }, elevation: 2 },
-  modeBtnText: { ...t.bodyStrong, fontSize: 14, color: color.mute },
-  modeBtnTextActive: { color: color.ink },
+  modeBtnActive: { backgroundColor: 'rgba(255,255,255,0.12)' },
+  modeBtnText: { ...t.bodyStrong, fontSize: 14, color: pv.textMute },
+  modeBtnTextActive: { color: pv.text },
+  /* Portava filter chips — values stay the internal PulseFilter truth */
+  chipRowClip: { overflow: 'hidden', justifyContent: 'center' },
+  chipRow: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, paddingVertical: 6 },
+  chip: { borderRadius: 999, borderWidth: 1, borderColor: pv.navyEdge, backgroundColor: pv.navySoft, paddingHorizontal: 14, paddingVertical: 8 },
+  chipActive: { backgroundColor: pv.tealDim, borderColor: pv.teal },
+  chipText: { fontSize: 13, lineHeight: 18, fontWeight: '600', color: pv.textMute },
+  chipTextActive: { color: pv.teal, fontWeight: '800' },
   inspoLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.faint, letterSpacing: 1.5, paddingHorizontal: space.lg, marginTop: space.xxl, marginBottom: space.md },
-  followingEmpty: { marginHorizontal: space.lg, marginTop: space.xl, padding: space.xl, borderRadius: 16, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised, alignItems: 'center', gap: space.md },
-  followingEmptyTitle: { ...t.body, color: color.deep, textAlign: 'center', lineHeight: 22 },
+  followingEmpty: { marginHorizontal: space.lg, marginTop: space.xl, padding: space.xl, borderRadius: 16, borderWidth: 1, borderColor: pv.navyEdge, backgroundColor: pv.navyRaised, alignItems: 'center', gap: space.md },
+  followingEmptyTitle: { ...t.body, color: pv.text, textAlign: 'center', lineHeight: 22 },
   exploreBtn: { backgroundColor: color.signal, paddingHorizontal: space.lg, paddingVertical: 10, borderRadius: 10 },
   exploreBtnText: { ...t.bodyStrong, color: '#fff', fontSize: 14 },
   loadingWrap: { paddingVertical: space.xxl, alignItems: 'center' },
