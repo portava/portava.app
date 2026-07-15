@@ -11,6 +11,7 @@ import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
   StyleSheet, RefreshControl, FlatList, Alert, TextInput,
 } from 'react-native';
+import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -105,6 +106,7 @@ export default function EventsTabScreen() {
   const insets = useSafeAreaInsets();
   const { isAuthed, configured } = useSession();
   const { locationState, requestLocation } = useActiveLocation();
+  const navScrollHandler = useNavBarScrollHandler();
 
   const [refreshing, setRefreshing] = useState(false);
 
@@ -516,6 +518,8 @@ export default function EventsTabScreen() {
       ) : (
         <ScrollView
           contentContainerStyle={styles.body}
+          onScroll={navScrollHandler}
+          scrollEventThrottle={16}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={color.signal} />
           }
@@ -698,6 +702,7 @@ export default function EventsTabScreen() {
               </View>
             )
           )}
+          <NavBarFiller />
         </ScrollView>
       )}
     </View>

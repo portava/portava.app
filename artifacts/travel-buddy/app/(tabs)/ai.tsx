@@ -1,8 +1,10 @@
 import React, { useState, useRef, useCallback } from 'react';
 import {
-  View, Text, ScrollView, TextInput, Pressable, StyleSheet,
+  View, Text, TextInput, Pressable, StyleSheet,
   KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
+import { ScrollView } from 'react-native';
+import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 import { Sparkles, Send, Plane, MessageCircle, Map, PlusCircle } from 'lucide-react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { postCompassFrontloadEvent, postCompassAsk } from '../../src/services/compass';
@@ -27,6 +29,7 @@ export default function AiChat() {
   const [loading, setLoading]       = useState(false);
   const [layoverOpen, setLayoverOpen] = useState(false);
   const scroll = useRef<ScrollView>(null);
+  const navScrollHandler = useNavBarScrollHandler();
 
   useFocusEffect(useCallback(() => {
     postCompassFrontloadEvent({ eventType: 'navigation', screen: 'ai_chat' }).catch(() => {});
@@ -101,7 +104,9 @@ export default function AiChat() {
       <ScreenHeader title="AI Buddy" back />
       <ScrollView
         ref={scroll}
-        contentContainerStyle={{ padding: space.lg, gap: space.md, paddingBottom: space.xl }}
+        contentContainerStyle={{ padding: space.lg, gap: space.md }}
+        onScroll={navScrollHandler}
+        scrollEventThrottle={16}
       >
         {entries.map((e) => {
           if (e.kind === 'user') {
@@ -141,6 +146,7 @@ export default function AiChat() {
             />
           );
         })}
+        <NavBarFiller />
       </ScrollView>
 
       <View style={styles.inputBar}>

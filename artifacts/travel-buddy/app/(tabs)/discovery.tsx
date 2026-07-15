@@ -11,7 +11,9 @@ import {
 import { getTrendingHashtags, type TrendingHashtag } from '../../src/services/hashtag';
 import type { DiscoveryAgeFilter } from '../../src/services/discovery';
 import type { Place } from '../../src/lib/location/placeTypes';
+import { NAV_BAR_FILLER_HEIGHT } from '../../src/hooks/useNavBarCollapse';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode, DiscoveryFilters } from '../../src/services/discovery';
 import { getDiscoveryCategoryCounts, getDiscoveryCategoryCountsBatch } from '../../src/services/discovery';
 import { DiscoveryCategoryTab } from '../../src/components/discovery/DiscoveryCategoryTab';
@@ -78,6 +80,7 @@ export default function DiscoveryHub() {
   const { locationState, showCityPicker, openCityPicker, closeCityPicker, setManualCity, isLoading } = useLocationContext();
   const { users: highlightUsers, sessionViewedIds, markSessionViewed } = useFollowingHighlights();
   const currentCity = locationState.place.city ?? null;
+  const navScrollHandler = useNavBarScrollHandler();
 
   const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([]);
   useEffect(() => {
@@ -639,7 +642,8 @@ export default function DiscoveryHub() {
               viewMode={viewMode}
               fallbackZoom={destinationZoom}
               sortBy={activeFilters.sortBy ?? null}
-              bottomInset={insets.bottom + 100}
+              bottomInset={NAV_BAR_FILLER_HEIGHT + insets.bottom}
+              onScroll={navScrollHandler}
             />
           </View>
         ) : (
@@ -662,7 +666,8 @@ export default function DiscoveryHub() {
             userLng={locationState.coords?.lng ?? null}
             onFiltersChange={handleFiltersChange}
             fallbackZoom={destinationZoom}
-            bottomInset={insets.bottom + 100}
+            bottomInset={NAV_BAR_FILLER_HEIGHT + insets.bottom}
+            onScroll={navScrollHandler}
           />
         )}
       </View>

@@ -229,6 +229,9 @@ interface DiscoveryCategoryTabProps {
   onFiltersChange?: (filters: DiscoveryFilters) => void;
   /** Extra padding at the bottom of the list to clear the floating nav bar. */
   bottomInset?: number;
+  /** Reanimated scroll handler forwarded from the parent discovery screen. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onScroll?: any;
 }
 
 export function DiscoveryCategoryTab({
@@ -250,6 +253,7 @@ export function DiscoveryCategoryTab({
   fallbackZoom,
   onFiltersChange,
   bottomInset,
+  onScroll,
 }: DiscoveryCategoryTabProps) {
   const [places, setPlaces]         = useState<DiscoveryPlace[]>([]);
   const [loading, setLoading]       = useState(false);
@@ -367,6 +371,8 @@ export function DiscoveryCategoryTab({
           )}
           contentContainerStyle={[styles.list, bottomInset != null ? { paddingBottom: bottomInset } : undefined]}
           showsVerticalScrollIndicator={false}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -382,6 +388,7 @@ export function DiscoveryCategoryTab({
             ) : null
           }
         />
+
       )}
     </View>
   );

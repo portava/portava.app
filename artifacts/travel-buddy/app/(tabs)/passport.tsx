@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
+import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Share2, Clock } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -361,12 +362,16 @@ function PassportContent({
     }).catch(() => setBuddyProfile(null));
   }, [reload]));
 
+  const navScrollHandler = useNavBarScrollHandler();
+
   return (
     <View style={s.root}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingTop: insets.top, paddingBottom: 120 }}
+        contentContainerStyle={{ paddingTop: insets.top }}
         showsVerticalScrollIndicator={false}
+        onScroll={navScrollHandler}
+        scrollEventThrottle={16}
       >
         {/* ── Identity Document Card ── */}
         <PassportIdentityCard
@@ -536,6 +541,7 @@ function PassportContent({
           onPrivacySettings={() => openSettings('safety')}
         />
         <View style={{ height: 24 }} />
+        <NavBarFiller />
       </ScrollView>
 
       {/* ── Absolute UI: share + bell + menus ── */}

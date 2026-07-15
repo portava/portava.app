@@ -44,6 +44,9 @@ interface ForYouTabProps {
   viewMode?: 'list' | 'map';
   sortBy?: string | null;
   bottomInset?: number;
+  /** Reanimated scroll handler forwarded from the parent discovery screen. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onScroll?: any;
 }
 
 type ForYouItem =
@@ -70,7 +73,7 @@ function compassItemToPlace(item: import('../../services/compass').CompassFeedIt
   };
 }
 
-export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy, bottomInset }: ForYouTabProps) {
+export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy, bottomInset, onScroll }: ForYouTabProps) {
   const { isAuthed }            = useSession();
   const [items, setItems]       = useState<ForYouItem[]>([]);
   const [loading, setLoading]   = useState(false);
@@ -368,6 +371,8 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         ListFooterComponent={listFooter}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[styles.list, bottomInset != null ? { paddingBottom: bottomInset } : undefined]}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={color.signal} />
         }

@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, ActivityIndicator, RefreshControl } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
+import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 import { PostCard } from '../../src/components/PostCard';
 import { PulseHeader } from '../../src/components/PulseHeader';
 import { FitsCard, FlexibleStrip } from '../../src/components/PulseFits';
@@ -77,6 +78,7 @@ function timeAgo(iso: string): string {
 }
 
 export default function Pulse() {
+  const navScrollHandler = useNavBarScrollHandler();
   const [feedMode, setFeedMode] = useState<FeedMode>('forYou');
   const [active, setActive] = useState<PulseFilter[]>(['All']);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -346,7 +348,7 @@ export default function Pulse() {
         data={feed}
         keyExtractor={(it) => it.id}
         ListHeaderComponent={Header}
-        ListFooterComponent={Footer}
+        ListFooterComponent={() => <>{Footer}<NavBarFiller /></>}
         renderItem={({ item }) => (
           item.type === 'post' ? (
             <PulseFeedCard item={item} onDeleteSuccess={() => handlePostDeleted(item.id)} />
@@ -359,8 +361,9 @@ export default function Pulse() {
         ItemSeparatorComponent={({ leadingItem }) => (
           <View style={{ height: (leadingItem as any)?.type === 'post' ? 8 : space.md }} />
         )}
-        contentContainerStyle={{ paddingBottom: 120 }}
         showsVerticalScrollIndicator={false}
+        onScroll={navScrollHandler}
+        scrollEventThrottle={16}
         refreshControl={
           <RefreshControl
             refreshing={feedMode === 'following' ? followingFeed.loading : realFeed.loading}
