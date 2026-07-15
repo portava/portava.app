@@ -220,10 +220,8 @@ function serveStaticFile(urlPath, res) {
   res.end(content);
 }
 
-const landingPageTemplate = fs.readFileSync(TEMPLATE_PATH, "utf-8");
-const appName = getAppName();
-
-const server = http.createServer((req, res) => {
+function createRequestHandler(landingPageTemplate, appName) {
+  return (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
   let pathname = url.pathname;
 
@@ -260,9 +258,23 @@ const server = http.createServer((req, res) => {
   }
 
   serveStaticFile(pathname, res);
-});
+  };
+}
 
-const port = parseInt(process.env.PORT || "20682", 10);
-server.listen(port, "0.0.0.0", () => {
-  console.log(`Serving static Expo build on port ${port}`);
-});
+module.exports = {
+  fetchProfileCard,
+  serveProfileSharePage,
+  createRequestHandler,
+  escapeHtml,
+};
+
+if (require.main === module) {
+  const landingPageTemplate = fs.readFileSync(TEMPLATE_PATH, "utf-8");
+  const appName = getAppName();
+  const server = http.createServer(createRequestHandler(landingPageTemplate, appName));
+
+  const port = parseInt(process.env.PORT || "20682", 10);
+  server.listen(port, "0.0.0.0", () => {
+    console.log(`Serving static Expo build on port ${port}`);
+  });
+}
