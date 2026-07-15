@@ -48,7 +48,7 @@ export async function answerLayoverQuestion(
   const cutoff = session.boardingTime ?? session.departureTime;
   const availMin = Math.max(0, Math.round((new Date(cutoff).getTime() - now.getTime()) / 60000));
 
-  const breakdown = computeBuffer(airport, session, new Date(session.departureTime));
+  const breakdown = computeBuffer(airport, session, new Date(session.departureTime), airport.timezone);
   const bufferMin = breakdown.totalBuffer;
   const usableMin = Math.max(0, availMin - bufferMin);
   const hardReturnTime = new Date(new Date(cutoff).getTime() - bufferMin * 60000);

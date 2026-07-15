@@ -23,6 +23,7 @@ import { useLocationContext } from '../../src/context/LocationContext';
 import { LocationPermissionPrompt } from '../../src/components/LocationPermissionPrompt';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
+import { ActiveLayoverPill } from '../../src/components/layover/ActiveLayoverPill';
 import { Plane, Users, MapPin } from 'lucide-react-native';
 import { PeopleYouMayKnow } from '../../src/components/PeopleYouMayKnow';
 import { CircleCompassSuggestions } from '../../src/components/CircleCompassSuggestions';
@@ -474,6 +475,7 @@ export default function Pulse() {
       <ManualCityPicker />
 
       {/* Layover Mode */}
+      <ActiveLayoverPill />
       <LayoverModeSheet
         visible={layoverSheetOpen}
         onClose={() => setLayoverSheetOpen(false)}

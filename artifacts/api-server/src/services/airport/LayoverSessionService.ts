@@ -24,6 +24,7 @@ export interface LayoverSessionInput {
   manualCity?: string | null;
   manualCountry?: string | null;
   manualIata?: string | null;
+  canonicalCityId?: string | null;
 }
 
 export interface LayoverSession {
@@ -46,6 +47,9 @@ export interface LayoverSession {
   manualCity: string | null;
   manualCountry: string | null;
   manualIata: string | null;
+  canonicalCityId: string | null;
+  shareCityStatus: boolean;
+  returnReminderAt: string | null;
   status: "active" | "completed" | "cancelled" | "expired";
   createdAt: string;
   updatedAt: string;
@@ -75,6 +79,9 @@ function rowToSession(row: any): LayoverSession {
     manualCity:         row.manual_city ?? null,
     manualCountry:      row.manual_country ?? null,
     manualIata:         row.manual_iata ?? null,
+    canonicalCityId:    row.canonical_city_id ?? null,
+    shareCityStatus:    Boolean(row.share_city_status),
+    returnReminderAt:   row.return_reminder_at ?? null,
     status:             row.status ?? "active",
     createdAt:          row.created_at,
     updatedAt:          row.updated_at,
@@ -125,6 +132,7 @@ export async function createSession(
         manual_city:         input.manualCity        ?? null,
         manual_country:      input.manualCountry     ?? null,
         manual_iata:         input.manualIata         ?? null,
+        canonical_city_id:   input.canonicalCityId    ?? null,
         status:              "active",
       })
       .select("*")
@@ -244,6 +252,73 @@ export async function getActiveSession(
     return data ? rowToSession(data) : null;
   } catch {
     return null;
+  }
+}
+
+/** List a user's sessions, newest first. Optional status filter. */
+export async function listSessions(
+  db: SupabaseClient,
+  userId: string,
+  status?: "active" | "completed" | "cancelled" | "expired",
+  limit = 20,
+): Promise<LayoverSession[]> {
+  try {
+    let query = db
+      .from("layover_sessions")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (status) query = query.eq("status", status);
+    const { data } = await query;
+    return (data ?? []).map(rowToSession);
+  } catch {
+    return [];
+  }
+}
+
+/** Toggle opt-in city-level layover visibility for a session. */
+export async function setShareStatus(
+  db: SupabaseClient,
+  sessionId: string,
+  userId: string,
+  enabled: boolean,
+): Promise<LayoverSession | null> {
+  try {
+    const { data, error } = await db
+      .from("layover_sessions")
+      .update({ share_city_status: enabled, updated_at: new Date().toISOString() })
+      .eq("id", sessionId)
+      .eq("user_id", userId)
+      .eq("status", "active")
+      .select("*")
+      .maybeSingle();
+    if (error || !data) return null;
+    const session = rowToSession(data);
+    await emitEvent(db, sessionId, userId, "share_toggled", { enabled });
+    return session;
+  } catch {
+    return null;
+  }
+}
+
+/** Persist the return reminder instant the user asked for. */
+export async function setReturnReminder(
+  db: SupabaseClient,
+  sessionId: string,
+  userId: string,
+  remindAtIso: string,
+): Promise<boolean> {
+  try {
+    const { error } = await db
+      .from("layover_sessions")
+      .update({ return_reminder_at: remindAtIso, updated_at: new Date().toISOString() })
+      .eq("id", sessionId)
+      .eq("user_id", userId)
+      .eq("status", "active");
+    return !error;
+  } catch {
+    return false;
   }
 }
 

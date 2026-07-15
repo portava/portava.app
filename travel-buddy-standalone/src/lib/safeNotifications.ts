@@ -107,3 +107,40 @@ export function addNotificationResponseReceivedListener(
     return noop as Subscription;
   }
 }
+
+/**
+ * Schedule a local notification at a specific Date.
+ * Returns the notification identifier, or null when notifications are
+ * unavailable (web, Expo Go without the native module, permission denied).
+ */
+export async function scheduleLocalNotificationAt(
+  date: Date,
+  content: { title: string; body?: string; data?: Record<string, unknown> },
+): Promise<string | null> {
+  const mod = getModule();
+  if (!mod) return null;
+  try {
+    const perms = await mod.getPermissionsAsync();
+    if (!perms?.granted) {
+      const req = await mod.requestPermissionsAsync();
+      if (!req?.granted) return null;
+    }
+    if (date.getTime() <= Date.now()) return null;
+    return await mod.scheduleNotificationAsync({
+      content,
+      trigger: { type: 'date', date },
+    });
+  } catch (e) {
+    if (__DEV__) console.warn('[safeNotifications] scheduleLocalNotificationAt failed', e);
+    return null;
+  }
+}
+
+export async function cancelScheduledNotification(identifier: string | null | undefined): Promise<void> {
+  if (!identifier) return;
+  try {
+    await getModule()?.cancelScheduledNotificationAsync(identifier);
+  } catch {
+    /* already fired or unavailable */
+  }
+}

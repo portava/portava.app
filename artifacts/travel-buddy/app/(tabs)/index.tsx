@@ -24,6 +24,7 @@ import { useLocationContext } from '../../src/context/LocationContext';
 import { LocationPermissionPrompt } from '../../src/components/LocationPermissionPrompt';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
+import { ActiveLayoverPill } from '../../src/components/layover/ActiveLayoverPill';
 import { Users, MapPin, LayoutGrid, CalendarDays, FileText, Gem } from 'lucide-react-native';
 import { PeopleYouMayKnow } from '../../src/components/PeopleYouMayKnow';
 
@@ -414,6 +415,9 @@ export default function Pulse() {
       {/* Location overlays */}
       <LocationPermissionPrompt />
       <ManualCityPicker />
+
+      {/* Resume pill for an in-flight layover session */}
+      <ActiveLayoverPill />
 
       {/* Layover Mode */}
       <LayoverModeSheet

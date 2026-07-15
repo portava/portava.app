@@ -1,16 +1,22 @@
 /**
- * LayoverModeSheet
+ * LayoverModeSheet — set up a layover session.
  *
- * Bottom sheet for setting up a layover session.
- * Entry from Discovery, Trip screen, Plan screen, City Pulse, or floating button.
+ * Modern flow: universal airport autocomplete (IATA badges), real DATE +
+ * time pickers in the airport's local time (overnight layovers supported),
+ * live duration preview, then straight into the layover dashboard.
  */
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, Modal, ScrollView, Pressable, Switch,
-  TextInput, StyleSheet, ActivityIndicator,
+  TextInput, StyleSheet, ActivityIndicator, Platform,
 } from 'react-native';
-import { X, Plane, Clock, MapPin, AlertCircle, ChevronRight } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
+import {
+  X, Plane, Clock, MapPin, AlertCircle, CalendarDays, Moon, BadgeCheck,
+} from 'lucide-react-native';
 import { GlobalTimePicker } from '../selectors/GlobalTimePicker';
+import { GlobalCalendarPicker } from '../selectors/GlobalCalendarPicker';
+import { color, space, radius, type as t } from '../../theme/tokens';
 import {
   createLayoverSession,
   searchAirports,
@@ -20,17 +26,14 @@ import {
   type ComfortLevel,
 } from '../../services/layover';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 interface Props {
   visible: boolean;
   onClose: () => void;
+  /** Optional — the sheet always routes to the layover dashboard itself. */
   onSessionCreated?: (sessionId: string, safeReturnSuggested: boolean) => void;
   tripId?: string | null;
   initialCity?: string | null;
 }
-
-// ── Vibe chips ────────────────────────────────────────────────────────────────
 
 const VIBE_OPTIONS = [
   { key: 'food',        label: '🍜 Food' },
@@ -39,33 +42,61 @@ const VIBE_OPTIONS = [
   { key: 'culture',     label: '🏛 Culture' },
   { key: 'rest',        label: '😴 Rest' },
   { key: 'meetups',     label: '🤝 Meetups' },
-  { key: 'hidden_gems', label: '💎 Hidden Gems' },
 ];
 
 const COMFORT_OPTIONS: Array<{ key: ComfortLevel; label: string; desc: string }> = [
-  { key: 'safe_only',  label: 'Safe only',   desc: 'Airport-only or very close activities' },
-  { key: 'moderate',   label: 'Moderate',    desc: 'Some outside options with good buffers' },
-  { key: 'adventurous',label: 'Adventurous', desc: 'Explore the city — tight but doable' },
+  { key: 'safe_only',   label: 'Play it safe', desc: 'Airport-only or right next door' },
+  { key: 'moderate',    label: 'Balanced',     desc: 'Out and about with generous buffers' },
+  { key: 'adventurous', label: 'Adventurous',  desc: 'Squeeze the most out of the window' },
 ];
 
-// ── Component ─────────────────────────────────────────────────────────────────
+function pad(n: number) { return n < 10 ? `0${n}` : String(n); }
+
+function todayLocalDate(offsetDays = 0): string {
+  const d = new Date(Date.now() + offsetDays * 86_400_000);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Naive local parse — used only for duration preview (tz-independent diff). */
+function parseWall(date: string | null, time: string | null): Date | null {
+  if (!date || !time) return null;
+  const [y, mo, dd] = date.split('-').map(Number);
+  const [h, mi] = time.split(':').map(Number);
+  if ([y, mo, dd, h, mi].some((x) => Number.isNaN(x))) return null;
+  return new Date(y, mo - 1, dd, h, mi, 0, 0);
+}
+
+function fmtDateLabel(date: string | null): string {
+  if (!date) return 'Date';
+  const d = parseWall(date, '12:00');
+  return d ? d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : date;
+}
+
+function fmtTimeLabel(time: string | null): string {
+  if (!time) return 'Time';
+  const d = parseWall(todayLocalDate(), time);
+  return d ? d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : time;
+}
 
 export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, initialCity }: Props) {
-  const [step, setStep] = useState<'airport' | 'time' | 'prefs'>('airport');
+  const router = useRouter();
 
   // Airport
-  const [airportQuery, setAirportQuery]     = useState(initialCity ?? '');
-  const [airportResults, setAirportResults] = useState<AirportProfile[]>([]);
-  const [selectedAirport, setSelectedAirport] = useState<AirportProfile | null>(null);
-  const [searching, setSearching]           = useState(false);
+  const [query, setQuery]             = useState(initialCity ?? '');
+  const [results, setResults]         = useState<AirportProfile[]>([]);
+  const [airport, setAirport]         = useState<AirportProfile | null>(null);
+  const [searching, setSearching]     = useState(false);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Time
-  const [arrivalTime,   setArrivalTime]   = useState<string | null>(null);
-  const [departureTime, setDepartureTime] = useState<string | null>(null);
-  const [timePickerFor, setTimePickerFor] = useState<'arrival' | 'departure' | null>(null);
-  const [flightType, setFlightType]       = useState<FlightType>('international');
+  // Times (airport-local wall time)
+  const [arrDate, setArrDate] = useState<string | null>(null);
+  const [arrTime, setArrTime] = useState<string | null>(null);
+  const [depDate, setDepDate] = useState<string | null>(null);
+  const [depTime, setDepTime] = useState<string | null>(null);
+  const [pickerFor, setPickerFor] = useState<null | 'arrDate' | 'arrTime' | 'depDate' | 'depTime'>(null);
 
-  // Options
+  // Prefs
+  const [flightType, setFlightType]                   = useState<FlightType>('international');
   const [immigrationRequired, setImmigrationRequired] = useState(false);
   const [checkedBags, setCheckedBags]                 = useState(false);
   const [loungeAccess, setLoungeAccess]               = useState(false);
@@ -76,59 +107,75 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
 
-  const toggleVibe = (key: string) => {
-    setVibeChips((prev) =>
-      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
-    );
+  // Debounced airport autocomplete
+  useEffect(() => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    const q = query.trim();
+    if (airport && query.startsWith(airport.iataCode)) return; // selection label, not a query
+    if (q.length < 2) { setResults([]); return; }
+    searchTimer.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        setResults(await searchAirports(q));
+      } finally {
+        setSearching(false);
+      }
+    }, 280);
+    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
+  }, [query, airport]);
+
+  const selectAirport = (ap: AirportProfile) => {
+    setAirport(ap);
+    setResults([]);
+    setQuery(`${ap.iataCode} — ${ap.name}`);
   };
 
-  const handleAirportSearch = async () => {
-    if (airportQuery.trim().length < 2) return;
-    setSearching(true);
-    try {
-      const results = await searchAirports(airportQuery);
-      setAirportResults(results);
-    } finally {
-      setSearching(false);
-    }
+  const clearAirport = () => {
+    setAirport(null);
+    setQuery('');
   };
 
-  const buildDatetime = (hhMm: string | null): string | null => {
-    if (!hhMm) return null;
-    const [h, m] = hhMm.split(':').map(Number);
-    if (isNaN(h) || isNaN(m)) return null;
-    const d = new Date();
-    d.setHours(h, m, 0, 0);
-    return d.toISOString();
-  };
+  const preview = useMemo(() => {
+    const a = parseWall(arrDate, arrTime);
+    const d = parseWall(depDate, depTime);
+    if (!a || !d) return null;
+    const minutes = Math.round((d.getTime() - a.getTime()) / 60_000);
+    if (minutes <= 0) return { minutes, label: 'Departure must be after arrival', invalid: true, overnight: false };
+    if (minutes > 48 * 60) return { minutes, label: 'Layovers longer than 48h aren’t supported', invalid: true, overnight: false };
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    const overnight = arrDate !== depDate;
+    return {
+      minutes,
+      invalid: false,
+      overnight,
+      label: `${h}h${m > 0 ? ` ${m}m` : ''} on the ground${overnight ? ' · overnight' : ''}`,
+    };
+  }, [arrDate, arrTime, depDate, depTime]);
 
-  const formatTimeLabel = (hhMm: string | null): string => {
-    if (!hhMm) return '';
-    const [h, m] = hhMm.split(':').map(Number);
-    const d = new Date();
-    d.setHours(h, m, 0, 0);
-    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  };
+  const toggleVibe = (key: string) =>
+    setVibeChips((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
 
   const handleCreate = async () => {
     setError(null);
-    const arrival   = buildDatetime(arrivalTime);
-    const departure = buildDatetime(departureTime);
-
-    if (!arrival || !departure) {
-      setError('Please pick both arrival and departure times.');
+    if (!airport) {
+      setError('Pick your airport from the search results — we need its timezone to get your times right.');
       return;
     }
-    if (new Date(departure) <= new Date(arrival)) {
-      setError('Departure must be after arrival.');
+    if (!arrDate || !arrTime || !depDate || !depTime) {
+      setError('Pick the date and time for both arrival and departure.');
+      return;
+    }
+    if (!preview || preview.invalid) {
+      setError(preview?.label ?? 'Check your times.');
       return;
     }
 
     setLoading(true);
     try {
       const payload: CreateSessionPayload = {
-        arrivalTime:   arrival,
-        departureTime: departure,
+        arrivalLocal:   `${arrDate}T${arrTime}`,
+        departureLocal: `${depDate}T${depTime}`,
         flightType,
         immigrationRequired,
         checkedBags,
@@ -137,113 +184,123 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
         comfortLevel,
         vibeChips,
         tripId: tripId ?? null,
-        ...(selectedAirport?.id
-          ? { airportId: selectedAirport.id }
-          : {
-              manualAirportName: (selectedAirport?.name ?? airportQuery) || null,
-              manualCity:        selectedAirport?.city ?? initialCity ?? null,
-              manualCountry:     selectedAirport?.country ?? null,
-              manualIata:        selectedAirport?.iataCode ?? null,
-            }),
+        ...(airport.id ? { airportId: airport.id, iata: airport.iataCode } : { iata: airport.iataCode }),
       };
 
       const result = await createLayoverSession(payload);
-      onSessionCreated?.(result.session.id, result.safeReturnSuggested);
       onClose();
+      onSessionCreated?.(result.session.id, result.safeReturnSuggested);
+      router.push(`/layover/${result.session.id}` as any);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '';
       if (msg.includes('feature_disabled') || msg.includes('not yet enabled')) {
         setError('Layover Mode is not yet enabled. Check back soon!');
       } else {
-        setError('Could not start layover session. Please try again.');
+        setError('Could not start your layover. Please try again.');
       }
     } finally {
       setLoading(false);
     }
   };
 
+  const tzNote = airport
+    ? `Times are local to ${airport.iataCode} (${airport.timezone})`
+    : 'Pick an airport from the list so times use its local timezone';
+
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={styles.container}>
-        {/* Header */}
         <View style={styles.header}>
-          <Pressable onPress={onClose} style={styles.closeBtn} accessibilityLabel="Close">
-            <X size={22} color="#666" />
+          <Pressable onPress={onClose} style={styles.closeBtn} accessibilityLabel="Close" hitSlop={8}>
+            <X size={22} color={color.mute} />
           </Pressable>
           <Text style={styles.title}>Layover Mode</Text>
           <View style={{ width: 38 }} />
         </View>
 
         <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
-          {/* Step: Airport */}
-          <Text style={styles.sectionLabel}><Plane size={14} color="#666" /> Airport</Text>
-          <View style={styles.row}>
+          {/* Airport */}
+          <Text style={styles.sectionLabel}>Where's your layover?</Text>
+          <View style={styles.searchWrap}>
+            <Plane size={16} color={color.faint} />
             <TextInput
-              style={[styles.input, { flex: 1 }]}
-              placeholder="IATA code or city (e.g. TPE, Tokyo)"
-              value={airportQuery}
-              onChangeText={setAirportQuery}
-              onSubmitEditing={handleAirportSearch}
-              returnKeyType="search"
+              style={styles.searchInput}
+              placeholder="Airport, city or IATA code (TPE, Tokyo…)"
+              placeholderTextColor={color.faint}
+              value={query}
+              onChangeText={(v) => { setQuery(v); if (airport) setAirport(null); }}
               autoCapitalize="characters"
+              autoCorrect={false}
             />
-            <Pressable style={styles.searchBtn} onPress={handleAirportSearch}>
-              {searching
-                ? <ActivityIndicator size="small" color="#fff" />
-                : <Text style={styles.searchBtnText}>Search</Text>}
-            </Pressable>
+            {searching
+              ? <ActivityIndicator size="small" color={color.deep} />
+              : airport
+                ? <Pressable onPress={clearAirport} hitSlop={8}><X size={16} color={color.faint} /></Pressable>
+                : null}
           </View>
 
-          {airportResults.length > 0 && (
+          {results.length > 0 && !airport && (
             <View style={styles.resultsBox}>
-              {airportResults.map((ap) => (
-                <Pressable
-                  key={ap.iataCode}
-                  style={[styles.resultItem, selectedAirport?.iataCode === ap.iataCode && styles.resultItemSelected]}
-                  onPress={() => { setSelectedAirport(ap); setAirportResults([]); setAirportQuery(`${ap.iataCode} — ${ap.name}`); }}
-                >
-                  <Text style={styles.resultCode}>{ap.iataCode}</Text>
-                  <Text style={styles.resultName}>{ap.name}</Text>
-                  <Text style={styles.resultCity}>{ap.city}, {ap.country}</Text>
+              {results.slice(0, 6).map((ap) => (
+                <Pressable key={`${ap.iataCode}-${ap.id ?? 'static'}`} style={styles.resultItem} onPress={() => selectAirport(ap)}>
+                  <View style={styles.iataBadge}><Text style={styles.iataBadgeText}>{ap.iataCode}</Text></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.resultName} numberOfLines={1}>{ap.name}</Text>
+                    <Text style={styles.resultCity} numberOfLines={1}>{ap.city}, {ap.country}</Text>
+                  </View>
+                  {ap.verified && <BadgeCheck size={15} color={color.deep} />}
                 </Pressable>
               ))}
             </View>
           )}
 
-          {selectedAirport && (
-            <View style={styles.selectedBadge}>
-              <MapPin size={13} color="#2196F3" />
-              <Text style={styles.selectedBadgeText}>{selectedAirport.name} · {selectedAirport.city}</Text>
+          {airport && (
+            <View style={styles.selectedCard}>
+              <MapPin size={14} color={color.deep} />
+              <Text style={styles.selectedText} numberOfLines={1}>
+                {airport.city}, {airport.country} · {airport.timezone}
+              </Text>
             </View>
           )}
 
-          {/* Time */}
-          <Text style={styles.sectionLabel}><Clock size={14} color="#666" /> Time window</Text>
+          {/* Times */}
+          <Text style={styles.sectionLabel}>You land</Text>
           <View style={styles.row}>
-            <View style={styles.halfField}>
-              <Text style={styles.fieldLabel}>Arrival time</Text>
-              <Pressable style={styles.timeTrigger} onPress={() => setTimePickerFor('arrival')}>
-                <Clock size={13} color={arrivalTime ? '#1a1a1a' : '#aaa'} />
-                <Text style={[styles.timeTriggerText, !arrivalTime && styles.timeTriggerPlaceholder]}>
-                  {arrivalTime ? formatTimeLabel(arrivalTime) : 'Pick time'}
-                </Text>
-                <ChevronRight size={13} color="#aaa" />
-              </Pressable>
-            </View>
-            <View style={styles.halfField}>
-              <Text style={styles.fieldLabel}>Departure time</Text>
-              <Pressable style={styles.timeTrigger} onPress={() => setTimePickerFor('departure')}>
-                <Clock size={13} color={departureTime ? '#1a1a1a' : '#aaa'} />
-                <Text style={[styles.timeTriggerText, !departureTime && styles.timeTriggerPlaceholder]}>
-                  {departureTime ? formatTimeLabel(departureTime) : 'Pick time'}
-                </Text>
-                <ChevronRight size={13} color="#aaa" />
-              </Pressable>
-            </View>
+            <Pressable style={[styles.pickerBtn, { flex: 1.4 }]} onPress={() => setPickerFor('arrDate')}>
+              <CalendarDays size={14} color={arrDate ? color.ink : color.faint} />
+              <Text style={[styles.pickerText, !arrDate && styles.pickerPlaceholder]}>{fmtDateLabel(arrDate)}</Text>
+            </Pressable>
+            <Pressable style={[styles.pickerBtn, { flex: 1 }]} onPress={() => setPickerFor('arrTime')}>
+              <Clock size={14} color={arrTime ? color.ink : color.faint} />
+              <Text style={[styles.pickerText, !arrTime && styles.pickerPlaceholder]}>{fmtTimeLabel(arrTime)}</Text>
+            </Pressable>
           </View>
 
+          <Text style={styles.sectionLabel}>Your next flight leaves</Text>
+          <View style={styles.row}>
+            <Pressable style={[styles.pickerBtn, { flex: 1.4 }]} onPress={() => setPickerFor('depDate')}>
+              <CalendarDays size={14} color={depDate ? color.ink : color.faint} />
+              <Text style={[styles.pickerText, !depDate && styles.pickerPlaceholder]}>{fmtDateLabel(depDate)}</Text>
+            </Pressable>
+            <Pressable style={[styles.pickerBtn, { flex: 1 }]} onPress={() => setPickerFor('depTime')}>
+              <Clock size={14} color={depTime ? color.ink : color.faint} />
+              <Text style={[styles.pickerText, !depTime && styles.pickerPlaceholder]}>{fmtTimeLabel(depTime)}</Text>
+            </Pressable>
+          </View>
+
+          <Text style={styles.tzNote}>{tzNote}</Text>
+
+          {preview && (
+            <View style={[styles.previewChip, preview.invalid && styles.previewChipBad]}>
+              {preview.overnight
+                ? <Moon size={13} color={preview.invalid ? '#C62828' : color.onInk} />
+                : <Clock size={13} color={preview.invalid ? '#C62828' : color.onInk} />}
+              <Text style={[styles.previewText, preview.invalid && styles.previewTextBad]}>{preview.label}</Text>
+            </View>
+          )}
+
           {/* Flight type */}
-          <Text style={styles.sectionLabel}>Flight type</Text>
+          <Text style={styles.sectionLabel}>Next flight is</Text>
           <View style={styles.segmented}>
             {(['domestic', 'international'] as FlightType[]).map((ft) => (
               <Pressable
@@ -252,40 +309,49 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
                 onPress={() => setFlightType(ft)}
               >
                 <Text style={[styles.segmentText, flightType === ft && styles.segmentTextActive]}>
-                  {ft === 'domestic' ? '🛫 Domestic' : '🌍 International'}
+                  {ft === 'domestic' ? 'Domestic' : 'International'}
                 </Text>
               </Pressable>
             ))}
           </View>
 
-          {/* Toggles */}
+          {/* Situation toggles */}
           <Text style={styles.sectionLabel}>Your situation</Text>
-          {[
-            { label: 'Immigration required',  value: immigrationRequired, set: setImmigrationRequired },
-            { label: 'Checked bags',           value: checkedBags,         set: setCheckedBags },
-            { label: 'Lounge access',          value: loungeAccess,        set: setLoungeAccess },
-            { label: 'Want to leave airport',  value: wantsToLeave,        set: setWantsToLeave },
-          ].map(({ label, value, set }) => (
-            <View key={label} style={styles.toggleRow}>
-              <Text style={styles.toggleLabel}>{label}</Text>
-              <Switch value={value} onValueChange={set} trackColor={{ true: '#2196F3' }} />
-            </View>
-          ))}
+          <View style={styles.toggleCard}>
+            {[
+              { label: 'I go through immigration', value: immigrationRequired, set: setImmigrationRequired },
+              { label: 'I have checked bags',       value: checkedBags,         set: setCheckedBags },
+              { label: 'I have lounge access',      value: loungeAccess,        set: setLoungeAccess },
+              { label: 'I want to leave the airport', value: wantsToLeave,      set: setWantsToLeave },
+            ].map(({ label, value, set }, i, arr) => (
+              <View key={label} style={[styles.toggleRow, i < arr.length - 1 && styles.toggleDivider]}>
+                <Text style={styles.toggleLabel}>{label}</Text>
+                <Switch
+                  value={value}
+                  onValueChange={set}
+                  trackColor={{ true: color.deep, false: color.haze }}
+                  thumbColor={Platform.OS === 'android' ? color.paperRaised : undefined}
+                />
+              </View>
+            ))}
+          </View>
 
-          {/* Comfort level */}
+          {/* Comfort */}
           <Text style={styles.sectionLabel}>Comfort level</Text>
-          {COMFORT_OPTIONS.map((opt) => (
-            <Pressable
-              key={opt.key}
-              style={[styles.comfortOption, comfortLevel === opt.key && styles.comfortOptionActive]}
-              onPress={() => setComfortLevel(opt.key)}
-            >
-              <Text style={[styles.comfortLabel, comfortLevel === opt.key && styles.comfortLabelActive]}>{opt.label}</Text>
-              <Text style={styles.comfortDesc}>{opt.desc}</Text>
-            </Pressable>
-          ))}
+          <View style={styles.comfortRow}>
+            {COMFORT_OPTIONS.map((opt) => (
+              <Pressable
+                key={opt.key}
+                style={[styles.comfortCard, comfortLevel === opt.key && styles.comfortCardActive]}
+                onPress={() => setComfortLevel(opt.key)}
+              >
+                <Text style={[styles.comfortLabel, comfortLevel === opt.key && styles.comfortLabelActive]}>{opt.label}</Text>
+                <Text style={styles.comfortDesc}>{opt.desc}</Text>
+              </Pressable>
+            ))}
+          </View>
 
-          {/* Vibe chips */}
+          {/* Vibes */}
           <Text style={styles.sectionLabel}>What are you into?</Text>
           <View style={styles.chipRow}>
             {VIBE_OPTIONS.map((v) => (
@@ -299,15 +365,6 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
             ))}
           </View>
 
-          {/* Warning */}
-          {!selectedAirport && !initialCity && (
-            <View style={styles.warningBox}>
-              <AlertCircle size={14} color="#E65100" />
-              <Text style={styles.warningText}>Airport name used for city-level search only. Exact location not required.</Text>
-            </View>
-          )}
-
-          {/* Inline error */}
           {error ? (
             <View style={styles.errorBox}>
               <AlertCircle size={14} color="#C62828" />
@@ -315,87 +372,117 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
             </View>
           ) : null}
 
-          {/* Submit */}
           <Pressable
             style={[styles.submitBtn, loading && styles.submitBtnDisabled]}
             onPress={handleCreate}
             disabled={loading}
           >
             {loading
-              ? <ActivityIndicator color="#fff" />
-              : <Text style={styles.submitBtnText}>Start Layover Mode</Text>}
+              ? <ActivityIndicator color={color.onInk} />
+              : <Text style={styles.submitBtnText}>Start layover</Text>}
           </Pressable>
         </ScrollView>
       </View>
 
-      <GlobalTimePicker
-        visible={timePickerFor === 'arrival'}
-        title="Arrival time"
-        value={arrivalTime}
-        allowClear
-        onChange={(v) => { setArrivalTime(v); }}
-        onClose={() => setTimePickerFor(null)}
+      {/* Pickers */}
+      <GlobalCalendarPicker
+        mode="single"
+        visible={pickerFor === 'arrDate'}
+        title="Arrival date"
+        value={arrDate}
+        minDate={todayLocalDate(-1)}
+        onConfirm={(v) => {
+          setArrDate(v);
+          if (v && !depDate) setDepDate(v);
+          setPickerFor(null);
+        }}
+        onCancel={() => setPickerFor(null)}
+      />
+      <GlobalCalendarPicker
+        mode="single"
+        visible={pickerFor === 'depDate'}
+        title="Departure date"
+        value={depDate ?? arrDate}
+        minDate={arrDate ?? todayLocalDate(-1)}
+        onConfirm={(v) => { setDepDate(v); setPickerFor(null); }}
+        onCancel={() => setPickerFor(null)}
       />
       <GlobalTimePicker
-        visible={timePickerFor === 'departure'}
+        visible={pickerFor === 'arrTime'}
+        title="Arrival time"
+        value={arrTime}
+        onChange={(v) => setArrTime(v)}
+        onClose={() => setPickerFor(null)}
+      />
+      <GlobalTimePicker
+        visible={pickerFor === 'depTime'}
         title="Departure time"
-        value={departureTime}
-        allowClear
-        onChange={(v) => { setDepartureTime(v); }}
-        onClose={() => setTimePickerFor(null)}
+        value={depTime}
+        onChange={(v) => setDepTime(v)}
+        onClose={() => setPickerFor(null)}
       />
     </Modal>
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
-  container:    { flex: 1, backgroundColor: '#fff' },
-  header:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#eee' },
-  closeBtn:     { padding: 8 },
-  title:        { fontSize: 17, fontWeight: '600', color: '#1a1a1a' },
-  body:         { padding: 16, paddingBottom: 40 },
-  sectionLabel: { fontSize: 13, fontWeight: '600', color: '#666', marginTop: 20, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
-  row:          { flexDirection: 'row', gap: 8 },
-  halfField:    { flex: 1 },
-  fieldLabel:   { fontSize: 12, color: '#888', marginBottom: 4 },
-  input:        { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, fontSize: 15, backgroundColor: '#fafafa' },
-  timeTrigger:  { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 12, backgroundColor: '#fafafa' },
-  timeTriggerText:       { flex: 1, fontSize: 15, color: '#1a1a1a' },
-  timeTriggerPlaceholder:{ color: '#aaa' },
-  searchBtn:    { backgroundColor: '#2196F3', borderRadius: 8, paddingHorizontal: 16, justifyContent: 'center' },
-  searchBtnText:{ color: '#fff', fontWeight: '600', fontSize: 14 },
-  resultsBox:   { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, marginTop: 4, overflow: 'hidden' },
-  resultItem:   { padding: 12, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
-  resultItemSelected: { backgroundColor: '#E3F2FD' },
-  resultCode:   { fontSize: 15, fontWeight: '700', color: '#1a1a1a' },
-  resultName:   { fontSize: 13, color: '#444', marginTop: 2 },
-  resultCity:   { fontSize: 12, color: '#888', marginTop: 1 },
-  selectedBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#E3F2FD', borderRadius: 6, padding: 8, marginTop: 6 },
-  selectedBadgeText: { fontSize: 13, color: '#1565C0' },
-  segmented:    { flexDirection: 'row', gap: 8 },
-  segment:      { flex: 1, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#ddd', alignItems: 'center' },
-  segmentActive: { backgroundColor: '#2196F3', borderColor: '#2196F3' },
-  segmentText:  { fontSize: 14, color: '#444' },
-  segmentTextActive: { color: '#fff', fontWeight: '600' },
-  toggleRow:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f5f5f5' },
-  toggleLabel:  { fontSize: 15, color: '#333' },
-  comfortOption: { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, marginBottom: 8 },
-  comfortOptionActive: { borderColor: '#2196F3', backgroundColor: '#E3F2FD' },
-  comfortLabel: { fontSize: 15, fontWeight: '600', color: '#333' },
-  comfortLabelActive: { color: '#1565C0' },
-  comfortDesc:  { fontSize: 12, color: '#888', marginTop: 2 },
-  chipRow:      { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip:         { borderWidth: 1, borderColor: '#ddd', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 },
-  chipActive:   { backgroundColor: '#2196F3', borderColor: '#2196F3' },
-  chipText:     { fontSize: 13, color: '#555' },
-  chipTextActive: { color: '#fff' },
-  warningBox:   { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: '#FFF3E0', borderRadius: 8, padding: 10, marginTop: 12 },
-  warningText:  { fontSize: 12, color: '#E65100', flex: 1 },
-  errorBox:     { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: '#FFEBEE', borderRadius: 8, padding: 12, marginTop: 12 },
-  errorText:    { fontSize: 13, color: '#C62828', flex: 1, fontWeight: '500' },
-  submitBtn:    { backgroundColor: '#2196F3', borderRadius: 12, padding: 16, alignItems: 'center', marginTop: 24 },
+  container:    { flex: 1, backgroundColor: color.paper },
+  header:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space.lg, paddingVertical: space.md, borderBottomWidth: 1, borderBottomColor: color.haze },
+  closeBtn:     { padding: space.xs },
+  title:        { ...t.heading, color: color.ink },
+  body:         { padding: space.lg, paddingBottom: 48 },
+  sectionLabel: { ...t.stamp, color: color.mute, textTransform: 'uppercase', marginTop: space.xl, marginBottom: space.sm },
+
+  searchWrap:   { flexDirection: 'row', alignItems: 'center', gap: space.sm, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: 2 },
+  searchInput:  { flex: 1, ...t.body, color: color.ink, paddingVertical: space.md },
+  resultsBox:   { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, marginTop: space.xs, overflow: 'hidden' },
+  resultItem:   { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md, borderBottomWidth: 1, borderBottomColor: color.haze },
+  iataBadge:    { backgroundColor: color.ink, borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 4, minWidth: 46, alignItems: 'center' },
+  iataBadgeText:{ ...t.stamp, color: color.onInk },
+  resultName:   { ...t.bodyStrong, color: color.ink },
+  resultCity:   { ...t.small, color: color.mute },
+  selectedCard: { flexDirection: 'row', alignItems: 'center', gap: space.sm, backgroundColor: 'rgba(10,61,74,0.08)', borderRadius: radius.md, padding: space.md, marginTop: space.sm },
+  selectedText: { ...t.small, color: color.deep, flex: 1 },
+
+  row:          { flexDirection: 'row', gap: space.sm },
+  pickerBtn:    { flexDirection: 'row', alignItems: 'center', gap: space.sm, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.md },
+  pickerText:   { ...t.body, color: color.ink, flexShrink: 1 },
+  pickerPlaceholder: { color: color.faint },
+  tzNote:       { ...t.small, color: color.faint, marginTop: space.sm },
+
+  previewChip:  { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', backgroundColor: color.deep, borderRadius: radius.pill ?? 999, paddingHorizontal: space.md, paddingVertical: 6, marginTop: space.md },
+  previewChipBad: { backgroundColor: '#FDECEA' },
+  previewText:  { ...t.small, color: color.onInk, fontWeight: '600' },
+  previewTextBad: { color: '#C62828' },
+
+  segmented:    { flexDirection: 'row', gap: space.sm },
+  segment:      { flex: 1, paddingVertical: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, alignItems: 'center', backgroundColor: color.paperRaised },
+  segmentActive: { backgroundColor: color.ink, borderColor: color.ink },
+  segmentText:  { ...t.bodyStrong, color: color.mute },
+  segmentTextActive: { color: color.onInk },
+
+  toggleCard:   { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingHorizontal: space.md },
+  toggleRow:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: space.md },
+  toggleDivider:{ borderBottomWidth: 1, borderBottomColor: color.haze },
+  toggleLabel:  { ...t.body, color: color.ink, flex: 1, paddingRight: space.md },
+
+  comfortRow:   { gap: space.sm },
+  comfortCard:  { borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, padding: space.md, backgroundColor: color.paperRaised },
+  comfortCardActive: { borderColor: color.deep, backgroundColor: 'rgba(10,61,74,0.08)' },
+  comfortLabel: { ...t.bodyStrong, color: color.ink },
+  comfortLabelActive: { color: color.deep },
+  comfortDesc:  { ...t.small, color: color.mute, marginTop: 2 },
+
+  chipRow:      { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  chip:         { borderWidth: 1, borderColor: color.haze, borderRadius: 999, paddingHorizontal: space.md, paddingVertical: 8, backgroundColor: color.paperRaised },
+  chipActive:   { backgroundColor: color.ink, borderColor: color.ink },
+  chipText:     { ...t.small, color: color.mute },
+  chipTextActive: { color: color.onInk },
+
+  errorBox:     { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm, backgroundColor: '#FDECEA', borderRadius: radius.md, padding: space.md, marginTop: space.lg },
+  errorText:    { ...t.small, color: '#C62828', flex: 1, fontWeight: '500' },
+
+  submitBtn:    { backgroundColor: color.signal, borderRadius: radius.lg, paddingVertical: space.lg, alignItems: 'center', marginTop: space.xl },
   submitBtnDisabled: { opacity: 0.6 },
-  submitBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  submitBtnText: { ...t.bodyStrong, color: color.onInk, fontSize: 16 },
 });

@@ -10,6 +10,40 @@ import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
 import { assess, type SafetyRating } from "./LayoverSafetyEngine.js";
 import { sanitizeRecommendation, type SafeRecommendation } from "./LayoverPrivacyGuard.js";
+import { localHour } from "./AirportTime.js";
+
+/**
+ * Which parts of the day does the remaining layover window cover, in the
+ * airport's local time? Used to keep recommendations honest: no nightlife
+ * cards for a 10:00–14:00 layover, no museum-first ordering at 23:00.
+ */
+export function timeOfDayContext(
+  airport: AirportProfile,
+  session: LayoverSession,
+  nowMs = Date.now(),
+): { coversEvening: boolean; coversDaytime: boolean } {
+  const tz = airport.timezone || "UTC";
+  const hourAt = (ms: number): number => {
+    try {
+      return localHour(tz, new Date(ms));
+    } catch {
+      return new Date(ms).getUTCHours();
+    }
+  };
+  // End at the boarding cutoff when known — being "out at 23:00" is irrelevant
+  // if boarding is at 22:15. Sample every 30 min for hour-precise coverage
+  // (no ceil() overshoot into hours the window never touches), capped at 24h.
+  const startMs = Math.max(nowMs, new Date(session.arrivalTime).getTime());
+  const endMs = new Date(session.boardingTime ?? session.departureTime).getTime();
+  const cappedEndMs = Math.min(endMs, startMs + 24 * 3_600_000);
+  const hours = new Set<number>();
+  for (let ts = startMs; ts <= cappedEndMs; ts += 30 * 60_000) hours.add(hourAt(ts));
+  if (cappedEndMs >= startMs) hours.add(hourAt(cappedEndMs));
+  return {
+    coversEvening: [...hours].some((h) => h >= 17 || h <= 1),
+    coversDaytime: [...hours].some((h) => h >= 9 && h < 18),
+  };
+}
 
 export interface RecommendationRow {
   id: string;
@@ -201,10 +235,23 @@ export async function generateRecommendations(
   // 1. Inside-airport suggestions (always generated)
   const insideCandidates = insideAirportCandidates(session);
 
-  // 2. Discovery places near airport city
-  const discoveryCandidates = session.wantsToLeave && session.layoverMinutes >= 90
+  // 2. Discovery places near airport city — filtered and ranked for the
+  //    time of day the traveler will actually be out there.
+  const tod = timeOfDayContext(airport, session, nowMs);
+  let discoveryCandidates = session.wantsToLeave && session.layoverMinutes >= 90
     ? await fetchDiscoveryPlaces(db, city, session.vibeChips)
     : [];
+  if (!tod.coversEvening) {
+    // Daytime-only window: nightlife cards would be dishonest.
+    discoveryCandidates = discoveryCandidates.filter((c) => c.recType !== "nightlife");
+  }
+  discoveryCandidates = [...discoveryCandidates].sort((a, b) => {
+    const rank = (c: typeof a) =>
+      (c.verified ? 0 : 2) + // verified places lead
+      (tod.coversEvening && c.recType === "nightlife" ? -1 : 0) + // nightlife shines in the evening
+      (!tod.coversDaytime && (c.recType === "activity" || c.recType === "culture") ? 3 : 0); // sights sink at night
+    return rank(a) - rank(b);
+  });
 
   // 3. Quick city escape for long layovers
   const cityEscapeCandidates = session.wantsToLeave && session.layoverMinutes >= 180

@@ -25,7 +25,15 @@ import {
   computeBuffer,
   safetyLabel,
   rankActivities,
+  computeWindow,
+  adviseLeaving,
+  estimateExitDelay,
 } from "../services/airport/LayoverSafetyEngine.js";
+import {
+  wallTimeToUtc,
+  localHour,
+  localDayString,
+} from "../services/airport/AirportTime.js";
 import {
   sanitizeRecommendation,
   sanitizeCompassAnswer,
@@ -667,5 +675,258 @@ describe("Admin airport profile buffer defaults", () => {
     const profile = tables.airport_profiles.find((p) => p.iata_code === "NRT");
     assert.ok(profile, "profile should be persisted");
     assert.equal(profile.verified, false); // default
+  });
+});
+
+// ── AirportTime (wall-time ⇄ UTC, timezone-local helpers) ─────────────────────
+
+describe("AirportTime", () => {
+  it("converts Tokyo wall time to UTC (no DST)", () => {
+    const d = wallTimeToUtc("Asia/Tokyo", "2026-08-10T14:30");
+    assert.ok(d, "should convert");
+    assert.equal(d!.toISOString(), "2026-08-10T05:30:00.000Z"); // JST = UTC+9
+  });
+
+  it("converts LAX wall time to UTC across DST", () => {
+    const summer = wallTimeToUtc("America/Los_Angeles", "2026-07-20T09:00");
+    assert.equal(summer!.toISOString(), "2026-07-20T16:00:00.000Z"); // PDT −7
+    const winter = wallTimeToUtc("America/Los_Angeles", "2026-01-20T09:00");
+    assert.equal(winter!.toISOString(), "2026-01-20T17:00:00.000Z"); // PST −8
+  });
+
+  it("localHour and localDayString report airport-local values", () => {
+    const instant = new Date("2026-03-10T20:00:00.000Z"); // 04:00 next day in Taipei
+    assert.equal(localHour("Asia/Taipei", instant), 4);
+    assert.equal(localDayString("Asia/Taipei", instant), "2026-03-11");
+    assert.equal(localDayString("UTC", instant), "2026-03-10");
+  });
+
+  it("wallTimeToUtc rejects garbage input", () => {
+    assert.equal(wallTimeToUtc("Asia/Tokyo", "not-a-time"), null);
+  });
+});
+
+// ── computeWindow: usable window math & status tiers ──────────────────────────
+
+describe("computeWindow tiers", () => {
+  const airport = makeAirportProfile(); // Asia/Taipei buffers 60/120 +20 traffic
+
+  function fixedSession(arrivalIso: string, departureIso: string, opts: any = {}): any {
+    return {
+      id: "sess-window", userId: USER_A, airportId: "airport-fake", tripId: null,
+      arrivalTime: arrivalIso, departureTime: departureIso, boardingTime: null,
+      layoverMinutes: Math.round((new Date(departureIso).getTime() - new Date(arrivalIso).getTime()) / 60000),
+      flightType: "domestic", immigrationRequired: false, checkedBags: false,
+      loungeAccess: false, wantsToLeave: true, comfortLevel: "moderate",
+      vibeChips: [], manualAirportName: null, manualCity: "Taoyuan",
+      manualCountry: "Taiwan", manualIata: "TPE", canonicalCityId: null,
+      shareCityStatus: false, returnReminderAt: null,
+      status: "active", createdAt: arrivalIso, updatedAt: arrivalIso,
+      ...opts,
+    };
+  }
+
+  it("2h international layover with immigration → too_short", () => {
+    // 09:00–11:00 Taipei daytime
+    const s = fixedSession("2026-03-10T01:00:00.000Z", "2026-03-10T03:00:00.000Z", {
+      flightType: "international", immigrationRequired: true,
+    });
+    const w = computeWindow(airport, s, new Date("2026-03-10T01:00:00.000Z").getTime());
+    assert.equal(w.tier, "too_short");
+    assert.equal(w.usableMinutes, 0, "no usable time after intl buffers");
+  });
+
+  it("5h domestic layover → quick_city", () => {
+    // 09:00–14:00 Taipei
+    const s = fixedSession("2026-03-10T01:00:00.000Z", "2026-03-10T06:00:00.000Z");
+    const w = computeWindow(airport, s, new Date("2026-03-10T01:00:00.000Z").getTime());
+    assert.equal(w.tier, "quick_city");
+    assert.ok(w.usableMinutes >= 90 && w.usableMinutes < 240, `usable ${w.usableMinutes}`);
+  });
+
+  it("10h daytime domestic layover → half_day", () => {
+    // 09:00–19:00 Taipei, same local day
+    const s = fixedSession("2026-03-10T01:00:00.000Z", "2026-03-10T11:00:00.000Z");
+    const w = computeWindow(airport, s, new Date("2026-03-10T01:00:00.000Z").getTime());
+    assert.equal(w.tier, "half_day");
+    assert.equal(w.overnight, false);
+  });
+
+  it("overnight layover crossing local midnight → overnight", () => {
+    // 20:00 Taipei → 08:00 next Taipei day (12h)
+    const s = fixedSession("2026-03-10T12:00:00.000Z", "2026-03-11T00:00:00.000Z");
+    const w = computeWindow(airport, s, new Date("2026-03-10T12:00:00.000Z").getTime());
+    assert.equal(w.overnight, true);
+    assert.equal(w.tier, "overnight");
+  });
+
+  it("wantsToLeave=false forces airport_only even with plenty of time", () => {
+    const s = fixedSession("2026-03-10T01:00:00.000Z", "2026-03-10T06:00:00.000Z", { wantsToLeave: false });
+    const w = computeWindow(airport, s, new Date("2026-03-10T01:00:00.000Z").getTime());
+    assert.equal(w.tier, "airport_only");
+  });
+
+  it("boarding time (not departure) is the hard cutoff when present", () => {
+    const s = fixedSession("2026-03-10T01:00:00.000Z", "2026-03-10T06:00:00.000Z", {
+      boardingTime: "2026-03-10T05:30:00.000Z",
+    });
+    const w = computeWindow(airport, s, new Date("2026-03-10T01:00:00.000Z").getTime());
+    assert.ok(
+      w.hardReturnTime.getTime() <= new Date("2026-03-10T05:30:00.000Z").getTime(),
+      "hard return must respect boarding cutoff",
+    );
+  });
+
+  it("estimateExitDelay scales with flight type, immigration and bags", () => {
+    assert.equal(estimateExitDelay({ flightType: "domestic", immigrationRequired: false, checkedBags: false } as any), 15);
+    assert.equal(estimateExitDelay({ flightType: "international", immigrationRequired: false, checkedBags: false } as any), 25);
+    assert.equal(estimateExitDelay({ flightType: "international", immigrationRequired: true, checkedBags: true } as any), 65);
+  });
+
+  it("computeBuffer time-of-day extra uses the airport timezone", () => {
+    const s = fixedSession("2026-03-10T01:00:00.000Z", "2026-03-10T03:00:00.000Z");
+    // 03:00 UTC = 11:00 Taipei → no night extra in tz mode, +20 in UTC mode.
+    const tzAware = computeBuffer(airport, s, new Date("2026-03-10T03:00:00.000Z"), "Asia/Taipei");
+    const utcOnly = computeBuffer(airport, s, new Date("2026-03-10T03:00:00.000Z"));
+    assert.equal(tzAware.timeOfDayExtra, 0);
+    assert.equal(utcOnly.timeOfDayExtra, 20);
+  });
+});
+
+// ── adviseLeaving: "Can I Leave the Airport?" guidance ────────────────────────
+
+describe("adviseLeaving", () => {
+  const airport = makeAirportProfile();
+
+  function sessionFor(tier: "long" | "short" | "stay"): any {
+    const base = {
+      id: "sess-advice", userId: USER_A, airportId: "airport-fake", tripId: null,
+      boardingTime: null, flightType: "domestic", immigrationRequired: false,
+      checkedBags: false, loungeAccess: false, wantsToLeave: tier !== "stay",
+      comfortLevel: "moderate", vibeChips: [], manualAirportName: null,
+      manualCity: "Taoyuan", manualCountry: "Taiwan", manualIata: "TPE",
+      canonicalCityId: null, shareCityStatus: false, returnReminderAt: null,
+      status: "active", createdAt: "", updatedAt: "",
+    };
+    if (tier === "short") {
+      return { ...base, arrivalTime: "2026-03-10T01:00:00.000Z", departureTime: "2026-03-10T03:00:00.000Z",
+        flightType: "international", immigrationRequired: true, layoverMinutes: 120 };
+    }
+    return { ...base, arrivalTime: "2026-03-10T01:00:00.000Z", departureTime: "2026-03-10T11:00:00.000Z", layoverMinutes: 600 };
+  }
+
+  it("says yes with reasons for a roomy window", () => {
+    const s = sessionFor("long");
+    const w = computeWindow(airport, s, new Date(s.arrivalTime).getTime());
+    const advice = adviseLeaving(airport, s, w);
+    assert.equal(advice.verdict, "yes");
+    assert.ok(advice.reasons.length > 0);
+  });
+
+  it("says no when buffers eat the whole window", () => {
+    const s = sessionFor("short");
+    const w = computeWindow(airport, s, new Date(s.arrivalTime).getTime());
+    const advice = adviseLeaving(airport, s, w);
+    assert.equal(advice.verdict, "no");
+  });
+
+  it("respects the stay-airside preference", () => {
+    const s = sessionFor("stay");
+    const w = computeWindow(airport, s, new Date(s.arrivalTime).getTime());
+    const advice = adviseLeaving(airport, s, w);
+    assert.equal(advice.verdict, "stay_airside");
+  });
+
+  it("is always explicit about visa unknowns and the guidance disclaimer", () => {
+    const s = sessionFor("long");
+    const w = computeWindow(airport, s, new Date(s.arrivalTime).getTime());
+    const advice = adviseLeaving(airport, s, w);
+    assert.ok(advice.unknowns.some((u) => u.toLowerCase().includes("visa")), "visa must be listed as unknown");
+    assert.ok(advice.disclaimer.toLowerCase().includes("guidance"), "disclaimer must frame this as guidance");
+  });
+});
+
+// ── timeOfDayContext ─────────────────────────────────────────────────────────
+import { timeOfDayContext } from "../services/airport/LayoverRecommendationService.js";
+
+describe("timeOfDayContext", () => {
+  const airport = makeAirportProfile(); // Asia/Taipei (UTC+8)
+
+  function sessionAt(arrivalIso: string, departureIso: string): any {
+    return {
+      id: "sess-tod", userId: USER_A, airportId: "airport-fake", tripId: null,
+      arrivalTime: arrivalIso, departureTime: departureIso, boardingTime: null,
+      layoverMinutes: Math.round((new Date(departureIso).getTime() - new Date(arrivalIso).getTime()) / 60000),
+      flightType: "domestic", immigrationRequired: false, checkedBags: false,
+      loungeAccess: false, wantsToLeave: true, comfortLevel: "moderate",
+      vibeChips: [], manualAirportName: null, manualCity: "Taoyuan",
+      manualCountry: "Taiwan", manualIata: "TPE", canonicalCityId: null,
+      shareCityStatus: false, returnReminderAt: null, status: "active",
+      createdAt: "", updatedAt: "",
+    };
+  }
+
+  it("flags a 10:00–14:00 local window as daytime-only", () => {
+    const s = sessionAt("2026-03-10T02:00:00.000Z", "2026-03-10T06:00:00.000Z");
+    const tod = timeOfDayContext(airport, s, new Date(s.arrivalTime).getTime());
+    assert.equal(tod.coversEvening, false);
+    assert.equal(tod.coversDaytime, true);
+  });
+
+  it("flags a 17:00–23:00 local window as covering the evening", () => {
+    const s = sessionAt("2026-03-10T09:00:00.000Z", "2026-03-10T15:00:00.000Z");
+    const tod = timeOfDayContext(airport, s, new Date(s.arrivalTime).getTime());
+    assert.equal(tod.coversEvening, true);
+  });
+
+  it("flags a 22:00–08:00 overnight window as evening but not daytime", () => {
+    const s = sessionAt("2026-03-10T14:00:00.000Z", "2026-03-11T00:00:00.000Z");
+    const tod = timeOfDayContext(airport, s, new Date(s.arrivalTime).getTime());
+    assert.equal(tod.coversEvening, true);
+    assert.equal(tod.coversDaytime, false);
+  });
+
+  it("measures from 'now', not arrival, when the layover is already underway", () => {
+    // Arrived 06:00 local, but it is now 18:00 local with a 23:00 departure.
+    const s = sessionAt("2026-03-09T22:00:00.000Z", "2026-03-10T15:00:00.000Z");
+    const tod = timeOfDayContext(airport, s, new Date("2026-03-10T10:00:00.000Z").getTime());
+    assert.equal(tod.coversEvening, true);
+    assert.equal(tod.coversDaytime, false);
+  });
+});
+
+describe("timeOfDayContext precision", () => {
+  const airport = makeAirportProfile(); // Asia/Taipei (UTC+8)
+
+  it("does not overshoot into the evening on fractional-hour windows (12:00–16:30)", () => {
+    const s = {
+      id: "sess-tod2", userId: USER_A, airportId: "airport-fake", tripId: null,
+      arrivalTime: "2026-03-10T04:00:00.000Z", departureTime: "2026-03-10T08:30:00.000Z",
+      boardingTime: null, layoverMinutes: 270, flightType: "domestic",
+      immigrationRequired: false, checkedBags: false, loungeAccess: false,
+      wantsToLeave: true, comfortLevel: "moderate", vibeChips: [],
+      manualAirportName: null, manualCity: "Taoyuan", manualCountry: "Taiwan",
+      manualIata: "TPE", canonicalCityId: null, shareCityStatus: false,
+      returnReminderAt: null, status: "active", createdAt: "", updatedAt: "",
+    } as any;
+    const tod = timeOfDayContext(airport, s, new Date(s.arrivalTime).getTime());
+    assert.equal(tod.coversEvening, false, "16:30 end must not count hour 17");
+    assert.equal(tod.coversDaytime, true);
+  });
+
+  it("stops at the boarding cutoff, not departure (evening dies at 16:45 boarding)", () => {
+    const s = {
+      id: "sess-tod3", userId: USER_A, airportId: "airport-fake", tripId: null,
+      arrivalTime: "2026-03-10T02:00:00.000Z", departureTime: "2026-03-10T12:00:00.000Z",
+      boardingTime: "2026-03-10T08:45:00.000Z", layoverMinutes: 600, flightType: "domestic",
+      immigrationRequired: false, checkedBags: false, loungeAccess: false,
+      wantsToLeave: true, comfortLevel: "moderate", vibeChips: [],
+      manualAirportName: null, manualCity: "Taoyuan", manualCountry: "Taiwan",
+      manualIata: "TPE", canonicalCityId: null, shareCityStatus: false,
+      returnReminderAt: null, status: "active", createdAt: "", updatedAt: "",
+    } as any;
+    // Departure 20:00 local would cover the evening; boarding 16:45 must not.
+    const tod = timeOfDayContext(airport, s, new Date(s.arrivalTime).getTime());
+    assert.equal(tod.coversEvening, false);
   });
 });

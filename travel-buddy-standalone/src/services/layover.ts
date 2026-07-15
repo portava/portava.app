@@ -70,16 +70,145 @@ export interface LayoverSession {
   manualCity: string | null;
   manualCountry: string | null;
   manualIata: string | null;
+  canonicalCityId: string | null;
+  shareCityStatus: boolean;
+  returnReminderAt: string | null;
   status: 'active' | 'completed' | 'cancelled' | 'expired';
   createdAt: string;
 }
 
+export type LayoverTier = 'too_short' | 'airport_only' | 'quick_city' | 'half_day' | 'overnight';
+
+export interface LayoverWindow {
+  totalMinutes: number;
+  exitDelayMin: number;
+  returnBufferMin: number;
+  usableMinutes: number;
+  hardReturnTime: string;
+  earliestOutTime: string;
+  breakdown: {
+    baseBuffer: number;
+    immigrationExtra: number;
+    bagsExtra: number;
+    trafficExtra: number;
+    timeOfDayExtra: number;
+    totalBuffer: number;
+    exitDelay: number;
+  };
+  tier: LayoverTier;
+  tierLabel: string;
+  tierBlurb: string;
+  overnight: boolean;
+}
+
+export interface LeaveAdvice {
+  verdict: 'yes' | 'tight' | 'no' | 'stay_airside';
+  reasons: string[];
+  unknowns: string[];
+  disclaimer: string;
+}
+
+export interface PlanStop {
+  id: string;
+  title: string;
+  description: string | null;
+  stopOrder: number;
+  durationMin: number;
+  travelMin: number;
+  placeId: string | null;
+  recommendationId: string | null;
+  lat: number | null;
+  lng: number | null;
+  locationLabel: string | null;
+  insideAirport: boolean;
+  source: 'user' | 'recommendation' | 'ai';
+}
+
+export interface PlanFit {
+  totalPlannedMin: number;
+  returnTravelMin: number;
+  neededMin: number;
+  usableMinutes: number;
+  fitsWindow: boolean;
+  overflowMin: number;
+  backByTime: string;
+}
+
+export interface PublicAirport {
+  id: string | null;
+  iataCode: string;
+  name: string;
+  city: string;
+  country: string;
+  countryCode: string | null;
+  timezone: string;
+  lat: number | null;
+  lng: number | null;
+  verified: boolean;
+}
+
+export interface LayoverLocalTimes {
+  timezone: string;
+  airportNow: string;
+  airportToday: string;
+  arrivalLocal: string;
+  arrivalDay: string;
+  departureLocal: string;
+  departureDay: string;
+  boardingLocal: string | null;
+  hardReturnLocal: string;
+}
+
+export interface LayoverOverview {
+  session: LayoverSession;
+  airport: PublicAirport;
+  window: LayoverWindow;
+  advice: LeaveAdvice;
+  stops: PlanStop[];
+  planFit: PlanFit;
+  share: { enabled: boolean; othersInCity: number };
+  returnReminderAt: string | null;
+  localTimes: LayoverLocalTimes;
+}
+
+export interface PresenceTraveler {
+  id: string;
+  handle: string | null;
+  name: string | null;
+  avatarUrl: string | null;
+}
+
+export interface LayoverBuddy {
+  id: string;
+  userId: string;
+  displayName: string | null;
+  tagline: string | null;
+  city: string | null;
+  country: string | null;
+  categories: string[];
+  hourlyRateUsd: number | null;
+  averageRating: number | null;
+  reviewCount: number;
+  verified: boolean;
+  coverPhotoUrl: string | null;
+  buddyLevel: string | null;
+  availableNow: boolean;
+  availableDuringLayover: boolean;
+}
+
 export interface CreateSessionPayload {
   airportId?: string | null;
+  /** Preferred: IATA code from the picker — server resolves tz + profile. */
+  iata?: string | null;
   tripId?: string | null;
-  arrivalTime: string;
-  departureTime: string;
+  /** Legacy UTC instants. Prefer the *Local wall-time fields below. */
+  arrivalTime?: string;
+  departureTime?: string;
   boardingTime?: string | null;
+  /** Airport-local wall times "YYYY-MM-DDTHH:mm" — converted server-side. */
+  arrivalLocal?: string | null;
+  departureLocal?: string | null;
+  boardingLocal?: string | null;
   flightType?: FlightType;
   immigrationRequired?: boolean;
   checkedBags?: boolean;
@@ -210,7 +339,7 @@ export async function askCompass(sessionId: string, question: string): Promise<C
 export async function setReturnDeadline(
   sessionId: string,
   minutesBefore = 30,
-): Promise<{ hardReturnTime: string; bufferMinutes: number } | null> {
+): Promise<{ hardReturnTime: string; hardReturnLocal?: string; reminderAt?: string; bufferMinutes: number } | null> {
   const res = await authedFetch(airportUrl('sessions', sessionId, 'return-deadline'), {
     method: 'POST',
     body: JSON.stringify({ minutesBefore }),
@@ -222,4 +351,150 @@ export async function setReturnDeadline(
 export async function endLayoverSession(sessionId: string): Promise<boolean> {
   const res = await authedFetch(airportUrl('sessions', sessionId), { method: 'DELETE' });
   return res.ok;
+}
+
+// ── Dashboard / overview ──────────────────────────────────────────────────────
+
+export async function getActiveLayoverSession(): Promise<{
+  session: LayoverSession | null;
+  airport?: PublicAirport;
+} | null> {
+  const res = await authedFetch(airportUrl('sessions', 'active'));
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function listLayoverSessions(
+  status?: LayoverSession['status'],
+): Promise<LayoverSession[]> {
+  const qs = status ? `?status=${status}` : '';
+  const res = await authedFetch(airportUrl(`sessions${qs}`));
+  if (!res.ok) return [];
+  const json = await res.json();
+  return json.sessions ?? [];
+}
+
+export async function getLayoverOverview(sessionId: string): Promise<LayoverOverview | null> {
+  const res = await authedFetch(airportUrl('sessions', sessionId, 'overview'));
+  if (!res.ok) return null;
+  const json = await res.json();
+  return json.ok ? (json as LayoverOverview) : null;
+}
+
+// ── Mini-itinerary plan stops ─────────────────────────────────────────────────
+
+export interface StopsResponse { stops: PlanStop[]; planFit: PlanFit }
+
+export interface NewStopInput {
+  title: string;
+  description?: string | null;
+  durationMin: number;
+  travelMin?: number;
+  locationLabel?: string | null;
+  insideAirport?: boolean;
+  lat?: number | null;
+  lng?: number | null;
+  placeId?: string | null;
+}
+
+export async function getPlanStops(sessionId: string): Promise<StopsResponse | null> {
+  const res = await authedFetch(airportUrl('sessions', sessionId, 'stops'));
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function addPlanStop(sessionId: string, stop: NewStopInput): Promise<StopsResponse | null> {
+  const res = await authedFetch(airportUrl('sessions', sessionId, 'stops'), {
+    method: 'POST',
+    body: JSON.stringify(stop),
+  });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function addStopFromRecommendation(
+  sessionId: string,
+  recommendationId: string,
+): Promise<StopsResponse | null> {
+  const res = await authedFetch(airportUrl('sessions', sessionId, 'stops', 'from-recommendation'), {
+    method: 'POST',
+    body: JSON.stringify({ recommendationId }),
+  });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function updatePlanStop(
+  sessionId: string,
+  stopId: string,
+  updates: Partial<NewStopInput>,
+): Promise<StopsResponse | null> {
+  const res = await authedFetch(airportUrl('sessions', sessionId, 'stops', stopId), {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function deletePlanStop(sessionId: string, stopId: string): Promise<StopsResponse | null> {
+  const res = await authedFetch(airportUrl('sessions', sessionId, 'stops', stopId), { method: 'DELETE' });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function reorderPlanStops(sessionId: string, orderedIds: string[]): Promise<StopsResponse | null> {
+  const res = await authedFetch(airportUrl('sessions', sessionId, 'stops', 'reorder'), {
+    method: 'POST',
+    body: JSON.stringify({ orderedIds }),
+  });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+// ── Sharing, presence & buddies ───────────────────────────────────────────────
+
+export async function setShareCityStatus(sessionId: string, enabled: boolean): Promise<LayoverSession | null> {
+  const res = await authedFetch(airportUrl('sessions', sessionId, 'share'), {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) return null;
+  const json = await res.json();
+  return json.session ?? null;
+}
+
+export async function getLayoverPresence(sessionId: string): Promise<{
+  sharing: boolean;
+  city?: string | null;
+  count: number;
+  travelers: PresenceTraveler[];
+} | null> {
+  const res = await authedFetch(airportUrl('sessions', sessionId, 'presence'));
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function getLayoverBuddies(sessionId: string): Promise<{
+  city: string | null;
+  buddies: LayoverBuddy[];
+} | null> {
+  const res = await authedFetch(airportUrl('sessions', sessionId, 'buddies'));
+  if (!res.ok) return null;
+  return res.json();
+}
+
+// ── Telegraph ─────────────────────────────────────────────────────────────────
+
+export async function sendLayoverTelegraph(sessionId: string, message: string): Promise<{
+  intent: string;
+  city: string | null;
+  threadId: string | null;
+} | null> {
+  const res = await authedFetch(airportUrl('sessions', sessionId, 'telegraph'), {
+    method: 'POST',
+    body: JSON.stringify({ message }),
+  });
+  if (!res.ok) return null;
+  return res.json();
 }

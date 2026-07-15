@@ -14,3 +14,5 @@ The rule: **diff each file against the main tree before copying anything.**
 2. Identical → `cp` the edited main file.
 3. Divergent → port edits manually, anchored on the standalone file's own text; then run standalone `tsc` separately (its type surface can differ).
 4. New shared files (new components/hooks) can be copied verbatim, but check the imports they pull in exist in standalone (e.g. hooks like `useNavBarCollapse`).
+5. Known fork difference: standalone enables `experiments.typedRoutes` (main does not), so dynamic `router.push(`/x/${id}`)` template literals fail its tsc. Cast per the fork's own convention (`as any` at the call site, matching its existing screens).
+6. Delegating a port to a subagent works well when the task spells out: diff-first rule, which files replace wholesale vs append, and "run standalone tsc; fix only ported files."

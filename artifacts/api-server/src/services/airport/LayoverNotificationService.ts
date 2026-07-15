@@ -69,7 +69,7 @@ export async function sendReturnDeadlineReminder(
     const token = (profile as any)?.expo_push_token;
     if (!token) return { ok: true, skipped: true };
 
-    const breakdown = computeBuffer(airport, session, new Date(session.departureTime));
+    const breakdown = computeBuffer(airport, session, new Date(session.departureTime), airport.timezone);
     const bufferMin = breakdown.totalBuffer;
     const cutoffTime = session.boardingTime ?? session.departureTime;
     const hardReturn = new Date(new Date(cutoffTime).getTime() - bufferMin * 60000);

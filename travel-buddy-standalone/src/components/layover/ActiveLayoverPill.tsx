@@ -1,0 +1,60 @@
+/**
+ * ActiveLayoverPill — floating "resume layover" pill shown on the home tab
+ * while a layover session is active.
+ */
+import React, { useCallback, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ChevronRight, Plane } from 'lucide-react-native';
+import { color, space, type as t } from '../../theme/tokens';
+import { getActiveLayoverSession, type LayoverSession, type PublicAirport } from '../../services/layover';
+import { fmtClock } from './layoverFormat';
+
+export function ActiveLayoverPill() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const [active, setActive] = useState<{ session: LayoverSession; airport?: PublicAirport } | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      getActiveLayoverSession().then((res) => {
+        if (!alive) return;
+        setActive(res?.session ? { session: res.session, airport: res.airport } : null);
+      }).catch(() => { if (alive) setActive(null); });
+      return () => { alive = false; };
+    }, []),
+  );
+
+  if (!active) return null;
+  const { session, airport } = active;
+  const label = airport?.iataCode ?? session.manualIata ?? 'Layover';
+  const depLocal = fmtClock(session.departureTime, airport?.timezone);
+
+  return (
+    <View style={[styles.wrap, { bottom: insets.bottom + 74 }]} pointerEvents="box-none">
+      <Pressable style={styles.pill} onPress={() => router.push(`/layover/${session.id}` as any)}>
+        <View style={styles.pulseDot} />
+        <Plane size={14} color={color.onInk} />
+        <Text style={styles.text} numberOfLines={1}>
+          {label} layover · flight at {depLocal}
+        </Text>
+        <ChevronRight size={15} color={color.onInkMute} />
+      </Pressable>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 40 },
+  pill: {
+    flexDirection: 'row', alignItems: 'center', gap: 7,
+    backgroundColor: color.ink, borderRadius: 999,
+    paddingHorizontal: space.lg, paddingVertical: 10,
+    shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
+    elevation: 6, maxWidth: '86%',
+  },
+  pulseDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: color.signal },
+  text: { ...t.small, fontWeight: '700', color: color.onInk, flexShrink: 1 },
+});
