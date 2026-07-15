@@ -91,6 +91,27 @@ app.listen(port, (err) => {
     logger.warn({ err: e }, "startup: could not probe toggle_feature_flag_with_audit"),
   );
 
+  // Startup check: verify profiles.passport_section_order exists (migration
+  // 0120).  If it is missing, PATCH /api/me/profile layout saves would hit
+  // schema drift; the route now returns an explicit error in that case, but
+  // this probe surfaces the drift immediately at boot instead of on first save.
+  (async () => {
+    const sc = getServiceClient();
+    if (!sc) return; // service client not configured — skip
+    const { error } = await sc
+      .from("profiles")
+      .select("passport_section_order")
+      .limit(1);
+    if (error && (error.code === "42703" || error.code === "PGRST204" || error.code === "PGRST100")) {
+      logger.warn(
+        { code: error.code },
+        "startup: profiles.passport_section_order column is missing — apply migration 0120_passport_section_order.sql or passport layout saves will fail",
+      );
+    }
+  })().catch((e) =>
+    logger.warn({ err: e }, "startup: could not probe profiles.passport_section_order"),
+  );
+
   // Startup health check — warn if the cleanup job hasn't run recently.
   // Queries the persistent job_health table so the check is accurate across
   // server restarts (not just for the current process lifecycle).

@@ -496,21 +496,64 @@ router.patch("/me/profile", async (req, res) => {
     .single();
 
   if (updateError && ((updateError as any).code === "42703" || (updateError as any).code === "PGRST204")) {
+    // The DB schema is missing one or more newer columns (schema drift).
+    // Retry with only the base columns — but never silently drop fields the
+    // client explicitly asked to change.
+    const FALLBACK_STRIPPED_COLUMNS = [
+      "display_name",
+      "spoken_languages",
+      "default_language",
+      "travel_styles",
+      "travel_pace",
+      "budget_style",
+      "travel_group_style",
+      "looking_for",
+      "comfort_level",
+      "availability_tags",
+      "planning_style",
+      "public_social_links",
+      "cover_photo_url",
+      "passport_section_order",
+    ];
     const safeRow = { ...row };
-    delete safeRow.display_name;
-    delete safeRow.spoken_languages;
-    delete safeRow.default_language;
-    delete safeRow.travel_styles;
-    delete safeRow.travel_pace;
-    delete safeRow.budget_style;
-    delete safeRow.travel_group_style;
-    delete safeRow.looking_for;
-    delete safeRow.comfort_level;
-    delete safeRow.availability_tags;
-    delete safeRow.planning_style;
-    delete safeRow.public_social_links;
-    delete safeRow.cover_photo_url;
-    delete safeRow.passport_section_order;
+    const stripped: string[] = [];
+    for (const col of FALLBACK_STRIPPED_COLUMNS) {
+      if (col in safeRow) {
+        stripped.push(col);
+        delete safeRow[col];
+      }
+    }
+
+    // passport_section_order saves must never silently no-op: if the column
+    // is missing from the live schema, surface a real error instead of
+    // returning 200 while dropping the user's layout preference.
+    if (stripped.includes("passport_section_order")) {
+      req.log.error(
+        { code: (updateError as any).code, stripped },
+        "PATCH /api/me/profile: passport_section_order column appears to be missing from the profiles table (schema drift) — apply migration 0120. Refusing to silently drop the layout save.",
+      );
+      sendError(
+        res,
+        "db_error",
+        "Could not save passport layout: the database is missing the passport_section_order column (schema drift). Apply migration 0120_passport_section_order.sql.",
+      );
+      return;
+    }
+
+    if (stripped.length > 0) {
+      req.log.warn(
+        { code: (updateError as any).code, stripped },
+        "PATCH /api/me/profile: retrying update without newer columns due to schema drift — these requested fields will NOT be saved",
+      );
+    }
+
+    if (Object.keys(safeRow).length === 0) {
+      // Everything the client asked to change was stripped — nothing would be
+      // saved, so a 200 here would be a lie.
+      sendError(res, "db_error", "Could not save profile: the database is missing the required column(s) for every requested field (schema drift).");
+      return;
+    }
+
     ({ data: updated, error: updateError } = await client
       .from("profiles")
       .update(safeRow)
