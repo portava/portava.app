@@ -17,6 +17,7 @@ import { ChevronLeft, Shield } from 'lucide-react-native';
 import { color, space, type as t, radius } from '../../src/theme/tokens';
 import { useNotificationPreferences } from '../../src/hooks/useNotifications';
 import type { NotificationCategory } from '../../src/services/notifications';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 const CATEGORY_LABELS: Record<NotificationCategory, { label: string; icon: string; description: string }> = {
   plans:       { label: 'Plans',          icon: '📋', description: 'Plan items, approvals, check-ins' },
@@ -173,6 +174,7 @@ const pickerStyles = StyleSheet.create({
 export default function NotificationSettingsScreen() {
   const insets = useSafeAreaInsets();
   const { preferences, categoryPreferences, loading, saving, reload, save } = useNotificationPreferences();
+  const navBarScrollHandler = useNavBarScrollHandler();
   const [expandedCategory, setExpandedCategory] = useState<NotificationCategory | null>(null);
   const [editingTime, setEditingTime] = useState<'start' | 'end' | null>(null);
 
@@ -232,6 +234,8 @@ export default function NotificationSettingsScreen() {
       <ScrollView
         contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + space.xxl }]}
         showsVerticalScrollIndicator={false}
+        onScroll={navBarScrollHandler}
+        scrollEventThrottle={16}
       >
         {/* ── Global toggles ── */}
         <SectionHeader title="Delivery" />
@@ -396,6 +400,8 @@ export default function NotificationSettingsScreen() {
             );
           })}
         </View>
+
+        <NavBarFiller />
       </ScrollView>
 
       {/* Quiet-hours time pickers */}

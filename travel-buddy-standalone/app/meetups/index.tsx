@@ -20,6 +20,7 @@ import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { RsvpBar } from '../../src/components/RsvpBar';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -139,6 +140,7 @@ function SectionHeader({ title, count }: { title: string; count: number }) {
 
 export default function MeetupsScreen() {
   const insets = useSafeAreaInsets();
+  const navBarScrollHandler = useNavBarScrollHandler();
   const { isAuthed, configured } = useSession();
 
   const [meetups, setMeetups] = useState<MeetupListItem[]>([]);
@@ -222,6 +224,8 @@ export default function MeetupsScreen() {
           refreshControl={
             <RefreshControl refreshing={loading} onRefresh={load} tintColor={color.signal} />
           }
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
         >
           {upcoming.length > 0 && (
             <>
@@ -236,6 +240,7 @@ export default function MeetupsScreen() {
               {past.map((m) => <MeetupRow key={m.id} meetup={m} />)}
             </>
           )}
+          <NavBarFiller />
         </ScrollView>
       )}
 

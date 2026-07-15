@@ -29,6 +29,7 @@ import { PP, PP_LABEL } from '../../src/theme/passportTokens';
 // New passport design components
 import { PassportIdentityCard } from '../../src/components/passport/PassportIdentityCard';
 import { PassportDivider } from '../../src/components/passport/PassportDivider';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 type Tab = 'posts' | 'stamps' | 'map' | 'about';
 const TABS: { key: Tab; label: string }[] = [
@@ -116,6 +117,7 @@ export default function PassportDeepLinkScreen() {
   const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
   const [tab, setTab] = useState<Tab>('posts');
   const insets = useSafeAreaInsets();
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const handleMorePress = useCallback(() => {
     if (!profile) return;
@@ -285,6 +287,8 @@ export default function PassportDeepLinkScreen() {
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: 80 }}
         showsVerticalScrollIndicator={false}
+        onScroll={navBarScrollHandler}
+        scrollEventThrottle={16}
       >
         {/* ── Passport Identity Card ── */}
         <PassportIdentityCard
@@ -320,6 +324,7 @@ export default function PassportDeepLinkScreen() {
           {tab === 'map'    && <MapTab postcards={postcards} />}
           {tab === 'about'  && <AboutTab profile={profile} isOwner={false} />}
         </View>
+        <NavBarFiller />
       </ScrollView>
 
       <HighlightViewer

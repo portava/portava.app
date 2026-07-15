@@ -117,9 +117,19 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
     return { opacity };
   });
 
+  // Nav icons shrink uniformly (scale, not scaleY) so they look like miniature
+  // icons rather than vertically-squished glyphs.
   const animatedIconStyle = useAnimatedStyle(() => {
-    const scale = interpolate(navBarProgress.value, [0, 1], [1, 0.72]);
-    return { transform: [{ scaleY: scale }] };
+    const scale = interpolate(navBarProgress.value, [0, 1], [1, 0.65]);
+    return { transform: [{ scale }] };
+  });
+
+  // The plus button is 44×44 px and needs a steeper scale so it fits inside the
+  // 20 px collapsed pill without being clipped into an unrecognisable smear.
+  // 44 × 0.34 ≈ 15 px — a coherent mini-circle centred in a 20 px pill.
+  const animatedPlusStyle = useAnimatedStyle(() => {
+    const scale = interpolate(navBarProgress.value, [0, 1], [1, 0.34]);
+    return { transform: [{ scale }] };
   });
 
   const TAB_HITSLOP = { top: 10, bottom: 10, left: 6, right: 6 };
@@ -176,7 +186,7 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
           accessibilityRole="button"
           accessibilityLabel="Create a post"
         >
-          <Animated.View style={[fb.plusBtn, animatedIconStyle]}>
+          <Animated.View style={[fb.plusBtn, animatedPlusStyle]}>
             <Plus size={22} color="#fff" strokeWidth={2.5} />
           </Animated.View>
         </Pressable>

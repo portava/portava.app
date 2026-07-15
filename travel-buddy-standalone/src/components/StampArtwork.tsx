@@ -9,8 +9,8 @@
  * All three sub-components share the same props contract so callers never
  * need to think about which one to use — just pass a `size`.
  */
-import React from 'react';
-import { Pressable } from 'react-native';
+import React, { useState } from 'react';
+import { Pressable, Image, View, StyleSheet } from 'react-native';
 import type { PassportStamp } from '../types/models';
 import { StampIcon } from './StampIcon';
 import { StampCard } from './StampCard';
@@ -30,9 +30,35 @@ export interface StampArtworkProps {
 }
 
 export function StampArtwork({ stamp, size = 88, rotate = 0, onPress }: StampArtworkProps) {
+  const [artFailed, setArtFailed] = useState(false);
   let child: React.ReactElement;
 
-  if (size < 56) {
+  if (stamp.universalArtworkUrl && !artFailed) {
+    // AI-generated universal artwork — render the image; fall back to the
+    // procedural design if the image fails to load.
+    child = (
+      <View
+        style={[
+          artStyles.frame,
+          {
+            width: size,
+            height: size,
+            borderRadius: size / 8,
+            transform: rotate ? [{ rotate: `${rotate}deg` }] : undefined,
+          },
+          stamp.locked && artStyles.locked,
+        ]}
+      >
+        <Image
+          source={{ uri: stamp.universalArtworkUrl }}
+          style={{ width: '100%', height: '100%' }}
+          resizeMode="cover"
+          onError={() => setArtFailed(true)}
+          accessibilityIgnoresInvertColors
+        />
+      </View>
+    );
+  } else if (size < 56) {
     child = <StampIcon stamp={stamp} size={size} />;
   } else if (size < 120) {
     child = <StampCard stamp={stamp} size={size} rotate={rotate} />;
@@ -50,6 +76,16 @@ export function StampArtwork({ stamp, size = 88, rotate = 0, onPress }: StampArt
 
   return child;
 }
+
+const artStyles = StyleSheet.create({
+  frame: {
+    overflow: 'hidden',
+    backgroundColor: 'rgba(0,0,0,0.05)',
+  },
+  locked: {
+    opacity: 0.35,
+  },
+});
 
 // Re-export sub-components and types for convenience
 export { StampIcon } from './StampIcon';

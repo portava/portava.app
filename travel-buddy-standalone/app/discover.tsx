@@ -10,8 +10,10 @@ import { TravelerRow } from '../src/components/TravelerRow';
 import { TravelerRowSkeleton } from '../src/components/TravelerRowSkeleton';
 import { searchUsers, getSuggestedTravelers, clearSuggestionsSeen, type TravelerSearchResult } from '../src/services/follows';
 import { color, space, radius, type as t } from '../src/theme/tokens';
+import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 
 export default function DiscoverScreen() {
+  const navBarScrollHandler = useNavBarScrollHandler();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<TravelerSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -138,6 +140,8 @@ export default function DiscoverScreen() {
               contentContainerStyle={styles.list}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
+              onScroll={navBarScrollHandler}
+              scrollEventThrottle={16}
               ListHeaderComponent={
                 <View style={styles.sectionHeaderRow}>
                   <Text style={styles.sectionHeader}>People you may know</Text>
@@ -156,12 +160,15 @@ export default function DiscoverScreen() {
                 </View>
               }
               ListFooterComponent={
-                loadingSuggestions ? (
-                  <View style={{ gap: space.sm, marginTop: space.sm }}>
-                    <TravelerRowSkeleton />
-                    <TravelerRowSkeleton />
-                  </View>
-                ) : null
+                <>
+                  {loadingSuggestions ? (
+                    <View style={{ gap: space.sm, marginTop: space.sm }}>
+                      <TravelerRowSkeleton />
+                      <TravelerRowSkeleton />
+                    </View>
+                  ) : null}
+                  <NavBarFiller />
+                </>
               }
               renderItem={({ item }) => (
                 <TravelerRow user={item} onFollowed={handleSuggestionFollowed} />
@@ -219,7 +226,10 @@ export default function DiscoverScreen() {
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.list}
             keyboardShouldPersistTaps="handled"
+            onScroll={navBarScrollHandler}
+            scrollEventThrottle={16}
             renderItem={({ item }) => <TravelerRow user={item} />}
+            ListFooterComponent={<NavBarFiller />}
           />
         )}
       </KeyboardAvoidingView>

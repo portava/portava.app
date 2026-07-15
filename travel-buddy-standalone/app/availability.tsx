@@ -8,6 +8,7 @@ import { resolveStatus, STATUS_LABEL } from '../src/lib/availability';
 import type { Weekday, TimeBlock } from '../src/types/models';
 import type { QuickStatus } from '../src/services/availability';
 import { color, space, radius, type as t, shadow, layout } from '../src/theme/tokens';
+import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 
 const DAYS: { key: Weekday; label: string }[] = [
   { key: 'mon', label: 'Mon' }, { key: 'tue', label: 'Tue' }, { key: 'wed', label: 'Wed' },
@@ -44,6 +45,7 @@ function summarize(days: Partial<Record<Weekday, TimeBlock[]>>): string {
 }
 
 export default function AvailabilityScreen() {
+  const navBarScrollHandler = useNavBarScrollHandler();
   const {
     availability, toggleBlock, applyWeekly, clearWeekly, setOpenToMeet, removeTripWindow,
     save, saving, saveError, quickStatus, setQuickStatus,
@@ -71,7 +73,7 @@ export default function AvailabilityScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       <ScreenHeader title="Availability" back />
-      <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.xl, paddingBottom: space.xxxl }} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.xl, paddingBottom: space.xxxl }} showsVerticalScrollIndicator={false} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
 
         {/* Current status */}
         <View style={s.statusCard}>
@@ -201,6 +203,7 @@ export default function AvailabilityScreen() {
             <Text style={s.saveText}>{saved ? 'Saved!' : 'Save'}</Text>
           </Pressable>
         </View>
+        <NavBarFiller />
       </ScrollView>
     </View>
   );

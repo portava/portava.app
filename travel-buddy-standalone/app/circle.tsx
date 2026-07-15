@@ -24,6 +24,7 @@ import { UserAvatarButton } from '../src/components/interaction/UserAvatarButton
 import { UserNameButton } from '../src/components/interaction/UserNameButton';
 import { UserOverflowMenu } from '../src/components/interaction/UserOverflowMenu';
 import { useBlockedIds } from '../src/context/BlockedIdsContext';
+import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 
 function CircleUserRow({
   u, reason, tripId,
@@ -130,6 +131,7 @@ function next14Days(): string[] {
 // If a circle bio/description is added in the future, render it with:
 //   <RichText content={circle.description} tags={circle.descriptionTags} hashtagUsages={circle.descriptionHashtags} />
 export default function Circle() {
+  const navBarScrollHandler = useNavBarScrollHandler();
   const { userId, isAuthed, configured } = useSession();
   const { tripId } = useLocalSearchParams<{ tripId?: string }>();
   const [tripTitle, setTripTitle] = useState<string | null>(null);
@@ -417,6 +419,8 @@ export default function Circle() {
         <ScrollView
           contentContainerStyle={{ padding: space.lg, gap: space.md }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={color.signal} />}
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
         >
           {/* ── Availability grid — shown when circle data is loaded ── */}
           {live && avMembers.length > 0 && (
@@ -479,6 +483,7 @@ export default function Circle() {
               </Text>
             </View>
           )}
+          <NavBarFiller />
         </ScrollView>
       )}
 

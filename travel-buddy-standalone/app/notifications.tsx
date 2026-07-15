@@ -25,6 +25,7 @@ import type { AppNotification, NotificationCategory } from '../src/services/noti
 import { useRequests } from '../src/hooks/useRequests';
 import { acceptRequest, declineRequest } from '../src/services/requests';
 import type { InboxItem } from '../src/services/requests';
+import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 
 // ── Tab definitions ───────────────────────────────────────────────────────────
 
@@ -189,6 +190,7 @@ function EmptyState({ label }: { label: string }) {
 
 export default function ActivityCenter() {
   const insets = useSafeAreaInsets();
+  const navBarScrollHandler = useNavBarScrollHandler();
   const [activeTab, setActiveTab] = useState('all');
   const tabScrollRef = useRef<ScrollView>(null);
 
@@ -291,11 +293,18 @@ export default function ActivityCenter() {
           }
           onEndReached={loadMore}
           onEndReachedThreshold={0.3}
-          ListFooterComponent={loadingMore ? (
-            <View style={styles.footer}>
-              <ActivityIndicator size="small" color={color.mute} />
-            </View>
-          ) : null}
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
+          ListFooterComponent={
+            <>
+              {loadingMore && (
+                <View style={styles.footer}>
+                  <ActivityIndicator size="small" color={color.mute} />
+                </View>
+              )}
+              <NavBarFiller />
+            </>
+          }
           ListEmptyComponent={
             <EmptyState label={activeTabDef.label} />
           }
@@ -323,6 +332,7 @@ function SocialRequestsPane({
   onReload: () => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   async function handleAccept(item: InboxItem) {
     setBusy(item.id);
@@ -385,6 +395,9 @@ function SocialRequestsPane({
       data={items}
       keyExtractor={(item) => item.id}
       contentContainerStyle={{ paddingBottom: space.xxxl }}
+      onScroll={navBarScrollHandler}
+      scrollEventThrottle={16}
+      ListFooterComponent={<NavBarFiller />}
       refreshControl={
         <RefreshControl refreshing={loading} onRefresh={onReload} tintColor={color.signal} />
       }

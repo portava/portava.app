@@ -23,6 +23,7 @@ import {
   type CircleWatcher,
 } from '../../src/services/circle';
 import { useSession } from '../../src/context/SessionContext';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 interface ContextGroup {
   contextType: 'trip' | 'event';
@@ -71,6 +72,7 @@ export default function WhoCanSeeMeScreen() {
   const [groups, setGroups] = useState<ContextGroup[]>([]);
   const [loadError, setLoadError] = useState(false);
   const [pausingAll, setPausingAll] = useState(false);
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const load = useCallback(async () => {
     if (!live || !userId) { setLoading(false); return; }
@@ -243,7 +245,7 @@ export default function WhoCanSeeMeScreen() {
           </Pressable>
         </View>
       ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + space.xl }}>
+        <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + space.xl }} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
           {groups.length === 0 ? (
             <View style={[s.center, { marginTop: space.xxxl }]}>
               <View style={s.emptyIcon}><Users size={32} color={color.faint} /></View>
@@ -322,6 +324,8 @@ export default function WhoCanSeeMeScreen() {
               <Text style={s.circleSettingsBtnText}>Circle settings</Text>
             </Pressable>
           </View>
+
+          <NavBarFiller />
         </ScrollView>
       )}
     </View>

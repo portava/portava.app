@@ -346,6 +346,8 @@ export interface PassportStamp {
   sublabel?: string;    // "PH · 2026", "x3"
   earnedAt: ISODate;
   locked?: boolean;     // show as not-yet-earned (faint)
+  /** AI-generated universal stamp artwork image URL (from the stamp definition). */
+  universalArtworkUrl?: string;
 }
 
 export interface TravelStats {

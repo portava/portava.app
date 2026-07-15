@@ -5,7 +5,7 @@
  */
 import React, { useState } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet,
+  View, Text, ScrollView, Pressable, StyleSheet, Image,
 } from 'react-native';
 import { Compass } from 'lucide-react-native';
 import type { PassportStamp } from '../../types/models';
@@ -48,20 +48,34 @@ function kindAccent(kind: PassportStamp['kind']): string {
 
 function StampChit({ stamp, onPress }: { stamp: PassportStamp; onPress?: () => void }) {
   const accent = kindAccent(stamp.kind);
+  const [artFailed, setArtFailed] = useState(false);
+  const showArt = !!stamp.universalArtworkUrl && !artFailed;
   return (
     <Pressable
       style={({ pressed }) => [ch.card, pressed && { opacity: 0.8 }]}
       onPress={onPress}
       accessibilityLabel={stamp.label + ' stamp'}
     >
-      {/* Top artwork area */}
-      <View style={[ch.artArea, { backgroundColor: accent }]}>
-        <View style={ch.artInnerRing} />
-        <Text style={ch.artLabel} numberOfLines={2}>{stamp.label}</Text>
-        {stamp.sublabel ? (
-          <Text style={ch.artSublabel} numberOfLines={1}>{stamp.sublabel}</Text>
-        ) : null}
-      </View>
+      {/* Top artwork area — AI artwork when available, colored placeholder otherwise */}
+      {showArt ? (
+        <View style={[ch.artArea, { backgroundColor: accent, padding: 0 }]}>
+          <Image
+            source={{ uri: stamp.universalArtworkUrl }}
+            style={ch.artImage}
+            resizeMode="cover"
+            onError={() => setArtFailed(true)}
+            accessibilityIgnoresInvertColors
+          />
+        </View>
+      ) : (
+        <View style={[ch.artArea, { backgroundColor: accent }]}>
+          <View style={ch.artInnerRing} />
+          <Text style={ch.artLabel} numberOfLines={2}>{stamp.label}</Text>
+          {stamp.sublabel ? (
+            <Text style={ch.artSublabel} numberOfLines={1}>{stamp.sublabel}</Text>
+          ) : null}
+        </View>
+      )}
       {/* Bottom label strip */}
       <View style={ch.labelStrip}>
         <Text style={ch.labelText} numberOfLines={1}>
@@ -185,6 +199,10 @@ const ch = StyleSheet.create({
     justifyContent: 'center',
     gap: 3,
     padding: 6,
+  },
+  artImage: {
+    width: '100%',
+    height: '100%',
   },
   artInnerRing: {
     position: 'absolute',

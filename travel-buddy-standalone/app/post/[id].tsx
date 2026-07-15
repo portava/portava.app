@@ -17,6 +17,7 @@ import { getPostById, type PostRow } from '../../src/services/posts';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { emitCommentCount } from '../../src/lib/commentCountStore';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 const UNDO_WINDOW_MS = 5000;
 
@@ -152,6 +153,7 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
 export default function PostDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { userId } = useSession();
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const [post, setPost]             = useState<PostRow | null>(null);
   const [loading, setLoading]       = useState(true);
@@ -249,6 +251,8 @@ export default function PostDetail() {
           contentContainerStyle={{ padding: space.lg, gap: space.lg }}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
         >
           {loading ? (
             <View style={{ paddingVertical: space.xxl, alignItems: 'center' }}>
@@ -280,6 +284,7 @@ export default function PostDetail() {
               />
             </View>
           )}
+          <NavBarFiller />
         </ScrollView>
       </KeyboardAvoidingView>
 

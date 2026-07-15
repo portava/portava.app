@@ -17,6 +17,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { X, Camera, ImageIcon, Globe, Users, Lock, Eye, Trash2 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { createMemory, addMemoryItem, type MemoryVisibility } from '../../src/services/memories';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 // ── Visibility options ────────────────────────────────────────────────────────
 
@@ -44,6 +45,7 @@ interface LocalAsset {
 
 export default function CreateMemoryScreen() {
   const insets = useSafeAreaInsets();
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const [assets, setAssets] = useState<LocalAsset[]>([]);
   const [title, setTitle] = useState('');
@@ -211,6 +213,8 @@ export default function CreateMemoryScreen() {
         style={{ flex: 1 }}
         contentContainerStyle={[s.body, { paddingBottom: insets.bottom + space.xxl }]}
         keyboardShouldPersistTaps="handled"
+        onScroll={navBarScrollHandler}
+        scrollEventThrottle={16}
       >
 
         {/* Media section */}
@@ -306,6 +310,7 @@ export default function CreateMemoryScreen() {
 
         {error ? <Text style={s.error}>{error}</Text> : null}
 
+        <NavBarFiller />
       </ScrollView>
     </KeyboardAvoidingView>
   );

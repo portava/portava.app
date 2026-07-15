@@ -5,9 +5,11 @@ import { ScreenHeader } from '../ScreenHeader';
 import { getBlockList, unblockUser, type BlockedUser } from '../../services/blocks';
 import { useBlockedIds } from '../../context/BlockedIdsContext';
 import { color, space, radius, type as t } from '../../theme/tokens';
+import { NavBarFiller, useNavBarScrollHandler } from '../../hooks/useNavBarCollapse';
 
 export function SocialSafetyControlsScreen() {
   const { removeBlock } = useBlockedIds();
+  const navBarScrollHandler = useNavBarScrollHandler();
   const [blocked, setBlocked] = useState<BlockedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [unblocking, setUnblocking] = useState<string | null>(null);
@@ -44,6 +46,9 @@ export function SocialSafetyControlsScreen() {
           <FlatList
             data={blocked}
             keyExtractor={(item) => item.id}
+            onScroll={navBarScrollHandler}
+            scrollEventThrottle={16}
+            ListFooterComponent={<NavBarFiller />}
             renderItem={({ item }) => (
               <View style={s.row}>
                 {item.avatarUrl ? (

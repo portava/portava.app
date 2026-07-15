@@ -24,6 +24,7 @@ import {
 } from '../../src/services/circle';
 import { FindYourCircleConsentSheet } from '../../src/components/FindYourCircleConsentSheet';
 import { useSession } from '../../src/context/SessionContext';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 const CONTEXT_OPTIONS: Array<{ value: ContextSharingDefault; label: string; sub: string }> = [
   {
@@ -94,6 +95,7 @@ export default function FindYourCircleSettingsScreen() {
   const [settings, setSettings] = useState<CircleSettings | null>(null);
   const [consentSheetVisible, setConsentSheetVisible] = useState(false);
   const [pendingEnable, setPendingEnable] = useState(false);
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const load = useCallback(async () => {
     if (!live) { setLoading(false); return; }
@@ -211,7 +213,7 @@ export default function FindYourCircleSettingsScreen() {
         {saving && <ActivityIndicator size="small" color={color.deep} style={{ marginLeft: 'auto' }} />}
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + space.xxxl }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + space.xxxl }} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
 
         {/* Global toggle */}
         <View style={s.section}>
@@ -336,6 +338,8 @@ export default function FindYourCircleSettingsScreen() {
             Your exact GPS coordinates are never shared.
           </Text>
         </View>
+
+        <NavBarFiller />
 
       </ScrollView>
 
