@@ -320,12 +320,50 @@ describe("Events — create event", () => {
     } finally { await close(); }
   });
 
-  it("creates an open event when publishNow=true", async () => {
+  it("creates an open event when publishNow=true (start-only, no end)", async () => {
     const client = makeFakeClient();
     _setTestClient(client, true);
     const { port, close } = await startServer();
     try {
-      const r = await apiReq(port, "POST", "/api/events", { title: "Open Event", publishNow: true }, ID.host1);
+      const r = await apiReq(port, "POST", "/api/events", { title: "Open Event", startsAt: "2026-08-01T18:00:00.000Z", publishNow: true }, ID.host1);
+      assert.equal(r.status, 201);
+      assert.equal(r.body.state, "open");
+      assert.equal(r.body.endsAt, null);
+    } finally { await close(); }
+  });
+
+  it("rejects publishNow without a startsAt", async () => {
+    const client = makeFakeClient();
+    _setTestClient(client, true);
+    const { port, close } = await startServer();
+    try {
+      const r = await apiReq(port, "POST", "/api/events", { title: "No Start", publishNow: true }, ID.host1);
+      assert.equal(r.status, 400);
+      assert.equal(r.body.error, "invalid_payload");
+      assert.match(r.body.message ?? "", /startsAt/);
+    } finally { await close(); }
+  });
+
+  it("rejects equal startsAt/endsAt on publish (midnight-default bug)", async () => {
+    const client = makeFakeClient();
+    _setTestClient(client, true);
+    const { port, close } = await startServer();
+    try {
+      const at = "2026-07-28T00:00:00.000Z";
+      const r = await apiReq(port, "POST", "/api/events", { title: "Equal Times", startsAt: at, endsAt: at, publishNow: true }, ID.host1);
+      assert.equal(r.status, 400);
+      assert.match(r.body.message ?? "", /endsAt must be after startsAt/);
+    } finally { await close(); }
+  });
+
+  it("accepts an overnight event crossing midnight", async () => {
+    const client = makeFakeClient();
+    _setTestClient(client, true);
+    const { port, close } = await startServer();
+    try {
+      const r = await apiReq(port, "POST", "/api/events", {
+        title: "Overnight", startsAt: "2026-07-28T22:00:00.000Z", endsAt: "2026-07-29T02:00:00.000Z", publishNow: true,
+      }, ID.host1);
       assert.equal(r.status, 201);
       assert.equal(r.body.state, "open");
     } finally { await close(); }
@@ -702,6 +740,33 @@ describe("Events — waitlist join, leave, and positions", () => {
       assert.equal(r.body.ok, true);
       const remaining = c._db.event_waitlist.rows.filter((r: any) => r.user_id === ID.user1);
       assert.equal(remaining.length, 0);
+    } finally { await close(); }
+  });
+});
+
+describe("Events — GET /api/events/me contract", () => {
+  it("returns hosted and attending events with a myRsvp field", async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, host_id: ID.host1, state: "open", visibility: "invite_only" }),
+        makeEvent({ id: ID.ev2, host_id: ID.other_host, state: "open", visibility: "public" }),
+      ]},
+      event_rsvps: { rows: [
+        { event_id: ID.ev2, user_id: ID.host1, status: "going" },
+      ]},
+    });
+    _setTestClient(client, true);
+    const { port, close } = await startServer();
+    try {
+      const r = await apiReq(port, "GET", "/api/events/me", null, ID.host1);
+      assert.equal(r.status, 200);
+      assert.equal(r.body.events.length, 2);
+      const hosted = r.body.events.find((e: any) => e.id === ID.ev1);
+      const attending = r.body.events.find((e: any) => e.id === ID.ev2);
+      // Contract: every item exposes myRsvp (EventListItem shape)
+      assert.ok("myRsvp" in hosted, "hosted event should expose myRsvp");
+      assert.equal(hosted.myRsvp, null);
+      assert.equal(attending.myRsvp, "going");
     } finally { await close(); }
   });
 });
@@ -1102,15 +1167,21 @@ describe("Events — GET /api/events list coverage", () => {
     } finally { await close(); }
   });
 
-  // 5b. Omitting city query param → 400 (city is required for the events list)
-  it("returns 400 when city query param is missing", async () => {
-    const client = makeFakeClient();
+  // 5b. Omitting city query param → 200 with ALL visible events (city is an
+  //     optional filter; the default Events feed sends no city).
+  it("returns all open events when city query param is omitted", async () => {
+    const client = makeFakeClient({
+      events: { rows: [
+        makeEvent({ id: ID.ev1, city: "Bangkok", state: "open", visibility: "public" }),
+        makeEvent({ id: ID.ev2, city: "Tokyo",   state: "open", visibility: "public", host_id: ID.other_host }),
+      ]},
+    });
     _setTestClient(client, true);
     const { port, close } = await startServer();
     try {
       const r = await apiReq(port, "GET", "/api/events?state=open", null, ID.user1);
-      assert.equal(r.status, 400);
-      assert.equal(r.body.error, "invalid_payload");
+      assert.equal(r.status, 200);
+      assert.equal(r.body.events.length, 2, "both events should be returned without a city filter");
     } finally { await close(); }
   });
 

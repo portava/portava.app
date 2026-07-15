@@ -520,6 +520,10 @@ router.post("/events", async (req, res) => {
     const prohibitedErr = checkProhibitedContent(b.title, b.description);
     if (prohibitedErr) { sendError(res, "invalid_payload", prohibitedErr); return; }
 
+    if (!b.startsAt) {
+      sendError(res, "invalid_payload", "startsAt is required to publish an event"); return;
+    }
+
     if (b.endsAt && b.startsAt && new Date(b.endsAt) <= new Date(b.startsAt)) {
       sendError(res, "invalid_payload", "endsAt must be after startsAt"); return;
     }
@@ -598,10 +602,6 @@ router.get("/events", async (req, res) => {
   const city     = (req.query.city as string | undefined) ?? null;
   const category = (req.query.category as string) ?? null;
 
-  if (!city || city.trim().length === 0) {
-    sendError(res, "invalid_payload", "city query param is required");
-    return;
-  }
   const dateFrom = (req.query.dateFrom as string) ?? null;
   const dateTo   = (req.query.dateTo as string) ?? null;
 
@@ -622,24 +622,97 @@ router.get("/events", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "list events"); sendError(res, "db_error", error.message); return; }
 
-  // Filter out blocked, friends_only without friendship, and events viewer can't access
-  const filtered: any[] = [];
-  for (const ev of (events as any[]) ?? []) {
-    const blocked = await isBlocked(sc, user.id, (ev as any).host_id);
-    if (blocked) continue;
-    if ((ev as any).visibility === "friends_only" && (ev as any).host_id !== user.id) {
-      const { data: friendship } = await sc
-        .from("user_friendships")
-        .select("user_a")
-        .or(`and(user_a.eq.${user.id},user_b.eq.${(ev as any).host_id}),and(user_b.eq.${user.id},user_a.eq.${(ev as any).host_id})`)
-        .maybeSingle();
-      if (!friendship) continue;
-    }
-    // Viewer eligibility gates (age / trust / verified) — hide ineligible events
-    const listingElig = await checkEventEligibility(sc, ev as any, user.id);
-    if (!listingElig.ok) continue;
-    filtered.push(ev);
+  // ── Batched visibility filtering ────────────────────────────────────────────
+  // Same rules as the old per-row loop (block → friends_only → eligibility with
+  // staff bypass, ban, and trust/age/verified gates) but with a fixed number of
+  // queries regardless of page size — important now that city is optional and
+  // the default feed can return a full unfiltered page.
+  const rows = (events as any[]) ?? [];
+  const otherHostIds = [...new Set(rows.map((e: any) => e.host_id as string))].filter((h) => h !== user.id);
+
+  // Blocks in either direction — two batched queries
+  const blockedHosts = new Set<string>();
+  if (otherHostIds.length > 0) {
+    const [b1, b2] = await Promise.all([
+      sc.from("blocks").select("blocked_id").eq("blocker_id", user.id).in("blocked_id", otherHostIds),
+      sc.from("blocks").select("blocker_id").eq("blocked_id", user.id).in("blocker_id", otherHostIds),
+    ]);
+    for (const b of (((b1 as any).data as any[]) ?? [])) blockedHosts.add(b.blocked_id as string);
+    for (const b of (((b2 as any).data as any[]) ?? [])) blockedHosts.add(b.blocker_id as string);
   }
+
+  // Friendships, only for hosts of friends_only events
+  const friendsOnlyHosts = [...new Set(
+    rows.filter((e: any) => e.visibility === "friends_only" && e.host_id !== user.id)
+        .map((e: any) => e.host_id as string),
+  )];
+  const friendHosts = new Set<string>();
+  if (friendsOnlyHosts.length > 0) {
+    const [f1, f2] = await Promise.all([
+      sc.from("user_friendships").select("user_b").eq("user_a", user.id).in("user_b", friendsOnlyHosts),
+      sc.from("user_friendships").select("user_a").eq("user_b", user.id).in("user_a", friendsOnlyHosts),
+    ]);
+    for (const f of (((f1 as any).data as any[]) ?? [])) friendHosts.add(f.user_b as string);
+    for (const f of (((f2 as any).data as any[]) ?? [])) friendHosts.add(f.user_a as string);
+  }
+
+  // Viewer's roles across the listed events (staff bypass / banned)
+  const allEventIds = rows.map((e: any) => e.id as string);
+  const staffEvents  = new Set<string>();
+  const bannedEvents = new Set<string>();
+  if (allEventIds.length > 0) {
+    const { data: roles } = await sc
+      .from("event_roles")
+      .select("event_id, role")
+      .eq("user_id", user.id)
+      .in("event_id", allEventIds)
+      .in("role", ["co_host", "moderator", "banned"]);
+    for (const r of ((roles as any[]) ?? [])) {
+      if ((r as any).role === "banned") bannedEvents.add((r as any).event_id as string);
+      else staffEvents.add((r as any).event_id as string);
+    }
+  }
+
+  // Viewer gate inputs — fetched once, only when some event actually has gates
+  const needsGates = rows.some((e: any) =>
+    e.host_id !== user.id && (e.verified_only || e.trust_score_min != null || e.age_min != null || e.age_max != null));
+  let trustGatesEnabled = false;
+  let viewerVerified = false;
+  let viewerAge: number | null = null;
+  let viewerTrust = 50;
+  if (needsGates) {
+    trustGatesEnabled = await isFlagEnabled(sc, "events_trust_gates_enabled");
+    if (trustGatesEnabled) {
+      const [profileRes, tpRes] = await Promise.all([
+        sc.from("profiles").select("is_verified, date_of_birth").eq("id", user.id).maybeSingle(),
+        sc.from("trust_profiles").select("overall_score").eq("user_id", user.id).maybeSingle(),
+      ]);
+      const profile = (profileRes as any).data;
+      viewerVerified = !!profile?.is_verified;
+      viewerTrust = ((tpRes as any).data)?.overall_score ?? 50;
+      viewerAge = profile?.date_of_birth
+        ? Math.floor((Date.now() - new Date(profile.date_of_birth).getTime()) / (1000 * 60 * 60 * 24 * 365.25))
+        : null;
+    }
+  }
+
+  const filtered: any[] = rows.filter((ev: any) => {
+    if (ev.host_id === user.id) return true;
+    if (blockedHosts.has(ev.host_id as string)) return false;
+    if (ev.visibility === "friends_only" && !friendHosts.has(ev.host_id as string)) return false;
+    if (staffEvents.has(ev.id as string)) return true;   // co-hosts/moderators bypass viewer gates
+    if (bannedEvents.has(ev.id as string)) return false;
+    if (trustGatesEnabled) {
+      if (ev.verified_only && !viewerVerified) return false;
+      if (ev.trust_score_min != null && viewerTrust < ev.trust_score_min) return false;
+      if (ev.age_min != null || ev.age_max != null) {
+        if (viewerAge == null) return false;
+        if (ev.age_min != null && viewerAge < ev.age_min) return false;
+        if (ev.age_max != null && viewerAge > ev.age_max) return false;
+      }
+    }
+    return true;
+  });
 
   // Fetch user RSVPs for these events
   const eventIds = filtered.map((e: any) => e.id as string);
@@ -905,8 +978,15 @@ router.get("/events/me", async (req, res) => {
   const hostedIds = new Set(hosted.map((e: any) => e.id as string));
   const combined = [...hosted, ...attending.filter((e: any) => !hostedIds.has(e.id as string))];
 
-  // All events here are ones the viewer hosts or attends → always participant view
-  res.json({ events: combined.map((e: any) => formatEvent(e, user.id, { goingRsvp: true })) });
+  // All events here are ones the viewer hosts or attends → always participant view.
+  // Include myRsvp so the response matches the EventListItem contract used by list cards.
+  const goingSet = new Set(rsvpIds);
+  res.json({
+    events: combined.map((e: any) => ({
+      ...formatEvent(e, user.id, { goingRsvp: true }),
+      myRsvp: goingSet.has(e.id as string) ? "going" : null,
+    })),
+  });
 });
 
 // ── GET /api/events/hosting ───────────────────────────────────────────────────
@@ -1325,7 +1405,8 @@ router.delete("/events/drafts/:draftId", async (req, res) => {
 const PublishDraftSchema = CreateEventSchema.extend({
   title:     z.string().min(1).max(200),
   startsAt:  z.string(),
-  endsAt:    z.string(),
+  // ends_at is nullable in the events model — a valid start-only event may be published.
+  endsAt:    z.string().optional().nullable(),
   locationName: z.string().min(1).max(300),
 });
 

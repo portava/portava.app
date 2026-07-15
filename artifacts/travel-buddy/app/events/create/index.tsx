@@ -38,10 +38,30 @@ import { getMyCircles, type CircleRow } from '../../../src/services/circles';
 import { listMyTrips, type TripRow } from '../../../src/services/trips';
 import { searchUsers, type TravelerSearchResult } from '../../../src/services/follows';
 import { uploadMedia, validateMedia } from '../../../src/services/media';
-import { DatePickerField } from '../../../src/components/DateTimePickerField';
+import { GlobalCalendarPicker } from '../../../src/components/selectors/GlobalCalendarPicker';
+import { GlobalTimePicker } from '../../../src/components/selectors/GlobalTimePicker';
+import {
+  composeLocalDate, splitIso, defaultEndFor, validateEventTimes,
+} from '../../../src/lib/eventDateTime';
 import { GlobalPlacePicker } from '../../../src/components/selectors/GlobalPlacePicker';
 import { Avatar } from '../../../src/components/ui';
 import { color, space, radius, type as t, shadow } from '../../../src/theme/tokens';
+
+// ── Date/time display helpers ─────────────────────────────────────────────────
+
+function formatDateLabel(dateStr: string): string {
+  const d = composeLocalDate(dateStr, '12:00');
+  return d ? d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : dateStr;
+}
+
+function formatTimeLabel(timeStr: string): string {
+  const d = composeLocalDate('2000-01-01', timeStr);
+  return d ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : timeStr;
+}
+
+function todayLocalDateStr(): string {
+  return splitIso(new Date().toISOString()).dateStr;
+}
 
 type Step = 'basics' | 'datetime' | 'location' | 'capacity' | 'age_trust' | 'privacy' | 'tickets' | 'invite' | 'preview';
 const STEPS: Step[] = ['basics', 'datetime', 'location', 'capacity', 'age_trust', 'privacy', 'tickets', 'invite', 'preview'];
@@ -100,8 +120,15 @@ export default function CreateEventScreen() {
   const compassSuggestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Step 2: Date/Time ───────────────────────────────────────────────────────
-  const [startDate, setStartDate] = useState<Date | null>(null);
-  const [endDate, setEndDate] = useState<Date | null>(null);
+  // Date and time are collected separately (shared calendar + clock pickers,
+  // no manual text entry) and composed into local-timezone Date instants.
+  const [startDateStr, setStartDateStr] = useState('');
+  const [startTime, setStartTime]       = useState('');
+  const [endDateStr, setEndDateStr]     = useState('');
+  const [endTime, setEndTime]           = useState('');
+  const [dtPicker, setDtPicker] = useState<null | 'startDate' | 'startTime' | 'endDate' | 'endTime'>(null);
+  const startDate = composeLocalDate(startDateStr, startTime);
+  const endDate   = composeLocalDate(endDateStr, endTime);
 
   // ── Step 3: Location ────────────────────────────────────────────────────────
   const [locationName, setLocationName] = useState(preLocation ?? '');
@@ -185,8 +212,14 @@ export default function CreateEventScreen() {
     if (d.title) setTitle(d.title);
     if (d.description) setDescription(d.description);
     if (d.category) setCategory(d.category);
-    if (d.startsAt) setStartDate(new Date(d.startsAt));
-    if (d.endsAt) setEndDate(new Date(d.endsAt));
+    if (d.startsAt) {
+      const p = splitIso(d.startsAt);
+      setStartDateStr(p.dateStr); setStartTime(p.timeStr);
+    }
+    if (d.endsAt) {
+      const p = splitIso(d.endsAt);
+      setEndDateStr(p.dateStr); setEndTime(p.timeStr);
+    }
     if (d.locationName) setLocationName(d.locationName);
     if (d.city) setCity(d.city);
     if (d.country) setCountry(d.country);
@@ -397,6 +430,13 @@ export default function CreateEventScreen() {
       setError('Title is required');
       return;
     }
+    if (step === 'datetime') {
+      const err = validateEventTimes(
+        { dateStr: startDateStr, timeStr: startTime },
+        { dateStr: endDateStr, timeStr: endTime },
+      );
+      if (err) { setError(err.message); return; }
+    }
     if (step === 'privacy' && visibility === 'circle' && !circleId) {
       setError('Select a circle to scope this event to');
       return;
@@ -447,6 +487,12 @@ export default function CreateEventScreen() {
 
   // ── Publish ─────────────────────────────────────────────────────────────────
   async function handlePublish() {
+    // Validate date/time before hitting the API so the error names the exact field.
+    const dtErr = validateEventTimes(
+      { dateStr: startDateStr, timeStr: startTime },
+      { dateStr: endDateStr, timeStr: endTime },
+    );
+    if (dtErr) { setError(`Date & Time: ${dtErr.message}`); return; }
     setSaving(true);
     setError(null);
     const payload = buildPayload();
@@ -456,11 +502,17 @@ export default function CreateEventScreen() {
       const res = await publishDraft(draftId, { ...payload, publishNow: true });
       if (res.ok && res.data) {
         eventId = res.data.id;
-      } else {
-        // Draft unavailable (table missing or draft gone) — fall back to direct creation.
+      } else if (/not.?found|no longer|unavailable|does not exist/i.test(res.message ?? '')) {
+        // Only fall back to direct creation when the draft itself is gone or the
+        // drafts backend is unavailable — never for validation/business-rule
+        // failures, which must surface to the user instead of being bypassed.
         const fallback = await createEvent({ ...payload, title: title.trim() || 'Untitled', publishNow: true });
         if (!fallback.ok || !fallback.data) { setError(fallback.message ?? 'Failed to publish'); setSaving(false); return; }
         eventId = fallback.data.id;
+      } else {
+        setError(res.message ?? 'Failed to publish');
+        setSaving(false);
+        return;
       }
     } else {
       const res = await createEvent({ ...payload, title: title.trim() || 'Untitled', publishNow: true });
@@ -654,28 +706,144 @@ export default function CreateEventScreen() {
           {step === 'datetime' && (
             <>
               <Text style={styles.label}>Start date & time</Text>
-              <DatePickerField
-                value={startDate}
-                onChange={(d) => { setStartDate(d); scheduleSave(); }}
-                minimumDate={new Date()}
-                placeholder="Pick a start date & time"
-              />
+              <View style={{ flexDirection: 'row', gap: space.sm }}>
+                <Pressable
+                  style={[styles.input, styles.locationRow, { flex: 1.4 }]}
+                  onPress={() => setDtPicker('startDate')}
+                  accessibilityRole="button"
+                  accessibilityLabel={startDateStr ? `Start date: ${formatDateLabel(startDateStr)}` : 'Pick a start date'}
+                >
+                  <CalendarClock size={14} color={startDateStr ? color.signal : color.faint} />
+                  <Text style={[styles.locationText, !startDateStr && styles.placeholder]} numberOfLines={1}>
+                    {startDateStr ? formatDateLabel(startDateStr) : 'Pick date'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.input, styles.locationRow, { flex: 1 }]}
+                  onPress={() => setDtPicker('startTime')}
+                  accessibilityRole="button"
+                  accessibilityLabel={startTime ? `Start time: ${formatTimeLabel(startTime)}` : 'Pick a start time'}
+                >
+                  <Clock size={14} color={startTime ? color.signal : color.faint} />
+                  <Text style={[styles.locationText, !startTime && styles.placeholder]} numberOfLines={1}>
+                    {startTime ? formatTimeLabel(startTime) : 'Pick time'}
+                  </Text>
+                </Pressable>
+              </View>
+
               <Text style={styles.label}>End date & time (optional)</Text>
-              <DatePickerField
-                value={endDate}
-                onChange={(d) => { setEndDate(d); scheduleSave(); }}
-                minimumDate={startDate ?? new Date()}
-                placeholder="Pick an end date & time"
-              />
+              <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'center' }}>
+                <Pressable
+                  style={[styles.input, styles.locationRow, { flex: 1.4 }]}
+                  onPress={() => setDtPicker('endDate')}
+                  accessibilityRole="button"
+                  accessibilityLabel={endDateStr ? `End date: ${formatDateLabel(endDateStr)}` : 'Pick an end date'}
+                >
+                  <CalendarClock size={14} color={endDateStr ? color.signal : color.faint} />
+                  <Text style={[styles.locationText, !endDateStr && styles.placeholder]} numberOfLines={1}>
+                    {endDateStr ? formatDateLabel(endDateStr) : 'Pick date'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.input, styles.locationRow, { flex: 1 }]}
+                  onPress={() => setDtPicker('endTime')}
+                  accessibilityRole="button"
+                  accessibilityLabel={endTime ? `End time: ${formatTimeLabel(endTime)}` : 'Pick an end time'}
+                >
+                  <Clock size={14} color={endTime ? color.signal : color.faint} />
+                  <Text style={[styles.locationText, !endTime && styles.placeholder]} numberOfLines={1}>
+                    {endTime ? formatTimeLabel(endTime) : 'Pick time'}
+                  </Text>
+                </Pressable>
+                {(endDateStr || endTime) ? (
+                  <Pressable
+                    hitSlop={8}
+                    onPress={() => { setEndDateStr(''); setEndTime(''); scheduleSave(); }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear end date and time"
+                  >
+                    <X size={15} color={color.mute} />
+                  </Pressable>
+                ) : null}
+              </View>
+
               {startDate && (
                 <View style={styles.infoBox}>
                   <Clock size={14} color={color.mute} />
                   <Text style={styles.infoText}>
-                    {startDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
-                    {endDate ? ` – ${endDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}` : ''}
+                    {startDate.toLocaleString(undefined, { weekday: 'long', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    {endDate ? ` – ${endDate.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : ''}
+                    {` · ${Intl.DateTimeFormat().resolvedOptions().timeZone}`}
                   </Text>
                 </View>
               )}
+
+              <GlobalCalendarPicker
+                mode="single"
+                visible={dtPicker === 'startDate'}
+                title="Start date"
+                value={startDateStr || null}
+                minDate={todayLocalDateStr()}
+                onConfirm={(v) => {
+                  if (v) setStartDateStr(v);
+                  setDtPicker(null);
+                  scheduleSave();
+                }}
+                onCancel={() => setDtPicker(null)}
+              />
+              <GlobalTimePicker
+                visible={dtPicker === 'startTime'}
+                title="Start time"
+                value={startTime || '18:00'}
+                onChange={(v) => { if (v) setStartTime(v); scheduleSave(); }}
+                onClose={() => setDtPicker(null)}
+              />
+              <GlobalCalendarPicker
+                mode="single"
+                visible={dtPicker === 'endDate'}
+                title="End date"
+                value={endDateStr || startDateStr || null}
+                minDate={startDateStr || todayLocalDateStr()}
+                onConfirm={(v) => {
+                  if (v) {
+                    setEndDateStr(v);
+                    // Default the end time to start + 2h so an equal start/end
+                    // pair can never be produced by defaults.
+                    if (!endTime && startDateStr && startTime) {
+                      const def = defaultEndFor(startDateStr, startTime);
+                      setEndTime(def.timeStr);
+                      if (def.dateStr > v) setEndDateStr(def.dateStr);
+                    }
+                  }
+                  setDtPicker(null);
+                  scheduleSave();
+                }}
+                onCancel={() => setDtPicker(null)}
+              />
+              <GlobalTimePicker
+                visible={dtPicker === 'endTime'}
+                title="End time"
+                value={endTime || (startDateStr && startTime ? defaultEndFor(startDateStr, startTime).timeStr : '20:00')}
+                onChange={(v) => {
+                  if (!v) return;
+                  setEndTime(v);
+                  // If no end date chosen yet, default to the start date —
+                  // rolling to the next day for overnight events.
+                  if (!endDateStr && startDateStr) {
+                    const cand = composeLocalDate(startDateStr, v);
+                    const s = composeLocalDate(startDateStr, startTime || '00:00');
+                    if (cand && s && cand.getTime() <= s.getTime()) {
+                      const next = new Date(s); next.setDate(next.getDate() + 1);
+                      const pad = (n: number) => String(n).padStart(2, '0');
+                      setEndDateStr(`${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}`);
+                    } else {
+                      setEndDateStr(startDateStr);
+                    }
+                  }
+                  scheduleSave();
+                }}
+                onClose={() => setDtPicker(null)}
+              />
             </>
           )}
 

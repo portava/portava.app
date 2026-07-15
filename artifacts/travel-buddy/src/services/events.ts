@@ -219,6 +219,14 @@ export async function listEvents(
   return apiCall(`/api/events${q ? `?${q}` : ''}`);
 }
 
+// ── My events (hosting + attending) ──────────────────────────────────────────
+
+export async function listMyEvents(
+  limit = 20,
+): Promise<ApiResult<{ events: EventListItem[] }>> {
+  return apiCall(`/api/events/me?limit=${limit}`);
+}
+
 // ── Get event detail ──────────────────────────────────────────────────────────
 
 export async function getEvent(eventId: string): Promise<ApiResult<EventDetail>> {

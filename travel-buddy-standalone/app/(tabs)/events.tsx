@@ -19,10 +19,13 @@ import {
   Bookmark, Users, FileEdit, Bell, Filter, Check, X,
 } from 'lucide-react-native';
 import {
-  listEvents, listFollowingEvents, listCircleEvents, getSavedEvents, getMyDrafts, getMyEventInvites,
+  listEvents, listMyEvents, listFollowingEvents, listCircleEvents, getSavedEvents, getMyDrafts, getMyEventInvites,
   saveEvent, unsaveEvent, deleteDraft,
   type EventListItem, type EventDraft, type EventInvite,
 } from '../../src/services/events';
+import {
+  todayRange, tomorrowRange, weekendRange, next7Range, upcomingRange,
+} from '../../src/lib/eventDateTime';
 import { EventDiscoveryCard } from '../../src/components/EventDiscoveryCard';
 import { useSession } from '../../src/context/SessionContext';
 import { useActiveLocation } from '../../src/hooks/useActiveLocation';
@@ -30,34 +33,7 @@ import { color, space, radius, type as t, shadow } from '../../src/theme/tokens'
 
 // ── Date preset helpers ───────────────────────────────────────────────────────
 
-function todayRange(): { dateFrom: string; dateTo: string } {
-  const now = new Date();
-  const start = new Date(now); start.setHours(0, 0, 0, 0);
-  const end = new Date(now);   end.setHours(23, 59, 59, 999);
-  return { dateFrom: start.toISOString(), dateTo: end.toISOString() };
-}
-
-function tomorrowRange(): { dateFrom: string; dateTo: string } {
-  const now = new Date();
-  const start = new Date(now); start.setDate(now.getDate() + 1); start.setHours(0, 0, 0, 0);
-  const end = new Date(start); end.setHours(23, 59, 59, 999);
-  return { dateFrom: start.toISOString(), dateTo: end.toISOString() };
-}
-
-function weekendRange(): { dateFrom: string; dateTo: string } {
-  const now = new Date();
-  const day = now.getDay();
-  const daysUntilSat = day === 6 ? 0 : (6 - day);
-  const sat = new Date(now); sat.setDate(now.getDate() + daysUntilSat); sat.setHours(0, 0, 0, 0);
-  const sun = new Date(sat); sun.setDate(sat.getDate() + 1); sun.setHours(23, 59, 59, 999);
-  return { dateFrom: sat.toISOString(), dateTo: sun.toISOString() };
-}
-
-function next7Range(): { dateFrom: string; dateTo: string } {
-  const now = new Date();
-  const end = new Date(now); end.setDate(now.getDate() + 7); end.setHours(23, 59, 59, 999);
-  return { dateFrom: now.toISOString(), dateTo: end.toISOString() };
-}
+// Range helpers live in src/lib/eventDateTime (shared + unit-tested).
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -111,6 +87,7 @@ export default function EventsTabScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   // ── Discovery events ──────────────────────────────────────────────────────
+  const [myEvents, setMyEvents]               = useState<EventListItem[]>([]);
   const [todayEvents, setTodayEvents]         = useState<EventListItem[]>([]);
   const [tomorrowEvents, setTomorrowEvents]   = useState<EventListItem[]>([]);
   const [weekendEvents, setWeekendEvents]     = useState<EventListItem[]>([]);
@@ -171,9 +148,10 @@ export default function EventsTabScreen() {
 
     // When a specific preset is active, fetch only one range (avoid duplicate sections)
     const isPresetActive = datePreset !== 'all';
-    const mainParams = isPresetActive ? dateRange : todayRange();
+    // Default ("Any time") shows a true Upcoming feed: start of local day onward.
+    const mainParams = isPresetActive ? dateRange : upcomingRange();
 
-    const [mainRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, draftsRes, invitesRes] = await Promise.all([
+    const [mainRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, draftsRes, invitesRes, myRes] = await Promise.all([
       listEvents({ ...mainParams, ...sharedFilters, limit: 10 }),
       isPresetActive ? Promise.resolve({ ok: true as const, data: { events: [] as EventListItem[] } }) : listEvents({ ...tomorrowRange(), ...sharedFilters, limit: 10 }),
       isPresetActive ? Promise.resolve({ ok: true as const, data: { events: [] as EventListItem[] } }) : listEvents({ ...weekendRange(), ...sharedFilters, limit: 10 }),
@@ -182,7 +160,10 @@ export default function EventsTabScreen() {
       getSavedEvents(1),
       getMyDrafts(),
       getMyEventInvites(),
+      listMyEvents(10),
     ]);
+
+    if (myRes.ok) setMyEvents(myRes.data?.events ?? []);
 
     if (mainRes.ok) setTodayEvents(mainRes.data?.events ?? []);
     if (tomorrowRes.ok) setTomorrowEvents(tomorrowRes.data?.events ?? []);
@@ -326,6 +307,7 @@ export default function EventsTabScreen() {
   }
 
   const hasContent =
+    myEvents.length > 0 ||
     todayEvents.length > 0 || tomorrowEvents.length > 0 ||
     weekendEvents.length > 0 || nearMeEvents.length > 0 ||
     followingEvents.length > 0 || circleEvents.length > 0 ||
@@ -568,9 +550,18 @@ export default function EventsTabScreen() {
             </View>
           )}
 
-          {/* Today */}
+          {/* Your events — always shows the viewer's hosted/attending events,
+              regardless of city/category/visibility filters, so a freshly
+              published event is immediately visible to its creator. */}
           {renderSection(
-            datePreset === 'all' ? 'Today' : STEP_LABELS_MAP[datePreset] ?? 'Today',
+            'Your events',
+            <Users size={15} color={color.signal} />,
+            myEvents,
+          )}
+
+          {/* Upcoming (or the active date preset) */}
+          {renderSection(
+            datePreset === 'all' ? 'Upcoming' : STEP_LABELS_MAP[datePreset] ?? 'Upcoming',
             <CalendarX size={15} color={color.mute} />,
             todayEvents,
           )}
