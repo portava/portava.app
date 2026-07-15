@@ -201,7 +201,7 @@ describe("GET /api/trips/invite-link/:token/preview — trip_inactive 410 paths"
   });
 
   // ── 4. active upcoming trip ───────────────────────────────────────────────
-  it("returns 200 for an active trip with no isTerminal field", async () => {
+  it("returns 200 for an active trip with isTerminal explicitly false", async () => {
     _setTestClient(
       makeClient({ tripStatus: "upcoming", endDate: "2099-12-31" }),
       true,
@@ -212,10 +212,12 @@ describe("GET /api/trips/invite-link/:token/preview — trip_inactive 410 paths"
     assert.equal(r.status, 200);
     assert.equal(r.body.tripTitle, "Test Trip");
     assert.equal(r.body.isFull, false);
+    // Contract: the 200 preview always emits isTerminal: false (terminal
+    // trips 410 before reaching this branch). Matches inviteLinkPreviewFull.
     assert.equal(
       r.body.isTerminal,
-      undefined,
-      "isTerminal must not appear in the 200 response",
+      false,
+      "isTerminal must be false in the 200 response",
     );
   });
 
@@ -231,8 +233,8 @@ describe("GET /api/trips/invite-link/:token/preview — trip_inactive 410 paths"
     assert.equal(r.status, 200);
     assert.equal(
       r.body.isTerminal,
-      undefined,
-      "isTerminal must not appear in the 200 response",
+      false,
+      "isTerminal must be false in the 200 response",
     );
   });
 

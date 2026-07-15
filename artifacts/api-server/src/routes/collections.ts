@@ -21,6 +21,7 @@ import { Router } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isUuid } from "../lib/followDecisions.js";
+import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 
 const router = Router();
 
@@ -419,10 +420,12 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
         if (type === "profile") {
           const { data } = await sc
             .from("profiles")
-            .select("id, name, avatar_url")
+            .select("id, handle, name, avatar_url")
             .in("id", ids);
+          const allowedNames = await nameVisibilitySet(sc, ids);
           for (const r of (data ?? []) as any[]) {
-            previewMap[r.id] = { title: r.name ?? r.id, coverUrl: r.avatar_url ?? null };
+            const shownName = presentedName(r, r.id === user.id || allowedNames.has(r.id));
+            previewMap[r.id] = { title: shownName ?? (r.handle ? `@${r.handle}` : r.id), coverUrl: r.avatar_url ?? null };
           }
         } else if (type === "post") {
           const { data } = await sc

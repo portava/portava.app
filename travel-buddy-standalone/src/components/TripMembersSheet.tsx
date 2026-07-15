@@ -23,6 +23,7 @@ import {
 } from '../services/friends';
 import { getTrip } from '../services/trips';
 import { color, space, radius, type as t } from '../theme/tokens';
+import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity';
 
 interface Props {
   type: 'trip' | 'circle';
@@ -38,7 +39,7 @@ function PersonAvatar({ user, size = 36 }: { user: FriendUser; size?: number }) 
   return (
     <View style={[{ width: size, height: size, borderRadius: size / 2 }, s.avatarFallback]}>
       <Text style={s.avatarInitial}>
-        {(user.name?.[0] ?? user.handle?.[0] ?? '?').toUpperCase()}
+        {(primaryIdentityText({ name: user.name, handle: user.handle }).replace(/^@/, '')[0] ?? '?').toUpperCase()}
       </Text>
     </View>
   );
@@ -59,8 +60,8 @@ function MemberRow({
     <View style={s.row}>
       <PersonAvatar user={user} />
       <View style={s.rowMeta}>
-        <Text style={s.rowName} numberOfLines={1}>{user.name || user.handle}</Text>
-        {user.handle ? <Text style={s.rowHandle} numberOfLines={1}>@{user.handle}</Text> : null}
+        <Text style={s.rowName} numberOfLines={1}>{primaryIdentityText({ name: user.name, handle: user.handle })}</Text>
+        {secondaryIdentityText({ name: user.name, handle: user.handle }) ? <Text style={s.rowHandle} numberOfLines={1}>{secondaryIdentityText({ name: user.name, handle: user.handle })}</Text> : null}
         {reason ? <Text style={s.rowReason} numberOfLines={1}>{reason}</Text> : null}
       </View>
       {badge ? (
@@ -272,8 +273,8 @@ export function TripMembersSheet({ type, id, title, onDismiss }: Props) {
                     >
                       <PersonAvatar user={c} size={32} />
                       <View style={s.rowMeta}>
-                        <Text style={s.rowName} numberOfLines={1}>{c.name || c.handle}</Text>
-                        {c.handle ? <Text style={s.rowHandle} numberOfLines={1}>@{c.handle}</Text> : null}
+                        <Text style={s.rowName} numberOfLines={1}>{primaryIdentityText({ name: c.name, handle: c.handle })}</Text>
+                        {secondaryIdentityText({ name: c.name, handle: c.handle }) ? <Text style={s.rowHandle} numberOfLines={1}>{secondaryIdentityText({ name: c.name, handle: c.handle })}</Text> : null}
                       </View>
                       {invitingId === c.id ? (
                         <ActivityIndicator size="small" color={color.signal} />

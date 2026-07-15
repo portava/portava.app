@@ -22,6 +22,7 @@ import { deriveIntentMode } from "../compass/CompassIntentModeEngine";
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
+import { nameVisibilitySet } from "../lib/publicIdentity";
 import { getServiceClient } from "../lib/supabase";
 
 const router = Router();
@@ -252,6 +253,9 @@ router.get("/pulse", async (req, res) => {
     } catch { /* non-fatal — savedByMe defaults to false */ }
   }
 
+  // Universal display-name rule: authors show @handle unless they opted in.
+  const allowedAuthorNames = await nameVisibilitySet(sc, rows.map((r: any) => r.author_id));
+
   // Shape responses — NEVER include exact coords
   const posts = rows.map((row: any) => {
     const geoTag = Array.isArray(row.pulse_geo_tags)
@@ -281,7 +285,9 @@ router.get("/pulse", async (req, res) => {
       author: profile ? {
         id:        profile.id,
         username:  profile.username,
-        name:      profile.full_name ?? profile.username,
+        name:      (row.author_id === user.id || allowedAuthorNames.has(row.author_id as string))
+          ? (profile.full_name ?? profile.username)
+          : profile.username,
         avatarUrl: profile.avatar_url ?? null,
       } : null,
       // Structured media items (photo + video); legacy mediaUrls preserved for backward compat

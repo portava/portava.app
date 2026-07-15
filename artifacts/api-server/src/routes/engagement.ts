@@ -32,6 +32,7 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 
 const router = Router();
 
@@ -246,8 +247,12 @@ router.get("/engagement/likes", async (req, res) => {
     return;
   }
 
-  // Profiles query — exclude deleted, banned, and suspended accounts
-  let profileQuery = sc
+  // Profiles query — exclude deleted, banned, and suspended accounts.
+  // NOTE: name search is NOT applied at the DB level. Under the universal
+  // display-name rule a hidden name must not be *matchable*, so we fetch the
+  // candidate rows unfiltered by name and post-filter in JS below, allowing a
+  // display_name match to survive only when that user opted in (or is viewer).
+  const { data: profiles, error: profileErr } = await sc
     .from("profiles")
     .select("id, username, display_name, avatar_url, account_status")
     .in("id", filteredIds)
@@ -255,19 +260,31 @@ router.get("/engagement/likes", async (req, res) => {
     .not("account_status", "eq", "banned")
     .not("account_status", "eq", "suspended");
 
-  if (q && q.trim()) {
-    profileQuery = profileQuery.or(`display_name.ilike.%${q.trim()}%,username.ilike.%${q.trim()}%`);
-  }
-
-  const { data: profiles, error: profileErr } = await profileQuery;
   if (profileErr) {
     req.log.error({ err: profileErr }, "engagement/likes profiles fetch failed");
     sendError(res, "db_error", profileErr.message);
     return;
   }
 
+  const candidateRows = (profiles ?? []) as any[];
+
+  // Universal display-name rule: batch lookup of who opted in to showing names.
+  const allowedNames = await nameVisibilitySet(sc, candidateRows.map((p) => p.id));
+
+  // Post-filter search: a row survives only if the query matched a visible
+  // field. username always matches; display_name matches only when that user's
+  // name is visible to the viewer (opted in, or the viewer themselves).
+  const term = q && q.trim() ? q.trim().toLowerCase() : null;
   const profileMap = new Map<string, any>();
-  for (const p of (profiles ?? []) as any[]) profileMap.set(p.id, p);
+  for (const p of candidateRows) {
+    if (term) {
+      const nameVisible = p.id === user.id || allowedNames.has(p.id);
+      const usernameHit = typeof p.username === "string" && p.username.toLowerCase().includes(term);
+      const nameHit = nameVisible && typeof p.display_name === "string" && p.display_name.toLowerCase().includes(term);
+      if (!usernameHit && !nameHit) continue;
+    }
+    profileMap.set(p.id, p);
+  }
 
   const profileIds = [...profileMap.keys()];
 
@@ -289,10 +306,14 @@ router.get("/engagement/likes", async (req, res) => {
     .map((id) => {
       const p = profileMap.get(id);
       if (!p) return null;
+      const shownName = presentedName(
+        { id: p.id, display_name: p.display_name, name: null },
+        p.id === user.id || allowedNames.has(p.id),
+      );
       return {
         id: p.id,
         handle: p.username ?? "",
-        displayName: p.display_name ?? p.username ?? "Traveler",
+        displayName: shownName ?? p.username ?? "Traveler",
         avatarUrl: p.avatar_url ?? null,
         isFollowing: followingSet.has(p.id),
         followsYou: followsYouSet.has(p.id),

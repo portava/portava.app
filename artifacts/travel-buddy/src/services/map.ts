@@ -118,9 +118,12 @@ export interface NearbyUser {
  */
 export async function listNearbyUsers(city: string, excludeUserId: string): Promise<NearbyUser[]> {
   if (!isSupabaseConfigured || !city.trim()) return [];
+  // Universal display-name rule: this is a direct-Supabase read, so other
+  // users' opt-in flags aren't checkable here (RLS). Never select real names —
+  // render @handle only.
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, name, avatar_url')
+    .select('id, handle, avatar_url')
     .ilike('current_city', city.trim())
     .eq('is_private', false)
     .neq('id', excludeUserId)
@@ -128,7 +131,7 @@ export async function listNearbyUsers(city: string, excludeUserId: string): Prom
   if (error || !data) return [];
   return (data as any[]).map((r) => ({
     id: r.id as string,
-    name: (r.name as string | null) ?? 'Traveler',
+    name: r.handle ? `@${r.handle as string}` : 'Traveler',
     avatarUrl: (r.avatar_url as string | null) ?? null,
   }));
 }

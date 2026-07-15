@@ -40,6 +40,7 @@ import { X } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import { getLikers, type LikeTargetType, type LikerUser } from '../services/engagementLikers';
 import { followUser, unfollowUser } from '../services/follows';
+import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity';
 
 // ── Liker row ─────────────────────────────────────────────────────────────────
 
@@ -69,7 +70,8 @@ function LikerRow({ user, onClose }: LikerRowProps) {
     router.push(`/u/${user.handle}` as any);
   }
 
-  const initials = (user.displayName || user.handle || 'T')
+  const initials = primaryIdentityText({ displayName: user.displayName, handle: user.handle })
+    .replace(/^@/, '')
     .split(' ')
     .map((w) => w[0] ?? '')
     .slice(0, 2)
@@ -91,9 +93,9 @@ function LikerRow({ user, onClose }: LikerRowProps) {
       )}
 
       <View style={s.info}>
-        <Text style={s.name} numberOfLines={1}>{user.displayName || user.handle || 'Traveler'}</Text>
+        <Text style={s.name} numberOfLines={1}>{primaryIdentityText({ displayName: user.displayName, handle: user.handle })}</Text>
         <View style={s.handleRow}>
-          {user.handle ? <Text style={s.handle} numberOfLines={1}>@{user.handle}</Text> : null}
+          {secondaryIdentityText({ displayName: user.displayName, handle: user.handle }) ? <Text style={s.handle} numberOfLines={1}>{secondaryIdentityText({ displayName: user.displayName, handle: user.handle })}</Text> : null}
           {user.followsYou && !isFollowing && (
             <View style={s.followsYouBadge}>
               <Text style={s.followsYouText}>Follows you</Text>

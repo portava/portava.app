@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { enrichSpans } from "../lib/enrichSpans";
+import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import {
   requireUser,
@@ -762,7 +763,8 @@ router.get("/posts", async (req, res) => {
         .from("profiles")
         .select("id, handle, name, avatar_url")
         .in("id", authorIds);
-      for (const p of profiles ?? []) profileMap[p.id] = p;
+      const allowedNames = await nameVisibilitySet(sc, authorIds);
+      for (const p of profiles ?? []) profileMap[p.id] = sanitizeIdentity(p as any, allowedNames, user.id);
     }
 
     // Step 4: batch-fetch engagement counts + likedByMe + savedByMe.
@@ -883,7 +885,8 @@ router.get("/posts", async (req, res) => {
       .from("profiles")
       .select("id, handle, name, avatar_url")
       .in("id", globalAuthorIds);
-    for (const p of profiles ?? []) globalProfileMap[p.id] = p;
+    const allowedNames = await nameVisibilitySet(svc, globalAuthorIds);
+    for (const p of profiles ?? []) globalProfileMap[p.id] = sanitizeIdentity(p as any, allowedNames, user.id);
   }
 
   // Batch-fetch engagement + likedByMe + savedByMe
@@ -1045,7 +1048,8 @@ router.get("/trips/:tripId/posts", async (req, res) => {
   if (tripSvc && tripAuthorIds.length > 0) {
     const { data: profiles } = await tripSvc
       .from("profiles").select("id, handle, name, avatar_url").in("id", tripAuthorIds);
-    for (const p of profiles ?? []) tripProfileMap[p.id] = p;
+    const allowedNames = await nameVisibilitySet(tripSvc, tripAuthorIds);
+    for (const p of profiles ?? []) tripProfileMap[p.id] = sanitizeIdentity(p as any, allowedNames, user.id);
   }
 
   const tripEngMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean; saveCount: number; savedByMe: boolean }> = {};

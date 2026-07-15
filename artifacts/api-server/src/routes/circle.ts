@@ -29,6 +29,7 @@ import { shapePresence, type CircleProfileSnippet } from "../lib/circleResponseS
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter as NotifRouter } from "../services/notifications/NotificationRouter.js";
+import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
 
 const router = Router();
 
@@ -298,6 +299,31 @@ async function postCircleStatusCard(
   } catch { /* non-fatal — card delivery must never block Circle operations */ }
 }
 
+/**
+ * Resolve the actor's notification-facing name honoring the universal display-name
+ * rule. The actor is the acting user; recipients are OTHER users, so their real
+ * name may only appear if the actor opted in — otherwise fall back to @handle.
+ * Non-fatal — always returns a usable string.
+ */
+async function resolveActorName(sc: any, userId: string, fallback = "Someone"): Promise<string> {
+  try {
+    const { data } = await sc
+      .from("profiles")
+      .select("display_name, name, handle")
+      .eq("id", userId)
+      .maybeSingle();
+    const handle = (data as any)?.handle as string | null;
+    const allowed = await nameVisibleFor(sc, userId);
+    if (allowed) {
+      const n = (data as any)?.display_name ?? (data as any)?.name;
+      if (n) return n as string;
+    }
+    return handle ? `@${handle}` : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 /** Resolve the display name for a context (trip title or event name). Non-fatal. */
 async function resolveContextTitle(
   sc: any,
@@ -471,13 +497,12 @@ router.patch("/circle/settings", async (req, res) => {
       try {
         // Discover caller's contexts using canonical membership tables — no circle_members.
         // Events require BOTH going RSVP AND event_attendees row (same gate as getAcceptedMemberIds).
-        const [tripMemberRes, eventRsvpRes, eventAttendeeRes, actorProfile] = await Promise.all([
+        const [tripMemberRes, eventRsvpRes, eventAttendeeRes, actorName] = await Promise.all([
           sc.from("trip_members").select("trip_id").eq("user_id", user.id).eq("status", "accepted"),
           sc.from("event_rsvps").select("event_id").eq("user_id", user.id).eq("status", "going"),
           sc.from("event_attendees").select("event_id").eq("user_id", user.id),
-          sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
+          resolveActorName(sc, user.id),
         ]);
-        const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "Someone";
         // Intersect event_rsvps × event_attendees for canonical eligibility.
         const rsvpEids     = new Set(((eventRsvpRes.data     ?? []) as any[]).map((r) => r.event_id as string));
         const attendeeEids = new Set(((eventAttendeeRes.data  ?? []) as any[]).map((r) => r.event_id as string));
@@ -543,13 +568,12 @@ router.post("/circle/pause-all", async (req, res) => {
   // Notify members of all active contexts that this user paused Circle (fire-and-forget).
   void (async () => {
     try {
-      const [tripMemberRes, eventRsvpRes, eventAttendeeRes, actorProfile] = await Promise.all([
+      const [tripMemberRes, eventRsvpRes, eventAttendeeRes, actorName] = await Promise.all([
         sc.from("trip_members").select("trip_id").eq("user_id", user.id).eq("status", "accepted"),
         sc.from("event_rsvps").select("event_id").eq("user_id", user.id).eq("status", "going"),
         sc.from("event_attendees").select("event_id").eq("user_id", user.id),
-        sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
+        resolveActorName(sc, user.id),
       ]);
-      const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "Someone";
       const rsvpEids     = new Set(((eventRsvpRes.data     ?? []) as any[]).map((r) => r.event_id as string));
       const attendeeEids = new Set(((eventAttendeeRes.data  ?? []) as any[]).map((r) => r.event_id as string));
       const eligibleEids = [...rsvpEids].filter((eid) => attendeeEids.has(eid));
@@ -723,6 +747,9 @@ router.get("/circle/contexts/:type/:id/members", async (req, res) => {
     profileMap.set(p.id as string, p);
   }
 
+  // Universal display-name rule: only subjects who opted in expose their real name.
+  const allowedNames = await nameVisibilitySet(sc, memberIds);
+
   const limitParam  = Math.min(Math.max(Number((req.query as any).limit  ?? 50), 1), 200);
   const offsetParam = Math.max(Number((req.query as any).offset ?? 0), 0);
 
@@ -746,10 +773,13 @@ router.get("/circle/contexts/:type/:id/members", async (req, res) => {
         if (guardResult.visibilityMode === "precise_live") return;
 
         const prof = profileMap.get(targetId);
+        const nameAllowed = targetId === user.id || allowedNames.has(targetId);
         const snippet: CircleProfileSnippet = {
           userId:      targetId,
           avatarUrl:   (prof?.avatar_url as string | null)                                    ?? null,
-          displayName: (prof?.display_name as string | null) ?? (prof?.name as string | null) ?? "",
+          displayName: nameAllowed
+            ? ((prof?.display_name as string | null) ?? (prof?.name as string | null) ?? "")
+            : "",
           username:    (prof?.handle as string | null)                                         ?? "",
         };
 
@@ -833,10 +863,14 @@ router.get("/circle/contexts/:type/:id/who-can-see-me", async (req, res) => {
     ? await sc.from("profiles").select("id, handle, display_name, name, avatar_url").in("id", canSeeMeIds)
     : { data: [] };
 
+  const allowedNames = await nameVisibilitySet(sc, canSeeMeIds);
+
   const members = ((profileRows ?? []) as any[]).map((p) => ({
     userId:      p.id as string,
     username:    (p.handle as string | null) ?? "",
-    displayName: (p.display_name as string | null) ?? (p.name as string | null) ?? "",
+    displayName: (p.id as string) === user.id || allowedNames.has(p.id as string)
+      ? ((p.display_name as string | null) ?? (p.name as string | null) ?? "")
+      : "",
     avatarUrl:   (p.avatar_url as string | null) ?? null,
   }));
 
@@ -1006,9 +1040,9 @@ router.post("/circle/contexts/:type/:id/presence", async (req, res) => {
   if (requestedStatus === "active") {
     void (async () => {
       try {
-        const [memberIds, actorProfile, contextTitle, otherActiveRes] = await Promise.all([
+        const [memberIds, actorName, contextTitle, otherActiveRes] = await Promise.all([
           getAcceptedMemberIds(sc, type as ContextType, id),
-          sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
+          resolveActorName(sc, user.id),
           resolveContextTitle(sc, type as ContextType, id),
           sc.from("circle_presence")
             .select("user_id")
@@ -1020,7 +1054,6 @@ router.post("/circle/contexts/:type/:id/presence", async (req, res) => {
         const otherActive = (otherActiveRes.data ?? []) as any[];
         if (otherActive.length === 0) {
           // Caller is the first one sharing — notify all other members.
-          const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "Someone";
           const recipients = memberIds.filter((m) => m !== user.id);
           await sendCircleNotifications(sc, recipients, "circle.context_active", {
             actor: actorName, contextTitle, contextType: type, contextId: id,
@@ -1113,14 +1146,11 @@ router.post("/circle/contexts/:type/:id/check-in", async (req, res) => {
   // Fire notifications + Telegraph card (all fire-and-forget, never block the 201 response).
   void (async () => {
     try {
-      const [memberIds, actorProfile, contextTitle] = await Promise.all([
+      const [memberIds, actorName, contextTitle] = await Promise.all([
         getAcceptedMemberIds(sc, type as ContextType, id),
-        sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
+        resolveActorName(sc, user.id),
         resolveContextTitle(sc, type as ContextType, id),
       ]);
-      const actorName = (actorProfile.data as any)?.display_name
-        ?? (actorProfile.data as any)?.name
-        ?? "Someone";
       const recipients = memberIds.filter((m) => m !== user.id);
       // Notifications: status label is user-supplied — safe to include. Venue is not.
       await sendCircleNotifications(sc, recipients, "circle.checkin", {
@@ -1334,12 +1364,11 @@ router.post("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
   // Notifications + Telegraph card (fire-and-forget)
   void (async () => {
     try {
-      const [memberIds, actorProfile, contextTitle] = await Promise.all([
+      const [memberIds, actorName, contextTitle] = await Promise.all([
         getAcceptedMemberIds(sc, type as ContextType, id),
-        sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
+        resolveActorName(sc, user.id, "The host"),
         resolveContextTitle(sc, type as ContextType, id),
       ]);
-      const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "The host";
       const recipients = memberIds.filter((m) => m !== user.id);
       // Privacy: no venue/location fields in notification params — status + deep-link only.
       await sendCircleNotifications(sc, recipients, "circle.meeting_point_updated", {
@@ -1416,12 +1445,11 @@ router.patch("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
   // Notifications + Telegraph card (fire-and-forget) — same pattern as POST /meeting-point
   void (async () => {
     try {
-      const [memberIds, actorProfile, contextTitle] = await Promise.all([
+      const [memberIds, actorName, contextTitle] = await Promise.all([
         getAcceptedMemberIds(sc, type as ContextType, id),
-        sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
+        resolveActorName(sc, user.id, "The host"),
         resolveContextTitle(sc, type as ContextType, id),
       ]);
-      const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "The host";
       const recipients = memberIds.filter((m) => m !== user.id);
       // Privacy: no venue/location fields in notification params — status + deep-link only.
       await sendCircleNotifications(sc, recipients, "circle.meeting_point_updated", {
@@ -1482,12 +1510,11 @@ router.delete("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
   // Notify members that the meeting point was cleared (fire-and-forget)
   void (async () => {
     try {
-      const [memberIds, actorProfile, contextTitle] = await Promise.all([
+      const [memberIds, actorName, contextTitle] = await Promise.all([
         getAcceptedMemberIds(sc, type as ContextType, id),
-        sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
+        resolveActorName(sc, user.id, "The host"),
         resolveContextTitle(sc, type as ContextType, id),
       ]);
-      const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "The host";
       const recipients = memberIds.filter((m) => m !== user.id);
       // Privacy: no venue/location fields — status + deep-link only.
       await sendCircleNotifications(sc, recipients, "circle.meeting_point_updated", {
@@ -1566,11 +1593,10 @@ router.post("/circle/contexts/:type/:id/need-help", async (req, res) => {
   // or any emergency detail in notification params.
   void (async () => {
     try {
-      const [actorProfile, contextTitle] = await Promise.all([
-        sc.from("profiles").select("display_name, name").eq("id", user.id).maybeSingle(),
+      const [actorName, contextTitle] = await Promise.all([
+        resolveActorName(sc, user.id),
         resolveContextTitle(sc, type as ContextType, id),
       ]);
-      const actorName = (actorProfile.data as any)?.display_name ?? (actorProfile.data as any)?.name ?? "Someone";
 
       // Resolve the host for this context using canonical owner columns.
       // trips: owner_id  — events: host_id  (consistent with trips.ts / admin.ts)
@@ -1834,9 +1860,7 @@ router.post("/circle/pause-on-session-end", async (req, res) => {
   // Notify members of each affected context (fire-and-forget — never block 200).
   void (async () => {
     try {
-      const { data: profileData } = await sc
-        .from("profiles").select("display_name, name").eq("id", user.id).maybeSingle();
-      const actorName = (profileData as any)?.display_name ?? (profileData as any)?.name ?? "Someone";
+      const actorName = await resolveActorName(sc, user.id);
 
       await Promise.all(
         (presenceRows as any[]).map(async (row) => {

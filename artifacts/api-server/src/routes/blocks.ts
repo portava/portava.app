@@ -5,6 +5,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { invalidateCompassProfile } from "../compass/CompassProfileService.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { resolveInteractionPermissions } from "../services/interactionPermissions.js";
+import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 
 const router = Router();
 
@@ -184,13 +185,15 @@ router.get("/me/blocks", async (req, res) => {
   const profileMap: Record<string, any> = {};
   for (const p of profiles ?? []) profileMap[(p as any).id] = p;
 
+  const allowedNames = await nameVisibilitySet(client, ids);
+
   res.status(200).json({
     blocked: (rows ?? []).map((r: any) => {
       const p = profileMap[r.blocked_id] ?? {};
       return {
         id: r.blocked_id as string,
         handle: (p.handle as string) ?? null,
-        name: (p.name as string) ?? null,
+        name: presentedName(p, r.blocked_id === user.id || allowedNames.has(r.blocked_id as string)),
         avatarUrl: (p.avatar_url as string | null) ?? null,
         blockedAt: r.created_at as string,
       };

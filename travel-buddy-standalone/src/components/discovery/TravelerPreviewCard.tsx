@@ -13,11 +13,14 @@ import { BadgeCheck, MapPin, X, ArrowRight, HandMetal } from 'lucide-react-nativ
 import { color, space, radius, type as t, shadow } from '../../theme/tokens';
 import type { MapTraveler } from '../../services/mapTravelers';
 import { travelerInitials } from './TravelerMapLayer';
+import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity';
 
 export function TravelerPreviewCard({ traveler, onClose }: {
   traveler: MapTraveler;
   onClose: () => void;
 }) {
+  const nameText = primaryIdentityText({ displayName: traveler.displayName, handle: traveler.handle });
+  const handleSubline = secondaryIdentityText({ displayName: traveler.displayName, handle: traveler.handle });
   const locationLabel = [traveler.city, traveler.country].filter(Boolean).join(', ');
   const freshLabel = traveler.freshness === 'live' ? 'Active now' : 'Recently active';
   const freshColor = traveler.freshness === 'live' ? '#22C55E' : '#F59E0B';
@@ -38,16 +41,16 @@ export function TravelerPreviewCard({ traveler, onClose }: {
           <Image source={{ uri: traveler.avatarUrl }} style={s.avatar} />
         ) : (
           <View style={s.avatarFallback}>
-            <Text style={s.avatarInitials}>{travelerInitials(traveler.displayName)}</Text>
+            <Text style={s.avatarInitials}>{travelerInitials(nameText.replace(/^@/, ''))}</Text>
           </View>
         )}
         <View style={{ flex: 1, minWidth: 0 }}>
           <View style={s.nameRow}>
-            <Text style={s.name} numberOfLines={1}>{traveler.displayName}</Text>
+            <Text style={s.name} numberOfLines={1}>{nameText}</Text>
             {traveler.verified && <BadgeCheck size={15} color={color.signal} />}
           </View>
-          {traveler.handle ? (
-            <Text style={s.handle} numberOfLines={1}>@{traveler.handle}</Text>
+          {handleSubline ? (
+            <Text style={s.handle} numberOfLines={1}>{handleSubline}</Text>
           ) : null}
         </View>
       </View>

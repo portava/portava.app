@@ -17,6 +17,7 @@ import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { sendPushNotification } from "../lib/push.js";
+import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
 
 const router = Router();
 
@@ -208,6 +209,7 @@ router.get("/trips/:tripId/availability", async (req, res) => {
     if ((r as any).expires_at > now) qsMap[(r as any).user_id] = r;
   }
 
+  const allowedNames = await nameVisibilitySet(getServiceClient() ?? client, memberIds);
   const profileMap: Record<string, any> = {};
   for (const p of profiles ?? []) profileMap[(p as any).id] = p;
 
@@ -216,10 +218,11 @@ router.get("/trips/:tripId/availability", async (req, res) => {
     const ga = globalAvMap[uid];
     const qs = qsMap[uid];
     const p = profileMap[uid];
+    const nameAllowed = uid === user.id || allowedNames.has(uid);
     return {
       userId: uid,
       handle: p?.handle ?? null,
-      name: p?.name ?? null,
+      name: nameAllowed ? (p?.name ?? null) : null,
       avatarUrl: p?.avatar_url ?? null,
       // trip-scoped open_days takes priority; fall back to global weekly_days
       openDays: ta?.open_days ?? null,
@@ -404,16 +407,17 @@ async function sendAvailabilityNudges(
     .map((r) => r.nudge_date as string)
     .sort()[0];
 
-  const [{ data: tokenRows }, { data: senderProfile }, { data: tripRow }] = await Promise.all([
+  const [{ data: tokenRows }, { data: senderProfile }, { data: tripRow }, senderNameAllowed] = await Promise.all([
     sc.from("profiles").select("id, expo_push_token").in("id", newRecipientIds),
     sc.from("profiles").select("name, handle").eq("id", senderId).single(),
     sc.from("trips").select("title").eq("id", tripId).single(),
+    nameVisibleFor(sc, senderId),
   ]);
 
-  const senderName =
-    (senderProfile as any)?.name ??
-    (senderProfile as any)?.handle ??
-    "A trip member";
+  const senderHandle = (senderProfile as any)?.handle as string | null;
+  const senderName = senderNameAllowed
+    ? ((senderProfile as any)?.name ?? (senderHandle ? `@${senderHandle}` : "A trip member"))
+    : (senderHandle ? `@${senderHandle}` : "A trip member");
 
   const tripTitle = (tripRow as any)?.title ?? "your trip";
 
@@ -512,9 +516,10 @@ router.get("/me/availability-nudges", async (req, res) => {
   const senderIds = [...new Set((rows as any[]).map((r) => r.sender_id as string))];
   const tripIds   = [...new Set((rows as any[]).map((r) => r.trip_id   as string))];
 
-  const [{ data: profiles }, { data: trips }] = await Promise.all([
+  const [{ data: profiles }, { data: trips }, allowedNames] = await Promise.all([
     sc.from("profiles").select("id, name, handle, avatar_url").in("id", senderIds),
     sc.from("trips").select("id, title, destination_city").in("id", tripIds),
+    nameVisibilitySet(sc, senderIds),
   ]);
 
   const profileMap: Record<string, any> = {};
@@ -526,10 +531,11 @@ router.get("/me/availability-nudges", async (req, res) => {
   const nudges = (rows as any[]).map((r) => {
     const sender = profileMap[r.sender_id];
     const trip   = tripMap[r.trip_id];
+    const nameAllowed = r.sender_id === user.id || allowedNames.has(r.sender_id as string);
     return {
       id:            r.id as string,
       senderId:      r.sender_id as string,
-      senderName:    sender?.name   ?? null,
+      senderName:    nameAllowed ? (sender?.name ?? null) : null,
       senderHandle:  sender?.handle ?? null,
       senderAvatarUrl: sender?.avatar_url ?? null,
       tripId:        r.trip_id    as string,
@@ -588,6 +594,7 @@ router.get("/circles/:circleId/availability", async (req, res) => {
   for (const r of qsRows ?? []) {
     if ((r as any).expires_at > now) qsMap[(r as any).user_id] = r;
   }
+  const allowedNames = await nameVisibilitySet(getServiceClient() ?? client, memberIds);
   const profileMap: Record<string, any> = {};
   for (const p of profiles ?? []) profileMap[p.id] = p;
 
@@ -595,10 +602,11 @@ router.get("/circles/:circleId/availability", async (req, res) => {
     const av = avMap[uid];
     const qs = qsMap[uid];
     const p = profileMap[uid];
+    const nameAllowed = uid === user.id || allowedNames.has(uid);
     return {
       userId: uid,
       handle: p?.handle ?? null,
-      name: p?.name ?? null,
+      name: nameAllowed ? (p?.name ?? null) : null,
       avatarUrl: p?.avatar_url ?? null,
       weeklyDays: av?.weekly_days ?? {},
       openToMeet: av?.open_to_meet ?? false,

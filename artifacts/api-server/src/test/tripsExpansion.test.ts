@@ -1047,7 +1047,9 @@ describe("trips-expansion routes", () => {
       assert.ok(Array.isArray(link.joiners), "joiners should be an array");
       assert.equal(link.joiners.length, 1);
       assert.equal(link.joiners[0].id, JOINER_ID);
-      assert.equal(link.joiners[0].name, "Jane Doe");
+      // Universal display-name rule: real name is redacted (null) unless the
+      // joiner opted in via profile_privacy_settings.show_real_name.
+      assert.equal(link.joiners[0].name, null);
       assert.equal(link.joiners[0].handle, "janedoe");
       assert.equal(link.joiners[0].removed, false);
     });

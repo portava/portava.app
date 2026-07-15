@@ -63,6 +63,7 @@ import {
   suggestCanonicalLocations,
   type CanonicalRow,
 } from "../lib/canonicalLocations";
+import { nameVisibilitySet } from "../lib/publicIdentity";
 
 const router = Router();
 const logger = rootLogger.child({ route: "discoverySearch" });
@@ -282,7 +283,22 @@ async function searchTravelers(
     const visible = rows.filter((p: any) => !noDiscSet.has(p.id as string));
     if (visible.length === 0) return [];
 
-    const visibleIds = visible.map((p: any) => p.id as string);
+    // Universal display-name rule: batch-resolve which subjects opted in to
+    // showing their real name. Hidden names must not be searchable/matchable —
+    // if the query matched only the (hidden) name, drop the row so searching
+    // someone's name cannot reveal it belongs to them.
+    const allowedNames = await nameVisibilitySet(sc, visible.map((p: any) => p.id as string));
+    const qLower = q.toLowerCase();
+    const nameSafe = visible.filter((p: any) => {
+      if (p.id === userId) return true;                 // viewer never redacted
+      if (allowedNames.has(p.id as string)) return true;
+      const h = ((p.handle as string | null) ?? "").toLowerCase();
+      const un = ((p.username as string | null) ?? "").toLowerCase();
+      return h.includes(qLower) || un.includes(qLower);
+    });
+    if (nameSafe.length === 0) return [];
+
+    const visibleIds = nameSafe.map((p: any) => p.id as string);
     const { data: followEdges } = await sc
       .from("user_follows")
       .select("following_id")
@@ -291,26 +307,32 @@ async function searchTravelers(
     const followingSet = new Set<string>((followEdges ?? []).map((e: any) => e.following_id as string));
 
     const type: Exclude<SearchType, "all"> = isBuddy ? "buddies" : "travelers";
-    const mapped: SearchResult[] = visible.map((p: any): SearchResult => ({
-      id: p.id,
-      type,
-      title: (p.name as string) ?? (p.handle as string) ?? "",
-      subtitle: p.handle ? `@${p.handle as string}` : null,
-      avatarUrl: (p.avatar_url as string | null) ?? null,
-      imageUrl: null,
-      fallbackInitials: initials((p.name as string) ?? (p.handle as string) ?? "?"),
-      locationPreview: [(p.home_city as string | null), (p.home_country as string | null)].filter(Boolean).join(", ") || null,
-      matchedReason: null,
-      actionState: { isFollowing: followingSet.has(p.id as string) },
-      privacyState: { isPrivate: false },
-      accessState: { canAccess: true },
-      destinationRoute: p.handle
-        ? `/passport/${p.handle as string}`
-        : `/passport/${p.id as string}`,
-      metadata: null,
-      createdAt: null,
-      startsAt: null,
-    }));
+    const mapped: SearchResult[] = nameSafe.map((p: any): SearchResult => {
+      // Name defaults to @handle unless the subject opted in (or is the viewer).
+      const nameAllowed = p.id === userId || allowedNames.has(p.id as string);
+      const presented = nameAllowed ? ((p.name as string | null) ?? null) : null;
+      const fallbackLabel = presented ?? (p.handle as string) ?? "?";
+      return {
+        id: p.id,
+        type,
+        title: presented ?? (p.handle as string) ?? "",
+        subtitle: p.handle ? `@${p.handle as string}` : null,
+        avatarUrl: (p.avatar_url as string | null) ?? null,
+        imageUrl: null,
+        fallbackInitials: initials(fallbackLabel),
+        locationPreview: [(p.home_city as string | null), (p.home_country as string | null)].filter(Boolean).join(", ") || null,
+        matchedReason: null,
+        actionState: { isFollowing: followingSet.has(p.id as string) },
+        privacyState: { isPrivate: false },
+        accessState: { canAccess: true },
+        destinationRoute: p.handle
+          ? `/passport/${p.handle as string}`
+          : `/passport/${p.id as string}`,
+        metadata: null,
+        createdAt: null,
+        startsAt: null,
+      };
+    });
 
     return mapped;
   } catch {

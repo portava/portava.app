@@ -23,6 +23,7 @@ import { ReportPostSheet } from './ReportPostSheet';
 import { SaveButton } from './SaveButton';
 import { deletePost } from '../services/postEngagement';
 import { hidePost } from '../services/posts';
+import { primaryIdentityText } from '../lib/displayIdentity';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -66,6 +67,10 @@ function AuthorRow({
   const handleAuthorPress = item.author?.username
     ? () => router.push(`/u/${item.author!.username}` as any)
     : undefined;
+
+  const authorText = item.author
+    ? primaryIdentityText({ name: item.author.name, username: item.author.username })
+    : '';
 
   function openOverflow() {
     if (isOwner) {
@@ -125,7 +130,7 @@ function AuthorRow({
           {avatarError || !item.author.avatarUrl ? (
             <View style={[s.avatar, s.avatarFallback]}>
               <Text style={s.avatarFallbackText}>
-                {(item.author.name ?? '?').charAt(0).toUpperCase()}
+                {(authorText.replace(/^@/, '') || '?').charAt(0).toUpperCase()}
               </Text>
             </View>
           ) : (
@@ -141,7 +146,7 @@ function AuthorRow({
         {badge ? <View style={[s.kindBadge, { backgroundColor: badge.bg }]}><Text style={[s.kindText, { color: badge.fg }]}>{badge.label}</Text></View> : null}
         {item.author ? (
           <Pressable onPress={handleAuthorPress}>
-            <Text style={[s.author, light ? { color: color.onInk } : undefined]}>{item.author.name}</Text>
+            <Text style={[s.author, light ? { color: color.onInk } : undefined]}>{authorText}</Text>
           </Pressable>
         ) : null}
         <Text style={[s.meta, light ? { color: color.onInkMute } : undefined]}>{item.timeAgo}{item.neighborhood ? ` · ${item.neighborhood}` : item.city ? ` · ${item.city}` : ''}</Text>

@@ -18,6 +18,7 @@ import { requireUser, sendError } from "../lib/http";
 import { isUuid } from "../lib/followDecisions";
 import { getServiceClient } from "../lib/supabase";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
+import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
 import { muteRateLimit } from "../lib/rateLimit";
 
 const router = Router();
@@ -175,13 +176,15 @@ router.get("/me/mutes", async (req, res) => {
     for (const p of profiles ?? []) profileMap[(p as any).id] = p;
   }
 
+  const allowedNames = await nameVisibilitySet(sc, ids);
+
   res.status(200).json({
     muted: (rows ?? []).map((r: any) => {
       const p = profileMap[r.muted_id] ?? {};
       return {
         id:         r.muted_id as string,
         handle:     (p.handle    as string | null) ?? null,
-        name:       (p.name      as string | null) ?? null,
+        name:       presentedName(p, r.muted_id === user.id || allowedNames.has(r.muted_id as string)),
         avatarUrl:  (p.avatar_url as string | null) ?? null,
         muteTypes:  (r.mute_types as string[]) ?? ["all"],
         mutedAt:    r.created_at as string,

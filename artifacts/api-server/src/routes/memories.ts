@@ -31,6 +31,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { sendPushNotification } from "../lib/push.js";
+import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -187,7 +188,10 @@ async function notifyTagged(sc: any, memory: any, taggedUserId: string): Promise
       .maybeSingle();
 
     if (tagged?.expo_push_token) {
-      const ownerName = owner?.name ?? owner?.handle ?? "Someone";
+      const ownerNameAllowed = await nameVisibleFor(sc, memory.owner_id);
+      const ownerName = ownerNameAllowed
+        ? (owner?.name ?? (owner?.handle ? `@${owner.handle}` : "Someone"))
+        : (owner?.handle ? `@${owner.handle}` : "Someone");
       await sendPushNotification([tagged.expo_push_token], {
         title: "You were tagged in a Memory",
         body: `${ownerName} tagged you in a memory. Tap to approve or remove.`,
@@ -221,7 +225,10 @@ async function notifyLike(sc: any, memoryId: string, ownerId: string, likerId: s
       .eq("id", ownerId)
       .maybeSingle();
     if (owner?.expo_push_token) {
-      const likerName = liker?.name ?? liker?.handle ?? "Someone";
+      const likerNameAllowed = await nameVisibleFor(sc, likerId);
+      const likerName = likerNameAllowed
+        ? (liker?.name ?? (liker?.handle ? `@${liker.handle}` : "Someone"))
+        : (liker?.handle ? `@${liker.handle}` : "Someone");
       await sendPushNotification([owner.expo_push_token], {
         title: "New like on your Memory",
         body: `${likerName} liked your memory.`,
@@ -418,6 +425,8 @@ router.get("/memories/:id", async (req, res) => {
     .eq("id", memory.owner_id)
     .maybeSingle();
 
+  const ownerNameAllowed = memory.owner_id === user.id || await nameVisibleFor(sc, memory.owner_id);
+
   res.json({
     memory: {
       ...mapMemory(memory),
@@ -429,7 +438,7 @@ router.get("/memories/:id", async (req, res) => {
       savedByMe: Boolean(savedByMe.data),
       owner: ownerProfile.data ? {
         id: (ownerProfile.data as any).id,
-        name: (ownerProfile.data as any).name,
+        name: ownerNameAllowed ? (ownerProfile.data as any).name : null,
         handle: (ownerProfile.data as any).handle,
         avatarUrl: (ownerProfile.data as any).avatar_url ?? null,
       } : null,
@@ -994,6 +1003,8 @@ router.get("/trips/:tripId/memory", async (req, res) => {
     sc.from("profiles").select("id, name, handle, avatar_url").eq("id", ownerId).maybeSingle(),
   ]);
 
+  const ownerNameAllowed = ownerId === user.id || await nameVisibleFor(sc, ownerId);
+
   res.json({
     memory: {
       ...mapMemory(memory),
@@ -1002,7 +1013,7 @@ router.get("/trips/:tripId/memory", async (req, res) => {
       cover: coverRow.data ? { mediaUrl: (coverRow.data as any).media_url, mediaType: (coverRow.data as any).media_type } : null,
       owner: ownerProfile.data ? {
         id: (ownerProfile.data as any).id,
-        name: (ownerProfile.data as any).name,
+        name: ownerNameAllowed ? (ownerProfile.data as any).name : null,
         handle: (ownerProfile.data as any).handle,
         avatarUrl: (ownerProfile.data as any).avatar_url ?? null,
       } : null,
@@ -1107,7 +1118,7 @@ async function enrichMemories(sc: any, rows: any[], viewerId: string) {
   const ids = rows.map((m) => m.id as string);
   const ownerIds = [...new Set(rows.map((m) => m.owner_id as string))];
 
-  const [likeRows, savedRows, coverRows, ownerRows] = await Promise.all([
+  const [likeRows, savedRows, coverRows, ownerRows, allowedNames] = await Promise.all([
     sc.from("memory_likes").select("memory_id, user_id").in("memory_id", ids),
     sc.from("memory_saves").select("memory_id").eq("user_id", viewerId).in("memory_id", ids),
     sc.from("memory_items")
@@ -1115,6 +1126,7 @@ async function enrichMemories(sc: any, rows: any[], viewerId: string) {
       .in("memory_id", ids)
       .eq("position", 0),
     sc.from("profiles").select("id, name, handle, avatar_url").in("id", ownerIds),
+    nameVisibilitySet(sc, ownerIds),
   ]);
 
   const likeCounts: Record<string, number> = {};
@@ -1132,7 +1144,8 @@ async function enrichMemories(sc: any, rows: any[], viewerId: string) {
 
   const ownerMap: Record<string, { id: string; name: string | null; handle: string | null; avatarUrl: string | null }> = {};
   for (const r of (ownerRows.data ?? []) as any[]) {
-    ownerMap[r.id] = { id: r.id, name: r.name, handle: r.handle, avatarUrl: r.avatar_url ?? null };
+    const nameAllowed = r.id === viewerId || allowedNames.has(r.id as string);
+    ownerMap[r.id] = { id: r.id, name: nameAllowed ? r.name : null, handle: r.handle, avatarUrl: r.avatar_url ?? null };
   }
 
   return rows.map((m) => ({

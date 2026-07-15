@@ -10,7 +10,8 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { MapPin, Calendar, Camera, MoreHorizontal, Plane, ShieldCheck } from 'lucide-react-native';
 import type { OwnProfile, PublicProfile } from '../../types/models';
-import { resolveDisplayName, resolveAvatarUrl, fallbackInitials } from '../../utils/identity';
+import { resolveAvatarUrl, fallbackInitials } from '../../utils/identity';
+import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity';
 import { isTravelBuddyVerified } from '../../lib/verification';
 import { HighlightRing } from '../HighlightRing';
 import { PassportSecurityPattern } from './PassportSecurityPattern';
@@ -106,8 +107,14 @@ export function PassportIdentityCard({
       .catch(() => {});
   }, [isOwner]);
 
-  const resolvedName = resolveDisplayName(profile);
   const username = 'username' in profile ? profile.username : null;
+  const identity = {
+    displayName: 'displayName' in profile ? profile.displayName : null,
+    name: 'name' in profile ? profile.name : null,
+    username,
+  };
+  const resolvedName = primaryIdentityText(identity);
+  const handleSubline = secondaryIdentityText(identity);
   const avatarUrl = resolveAvatarUrl(profile.avatarUrl);
   const initials = fallbackInitials(profile);
   const isVerified = isTravelBuddyVerified(profile);
@@ -274,7 +281,7 @@ export function PassportIdentityCard({
         {/* Name + handle */}
         <View style={s.nameRow}>
           <Text style={s.displayName} numberOfLines={1}>{resolvedName}</Text>
-          {username ? <Text style={s.handle}>@{username}</Text> : null}
+          {handleSubline ? <Text style={s.handle}>{handleSubline}</Text> : null}
         </View>
 
         {/* Two-column fields grid */}

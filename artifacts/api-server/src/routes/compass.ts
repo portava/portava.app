@@ -22,6 +22,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { isCompassEnabled, isEnabled } from "../compass/flags.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { getCompassProfile } from "../compass/CompassProfileService.js";
@@ -1901,7 +1902,10 @@ router.get("/compass/recommendations", async (req, res) => {
         }
       }
 
+      // Universal display-name rule: real names only for opted-in travelers.
+      const allowedTravNames = await nameVisibilitySet(sc, topTravSlice.map((s) => s.id));
       const travelerRecommendations = topTravSlice.map((s) => {
+        const nameOk = allowedTravNames.has(s.id);
         const isPrivate = s.row.is_private ?? false;
         const followStatus: "following" | "requested" | "not_following" =
           followingSet.has(s.id) ? "following"
@@ -1911,17 +1915,20 @@ router.get("/compass/recommendations", async (req, res) => {
           id:       s.id,
           type:     "traveler",
           category: "traveler",
-          // Title is always safe (public profile name or null for private)
-          title: isPrivate && !followingSet.has(s.id)
-            ? (s.row.display_name ?? s.row.name ?? null) as string | null
-            : (s.row.display_name ?? s.row.name ?? s.row.username ?? null) as string | null,
+          // Universal display-name rule: hidden names fall back to @username
+          // (and to null for private non-followed profiles, which suppress it).
+          title: nameOk
+            ? ((s.row.display_name ?? s.row.name ?? s.row.username ?? null) as string | null)
+            : (isPrivate && !followingSet.has(s.id)
+              ? null
+              : ((s.row.username ?? null) as string | null)),
           reason:   buildTravelerReasonText(s.reasonCode, isPrivate ? [] : s.sharedInterests, isPrivate ? null : (s.row.home_city ?? null)),
           city:     isPrivate ? null : ((s.row.home_city ?? null) as string | null),
           data: {
             userId:          s.id,
             // Private profiles: suppress identifying details until followed
             username:        isPrivate ? null : ((s.row.username ?? null) as string | null),
-            displayName:     (s.row.display_name ?? s.row.name ?? null) as string | null,
+            displayName:     nameOk ? ((s.row.display_name ?? s.row.name ?? null) as string | null) : null,
             avatarUrl:       (s.row.avatar_url ?? null) as string | null,
             homeCity:        isPrivate ? null : ((s.row.home_city ?? null) as string | null),
             isPrivate,

@@ -11,6 +11,7 @@ import {
 import { getServiceClient } from "../lib/supabase";
 import { syncCircleChatMembers } from "../lib/chatSync";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
+import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity";
 
 const router = Router();
 
@@ -289,7 +290,8 @@ router.get("/me/friend-requests/incoming", async (req, res) => {
   let profileMap: Record<string, any> = {};
   if (requesterIds.length > 0) {
     const { data: profiles } = await sc.from("profiles").select(PROFILE_PUBLIC).in("id", requesterIds);
-    for (const p of profiles ?? []) profileMap[p.id] = p;
+    const allowedNames = await nameVisibilitySet(sc, requesterIds);
+    for (const p of profiles ?? []) profileMap[p.id] = sanitizeIdentity(p as any, allowedNames, user.id);
   }
 
   const requests = (data ?? []).map((r: any) => {
@@ -330,7 +332,8 @@ router.get("/me/friend-requests/outgoing", async (req, res) => {
   let profileMap: Record<string, any> = {};
   if (recipientIds.length > 0) {
     const { data: profiles } = await sc.from("profiles").select(PROFILE_PUBLIC).in("id", recipientIds);
-    for (const p of profiles ?? []) profileMap[p.id] = p;
+    const allowedNames = await nameVisibilitySet(sc, recipientIds);
+    for (const p of profiles ?? []) profileMap[p.id] = sanitizeIdentity(p as any, allowedNames, user.id);
   }
 
   const requests = (data ?? []).map((r: any) => {
@@ -372,7 +375,8 @@ router.get("/me/friends", async (req, res) => {
   let profileMap: Record<string, any> = {};
   if (friendIds.length > 0) {
     const { data: profiles } = await sc.from("profiles").select(PROFILE_PUBLIC).in("id", friendIds);
-    for (const p of profiles ?? []) profileMap[p.id] = p;
+    const allowedNames = await nameVisibilitySet(sc, friendIds);
+    for (const p of profiles ?? []) profileMap[p.id] = sanitizeIdentity(p as any, allowedNames, user.id);
   }
 
   const friends = entries
@@ -434,13 +438,18 @@ router.get("/circles/:circleOwnerId/members", async (req, res) => {
 
   if (profErr) { sendError(res, "db_error", profErr.message); return; }
 
+  const allowedNames = await nameVisibilitySet(sc, memberIds);
+
   res.status(200).json({
-    members: (profiles ?? []).map((p: any) => ({
-      id: p.id as string,
-      handle: p.handle as string,
-      name: p.name as string,
-      avatarUrl: (p.avatar_url as string | null) ?? null,
-    })),
+    members: (profiles ?? []).map((p: any) => {
+      const s = sanitizeIdentity(p as any, allowedNames, user.id);
+      return {
+        id: s.id as string,
+        handle: s.handle as string,
+        name: s.name as string,
+        avatarUrl: (s.avatar_url as string | null) ?? null,
+      };
+    }),
   });
 });
 
@@ -497,7 +506,8 @@ router.get("/circles/:circleOwnerId/invitable-users", async (req, res) => {
   const profileMap: Record<string, any> = {};
   if (allIds.length > 0) {
     const { data: profiles } = await sc.from("profiles").select(PROFILE_PUBLIC).in("id", allIds);
-    for (const p of profiles ?? []) profileMap[(p as any).id] = p;
+    const allowedNames = await nameVisibilitySet(sc, allIds);
+    for (const p of profiles ?? []) profileMap[(p as any).id] = sanitizeIdentity(p as any, allowedNames, user.id);
   }
 
   const toUser = (id: string) => {

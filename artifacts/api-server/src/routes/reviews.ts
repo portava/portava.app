@@ -20,6 +20,7 @@ import { requireUser, optionalUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isUuid } from "../lib/followDecisions.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
+import { nameVisibilitySet } from "../lib/publicIdentity.js";
 
 const router = Router();
 
@@ -279,6 +280,13 @@ router.get("/trips/:id/reviews", async (req, res) => {
     ? Math.round((allRows.reduce((s: number, r: any) => s + r.rating, 0) / totalCount) * 10) / 10
     : null;
 
+  // Universal display-name rule: reviewer real names default to hidden (@handle)
+  // unless the reviewer opted in. Anonymous reviews carry no reviewer at all.
+  const reviewerIds = rows
+    .filter((r: any) => r.visibility !== "anonymous")
+    .map((r: any) => r.reviewer_id as string);
+  const allowedNames = await nameVisibilitySet(sc, reviewerIds);
+
   res.json({
     reviews: rows.map((r: any) => ({
       id:         r.id,
@@ -290,7 +298,9 @@ router.get("/trips/:id/reviews", async (req, res) => {
       reviewer:   r.visibility === "anonymous" ? null : {
         id:          r.reviewer_id,
         handle:      r.profiles?.handle ?? null,
-        displayName: r.profiles?.display_name ?? null,
+        displayName: (r.reviewer_id === auth.user.id || allowedNames.has(r.reviewer_id))
+          ? (r.profiles?.display_name ?? null)
+          : null,
         avatarUrl:   r.profiles?.avatar_url ?? null,
       },
     })),
@@ -306,7 +316,8 @@ router.get("/trips/:id/reviews", async (req, res) => {
 
 router.get("/places/:id/reviews", async (req, res) => {
   // optionalUser: if a Bearer token is present it is verified; missing token is fine.
-  await optionalUser(req);
+  const viewer = await optionalUser(req);
+  const viewerId = viewer?.user.id ?? null;
 
   const { id } = req.params;
   if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid place id"); return; }
@@ -344,6 +355,13 @@ router.get("/places/:id/reviews", async (req, res) => {
     ? Math.round((allRows.reduce((s: number, r: any) => s + r.rating, 0) / totalCount) * 10) / 10
     : null;
 
+  // Universal display-name rule: reviewer real names default to hidden (@handle)
+  // unless the reviewer opted in. Viewer may be unauthenticated (viewerId null).
+  const reviewerIds = rows
+    .filter((r: any) => r.visibility !== "anonymous")
+    .map((r: any) => r.reviewer_id as string);
+  const allowedNames = await nameVisibilitySet(sc, reviewerIds);
+
   res.json({
     reviews: rows.map((r: any) => ({
       id:         r.id,
@@ -355,7 +373,9 @@ router.get("/places/:id/reviews", async (req, res) => {
       reviewer:   r.visibility === "anonymous" ? null : {
         id:          r.reviewer_id,
         handle:      r.profiles?.handle ?? null,
-        displayName: r.profiles?.display_name ?? null,
+        displayName: ((viewerId && r.reviewer_id === viewerId) || allowedNames.has(r.reviewer_id))
+          ? (r.profiles?.display_name ?? null)
+          : null,
         avatarUrl:   r.profiles?.avatar_url ?? null,
       },
     })),
@@ -441,6 +461,18 @@ router.get("/users/:id/reviews", async (req, res) => {
     ? Math.round((allRatings.reduce((s, v) => s + v, 0) / reviewCount) * 10) / 10
     : null;
 
+  // Universal display-name rule: reviewer real names default to hidden (@handle)
+  // unless the reviewer opted in. Anonymous reviews carry no reviewer at all.
+  const reviewerIds = [
+    ...tripRows.filter((r: any) => r.visibility !== "anonymous").map((r: any) => r.reviewer_id as string),
+    ...eventRows.filter((r: any) => !(r.anonymous ?? false)).map((r: any) => r.reviewer_id as string),
+  ];
+  const allowedNames = await nameVisibilitySet(sc, reviewerIds);
+  const displayNameFor = (r: any) =>
+    (r.reviewer_id === auth.user.id || allowedNames.has(r.reviewer_id))
+      ? (r.profiles?.display_name ?? null)
+      : null;
+
   // Merge + sort by date, return most recent `limit` items
   const merged = [
     ...tripRows.map((r: any) => ({
@@ -455,7 +487,7 @@ router.get("/users/:id/reviews", async (req, res) => {
       reviewer:   r.visibility === "anonymous" ? null : {
         id:          r.reviewer_id,
         handle:      r.profiles?.handle ?? null,
-        displayName: r.profiles?.display_name ?? null,
+        displayName: displayNameFor(r),
         avatarUrl:   r.profiles?.avatar_url ?? null,
       },
     })),
@@ -471,7 +503,7 @@ router.get("/users/:id/reviews", async (req, res) => {
       reviewer:   r.anonymous ? null : {
         id:          r.reviewer_id,
         handle:      r.profiles?.handle ?? null,
-        displayName: r.profiles?.display_name ?? null,
+        displayName: displayNameFor(r),
         avatarUrl:   r.profiles?.avatar_url ?? null,
       },
     })),

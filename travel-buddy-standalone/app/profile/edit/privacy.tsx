@@ -248,6 +248,7 @@ export default function PrivacyVisibilityScreen() {
   ];
 
   const visibilityToggles: Array<{ key: keyof PrivacySettings; label: string; sub: string }> = [
+    { key: 'show_real_name', label: 'Show my real name', sub: 'Show your name to other travelers instead of just your @handle' },
     { key: 'show_stamps', label: 'Show stamps', sub: 'Others can see your collected stamps' },
     { key: 'show_current_city', label: 'Show current city', sub: 'Display your current city on your profile' },
     { key: 'show_upcoming_trips', label: 'Show upcoming trips', sub: 'Others can see your travel plans' },

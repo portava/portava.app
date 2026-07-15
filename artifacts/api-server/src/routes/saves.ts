@@ -17,6 +17,7 @@ import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { isUuid } from "../lib/followDecisions";
 import { getServiceClient } from "../lib/supabase";
+import { nameVisibilitySet } from "../lib/publicIdentity";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 
 const router = Router();
@@ -147,13 +148,16 @@ router.get("/me/saves", async (req, res) => {
     for (const p of profiles ?? []) profileMap[(p as any).id] = p;
   }
 
+  // Universal display-name rule: saved users show @handle unless opted in.
+  const allowedSavedNames = await nameVisibilitySet(sc, ids);
+
   res.status(200).json({
     saves: (rows ?? []).map((r: any) => {
       const p = profileMap[r.saved_id] ?? {};
       return {
         id:        r.saved_id as string,
         handle:    (p.handle    as string | null) ?? null,
-        name:      (p.name      as string | null) ?? null,
+        name:      (r.saved_id === user.id || allowedSavedNames.has(r.saved_id as string)) ? ((p.name as string | null) ?? null) : null,
         avatarUrl: (p.avatar_url as string | null) ?? null,
         savedAt:   r.created_at as string,
       };

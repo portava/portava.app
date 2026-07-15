@@ -9,6 +9,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js";
+import { getServiceClient } from "../lib/supabase.js";
+import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { optimizeRoute, type RouteStyle, type CandidateStop } from "../services/routeOptimizer.js";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine.js";
 import type { CompassContext } from "../compass/types.js";
@@ -356,7 +358,7 @@ router.get("/route-plans/:id/members", async (req, res) => {
   // Fetch joined members from route_plan_members + their profiles
   const { data: members } = await (client as any)
     .from("route_plan_members")
-    .select("user_id, joined_at, profiles(id, display_name, avatar_url)")
+    .select("user_id, joined_at, profiles(id, display_name, handle, avatar_url)")
     .eq("route_plan_id", id);
 
   // Shared checkpoint progress
@@ -370,9 +372,16 @@ router.get("/route-plans/:id/members", async (req, res) => {
     (s: Record<string, unknown>) => s.checkpoint_status === "arrived",
   ).length;
 
+  // Universal display-name rule: members show @handle unless opted in.
+  const allowedMemberNames = await nameVisibilitySet(
+    getServiceClient(),
+    (members ?? []).map((m: any) => m.user_id),
+  );
   const result = (members ?? []).map((m: any) => ({
     userId:      m.user_id,
-    displayName: m.profiles?.display_name ?? "Traveler",
+    displayName: (m.user_id === user.id || allowedMemberNames.has(m.user_id as string))
+      ? (m.profiles?.display_name ?? "Traveler")
+      : (m.profiles?.handle ? `@${m.profiles.handle}` : "Traveler"),
     avatarUrl:   m.profiles?.avatar_url ?? null,
     isOwner:     m.user_id === (plan as any).owner_user_id,
     joinedAt:    m.joined_at,

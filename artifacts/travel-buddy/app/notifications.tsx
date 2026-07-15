@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { UserAvatarButton } from '../src/components/interaction/UserAvatarButton';
 import { UserNameButton } from '../src/components/interaction/UserNameButton';
+import { secondaryIdentityText } from '../src/lib/displayIdentity';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, CheckCheck, UserCheck, UserMinus } from 'lucide-react-native';
@@ -421,8 +422,8 @@ function SocialRequestsPane({
                   style={srStyles.name}
                   disabled={!item.actor?.id}
                 />
-                {item.actor?.handle ? (
-                  <Text style={srStyles.handle}>@{item.actor.handle}</Text>
+                {secondaryIdentityText({ name: item.actor?.name, handle: item.actor?.handle }) ? (
+                  <Text style={srStyles.handle}>{secondaryIdentityText({ name: item.actor?.name, handle: item.actor?.handle })}</Text>
                 ) : null}
               </View>
               <View style={srStyles.typeChip}>

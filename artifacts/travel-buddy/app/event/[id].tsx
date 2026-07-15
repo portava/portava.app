@@ -49,6 +49,7 @@ import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { Avatar } from '../../src/components/ui';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import { primaryIdentityText } from '../../src/lib/displayIdentity';
 import { getWaitlistUiState } from '../../src/lib/waitlistState';
 import { getAttendeeActionSet, type EventLifecycleState } from '../../src/lib/eventRoleActions';
 import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
@@ -553,7 +554,7 @@ export default function EventDetailScreen() {
                 <Avatar uri={event.host.avatarUrl ?? ''} size={36} />
                 <View>
                   <Text style={styles.hostLabel}>Hosted by</Text>
-                  <Text style={styles.hostName}>{event.host.displayName ?? event.host.handle ?? 'Unknown'}</Text>
+                  <Text style={styles.hostName}>{primaryIdentityText({ displayName: event.host.displayName, handle: event.host.handle })}</Text>
                 </View>
               </Pressable>
             )}

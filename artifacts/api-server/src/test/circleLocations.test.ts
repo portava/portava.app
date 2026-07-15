@@ -85,6 +85,10 @@ function buildQuery(allRows: any[]) {
       rows = rows.filter((r: any) => vals.includes(r[col]));
       return q;
     },
+    // requireUser's account-status check reads profiles via .maybeSingle().
+    maybeSingle() {
+      return Promise.resolve({ data: rows[0] ?? null, error: null });
+    },
     then(resolve: (v: any) => void, reject?: (e: any) => void) {
       return Promise.resolve({ data: rows, error: null }).then(resolve, reject);
     },
@@ -171,7 +175,9 @@ describe("GET /api/me/circle-locations", () => {
     assert.equal(r.body.locations.length, 1);
     const loc = r.body.locations[0];
     assert.equal(loc.userId, MEMBER_A);
-    assert.equal(loc.name, "Alice");
+    // Universal display-name rule: real name is redacted (null) unless the
+    // member opted in via profile_privacy_settings.show_real_name.
+    assert.equal(loc.name, null);
     assert.equal(loc.lat, 48.8566);
     assert.equal(loc.lng, 2.3522);
     assert.equal(loc.city, "Paris");

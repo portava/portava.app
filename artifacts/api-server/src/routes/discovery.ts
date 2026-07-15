@@ -21,6 +21,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { getServiceClient } from "../lib/supabase";
 import { sendError, requireUser } from "../lib/http";
+import { nameVisibilitySet } from "../lib/publicIdentity";
 import { buildDiscoveryContext } from "../services/location/DiscoveryLocationContext";
 import { loadPreferences } from "../services/location/LocationPermissionService";
 import { toCanonicalCategory } from "../lib/placeCategories";
@@ -1353,6 +1354,12 @@ router.get("/discovery/community", async (req, res) => {
       return;
     }
 
+    // Universal display-name rule: submitter names show @handle unless opted in.
+    const allowedSubmitterNames = await nameVisibilitySet(
+      getServiceClient(),
+      (data ?? []).map((r: any) => r.submitted_by).filter(Boolean),
+    );
+
     const items: CommunityDiscoveryItem[] = (data ?? []).map((row: any) => {
       const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
       return {
@@ -1367,7 +1374,9 @@ router.get("/discovery/community", async (req, res) => {
         submittedBy:  profile
           ? {
               id:        profile.id as string,
-              name:      (profile.name ?? "Traveler") as string,
+              name:      (allowedSubmitterNames.has(profile.id as string)
+                ? (profile.name ?? "Traveler")
+                : (profile.username ? `@${profile.username}` : "Traveler")) as string,
               avatarUrl: (profile.avatar_url ?? null) as string | null,
               handle:    (profile.username ?? null) as string | null,
             }

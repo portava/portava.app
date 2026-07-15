@@ -3922,6 +3922,7 @@ export type Database = {
           show_home_country: boolean
           show_past_trips: boolean
           show_posts: boolean
+          show_real_name: boolean
           show_stamps: boolean
           show_upcoming_trips: boolean
           show_visited_places: boolean
@@ -3943,6 +3944,7 @@ export type Database = {
           show_home_country?: boolean
           show_past_trips?: boolean
           show_posts?: boolean
+          show_real_name?: boolean
           show_stamps?: boolean
           show_upcoming_trips?: boolean
           show_visited_places?: boolean
@@ -3964,6 +3966,7 @@ export type Database = {
           show_home_country?: boolean
           show_past_trips?: boolean
           show_posts?: boolean
+          show_real_name?: boolean
           show_stamps?: boolean
           show_upcoming_trips?: boolean
           show_visited_places?: boolean

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
+import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity";
 import { decideUnfollow, isUuid } from "../lib/followDecisions";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { getSeenIds, markAsSeen, clearSeen, dailySeed, seededShuffle } from "../lib/suggestionSeenCache";
@@ -238,8 +239,9 @@ router.get("/me/following", async (req, res) => {
     mutualSet = new Set((back ?? []).map((r: any) => r.follower_id as string));
   }
 
+  const allowedNamesFwd = await nameVisibilitySet(sc, rows.map((r: any) => r.profile?.id));
   res.status(200).json({
-    users: rows.map((r: any) => ({ ...rowToUser(r), followsYou: mutualSet.has(r.following_id as string) })),
+    users: rows.map((r: any) => ({ ...rowToUser(r, allowedNamesFwd, user.id), followsYou: mutualSet.has(r.following_id as string) })),
   });
 });
 
@@ -272,14 +274,17 @@ router.get("/me/followers", async (req, res) => {
     youFollowSet = new Set((fwd ?? []).map((r: any) => r.following_id as string));
   }
 
+  const allowedNamesBack = await nameVisibilitySet(sc, rows.map((r: any) => r.profile?.id));
   res.status(200).json({
-    users: rows.map((r: any) => ({ ...rowToUser(r), youFollow: youFollowSet.has(r.follower_id as string) })),
+    users: rows.map((r: any) => ({ ...rowToUser(r, allowedNamesBack, user.id), youFollow: youFollowSet.has(r.follower_id as string) })),
   });
 });
 
-function rowToUser(r: any) {
+function rowToUser(r: any, allowedNames?: Set<string>, viewerId?: string | null) {
   const p = r.profile ?? {};
-  return { id: p.id, handle: p.handle, name: p.name, avatarUrl: p.avatar_url ?? null, since: r.created_at };
+  // Universal display-name rule: name only when the subject opted in (or is the viewer).
+  const nameOk = !!p.id && (p.id === viewerId || (allowedNames?.has(p.id) ?? false));
+  return { id: p.id, handle: p.handle, name: nameOk ? p.name : null, avatarUrl: p.avatar_url ?? null, since: r.created_at };
 }
 
 /* ===========================================================================
@@ -502,11 +507,23 @@ router.get("/users/search", async (req, res) => {
     }
   } catch { /* fail-safe: skip shared destinations */ }
 
+  // Universal display-name rule: batch-resolve which subjects opted in.
+  const allowedNames = await nameVisibilitySet(sc, rows.map((p: any) => p.id));
+  const qLower = q.toLowerCase();
   const users = rows
     .filter((p: any) => !blockedSet.has(p.id as string))
+    // Hidden names must not be searchable: if the query only matched the
+    // (hidden) real name — not the handle/username — drop the row entirely,
+    // otherwise searching someone's name would reveal it belongs to them.
+    .filter((p: any) => {
+      if (allowedNames.has(p.id as string)) return true;
+      const h = ((p.handle as string | null) ?? "").toLowerCase();
+      const un = ((p.username as string | null) ?? "").toLowerCase();
+      return h.includes(qLower) || un.includes(qLower);
+    })
     .map((p: any) => ({
       id: p.id,
-      displayName: (p.name as string | null) ?? null,
+      displayName: allowedNames.has(p.id as string) ? ((p.name as string | null) ?? null) : null,
       username: (p.handle as string | null) ?? null,
       avatarUrl: (p.avatar_url as string | null) ?? null,
       followerCount: followerCounts[p.id as string] ?? 0,
@@ -1025,6 +1042,8 @@ router.get("/users/suggestions", async (req, res) => {
 
   // Re-order profiles to match the (possibly shuffled) safeIds order
   const profileById = new Map((profiles ?? []).map((p: any) => [p.id as string, p]));
+  // Universal display-name rule: suggestions show @handle unless opted in.
+  const allowedSuggestionNames = await nameVisibilitySet(sc, safeIds);
   const users = safeIds
     .map((id) => profileById.get(id))
     .filter(Boolean)
@@ -1050,7 +1069,7 @@ router.get("/users/suggestions", async (req, res) => {
       }
       return {
         id: p.id,
-        displayName: (p.name as string | null) ?? null,
+        displayName: allowedSuggestionNames.has(p.id as string) ? ((p.name as string | null) ?? null) : null,
         username: (p.handle as string | null) ?? null,
         avatarUrl: (p.avatar_url as string | null) ?? null,
         followerCount: followerCounts[p.id as string] ?? 0,
@@ -1161,14 +1180,17 @@ function buildPassportResponse(
   isFollowing: boolean,
   isOwnProfile: boolean,
   reason: string | null,
+  allowRealName = false,
 ): object {
+  // Universal display-name rule: name only for the owner or opted-in subjects.
+  const nameOk = isOwnProfile || allowRealName;
   const isPrivate = p.is_private ?? false;
   // Private profile viewed by a non-follower non-owner: redact rich fields.
   if (isPrivate && !isOwnProfile && !isFollowing) {
     return {
       id: p.id,
       handle: p.handle,
-      name: p.name,
+      name: nameOk ? p.name : null,
       avatarUrl: p.avatar_url ?? null,
       isPrivate: true,
       isOwnProfile,
@@ -1182,7 +1204,7 @@ function buildPassportResponse(
   return {
     id: p.id,
     handle: p.handle,
-    name: p.name,
+    name: nameOk ? p.name : null,
     avatarUrl: p.avatar_url ?? null,
     bio: p.bio ?? null,
     homeCity: p.home_city ?? null,
@@ -1298,8 +1320,9 @@ router.get("/users/:userId", async (req, res) => {
     reason = reasonResult;
   }
 
+  const allowRealName = await nameVisibleFor(sc, target);
   res.status(200).json(
-    buildPassportResponse(p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason),
+    buildPassportResponse(p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason, allowRealName),
   );
 });
 
@@ -1391,8 +1414,9 @@ router.get("/users/by-handle/:handle", async (req, res) => {
     reason = reasonResult;
   }
 
+  const allowRealName = await nameVisibleFor(sc, target);
   res.status(200).json(
-    buildPassportResponse(p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason),
+    buildPassportResponse(p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason, allowRealName),
   );
 });
 

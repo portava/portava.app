@@ -18,6 +18,7 @@
 import { Router } from "express";
 import { sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
+import { nameVisibilitySet } from "../lib/publicIdentity";
 import {
   resolveProfileVisibility,
   extractBearerToken,
@@ -408,12 +409,15 @@ router.get("/users/:username/circles", async (req, res) => {
   }
 
   const rows = data ?? [];
+  // Universal display-name rule: circle owners show @handle unless opted in.
+  const allowedOwnerNames = await nameVisibilitySet(sc, rows.map((r: any) => r.owner_id));
   const items = rows.slice(0, limit).map((r: any) => {
     const owner = r.owner ?? {};
+    const nameOk = r.owner_id === viewerId || allowedOwnerNames.has(r.owner_id as string);
     return {
       circleOwnerId: r.owner_id,
       ownerHandle: owner.handle ?? owner.username ?? null,
-      ownerDisplayName: owner.display_name ?? owner.name ?? null,
+      ownerDisplayName: nameOk ? (owner.display_name ?? owner.name ?? null) : null,
       ownerAvatarUrl: owner.avatar_url ?? null,
       joinedAt: r.created_at,
     };

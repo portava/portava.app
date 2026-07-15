@@ -15,6 +15,7 @@ import {
 import { Avatar } from './ui';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import type { EventListItem, EventRsvpStatus } from '../services/events';
+import { primaryIdentityText } from '../lib/displayIdentity';
 
 interface Props {
   event: EventListItem;
@@ -174,7 +175,7 @@ export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSave
             accessibilityLabel={`View ${event.hostName ?? 'host'}'s profile`}
           >
             <Avatar uri={event.hostAvatarUrl ?? ''} size={16} />
-            <Text style={styles.hostName} numberOfLines={1}>{event.hostName ?? 'Host'}</Text>
+            <Text style={styles.hostName} numberOfLines={1}>{event.hostName ? primaryIdentityText({ name: event.hostName }) : 'Host'}</Text>
             {/* Verified host indicator — signalled by verifiedOnly being false but hostName present;
                 we use a simple heuristic: show UserCheck if the event's verifiedOnly is true or
                 hostName is present as a placeholder — real verification comes from profile data */}

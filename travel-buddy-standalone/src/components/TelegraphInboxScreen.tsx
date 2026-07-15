@@ -18,6 +18,7 @@ import { TG, TG_AVATAR } from '../theme/telegraphTokens';
 import { TelegraphAvatar, TelegraphRow } from './telegraph/TelegraphPrimitives';
 import type { ThreadSummary, MessageRequest } from '../services/messaging';
 import { circleCardInboxPreview } from './CircleStatusCardMessage.logic';
+import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity';
 
 type FilterKey = 'all' | 'direct' | 'trips' | 'circles' | 'unread' | 'requests';
 
@@ -44,8 +45,11 @@ function timeAgo(iso: string): string {
 
 function navigateToThread(item: ThreadSummary) {
   const isRentBuddy = item.threadType === 'rent_buddy_booking';
+  const otherForTitle = item.otherMembers[0];
   const title = item.threadType === 'direct' || isRentBuddy
-    ? (item.otherMembers[0]?.name ?? (isRentBuddy ? 'Buddy Booking' : ''))
+    ? (otherForTitle
+        ? primaryIdentityText({ name: otherForTitle.name, handle: otherForTitle.handle })
+        : (isRentBuddy ? 'Buddy Booking' : ''))
     : (item.title ?? '');
   const params = new URLSearchParams({ title, threadType: item.threadType });
   if (item.tripId) params.set('contextId', item.tripId);
@@ -98,7 +102,7 @@ function DmThreadAvatar({ item, currentUserId }: { item: ThreadSummary; currentU
     ? <Image source={{ uri: other.avatarUrl }} style={s.avatar} />
     : (
       <View style={[s.avatar, s.avatarPlaceholder]}>
-        <Text style={s.avatarInitial}>{(other?.name?.[0] ?? '?').toUpperCase()}</Text>
+        <Text style={s.avatarInitial}>{(primaryIdentityText({ name: other?.name, handle: other?.handle }).replace(/^@/, '')[0] ?? '?').toUpperCase()}</Text>
       </View>
     );
 
@@ -127,9 +131,10 @@ function ThreadAvatarIcon({ item, currentUserId }: { item: ThreadSummary; curren
 
 function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | null }) {
   const isGroup = item.threadType !== 'direct';
+  const otherMember = item.otherMembers[0];
   const displayName = isGroup
     ? (item.title ?? (item.threadType === 'trip' ? 'Trip Chat' : 'Circle Chat'))
-    : (item.otherMembers[0]?.name ?? 'Unknown');
+    : (otherMember ? primaryIdentityText({ name: otherMember.name, handle: otherMember.handle }) : 'Unknown');
 
   const lmp = item.lastMessagePreview;
   const isMine = lmp?.senderId === userId;
@@ -332,7 +337,9 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
       const q = search.toLowerCase();
       const name = th.threadType !== 'direct'
         ? (th.title ?? '').toLowerCase()
-        : (th.otherMembers[0]?.name ?? '').toLowerCase();
+        : (th.otherMembers[0]
+            ? primaryIdentityText({ name: th.otherMembers[0].name, handle: th.otherMembers[0].handle }).toLowerCase()
+            : '');
       const body = (th.lastMessagePreview?.body ?? '').toLowerCase();
       const displayBody = (th.lastMessagePreview?.displayBody ?? '').toLowerCase();
       if (!name.includes(q) && !body.includes(q) && !displayBody.includes(q)) return false;
@@ -485,7 +492,7 @@ function RequestCard({
     if (!request.sender?.id) return;
     Alert.alert(
       'Block this person?',
-      `${request.sender.name ?? 'This person'} won't be able to message you or see your profile.`,
+      `${request.sender.name ? primaryIdentityText({ name: request.sender.name, handle: request.sender.handle }) : 'This person'} won't be able to message you or see your profile.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -507,7 +514,9 @@ function RequestCard({
   }
 
   const { sender, previewText, createdAt } = request;
-  const initial = (sender?.name?.[0] ?? '?').toUpperCase();
+  const senderName = primaryIdentityText({ name: sender?.name, handle: sender?.handle });
+  const senderHandleSub = secondaryIdentityText({ name: sender?.name, handle: sender?.handle });
+  const initial = (senderName.replace(/^@/, '')[0] ?? '?').toUpperCase();
 
   return (
     <View style={rc.card}>
@@ -521,9 +530,9 @@ function RequestCard({
           </View>
         )}
         <View style={{ flex: 1 }}>
-          <Text style={rc.name} numberOfLines={1}>{sender?.name ?? 'Unknown'}</Text>
-          {sender?.handle ? (
-            <Text style={rc.handle}>@{sender.handle}</Text>
+          <Text style={rc.name} numberOfLines={1}>{senderName}</Text>
+          {senderHandleSub ? (
+            <Text style={rc.handle}>{senderHandleSub}</Text>
           ) : null}
         </View>
         <Text style={rc.time}>{timeAgo(createdAt)}</Text>
@@ -709,7 +718,7 @@ function RequestsPane({
           onAccept={async () => {
             const res = await onAccept(item.requestId);
             if (res.ok && res.data?.threadId) {
-              const name = item.sender?.name ?? 'Chat';
+              const name = item.sender ? primaryIdentityText({ name: item.sender.name, handle: item.sender.handle }) : 'Chat';
               const params = new URLSearchParams({
                 title: name,
                 threadType: 'direct',

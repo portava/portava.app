@@ -24,6 +24,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
+import { nameVisibilitySet } from '../lib/publicIdentity.js';
 
 const router = Router();
 
@@ -590,6 +591,8 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
 
     const authorIds = [...new Set(visiblePosts.map((p: any) => p.author_id))];
     let profileMap: Record<string, any> = {};
+    // Universal display-name rule: only include a real name when the author opted in.
+    const allowedAuthorNames = await nameVisibilitySet(sc, authorIds as string[]);
     if (authorIds.length > 0) {
       const { data: profiles } = await sc.from('profiles').select('id, handle, name, avatar_url').in('id', authorIds);
       for (const p of (profiles ?? []) as any[]) profileMap[p.id] = p;
@@ -607,7 +610,14 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
       return {
         id: p.id, type: 'post', content: p.content, mediaUrls: p.media_urls ?? [],
         createdAt: p.created_at, likeCount: p.like_count ?? 0, commentCount: p.comment_count ?? 0,
-        author: pr ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null } : null,
+        author: pr
+          ? {
+              id: pr.id,
+              handle: pr.handle,
+              name: (pr.id === user.id || allowedAuthorNames.has(pr.id)) ? (pr.name ?? null) : null,
+              avatarUrl: pr.avatar_url ?? null,
+            }
+          : null,
         tags: spans.tags,
         hashtagUsages: spans.hashtagUsages,
       };
@@ -618,10 +628,16 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
     // Exclude blocked/blocking profiles
     const { data: profiles } = await sc
       .from('profiles').select('id, handle, name, avatar_url').in('id', sourceIds);
-    const items = (profiles ?? [])
-      .filter((p: any) => !feedBlockedSet.has(p.id))
+    const visiblePeople = (profiles ?? []).filter((p: any) => !feedBlockedSet.has(p.id));
+    // Universal display-name rule: real name only when the subject opted in.
+    const allowedPeopleNames = await nameVisibilitySet(sc, visiblePeople.map((p: any) => p.id as string));
+    const items = visiblePeople
       .map((p: any) => ({
-        id: p.id, type: 'user', handle: p.handle, name: p.name ?? null, avatarUrl: p.avatar_url ?? null,
+        id: p.id,
+        type: 'user',
+        handle: p.handle,
+        name: (p.id === user.id || allowedPeopleNames.has(p.id)) ? (p.name ?? null) : null,
+        avatarUrl: p.avatar_url ?? null,
       }));
     res.status(200).json({ items, posts: [], hasMore: items.length === limit, nextCursor, tab, scope });
 

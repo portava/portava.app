@@ -5,6 +5,7 @@ import { getServiceClient } from "../lib/supabase";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { canViewHighlight, type HighlightVisibility, type HighlightRecord } from "../lib/highlightPermissions";
 import { canMessage } from "../lib/messagingPermissions";
+import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -282,7 +283,10 @@ router.get("/users/:userId/highlights", async (req, res) => {
   let author: any = null;
   if (sc) {
     const { data: p } = await sc.from("profiles").select("id, handle, name, avatar_url").eq("id", targetId).maybeSingle();
-    if (p) author = { id: (p as any).id, handle: (p as any).handle, name: (p as any).name, avatarUrl: (p as any).avatar_url ?? null };
+    if (p) {
+      const allowedNames = await nameVisibilitySet(sc, [targetId]);
+      author = { id: (p as any).id, handle: (p as any).handle, name: presentedName(p as any, (p as any).id === user.id || allowedNames.has((p as any).id)), avatarUrl: (p as any).avatar_url ?? null };
+    }
   }
 
   const result = visible.map((h: any) => ({
@@ -439,9 +443,10 @@ router.get("/highlights/active", async (req, res) => {
   const viewedSet = new Set<string>((viewedRows.data ?? []).map((r: any) => r.highlight_id as string));
   const likedSet = new Set<string>((likedRows.data ?? []).map((r: any) => r.highlight_id as string));
 
+  const allowedNames = await nameVisibilitySet(sc, ownerIds);
   const profileMap: Record<string, any> = {};
   for (const p of profileRows.data ?? []) {
-    profileMap[(p as any).id] = { id: (p as any).id, handle: (p as any).handle, name: (p as any).name, avatarUrl: (p as any).avatar_url ?? null };
+    profileMap[(p as any).id] = { id: (p as any).id, handle: (p as any).handle, name: presentedName(p as any, (p as any).id === user.id || allowedNames.has((p as any).id)), avatarUrl: (p as any).avatar_url ?? null };
   }
 
   const result = visible.map((h: any) => ({
@@ -634,13 +639,14 @@ router.get("/highlights/:id/viewers", async (req, res) => {
   const profileMap: Record<string, any> = {};
   for (const p of profileRows.data ?? []) profileMap[(p as any).id] = p;
   const likedSet = new Set<string>((likeRows.data ?? []).map((r: any) => r.user_id as string));
+  const allowedNames = await nameVisibilitySet(sc, viewerIds);
 
   const viewers = (viewRows ?? []).map((r: any) => {
     const p = profileMap[r.viewer_id] ?? {};
     return {
       user_id: r.viewer_id,
       handle: (p as any).handle ?? null,
-      name: (p as any).name ?? null,
+      name: presentedName(p as any, r.viewer_id === user.id || allowedNames.has(r.viewer_id as string)),
       avatar_url: (p as any).avatar_url ?? null,
       viewed_at: r.viewed_at,
       liked: likedSet.has(r.viewer_id as string),
@@ -956,12 +962,13 @@ router.get("/highlights/following-feed", async (req, res) => {
   const viewedSet = new Set<string>((viewedRows2.data ?? []).map((r: any) => r.highlight_id as string));
   const likedSet = new Set<string>((likedRows2.data ?? []).map((r: any) => r.highlight_id as string));
 
+  const allowedNames = await nameVisibilitySet(sc, ownerIds);
   const profileMap: Record<string, any> = {};
   for (const p of profileRows.data ?? []) {
     profileMap[(p as any).id] = {
       userId: (p as any).id,
       handle: (p as any).handle ?? null,
-      name: (p as any).name ?? null,
+      name: presentedName(p as any, (p as any).id === user.id || allowedNames.has((p as any).id)),
       avatarUrl: (p as any).avatar_url ?? null,
     };
   }

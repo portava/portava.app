@@ -4,6 +4,7 @@ import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { resolveProfileVisibility, extractBearerToken } from "../lib/profileVisibility";
+import { nameVisibleFor } from "../lib/publicIdentity";
 
 const router = Router();
 
@@ -19,11 +20,13 @@ const PUBLIC_POSTCARD_COLUMNS =
 /** Fallback: select everything; mapPostcard handles missing fields with ?? null. */
 const PUBLIC_POSTCARD_COLUMNS_FALLBACK = "*";
 
-function mapPublicProfile(r: any) {
+function mapPublicProfile(r: any, allowRealName = false) {
   return {
     id: r.id,
     username: r.username ?? null,
-    displayName: r.display_name ?? r.name ?? null,
+    // Universal display-name rule: real name only when the subject opted in
+    // (or the viewer is the subject — callers pass allowRealName=true then).
+    displayName: allowRealName ? (r.display_name ?? r.name ?? null) : null,
     bio: r.bio ?? null,
     avatarUrl: r.avatar_url ?? null,
     coverPhotoUrl: r.cover_photo_url ?? null,
@@ -211,7 +214,11 @@ router.get("/users/:username/passport", async (req, res) => {
     res.status(200).json({
       id: data.id,
       username: data.username ?? null,
-      displayName: (data.display_name ?? data.name) ?? null,
+      // Universal display-name rule: a private profile's preview must never
+      // reveal the real name unless that user opted in.
+      displayName: privacySettings?.show_real_name === true
+        ? ((data.display_name ?? data.name) ?? null)
+        : null,
       avatarUrl: null,
       accountStatus: (data as any).account_status ?? "active",
       visibility: "private",
@@ -295,7 +302,7 @@ router.get("/users/:username/passport", async (req, res) => {
   }
 
   res.status(200).json({
-    ...mapPublicProfile(data),
+    ...mapPublicProfile(data, isMe || privacySettings?.show_real_name === true),
     viewer,
     buddyProvider,
   });
@@ -627,11 +634,13 @@ router.get("/users/:username/profile", async (req, res) => {
     res.status(200).json({ blocked: true });
     return;
   }
+  const allowRealName = viewerId === profile.id || (await nameVisibleFor(sc, profile.id));
+
   if (visibility === "limited_preview") {
     res.status(200).json({
       private: true,
       username: profile.username,
-      displayName: profile.display_name ?? profile.name ?? null,
+      displayName: allowRealName ? (profile.display_name ?? profile.name ?? null) : null,
       avatarUrl: null,
       coverUrl: null,
       tripCount: 0,
@@ -651,7 +660,7 @@ router.get("/users/:username/profile", async (req, res) => {
   res.status(200).json({
     id: profile.id,
     username: profile.username ?? null,
-    displayName: profile.display_name ?? profile.name ?? null,
+    displayName: allowRealName ? (profile.display_name ?? profile.name ?? null) : null,
     bio: profile.bio ?? null,
     avatarUrl: profile.avatar_url ?? null,
     coverUrl: profile.cover_photo_url ?? null,
@@ -977,13 +986,16 @@ router.get("/users/:username/stamps/:stampId/preview", async (req, res) => {
     const stamp = await fetchPublicStampPreview(sc, profile.id, stampId);
     if (!stamp) { res.status(404).json({ error: "not_found" }); return; }
 
+    // Universal display-name rule: share pages are anonymous — owner's real
+    // name appears only if they opted in; otherwise clients show @username.
+    const ownerAllowName = await nameVisibleFor(sc, profile.id);
     res.status(200).json({
       label: stamp.label,
       artworkUrl: stamp.artworkUrl,
       city: stamp.city,
       country: stamp.country,
       earnedAt: stamp.earnedAt,
-      ownerDisplayName: profile.display_name ?? profile.name ?? null,
+      ownerDisplayName: ownerAllowName ? (profile.display_name ?? profile.name ?? null) : null,
       ownerUsername: profile.username ?? username,
     });
   } catch (e: any) {
@@ -1054,9 +1066,10 @@ router.get("/users/:username/og-image.png", async (req, res) => {
       if (stamp) {
         try {
           const artworkDataUri = stamp.artworkUrl ? await fetchImageAsDataUri(stamp.artworkUrl) : null;
+          const stampOwnerAllowName = await nameVisibleFor(sc, profile.id);
           const png = await renderStampOgPng({
             stampLabel: stamp.label,
-            ownerName: profile.display_name ?? profile.name ?? null,
+            ownerName: stampOwnerAllowName ? (profile.display_name ?? profile.name ?? null) : null,
             ownerUsername: profile.username ?? username,
             place: stamp.city ?? stamp.country ?? null,
             earnedAt: stamp.earnedAt,
@@ -1081,8 +1094,11 @@ router.get("/users/:username/og-image.png", async (req, res) => {
 
     const avatarDataUri = profile.avatar_url ? await fetchImageAsDataUri(profile.avatar_url) : null;
 
+    // Universal display-name rule: OG/share images fall back to @username
+    // unless the subject opted in to showing their real name.
+    const ogAllowName = await nameVisibleFor(sc, profile.id);
     await sendPng({
-      displayName: profile.display_name ?? profile.name ?? null,
+      displayName: ogAllowName ? (profile.display_name ?? profile.name ?? null) : null,
       username: profile.username ?? username,
       tripCount: tripResult.count ?? 0,
       stampCount: (stampResult as any).error?.code === "PGRST205" ? 0 : (stampResult.count ?? 0),

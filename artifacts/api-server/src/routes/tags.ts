@@ -10,6 +10,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
+import { nameVisibilitySet } from '../lib/publicIdentity.js';
 import { isUuid } from '../lib/followDecisions.js';
 import { resolveInteractionPermissions } from '../services/interactionPermissions.js';
 import { isFlagEnabled } from '../lib/featureFlags.js';
@@ -262,6 +263,12 @@ router.get('/tags/suggestions', async (req, res) => {
 
   const PER_TYPE_CAP = 10;
 
+  // Universal display-name rule: batch-resolve which subjects opted in to showing
+  // their real name. Hidden names must not be matchable — if the query matched only
+  // the (hidden) name and not the handle, drop the row so searching a name cannot
+  // reveal it belongs to a user who has not opted in.
+  const allowedNames = await nameVisibilitySet(sc, visibleIds);
+
   // Apply tag_permission at suggestion time (friends_only and interacted enforced here)
   // Cap at PER_TYPE_CAP users to match per-type cap applied to entity suggestions
   const userSuggestions = profiles
@@ -272,11 +279,17 @@ router.get('/tags/suggestions', async (req, res) => {
       if (perm === 'interacted')  return iFollow.has(p.id) || followsMe.has(p.id);
       return true;
     })
+    .filter((p) => {
+      // Hidden-name-not-searchable: keep only if the subject opted in, or the
+      // query matched the handle (handle is always public).
+      if (allowedNames.has(p.id)) return true;
+      return ((p.handle as string | null) ?? '').toLowerCase().includes(q);
+    })
     .map((p: any) => ({
       id: p.id,
       type: 'user' as const,
       handle: p.handle,
-      name: p.name ?? null,
+      name: allowedNames.has(p.id) ? (p.name ?? null) : null,
       avatarUrl: p.avatar_url ?? null,
       tagPermission: p.tag_permission ?? 'anyone',
       relationshipRank: rank(p.id),

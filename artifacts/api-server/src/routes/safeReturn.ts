@@ -25,6 +25,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
+import { nameVisibilitySet } from "../lib/publicIdentity";
 import { createStamp } from "../services/passport/PassportStampService.js";
 import { awardStamp } from "../services/passport/StampAwardEngine.js";
 import { createSuggestedMemory } from "../services/passport/PassportMemoryService.js";
@@ -747,9 +748,12 @@ router.get("/me/safe-return/trusted-contacts", async (req, res) => {
       .select("followee_id, profiles!follows_followee_id_fkey(id, display_name, handle, avatar_url)")
       .eq("follower_id", auth.user.id);
 
-    const contacts = ((following as any[]) ?? []).map((f: any) => ({
+    // Universal display-name rule: contacts show @handle unless opted in.
+    const rows = ((following as any[]) ?? []);
+    const allowedContactNames = await nameVisibilitySet(db, rows.map((f: any) => f.followee_id));
+    const contacts = rows.map((f: any) => ({
       userId:      f.followee_id,
-      displayName: f.profiles?.display_name ?? null,
+      displayName: allowedContactNames.has(f.followee_id as string) ? (f.profiles?.display_name ?? null) : null,
       handle:      f.profiles?.handle ?? null,
       avatarUrl:   f.profiles?.avatar_url ?? null,
     }));

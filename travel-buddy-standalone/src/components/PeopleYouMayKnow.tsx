@@ -21,6 +21,7 @@ import {
 } from '../services/follows';
 import { useSession } from '../context/SessionContext';
 import { color, space, radius, type as t } from '../theme/tokens';
+import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity';
 
 const FOLLOWING_THRESHOLD = 10;
 const STRIP_LIMIT = 5;
@@ -159,8 +160,8 @@ function SuggestionCard({ user, onFollowed, onDismiss }: CardProps) {
     if (user.username) router.push(`/u/${user.username}` as any);
   }
 
-  const displayName = user.displayName ?? user.username ?? 'Traveler';
-  const handle = user.username ? `@${user.username}` : null;
+  const displayName = primaryIdentityText({ displayName: user.displayName, username: user.username });
+  const handle = secondaryIdentityText({ displayName: user.displayName, username: user.username });
   const reason = user.reason ?? null;
 
   return (

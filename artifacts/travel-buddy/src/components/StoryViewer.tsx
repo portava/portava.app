@@ -20,6 +20,7 @@ import type { Story, StoryFeedUser } from '../services/stories';
 import { getViewers, type StoryViewer } from '../services/stories';
 import { useSession } from '../context/SessionContext';
 import { formatRelativeTime as formatRelative } from '../lib/dateTime/formatters';
+import { primaryIdentityText } from '../lib/displayIdentity';
 
 const STORY_DURATION_MS = 5000;
 
@@ -117,7 +118,7 @@ export function StoryViewer({ visible, feedUser, onClose }: Props) {
           <View style={s.authorRow}>
             <View style={s.avatar} />
             <View>
-              <Text style={s.authorName}>{feedUser.name ?? feedUser.handle ?? 'Traveler'}</Text>
+              <Text style={s.authorName}>{primaryIdentityText({ name: feedUser.name, handle: feedUser.handle })}</Text>
               <Text style={s.timeAgo}>{formatRelative(current.created_at)}</Text>
             </View>
           </View>
@@ -178,7 +179,7 @@ export function StoryViewer({ visible, feedUser, onClose }: Props) {
                 viewers.map((v) => (
                   <View key={v.userId} style={s.viewerRow}>
                     <View style={s.viewerAvatar} />
-                    <Text style={s.viewerName}>{v.name ?? v.handle ?? 'Traveler'}</Text>
+                    <Text style={s.viewerName}>{primaryIdentityText({ name: v.name, handle: v.handle })}</Text>
                     <Text style={s.viewerTime}>{formatRelative(v.viewedAt)}</Text>
                   </View>
                 ))

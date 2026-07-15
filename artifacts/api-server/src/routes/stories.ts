@@ -15,6 +15,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 
 const router = Router();
@@ -297,9 +298,11 @@ router.get("/stories/feed", async (req, res) => {
   ]);
 
   const viewedSet = new Set<string>((viewedRows.data ?? []).map((r: any) => r.story_id as string));
+  const allowedNames = await nameVisibilitySet(sc, ownerIds);
   const profileMap: Record<string, any> = {};
   for (const p of profileRows.data ?? []) {
-    profileMap[(p as any).id] = { id: (p as any).id, handle: (p as any).handle, name: (p as any).name, avatarUrl: (p as any).avatar_url ?? null };
+    const nameAllowed = (p as any).id === user.id || allowedNames.has((p as any).id as string);
+    profileMap[(p as any).id] = { id: (p as any).id, handle: (p as any).handle, name: nameAllowed ? (p as any).name : null, avatarUrl: (p as any).avatar_url ?? null };
   }
 
   const users = ownerIds.slice(0, limit).map((ownerId) => {
@@ -523,9 +526,11 @@ router.get("/stories/:id/viewers", async (req, res) => {
     .select("id, handle, name, avatar_url")
     .in("id", viewerIds);
 
+  const allowedNames = await nameVisibilitySet(sc, viewerIds);
   const profileMap: Record<string, any> = {};
   for (const p of profiles ?? []) {
-    profileMap[(p as any).id] = { handle: (p as any).handle, name: (p as any).name, avatarUrl: (p as any).avatar_url ?? null };
+    const nameAllowed = (p as any).id === user.id || allowedNames.has((p as any).id as string);
+    profileMap[(p as any).id] = { handle: (p as any).handle, name: nameAllowed ? (p as any).name : null, avatarUrl: (p as any).avatar_url ?? null };
   }
 
   const viewers = viewerIds.map((vid) => ({

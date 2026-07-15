@@ -15,6 +15,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { Marker } from '@maplibre/maplibre-react-native';
 import { color } from '../../theme/tokens';
+import { primaryIdentityText } from '../../lib/displayIdentity';
 import type { MapTraveler } from '../../services/mapTravelers';
 
 // ── Clustering (pure, grid-based) ─────────────────────────────────────────────
@@ -107,7 +108,7 @@ function TravelerAvatarMarker({ traveler, onPress }: {
           />
         ) : (
           <View style={m.initialsDisc}>
-            <Text style={m.initialsText}>{travelerInitials(traveler.displayName)}</Text>
+            <Text style={m.initialsText}>{travelerInitials(primaryIdentityText({ displayName: traveler.displayName, handle: traveler.handle }).replace(/^@/, ''))}</Text>
           </View>
         )}
         <View style={[m.freshDot, { backgroundColor: FRESH_COLOR[traveler.freshness] }]} />

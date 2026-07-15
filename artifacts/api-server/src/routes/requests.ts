@@ -18,6 +18,7 @@ import { normalizedFriendshipPair, isUuid } from "../lib/friendDecisions";
 import { getServiceClient } from "../lib/supabase";
 import { getAgeEligibilityReason } from "../lib/ageEligibility";
 import { resolveInteractionPermissions } from "../services/interactionPermissions.js";
+import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity";
 
 const router = Router();
 
@@ -45,12 +46,13 @@ function profileToActor(p: any): Actor | null {
   return { id: p.id, handle: p.handle ?? null, name: p.name ?? null, avatarUrl: p.avatar_url ?? null };
 }
 
-async function batchProfiles(sc: any, ids: string[]): Promise<Record<string, any>> {
+async function batchProfiles(sc: any, ids: string[], viewerId: string): Promise<Record<string, any>> {
   const uniq = [...new Set(ids.filter(Boolean))];
   if (uniq.length === 0) return {};
   const { data } = await sc.from("profiles").select(PROFILE_PUBLIC).in("id", uniq);
+  const allowedNames = await nameVisibilitySet(sc, uniq);
   const map: Record<string, any> = {};
-  for (const p of (data ?? [])) map[p.id] = p;
+  for (const p of (data ?? [])) map[p.id] = sanitizeIdentity(p as any, allowedNames, viewerId);
   return map;
 }
 
@@ -132,7 +134,7 @@ router.get("/me/requests", async (req, res) => {
     ...Object.values(tripOwnerMap),           // trip owners (for incoming)
     ...tripInviteesOut.map((r) => r.user_id), // invitees (for outgoing)
   ];
-  const profileMap = await batchProfiles(sc, actorIds);
+  const profileMap = await batchProfiles(sc, actorIds, user.id);
 
   // ── 5. Assemble items ──────────────────────────────────────────────────────
   const items: InboxItem[] = [];

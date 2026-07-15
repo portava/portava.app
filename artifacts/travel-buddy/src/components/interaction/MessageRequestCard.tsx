@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Pressable, Image, StyleSheet } from 'react-native';
 import { useBlockedIds } from '../../context/BlockedIdsContext';
 import { color, space, radius, type as t } from '../../theme/tokens';
+import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity';
 
 interface Props {
   senderId: string;
@@ -27,7 +28,8 @@ export function MessageRequestCard({
   const { blockedIds } = useBlockedIds();
   if (blockedIds.has(senderId)) return null;
 
-  const name = senderName ?? senderHandle ?? 'Traveler';
+  const name = primaryIdentityText({ name: senderName, handle: senderHandle });
+  const handleSubline = secondaryIdentityText({ name: senderName, handle: senderHandle });
 
   return (
     <View style={s.card}>
@@ -41,7 +43,7 @@ export function MessageRequestCard({
         )}
         <View style={s.body}>
           <Text style={s.name} numberOfLines={1}>{name}</Text>
-          {senderHandle ? <Text style={s.handle}>@{senderHandle}</Text> : null}
+          {handleSubline ? <Text style={s.handle}>{handleSubline}</Text> : null}
           <Text style={s.preview} numberOfLines={2}>{previewText}</Text>
         </View>
       </View>

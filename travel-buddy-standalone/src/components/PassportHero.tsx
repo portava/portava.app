@@ -5,7 +5,8 @@ import { Plane, MapPin, MoreHorizontal, Camera, ShieldCheck, Calendar } from 'lu
 import type { OwnProfile, PublicProfile } from '../types/models';
 import { PassportMonogramWatermark, PassportInkStamp, PassportHeroBackdrop } from './PassportMarks';
 import { isTravelBuddyVerified, getVerificationOwnerPrompt } from '../lib/verification';
-import { resolveDisplayName, resolveAvatarUrl, fallbackInitials } from '../utils/identity';
+import { resolveAvatarUrl, fallbackInitials } from '../utils/identity';
+import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import { HighlightRing } from './HighlightRing';
 
@@ -75,8 +76,14 @@ export function PassportHero({
   trustLabel?: string | null;
   onTrustInfo?: () => void;
 }) {
-  const resolvedName = resolveDisplayName(profile);
   const username = 'username' in profile ? profile.username : null;
+  const identity = {
+    displayName: 'displayName' in profile ? profile.displayName : null,
+    name: 'name' in profile ? profile.name : null,
+    username,
+  };
+  const resolvedName = primaryIdentityText(identity);
+  const handleSubline = secondaryIdentityText(identity);
   const bio = profile.bio;
   const homeCity = profile.homeCity;
   const homeCountry = profile.homeCountry;
@@ -169,7 +176,7 @@ export function PassportHero({
         {/* Details */}
         <View style={styles.details}>
           <Text style={styles.name} numberOfLines={2}>{resolvedName}</Text>
-          {username ? <Text style={styles.handle}>@{username}</Text> : null}
+          {handleSubline ? <Text style={styles.handle}>{handleSubline}</Text> : null}
           {bio ? <Text style={styles.bio} numberOfLines={2}>{bio}</Text> : null}
           {(homeCity || homeCountry) ? (
             <View style={styles.locRow}>

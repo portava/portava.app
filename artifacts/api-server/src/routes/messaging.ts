@@ -26,6 +26,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http';
 import { canMessage } from '../lib/messagingPermissions';
+import { nameVisibilitySet, sanitizeIdentity } from '../lib/publicIdentity';
 import { getServiceClient } from '../lib/supabase';
 import { resolveInteractionPermissions } from '../services/interactionPermissions.js';
 import { isFlagEnabled } from '../lib/featureFlags.js';
@@ -1143,6 +1144,15 @@ router.get('/me/threads', async (req, res) => {
       .in('thread_id', threadIds),
   ]);
 
+  // Universal display-name rule: member names show only when opted in.
+  {
+    const memberRows = ((allMembersRes as any).data ?? []) as any[];
+    const allowedMemberNames = await nameVisibilitySet(sc, memberRows.map((m: any) => m.user_id));
+    for (const m of memberRows) {
+      if (m.profile) m.profile = sanitizeIdentity(m.profile, allowedMemberNames, user.id);
+    }
+  }
+
   // Last message per thread.
   const lastMsgByThread: Record<string, any> = {};
   for (const m of (lastMsgRes.data ?? []) as any[]) {
@@ -1334,6 +1344,14 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   const rows = (data ?? []) as any[];
 
+  // Universal display-name rule: sender names show only when opted in.
+  {
+    const allowedSenderNames = await nameVisibilitySet(sc, rows.map((r: any) => r.sender_id));
+    for (const r of rows) {
+      if (r.profile) r.profile = sanitizeIdentity(r.profile, allowedSenderNames, user.id);
+    }
+  }
+
   // Fetch translations for messages where current user is recipient (sender_id != user.id).
   const incomingMsgIds = rows
     .filter((m) => m.sender_id !== user.id && !m.deleted_at)
@@ -1379,10 +1397,18 @@ router.get('/threads/:threadId/messages', async (req, res) => {
         if (replyIds.length > 0) {
           const { data: quotedRows } = await sc
             .from('messages')
-            .select(`id, body, profile:profiles!messages_sender_id_fkey(name)`)
+            .select(`id, body, sender_id, profile:profiles!messages_sender_id_fkey(name, handle)`)
             .in('id', replyIds);
+          // Universal display-name rule: quoted sender shows @handle unless opted in.
+          const qAllowed = await nameVisibilitySet(sc, ((quotedRows as any[]) ?? []).map((q: any) => q.sender_id));
           for (const qr of quotedRows as any[] ?? []) {
-            replyContextMap[qr.id] = { body: qr.body ?? '', senderName: qr.profile?.name ?? null };
+            const nameOk = qr.sender_id === user.id || qAllowed.has(qr.sender_id as string);
+            replyContextMap[qr.id] = {
+              body: qr.body ?? '',
+              senderName: nameOk
+                ? (qr.profile?.name ?? null)
+                : (qr.profile?.handle ? `@${qr.profile.handle}` : null),
+            };
           }
         }
       }

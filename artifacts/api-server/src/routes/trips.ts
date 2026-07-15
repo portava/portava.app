@@ -8,6 +8,7 @@ import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
 import { sendPushNotification } from "../lib/push.js";
 import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js";
+import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity";
 
 const router = Router();
 
@@ -382,8 +383,9 @@ router.get("/trips/:tripId/members", async (req, res) => {
 
   if (profErr) { sendError(res, "db_error", profErr.message); return; }
 
+  const allowedNames = await nameVisibilitySet(sc, allIds);
   const profileMap: Record<string, any> = {};
-  for (const p of profiles ?? []) profileMap[(p as any).id] = p;
+  for (const p of profiles ?? []) profileMap[(p as any).id] = sanitizeIdentity(p as any, allowedNames, user.id);
 
   const followsYouSet = new Set<string>((theyFollowMe ?? []).map((r: any) => r.follower_id as string));
   const youFollowSet = new Set<string>((iFollowThem ?? []).map((r: any) => r.following_id as string));
@@ -454,7 +456,8 @@ router.get("/trips/:tripId/invitable-users", async (req, res) => {
   const profileMap: Record<string, any> = {};
   if (allIds.length > 0) {
     const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", allIds);
-    for (const p of profiles ?? []) profileMap[(p as any).id] = p;
+    const allowedNames = await nameVisibilitySet(sc, allIds);
+    for (const p of profiles ?? []) profileMap[(p as any).id] = sanitizeIdentity(p as any, allowedNames, user.id);
   }
 
   const toUser = (id: string) => {
@@ -530,7 +533,8 @@ router.get("/me/trip-invites/pending", async (req, res) => {
       .from("profiles")
       .select("id, handle, name, avatar_url")
       .in("id", ownerIds);
-    for (const p of profiles ?? []) profileMap[(p as any).id] = p;
+    const allowedNames = await nameVisibilitySet(sc, ownerIds);
+    for (const p of profiles ?? []) profileMap[(p as any).id] = sanitizeIdentity(p as any, allowedNames, user.id);
   }
 
   const invites = inviteRows
@@ -826,11 +830,14 @@ router.post("/trips/:tripId/invite", async (req, res) => {
       if (!sc2) return;
       const [{ data: tripRow }, { data: inviterRow }, { data: inviteeRow }] = await Promise.all([
         sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
-        sc2.from("profiles").select("display_name").eq("id", user.id).maybeSingle(),
+        sc2.from("profiles").select("display_name, handle").eq("id", user.id).maybeSingle(),
         sc2.from("profiles").select("expo_push_token").eq("id", userId).maybeSingle(),
       ]);
       const tripTitle   = (tripRow as any)?.title   ?? "a trip";
-      const inviterName = (inviterRow as any)?.display_name ?? "Someone";
+      const inviterNameAllowed = await nameVisibleFor(sc2, user.id);
+      const inviterName = inviterNameAllowed
+        ? ((inviterRow as any)?.display_name ?? ((inviterRow as any)?.handle ? `@${(inviterRow as any).handle}` : "Someone"))
+        : ((inviterRow as any)?.handle ? `@${(inviterRow as any).handle}` : "Someone");
       await sendPushNotification([(inviteeRow as any)?.expo_push_token], {
         title: "Trip invitation",
         body:  `${inviterName} invited you to join ${tripTitle}`,
@@ -879,9 +886,12 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
       if (!tripRow || (tripRow as any).owner_id === user.id) return; // skip if caller IS owner
       const [{ data: ownerRow }, { data: acceptorRow }] = await Promise.all([
         sc2.from("profiles").select("expo_push_token").eq("id", (tripRow as any).owner_id).maybeSingle(),
-        sc2.from("profiles").select("display_name").eq("id", user.id).maybeSingle(),
+        sc2.from("profiles").select("display_name, handle").eq("id", user.id).maybeSingle(),
       ]);
-      const acceptorName = (acceptorRow as any)?.display_name ?? "Someone";
+      const acceptorNameAllowed = await nameVisibleFor(sc2, user.id);
+      const acceptorName = acceptorNameAllowed
+        ? ((acceptorRow as any)?.display_name ?? ((acceptorRow as any)?.handle ? `@${(acceptorRow as any).handle}` : "Someone"))
+        : ((acceptorRow as any)?.handle ? `@${(acceptorRow as any).handle}` : "Someone");
       await sendPushNotification([(ownerRow as any)?.expo_push_token], {
         title: (tripRow as any).title ?? "Your trip",
         body: `${acceptorName} joined your trip!`,
@@ -925,12 +935,15 @@ router.post("/trips/:tripId/decline-invite", async (req, res) => {
       if (!sc2) return;
       const [{ data: tripRow }, { data: declinerRow }] = await Promise.all([
         sc2.from("trips").select("title, owner_id").eq("id", tripId).maybeSingle(),
-        sc2.from("profiles").select("display_name").eq("id", user.id).maybeSingle(),
+        sc2.from("profiles").select("display_name, handle").eq("id", user.id).maybeSingle(),
       ]);
       const ownerId = (tripRow as any)?.owner_id as string | undefined;
       if (!ownerId || ownerId === user.id) return;
       const { data: ownerRow } = await sc2.from("profiles").select("expo_push_token").eq("id", ownerId).maybeSingle();
-      const declinerName = (declinerRow as any)?.display_name ?? "Someone";
+      const declinerNameAllowed = await nameVisibleFor(sc2, user.id);
+      const declinerName = declinerNameAllowed
+        ? ((declinerRow as any)?.display_name ?? ((declinerRow as any)?.handle ? `@${(declinerRow as any).handle}` : "Someone"))
+        : ((declinerRow as any)?.handle ? `@${(declinerRow as any).handle}` : "Someone");
       await sendPushNotification([(ownerRow as any)?.expo_push_token], {
         title: "Invite declined",
         body:  `${declinerName} declined your invitation to ${(tripRow as any)?.title ?? "your trip"}`,

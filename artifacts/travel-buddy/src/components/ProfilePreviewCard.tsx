@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X } from 'lucide-react-native';
 import { getPublicProfile, type PublicProfileCard } from '../services/profile';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
+import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity';
 
 interface Props {
   username: string | null;
@@ -74,16 +75,16 @@ export function ProfilePreviewCard({ username, visible, onClose }: Props) {
               ) : (
                 <View style={[s.avatar, s.avatarFallback]}>
                   <Text style={s.avatarInitial}>
-                    {(profile.displayName ?? profile.username ?? '?').charAt(0).toUpperCase()}
+                    {(primaryIdentityText({ displayName: profile.displayName, username: profile.username }).replace(/^@/, '')[0] ?? '?').toUpperCase()}
                   </Text>
                 </View>
               )}
 
               <Text style={s.name} numberOfLines={1}>
-                {profile.displayName ?? profile.username}
+                {primaryIdentityText({ displayName: profile.displayName, username: profile.username })}
               </Text>
-              {profile.username && (
-                <Text style={s.handleText} numberOfLines={1}>@{profile.username}</Text>
+              {secondaryIdentityText({ displayName: profile.displayName, username: profile.username }) && (
+                <Text style={s.handleText} numberOfLines={1}>{secondaryIdentityText({ displayName: profile.displayName, username: profile.username })}</Text>
               )}
 
               {!!profile.bio && (

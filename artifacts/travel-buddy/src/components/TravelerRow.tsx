@@ -10,6 +10,7 @@ import { useHighlightRingState } from '../hooks/useHighlightRingState';
 import { UserAvatarButton } from './interaction/UserAvatarButton';
 import { UserNameButton } from './interaction/UserNameButton';
 import { UserOverflowMenu } from './interaction/UserOverflowMenu';
+import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity';
 
 function rowSignalIcon(signal: string) {
   const lower = signal.toLowerCase();
@@ -75,7 +76,8 @@ export function TravelerRow({ user, isOwnProfile = false, onFollowed, onBlockSuc
     onBlockSuccess?.(userId);
   }
 
-  const displayName = user.displayName ?? user.username ?? 'Traveler';
+  const displayName = primaryIdentityText({ displayName: user.displayName, username: user.username });
+  const handleSubline = secondaryIdentityText({ displayName: user.displayName, username: user.username });
 
   return (
     <>
@@ -103,8 +105,8 @@ export function TravelerRow({ user, isOwnProfile = false, onFollowed, onBlockSuc
           displayName={displayName}
           style={styles.name}
         />
-        {user.username ? (
-          <Text style={styles.handle} numberOfLines={1}>@{user.username}</Text>
+        {handleSubline ? (
+          <Text style={styles.handle} numberOfLines={1}>{handleSubline}</Text>
         ) : null}
         {user.isPrivate ? (
           <View style={styles.privateBadge}>

@@ -7,6 +7,7 @@ import { View, Text, StyleSheet, Pressable, Switch, Image, ScrollView } from 're
 import { Users, Star, BadgeCheck } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens';
 import type { LayoverBuddy, PresenceTraveler } from '../../services/layover';
+import { primaryIdentityText } from '../../lib/displayIdentity';
 
 interface Props {
   city: string | null;
@@ -21,7 +22,7 @@ interface Props {
 }
 
 function initials(name: string | null, handle: string | null): string {
-  const src = (name ?? handle ?? '?').trim();
+  const src = primaryIdentityText({ name, handle }).replace(/^@/, '').trim() || '?';
   const parts = src.split(/\s+/);
   return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '?';
 }

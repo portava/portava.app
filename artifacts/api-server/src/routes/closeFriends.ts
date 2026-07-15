@@ -13,6 +13,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -52,9 +53,10 @@ router.get("/users/me/close-friends", async (req, res) => {
     .select("id, handle, name, avatar_url")
     .in("id", friendIds);
 
+  const allowedNames = await nameVisibilitySet(sc, friendIds);
   const profileMap: Record<string, any> = {};
   for (const p of profiles ?? []) {
-    profileMap[(p as any).id] = { id: (p as any).id, handle: (p as any).handle, name: (p as any).name, avatarUrl: (p as any).avatar_url ?? null };
+    profileMap[(p as any).id] = { id: (p as any).id, handle: (p as any).handle, name: presentedName(p as any, (p as any).id === user.id || allowedNames.has((p as any).id)), avatarUrl: (p as any).avatar_url ?? null };
   }
 
   const closeFriends = rows.map((r: any) => ({

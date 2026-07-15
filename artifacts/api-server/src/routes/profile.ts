@@ -1163,6 +1163,9 @@ router.delete("/me/delete-request", async (req, res) => {
  */
 const PRIVACY_DEFAULTS = {
   profile_visibility: "public",
+  // Universal display-name rule: real names are OPT-IN. Default off means
+  // every user reference across the app shows @handle only.
+  show_real_name: false,
   show_current_city: true,
   show_home_country: true,
   show_visited_places: true,
@@ -1226,6 +1229,7 @@ router.get("/me/privacy", async (req, res) => {
  */
 const patchPrivacySchema = z.object({
   profile_visibility: z.enum(["public", "followers_only", "private"]).optional(),
+  show_real_name: z.boolean().optional(),
   show_current_city: z.boolean().optional(),
   show_home_country: z.boolean().optional(),
   show_visited_places: z.boolean().optional(),

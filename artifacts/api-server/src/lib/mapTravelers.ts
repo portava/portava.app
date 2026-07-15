@@ -28,6 +28,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "./database.types";
 import { normalizeLocationName } from "./canonicalLocations";
+import { nameVisibilitySet } from "./publicIdentity";
 
 /**
  * Compile-time schema guard: property access below type-checks against the
@@ -271,6 +272,9 @@ async function loadCandidates(
     }
   }
 
+  // Universal display-name rule: map pins show @handle unless opted in.
+  const allowedPinNames = await nameVisibilitySet(db, eligible.map((e) => e.loc.user_id));
+
   const rows: MapTravelerPayload[] = eligible.map(({ loc, prof, vis, freshness }) => {
     const id = loc.user_id;
     let pos: { lat: number; lng: number; precision: MapPrecision } | null = null;
@@ -283,11 +287,12 @@ async function loadCandidates(
     return {
       id,
       handle: (prof.handle as string | null) ?? null,
-      displayName:
-        (prof.display_name as string | null) ??
-        (prof.name as string | null) ??
-        (prof.handle as string | null) ??
-        "Traveler",
+      displayName: allowedPinNames.has(id)
+        ? ((prof.display_name as string | null) ??
+          (prof.name as string | null) ??
+          (prof.handle as string | null) ??
+          "Traveler")
+        : (prof.handle ? `@${prof.handle as string}` : "Traveler"),
       avatarUrl: (prof.avatar_url as string | null) ?? null,
       verified: prof.verified === true,
       openToMeet: prof.open_to_meet === true,

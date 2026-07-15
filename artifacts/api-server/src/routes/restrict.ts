@@ -15,6 +15,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { isUuid } from "../lib/followDecisions.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { resolveInteractionPermissions } from "../services/interactionPermissions.js";
+import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 
 const router = Router();
 
@@ -145,13 +146,15 @@ router.get("/me/restrictions", async (req, res) => {
     for (const p of profiles ?? []) profileMap[(p as any).id] = p;
   }
 
+  const allowedNames = await nameVisibilitySet(sc, ids);
+
   res.status(200).json({
     restricted: (rows ?? []).map((r: any) => {
       const p = profileMap[r.restricted_id] ?? {};
       return {
         id:                r.restricted_id as string,
         handle:            (p.handle as string | null) ?? null,
-        name:              (p.name as string | null) ?? null,
+        name:              presentedName(p, r.restricted_id === user.id || allowedNames.has(r.restricted_id as string)),
         avatarUrl:         (p.avatar_url as string | null) ?? null,
         restrictionReason: ((r.options as any)?.reason as string | null) ?? null,
         restrictedAt:      r.created_at as string,

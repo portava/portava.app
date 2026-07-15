@@ -181,6 +181,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { sendPushNotification } from "../lib/push.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
@@ -756,7 +757,8 @@ router.get("/events", async (req, res) => {
   const hostProfileMap: Record<string, { name?: string | null; avatar_url?: string | null }> = {};
   if (hostIds.length > 0) {
     const { data: hps } = await sc.from("profiles").select("id, name, avatar_url").in("id", hostIds);
-    for (const p of (hps as any[]) ?? []) hostProfileMap[p.id as string] = p;
+    const allowedNames = await nameVisibilitySet(sc, hostIds);
+    for (const p of (hps as any[]) ?? []) hostProfileMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
   }
 
   res.json({
@@ -1109,7 +1111,8 @@ router.get("/events/circles", async (req, res) => {
   const hpMap: Record<string, { name?: string | null; avatar_url?: string | null }> = {};
   if (hostIdSet.length > 0) {
     const { data: hps } = await sc.from("profiles").select("id, name, avatar_url").in("id", hostIdSet);
-    for (const p of (hps as any[]) ?? []) hpMap[p.id as string] = p;
+    const allowedNames = await nameVisibilitySet(sc, hostIdSet);
+    for (const p of (hps as any[]) ?? []) hpMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
   }
 
   // Step 5 — Batch-fetch viewer RSVP state so card CTAs are accurate
@@ -1214,7 +1217,8 @@ router.get("/events/invites", async (req, res) => {
   }
   if (inviterIds.length > 0) {
     const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", inviterIds);
-    for (const p of (profiles as any[]) ?? []) inviterMap[p.id as string] = p;
+    const allowedNames = await nameVisibilitySet(sc, inviterIds);
+    for (const p of (profiles as any[]) ?? []) inviterMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
   }
 
   res.json({
@@ -1691,7 +1695,8 @@ router.get("/events/:id", async (req, res) => {
   let goingProfiles: any[] = [];
   if (isParticipant && goingAvatars.length > 0) {
     const { data: gp } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", goingAvatars);
-    goingProfiles = (gp as any[]) ?? [];
+    const allowedGoing = await nameVisibilitySet(sc, goingAvatars);
+    goingProfiles = ((gp as any[]) ?? []).map((p) => sanitizeIdentity(p, allowedGoing, user.id));
   }
 
   const { data: waitlistData } = await sc
@@ -1700,7 +1705,9 @@ router.get("/events/:id", async (req, res) => {
     .eq("event_id", id);
   const waitlistCount = ((waitlistData as any[]) ?? []).length;
 
-  const hp = (hostResult as any).data;
+  const hpRaw = (hostResult as any).data;
+  const hostAllowed = await nameVisibilitySet(sc, [(ev as any).host_id]);
+  const hp = sanitizeIdentity(hpRaw, hostAllowed, user.id);
   const host = hp ? {
     id: hp.id,
     handle: hp.handle ?? null,
@@ -2420,7 +2427,10 @@ router.get("/events/:id/waitlist", async (req, res) => {
     .in("id", userIds);
 
   const profileMap: Record<string, any> = {};
-  for (const p of (profiles as any[]) ?? []) profileMap[p.id as string] = p;
+  {
+    const allowedNames = await nameVisibilitySet(sc, userIds);
+    for (const p of (profiles as any[]) ?? []) profileMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
+  }
 
   res.json({
     waitlist: rows.map((r: any) => ({
@@ -2542,8 +2552,9 @@ router.get("/events/:id/requests", async (req, res) => {
       .from("profiles")
       .select("id, handle, name, avatar_url")
       .in("id", userIds);
+    const allowedNames = await nameVisibilitySet(sc, userIds);
     for (const p of (profiles as any[]) ?? []) {
-      profileMap[p.id as string] = p;
+      profileMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
     }
   }
 
@@ -2920,7 +2931,10 @@ router.get("/events/:id/attendees", async (req, res) => {
   }
 
   const profileMap: Record<string, any> = {};
-  for (const p of profiles) profileMap[p.id] = p;
+  {
+    const allowedNames = await nameVisibilitySet(sc, userIds);
+    for (const p of profiles) profileMap[p.id] = sanitizeIdentity(p, allowedNames, user.id);
+  }
 
   const stateMap: Record<string, any> = {};
   for (const s of states) stateMap[s.user_id] = s;
@@ -3535,6 +3549,12 @@ router.get("/events/:id/reviews", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "get event reviews"); sendError(res, "db_error", error.message); return; }
 
+  // Universal display-name rule: reviewer names show only when opted in.
+  const reviewerIds = ((reviews as any[]) ?? [])
+    .filter((r: any) => !r.anonymous)
+    .map((r: any) => r.reviewer_id as string);
+  const allowedReviewerNames = await nameVisibilitySet(sc, reviewerIds);
+
   res.json({
     reviews: ((reviews as any[]) ?? []).map((r: any) => ({
       id:        r.id,
@@ -3545,7 +3565,9 @@ router.get("/events/:id/reviews", async (req, res) => {
       reviewer:  r.anonymous ? null : {
         id:          r.reviewer_id,
         handle:      r.profiles?.handle ?? null,
-        displayName: r.profiles?.display_name ?? null,
+        displayName: (r.reviewer_id === ctx.user.id || allowedReviewerNames.has(r.reviewer_id as string))
+          ? (r.profiles?.display_name ?? null)
+          : null,
         avatarUrl:   r.profiles?.avatar_url ?? null,
       },
     })),

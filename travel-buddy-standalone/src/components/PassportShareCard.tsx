@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Image, StyleSheet } from 'react-native';
 import { Plane, Map, Award } from 'lucide-react-native';
 import { color, space, radius } from '../theme/tokens';
+import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity';
 
 export interface PassportShareCardProps {
   displayName: string | null;
@@ -37,10 +38,10 @@ export const PassportShareCard = React.forwardRef<View, PassportShareCardProps>(
 
         {/* Name + handle */}
         <Text style={styles.displayName} numberOfLines={1}>
-          {displayName ?? 'Traveler'}
+          {primaryIdentityText({ displayName, username })}
         </Text>
-        {username ? (
-          <Text style={styles.handle}>@{username}</Text>
+        {secondaryIdentityText({ displayName, username }) ? (
+          <Text style={styles.handle}>{secondaryIdentityText({ displayName, username })}</Text>
         ) : null}
         {tagline ? (
           <Text style={styles.tagline} numberOfLines={2}>{tagline}</Text>

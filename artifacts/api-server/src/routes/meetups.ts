@@ -29,6 +29,7 @@ import {
   formatAgeLimitLabel,
   validateAgeRange,
 } from "../lib/ageEligibility.js";
+import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
 
 const router = Router();
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -364,14 +365,18 @@ router.get("/meetups/:meetupId", async (req, res) => {
         ? sc.from("profiles").select("id, handle, name, avatar_url").in("id", goingIds)
         : Promise.resolve({ data: [] }),
     ]);
+    // Universal display-name rule: names default to hidden (@handle) unless the
+    // subject opted in. Viewer always sees their own name.
+    const allowedNames = await nameVisibilitySet(sc, [meetup.creator_id, ...goingIds]);
     if (creatorResult.data) {
       const cp = creatorResult.data as any;
-      creator = { id: cp.id, handle: (cp.handle as string | null) ?? null, displayName: cp.name ?? null, avatarUrl: cp.avatar_url ?? null };
+      const cpAllowed = cp.id === user.id || allowedNames.has(cp.id);
+      creator = { id: cp.id, handle: (cp.handle as string | null) ?? null, displayName: cpAllowed ? (cp.name ?? null) : null, avatarUrl: cp.avatar_url ?? null };
     }
     goingAttendees = ((goingResult as any).data ?? []).map((p: any) => ({
       id:          p.id as string,
       handle:      (p.handle as string | null) ?? null,
-      displayName: (p.name as string | null) ?? null,
+      displayName: (p.id === user.id || allowedNames.has(p.id)) ? ((p.name as string | null) ?? null) : null,
       avatarUrl:   (p.avatar_url as string | null) ?? null,
     }));
   }
@@ -1064,9 +1069,13 @@ async function pushMeetupTimeConfirmed(
     sc.from("profiles").select("name, handle").eq("id", confirmerId).maybeSingle(),
   ]);
 
+  // Universal display-name rule: only interpolate the confirmer's real name
+  // when they opted in; otherwise fall back to their @handle.
+  const confirmerNameAllowed = await nameVisibleFor(sc, confirmerId);
+  const confirmerHandle = (confirmerProfile as any)?.handle;
   const confirmerName =
-    (confirmerProfile as any)?.name ??
-    (confirmerProfile as any)?.handle ??
+    (confirmerNameAllowed ? (confirmerProfile as any)?.name : null) ??
+    (confirmerHandle ? `@${confirmerHandle}` : null) ??
     "The organizer";
 
   const when = formatMeetupWhen(startsAt);
@@ -1120,8 +1129,12 @@ async function postCancelSystemMessage(
   if (!threadId) return;
 
   const { data: profile } = await client
-    .from("profiles").select("name, handle").eq("id", creatorId).maybeSingle();
-  const creatorName: string = (profile as any)?.name ?? (profile as any)?.handle ?? "Someone";
+    .from("profiles").select("id, name, handle").eq("id", creatorId).maybeSingle();
+  // Universal display-name rule: only use the creator's real name in the message
+  // text when they opted in; otherwise fall back to their @handle.
+  const nameAllowed = await nameVisibleFor(client, creatorId);
+  const cHandle = (profile as any)?.handle;
+  const creatorName: string = (nameAllowed ? (profile as any)?.name : null) ?? (cHandle ? `@${cHandle}` : null) ?? "Someone";
   const text = `${creatorName} cancelled the meetup: ${title}`;
   const body = JSON.stringify({ type: "meetup_cancelled", meetupId, title, creatorName, text });
 
@@ -1182,10 +1195,13 @@ async function postConfirmTimeSystemMessage(
   // Fetch creator's display name for the human-readable message
   const { data: profile } = await client
     .from("profiles")
-    .select("name, handle")
+    .select("id, name, handle")
     .eq("id", creatorId)
     .maybeSingle();
-  const creatorName: string = (profile as any)?.name ?? (profile as any)?.handle ?? "Someone";
+  // Universal display-name rule: only use the creator's real name when opted in.
+  const nameAllowed = await nameVisibleFor(client, creatorId);
+  const cHandle = (profile as any)?.handle;
+  const creatorName: string = (nameAllowed ? (profile as any)?.name : null) ?? (cHandle ? `@${cHandle}` : null) ?? "Someone";
 
   const confirmedDate = new Date(startsAt).toLocaleDateString("en-US", {
     weekday: "short", month: "short", day: "numeric",
@@ -1252,10 +1268,14 @@ async function postMeetupSystemMessage(
   // Fetch creator display name for the card
   const { data: profile } = await client
     .from("profiles")
-    .select("name, handle")
+    .select("id, name, handle")
     .eq("id", creatorId)
     .maybeSingle();
-  const plannedByName = (profile as any)?.name ?? (profile as any)?.handle ?? null;
+  // Universal display-name rule: only use the creator's real name when opted in;
+  // otherwise fall back to their @handle.
+  const nameAllowed = await nameVisibleFor(client, creatorId);
+  const cHandle = (profile as any)?.handle;
+  const plannedByName = (nameAllowed ? (profile as any)?.name : null) ?? (cHandle ? `@${cHandle}` : null) ?? null;
 
   const body = JSON.stringify({
     type: "meetup_card",
@@ -1396,8 +1416,13 @@ router.get("/me/meetup-invites", async (req, res) => {
 
   const creatorIds = [...new Set((meetups ?? []).map((m: any) => m.creator_id as string))];
   const { data: profiles } = await client.from("profiles").select("id, handle, name, avatar_url").in("id", creatorIds);
+  // Universal display-name rule: creator real names default to hidden (@handle).
+  const allowedNames = await nameVisibilitySet(client, creatorIds);
   const profileMap: Record<string, any> = {};
-  for (const p of profiles ?? []) profileMap[p.id] = p;
+  for (const p of profiles ?? []) {
+    const allowed = p.id === user.id || allowedNames.has(p.id);
+    profileMap[p.id] = { ...p, name: allowed ? p.name : null };
+  }
 
   const result = (invites as any[])
     .filter((i) => {
@@ -1499,16 +1524,20 @@ router.get("/me/frequent-invitees", async (req, res) => {
 
   if (profErr) { sendError(res, "db_error", profErr.message); return; }
 
+  // Universal display-name rule: invitee real names default to hidden (@handle).
+  const allowedNames = await nameVisibilitySet(sc, top3.map((e) => e.id));
+
   const profileMap = new Map((profiles ?? []).map((p: any) => [p.id as string, p]));
 
   const invitees: FrequentInvitee[] = top3
     .map(({ id, count }) => {
       const p = profileMap.get(id);
       if (!p) return null;
+      const allowed = p.id === user.id || allowedNames.has(p.id);
       return {
         id: p.id as string,
         handle: p.handle as string,
-        name: p.name as string,
+        name: (allowed ? p.name : null) as string,
         avatarUrl: (p.avatar_url as string | null) ?? null,
         count,
       };

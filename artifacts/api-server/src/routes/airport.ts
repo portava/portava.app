@@ -26,6 +26,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, isAcceptedTripMember, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import {
   resolveByIata,
   resolveByGps,
@@ -963,12 +964,17 @@ async function cityPresence(
 
     let travelers: Array<{ id: string; handle: string | null; name: string | null; avatarUrl: string | null }> = [];
     try {
+      const shown = visible.slice(0, 6);
       const { data: profiles } = await sc
         .from("profiles")
         .select("id, handle, name, avatar_url")
-        .in("id", visible.slice(0, 6));
+        .in("id", shown);
+      const allowedNames = await nameVisibilitySet(sc, shown);
       travelers = ((profiles ?? []) as any[]).map((p) => ({
-        id: p.id, handle: p.handle ?? null, name: p.name ?? null, avatarUrl: p.avatar_url ?? null,
+        id: p.id,
+        handle: p.handle ?? null,
+        name: (p.id === userId || allowedNames.has(p.id as string)) ? (p.name ?? null) : null,
+        avatarUrl: p.avatar_url ?? null,
       }));
     } catch { /* count-only */ }
 
@@ -1446,6 +1452,7 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
 router.get("/airport/pulse", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
+  const { user } = auth;
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
@@ -1485,8 +1492,13 @@ router.get("/airport/pulse", async (req, res) => {
   const { data, error } = await query;
   if (error) { sendError(res, "db_error", error.message); return; }
 
-  const posts = (data ?? []).map((row: any) => {
+  const rows = (data ?? []) as any[];
+  const authorIds = [...new Set(rows.map((r: any) => r.author_id as string))];
+  const allowedNames = await nameVisibilitySet(sc, authorIds);
+
+  const posts = rows.map((row: any) => {
     const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+    const nameAllowed = profile && (profile.id === user.id || allowedNames.has(profile.id as string));
     return {
       id:          row.id,
       authorId:    row.author_id,
@@ -1497,7 +1509,7 @@ router.get("/airport/pulse", async (req, res) => {
       locationCountry: row.location_country ?? null,
       author: profile ? {
         id: profile.id, username: profile.username,
-        name: profile.full_name ?? profile.username, avatarUrl: profile.avatar_url ?? null,
+        name: nameAllowed ? (profile.full_name ?? null) : null, avatarUrl: profile.avatar_url ?? null,
       } : null,
     };
   });

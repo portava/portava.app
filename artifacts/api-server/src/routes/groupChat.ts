@@ -24,6 +24,7 @@ import {
   markTranslationsPending,
   type TranslationStatusValue,
 } from '../services/messageTranslation';
+import { nameVisibilitySet } from '../lib/publicIdentity';
 
 const router = Router();
 
@@ -91,9 +92,15 @@ async function fetchMessagesForThread(
     for (const t of tRows ?? []) translationMap[(t as any).message_id] = t;
   }
 
+  // Universal display-name rule: sender real names default to hidden (@handle)
+  // unless the sender has opted in. Viewer always sees their own name.
+  const senderIds = [...new Set(rows.map((m) => m.sender_id as string))];
+  const allowedNames = await nameVisibilitySet(sc, senderIds);
+
   return rows.map((m) => {
     const p = m.profile ?? {};
     const isDeleted = Boolean(m.deleted_at);
+    const nameAllowed = m.sender_id === userId || allowedNames.has(m.sender_id);
     const tRow = translationMap[m.id] ?? null;
 
     const display = buildDisplayFields(
@@ -119,7 +126,7 @@ async function fetchMessagesForThread(
       threadId: m.thread_id,
       senderId: m.sender_id,
       senderHandle: p.handle ?? null,
-      senderName: p.name ?? null,
+      senderName: nameAllowed ? (p.name ?? null) : null,
       senderAvatarUrl: p.avatar_url ?? null,
       body: isDeleted ? null : m.body,
       deleted: isDeleted,

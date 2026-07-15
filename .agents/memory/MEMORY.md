@@ -4,3 +4,5 @@
 - [Scroll-collapse animation gotchas](scroll-collapse-gotchas.md) — size collapse rows from token lineHeight (fontSize overrides don't shrink it); animate height on a View clip wrapper, never on Text (RN web).
 - [DB column-drift trap](db-column-drift.md) — check generated database.types.ts for column names (lat/lng vs latitude/longitude differ by table) and Pick<>-type query rows; fail-closed code hides wrong columns as silent empties.
 - [Standalone tree parity](standalone-fork-parity.md) — travel-buddy-standalone is a divergent fork; diff each file before copying, port edits manually into divergent screens, run its tsc separately.
+- [API server test suite](api-server-testing.md) — node:test not vitest; suite >5min, run via api-test workflow; fake-client pitfalls.
+- [Display-name privacy rule](display-name-privacy.md) — @handle default, real name only if opted in; exemptions listed inside.

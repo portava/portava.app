@@ -20,6 +20,7 @@ import {
 import { router } from 'expo-router';
 import { Users, Sparkles, CheckCircle, MapPin } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens';
+import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity';
 import {
   fetchCompassSettings,
   fetchCompassTravelerMatches,
@@ -49,8 +50,9 @@ function TravelerCard({ item }: { item: CompassTravelerResult }) {
   const [requested, setRequested] = useState(d.followStatus === 'requested');
   const [inFlight, setInFlight] = useState(false);
 
-  const displayName = d.displayName ?? (d.isPrivate ? 'Private Traveler' : (d.username ?? 'Traveler'));
-  const initials = displayName.slice(0, 2).toUpperCase();
+  const displayName = d.displayName ?? (d.isPrivate ? 'Private Traveler' : primaryIdentityText({ username: d.username }));
+  const usernameSubline = secondaryIdentityText({ displayName: d.displayName, username: d.username });
+  const initials = displayName.replace(/^@/, '').slice(0, 2).toUpperCase();
 
   const handleFollow = async () => {
     if (followed || requested || inFlight) return;
@@ -97,8 +99,8 @@ function TravelerCard({ item }: { item: CompassTravelerResult }) {
       <Text style={s.name} numberOfLines={1}>{displayName}</Text>
 
       {/* Username — hidden for unfollowed private profiles */}
-      {d.username && !d.isPrivate ? (
-        <Text style={s.username} numberOfLines={1}>@{d.username}</Text>
+      {usernameSubline && !d.isPrivate ? (
+        <Text style={s.username} numberOfLines={1}>{usernameSubline}</Text>
       ) : null}
 
       {/* City — hidden for unfollowed private profiles */}

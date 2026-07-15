@@ -333,7 +333,9 @@ describe("GET /api/users/suggestions", () => {
     const body = await r.json() as any;
     const u = body.users[0];
     assert.equal(u.id, B);
-    assert.equal(u.displayName, "Trav One");
+    // Universal display-name rule: displayName is null unless the user opted
+    // in via profile_privacy_settings.show_real_name (clients fall back to @username).
+    assert.equal(u.displayName, null);
     assert.equal(u.username, "traveler1");
     assert.equal(u.avatarUrl, "https://cdn/a.jpg");
     assert.equal(typeof u.followerCount, "number");

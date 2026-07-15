@@ -3,6 +3,7 @@ import { Pressable, Text, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { useBlockedIds } from '../../context/BlockedIdsContext';
 import { color, type as t } from '../../theme/tokens';
+import { primaryIdentityText } from '../../lib/displayIdentity';
 
 interface Props {
   userId: string;
@@ -33,7 +34,7 @@ export function UserNameButton({ userId, handle, displayName, style, numberOfLin
   return (
     <Pressable onPress={handlePress} disabled={disabled || isLoading || !handle}>
       <Text style={[styles.name, style]} numberOfLines={numberOfLines}>
-        {displayName ?? handle ?? 'Traveler'}
+        {primaryIdentityText({ displayName, handle })}
       </Text>
     </Pressable>
   );

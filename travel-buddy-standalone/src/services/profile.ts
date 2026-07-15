@@ -445,6 +445,7 @@ export interface PrivacySettings {
   show_stamps: boolean;
   show_friends: boolean;
   show_followers: boolean;
+  show_real_name: boolean;
   allow_messages_from: 'everyone' | 'friends' | 'followers' | 'nobody';
   allow_friend_requests: boolean;
   allow_follow: boolean;

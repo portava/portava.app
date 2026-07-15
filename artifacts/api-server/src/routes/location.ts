@@ -10,6 +10,7 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase.js";
+import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { reverseGeocode } from "../services/geocodingService";
 import { checkAndRecordSnapshot, getUserTrustLevel, checkIpCityMismatch } from "../services/location/LocationSafetyService";
@@ -496,11 +497,16 @@ router.get("/me/circle-locations", async (req, res) => {
     (profileRes.data ?? []).map((p: any) => [p.id as string, p])
   );
 
+  // Universal display-name rule: members show real names only when opted in.
+  const allowedLocNames = await nameVisibilitySet(sc, visibleIds);
+
   const locations = (locationRes.data ?? []).map((row: any) => {
     const profile = profileMap.get(row.user_id as string);
+    const uid = row.user_id as string;
+    const nameOk = uid === user.id || allowedLocNames.has(uid);
     return {
-      userId:    row.user_id as string,
-      name:      (profile?.name as string | null) ?? null,
+      userId:    uid,
+      name:      nameOk ? ((profile?.name as string | null) ?? null) : null,
       avatarUrl: (profile?.avatar_url as string | null) ?? null,
       lat:       row.lat != null ? Number(row.lat) : null,
       lng:       row.lng != null ? Number(row.lng) : null,

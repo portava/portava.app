@@ -61,6 +61,7 @@ import { computeOptimisticLike } from '../lib/commentLikeLogic';
 import { createSubmitGuard } from '../lib/commentSubmitGuard';
 import { createLikeToggleGuard } from '../lib/likeToggleGuard';
 import { EngagementUserListSheet } from './EngagementUserListSheet';
+import { primaryIdentityText } from '../lib/displayIdentity';
 
 // ── Shared contexts ───────────────────────────────────────────────────────────
 
@@ -113,6 +114,7 @@ function timeAgo(iso: string): string {
 
 function AvatarFallback({ name, size = 32 }: { name: string; size?: number }) {
   const initials = name
+    .replace(/^@/, '')
     .split(' ')
     .map((w) => w[0] ?? '')
     .slice(0, 2)
@@ -234,11 +236,11 @@ function ReplyRow({
     <>
       <View style={s.replyRow}>
         <CornerDownRight size={12} color={color.faint} style={s.replyIcon} />
-        <CommentAvatar uri={reply.author.avatarUrl} name={reply.author.name} size={24} />
+        <CommentAvatar uri={reply.author.avatarUrl} name={primaryIdentityText({ name: reply.author.name, handle: reply.author.handle })} size={24} />
         <View style={s.commentBody}>
           <View style={s.commentMeta}>
             <Pressable onPress={() => onAuthorPress(reply.author.handle)} hitSlop={4}>
-              <Text style={s.commentAuthor}>{reply.author.name}</Text>
+              <Text style={s.commentAuthor}>{primaryIdentityText({ name: reply.author.name, handle: reply.author.handle })}</Text>
             </Pressable>
             <Text style={s.commentTime}>{timeAgo(reply.createdAt)}</Text>
           </View>
@@ -360,11 +362,11 @@ function CommentItem({
   return (
     <View>
       <View style={s.commentRow}>
-        <CommentAvatar uri={comment.author.avatarUrl} name={comment.author.name} size={32} />
+        <CommentAvatar uri={comment.author.avatarUrl} name={primaryIdentityText({ name: comment.author.name, handle: comment.author.handle })} size={32} />
         <View style={s.commentBody}>
           <View style={s.commentMeta}>
             <Pressable onPress={() => onAuthorPress(comment.author.handle)} hitSlop={4}>
-              <Text style={s.commentAuthor}>{comment.author.name}</Text>
+              <Text style={s.commentAuthor}>{primaryIdentityText({ name: comment.author.name, handle: comment.author.handle })}</Text>
             </Pressable>
             <Text style={s.commentTime}>{timeAgo(comment.createdAt)}</Text>
           </View>
@@ -375,7 +377,7 @@ function CommentItem({
             currentUserId={currentUserId ?? undefined}
             style={s.commentText}
           />
-          <Pressable hitSlop={6} onPress={() => onReply(comment.id, comment.author.name)} style={s.replyBtn}>
+          <Pressable hitSlop={6} onPress={() => onReply(comment.id, primaryIdentityText({ name: comment.author.name, handle: comment.author.handle }))} style={s.replyBtn}>
             <Text style={s.replyBtnText}>Reply</Text>
           </Pressable>
         </View>

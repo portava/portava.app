@@ -18,6 +18,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildCrewCard, type RawMemberLocation, type CrewMemberCard } from "../../lib/tripCrewLocation.js";
 import { logger as rootLogger } from "../../lib/logger.js";
+import { nameVisibilitySet } from "../../lib/publicIdentity.js";
 
 const logger = rootLogger.child({ service: "TripCrewLocationService" });
 
@@ -137,6 +138,10 @@ export async function getCrewMap(
     }
   }
 
+  // Universal display-name rule: crew members show real names only when
+  // opted in (viewer is already excluded from allUserIds above).
+  const allowedCrewNames = await nameVisibilitySet(db, allUserIds);
+
   // 8. Build cards
   const cards: CrewMemberCard[] = allUserIds.map((uid) => {
     const profile = profileMap.get(uid);
@@ -147,7 +152,7 @@ export async function getCrewMap(
 
     const raw: RawMemberLocation = {
       userId: uid,
-      name: profile?.full_name ?? null,
+      name: allowedCrewNames.has(uid) ? (profile?.full_name ?? null) : null,
       handle: profile?.username ?? null,
       avatarUrl: profile?.avatar_url ?? null,
       prefs: prefs ? {

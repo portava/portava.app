@@ -14,6 +14,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { calculateDistanceMeters } from "../lib/locationVerify.js";
 import { checkAndRecordSnapshot } from "../services/location/LocationSafetyService.js";
 import { createStamp } from "../services/passport/PassportStampService.js";
@@ -687,13 +688,17 @@ router.get("/trips/:tripId/geofence/attendance", async (req, res) => {
     left:           "Left",
   };
 
+  // Universal display-name rule: attendees show @handle unless opted in.
+  const allowedAttendeeNames = await nameVisibilitySet(db, memberIds);
+
   const attendees = memberIds.map((uid) => {
     const p = profileMap[uid] ?? {};
     const c = checkinMap[uid];
+    const nameOk = uid === user.id || allowedAttendeeNames.has(uid);
     return {
       userId:   uid,
       handle:   (p.handle as string) ?? "",
-      name:     (p.name   as string) ?? "",
+      name:     nameOk ? ((p.name as string) ?? "") : "",
       avatarUrl:(p.avatar_url as string | null) ?? null,
       status:   (c?.status as string) ?? "not_checked_in",
       statusLabel: STATUS_LABEL[(c?.status as string) ?? "not_checked_in"] ?? "Unknown",

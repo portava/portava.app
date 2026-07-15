@@ -16,6 +16,8 @@ export type VisibilityLevel = "full" | "followers_only" | "limited_preview" | "b
 
 export interface PrivacySettings {
   profile_visibility: string;
+  /** Opt-in: when false (default), other users only ever see @handle. */
+  show_real_name?: boolean;
   show_current_city: boolean;
   show_home_country: boolean;
   show_visited_places: boolean;

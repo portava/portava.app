@@ -18,6 +18,7 @@ import {
   type ApiErrorCode,
 } from "../lib/http.js";
 import { sendPushNotification } from "../lib/push.js";
+import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -322,7 +323,8 @@ router.get("/trips/invites", async (req, res) => {
       .from("profiles")
       .select("id, handle, name, avatar_url")
       .in("id", ownerIds);
-    for (const p of profiles ?? []) profileMap[(p as any).id] = p;
+    const allowedNames = await nameVisibilitySet(sc, ownerIds);
+    for (const p of profiles ?? []) profileMap[(p as any).id] = sanitizeIdentity(p as any, allowedNames, user.id);
   }
 
   const invites = (rows as any[]).map((row) => {
@@ -383,7 +385,8 @@ router.get("/trips/join-requests", async (req, res) => {
       .from("profiles")
       .select("id, handle, name, avatar_url")
       .in("id", userIds);
-    for (const p of profiles ?? []) profileMap[(p as any).id] = p;
+    const allowedNames = await nameVisibilitySet(sc, userIds);
+    for (const p of profiles ?? []) profileMap[(p as any).id] = sanitizeIdentity(p as any, allowedNames, user.id);
   }
 
   res.json({
@@ -756,9 +759,12 @@ router.post("/trips/:tripId/join-request", async (req, res) => {
       const [{ data: tripRow }, { data: ownerRow }, { data: requesterRow }] = await Promise.all([
         sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
         sc2.from("profiles").select("expo_push_token").eq("id", ownerId).maybeSingle(),
-        sc2.from("profiles").select("display_name").eq("id", user.id).maybeSingle(),
+        sc2.from("profiles").select("display_name, handle").eq("id", user.id).maybeSingle(),
       ]);
-      const requesterName = (requesterRow as any)?.display_name ?? "Someone";
+      const requesterNameAllowed = await nameVisibleFor(sc2, user.id);
+      const requesterName = requesterNameAllowed
+        ? ((requesterRow as any)?.display_name ?? ((requesterRow as any)?.handle ? `@${(requesterRow as any).handle}` : "Someone"))
+        : ((requesterRow as any)?.handle ? `@${(requesterRow as any).handle}` : "Someone");
       await sendPushNotification([(ownerRow as any)?.expo_push_token], {
         title: "New join request",
         body:  `${requesterName} wants to join ${(tripRow as any)?.title ?? "your trip"}`,
@@ -1061,10 +1067,12 @@ router.get("/trips/:tripId/invite-links", async (req, res) => {
       .from("profiles")
       .select("id, full_name, username, avatar_url")
       .in("id", allJoinerIds);
+    const allowedNames = await nameVisibilitySet(sc, allJoinerIds);
     for (const p of (profiles ?? []) as any[]) {
+      const nameAllowed = (p.id as string) === user.id || allowedNames.has(p.id as string);
       profileMap.set(p.id as string, {
         id: p.id as string,
-        name: (p.full_name as string) ?? null,
+        name: nameAllowed ? ((p.full_name as string) ?? null) : null,
         handle: (p.username as string) ?? null,
         avatarUrl: (p.avatar_url as string) ?? null,
       });
@@ -1209,6 +1217,9 @@ router.get("/trips/invite-link/:token/preview", async (req, res) => {
     linkId:             lk.id,
     expiresAt:          lk.expires_at ?? null,
     tripStatus:         tripStatus,
+    // Always false on the 200 path — terminal trips return 410 above. Emitted
+    // explicitly so clients (and the preview contract tests) can rely on it.
+    isTerminal:         false,
     isFull:             isFull,
   });
 });
