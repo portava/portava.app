@@ -262,33 +262,8 @@ export default function Pulse() {
       {/* People you may know — shown in For You mode only */}
       {feedMode === 'forYou' && <PeopleYouMayKnow refreshKey={peopleRefreshKey} />}
 
-      {/* Pulse Wall — feed mode toggle + quick filters */}
+      {/* Pulse Wall section label — scrolls with pre-wall content */}
       <Text style={styles.wallTitle}>Pulse Wall</Text>
-
-      {/* For You / Following toggle */}
-      <View style={styles.modeRow}>
-        <Pressable
-          style={[styles.modeBtn, feedMode === 'forYou' && styles.modeBtnActive]}
-          onPress={() => handleFeedMode('forYou')}
-        >
-          <Text style={[styles.modeBtnText, feedMode === 'forYou' && styles.modeBtnTextActive]}>For You</Text>
-        </Pressable>
-        <Pressable
-          style={[styles.modeBtn, feedMode === 'following' && styles.modeBtnActive]}
-          onPress={() => handleFeedMode('following')}
-        >
-          <Text style={[styles.modeBtnText, feedMode === 'following' && styles.modeBtnTextActive]}>Following</Text>
-        </Pressable>
-      </View>
-
-      {/* Category filter rail — underline-tab style, For You mode only */}
-      {feedMode === 'forYou' && (
-        <PulseFilterRail
-          filters={QUICK_FILTERS}
-          active={active}
-          onPress={(f) => toggleQuick(f as PulseFilter)}
-        />
-      )}
     </View>
   );
 
@@ -340,6 +315,33 @@ export default function Pulse() {
         onFilter={() => setSheetOpen(true)}
         onCityPress={openCityPicker}
       />
+
+      {/* ── Sticky wall controls: mode toggle + category filter rail ── */}
+      <View style={styles.stickyControls}>
+        <View style={styles.modeRow}>
+          <Pressable
+            style={[styles.modeBtn, feedMode === 'forYou' && styles.modeBtnActive]}
+            onPress={() => handleFeedMode('forYou')}
+          >
+            <Text style={[styles.modeBtnText, feedMode === 'forYou' && styles.modeBtnTextActive]}>For You</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.modeBtn, feedMode === 'following' && styles.modeBtnActive]}
+            onPress={() => handleFeedMode('following')}
+          >
+            <Text style={[styles.modeBtnText, feedMode === 'following' && styles.modeBtnTextActive]}>Following</Text>
+          </Pressable>
+        </View>
+        {feedMode === 'forYou' && (
+          <PulseFilterRail
+            filters={QUICK_FILTERS}
+            active={active}
+            onPress={(f) => toggleQuick(f as PulseFilter)}
+            labels={{ 'Hidden Gems': 'Gems' }}
+          />
+        )}
+      </View>
+
       <FlatList
         data={feed}
         keyExtractor={(it) => it.id}
@@ -392,6 +394,17 @@ export default function Pulse() {
 }
 
 const styles = StyleSheet.create({
+  stickyControls: {
+    backgroundColor: color.paper,
+    paddingTop: space.sm,
+    // Subtle bottom shadow so the sticky bar reads as a layer above the feed
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+    zIndex: 10,
+  },
   fitsHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, marginTop: space.lg, marginBottom: space.md, flexWrap: 'wrap' },
   sectionTitle: { ...t.title, color: color.ink, fontSize: 20 },
   insideBadge: { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: 999, paddingHorizontal: space.sm, paddingVertical: 3 },

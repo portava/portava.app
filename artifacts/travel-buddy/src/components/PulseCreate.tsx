@@ -141,10 +141,11 @@ export function PulseFilterSheet({
         <ScrollView contentContainerStyle={fs.chips}>
           {PULSE_FILTERS.map((f) => {
             const on = active.includes(f);
+            const label = f === 'Hidden Gems' ? 'Gems' : f;
             return (
               <Pressable key={f} style={[fs.chip, on && fs.chipOn]} onPress={() => onToggle(f)}>
                 {on ? <Check size={14} color={color.onInk} /> : null}
-                <Text style={[fs.chipText, on && fs.chipTextOn]}>{f}</Text>
+                <Text style={[fs.chipText, on && fs.chipTextOn]}>{label}</Text>
               </Pressable>
             );
           })}

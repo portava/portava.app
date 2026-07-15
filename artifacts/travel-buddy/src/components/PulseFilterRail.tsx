@@ -19,11 +19,11 @@ import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { color, space } from '../theme/tokens';
 
 export interface PulseFilterRailProps {
-  /** Ordered list of filter labels to display. */
+  /** Ordered list of filter values. These are also matched by string equality for active state. */
   filters: string[];
-  /** Currently active filters — matched by string equality. */
+  /** Currently active filters — matched by string equality against `filters` values. */
   active: string[];
-  /** Called when a filter label is tapped. Parent owns select/toggle logic. */
+  /** Called when a filter is tapped — receives the filter value (not the display label). */
   onPress: (filter: string) => void;
   /**
    * Horizontal padding for the first tab so its text aligns with the page grid.
@@ -31,6 +31,13 @@ export interface PulseFilterRailProps {
    * lands exactly at this value.
    */
   leadingPad?: number;
+  /**
+   * Optional display label overrides. Keys are filter values; values are the
+   * label shown to the user. Unspecified filters fall back to the value itself.
+   * Example: { 'Hidden Gems': 'Gems' } shows "Gems" but the value passed to
+   * onPress and matched in `active` is still 'Hidden Gems'.
+   */
+  labels?: Record<string, string>;
 }
 
 // The internal horizontal padding of each tab. The indicator is inset by 2 px
@@ -42,6 +49,7 @@ export function PulseFilterRail({
   active,
   onPress,
   leadingPad = space.lg,
+  labels,
 }: PulseFilterRailProps) {
   return (
     <View style={s.wrap}>
@@ -55,6 +63,7 @@ export function PulseFilterRail({
       >
         {filters.map((f) => {
           const isActive = active.includes(f);
+          const displayLabel = labels?.[f] ?? f;
           return (
             <Pressable
               key={f}
@@ -63,13 +72,13 @@ export function PulseFilterRail({
               hitSlop={{ top: 6, bottom: 6, left: 0, right: 0 }}
               accessibilityRole="button"
               accessibilityState={{ selected: isActive }}
-              accessibilityLabel={`${f} filter${isActive ? ', selected' : ''}`}
+              accessibilityLabel={`${displayLabel} filter${isActive ? ', selected' : ''}`}
             >
               <Text
                 style={[s.label, isActive && s.labelActive]}
                 numberOfLines={1}
               >
-                {f}
+                {displayLabel}
               </Text>
               {isActive && <View style={s.indicator} />}
             </Pressable>
