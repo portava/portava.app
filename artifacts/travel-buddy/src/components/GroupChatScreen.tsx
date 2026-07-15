@@ -48,6 +48,7 @@ import { deleteMessage, saveMessage } from '../services/messaging';
 import { getTripMembers, getCircleMembers, type FriendUser } from '../services/friends';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
+import { MessageEntrance, useMessageEntranceGate } from './MessageEntrance';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
@@ -372,6 +373,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   const [memberPreview, setMemberPreview] = useState<FriendUser[]>([]);
   const [memberCount, setMemberCount] = useState<number | null>(null);
   const listRef = useRef<FlatList>(null);
+  const shouldAnimateMessage = useMessageEntranceGate();
 
   const displayTitle = thread?.title ?? title ?? (type === 'trip' ? 'Trip Chat' : 'Circle Chat');
   const isNoAccess = state === 'no_access' || thread?.memberAccess === 'removed';
@@ -657,7 +659,10 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
             return <TelegraphSystemNotice text={m.body ?? ''} />;
           }
           return (
-            <View style={[styles.bubbleRow, mine && styles.bubbleRowMine]}>
+            <MessageEntrance
+              animate={shouldAnimateMessage(m.clientId ?? m.id, m.createdAt)}
+              style={[styles.bubbleRow, mine && styles.bubbleRowMine]}
+            >
               {!mine && (
                 <View style={[styles.avatar, styles.avatarSmall]}>
                   {m.senderAvatarUrl ? (
@@ -683,7 +688,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
                 deliveryStatus={mine ? (m.deliveryStatus ?? null) : null}
                 onRetry={mine && m.clientId ? () => retrySend(m.clientId!) : undefined}
               />
-            </View>
+            </MessageEntrance>
           );
         }}
         onLayout={() => listRef.current?.scrollToEnd({ animated: false })}
