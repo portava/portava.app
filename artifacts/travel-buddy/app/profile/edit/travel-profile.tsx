@@ -10,7 +10,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import {
   SettingsScreen, SettingsSection, FieldLabel, ChipGrid, ToggleRow, SaveBar,
-  useUnsavedGuard, type SaveState,
+  useUnsavedGuard, useSavedThenBack, type SaveState,
 } from '../../../src/components/settings/SettingsUI';
 import { PP } from '../../../src/theme/passportTokens';
 import { space } from '../../../src/theme/tokens';
@@ -128,6 +128,7 @@ export default function TravelProfileScreen() {
   const [originalAi, setOriginalAi] = useState<AIForm | null>(null);
 
   const [saveState, setSaveState] = useState<SaveState>('idle');
+  const savedThenBack = useSavedThenBack(setSaveState);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -269,8 +270,7 @@ export default function TravelProfileScreen() {
 
       setOriginalForm(form);
       setOriginalAi(ai);
-      setSaveState('saved');
-      setTimeout(() => setSaveState('idle'), 1500);
+      savedThenBack();
     } catch (e) {
       setSaveState('error');
       setSaveError(e instanceof Error ? e.message : 'Failed to save. Try again.');

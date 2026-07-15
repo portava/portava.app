@@ -19,7 +19,7 @@ import type { OwnProfile } from '../../../src/types/models';
 import { PP } from '../../../src/theme/passportTokens';
 import { space } from '../../../src/theme/tokens';
 import {
-  SettingsScreen, SettingsSection, SaveButton, useUnsavedGuard,
+  SettingsScreen, SettingsSection, SaveButton, useUnsavedGuard, useSavedThenBack,
   FieldLabel, FieldHint, TextField, ChipGrid, type SaveState,
 } from '../../../src/components/settings/SettingsUI';
 
@@ -76,7 +76,7 @@ export default function IdentityScreen() {
   const [usernameMessage, setUsernameMessage] = useState<string | null>(null);
   const usernameTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveLockRef = useRef(false);
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savedThenBack = useSavedThenBack(setSaveState);
 
   const isDirty = originalForm !== null && (
     form.displayName !== originalForm.displayName ||
@@ -115,7 +115,6 @@ export default function IdentityScreen() {
     }).catch(() => { if (alive) setLoading(false); });
     return () => {
       alive = false;
-      if (savedTimer.current) clearTimeout(savedTimer.current);
     };
   }, []);
 
@@ -297,9 +296,7 @@ export default function IdentityScreen() {
 
       setProfile(res.data);
       setOriginalForm(form);
-      setSaveState('saved');
-      if (savedTimer.current) clearTimeout(savedTimer.current);
-      savedTimer.current = setTimeout(() => setSaveState('idle'), 1600);
+      savedThenBack();
     } finally {
       saveLockRef.current = false;
     }

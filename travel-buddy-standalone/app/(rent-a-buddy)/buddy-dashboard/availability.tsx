@@ -126,7 +126,9 @@ export default function BuddyAvailabilityScreen() {
         }),
       ]);
       if (gridRes.ok && settingsRes.ok) {
-        Alert.alert('Saved', 'Your availability has been updated.');
+        Alert.alert('Saved', 'Your availability has been updated.', [
+          { text: 'OK', onPress: () => { if (router.canGoBack()) router.back(); } },
+        ]);
       } else {
         const errMsg = !gridRes.ok ? gridRes.error : (!settingsRes.ok ? settingsRes.error : undefined);
         Alert.alert('Error', errMsg ?? 'Could not save availability.');

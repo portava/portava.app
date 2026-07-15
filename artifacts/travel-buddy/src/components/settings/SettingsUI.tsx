@@ -16,7 +16,7 @@
  *   ChipGrid         — multi/single select chips
  *   ToggleRow        — label + Switch row
  */
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, Pressable, ScrollView, StyleSheet, Alert,
   ActivityIndicator, KeyboardAvoidingView, Platform, Switch,
@@ -28,6 +28,29 @@ import { ArrowLeft, ChevronRight, Check, AlertCircle, RotateCcw } from 'lucide-r
 import { PP } from '../../theme/passportTokens';
 import { space, radius, type as t } from '../../theme/tokens';
 import { NavBarFiller } from '../../hooks/useNavBarCollapse';
+
+// ── Post-save success flow ──────────────────────────────────────────────────
+
+/**
+ * Universal post-save behavior: flash the SaveBar's 'saved' checkmark, then
+ * automatically return the user to the previous screen — no manual Back press
+ * after a successful save. Falls back to resetting to 'idle' when there is no
+ * history to go back to. The pending timer is cleared on unmount so a user who
+ * leaves early is never popped twice.
+ */
+export function useSavedThenBack(setSaveState: (s: SaveState) => void, delayMs = 900) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  return useCallback(() => {
+    setSaveState('saved');
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      if (router.canGoBack()) router.back();
+      else setSaveState('idle');
+    }, delayMs);
+  }, [setSaveState, delayMs]);
+}
 
 // ── Unsaved-change guard ────────────────────────────────────────────────────
 

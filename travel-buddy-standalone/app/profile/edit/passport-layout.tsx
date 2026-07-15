@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { GripVertical, RotateCcw } from 'lucide-react-native';
 import {
-  SettingsScreen, SettingsSection, SaveBar, useUnsavedGuard, type SaveState,
+  SettingsScreen, SettingsSection, SaveBar, useUnsavedGuard, useSavedThenBack, type SaveState,
 } from '../../../src/components/settings/SettingsUI';
 import { PP, PP_LABEL } from '../../../src/theme/passportTokens';
 import { space, radius, type as t } from '../../../src/theme/tokens';
@@ -36,6 +36,7 @@ export default function PassportLayoutScreen() {
   const [order, setOrder] = useState<PassportSectionKey[]>(() => [...CANONICAL_SECTION_ORDER]);
   const [dragKey, setDragKey] = useState<PassportSectionKey | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('idle');
+  const savedThenBack = useSavedThenBack(setSaveState);
   const [saveError, setSaveError] = useState<string | null>(null);
   const dragY = useRef(new Animated.Value(0)).current;
 
@@ -125,10 +126,10 @@ export default function PassportLayoutScreen() {
       setSaveError(res.message ?? 'Please try again.');
       return;
     }
-    // Reset dirty baseline; show 'saved' briefly, then back to idle. No auto-nav.
+    // Reset dirty baseline; show 'saved' briefly, then auto-return to the
+    // previous screen (universal post-save behavior).
     setBaseline(order);
-    setSaveState('saved');
-    setTimeout(() => setSaveState('idle'), 1600);
+    savedThenBack();
   }, [order]);
 
   if (loading) {

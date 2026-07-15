@@ -23,7 +23,7 @@ import type { OwnProfile } from '../../../src/types/models';
 import { PP } from '../../../src/theme/passportTokens';
 import { space } from '../../../src/theme/tokens';
 import {
-  SettingsScreen, SettingsSection, SaveButton, useUnsavedGuard,
+  SettingsScreen, SettingsSection, SaveButton, useUnsavedGuard, useSavedThenBack,
   FieldHint, type SaveState,
 } from '../../../src/components/settings/SettingsUI';
 
@@ -43,7 +43,7 @@ export default function PhotosScreen() {
 
   const coverOriginalWidthRef = useRef<number>(1920);
   const saveLockRef = useRef(false);
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savedThenBack = useSavedThenBack(setSaveState);
 
   const isDirty = avatarUri !== null || coverUri !== null;
   useUnsavedGuard(isDirty);
@@ -61,7 +61,6 @@ export default function PhotosScreen() {
     }).catch(() => { if (alive) setLoading(false); });
     return () => {
       alive = false;
-      if (savedTimer.current) clearTimeout(savedTimer.current);
     };
   }, []);
 
@@ -177,9 +176,7 @@ export default function PhotosScreen() {
       if (patch.coverUrl) setCoverUrl(patch.coverUrl);
       setAvatarUri(null);
       setCoverUri(null);
-      setSaveState('saved');
-      if (savedTimer.current) clearTimeout(savedTimer.current);
-      savedTimer.current = setTimeout(() => setSaveState('idle'), 1600);
+      savedThenBack();
     } finally {
       setPhotoPhase('idle');
       saveLockRef.current = false;

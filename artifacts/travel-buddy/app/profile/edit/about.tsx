@@ -11,7 +11,7 @@ import type { OwnProfile } from '../../../src/types/models';
 import { PP } from '../../../src/theme/passportTokens';
 import { space } from '../../../src/theme/tokens';
 import {
-  SettingsScreen, SettingsSection, SaveBar, useUnsavedGuard,
+  SettingsScreen, SettingsSection, SaveBar, useUnsavedGuard, useSavedThenBack,
   ChipGrid, type SaveState,
 } from '../../../src/components/settings/SettingsUI';
 
@@ -42,7 +42,7 @@ export default function AboutScreen() {
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [saveError, setSaveError] = useState<string | null>(null);
   const saveLockRef = useRef(false);
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savedThenBack = useSavedThenBack(setSaveState);
 
   const isDirty = originalForm !== null && (
     form.interests.join(',') !== originalForm.interests.join(',') ||
@@ -67,7 +67,6 @@ export default function AboutScreen() {
     }).catch(() => { if (alive) setLoading(false); });
     return () => {
       alive = false;
-      if (savedTimer.current) clearTimeout(savedTimer.current);
     };
   }, []);
 
@@ -100,9 +99,7 @@ export default function AboutScreen() {
       }
 
       setOriginalForm(form);
-      setSaveState('saved');
-      if (savedTimer.current) clearTimeout(savedTimer.current);
-      savedTimer.current = setTimeout(() => setSaveState('idle'), 1600);
+      savedThenBack();
     } finally {
       saveLockRef.current = false;
     }
