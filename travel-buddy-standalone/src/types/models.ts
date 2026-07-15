@@ -533,6 +533,8 @@ export interface OwnProfile {
   tripCount?: number | null;
   hostVerifiedAt?: ISODate | null;
   buddyVerifiedAt?: ISODate | null;
+  /** Owner's preferred passport section order; null/absent = canonical order. */
+  passportSectionOrder?: string[] | null;
 }
 
 /* ───────────────────────────────────────────────────────────────────────

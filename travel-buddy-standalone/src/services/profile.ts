@@ -90,6 +90,8 @@ export interface UpdateProfileInput {
   publicSocialLinks?: Record<string, string>;
   preferredLanguage?: string | null;
   dateOfBirth?: string | null;
+  /** Permutation of the five passport section keys; null resets to canonical order. */
+  passportSectionOrder?: string[] | null;
 }
 
 export async function updateMyProfile(patch: UpdateProfileInput): Promise<ProfileResult<OwnProfile>> {
