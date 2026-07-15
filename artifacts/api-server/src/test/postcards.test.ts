@@ -31,15 +31,28 @@ const MEDIA_ID = '20000000-0000-0000-0000-000000000c01';
 const TOKEN_OWNER = 'fake-pc-owner';
 const TOKEN_OTHER = 'fake-pc-other';
 
+// Stamp definitions for overlay tests (post location is Tokyo / Japan)
+const DEF_TOKYO_ID    = '50000000-0000-0000-0000-000000000d01'; // earned by OWNER, has artwork
+const DEF_JAPAN_ID    = '50000000-0000-0000-0000-000000000d02'; // country-level, NOT earned — location-eligible
+const DEF_PARIS_ID    = '50000000-0000-0000-0000-000000000d03'; // earned by OTHER only, mismatched location
+const DEF_NOART_ID    = '50000000-0000-0000-0000-000000000d04'; // earned by OWNER, no universal artwork
+const DEF_INACTIVE_ID = '50000000-0000-0000-0000-000000000d05'; // earned by OWNER, is_active=false
+const DEF_REVOKED_ID  = '50000000-0000-0000-0000-000000000d06'; // OWNER's user_stamp is revoked
+
 // ── In-memory DB ─────────────────────────────────────────────────────────────
 
 let posts: Record<string, any> = {};
 let allPostMedia: any[] = [];
 let allPostcards: any[] = [];
 let allProfiles: any[] = [];
+let allUserStamps: any[] = [];
+let allStampDefs: any[] = [];
 // One-shot failure injection for the next posts INSERT (simulates PostgREST
 // schema-cache errors like PGRST204). Consumed by builder.single().
 let failNextPostsInsert: { code: string; message: string } | null = null;
+// One-shot failure injection for the next post_media UPDATE (simulates a
+// missing stamp_overlay column → PGRST204). Consumed by builder.then().
+let failNextMediaUpdate: { code: string; message: string } | null = null;
 
 function resetDb() {
   posts = {
@@ -56,6 +69,22 @@ function resetDb() {
   allProfiles = [
     { id: OWNER_ID, role: 'user', username: 'owner' },
     { id: OTHER_ID, role: 'user', username: 'other' },
+  ];
+  failNextMediaUpdate = null;
+  allStampDefs = [
+    { id: DEF_TOKYO_ID,    name: 'Tokyo',  city: 'Tokyo', country: 'Japan',       rarity: 'common', is_active: true,  universal_artwork_url: 'https://cdn.test/art/tokyo.png' },
+    { id: DEF_JAPAN_ID,    name: 'Japan',  city: null,    country: 'Japan',       rarity: 'rare',   is_active: true,  universal_artwork_url: 'https://cdn.test/art/japan.png' },
+    { id: DEF_PARIS_ID,    name: 'Paris',  city: 'Paris', country: 'France',      rarity: 'common', is_active: true,  universal_artwork_url: 'https://cdn.test/art/paris.png' },
+    { id: DEF_NOART_ID,    name: 'Osaka',  city: 'Osaka', country: 'Japan',       rarity: 'common', is_active: true,  universal_artwork_url: null },
+    { id: DEF_INACTIVE_ID, name: 'Kyoto',  city: 'Kyoto', country: 'Japan',       rarity: 'common', is_active: false, universal_artwork_url: 'https://cdn.test/art/kyoto.png' },
+    { id: DEF_REVOKED_ID,  name: 'Seoul',  city: 'Seoul', country: 'South Korea', rarity: 'common', is_active: true,  universal_artwork_url: 'https://cdn.test/art/seoul.png' },
+  ];
+  allUserStamps = [
+    { id: 'us-1', user_id: OWNER_ID, stamp_definition_id: DEF_TOKYO_ID,    is_revoked: false, earned_at: '2026-07-01T00:00:00Z' },
+    { id: 'us-2', user_id: OWNER_ID, stamp_definition_id: DEF_NOART_ID,    is_revoked: false, earned_at: '2026-06-01T00:00:00Z' },
+    { id: 'us-3', user_id: OWNER_ID, stamp_definition_id: DEF_INACTIVE_ID, is_revoked: false, earned_at: '2026-05-01T00:00:00Z' },
+    { id: 'us-4', user_id: OWNER_ID, stamp_definition_id: DEF_REVOKED_ID,  is_revoked: true,  earned_at: '2026-04-01T00:00:00Z' },
+    { id: 'us-5', user_id: OTHER_ID, stamp_definition_id: DEF_PARIS_ID,    is_revoked: false, earned_at: '2026-03-01T00:00:00Z' },
   ];
 }
 
@@ -77,6 +106,14 @@ function buildFakeClient(tokenToId: Record<string, string>) {
       eq(col: string, val: any)    { filtered = filtered.filter((r) => r[col] === val); return b; },
       neq(col: string, val: any)   { filtered = filtered.filter((r) => r[col] !== val); return b; },
       in(col: string, vals: any[]) { filtered = filtered.filter((r) => vals.includes(r[col])); return b; },
+      ilike(col: string, pattern: string) {
+        // Case-insensitive LIKE with % / _ wildcards (enough for these tests)
+        const escaped = String(pattern).replace(/[.*+?^{}()|[\]\\]/g, (ch) => '\\' + ch);
+        const reBody = escaped.replace(/%/g, '.*').replace(/_/g, '.');
+        const rx = new RegExp('^' + reBody + "$", 'i');
+        filtered = filtered.filter((r) => typeof r[col] === 'string' && rx.test(r[col]));
+        return b;
+      },
       or()  { return b; },
       order() { return b; },
       limit(n: number) { filtered = filtered.slice(0, n); return b; },
@@ -142,6 +179,11 @@ function buildFakeClient(tokenToId: Record<string, string>) {
         }
 
         if (updateData !== null) {
+          if (table === 'post_media' && failNextMediaUpdate) {
+            const error = failNextMediaUpdate;
+            failNextMediaUpdate = null; // one-shot: the retry succeeds
+            return cb({ data: null, error });
+          }
           for (const row of filtered) {
             if (table === 'posts' && posts[row.id])
               Object.assign(posts[row.id], updateData);
@@ -183,6 +225,8 @@ function buildFakeClient(tokenToId: Record<string, string>) {
       else if (table === 'post_media')         rows = allPostMedia.map((r) => ({ ...r }));
       else if (table === 'passport_postcards') rows = allPostcards.map((r) => ({ ...r }));
       else if (table === 'profiles')           rows = allProfiles.map((r) => ({ ...r }));
+      else if (table === 'user_stamps')        rows = allUserStamps.map((r) => ({ ...r }));
+      else if (table === 'stamp_definitions')  rows = allStampDefs.map((r) => ({ ...r }));
       // All other tables (feature_flags, hashtags, text_spans, etc.) return empty arrays
       return builder(table, rows);
     },
@@ -803,5 +847,301 @@ describe('Endpoint-level visibility and media filtering', () => {
     );
     assert.equal(status, 403, 'private post should return 403 for non-owner');
     assert.match(body.error ?? '', /forbidden/i);
+  });
+});
+
+// ── GET /api/postcards/stamp-overlay-options ──────────────────────────────────
+
+describe('GET /api/postcards/stamp-overlay-options', () => {
+  it('returns 401 when unauthenticated', async () => {
+    const { status } = await apiReq('GET', '/postcards/stamp-overlay-options');
+    assert.equal(status, 401);
+  });
+
+  it('lists only own earned stamps with approved + active artwork', async () => {
+    const { status, body } = await apiReq('GET', '/postcards/stamp-overlay-options', undefined, TOKEN_OWNER);
+    assert.equal(status, 200);
+    assert.deepEqual(body.suggested, [], 'no location params means no suggestions');
+    const ids = body.earned.map((o: any) => o.stampDefinitionId);
+    assert.deepEqual(ids, [DEF_TOKYO_ID], 'revoked, artwork-less, inactive and other-user stamps are excluded');
+    const opt = body.earned[0];
+    assert.equal(opt.name, 'Tokyo');
+    assert.equal(opt.artworkUrl, 'https://cdn.test/art/tokyo.png');
+    assert.ok(!('is_active' in opt), 'internal columns must not leak');
+  });
+
+  it("never exposes another user's inventory", async () => {
+    const { body } = await apiReq('GET', '/postcards/stamp-overlay-options', undefined, TOKEN_OTHER);
+    const ids = (body.earned ?? []).map((o: any) => o.stampDefinitionId);
+    assert.deepEqual(ids, [DEF_PARIS_ID], 'OTHER sees only their own earned stamp');
+  });
+
+  it('suggests location-matching stamps (city-level first) and dedupes them out of earned', async () => {
+    const { status, body } = await apiReq(
+      'GET', '/postcards/stamp-overlay-options?city=Tokyo&country=Japan', undefined, TOKEN_OWNER,
+    );
+    assert.equal(status, 200);
+    const suggestedIds = body.suggested.map((o: any) => o.stampDefinitionId);
+    assert.deepEqual(suggestedIds, [DEF_TOKYO_ID, DEF_JAPAN_ID], 'city match ranks above country-level match');
+    const earnedIds = body.earned.map((o: any) => o.stampDefinitionId);
+    assert.ok(!earnedIds.includes(DEF_TOKYO_ID), 'suggested stamps are not repeated in earned');
+  });
+
+  it('matches location case-insensitively', async () => {
+    const { body } = await apiReq(
+      'GET', '/postcards/stamp-overlay-options?city=tokyo&country=japan', undefined, TOKEN_OWNER,
+    );
+    const suggestedIds = body.suggested.map((o: any) => o.stampDefinitionId);
+    assert.deepEqual(suggestedIds, [DEF_TOKYO_ID, DEF_JAPAN_ID]);
+  });
+
+  it('applies the q search filter across both lists', async () => {
+    const { body } = await apiReq(
+      'GET', '/postcards/stamp-overlay-options?city=Tokyo&country=Japan&q=Tok', undefined, TOKEN_OWNER,
+    );
+    const suggestedIds = body.suggested.map((o: any) => o.stampDefinitionId);
+    assert.deepEqual(suggestedIds, [DEF_TOKYO_ID], 'q narrows suggestions');
+    assert.deepEqual(body.earned, [], 'earned is deduped and filtered too');
+  });
+});
+
+// ── Stamp overlay on media complete ───────────────────────────────────────────
+
+describe('POST /api/postcards/:id/media/:mediaId/complete — stamp overlay', () => {
+  function seedPending(mediaId = MEDIA_ID, mediaType: 'image' | 'video' = 'image') {
+    allPostMedia.push({
+      id: mediaId, post_id: POST_ID, user_id: OWNER_ID,
+      media_type: mediaType, storage_bucket: 'post-media',
+      storage_path: `${OWNER_ID}/${POST_ID}/${mediaId}.${mediaType === 'video' ? 'mp4' : 'jpg'}`,
+      public_url: '', mime_type: mediaType === 'video' ? 'video/mp4' : 'image/jpeg',
+      file_size_bytes: 500_000, processing_status: 'pending', moderation_status: 'pending',
+      sort_order: 0,
+    });
+  }
+
+  it('applies an earned stamp and pins the artwork server-side', async () => {
+    seedPending();
+    const { status, body } = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      {
+        mimeType: 'image/jpeg', fileSizeBytes: 500_000, width: 1600, height: 2000,
+        stampOverlay: { stampDefinitionId: DEF_TOKYO_ID, style: 'white', x: 0.8, y: 0.85, scale: 0.3 },
+      },
+      TOKEN_OWNER,
+    );
+    assert.equal(status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.stampOverlayApplied, true);
+
+    const row = allPostMedia.find((m) => m.id === MEDIA_ID);
+    assert.equal(row?.processing_status, 'ready');
+    const ov = row?.stamp_overlay;
+    assert.ok(ov, 'overlay metadata should be written on the media row');
+    assert.equal(ov.stampDefinitionId, DEF_TOKYO_ID);
+    assert.equal(ov.label, 'Tokyo');
+    assert.equal(ov.city, 'Tokyo');
+    assert.equal(ov.country, 'Japan');
+    assert.equal(ov.artworkUrl, 'https://cdn.test/art/tokyo.png', 'artwork URL is pinned from the definition, never from the client');
+    assert.ok(typeof ov.artworkPinnedAt === 'string' && !Number.isNaN(Date.parse(ov.artworkPinnedAt)), 'pin timestamp recorded');
+    assert.equal(ov.style, 'white');
+    assert.equal(ov.x, 0.8);
+    assert.equal(ov.y, 0.85);
+    assert.equal(ov.scale, 0.3);
+    assert.equal(ov.rotation, 0, 'rotation defaults to 0');
+    assert.equal(ov.opacity, 1, 'non-watermark styles default to full opacity');
+  });
+
+  it('defaults style to white and watermark opacity to 0.45', async () => {
+    const M2 = '20000000-0000-0000-0000-000000000c11';
+    const M3 = '20000000-0000-0000-0000-000000000c12';
+    seedPending(M2);
+    seedPending(M3);
+
+    const r1 = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${M2}/complete`,
+      { mimeType: 'image/jpeg', fileSizeBytes: 1000, stampOverlay: { stampDefinitionId: DEF_TOKYO_ID, x: 0.5, y: 0.5, scale: 0.2 } },
+      TOKEN_OWNER,
+    );
+    assert.equal(r1.status, 200);
+    const row1 = allPostMedia.find((m) => m.id === M2);
+    assert.equal(row1?.stamp_overlay?.style, 'white', 'default render style is white ink');
+    assert.equal(row1?.stamp_overlay?.opacity, 1);
+
+    const r2 = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${M3}/complete`,
+      { mimeType: 'image/jpeg', fileSizeBytes: 1000, stampOverlay: { stampDefinitionId: DEF_TOKYO_ID, style: 'watermark', x: 0.5, y: 0.5, scale: 0.2 } },
+      TOKEN_OWNER,
+    );
+    assert.equal(r2.status, 200);
+    const row2 = allPostMedia.find((m) => m.id === M3);
+    assert.equal(row2?.stamp_overlay?.opacity, 0.45, 'watermark defaults to translucent opacity');
+  });
+
+  it('allows an unearned stamp when its definition matches the post location', async () => {
+    seedPending();
+    const { status, body } = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      {
+        mimeType: 'image/jpeg', fileSizeBytes: 500_000,
+        stampOverlay: { stampDefinitionId: DEF_JAPAN_ID, x: 0.2, y: 0.2, scale: 0.25 },
+      },
+      TOKEN_OWNER,
+    );
+    assert.equal(status, 200);
+    assert.equal(body.stampOverlayApplied, true, 'location-matching stamp is eligible without being earned');
+    const row = allPostMedia.find((m) => m.id === MEDIA_ID);
+    assert.equal(row?.stamp_overlay?.label, 'Japan');
+  });
+
+  it('completes WITHOUT the overlay when the stamp is not eligible (never blocks posting)', async () => {
+    seedPending();
+    const { status, body } = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      {
+        mimeType: 'image/jpeg', fileSizeBytes: 500_000,
+        stampOverlay: { stampDefinitionId: DEF_PARIS_ID, x: 0.5, y: 0.5, scale: 0.2 },
+      },
+      TOKEN_OWNER,
+    );
+    assert.equal(status, 200, 'upload completion must never be blocked by overlay problems');
+    assert.equal(body.ok, true);
+    assert.equal(body.mediaCount, 1);
+    assert.equal(body.stampOverlayApplied, false);
+    assert.equal(body.stampOverlayError, 'stamp_not_eligible');
+    const row = allPostMedia.find((m) => m.id === MEDIA_ID);
+    assert.equal(row?.processing_status, 'ready', 'media still becomes ready');
+    assert.ok(!('stamp_overlay' in (row ?? {})), 'no overlay metadata written');
+  });
+
+  it('treats a revoked earned stamp as not eligible', async () => {
+    seedPending();
+    const { status, body } = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      {
+        mimeType: 'image/jpeg', fileSizeBytes: 500_000,
+        stampOverlay: { stampDefinitionId: DEF_REVOKED_ID, x: 0.5, y: 0.5, scale: 0.2 },
+      },
+      TOKEN_OWNER,
+    );
+    assert.equal(status, 200);
+    assert.equal(body.stampOverlayApplied, false, 'revoked stamps must not be usable');
+    assert.equal(body.stampOverlayError, 'stamp_not_eligible');
+  });
+
+  it('reports stamp_unavailable for unknown, inactive, or artwork-less definitions', async () => {
+    const M2 = '20000000-0000-0000-0000-000000000c21';
+    const M3 = '20000000-0000-0000-0000-000000000c22';
+    const M4 = '20000000-0000-0000-0000-000000000c23';
+    seedPending(M2);
+    seedPending(M3);
+    seedPending(M4);
+
+    const unknown = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${M2}/complete`,
+      { mimeType: 'image/jpeg', fileSizeBytes: 1000, stampOverlay: { stampDefinitionId: '50000000-0000-0000-0000-00000000dead', x: 0.5, y: 0.5, scale: 0.2 } },
+      TOKEN_OWNER,
+    );
+    assert.equal(unknown.status, 200);
+    assert.equal(unknown.body.stampOverlayError, 'stamp_unavailable');
+
+    const inactive = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${M3}/complete`,
+      { mimeType: 'image/jpeg', fileSizeBytes: 1000, stampOverlay: { stampDefinitionId: DEF_INACTIVE_ID, x: 0.5, y: 0.5, scale: 0.2 } },
+      TOKEN_OWNER,
+    );
+    assert.equal(inactive.status, 200);
+    assert.equal(inactive.body.stampOverlayError, 'stamp_unavailable', 'inactive defs are unavailable even when earned');
+
+    const noArt = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${M4}/complete`,
+      { mimeType: 'image/jpeg', fileSizeBytes: 1000, stampOverlay: { stampDefinitionId: DEF_NOART_ID, x: 0.5, y: 0.5, scale: 0.2 } },
+      TOKEN_OWNER,
+    );
+    assert.equal(noArt.status, 200);
+    assert.equal(noArt.body.stampOverlayError, 'stamp_unavailable', 'defs without universal artwork are unavailable');
+  });
+
+  it('rejects malformed overlay payloads with 400 and leaves the media pending', async () => {
+    seedPending();
+    const badX = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      { mimeType: 'image/jpeg', fileSizeBytes: 1000, stampOverlay: { stampDefinitionId: DEF_TOKYO_ID, x: 1.5, y: 0.5, scale: 0.2 } },
+      TOKEN_OWNER,
+    );
+    assert.equal(badX.status, 400, 'x outside 0..1 is malformed');
+
+    const badScale = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      { mimeType: 'image/jpeg', fileSizeBytes: 1000, stampOverlay: { stampDefinitionId: DEF_TOKYO_ID, x: 0.5, y: 0.5, scale: 0.05 } },
+      TOKEN_OWNER,
+    );
+    assert.equal(badScale.status, 400, 'scale below the minimum is malformed');
+
+    const badStyle = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      { mimeType: 'image/jpeg', fileSizeBytes: 1000, stampOverlay: { stampDefinitionId: DEF_TOKYO_ID, style: 'neon', x: 0.5, y: 0.5, scale: 0.2 } },
+      TOKEN_OWNER,
+    );
+    assert.equal(badStyle.status, 400, 'unknown style is malformed');
+
+    const row = allPostMedia.find((m) => m.id === MEDIA_ID);
+    assert.equal(row?.processing_status, 'pending', 'malformed payloads must not mark media ready');
+    assert.ok(!('stamp_overlay' in (row ?? {})));
+  });
+
+  it('skips the overlay for video media with a stamp_overlay_images_only flag', async () => {
+    seedPending(MEDIA_ID, 'video');
+    const { status, body } = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      {
+        mimeType: 'video/mp4', fileSizeBytes: 1_000_000, durationSeconds: 12,
+        stampOverlay: { stampDefinitionId: DEF_TOKYO_ID, x: 0.5, y: 0.5, scale: 0.2 },
+      },
+      TOKEN_OWNER,
+    );
+    assert.equal(status, 200);
+    assert.equal(body.hasVideo, true);
+    assert.equal(body.stampOverlayApplied, false);
+    assert.equal(body.stampOverlayError, 'stamp_overlay_images_only');
+    const row = allPostMedia.find((m) => m.id === MEDIA_ID);
+    assert.equal(row?.processing_status, 'ready', 'video upload still completes');
+    assert.ok(!('stamp_overlay' in (row ?? {})));
+  });
+
+  it('degrades gracefully when the stamp_overlay column is missing (PGRST204 retry)', async () => {
+    seedPending();
+    failNextMediaUpdate = {
+      code: 'PGRST204',
+      message: "Could not find the 'stamp_overlay' column of 'post_media' in the schema cache",
+    };
+    const { status, body } = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      {
+        mimeType: 'image/jpeg', fileSizeBytes: 500_000,
+        stampOverlay: { stampDefinitionId: DEF_TOKYO_ID, x: 0.5, y: 0.5, scale: 0.2 },
+      },
+      TOKEN_OWNER,
+    );
+    assert.equal(status, 200, 'missing column must never block the upload');
+    assert.equal(body.ok, true);
+    assert.equal(body.stampOverlayApplied, false);
+    assert.equal(body.stampOverlayError, 'stamp_overlay_not_supported');
+    const row = allPostMedia.find((m) => m.id === MEDIA_ID);
+    assert.equal(row?.processing_status, 'ready', 'retry without the overlay column succeeded');
+    assert.ok(!('stamp_overlay' in (row ?? {})));
+  });
+
+  it('keeps the legacy response shape when no overlay is requested (back-compat)', async () => {
+    seedPending();
+    const { status, body } = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      { mimeType: 'image/jpeg', fileSizeBytes: 500_000 },
+      TOKEN_OWNER,
+    );
+    assert.equal(status, 200);
+    assert.ok(!('stampOverlayApplied' in body), 'no overlay flags unless an overlay was requested');
+    assert.ok(!('stampOverlayError' in body));
+    const row = allPostMedia.find((m) => m.id === MEDIA_ID);
+    assert.ok(!('stamp_overlay' in (row ?? {})));
   });
 });

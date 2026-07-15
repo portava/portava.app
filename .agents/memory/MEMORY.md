@@ -6,3 +6,5 @@
 - [Standalone tree parity](standalone-fork-parity.md) — travel-buddy-standalone is a divergent fork; diff each file before copying, port edits manually into divergent screens, run its tsc separately.
 - [API server test suite](api-server-testing.md) — node:test not vitest; suite >5min, run via api-test workflow; fake-client pitfalls.
 - [Display-name privacy rule](display-name-privacy.md) — @handle default, real name only if opted in; exemptions listed inside.
+- [Edit-tool $ metacharacters](edit-tool-metacharacters.md) — never put JS replace patterns ($ followed by &, ', backtick, digit, $) in Edit new_string; they expand and corrupt files. WriteFile is verbatim-safe.
+- [Mobile test import extensions](mobile-test-ts-extensions.md) — travel-buddy node:test files need explicit .ts import extensions and manual registration in the package.json test list.

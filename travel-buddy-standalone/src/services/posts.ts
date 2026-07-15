@@ -46,6 +46,8 @@ export interface PostRow {
   tripId: string | null;
   content: string;
   mediaUrls: string[];
+  /** Structured ready media (url/type/dims + stamp_overlay) from feed + detail endpoints. */
+  media?: import('../types/models').PostcardMediaItem[];
   visibility: PostVisibility;
   status: PostStatus;
   createdAt: string;
@@ -112,6 +114,7 @@ function mapPost(r: any): PostRow {
     tripId: r.trip_id ?? null,
     content: r.content ?? '',
     mediaUrls: r.media_urls ?? [],
+    media: Array.isArray(r.media) ? r.media : undefined,
     visibility: r.visibility,
     status: r.status,
     createdAt: r.created_at,

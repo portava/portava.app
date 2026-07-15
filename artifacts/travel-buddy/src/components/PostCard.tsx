@@ -13,6 +13,7 @@ import { RichText } from './RichText';
 import { useSession } from '../context/SessionContext';
 import { ReportPostSheet } from './ReportPostSheet';
 import { PostOwnerMenu, type PostSettings } from './PostOwnerMenu';
+import { MediaStampOverlay } from './StampOverlayBadge';
 import { SaveButton } from './SaveButton';
 
 const { height: _screenH } = Dimensions.get('window');
@@ -93,6 +94,7 @@ function HeroCard({ post }: { post: Post }) {
         ? <Image source={{ uri: post.media[0].url }} style={StyleSheet.absoluteFill} resizeMode="cover" onError={() => setImgFailed(true)} />
         : <ImgPlaceholder city={post.destination?.city} fill />
       }
+      {!imgFailed && <MediaStampOverlay raw={post.media[0]?.stampOverlay} />}
       <Scrim />
       <View style={styles.heroTop}>
         <Stamp label={post.category} tone="onInk" />
@@ -191,6 +193,7 @@ function StandardCard({ post }: { post: Post }) {
             <PlayCircle size={32} color="#FFFFFF" />
           </View>
         )}
+        {hasMedia && !imgFailed && <MediaStampOverlay raw={post.media[0]?.stampOverlay} />}
       </View>
       <View style={styles.stdBody}>
         <View style={styles.stampRow}>
@@ -314,7 +317,12 @@ function ItineraryCard({ post }: { post: Post }) {
 
   return (
     <Pressable style={[styles.card, styles.itin]} onPress={() => router.push(`/post/${post.id}`)}>
-      {post.media[0] && <Image source={{ uri: post.media[0].url }} style={styles.itinCover} resizeMode="cover" />}
+      {post.media[0] && (
+        <View style={styles.itinCover}>
+          <Image source={{ uri: post.media[0].url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+          <MediaStampOverlay raw={post.media[0]?.stampOverlay} />
+        </View>
+      )}
       <View style={styles.itinBody}>
         <View style={styles.itinHead}>
           <View style={styles.stampRow}>

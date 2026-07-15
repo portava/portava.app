@@ -50,6 +50,9 @@ function postRowToFeedItem(p: PostRow): PulseFeedItem {
     tags: [categoryToStamp(p.category)],
     categoryFallback: !p.category,
     mediaUrl: p.mediaUrls[0],
+    // Structured media passthrough — carries thumbnail/video info AND the
+    // stamp_overlay jsonb that PulseFeedCard renders via MediaStampOverlay.
+    media: p.media,
     caption: p.content,
     source: 'user',
     neighborhood: p.locationName ?? undefined,

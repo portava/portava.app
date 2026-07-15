@@ -24,6 +24,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { nameVisibilitySet } from "../lib/publicIdentity";
 import { getServiceClient } from "../lib/supabase";
+import { stampOverlayCol } from "../lib/postMediaOverlay";
 
 const router = Router();
 
@@ -82,6 +83,7 @@ function filterPublicMedia(raw: any): Array<Record<string, unknown>> {
       height:            m.height ?? null,
       sort_order:        m.sort_order ?? 0,
       processing_status: m.processing_status,
+      stamp_overlay:     m.stamp_overlay ?? null,
     }));
 }
 
@@ -136,7 +138,7 @@ router.get("/pulse", async (req, res) => {
 
   let query = sc
     .from("posts")
-    .select(`${POST_SAFE_COLUMNS}, post_media(${POST_MEDIA_COLUMNS}), pulse_geo_tags(${GEO_TAG_COLUMNS}), profiles!author_id(id, username, full_name, avatar_url)`)
+    .select(`${POST_SAFE_COLUMNS}, post_media(${POST_MEDIA_COLUMNS}${await stampOverlayCol(sc)}), pulse_geo_tags(${GEO_TAG_COLUMNS}), profiles!author_id(id, username, full_name, avatar_url)`)
     .eq("status", "active")
     .eq("visibility", "public")
     .order("created_at", { ascending: false })

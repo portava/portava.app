@@ -5,6 +5,7 @@ import { MapPin, PlayCircle } from 'lucide-react-native';
 import type { Post } from '../types/models';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters';
+import { MediaStampOverlay } from './StampOverlayBadge';
 
 /**
  * PostcardTile — postcard-styled tile (image-heavy, paper border, corner
@@ -46,6 +47,8 @@ export function PostcardTile({ post, variant = 'square', rotate = 0 }: { post: P
             <Text style={pt.noImageText} numberOfLines={2}>{post.destination.city.toUpperCase()}</Text>
           </View>
         )}
+        {/* passport-stamp overlay (images only; parse-gated) */}
+        {post.media[0] && <MediaStampOverlay raw={post.media[0].stampOverlay} />}
         {/* video play badge */}
         {post.media[0]?.kind === 'video' && (
           <View style={pt.playBadge}>

@@ -91,6 +91,8 @@ export interface PostMedia {
   kind: 'image' | 'video';
   /** 0..1 estimated brightness; >0.62 triggers caption-below contrast fallback. */
   brightness?: number;
+  /** Raw stamp-overlay jsonb passthrough — validate via parseStampOverlay(). */
+  stampOverlay?: unknown;
 }
 
 export interface Post {
@@ -425,6 +427,12 @@ export interface PostcardMediaItem {
   height: number | null;
   sort_order: number;
   processing_status: 'pending' | 'ready' | 'failed';
+  /**
+   * Optional passport-stamp overlay metadata (raw jsonb from the server).
+   * Typed as unknown on purpose — render surfaces must validate through
+   * parseStampOverlay() so malformed data degrades to "no overlay".
+   */
+  stamp_overlay?: unknown;
 }
 
 export interface PassportPostcard {

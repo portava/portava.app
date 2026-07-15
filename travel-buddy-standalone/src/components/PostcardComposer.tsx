@@ -11,11 +11,11 @@
 import React, { useRef, useState } from 'react';
 import {
   View, Text, Modal, Pressable, StyleSheet, TextInput,
-  ActivityIndicator, Alert, Image, ScrollView,
+  ActivityIndicator, Alert, Image, ScrollView, PanResponder,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
-import { X, Camera, ImageIcon, PlayCircle, ChevronDown, MapPin } from 'lucide-react-native';
+import { X, Camera, ImageIcon, PlayCircle, ChevronDown, MapPin, Minus, Plus, Stamp as StampIcon } from 'lucide-react-native';
 import {
   createPostcard,
   getUploadUrl,
@@ -28,6 +28,22 @@ import {
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker';
 import type { Place } from '../lib/location/placeTypes';
+import { StampPickerSheet } from './StampPickerSheet';
+import { StampOverlayBadge } from './StampOverlayBadge';
+import {
+  clamp,
+  clampOverlayPosition,
+  completePayloadFromDraft,
+  draftFromOption,
+  draftToRenderData,
+  overlayLayout,
+  STAMP_OVERLAY_CORNERS,
+  STAMP_OVERLAY_MAX_SCALE,
+  STAMP_OVERLAY_MIN_SCALE,
+  STAMP_OVERLAY_SCALE_STEP,
+  STAMP_OVERLAY_STYLES,
+  type StampOverlayDraft,
+} from '../lib/stampOverlay';
 
 type Phase = 'pick' | 'uploading';
 
@@ -70,6 +86,54 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
   const cancelRef = useRef<UploadCancelRef>({});
   const abortedRef = useRef(false);
 
+  // ── Stamp overlay editing state (images only; optional) ─────────────────
+  const [stampOverlay, setStampOverlay] = useState<StampOverlayDraft | null>(null);
+  const [stampPickerOpen, setStampPickerOpen] = useState(false);
+  const [previewSize, setPreviewSize] = useState<{ w: number; h: number } | null>(null);
+  const stampOverlayRef = useRef<StampOverlayDraft | null>(null);
+  stampOverlayRef.current = stampOverlay;
+  const previewSizeRef = useRef<{ w: number; h: number } | null>(null);
+  previewSizeRef.current = previewSize;
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+  // Plain PanResponder (no gesture libs) — works on native AND react-native-web.
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) + Math.abs(g.dy) > 4,
+      // Don't let the surrounding ScrollView steal an in-progress drag.
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: () => {
+        const ov = stampOverlayRef.current;
+        dragStartRef.current = ov ? { x: ov.x, y: ov.y } : null;
+      },
+      onPanResponderMove: (_e, g) => {
+        const start = dragStartRef.current;
+        const ov = stampOverlayRef.current;
+        const size = previewSizeRef.current;
+        if (!start || !ov || !size || size.w <= 0 || size.h <= 0) return;
+        const next = clampOverlayPosition(start.x + g.dx / size.w, start.y + g.dy / size.h);
+        setStampOverlay({ ...ov, x: next.x, y: next.y });
+      },
+      onPanResponderRelease: () => { dragStartRef.current = null; },
+      onPanResponderTerminate: () => { dragStartRef.current = null; },
+    }),
+  ).current;
+
+  function resizeStamp(dir: 1 | -1) {
+    setStampOverlay((ov) =>
+      ov
+        ? {
+            ...ov,
+            scale: clamp(
+              ov.scale + dir * STAMP_OVERLAY_SCALE_STEP,
+              STAMP_OVERLAY_MIN_SCALE,
+              STAMP_OVERLAY_MAX_SCALE,
+            ),
+          }
+        : ov,
+    );
+  }
+
   function reset() {
     setPhase('pick');
     setAsset(null);
@@ -80,6 +144,9 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     setShowVis(false);
     setProgress(0);
     setError(null);
+    setStampOverlay(null);
+    setStampPickerOpen(false);
+    setPreviewSize(null);
     abortedRef.current = false;
   }
 
@@ -172,6 +239,8 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
       durationSeconds,
       isVideo: picked.type === 'video',
     });
+    // Stamps only apply to photos — drop any draft overlay for videos.
+    if (picked.type === 'video') setStampOverlay(null);
     setError(null);
   }
 
@@ -242,6 +311,8 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
       durationSeconds: asset.durationSeconds,
       width: asset.width,
       height: asset.height,
+      stampOverlay:
+        stampOverlay && !asset.isVideo ? completePayloadFromDraft(stampOverlay) : undefined,
     });
 
     if (!completeRes.ok) {
@@ -250,12 +321,25 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
       return;
     }
 
+    // A stamp problem never blocks the post — surface it quietly after success.
+    const overlayWarning =
+      completeRes.data.stampOverlayApplied === false
+        ? stampOverlayErrorMessage(completeRes.data.stampOverlayError)
+        : null;
+
     reset();
     onSuccess();
+    if (overlayWarning) {
+      Alert.alert('Posted without stamp', overlayWarning);
+    }
   }
 
   const visLabel = VISIBILITIES.find((v) => v.key === visibility)?.label ?? 'Public';
   const progressPct = Math.round(progress * 100);
+  const editorLayout =
+    stampOverlay && previewSize
+      ? overlayLayout(previewSize.w, previewSize.h, stampOverlay)
+      : null;
 
   return (
     <Modal
@@ -295,7 +379,17 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
 
             {/* Preview or picker */}
             {asset ? (
-              <View style={s.previewWrap}>
+              <View
+                style={s.previewWrap}
+                onLayout={(e) => {
+                  const { width, height } = e.nativeEvent.layout;
+                  setPreviewSize((prev) =>
+                    prev && prev.w === width && prev.h === height
+                      ? prev
+                      : { w: width, h: height },
+                  );
+                }}
+              >
                 <Image
                   source={{ uri: asset.uri }}
                   style={s.preview}
@@ -305,6 +399,28 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
                   <View style={s.playOverlay}>
                     <PlayCircle size={48} color="#fff" />
                   </View>
+                )}
+                {/* Placed stamp + invisible drag target (photos only) */}
+                {!asset.isVideo && stampOverlay && previewSize && (
+                  <>
+                    <StampOverlayBadge
+                      overlay={draftToRenderData(stampOverlay)}
+                      containerWidth={previewSize.w}
+                      containerHeight={previewSize.h}
+                    />
+                    {editorLayout && (
+                      <View
+                        {...panResponder.panHandlers}
+                        style={{
+                          position: 'absolute',
+                          left: editorLayout.left - 10,
+                          top: editorLayout.top - 10,
+                          width: editorLayout.size + 20,
+                          height: editorLayout.size + 20,
+                        }}
+                      />
+                    )}
+                  </>
                 )}
                 <Pressable style={s.changeBtn} onPress={pickFromLibrary} hitSlop={8}>
                   <Text style={s.changeBtnText}>Change</Text>
@@ -372,6 +488,64 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
                   )}
                 </Pressable>
 
+                {/* Passport stamp — optional overlay placed on the photo */}
+                {!asset.isVideo && (
+                  <>
+                    <Text style={s.label}>Passport stamp</Text>
+                    {!stampOverlay ? (
+                      <Pressable style={s.stampAddBtn} onPress={() => setStampPickerOpen(true)}>
+                        <StampIcon size={16} color={color.signal} />
+                        <Text style={s.stampAddText}>Add a stamp (optional)</Text>
+                      </Pressable>
+                    ) : (
+                      <View style={s.stampControls}>
+                        <View style={s.stampMetaRow}>
+                          <Text style={s.stampName} numberOfLines={1}>{stampOverlay.label}</Text>
+                          <Pressable onPress={() => setStampPickerOpen(true)} hitSlop={6}>
+                            <Text style={s.stampAction}>Replace</Text>
+                          </Pressable>
+                          <Pressable onPress={() => setStampOverlay(null)} hitSlop={6}>
+                            <Text style={[s.stampAction, { color: color.mute }]}>Remove</Text>
+                          </Pressable>
+                        </View>
+                        <View style={s.stampChipRow}>
+                          {STAMP_OVERLAY_STYLES.map((st) => (
+                            <Pressable
+                              key={st.key}
+                              style={[s.stampChip, stampOverlay.style === st.key && s.stampChipActive]}
+                              onPress={() => setStampOverlay({ ...stampOverlay, style: st.key })}
+                            >
+                              <Text style={[s.stampChipText, stampOverlay.style === st.key && s.stampChipTextActive]}>
+                                {st.label}
+                              </Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                        <View style={s.stampToolRow}>
+                          <Pressable style={s.stampTool} onPress={() => resizeStamp(-1)} hitSlop={6}>
+                            <Minus size={14} color={color.ink} />
+                          </Pressable>
+                          <Pressable style={s.stampTool} onPress={() => resizeStamp(1)} hitSlop={6}>
+                            <Plus size={14} color={color.ink} />
+                          </Pressable>
+                          <View style={{ flex: 1 }} />
+                          {STAMP_OVERLAY_CORNERS.map((c) => (
+                            <Pressable
+                              key={c.key}
+                              style={s.stampCorner}
+                              onPress={() => setStampOverlay({ ...stampOverlay, x: c.x, y: c.y })}
+                              hitSlop={4}
+                            >
+                              <View style={[s.stampCornerDot, cornerDotPos(c.key)]} />
+                            </Pressable>
+                          ))}
+                        </View>
+                        <Text style={s.stampHint}>Drag the stamp on the photo to position it.</Text>
+                      </View>
+                    )}
+                  </>
+                )}
+
                 {/* Visibility */}
                 <Text style={s.label}>Visibility</Text>
                 <Pressable
@@ -438,9 +612,49 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
           }}
           onClose={() => setCityPickerOpen(false)}
         />
+        {/* Stamp picker — earned + location-suggested universal stamps */}
+        <StampPickerSheet
+          visible={stampPickerOpen}
+          onClose={() => setStampPickerOpen(false)}
+          onSelect={(opt) => {
+            setStampOverlay((prev) =>
+              prev
+                ? { ...draftFromOption(opt), style: prev.style, x: prev.x, y: prev.y, scale: prev.scale }
+                : draftFromOption(opt),
+            );
+            setStampPickerOpen(false);
+          }}
+          city={place ? place.city ?? place.name : null}
+          country={place?.country ?? null}
+        />
       </View>
     </Modal>
   );
+}
+
+/** Dot position inside the little corner-preset buttons. */
+function cornerDotPos(key: string): { top?: number; bottom?: number; left?: number; right?: number } {
+  switch (key) {
+    case 'tl': return { top: 3, left: 3 };
+    case 'tr': return { top: 3, right: 3 };
+    case 'bl': return { bottom: 3, left: 3 };
+    default: return { bottom: 3, right: 3 };
+  }
+}
+
+/** Friendly copy for the non-blocking "posted without stamp" cases. */
+function stampOverlayErrorMessage(code?: string): string {
+  switch (code) {
+    case 'stamp_not_eligible':
+      return "You haven't earned that stamp for this location yet, so the postcard was posted without it.";
+    case 'stamp_unavailable':
+      return 'That stamp is no longer available, so the postcard was posted without it.';
+    case 'stamp_overlay_images_only':
+    case 'stamp_overlay_not_supported':
+      return 'Stamps can only be placed on photos, so the postcard was posted without one.';
+    default:
+      return 'The stamp could not be added, so the postcard was posted without it.';
+  }
 }
 
 const s = StyleSheet.create({
@@ -534,4 +748,40 @@ const s = StyleSheet.create({
     borderRadius: radius.pill, borderWidth: 1.5, borderColor: color.mute,
   },
   cancelUploadText: { ...t.bodyStrong, color: color.ink },
+
+  // ── Stamp overlay controls ────────────────────────────────────────────────
+  stampAddBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    borderWidth: 1.5, borderStyle: 'dashed', borderColor: color.haze,
+    borderRadius: radius.md, padding: space.md, height: 48,
+  },
+  stampAddText: { ...t.body, color: color.signal, fontWeight: '600' },
+  stampControls: {
+    borderWidth: 1, borderColor: color.haze, borderRadius: radius.md,
+    padding: space.md, gap: space.sm,
+  },
+  stampMetaRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  stampName: { ...t.bodyStrong, color: color.ink, flex: 1 },
+  stampAction: { ...t.small, color: color.signal, fontWeight: '700' },
+  stampChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  stampChip: {
+    borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill,
+    paddingHorizontal: 12, paddingVertical: 6,
+  },
+  stampChipActive: { borderColor: color.signal, backgroundColor: 'rgba(255,77,46,0.08)' },
+  stampChipText: { ...t.small, color: color.ink },
+  stampChipTextActive: { color: color.signal, fontWeight: '700' },
+  stampToolRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  stampTool: {
+    width: 32, height: 32, borderRadius: 16, borderWidth: 1, borderColor: color.haze,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  stampCorner: {
+    width: 26, height: 26, borderRadius: 6, borderWidth: 1, borderColor: color.haze,
+  },
+  stampCornerDot: {
+    position: 'absolute', width: 7, height: 7, borderRadius: 2,
+    backgroundColor: color.signal,
+  },
+  stampHint: { ...t.small, color: color.faint },
 });

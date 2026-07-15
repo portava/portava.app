@@ -43,6 +43,137 @@ function isValidUuid(v: unknown): v is string {
   return typeof v === 'string' && UUID_RE.test(v);
 }
 
+/* ============================================================================
+ * Stamp overlay (migration 0129) — optional, non-destructive stamp on a photo
+ * ============================================================================
+ * The client sends placement + a stamp_definitions id; the server validates
+ * eligibility and PINS the artwork reference at publish time so later catalog
+ * artwork updates never change historical posts. The original media file is
+ * never modified — the overlay is pure metadata rendered client-side.
+ *
+ * Eligibility (never awards a stamp, never bypasses earning):
+ *   - the caller has earned the stamp (user_stamps row, not revoked), OR
+ *   - the stamp definition matches the post's location (city/country).
+ * Only definitions with approved + active universal artwork qualify
+ * (is_active = true AND universal_artwork_url IS NOT NULL).
+ */
+const STAMP_OVERLAY_STYLES = ['original', 'white', 'dark', 'watermark'] as const;
+
+const stampOverlaySchema = z.object({
+  stampDefinitionId: z.string().uuid(),
+  style:    z.enum(STAMP_OVERLAY_STYLES).optional().default('white'),
+  /** Normalized center within the displayed media frame (cover rect), 0..1. */
+  x:        z.number().min(0).max(1),
+  y:        z.number().min(0).max(1),
+  /** Stamp diameter as a fraction of the media display width. */
+  scale:    z.number().min(0.12).max(0.5),
+  rotation: z.number().min(-45).max(45).optional().default(0),
+  opacity:  z.number().min(0.05).max(1).optional(),
+});
+
+type StampOverlayInput = z.infer<typeof stampOverlaySchema>;
+
+function normLoc(v: unknown): string {
+  return typeof v === 'string' ? v.trim().toLowerCase() : '';
+}
+
+/** Case-insensitive location match between a stamp definition and a post.
+ *  City-level defs require a city match (plus country agreement when both
+ *  sides carry one — guards "Paris, Texas" vs "Paris, France"); country-level
+ *  defs (no city) match on country alone. */
+function stampDefMatchesLocation(
+  def: { city?: string | null; country?: string | null },
+  city?: string | null,
+  country?: string | null,
+): boolean {
+  const defCity = normLoc(def.city);
+  const defCountry = normLoc(def.country);
+  const postCity = normLoc(city);
+  const postCountry = normLoc(country);
+  if (defCity) {
+    if (!postCity || defCity !== postCity) return false;
+    if (defCountry && postCountry && defCountry !== postCountry) return false;
+    return true;
+  }
+  if (defCountry) return postCountry === defCountry;
+  return false;
+}
+
+const roundTo = (n: number, p = 4) => Math.round(n * 10 ** p) / 10 ** p;
+
+/**
+ * Resolve + validate a requested stamp overlay. Returns the server-built
+ * overlay JSON (with pinned artwork) or an error code. Failures NEVER block
+ * the upload — the caller completes without the overlay and surfaces a flag.
+ */
+async function resolveStampOverlay(
+  sc: any,
+  userId: string,
+  postId: string,
+  input: StampOverlayInput,
+): Promise<{ overlay: Record<string, unknown> | null; errorCode: string | null }> {
+  let def: any = null;
+  try {
+    const { data, error } = await sc
+      .from('stamp_definitions')
+      .select('id, name, city, country, rarity, is_active, universal_artwork_url')
+      .eq('id', input.stampDefinitionId)
+      .maybeSingle();
+    if (error) return { overlay: null, errorCode: 'stamp_unavailable' };
+    def = data;
+  } catch {
+    return { overlay: null, errorCode: 'stamp_unavailable' };
+  }
+
+  // Only approved + active universal artwork may be overlaid.
+  if (!def || def.is_active !== true || !def.universal_artwork_url) {
+    return { overlay: null, errorCode: 'stamp_unavailable' };
+  }
+
+  // Eligibility: earned (not revoked) OR location-matching definition.
+  let eligible = false;
+  try {
+    const { data: earnedRows } = await sc
+      .from('user_stamps')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('stamp_definition_id', def.id)
+      .eq('is_revoked', false)
+      .limit(1);
+    eligible = ((earnedRows ?? []) as any[]).length > 0;
+  } catch { /* fall through to the location check */ }
+
+  if (!eligible) {
+    const { data: postRow } = await sc
+      .from('posts')
+      .select('location_city, location_country')
+      .eq('id', postId)
+      .maybeSingle();
+    eligible =
+      !!postRow &&
+      stampDefMatchesLocation(def, (postRow as any).location_city, (postRow as any).location_country);
+  }
+  if (!eligible) return { overlay: null, errorCode: 'stamp_not_eligible' };
+
+  return {
+    overlay: {
+      stampDefinitionId: def.id,
+      label:           def.name ?? 'Stamp',
+      city:            def.city ?? null,
+      country:         def.country ?? null,
+      artworkUrl:      def.universal_artwork_url,
+      artworkPinnedAt: new Date().toISOString(),
+      style:           input.style,
+      x:               roundTo(input.x),
+      y:               roundTo(input.y),
+      scale:           roundTo(input.scale),
+      rotation:        roundTo(input.rotation, 2),
+      opacity:         roundTo(input.opacity ?? (input.style === 'watermark' ? 0.45 : 1)),
+    },
+    errorCode: null,
+  };
+}
+
 /**
  * Re-derives and writes media_count, has_video, primary_media_type on the
  * parent post and any linked passport_postcard from the current set of ready
@@ -350,6 +481,8 @@ const completeSchema = z.object({
   width:           z.number().int().positive().optional(),
   height:          z.number().int().positive().optional(),
   thumbnailPath:   z.string().max(500).optional(),
+  /** Optional stamp overlay — validated & pinned server-side (never trust client URLs). */
+  stampOverlay:    stampOverlaySchema.optional(),
 });
 
 router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
@@ -407,23 +540,61 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     thumbnailUrl = (tData as any)?.publicUrl ?? null;
   }
 
+  // Optional stamp overlay — resolved & pinned server-side. An ineligible or
+  // unavailable stamp NEVER blocks the upload: we complete without the overlay
+  // and return a flag the client can surface.
+  let overlay: Record<string, unknown> | null = null;
+  let overlayError: string | null = null;
+  if (p.stampOverlay) {
+    if ((mediaRow as any).media_type !== 'image') {
+      overlayError = 'stamp_overlay_images_only';
+    } else {
+      const resolved = await resolveStampOverlay(sc, user.id, postId, p.stampOverlay);
+      overlay = resolved.overlay;
+      overlayError = resolved.errorCode;
+    }
+    if (overlayError) {
+      req.log.warn(
+        { overlayError, stampDefinitionId: p.stampOverlay.stampDefinitionId, mediaId },
+        'postcards: stamp overlay skipped (upload still completes)',
+      );
+    }
+  }
+
   // Mark ready + store metadata
-  const { error: updateErr } = await sc
+  const baseUpdate = {
+    processing_status:      'ready',
+    moderation_status:      'approved',
+    public_url:             publicUrl,
+    mime_type:              p.mimeType,
+    file_size_bytes:        p.fileSizeBytes,
+    duration_seconds:       p.durationSeconds ?? null,
+    width:                  p.width ?? null,
+    height:                 p.height ?? null,
+    thumbnail_url:          thumbnailUrl,
+    thumbnail_storage_path: p.thumbnailPath ?? null,
+    updated_at:             new Date().toISOString(),
+  };
+
+  let { error: updateErr } = await sc
     .from('post_media')
-    .update({
-      processing_status:      'ready',
-      moderation_status:      'approved',
-      public_url:             publicUrl,
-      mime_type:              p.mimeType,
-      file_size_bytes:        p.fileSizeBytes,
-      duration_seconds:       p.durationSeconds ?? null,
-      width:                  p.width ?? null,
-      height:                 p.height ?? null,
-      thumbnail_url:          thumbnailUrl,
-      thumbnail_storage_path: p.thumbnailPath ?? null,
-      updated_at:             new Date().toISOString(),
-    })
+    .update(overlay ? { ...baseUpdate, stamp_overlay: overlay } : baseUpdate)
     .eq('id', mediaId);
+
+  // Graceful degrade: stamp_overlay column missing (migration 0129 not applied
+  // in this environment) — retry without the overlay; never block the upload.
+  if (
+    updateErr && overlay &&
+    (updateErr as any).code === 'PGRST204' &&
+    typeof updateErr.message === 'string' &&
+    updateErr.message.includes('stamp_overlay')
+  ) {
+    req.log.warn({ err: updateErr }, 'postcards: stamp_overlay column missing — completing without overlay (apply migration 0129)');
+    overlay = null;
+    overlayError = 'stamp_overlay_not_supported';
+    const retry = await sc.from('post_media').update(baseUpdate).eq('id', mediaId);
+    updateErr = retry.error;
+  }
 
   if (updateErr) {
     req.log.error({ err: updateErr }, 'postcards: failed to complete media upload');
@@ -481,6 +652,11 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     ok: true,
     mediaCount: counts.mediaCount,
     hasVideo:   counts.hasVideo,
+    ...(p.stampOverlay
+      ? overlay
+        ? { stampOverlayApplied: true }
+        : { stampOverlayApplied: false, stampOverlayError: overlayError ?? 'stamp_unavailable' }
+      : {}),
   });
 });
 
@@ -559,6 +735,136 @@ router.delete('/postcards/:id/media/:mediaId', async (req, res) => {
     mediaCount: counts.mediaCount,
     hasVideo:   counts.hasVideo,
   });
+});
+
+/* ============================================================================
+ * GET /api/postcards/stamp-overlay-options — stamps the caller may overlay
+ * ============================================================================
+ * Returns ONLY the caller's own earned stamps plus definitions matching the
+ * given location (contextually eligible) — never other users' inventory.
+ * Filters to approved + active universal artwork. Suggested stamps are
+ * surfaced for the post's location but NEVER auto-applied — applying stays an
+ * explicit user action in the composer.
+ */
+const overlayOptionsQuerySchema = z.object({
+  city:    z.string().max(100).optional(),
+  country: z.string().max(100).optional(),
+  q:       z.string().max(100).optional(),
+});
+
+const OVERLAY_DEF_COLUMNS = 'id, name, city, country, rarity, is_active, universal_artwork_url';
+
+/** Escape LIKE wildcards in user input — we want literal matching only. */
+const escLike = (s: string) => s.trim().replace(/[%_]/g, (ch) => '\\' + ch);
+
+function hasOverlayArtwork(def: any): boolean {
+  return !!def && def.is_active === true && !!def.universal_artwork_url;
+}
+
+function toOverlayOption(def: any) {
+  return {
+    stampDefinitionId: def.id,
+    name:       def.name ?? 'Stamp',
+    city:       def.city ?? null,
+    country:    def.country ?? null,
+    rarity:     def.rarity ?? null,
+    artworkUrl: def.universal_artwork_url,
+  };
+}
+
+router.get('/postcards/stamp-overlay-options', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  const parsed = overlayOptionsQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    sendError(res, 'invalid_payload', parsed.error.issues[0]?.message ?? 'Invalid query');
+    return;
+  }
+  const { city, country, q } = parsed.data;
+
+  // Caller's own earned stamps (excluding revoked) — self-inventory only.
+  let earnedDefs: any[] = [];
+  try {
+    const { data: stampRows, error: stampsErr } = await sc
+      .from('user_stamps')
+      .select('stamp_definition_id, earned_at')
+      .eq('user_id', user.id)
+      .eq('is_revoked', false)
+      .order('earned_at', { ascending: false })
+      .limit(300);
+    if (!stampsErr) {
+      const ids = [...new Set(
+        ((stampRows ?? []) as any[]).map((r) => r.stamp_definition_id).filter(Boolean),
+      )] as string[];
+      if (ids.length > 0) {
+        const { data: defRows } = await sc
+          .from('stamp_definitions')
+          .select(OVERLAY_DEF_COLUMNS)
+          .in('id', ids);
+        const byId = new Map(((defRows ?? []) as any[]).map((d) => [d.id, d]));
+        // Preserve earned order (most recent first).
+        earnedDefs = ids.map((id) => byId.get(id)).filter(hasOverlayArtwork);
+      }
+    }
+  } catch { /* fail-open: empty earned list */ }
+
+  // Location-matching definitions ("For this location"). The ilike queries
+  // only narrow candidates — stampDefMatchesLocation() is authoritative.
+  let suggestedDefs: any[] = [];
+  if (city || country) {
+    try {
+      const candidates: any[] = [];
+      if (city) {
+        const { data } = await sc
+          .from('stamp_definitions')
+          .select(OVERLAY_DEF_COLUMNS)
+          .eq('is_active', true)
+          .ilike('city', escLike(city))
+          .limit(25);
+        candidates.push(...((data ?? []) as any[]));
+      }
+      if (country) {
+        const { data } = await sc
+          .from('stamp_definitions')
+          .select(OVERLAY_DEF_COLUMNS)
+          .eq('is_active', true)
+          .ilike('country', escLike(country))
+          .limit(25);
+        candidates.push(...((data ?? []) as any[]));
+      }
+      const seen = new Set<string>();
+      suggestedDefs = candidates.filter((d) => {
+        if (!hasOverlayArtwork(d) || seen.has(d.id)) return false;
+        seen.add(d.id);
+        return stampDefMatchesLocation(d, city ?? null, country ?? null);
+      });
+      // City-level matches ahead of country-level ones.
+      suggestedDefs.sort((a, b) => (a.city ? 0 : 1) - (b.city ? 0 : 1));
+    } catch { /* fail-open: no suggestions */ }
+  }
+
+  // Free-text search across both lists.
+  const needle = normLoc(q);
+  const matchesQ = (d: any) =>
+    !needle ||
+    normLoc(d.name).includes(needle) ||
+    normLoc(d.city).includes(needle) ||
+    normLoc(d.country).includes(needle);
+
+  const suggestedIds = new Set(suggestedDefs.map((d) => d.id));
+  const suggested = suggestedDefs.filter(matchesQ).slice(0, 20).map(toOverlayOption);
+  const earned = earnedDefs
+    .filter((d) => !suggestedIds.has(d.id))
+    .filter(matchesQ)
+    .slice(0, 100)
+    .map(toOverlayOption);
+
+  res.status(200).json({ suggested, earned });
 });
 
 export default router;

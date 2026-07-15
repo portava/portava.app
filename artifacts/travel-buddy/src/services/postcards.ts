@@ -52,6 +52,21 @@ export interface CompleteUploadParams {
   width?: number;
   height?: number;
   thumbnailPath?: string;
+  /**
+   * Optional passport-stamp overlay placement. The server validates
+   * eligibility (earned or location-matching) and pins the artwork URL —
+   * the client never sends artwork URLs. Ineligible stamps never block the
+   * upload; the response carries stampOverlayApplied/stampOverlayError.
+   */
+  stampOverlay?: {
+    stampDefinitionId: string;
+    style?: 'original' | 'white' | 'dark' | 'watermark';
+    x: number;
+    y: number;
+    scale: number;
+    rotation?: number;
+    opacity?: number;
+  };
 }
 
 export type UploadProgressCallback = (progress: number) => void;
@@ -136,6 +151,26 @@ async function apiPost<T>(path: string, body: unknown): Promise<ApiResult<T>> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(body),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, message: readableError(json, res.status) };
+    }
+    return { ok: true, data: json as T };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
+  }
+}
+
+async function apiGet<T>(path: string): Promise<ApiResult<T>> {
+  if (!isSupabaseConfigured || !apiBase()) {
+    return { ok: false, message: 'Backend not configured' };
+  }
+  const token = await freshToken();
+  if (!token) return { ok: false, message: 'Please sign in to continue' };
+  try {
+    const res = await fetch(`${apiBase()}${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -254,11 +289,39 @@ export async function completeUpload(
   postId: string,
   mediaId: string,
   params: CompleteUploadParams,
-): Promise<ApiResult<{ ok: boolean; mediaCount: number; hasVideo: boolean }>> {
+): Promise<ApiResult<{
+  ok: boolean;
+  mediaCount: number;
+  hasVideo: boolean;
+  /** Present only when a stampOverlay was requested. */
+  stampOverlayApplied?: boolean;
+  stampOverlayError?: string;
+}>> {
   return apiPost(
     `/api/postcards/${encodeURIComponent(postId)}/media/${encodeURIComponent(mediaId)}/complete`,
     params,
   );
+}
+
+/**
+ * Stamps the current user may place on a postcard photo: their earned stamps
+ * plus universal stamps suggested for the tagged location. Server-filtered to
+ * approved + active artwork and the user's own inventory.
+ */
+export async function getStampOverlayOptions(params: {
+  city?: string | null;
+  country?: string | null;
+  q?: string;
+} = {}): Promise<ApiResult<{
+  suggested: import('../lib/stampOverlay').StampOverlayOption[];
+  earned: import('../lib/stampOverlay').StampOverlayOption[];
+}>> {
+  const qs = new URLSearchParams();
+  if (params.city) qs.set('city', params.city);
+  if (params.country) qs.set('country', params.country);
+  if (params.q) qs.set('q', params.q);
+  const suffix = qs.toString();
+  return apiGet(`/api/postcards/stamp-overlay-options${suffix ? `?${suffix}` : ''}`);
 }
 
 /** Remove one media item from a postcard (owner-only). */

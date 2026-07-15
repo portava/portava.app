@@ -26,6 +26,7 @@ import { upsertCityStamp } from "../lib/stampHelper";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { awardStamp } from "../services/passport/StampAwardEngine.js";
 import { getServiceClient } from "../lib/supabase";
+import { stampOverlayCol } from "../lib/postMediaOverlay";
 import { checkRateLimit } from "../lib/rateLimit";
 import { writePulseGeoTag } from "../services/location/PulseGeoTagService";
 import { processTagging } from "../services/tagging/TaggingService.js";
@@ -128,6 +129,7 @@ function filterPostMedia(items: any[]): Array<Record<string, unknown>> {
       height:            m.height ?? null,
       sort_order:        m.sort_order ?? 0,
       processing_status: m.processing_status,
+      stamp_overlay:     m.stamp_overlay ?? null,
     }));
 }
 
@@ -800,7 +802,7 @@ router.get("/posts", async (req, res) => {
       try {
         const { data: mediaRows } = await sc
           .from("post_media")
-          .select(POST_MEDIA_FEED_COLUMNS)
+          .select(POST_MEDIA_FEED_COLUMNS + (await stampOverlayCol(sc)))
           .in("post_id", postIds)
           .eq("processing_status", "ready")
           .neq("moderation_status", "rejected");
@@ -921,7 +923,7 @@ router.get("/posts", async (req, res) => {
     try {
       const { data: mediaRows } = await svc
         .from("post_media")
-        .select(POST_MEDIA_FEED_COLUMNS)
+        .select(POST_MEDIA_FEED_COLUMNS + (await stampOverlayCol(svc)))
         .in("post_id", globalPostIds)
         .eq("processing_status", "ready")
         .neq("moderation_status", "rejected");
@@ -1077,7 +1079,7 @@ router.get("/trips/:tripId/posts", async (req, res) => {
     try {
       const { data: mediaRows } = await tripSvc
         .from("post_media")
-        .select(POST_MEDIA_FEED_COLUMNS)
+        .select(POST_MEDIA_FEED_COLUMNS + (await stampOverlayCol(tripSvc)))
         .in("post_id", tripPostIds)
         .eq("processing_status", "ready")
         .neq("moderation_status", "rejected");
@@ -1266,7 +1268,7 @@ router.get("/posts/:postId", async (req, res) => {
     sc.from("posts_likes").select("post_id").eq("post_id", postId).eq("user_id", user.id).maybeSingle(),
     sc.from("post_saves").select("post_id").eq("post_id", postId).eq("user_id", user.id).maybeSingle(),
     sc.from("post_media")
-      .select("id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status")
+      .select("id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status" + (await stampOverlayCol(sc)))
       .eq("post_id", postId)
       .eq("processing_status", "ready")
       .order("sort_order", { ascending: true }),
@@ -1285,6 +1287,7 @@ router.get("/posts/:postId", async (req, res) => {
       height:            m.height ?? null,
       sort_order:        m.sort_order ?? 0,
       processing_status: m.processing_status,
+      stamp_overlay:     m.stamp_overlay ?? null,
     }));
 
   const base = isAuthor ? post : mapPublicPost(post);

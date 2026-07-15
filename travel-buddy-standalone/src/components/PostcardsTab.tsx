@@ -6,6 +6,7 @@ import {
 import { router } from 'expo-router';
 import { MapPin, Pin, MoreHorizontal, ShieldCheck, X, Plus, PlayCircle, Clock, AlertCircle } from 'lucide-react-native';
 import type { PassportPostcard } from '../types/models';
+import { MediaStampOverlay } from './StampOverlayBadge';
 import type { usePostcardActions } from '../hooks/usePostcardActions';
 import { color, space, radius, type as t, shadow } from '../theme/tokens';
 
@@ -143,6 +144,7 @@ function PostcardCard({
         const allMedia = card.media ?? [];
         const firstReady = allMedia.find((m) => m.processing_status === 'ready');
         const firstAny = allMedia[0];
+        const displayItem = firstReady ?? firstAny;
         const displayUri = firstReady?.thumbnail_url ?? firstReady?.url ?? firstAny?.thumbnail_url ?? firstAny?.url ?? card.mediaUrl;
         const isVideo = (firstReady ?? firstAny)?.media_type === 'video' || card.hasVideo;
         const hasPending = allMedia.length > 0 && !firstReady && allMedia.some((m) => m.processing_status === 'pending');
@@ -154,6 +156,8 @@ function PostcardCard({
               style={pc.media}
               defaultSource={undefined}
             />
+            {/* Passport-stamp overlay — parse-gated; malformed data renders nothing */}
+            {displayItem ? <MediaStampOverlay raw={displayItem.stamp_overlay} /> : null}
             {isVideo && !hasPending && !hasFailed && (
               <View style={pc.videoPlayOverlay}>
                 <PlayCircle size={36} color="#fff" />

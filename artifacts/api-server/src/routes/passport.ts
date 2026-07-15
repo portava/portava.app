@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
+import { stampOverlayCol } from "../lib/postMediaOverlay";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { resolveProfileVisibility, extractBearerToken } from "../lib/profileVisibility";
 import { nameVisibleFor } from "../lib/publicIdentity";
@@ -86,6 +87,7 @@ function buildMediaArray(items: any[]): Array<Record<string, unknown>> {
       height:            m.height ?? null,
       sort_order:        m.sort_order ?? 0,
       processing_status: m.processing_status,
+      stamp_overlay:     m.stamp_overlay ?? null,
     }));
 }
 
@@ -374,7 +376,7 @@ router.get("/users/:username/passport/postcards", async (req, res) => {
     try {
       const { data: mediaRows } = await sc
         .from("post_media")
-        .select("post_id, id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status")
+        .select("post_id, id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status" + (await stampOverlayCol(sc)))
         .in("post_id", postIds)
         .eq("processing_status", "ready")
         .neq("moderation_status", "rejected");
@@ -444,7 +446,7 @@ router.get("/me/passport/postcards", async (req, res) => {
       try {
         const { data: mediaRows } = await sc
           .from("post_media")
-          .select("post_id, id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status")
+          .select("post_id, id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status" + (await stampOverlayCol(sc)))
           .in("post_id", ownerPostIds)
           .eq("processing_status", "ready");
         for (const m of (mediaRows ?? []) as any[]) {

@@ -24,6 +24,7 @@ import { SaveButton } from './SaveButton';
 import { deletePost } from '../services/postEngagement';
 import { hidePost } from '../services/posts';
 import { primaryIdentityText } from '../lib/displayIdentity';
+import { MediaStampOverlay } from './StampOverlayBadge';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -237,6 +238,8 @@ function PostCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; 
             <PlayCircle size={40} color="rgba(255,255,255,0.9)" />
           </View>
         )}
+        {/* Passport-stamp overlay — sits on the photo, under the scrim/labels */}
+        {!mediaFailed && <MediaStampOverlay raw={item.media?.[0]?.stamp_overlay} />}
         {/* Bottom scrim for AuthorRow readability.
             End-stop 0.85 + height 60 % ensures WCAG AA contrast (≥4.5:1) for
             white author-name text on the brightest travel media (snowy/beach). */}

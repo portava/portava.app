@@ -13,6 +13,7 @@ import {
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { ReportPostSheet } from '../../src/components/ReportPostSheet';
 import { CommentsSection } from '../../src/components/CommentsSheet';
+import { MediaStampOverlay } from '../../src/components/StampOverlayBadge';
 import { getPostById, type PostRow } from '../../src/services/posts';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
@@ -85,7 +86,8 @@ function ReportedBanner({
 function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: number }) {
   const { width } = useWindowDimensions();
   const mediaHeight = Math.min(Math.round(width * (5 / 4)), 560);
-  const firstMedia = post.mediaUrls[0] ?? null;
+  const firstMediaItem = post.media?.[0] ?? null;
+  const firstMedia = firstMediaItem?.url ?? post.mediaUrls[0] ?? null;
   const loc = post.locationName ?? post.locationCity ?? null;
   const authorName = post.author?.name ?? 'Traveler';
   const authorAvatar = post.author?.avatarUrl ?? null;
@@ -113,7 +115,10 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
       </Pressable>
 
       {firstMedia ? (
-        <Image source={{ uri: firstMedia }} style={[card.media, { height: mediaHeight }]} resizeMode="cover" />
+        <View style={[card.media, { height: mediaHeight, overflow: 'hidden' as const }]}>
+          <Image source={{ uri: firstMedia }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+          <MediaStampOverlay raw={firstMediaItem?.stamp_overlay} />
+        </View>
       ) : (
         <View style={[card.media, { height: mediaHeight }, card.mediaPlaceholder]}>
           <MapPin size={28} color={color.onInk} />

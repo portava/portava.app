@@ -19,6 +19,7 @@ import { STATUS_LABEL } from '../../src/lib/availability';
 import { PULSE_FILTERS } from '../../src/types/models';
 import type { PulseFilter, PulseFeedItem } from '../../src/types/models';
 import type { PostRow } from '../../src/services/posts';
+import { postRowToFeedItem } from '../../src/lib/postFeedAdapter';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { useLocationContext } from '../../src/context/LocationContext';
 import { LocationPermissionPrompt } from '../../src/components/LocationPermissionPrompt';
@@ -40,53 +41,6 @@ const FILTER_ICONS: Record<string, React.ComponentType<{ size?: number; color?: 
 };
 
 type FeedMode = 'forYou' | 'following';
-
-/** Convert a real PostRow from the API into a PulseFeedItem for the Pulse Wall. */
-function postRowToFeedItem(p: PostRow): PulseFeedItem {
-  return {
-    id: p.id,
-    type: 'post',
-    city: p.locationCity ?? 'Traveler Post',
-    author: {
-      id: p.authorId,
-      name: p.author?.name ?? 'Traveler',
-      avatarUrl: p.author?.avatarUrl ?? '',
-    },
-    createdAt: p.createdAt,
-    timeAgo: timeAgo(p.createdAt),
-    tags: [categoryToStamp(p.category)],
-    categoryFallback: !p.category,
-    mediaUrl: p.mediaUrls[0],
-    caption: p.content,
-    source: 'user',
-    neighborhood: p.locationName ?? undefined,
-    visibility: p.visibility === 'trip_only' ? 'private' : (p.visibility as 'public' | 'private'),
-    likeCount: p.likeCount,
-    commentCount: p.commentCount,
-    likedByMe: p.likedByMe,
-    canLike: p.canLike,
-    canComment: p.canComment,
-    canShare: p.canShare,
-    spanTags: p.tags,
-    spanHashtags: p.hashtagUsages,
-  };
-}
-
-/** Map a PostCategory slug to a human-readable stamp label. Falls back to 'Travel'. */
-function categoryToStamp(cat: string | null | undefined): string {
-  if (!cat) return 'Travel';
-  return cat.charAt(0).toUpperCase() + cat.slice(1);
-}
-
-function timeAgo(iso: string): string {
-  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-  if (s < 60) return 'just now';
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
 
 export default function Pulse() {
   const navScrollHandler = useNavBarScrollHandler();
