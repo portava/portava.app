@@ -1,19 +1,18 @@
 {
-  "name": "workspace",
+  "name": "travel-buddy-workspace",
   "version": "0.0.0",
-  "license": "MIT",
-  "scripts": {
-    "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
-    "build": "pnpm run typecheck && pnpm -r --if-present run build",
-    "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
-  },
   "private": true,
-  "dependencies": {
-    "@replit/connectors-sdk": "^0.4.1"
+  "scripts": {
+    "typecheck:libs": "tsc --build",
+    "typecheck": "pnpm -r --filter !@workspace/travel-buddy run typecheck",
+    "lint": "eslint artifacts/api-server/src scripts/src travel-buddy-standalone/app travel-buddy-standalone/src"
   },
   "devDependencies": {
-    "prettier": "^3.9.4",
-    "typescript": "~5.9.3"
+    "@types/node": "22.20.0",
+    "eslint": "^10.6.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "typescript": "~5.9.2",
+    "typescript-eslint": "^8.62.0",
+    "zod-validation-error": "^4.0.0"
   }
 }

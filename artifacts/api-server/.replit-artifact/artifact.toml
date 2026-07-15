@@ -19,6 +19,7 @@ args = ["pnpm", "--filter", "@workspace/api-server", "run", "build"]
 
 [services.production.build.env]
 NODE_ENV = "production"
+COREPACK_HOME = "/tmp/corepack"
 
 [services.production.run]
 # we don't run through pnpm to make startup faster in production

@@ -1,0 +1,122 @@
+{
+  "expo": {
+    "name": "Travel Buddy",
+    "slug": "travel-buddy",
+    "version": "1.0.1",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "travelbuddy",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/images/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.passporttravelbuddy.app",
+      "buildNumber": "2",
+      "associatedDomains": [
+        "applinks:df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev"
+      ],
+      "infoPlist": {
+        "LSApplicationQueriesSchemes": [
+          "travelbuddy"
+        ],
+        "NSCalendarsUsageDescription": "Travel Buddy adds confirmed meetups to your calendar so you never miss a plan.",
+        "NSLocationWhenInUseUsageDescription": "Travel Buddy uses your location to show nearby places and auto-publish posts after you leave a spot.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Travel Buddy uses your location in the background to track route progress and trigger check-ins.",
+        "NSCameraUsageDescription": "Travel Buddy uses your camera so you can add photos to posts and your passport.",
+        "NSPhotoLibraryUsageDescription": "Travel Buddy accesses your photo library so you can upload trip photos and profile pictures.",
+        "NSMicrophoneUsageDescription": "Travel Buddy uses your microphone for video content attached to posts.",
+        "NSUserNotificationsUsageDescription": "Travel Buddy sends notifications for trip invites, messages, and travel reminders."
+      }
+    },
+    "android": {
+      "package": "com.passporttravelbuddy.app",
+      "versionCode": 2,
+      "permissions": [
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": false,
+          "data": [
+            {
+              "scheme": "travelbuddy"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev",
+              "pathPrefix": "/passport"
+            },
+            {
+              "scheme": "https",
+              "host": "df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev",
+              "pathPrefix": "/u"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
+    },
+    "web": {
+      "favicon": "./assets/images/icon.png"
+    },
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "origin": "https://df523879-bb73-45a7-ae4b-d2b860bb451c-00-3l7rteubrn2h7-icqigvm4.spock.replit.dev/"
+        }
+      ],
+      "expo-font",
+      "expo-web-browser",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Travel Buddy needs your location to automatically publish your post after you leave a spot.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true
+        }
+      ],
+      "expo-dev-client",
+      "@maplibre/maplibre-react-native"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "b4147876-b8f9-4ea2-94f4-dd9f4e9cb65b"
+      }
+    },
+    "owner": "travel-buddy1"
+  }
+}

@@ -1,0 +1,2 @@
+- [Env/secrets audit gotchas](env-secrets-gotchas.md) — shared env vars can shadow same-name secrets with corrupted values; user-typed secret names often have typos the app can't see.
+- [Explore page performance fixes](explore-perf-fixes.md) — 6 targeted fixes for Discover tab cold-start; geocode dedup, batch counts endpoint, client cache, FlatList virtualisation, community cache, deferred PlaceCard fetches.

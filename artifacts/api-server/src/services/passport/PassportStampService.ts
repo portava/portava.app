@@ -1,0 +1,197 @@
+/**
+ * PassportStampService
+ *
+ * Creates passport stamps from verified source events.
+ * Uses the unique index on (user_id, stamp_type, country, city) to deduplicate —
+ * a second upsert for the same city returns the existing stamp ID.
+ */
+
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { VisibilityTier } from "./PassportPrivacyGuard.js";
+import { recordTrustEvent } from "../trust/TrustEventService.js";
+
+export type StampType =
+  | "city"
+  | "neighborhood"
+  | "plan"
+  | "host"
+  | "hidden_gem"
+  | "safe_return"
+  | "activity"
+  | "trip_crew"
+  | "compass_ai"
+  | "qr_checkin";
+
+export type VerificationLevel =
+  | "unverified"
+  | "gps"
+  | "checkin"
+  | "safe_return"
+  | "crew"
+  | "admin";
+
+export interface CreateStampInput {
+  userId: string;
+  stampType: StampType;
+  country?: string | null;
+  city?: string | null;
+  neighborhood?: string | null;
+  placeId?: string | null;
+  planId?: string | null;
+  tripId?: string | null;
+  sourceType?: string;
+  verificationLevel?: VerificationLevel;
+  /** Defaults to user's preference or 'public' for city stamps, 'private' for safe_return. */
+  visibility?: VisibilityTier;
+  earnedAt?: string;
+}
+
+export interface StampResult {
+  id: string;
+  isNew: boolean;
+}
+
+/**
+ * Create (or no-op if duplicate) a passport stamp.
+ * Returns the stamp id and whether it was newly created.
+ */
+export async function createStamp(
+  db: SupabaseClient,
+  input: CreateStampInput,
+): Promise<StampResult | null> {
+  const {
+    userId, stampType, country, city, neighborhood,
+    placeId, planId, tripId, sourceType = "system",
+    verificationLevel = "unverified", earnedAt,
+  } = input;
+
+  // Apply visibility: explicit > safe_return default > user preference > "public"
+  let visibility: VisibilityTier;
+  if (input.visibility) {
+    visibility = input.visibility;
+  } else if (stampType === "safe_return") {
+    visibility = "private";
+  } else {
+    // Look up user's default stamp visibility preference
+    try {
+      const { data: prefRow } = await db
+        .from("passport_visibility_preferences")
+        .select("default_stamp_visibility")
+        .eq("user_id", userId)
+        .maybeSingle();
+      visibility = ((prefRow as any)?.default_stamp_visibility as VisibilityTier) ?? "public";
+    } catch {
+      visibility = "public";
+    }
+  }
+
+  // Check for existing stamp — mirrors COALESCE(country,'') / COALESCE(city,'') unique index
+  // Use .is(col, null) for null values; .eq(col, val) for non-null values.
+  let dedupQuery = db
+    .from("passport_stamps")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("stamp_type", stampType);
+  if (country != null && country !== "") {
+    dedupQuery = dedupQuery.eq("country", country) as typeof dedupQuery;
+  } else {
+    dedupQuery = dedupQuery.is("country", null) as typeof dedupQuery;
+  }
+  if (city != null && city !== "") {
+    dedupQuery = dedupQuery.eq("city", city) as typeof dedupQuery;
+  } else {
+    dedupQuery = dedupQuery.is("city", null) as typeof dedupQuery;
+  }
+  const { data: existing } = await dedupQuery.maybeSingle();
+
+  if (existing) {
+    return { id: (existing as any).id, isNew: false };
+  }
+
+  const { data, error } = await db
+    .from("passport_stamps")
+    .insert({
+      user_id: userId,
+      stamp_type: stampType,
+      country: country ?? null,
+      city: city ?? null,
+      neighborhood: neighborhood ?? null,
+      place_id: placeId ?? null,
+      plan_id: planId ?? null,
+      trip_id: tripId ?? null,
+      source_type: sourceType,
+      verification_level: verificationLevel,
+      visibility,
+      earned_at: earnedAt ?? new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+
+  if (error) return null;
+  const stampId = (data as any).id;
+
+  // Feed new passport stamp into Trust Engine (fire-and-forget; flag-gated internally)
+  void recordTrustEvent(db, {
+    userId,
+    eventType: "passport_stamp_earned",
+    category: "passport_authenticity",
+    delta: 2,
+    severity: "minor",
+    sourceType: "passport",
+    sourceId: stampId,
+    dedupWindowHours: 48,
+  });
+
+  return { id: stampId, isNew: true };
+}
+
+/**
+ * Update the visibility of a stamp.
+ * Only the stamp owner can do this (caller must pass their userId for verification).
+ */
+export async function updateStampVisibility(
+  db: SupabaseClient,
+  stampId: string,
+  userId: string,
+  visibility: VisibilityTier,
+): Promise<boolean> {
+  const { data, error } = await db
+    .from("passport_stamps")
+    .update({ visibility, updated_at: new Date().toISOString() })
+    .eq("id", stampId)
+    .eq("user_id", userId)
+    .select("id");
+
+  if (error) return false;
+  return Array.isArray(data) && data.length > 0;
+}
+
+/**
+ * Load stamps for a user, optionally filtered.
+ */
+export async function loadStamps(
+  db: SupabaseClient,
+  userId: string,
+  filters: {
+    country?: string;
+    city?: string;
+    stampType?: string;
+    visibility?: VisibilityTier;
+  } = {},
+): Promise<any[]> {
+  let query = db
+    .from("passport_stamps")
+    .select("id, stamp_type, country, city, neighborhood, place_id, plan_id, trip_id, source_type, verification_level, visibility, earned_at, created_at")
+    .eq("user_id", userId)
+    .order("earned_at", { ascending: false })
+    .limit(200);
+
+  if (filters.country) query = (query as any).eq("country", filters.country);
+  if (filters.city) query = (query as any).eq("city", filters.city);
+  if (filters.stampType) query = (query as any).eq("stamp_type", filters.stampType);
+  if (filters.visibility) query = (query as any).eq("visibility", filters.visibility);
+
+  const { data, error } = await query;
+  if (error) return [];
+  return data ?? [];
+}

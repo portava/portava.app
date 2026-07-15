@@ -1,0 +1,1718 @@
+/**
+ * GET /api/discovery
+ *
+ * Destination-scoped place discovery backed by Nominatim + Overpass (OSM).
+ * No auth required — returns only public place data.
+ *
+ * Query params:
+ *   destination  string  (required) city / area name e.g. "Paris"
+ *   category     string  for_you | places | food | nightlife | activities |
+ *                        events | beaches | transport   (default: for_you)
+ *   radiusKm     number  search radius 1–100 km  (default: 10)
+ *   page         number  1-based page (default: 1); PAGE_SIZE=20
+ *
+ * Response: { places: DiscoveryPlace[], destination: string, total: number }
+ *
+ * Caches results per (destination, category, radiusKm) for 2 hours.
+ * Graceful degradation: any network/parse error returns an empty list.
+ */
+
+import { Router } from "express";
+import { z } from "zod";
+import { getServiceClient } from "../lib/supabase";
+import { sendError, requireUser } from "../lib/http";
+import { buildDiscoveryContext } from "../services/location/DiscoveryLocationContext";
+import { loadPreferences } from "../services/location/LocationPermissionService";
+import { toCanonicalCategory } from "../lib/placeCategories";
+import type { DiscoveryContext, DiscoveryContextMode } from "../services/location/DiscoveryLocationContext";
+import { calculateUserAge } from "../lib/ageEligibility";
+import { discoveryPlaceToCompassItem } from "../compass/CompassDiscoveryAdapter";
+import { getCompassProfile } from "../compass/CompassProfileService";
+import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
+import { rankItemsForDiscovery } from "../compass/CompassFeedBuilder";
+import { isEnabled } from "../compass/flags";
+
+const router = Router();
+
+const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
+const OVERPASS_URL  = "https://overpass-api.de/api/interpreter";
+const FETCH_TIMEOUT_MS = 25_000;
+const CACHE_TTL_MS     = 2 * 60 * 60 * 1_000; // 2 hours
+const MAX_FETCH        = 60;
+const PAGE_SIZE        = 20;
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+/** Shape used internally and returned in all API responses. */
+export interface DiscoveryPlace {
+  id: string;
+  name: string;
+  category: string;
+  type: string | null;
+  description: string | null;
+  distanceKm: number | null;
+  /** OSM venue latitude — public data, safe to expose */
+  lat: number | null;
+  /** OSM venue longitude — public data, safe to expose */
+  lng: number | null;
+  tags: string[];
+  address: string | null;
+  website: string | null;
+  phone: string | null;
+  openingHours: string | null;
+  rating: number | null;
+  isOpenNow: boolean | null;
+  /** Number of times this place has been saved; populated for DB-backed places. */
+  savedCount?: number;
+}
+
+/** Public shape returned in all API responses. */
+export type PublicDiscoveryPlace = DiscoveryPlace;
+
+function toPublic(p: DiscoveryPlace): PublicDiscoveryPlace {
+  return p;
+}
+
+interface CacheEntry {
+  places: DiscoveryPlace[];
+  cachedAt: number;
+}
+
+// ── In-memory cache ───────────────────────────────────────────────────────────
+
+const cache = new Map<string, CacheEntry>();
+
+function cacheKey(dest: string, cat: string, radius: number) {
+  return `${dest.toLowerCase().trim()}:${cat}:${radius}`;
+}
+
+function isFresh(e: CacheEntry) {
+  return Date.now() - e.cachedAt < CACHE_TTL_MS;
+}
+
+// ── Geocode deduplication cache ────────────────────────────────────────────────
+// Caches Nominatim results for 24 h and deduplicates concurrent in-flight
+// requests so that N parallel category-count calls for the same city only call
+// Nominatim once — preserving the 1 req/s fair-use policy.
+const GEOCODE_CACHE_TTL = 24 * 60 * 60 * 1_000;
+const _geocodeMemory  = new Map<string, { r: { lat: number; lng: number; display: string } | null; at: number }>();
+const _geocodePending = new Map<string, Promise<{ lat: number; lng: number; display: string } | null>>();
+
+/**
+ * Patch the savedCount for a single OSM place across all live cache entries.
+ *
+ * Called by the wishlist router immediately after `trackOsmPlaceSave` /
+ * `trackOsmPlaceUnsave` increments or decrements `saved_count` in the DB, so
+ * the popular sort reflects the change on the next request instead of serving
+ * a stale count for up to the 2-hour TTL.
+ *
+ * The cache key encodes destination + category + radius, none of which are
+ * available in the wishlist path, so we scan all entries and patch every place
+ * whose `id` (the OSM element string, e.g. "node/12345678") matches.
+ * In practice at most one entry per category bucket will match.
+ */
+export function patchOsmSavedCount(osmId: string, newCount: number): void {
+  for (const entry of cache.values()) {
+    for (const place of entry.places) {
+      if (place.id === osmId) {
+        place.savedCount = newCount;
+        break;
+      }
+    }
+  }
+}
+
+// ── Fetch helpers ─────────────────────────────────────────────────────────────
+
+async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function geocode(location: string): Promise<{ lat: number; lng: number; display: string } | null> {
+  const url = `${NOMINATIM_URL}?q=${encodeURIComponent(location)}&format=json&limit=1`;
+  const res = await fetchWithTimeout(url, {
+    headers: { "User-Agent": "TravelBuddy/1.0 (travel-buddy-app; discovery)" },
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as Array<{ lat: string; lon: string; display_name: string }>;
+  const r = data?.[0];
+  if (!r) return null;
+  return { lat: parseFloat(r.lat), lng: parseFloat(r.lon), display: r.display_name };
+}
+
+/**
+ * Geocode with a 24-hour in-memory cache and in-flight deduplication.
+ *
+ * When N category-count requests arrive in parallel for the same city this
+ * ensures only ONE Nominatim call is made — the rest await the same promise.
+ * This respects Nominatim's 1 req/s fair-use policy and dramatically cuts
+ * cold-start latency.
+ */
+function geocodeCached(location: string): Promise<{ lat: number; lng: number; display: string } | null> {
+  const key = location.toLowerCase().trim();
+
+  const mem = _geocodeMemory.get(key);
+  if (mem && Date.now() - mem.at < GEOCODE_CACHE_TTL) return Promise.resolve(mem.r);
+
+  // Dedup: return the same promise to every concurrent caller.
+  const existing = _geocodePending.get(key);
+  if (existing) return existing;
+
+  const p = geocode(location)
+    .then((r) => {
+      _geocodeMemory.set(key, { r, at: Date.now() });
+      _geocodePending.delete(key);
+      return r;
+    })
+    .catch((e) => {
+      _geocodePending.delete(key);
+      throw e;
+    });
+  _geocodePending.set(key, p);
+  return p;
+}
+
+// ── Category → Overpass filter ────────────────────────────────────────────────
+
+function overpassFilter(cat: string, radius: number, lat: number, lng: number): string {
+  const r = radius;
+  const c = `${lat},${lng}`;
+
+  switch (cat) {
+    case "places":
+      return `(
+  node["tourism"~"^(attraction|museum|viewpoint|gallery|castle|ruins|artwork|monument|historic)$"](around:${r},${c});
+  way["tourism"~"^(attraction|museum|viewpoint|gallery|castle|ruins|artwork|monument|historic)$"](around:${r},${c});
+  node["historic"~"^(castle|monument|memorial|ruins|building|church|fort|palace)$"](around:${r},${c});
+  way["historic"~"^(castle|monument|memorial|ruins|building|church|fort|palace)$"](around:${r},${c});
+);`;
+
+    case "food":
+      return `(
+  node["amenity"~"^(restaurant|cafe|fast_food|bistro|food_court|bakery|ice_cream)$"](around:${r},${c});
+  way["amenity"~"^(restaurant|cafe|fast_food|bistro|food_court|bakery|ice_cream)$"](around:${r},${c});
+);`;
+
+    case "nightlife":
+      return `(
+  node["amenity"~"^(bar|pub|nightclub|casino|biergarten|cocktail_bar)$"](around:${r},${c});
+  way["amenity"~"^(bar|pub|nightclub|casino|biergarten|cocktail_bar)$"](around:${r},${c});
+);`;
+
+    case "activities":
+      return `(
+  node["leisure"~"^(park|sports_centre|fitness_centre|swimming_pool|golf_course|marina|water_park|miniature_golf|bowling_alley|stadium)$"](around:${r},${c});
+  way["leisure"~"^(park|sports_centre|fitness_centre|swimming_pool|golf_course|marina|water_park|miniature_golf|bowling_alley|stadium)$"](around:${r},${c});
+  node["tourism"~"^(theme_park|zoo|aquarium)$"](around:${r},${c});
+  way["tourism"~"^(theme_park|zoo|aquarium)$"](around:${r},${c});
+);`;
+
+    case "events":
+      return `(
+  node["amenity"~"^(marketplace|community_centre|events_venue|theatre|cinema|arts_centre)$"](around:${r},${c});
+  way["amenity"~"^(marketplace|community_centre|events_venue|theatre|cinema|arts_centre)$"](around:${r},${c});
+  node["tourism"="gallery"](around:${r},${c});
+  way["tourism"="gallery"](around:${r},${c});
+);`;
+
+    case "beaches":
+      return `(
+  node["natural"="beach"](around:${r},${c});
+  way["natural"="beach"](around:${r},${c});
+  relation["natural"="beach"](around:${r},${c});
+  node["leisure"="beach_resort"](around:${r},${c});
+  way["leisure"="beach_resort"](around:${r},${c});
+);`;
+
+    case "transport":
+      return `(
+  node["amenity"~"^(bus_station|ferry_terminal|taxi|car_rental|bicycle_rental)$"](around:${r},${c});
+  node["railway"~"^(station|halt|tram_stop|subway_entrance)$"](around:${r},${c});
+  node["aeroway"~"^(aerodrome|terminal)$"](around:${r},${c});
+  way["aeroway"~"^(aerodrome|terminal)$"](around:${r},${c});
+);`;
+
+    case "for_you":
+    default:
+      return `(
+  node["tourism"~"^(attraction|museum|viewpoint|gallery)$"](around:${r},${c});
+  way["tourism"~"^(attraction|museum|viewpoint|gallery)$"](around:${r},${c});
+  node["amenity"~"^(restaurant|cafe)$"](around:${r},${c});
+  node["natural"="beach"](around:${r},${c});
+  way["natural"="beach"](around:${r},${c});
+  node["leisure"~"^(park|sports_centre)$"](around:${r},${c});
+  way["leisure"~"^(park|sports_centre)$"](around:${r},${c});
+);`;
+  }
+}
+
+// ── Haversine ─────────────────────────────────────────────────────────────────
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ── Tag extraction ────────────────────────────────────────────────────────────
+
+function friendlyType(tags: Record<string, string>): string | null {
+  if (tags.tourism)  return tags.tourism.replace(/_/g, " ");
+  if (tags.amenity)  return tags.amenity.replace(/_/g, " ");
+  if (tags.leisure)  return tags.leisure.replace(/_/g, " ");
+  if (tags.natural)  return tags.natural.replace(/_/g, " ");
+  if (tags.historic) return tags.historic.replace(/_/g, " ");
+  if (tags.railway)  return "rail station";
+  if (tags.aeroway)  return "airport";
+  return null;
+}
+
+function extractTags(tags: Record<string, string>): string[] {
+  const out: string[] = [];
+  if (tags.cuisine)    out.push(tags.cuisine.split(/[;,]/)[0]!.trim().replace(/_/g, " "));
+  if (tags.tourism)    out.push(tags.tourism.replace(/_/g, " "));
+  if (tags.amenity)    out.push(tags.amenity.replace(/_/g, " "));
+  if (tags.leisure)    out.push(tags.leisure.replace(/_/g, " "));
+  if (tags.natural)    out.push(tags.natural);
+  if (tags.historic)   out.push(tags.historic.replace(/_/g, " "));
+  if (tags.sport)      out.push(tags.sport.split(";")[0]!.trim());
+  return [...new Set(out)].filter(Boolean).slice(0, 3);
+}
+
+function parseRating(tags: Record<string, string>): number | null {
+  const raw = tags["stars"] ?? tags["rating"] ?? null;
+  if (!raw) return null;
+  const n = parseFloat(raw);
+  return Number.isFinite(n) ? Math.round(n * 10) / 10 : null;
+}
+
+/** Best-effort open-now check from an OSM opening_hours string. */
+function determineOpenNow(hours: string | null): boolean | null {
+  if (!hours) return null;
+  const now = new Date();
+  const dayAbbr = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"][now.getDay()];
+  if (dayAbbr && !hours.includes(dayAbbr)) return false;
+  const match = hours.match(/(\d{2}):(\d{2})-(\d{2}):(\d{2})/);
+  if (!match) return null; // present but unparseable — unknown
+  const hh    = now.getHours() * 100 + now.getMinutes();
+  const open  = parseInt(match[1]!) * 100 + parseInt(match[2]!);
+  const close = parseInt(match[3]!) * 100 + parseInt(match[4]!);
+  return hh >= open && hh <= close;
+}
+
+function buildAddress(tags: Record<string, string>): string | null {
+  const parts: string[] = [];
+  if (tags["addr:housenumber"] && tags["addr:street"]) {
+    parts.push(`${tags["addr:housenumber"]} ${tags["addr:street"]}`);
+  } else if (tags["addr:street"]) {
+    parts.push(tags["addr:street"]);
+  }
+  if (tags["addr:city"]) parts.push(tags["addr:city"]);
+  return parts.length ? parts.join(", ") : null;
+}
+
+// ── Overpass query ────────────────────────────────────────────────────────────
+
+type OsmElement = {
+  type: "node" | "way" | "relation";
+  id: number;
+  lat?: number;
+  lon?: number;
+  center?: { lat: number; lon: number };
+  tags?: Record<string, string>;
+};
+
+async function queryOverpass(
+  lat: number,
+  lng: number,
+  radiusM: number,
+  category: string,
+): Promise<DiscoveryPlace[]> {
+  const filter = overpassFilter(category, radiusM, lat, lng);
+  const query  = `[out:json][timeout:20];\n${filter}\nout body center qt ${MAX_FETCH};`;
+
+  // GET avoids Content-Type 406 issues with undici (Node built-in fetch).
+  const url = `${OVERPASS_URL}?data=${encodeURIComponent(query)}`;
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(url, {
+      headers: { "User-Agent": "TravelBuddy/1.0 (travel-buddy-app; discovery)" },
+    });
+  } catch {
+    return [];
+  }
+
+  if (!res.ok) return [];
+
+  const data = (await res.json()) as { elements: OsmElement[] };
+  if (!data?.elements?.length) return [];
+
+  return data.elements
+    .filter((el) => el.tags?.name && el.tags.name.trim())
+    .map((el): DiscoveryPlace => {
+      const elLat = el.lat ?? el.center?.lat ?? null;
+      const elLng = el.lon ?? el.center?.lon ?? null;
+      const tags  = el.tags ?? {};
+      return {
+        id:          `${el.type}/${el.id}`,
+        name:        tags.name!,
+        category,
+        type:        friendlyType(tags),
+        description: tags.description ?? tags["note"] ?? null,
+        distanceKm:  elLat != null && elLng != null
+          ? Math.round(haversineKm(lat, lng, elLat, elLng) * 10) / 10
+          : null,
+        lat:         elLat,
+        lng:         elLng,
+        tags:         extractTags(tags),
+        address:      buildAddress(tags),
+        website:      tags.website ?? tags.url ?? null,
+        phone:        tags.phone ?? tags["contact:phone"] ?? null,
+        openingHours: tags.opening_hours ?? null,
+        rating:       parseRating(tags),
+        isOpenNow:    determineOpenNow(tags.opening_hours ?? null),
+      };
+    })
+    .sort((a, b) => (a.distanceKm ?? 999) - (b.distanceKm ?? 999))
+    .slice(0, MAX_FETCH);
+}
+
+// ── Category mapper (DB → Discovery tab) ──────────────────────────────────────
+//
+// Wraps the authoritative placeCategories.ts module.
+// Prefer primary_category from the DB; fall back to the canonical mapper
+// only for rows that pre-date migration 0083 (no primary_category yet).
+
+function mapDbCategory(rawCategory: string, rawPlaceType?: string): string {
+  return toCanonicalCategory(rawCategory, rawPlaceType);
+}
+
+// ── DB places query ────────────────────────────────────────────────────────────
+//
+// Queries discovery_places by city name (case-insensitive). Results are merged
+// with OSM results and deduplicated by normalised place name so that traveler-
+// submitted places surface even when Overpass returns nothing for a destination.
+
+/** Test-only: override the DB query so tests can inject seeded rows without a live DB. */
+let _testDbOverride: ((dest: string, cat: string, lat: number | null, lng: number | null) => Promise<DiscoveryPlace[]>) | null = null;
+export function _setTestDbPlacesOverride(fn: typeof _testDbOverride): void {
+  _testDbOverride = fn;
+}
+
+/**
+ * Test hook: inject a fake cache entry so unit tests can verify that
+ * `patchOsmSavedCount` updates the right place without requiring a real
+ * Overpass round-trip.  Objects are stored by reference so in-place
+ * mutations by `patchOsmSavedCount` are observable on the original objects.
+ */
+export function _injectTestCacheEntry(key: string, places: DiscoveryPlace[]): void {
+  cache.set(key, { places, cachedAt: Date.now() });
+}
+
+/** Test hook: remove a cache entry previously injected by _injectTestCacheEntry. */
+export function _clearTestCacheEntry(key: string): void {
+  cache.delete(key);
+}
+
+async function queryDbPlaces(
+  destination: string,
+  category: string,
+  centerLat: number | null,
+  centerLng: number | null,
+): Promise<DiscoveryPlace[]> {
+  if (_testDbOverride) return _testDbOverride(destination, category, centerLat, centerLng);
+
+  const sc = getServiceClient();
+  if (!sc) return [];
+
+  // Normalise: "Miami, FL" → "Miami"; strip trailing country/state qualifiers
+  const cityBase = destination.split(",")[0]?.trim() ?? destination;
+
+  try {
+    const { data, error } = await sc
+      .from("discovery_places")
+      .select("id, city, name, place_type, category, primary_category, secondary_categories, neighborhood, blurb, image_url, rating, saved_count, lat, lng, tag, verified, created_at")
+      .or(`city.ilike.${cityBase},city.ilike.${cityBase}%`)
+      .eq("status", "active")
+      .order("saved_count", { ascending: false })
+      .limit(60);
+
+    if (error || !data) return [];
+
+    return (data as any[])
+      .filter((row: any) => {
+        if (category === "for_you") return true;
+        // Prefer primary_category (post-migration 0083); fall back to the
+        // canonical mapper so pre-migration rows still filter correctly.
+        const effectiveCategory: string = (row.primary_category as string | null)
+          ?? mapDbCategory((row.category ?? "") as string, (row.place_type ?? "") as string);
+        if (effectiveCategory === category) return true;
+        // Also include places where the requested category appears in secondary_categories,
+        // so multi-category venues (e.g. a beach bar: primary=beaches, secondary=[food])
+        // show up in all applicable tabs.
+        const secondary: string[] = Array.isArray(row.secondary_categories)
+          ? (row.secondary_categories as string[])
+          : [];
+        return secondary.includes(category);
+      })
+      .map((row: any): DiscoveryPlace => {
+        const lat = row.lat != null ? parseFloat(String(row.lat)) : null;
+        const lng = row.lng != null ? parseFloat(String(row.lng)) : null;
+        const effectiveCategory: string = (row.primary_category as string | null)
+          ?? mapDbCategory((row.category ?? "") as string, (row.place_type ?? "") as string);
+        return {
+          id: `db/${row.id as string}`,
+          name: row.name as string,
+          // Use canonical category so the frontend always gets a valid tab value
+          category: effectiveCategory,
+          type: (row.place_type ?? null) as string | null,
+          description: (row.blurb ?? null) as string | null,
+          distanceKm:
+            centerLat != null && centerLng != null && lat != null && lng != null
+              ? Math.round(haversineKm(centerLat, centerLng, lat, lng) * 10) / 10
+              : null,
+          lat,
+          lng,
+          tags: [row.category, row.tag].filter(Boolean) as string[],
+          address: (row.neighborhood ?? null) as string | null,
+          website: null,
+          phone: null,
+          openingHours: null,
+          rating: row.rating != null ? parseFloat(String(row.rating)) : null,
+          isOpenNow: null,
+          savedCount: (row.saved_count as number) ?? 0,
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
+// ── OSM saved-count enrichment ────────────────────────────────────────────────
+//
+// OSM places returned by Overpass have no saved_count because they live only
+// in the in-memory cache, not in discovery_places.  When a user saves an OSM
+// place via POST /api/wishlist the wishlist handler upserts a row in
+// discovery_places (source="osm", osm_id=<type>/<id>).  This function does a
+// single batch lookup to attach those real save counts to the Overpass results
+// before they are stored in the cache.  Failures are swallowed — a missing
+// savedCount just means the popular sort falls back to rating as the tie-breaker.
+
+async function enrichOsmSavedCounts(places: DiscoveryPlace[]): Promise<DiscoveryPlace[]> {
+  if (places.length === 0) return places;
+  const sc = getServiceClient();
+  if (!sc) return places;
+
+  try {
+    const osmIds = places.map((p) => p.id);
+    const { data } = await sc
+      .from("discovery_places")
+      .select("osm_id, saved_count")
+      .in("osm_id", osmIds)
+      .gt("saved_count", 0);
+
+    if (!data || data.length === 0) return places;
+
+    const countMap = new Map(
+      (data as Array<{ osm_id: string; saved_count: number }>)
+        .map((r) => [r.osm_id, r.saved_count]),
+    );
+
+    return places.map((p) => {
+      const count = countMap.get(p.id);
+      return count != null ? { ...p, savedCount: count } : p;
+    });
+  } catch {
+    return places;
+  }
+}
+
+// ── Merge + deduplicate ────────────────────────────────────────────────────────
+//
+// OSM places take precedence. DB places whose normalised name already appears
+// in the OSM result are dropped to avoid showing the same venue twice.
+
+function mergeAndDedup(osmPlaces: DiscoveryPlace[], dbPlaces: DiscoveryPlace[]): DiscoveryPlace[] {
+  const seen = new Set(osmPlaces.map((p) => p.name.toLowerCase().trim()));
+  const uniqueDb = dbPlaces.filter((p) => !seen.has(p.name.toLowerCase().trim()));
+  // DB places are interleaved near the top — they are curated so should rank well
+  const merged: DiscoveryPlace[] = [];
+  let dbIdx = 0;
+  for (let i = 0; i < osmPlaces.length; i++) {
+    merged.push(osmPlaces[i]!);
+    // Interleave one DB place every 4 OSM places so traveler picks surface early
+    if ((i + 1) % 4 === 0 && dbIdx < uniqueDb.length) {
+      merged.push(uniqueDb[dbIdx++]!);
+    }
+  }
+  // Append any remaining DB places after OSM results
+  while (dbIdx < uniqueDb.length) {
+    merged.push(uniqueDb[dbIdx++]!);
+  }
+  return merged;
+}
+
+// ── Composite ranking ─────────────────────────────────────────────────────────
+//
+// When a DiscoveryContext is present (authenticated caller), re-sort places
+// using a weighted composite score so that:
+//   - Verified/trusted places (from GeoZoneService) are boosted
+//   - Distance weight is dialled per mode (near_me → high, in_city → low)
+//   - Trip/vibe context elevates relevant categories
+//   - Safety-score weight lifts well-tagged places for safe_nearby mode
+//
+// PRIVACY: no exact coords are used in scoring. Distance is expressed in km
+// from the OSM element centre (already computed by queryOverpass).
+
+const MAX_DISTANCE_KM = 20; // distance normalisation ceiling
+
+function scoreWithContext(places: DiscoveryPlace[], ctx: DiscoveryContext): DiscoveryPlace[] {
+  const w = ctx.weights;
+  const verifiedSet = new Set(ctx.verifiedPlaceIds);
+
+  function score(p: DiscoveryPlace): number {
+    let s = 0;
+
+    // Distance factor (inverted — closer = higher score)
+    if (w.distance > 0 && p.distanceKm != null) {
+      const distFactor = Math.max(0, 1 - p.distanceKm / MAX_DISTANCE_KM);
+      s += w.distance * distFactor;
+    }
+
+    // Verified places boost — from GeoZoneService (curated, trust-reviewed)
+    if (w.verifiedPlaces > 0 && verifiedSet.has(p.id)) {
+      s += w.verifiedPlaces;
+    }
+
+    // Rating signal — boosts well-reviewed places slightly (consistent across modes)
+    if (p.rating != null && p.rating > 0) {
+      s += 0.15 * (p.rating / 5);
+    }
+
+    // City match — all results are already in the city, constant contribution
+    s += w.cityMatch * 0.4;
+
+    // Trip match boost — adds lift when going_soon context is active
+    if (w.tripMatch > 0) {
+      s += w.tripMatch * 0.3;
+    }
+
+    // Safety signal — prefer places with structured opening hours (proxy for legitimacy)
+    if (w.safetyScore > 0 && p.openingHours) {
+      s += w.safetyScore * 0.2;
+    }
+
+    // Vibe match — currently a constant lift per mode (trip / vibe data not local)
+    if (w.vibeMatch > 0) {
+      s += w.vibeMatch * 0.2;
+    }
+
+    return s;
+  }
+
+  return [...places].sort((a, b) => score(b) - score(a));
+}
+
+// ── Route ─────────────────────────────────────────────────────────────────────
+
+const VALID_CATEGORIES = ["for_you", "places", "food", "nightlife", "activities", "events", "beaches", "transport"];
+const VALID_CONTEXT_MODES = ["near_me", "in_city", "going_soon", "around_crew", "safe_nearby"];
+
+// OSM venue types considered adult-only (require 18+). Used to filter results
+// for callers whose effective age resolves to under 18.
+const ADULT_OSM_VENUE_TYPES = new Set([
+  "nightclub", "casino", "stripclub", "adult_gaming_centre",
+  "brothel", "swingerclub", "bar", "pub",
+]);
+
+/**
+ * Context mode labels returned to the client. Never includes exact coords.
+ */
+function contextModeLabel(mode: string, city: string | null): string {
+  switch (mode) {
+    case "near_me":      return "Near me";
+    case "in_city":      return city ? `In ${city}` : "In this city";
+    case "going_soon":   return city ? `Going to ${city}` : "Going soon";
+    case "around_crew":  return "Around my crew";
+    case "safe_nearby":  return "Safe nearby";
+    default:             return city ? `In ${city}` : "Discovery";
+  }
+}
+
+router.get("/discovery", async (req, res) => {
+  const destinationParam = (req.query.destination as string | undefined)?.trim() || undefined;
+  const latParam  = req.query.lat  ? parseFloat(req.query.lat  as string) : null;
+  const lngParam  = req.query.lng  ? parseFloat(req.query.lng  as string) : null;
+  const clientCoords =
+    latParam != null && !isNaN(latParam) && lngParam != null && !isNaN(lngParam)
+      ? { lat: latParam, lng: lngParam }
+      : null;
+
+  // User's actual GPS position — used ONLY to recompute distanceKm for nearest sort.
+  // Never used as the Overpass query centre or for geocoding; that always uses the
+  // destination coordinates so cache keys and result sets stay destination-scoped.
+  const userLatParam = req.query.userLat ? parseFloat(req.query.userLat as string) : null;
+  const userLngParam = req.query.userLng ? parseFloat(req.query.userLng as string) : null;
+  const userCoords =
+    userLatParam != null && !isNaN(userLatParam) && userLngParam != null && !isNaN(userLngParam)
+      ? { lat: userLatParam, lng: userLngParam }
+      : null;
+
+  // Optional auth — enrich with DiscoveryLocationContext when present.
+  // When authenticated + no destination param, we use discoveryCtx.targetCity as
+  // the effective destination so context-driven modes (near_me/going_soon) work
+  // without requiring the client to geocode first.
+  let discoveryCtx: DiscoveryContext | null = null;
+  let callerUserId: string | null = null;
+
+  const authHeader = req.headers.authorization;
+  const _authSc = getServiceClient();
+  if (authHeader?.startsWith("Bearer ") && _authSc) {
+    try {
+      const token = authHeader.slice(7).trim();
+      const sc = _authSc;
+      const { data: authData } = await sc.auth.getUser(token);
+      if (authData?.user) {
+        callerUserId = authData.user.id;
+        const rawMode = (req.query.context as string | undefined) ?? "";
+        const mode: DiscoveryContextMode = VALID_CONTEXT_MODES.includes(rawMode)
+          ? (rawMode as DiscoveryContextMode)
+          : "in_city";
+
+        const [prefs, locState] = await Promise.all([
+          loadPreferences(sc, authData.user.id),
+          sc.from("user_location_state")
+            .select("city, country, lat, lng")
+            .eq("user_id", authData.user.id)
+            .maybeSingle(),
+        ]);
+
+        const currentCity    = (locState.data as any)?.city ?? null;
+        const currentCountry = (locState.data as any)?.country ?? null;
+
+        discoveryCtx = await buildDiscoveryContext({
+          db: sc, userId: authData.user.id, prefs, mode,
+          currentCity, currentCountry,
+        });
+      }
+    } catch { /* degrade — non-fatal */ }
+  }
+
+  // Resolve effective destination: explicit query param takes priority; fall back
+  // to DiscoveryContext.targetCity so context-driven modes work without client geocoding.
+  const destination = destinationParam ?? discoveryCtx?.targetCity ?? undefined;
+  if (!destination) {
+    res.status(400).json({ error: "invalid_payload", message: "destination is required" });
+    return;
+  }
+
+  // Context mode: near_me | in_city | going_soon | around_crew | safe_nearby
+  const contextMode = VALID_CONTEXT_MODES.includes(req.query.context as string)
+    ? (req.query.context as string)
+    : null;
+
+  // Adjust radius based on context mode (DiscoveryContext overrides when available)
+  const defaultRadius = discoveryCtx?.radiusKm ?? (
+    contextMode === "near_me" ? 5
+    : contextMode === "safe_nearby" ? 3
+    : contextMode === "going_soon" ? 15
+    : 10
+  );
+
+  const category  = VALID_CATEGORIES.includes(req.query.category as string)
+    ? (req.query.category as string)
+    : "for_you";
+  const radiusKm  = Math.max(1, Math.min(100, parseFloat(req.query.radiusKm as string) || defaultRadius));
+  const page      = Math.max(1, parseInt(req.query.page as string) || 1);
+  const radiusM   = Math.round(radiusKm * 1000);
+  const openNow   = req.query.openNow === "1";
+  const minRating = req.query.minRating ? parseFloat(req.query.minRating as string) : null;
+  const sortBy    = req.query.sortBy === "rating" ? "rating"
+    : req.query.sortBy === "popular" ? "popular"
+    : req.query.sortBy === "nearest" ? "nearest"
+    : null;
+
+  // ── Age filter params ──────────────────────────────────────────────────────
+  const VALID_AGE_FILTERS = ["any", "open_to_me", "18_plus", "21_plus", "under_30", "30_plus", "custom"] as const;
+  type AgeFilterType = typeof VALID_AGE_FILTERS[number];
+  const rawAgeFilter = req.query.ageFilter as string | undefined;
+  const ageFilter: AgeFilterType = VALID_AGE_FILTERS.includes(rawAgeFilter as any)
+    ? (rawAgeFilter as AgeFilterType)
+    : "any";
+  const customMinAge = req.query.customMinAge ? parseInt(req.query.customMinAge as string) : null;
+  const customMaxAge = req.query.customMaxAge ? parseInt(req.query.customMaxAge as string) : null;
+
+  // Resolve caller age when ageFilter = open_to_me
+  let callerAge: number | null = null;
+  let callerDobMissing = false;
+  if (ageFilter === "open_to_me" && callerUserId) {
+    const sc = getServiceClient();
+    if (sc) {
+      const { data: profileRow } = await sc
+        .from("profiles")
+        .select("date_of_birth")
+        .eq("id", callerUserId)
+        .maybeSingle();
+      const dob = (profileRow as any)?.date_of_birth ?? null;
+      callerAge = calculateUserAge(dob);
+      if (callerAge === null) callerDobMissing = true;
+    }
+  }
+
+  /** Derive effective min/max age from the chosen filter preset */
+  function ageFilterBounds(): { min: number | null; max: number | null } | null {
+    switch (ageFilter) {
+      case "any":        return null;
+      case "18_plus":    return { min: 18, max: null };
+      case "21_plus":    return { min: 21, max: null };
+      case "under_30":   return { min: null, max: 29 };
+      case "30_plus":    return { min: 30, max: null };
+      case "custom":     return { min: customMinAge, max: customMaxAge };
+      case "open_to_me": return callerAge !== null ? { min: callerAge, max: callerAge } : null;
+      default:           return null;
+    }
+  }
+
+  const key    = cacheKey(destination, category, radiusKm);
+  const cached = cache.get(key);
+  /** Apply openNow / minRating / age filters to a set of places */
+  function applyFilters(raw: DiscoveryPlace[]): DiscoveryPlace[] {
+    let list = raw;
+    if (openNow) {
+      list = list.filter((p) => {
+        if (p.isOpenNow === null) return true; // no data → optimistic include
+        return p.isOpenNow === true;
+      });
+    }
+    if (minRating !== null && Number.isFinite(minRating)) {
+      list = list.filter((p) => {
+        if (p.rating === null) return true; // no rating data → include
+        return p.rating >= minRating!;
+      });
+    }
+    // Age-based category filter: OSM venues don't store explicit age limits, so
+    // we proxy by known adult-only venue types. Filter them out only when the
+    // effective caller age resolves to < 18 (e.g. open_to_me for a minor, or
+    // custom range capped below 18).
+    const ageBounds = ageFilterBounds();
+    if (ageBounds !== null) {
+      const effectiveMin = ageBounds.min ?? (ageBounds.max !== null && ageBounds.max < 18 ? ageBounds.max : null);
+      if (effectiveMin !== null && effectiveMin < 18) {
+        list = list.filter((p) => !ADULT_OSM_VENUE_TYPES.has((p.category ?? "").toLowerCase()));
+      }
+    }
+    if (sortBy === "rating") {
+      list = [...list].sort((a, b) => {
+        const ra = a.rating ?? -1;
+        const rb = b.rating ?? -1;
+        return rb - ra;
+      });
+    }
+    if (sortBy === "popular") {
+      list = [...list].sort((a, b) => {
+        const savedDiff = (b.savedCount ?? 0) - (a.savedCount ?? 0);
+        if (savedDiff !== 0) return savedDiff;
+        // For OSM places (and any place where savedCount is equal), use rating
+        // as a secondary popularity proxy so higher-rated venues surface first.
+        return (b.rating ?? 0) - (a.rating ?? 0);
+      });
+    }
+    if (sortBy === "nearest") {
+      list = [...list].sort((a, b) => (a.distanceKm ?? 99999) - (b.distanceKm ?? 99999));
+    }
+    return list;
+  }
+
+  const cityLabel = destination.split(",")[0]?.trim() ?? null;
+  // discoveryCtx.label (from DiscoveryLocationContext) takes precedence over generic label
+  const ctxLabel  = discoveryCtx?.label ?? (contextMode ? contextModeLabel(contextMode, cityLabel) : null);
+
+  const ageFilterMeta = {
+    ageFilter,
+    callerDobMissing: ageFilter === "open_to_me" ? callerDobMissing : false,
+    bounds: ageFilterBounds(),
+  };
+
+  if (cached && isFresh(cached)) {
+    // OSM results are cached; DB places are always re-queried (they change more often).
+    // Use userCoords for distance computation so DB places are measured from the user's
+    // actual position when userCoords are present; fall back to clientCoords otherwise.
+    const distRef = userCoords ?? clientCoords;
+    const dbPlaces = await queryDbPlaces(destination, category, distRef?.lat ?? null, distRef?.lng ?? null);
+    // When sortBy=nearest and user coords are available, recompute distanceKm from
+    // the user's actual position — cached OSM places store distance from destination centre.
+    const osmWithDist = sortBy === "nearest" && distRef
+      ? cached.places.map((p) =>
+          p.lat != null && p.lng != null
+            ? { ...p, distanceKm: Math.round(haversineKm(distRef.lat, distRef.lng, p.lat, p.lng) * 10) / 10 }
+            : p,
+        )
+      : cached.places;
+    const merged   = mergeAndDedup(osmWithDist, dbPlaces);
+    const filtered = applyFilters(merged);
+    const slice    = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+    res.json({
+      places: slice, total: filtered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
+      sourceSummary: { seededDbCount: dbPlaces.length, osmCount: cached.places.length, userCreatedCount: 0 },
+    });
+    return;
+  }
+
+  try {
+    const coords = clientCoords ?? await geocodeCached(destination);
+    if (!coords) {
+      res.json({ places: [], total: 0, destination, context: ctxLabel, cached: false, ageFilterMeta,
+        sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 } });
+      return;
+    }
+
+    // Query OSM and DB in parallel for speed.
+    // DB distance computation uses userCoords when available so that nearest
+    // sort measures from the user's actual position. OSM always queries from
+    // the destination centre — this is what gets cached and must not use user coords.
+    const distRef = userCoords ?? coords;
+    const [osmPlaces, dbPlaces] = await Promise.all([
+      queryOverpass(coords.lat, coords.lng, radiusM, category),
+      queryDbPlaces(destination, category, distRef.lat, distRef.lng),
+    ]);
+
+    // Enrich OSM places with real save counts from discovery_places before
+    // merging and caching.  A single batch SELECT by osm_id attaches savedCount
+    // to any place saved by at least one user so the popular sort can order OSM
+    // results by real traveler demand instead of relying solely on the OSM rating
+    // field.  Enrichment runs before the cache write so subsequent cache-hit
+    // requests get the counts without an extra round trip (counts are at most
+    // 2 hours stale, which is acceptable for a popularity signal).
+    const enrichedOsm = osmPlaces.length > 0
+      ? await enrichOsmSavedCounts(osmPlaces)
+      : osmPlaces;
+
+    // When sortBy=nearest, recompute OSM place distances from the user's position
+    // (OSM query ran from destination centre; cached entry will too on next request).
+    const osmForMerge = sortBy === "nearest" && userCoords
+      ? enrichedOsm.map((p) =>
+          p.lat != null && p.lng != null
+            ? { ...p, distanceKm: Math.round(haversineKm(userCoords.lat, userCoords.lng, p.lat, p.lng) * 10) / 10 }
+            : p,
+        )
+      : enrichedOsm;
+
+    const places = mergeAndDedup(osmForMerge, dbPlaces);
+
+    // Only cache when we have results — avoids locking out a destination for
+    // 2 hours if Overpass timed out or returned nothing transiently.
+    if (enrichedOsm.length > 0) {
+      cache.set(key, { places: enrichedOsm, cachedAt: Date.now() });
+    }
+
+    // COMPASS_V1_RULE_BASED_ENABLED: for for_you tab, use Compass pipeline scoring
+    // instead of the rule-based scoreWithContext to rank OSM places.
+    if (category === "for_you" && callerUserId) {
+      const compassSc = getServiceClient();
+      if (compassSc) {
+        try {
+          const compassFlagOn = await isEnabled(compassSc, "COMPASS_V1_RULE_BASED_ENABLED");
+          if (compassFlagOn) {
+            const compassProfile = await getCompassProfile(compassSc, callerUserId);
+            const compassContext = buildCompassContext(compassProfile, defaultSignals(compassProfile));
+            const compassItems   = places.map(discoveryPlaceToCompassItem);
+
+            // Use the full feed-intelligence stack (pipeline + active-user
+            // reward boosts + fair exposure) to rank ALL candidate items.
+            // rankItemsForDiscovery returns a flat sorted list with no page-
+            // size limit so discovery applies its own pagination below.
+            const scored = await rankItemsForDiscovery(
+              compassItems, compassProfile, compassContext, compassSc,
+            );
+
+            // Build lookup so we can restore all original DiscoveryPlace fields
+            const placeById = new Map(places.map((p) => [p.id, p]));
+            const compassRanked: DiscoveryPlace[] = scored.map((r) => {
+              const originalId = r.item.id.replace(/^discovery:/, "");
+              return placeById.get(originalId) ?? {
+                id: originalId, name: String(r.item.contentBody ?? ""),
+                category: (r.item.interestTags ?? [])[0] ?? "places",
+                type: null, description: null, distanceKm: null,
+                lat: null, lng: null, tags: [], address: null,
+                website: null, phone: null, openingHours: null,
+                rating: null, isOpenNow: null,
+              };
+            });
+            // Compass is authoritative: blocked/rejected items are excluded.
+            // Only pipeline-passed items appear when the flag is enabled.
+            const merged = compassRanked;
+            const cFiltered  = applyFilters(merged);
+            const cSlice     = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+            res.json({ places: cSlice, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
+              sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
+            return;
+          }
+        } catch { /* fall through to normal rule-based path */ }
+      }
+    }
+
+    // Apply context-aware composite ranking when DiscoveryContext is available
+    const ranked  = discoveryCtx ? scoreWithContext(places, discoveryCtx) : places;
+    const filtered = applyFilters(ranked);
+    const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+    res.json({ places: slice, total: filtered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
+      sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
+  } catch (err) {
+    req.log.error({ err }, "discovery route failed");
+    res.json({ places: [], total: 0, destination, context: ctxLabel ?? null, cached: false, ageFilterMeta: null,
+      sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 } });
+  }
+});
+
+// ── Unified discovery feed ─────────────────────────────────────────────────────
+//
+// GET /api/discovery/feed
+//
+// A single, cursor-paginated endpoint that merges OSM + discovery_places DB
+// results and returns the unified envelope expected by the Discovery screen.
+//
+// Query params:
+//   city / destination  string  City name (synonyms)
+//   lat / lng           number  Skip geocoding when both provided
+//   category            string  Single category (default: for_you)
+//   categories          string  Comma-separated multi-category e.g. "food,beaches"
+//   radiusKm            number  1–100 (default: 10)
+//   limit               number  1–50 (default: 20)
+//   cursor              string  Opaque pagination cursor (base64url-encoded offset)
+//   includeEvents       0|1     Include events section (default: 1)
+//   includePlaces       0|1     Include places section (default: 1)
+//
+// Response:
+//   { places, events, posts, memories, sections, nextCursor, total,
+//     destination, context, sourceSummary: { seededDbCount, osmCount, userCreatedCount } }
+
+function encodeOffset(n: number): string {
+  return Buffer.from(String(n)).toString("base64url");
+}
+
+function decodeOffset(cursor: string): number {
+  try { return Math.max(0, parseInt(Buffer.from(cursor, "base64url").toString("utf8"), 10)); }
+  catch { return 0; }
+}
+
+/**
+ * GET /api/discovery/counts
+ *
+ * Returns result counts for all countable Discovery categories in a single HTTP
+ * round-trip.  The server geocodes the destination once (using the dedup cache)
+ * and fans out to all categories in parallel — using the per-category in-memory
+ * cache wherever possible.
+ *
+ * Replaces the 7 parallel /api/discovery requests that the client used to fire
+ * to populate category-tab badges.
+ *
+ * Query params:
+ *   destination  string  (required)
+ *   radiusKm     number  1–100 (default: 10)
+ *   lat / lng    number  optional — skip Nominatim when already resolved
+ */
+const COUNTABLE_CATS = ["places", "food", "nightlife", "activities", "events", "beaches", "transport"] as const;
+
+router.get("/discovery/counts", async (req, res) => {
+  const destination = ((req.query.destination as string | undefined) ?? "").trim();
+  if (!destination) {
+    sendError(res, "invalid_payload", "destination is required");
+    return;
+  }
+
+  const radiusKm     = Math.max(1, Math.min(100, parseFloat(req.query.radiusKm as string) || 10));
+  const latParam     = req.query.lat  ? parseFloat(req.query.lat  as string) : null;
+  const lngParam     = req.query.lng  ? parseFloat(req.query.lng  as string) : null;
+  const clientCoords =
+    latParam != null && !isNaN(latParam) && lngParam != null && !isNaN(lngParam)
+      ? { lat: latParam, lng: lngParam }
+      : null;
+
+  // Resolve coords — one geocode call with full dedup, or skip if supplied.
+  const coords = clientCoords ?? await geocodeCached(destination);
+  if (!coords) {
+    res.json({ counts: {}, destination, cached: false });
+    return;
+  }
+
+  const radiusM = Math.round(radiusKm * 1_000);
+
+  try {
+    const results = await Promise.allSettled(
+      COUNTABLE_CATS.map(async (cat) => {
+        const k   = cacheKey(destination, cat, radiusKm);
+        const hit = cache.get(k);
+        if (hit && isFresh(hit)) {
+          // Cache warm — zero network calls needed.
+          return { cat, total: hit.places.length };
+        }
+        // Cache cold — fetch Overpass + DB, then populate cache for subsequent requests.
+        const [osmPlaces, dbPlaces] = await Promise.all([
+          queryOverpass(coords.lat, coords.lng, radiusM, cat),
+          queryDbPlaces(destination, cat, coords.lat, coords.lng),
+        ]);
+        const enriched = osmPlaces.length > 0 ? await enrichOsmSavedCounts(osmPlaces) : osmPlaces;
+        if (enriched.length > 0) cache.set(k, { places: enriched, cachedAt: Date.now() });
+        return { cat, total: mergeAndDedup(enriched, dbPlaces).length };
+      }),
+    );
+
+    const counts: Partial<Record<string, number>> = {};
+    for (const r of results) {
+      if (r.status === "fulfilled") counts[r.value.cat] = r.value.total;
+    }
+
+    res.set("Cache-Control", "public, max-age=300"); // 5-minute browser/CDN cache
+    res.json({ counts, destination, cached: true });
+  } catch (err) {
+    req.log.error({ err }, "discovery/counts failed");
+    res.json({ counts: {}, destination, cached: false });
+  }
+});
+
+router.get("/discovery/feed", async (req, res) => {
+  // ── Params ─────────────────────────────────────────────────────────────────
+  const cityParam    = ((req.query.city ?? req.query.destination) as string | undefined)?.trim() || undefined;
+  const latParam     = req.query.lat ? parseFloat(req.query.lat as string) : null;
+  const lngParam     = req.query.lng ? parseFloat(req.query.lng as string) : null;
+  const clientCoords =
+    latParam != null && !isNaN(latParam) && lngParam != null && !isNaN(lngParam)
+      ? { lat: latParam, lng: lngParam }
+      : null;
+
+  if (!cityParam && !clientCoords) {
+    sendError(res, "invalid_payload", "city or lat+lng is required");
+    return;
+  }
+
+  const rawCats = (req.query.categories as string | undefined)
+    ?.split(",").map((s) => s.trim()).filter((s) => VALID_CATEGORIES.includes(s)) ?? [];
+  const singleCat = VALID_CATEGORIES.includes(req.query.category as string)
+    ? (req.query.category as string)
+    : "for_you";
+  const effectiveCats = rawCats.length > 0 ? rawCats : [singleCat];
+
+  const radiusKm     = Math.max(1, Math.min(100, parseFloat(req.query.radiusKm as string) || 10));
+  const limit        = Math.max(1, Math.min(50, parseInt(req.query.limit as string) || 20));
+  const offset       = req.query.cursor ? decodeOffset(req.query.cursor as string) : 0;
+  const includePlaces = req.query.includePlaces !== "0";
+  const radiusM      = Math.round(radiusKm * 1000);
+
+  // ── Resolve effective destination ──────────────────────────────────────────
+  let destination = cityParam;
+  let coords = clientCoords;
+
+  if (!coords) {
+    const geo = await geocodeCached(destination!);
+    if (!geo) {
+      res.json({
+        places: [], events: [], posts: [], memories: [], sections: [],
+        nextCursor: null, total: 0, destination: destination ?? null, context: null,
+        sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
+      });
+      return;
+    }
+    coords = { lat: geo.lat, lng: geo.lng };
+    if (!destination) destination = geo.display.split(",")[0]?.trim();
+  }
+
+  // ── Fetch places across all requested categories ───────────────────────────
+  try {
+    const categoryResults = await Promise.all(
+      effectiveCats.map(async (cat) => {
+        const [rawOsmPlaces, dbPlaces] = includePlaces
+          ? await Promise.all([
+              queryOverpass(coords!.lat, coords!.lng, radiusM, cat),
+              queryDbPlaces(destination ?? "", cat, coords!.lat, coords!.lng),
+            ])
+          : [[], [] as DiscoveryPlace[]];
+        const osmPlaces = await enrichOsmSavedCounts(rawOsmPlaces);
+        return { osmPlaces, dbPlaces, merged: mergeAndDedup(osmPlaces, dbPlaces) };
+      }),
+    );
+
+    // Flatten, dedup across categories by id
+    const seen = new Set<string>();
+    const allPlaces: DiscoveryPlace[] = [];
+    let totalOsm = 0;
+    let totalDb  = 0;
+    for (const { osmPlaces, dbPlaces, merged } of categoryResults) {
+      totalOsm += osmPlaces.length;
+      totalDb  += dbPlaces.length;
+      for (const p of merged) {
+        if (!seen.has(p.id)) { seen.add(p.id); allPlaces.push(p); }
+      }
+    }
+
+    const total     = allPlaces.length;
+    const slice     = allPlaces.slice(offset, offset + limit).map(toPublic);
+    const nextOff   = offset + limit;
+    const nextCursor = nextOff < total ? encodeOffset(nextOff) : null;
+
+    res.json({
+      places: slice,
+      events:   [],
+      posts:    [],
+      memories: [],
+      sections: [],
+      nextCursor,
+      total,
+      destination: destination ?? null,
+      context: null,
+      sourceSummary: { seededDbCount: totalDb, osmCount: totalOsm, userCreatedCount: 0 },
+    });
+  } catch (err) {
+    req.log.error({ err }, "discovery/feed failed");
+    res.json({
+      places: [], events: [], posts: [], memories: [], sections: [],
+      nextCursor: null, total: 0, destination: destination ?? null, context: null,
+      sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
+    });
+  }
+});
+
+// ── Community discovery route ──────────────────────────────────────────────────
+//
+// GET /api/discovery/community?city=Cebu[&type=hidden_gem|traveler_pick|all][&limit=20]
+//
+// Queries the `discovery_places` table and joins `profiles` to resolve
+// submitted_by → { id, name, avatarUrl } so HighlightRing can fire on real UUIDs.
+// No auth required — all community places are publicly readable.
+
+export interface CommunityDiscoveryItem {
+  id: string;
+  city: string;
+  name: string;
+  placeType: "hidden_gem" | "traveler_pick";
+  category: string;
+  neighborhood: string | null;
+  blurb: string | null;
+  imageUrl: string | null;
+  submittedBy: { id: string; name: string; avatarUrl: string | null } | null;
+  savedCount: number;
+  tag: string | null;
+  note: string | null;
+  rating: number | null;
+  source: string;
+  status: string;
+  verified: boolean;
+  createdAt: string;
+  lat: number | null;
+  lng: number | null;
+}
+
+const VALID_PLACE_TYPES = new Set(["hidden_gem", "traveler_pick", "all"]);
+
+router.get("/discovery/community", async (req, res) => {
+  const city = (req.query.city as string | undefined)?.trim();
+  if (!city) {
+    sendError(res, "invalid_payload", "city is required");
+    return;
+  }
+
+  if (!getServiceClient()) {
+    res.json({ items: [], city, total: 0 });
+    return;
+  }
+
+  // Accept place_type (canonical) or type (backward-compatible alias)
+  const rawType  = (req.query.place_type ?? req.query.type) as string | undefined;
+  const typeFilter = VALID_PLACE_TYPES.has(rawType ?? "") ? rawType! : "all";
+  const limit    = Math.max(1, Math.min(100, parseInt(req.query.limit as string) || 20));
+  const sortBy   = (req.query.sortBy as string | undefined) === "rating" ? "rating"
+    : (req.query.sortBy as string | undefined) === "popular" ? "popular"
+    : null;
+
+  // Age filter params for community discovery
+  const VALID_AGE_FILTERS_COMM = ["any", "open_to_me", "18_plus", "21_plus", "under_30", "30_plus", "custom"] as const;
+  const rawAgeFilter = req.query.ageFilter as string | undefined;
+  const ageFilterComm = VALID_AGE_FILTERS_COMM.includes(rawAgeFilter as any)
+    ? (rawAgeFilter as typeof VALID_AGE_FILTERS_COMM[number])
+    : "any";
+  const customMinAge = req.query.customMinAge ? parseInt(req.query.customMinAge as string) : null;
+  const customMaxAge = req.query.customMaxAge ? parseInt(req.query.customMaxAge as string) : null;
+
+  // Optional auth — needed only for open_to_me to resolve caller DOB
+  let commCallerAge: number | null = null;
+  let commCallerDobMissing = false;
+  if (ageFilterComm === "open_to_me") {
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith("Bearer ")) {
+      const sc = getServiceClient();
+      if (sc) {
+        try {
+          const token = authHeader.slice(7).trim();
+          const { data: authData } = await sc.auth.getUser(token);
+          if (authData?.user) {
+            const { data: profileRow } = await sc
+              .from("profiles")
+              .select("date_of_birth")
+              .eq("id", authData.user.id)
+              .maybeSingle();
+            const dob = (profileRow as any)?.date_of_birth ?? null;
+            commCallerAge = calculateUserAge(dob);
+          }
+        } catch { /* degrade gracefully */ }
+      }
+    }
+    if (commCallerAge === null) commCallerDobMissing = true;
+  }
+
+  function communityAgeBounds(): { min: number | null; max: number | null } | null {
+    switch (ageFilterComm) {
+      case "any":        return null;
+      case "18_plus":    return { min: 18, max: null };
+      case "21_plus":    return { min: 21, max: null };
+      case "under_30":   return { min: null, max: 29 };
+      case "30_plus":    return { min: 30, max: null };
+      case "custom":     return (customMinAge !== null || customMaxAge !== null)
+                           ? { min: customMinAge, max: customMaxAge }
+                           : null;
+      case "open_to_me": return commCallerAge !== null
+                           ? { min: commCallerAge, max: commCallerAge }
+                           : null;
+      default:           return null;
+    }
+  }
+
+  try {
+    const sc = getServiceClient()!;
+
+    let query = sc
+      .from("discovery_places")
+      .select(`
+        id,
+        city,
+        name,
+        place_type,
+        category,
+        neighborhood,
+        blurb,
+        image_url,
+        submitted_by,
+        saved_count,
+        tag,
+        note,
+        rating,
+        source,
+        status,
+        verified,
+        created_at,
+        lat,
+        lng,
+        profiles:submitted_by!left ( id, name, avatar_url, username )
+      `)
+      .ilike("city", city.trim())
+      .eq("status", "active")
+      .order(sortBy === "rating" ? "rating" : sortBy === "popular" ? "saved_count" : "created_at", { ascending: false, nullsFirst: false });
+
+    // Secondary tiebreaker: when primary scores are tied or all NULL (e.g. a city
+    // with no saves yet on popular sort), fall back to newest-first so the ordering
+    // is deterministic and never silently reverts to arbitrary DB natural order.
+    if (sortBy === "popular" || sortBy === "rating") {
+      query = query.order("created_at", { ascending: false });
+    }
+
+    query = query.limit(limit);
+
+    if (typeFilter !== "all") {
+      query = query.eq("place_type", typeFilter);
+    }
+
+    // Age filtering: show only places accessible to the effective caller age.
+    // Interpretation: a place is accessible to someone of age X when
+    //   min_age IS NULL OR min_age <= X  (place doesn't require more than X years)
+    //   max_age IS NULL OR max_age >= X  (place doesn't cap at below X years)
+    const ageBoundsComm = communityAgeBounds();
+    if (ageBoundsComm) {
+      if (ageBoundsComm.min !== null) {
+        query = query.or(`min_age.is.null,min_age.lte.${ageBoundsComm.min}`);
+      }
+      if (ageBoundsComm.max !== null) {
+        query = query.or(`max_age.is.null,max_age.gte.${ageBoundsComm.max}`);
+      }
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      req.log.error({ err: error }, "discovery/community query failed");
+      res.json({ items: [], city, total: 0 });
+      return;
+    }
+
+    const items: CommunityDiscoveryItem[] = (data ?? []).map((row: any) => {
+      const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+      return {
+        id:           row.id,
+        city:         row.city,
+        name:         row.name,
+        placeType:    (row.place_type ?? "hidden_gem") as "hidden_gem" | "traveler_pick",
+        category:     row.category ?? "hidden_gem",
+        neighborhood: row.neighborhood ?? null,
+        blurb:        row.blurb ?? null,
+        imageUrl:     row.image_url ?? null,
+        submittedBy:  profile
+          ? {
+              id:        profile.id as string,
+              name:      (profile.name ?? "Traveler") as string,
+              avatarUrl: (profile.avatar_url ?? null) as string | null,
+              handle:    (profile.username ?? null) as string | null,
+            }
+          : null,
+        savedCount: (row.saved_count as number) ?? 0,
+        tag:       row.tag ?? null,
+        note:      row.note ?? null,
+        rating:    row.rating != null ? parseFloat(row.rating) : null,
+        source:    row.source ?? "traveler",
+        status:    row.status ?? "provisional",
+        verified:  Boolean(row.verified),
+        createdAt: row.created_at as string,
+        lat:       row.lat != null ? parseFloat(row.lat) : null,
+        lng:       row.lng != null ? parseFloat(row.lng) : null,
+      };
+    });
+
+    // Batch-fetch saved state (optional auth — non-fatal when unauthenticated)
+    const placeIds = items.map((i) => i.id);
+    const savedPlaceIds = new Set<string>();
+    try {
+      const authHeaderComm = req.headers.authorization;
+      const commSc = getServiceClient();
+      if (authHeaderComm?.startsWith("Bearer ") && commSc && placeIds.length > 0) {
+        const { data: authDataComm } = await commSc.auth.getUser(authHeaderComm.slice(7).trim());
+        if (authDataComm?.user) {
+          const { data: userCols } = await commSc
+            .from("collections")
+            .select("id")
+            .eq("owner_id", authDataComm.user.id);
+          const colIds = ((userCols ?? []) as any[]).map((c) => c.id as string);
+          if (colIds.length > 0) {
+            const { data: savedItems } = await commSc
+              .from("collection_items")
+              .select("entity_id")
+              .eq("entity_type", "place")
+              .in("collection_id", colIds)
+              .in("entity_id", placeIds);
+            for (const s of (savedItems ?? []) as any[]) savedPlaceIds.add((s as any).entity_id as string);
+          }
+        }
+      }
+    } catch { /* non-fatal */ }
+
+    res.json({
+      items: items.map((i) => ({ ...i, isSaved: savedPlaceIds.has(i.id) })),
+      city,
+      total: items.length,
+      ageFilterMeta: {
+        ageFilter:         ageFilterComm,
+        callerDobMissing:  ageFilterComm === "open_to_me" ? commCallerDobMissing : false,
+        bounds:            communityAgeBounds(),
+      },
+    });
+  } catch (err) {
+    req.log.error({ err }, "discovery/community route failed");
+    res.json({ items: [], city, total: 0 });
+  }
+});
+
+/**
+ * POST /api/discovery/community  — submit a new community place (hidden gem or traveler pick).
+ * Requires auth. Inserts via service role client to bypass RLS (P-256 JWT key rotation).
+ */
+router.post("/discovery/community", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+
+  const sc = getServiceClient();
+  if (!sc) {
+    res.status(503).json({ ok: false, reason: "server_not_configured" });
+    return;
+  }
+
+  const {
+    city,
+    name,
+    place_type,
+    category,
+    neighborhood,
+    blurb,
+    tag,
+    note,
+    rating,
+    lat,
+    lng,
+  } = req.body as Record<string, unknown>;
+
+  if (!city || typeof city !== "string" || city.trim().length === 0) {
+    sendError(res, "invalid_payload", "city is required");
+    return;
+  }
+  if (!name || typeof name !== "string" || name.trim().length === 0) {
+    sendError(res, "invalid_payload", "name is required");
+    return;
+  }
+  const VALID_PLACE_TYPES_POST = new Set(["hidden_gem", "traveler_pick"]);
+  if (!place_type || !VALID_PLACE_TYPES_POST.has(place_type as string)) {
+    sendError(res, "invalid_payload", "place_type must be hidden_gem or traveler_pick");
+    return;
+  }
+
+  const ratingNum = rating != null ? parseFloat(String(rating)) : null;
+  if (ratingNum !== null && (isNaN(ratingNum) || ratingNum < 0 || ratingNum > 5)) {
+    sendError(res, "invalid_payload", "rating must be between 0 and 5");
+    return;
+  }
+
+  const latNum = lat != null ? parseFloat(String(lat)) : null;
+  const lngNum = lng != null ? parseFloat(String(lng)) : null;
+  if (latNum !== null && (isNaN(latNum) || latNum < -90 || latNum > 90)) {
+    sendError(res, "invalid_payload", "lat must be between -90 and 90");
+    return;
+  }
+  if (lngNum !== null && (isNaN(lngNum) || lngNum < -180 || lngNum > 180)) {
+    sendError(res, "invalid_payload", "lng must be between -180 and 180");
+    return;
+  }
+
+  const cityTrim = (city as string).trim();
+  const nameTrim = (name as string).trim();
+
+  // ── Duplicate check ──────────────────────────────────────────────────────────
+  // Reject if an active place with the same city + name already exists (case-insensitive).
+  const { data: existingPlace, error: dupeCheckErr } = await sc
+    .from("discovery_places")
+    .select("id")
+    .ilike("city", cityTrim)
+    .ilike("name", nameTrim)
+    .eq("status", "active")
+    .limit(1)
+    .maybeSingle();
+
+  if (dupeCheckErr) {
+    sendError(res, "db_error", dupeCheckErr.message);
+    return;
+  }
+
+  if (existingPlace) {
+    res.status(409).json({
+      ok: false,
+      error: "duplicate_place",
+      message: "A place with that name already exists in this city",
+    });
+    return;
+  }
+
+  // Auto-geocode the place name + city when the caller didn't supply coordinates.
+  // A 4-second timeout prevents this from blocking the response when Nominatim is slow.
+  // If geocoding fails or times out, we insert with null coords — the place still appears
+  // in the list view; it just won't be pinned on the map.
+  let finalLat = latNum;
+  let finalLng = lngNum;
+  let geocoded = false;
+  if (finalLat === null || finalLng === null) {
+    try {
+      const neighborhoodStr = typeof neighborhood === "string" && neighborhood.trim()
+        ? `${neighborhood.trim()}, `
+        : "";
+      const geoQuery = `${(name as string).trim()}, ${neighborhoodStr}${(city as string).trim()}`;
+      const geoResult = await Promise.race([
+        geocode(geoQuery),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 4_000)),
+      ]);
+      if (geoResult) {
+        finalLat = geoResult.lat;
+        finalLng = geoResult.lng;
+        geocoded = true;
+      }
+    } catch {
+      /* non-fatal — insert without coordinates */
+    }
+  }
+
+  try {
+    const { data, error } = await sc
+      .from("discovery_places")
+      .insert({
+        city:         cityTrim,
+        name:         nameTrim,
+        place_type:   place_type as string,
+        category:     typeof category === "string" ? category.trim() : null,
+        neighborhood: typeof neighborhood === "string" ? neighborhood.trim() || null : null,
+        blurb:        typeof blurb === "string" ? blurb.trim() || null : null,
+        tag:          typeof tag === "string" ? tag.trim() || null : null,
+        note:         typeof note === "string" ? note.trim() || null : null,
+        rating:       ratingNum,
+        lat:          finalLat,
+        lng:          finalLng,
+        submitted_by: auth.user.id,
+        source:       "traveler",
+        status:       "active",
+        verified:     false,
+      })
+      .select("id, name, city, place_type, status, created_at")
+      .single();
+
+    if (error) {
+      req.log.error({ err: error }, "discovery/community POST insert failed");
+      res.status(500).json({ ok: false, reason: "insert_failed" });
+      return;
+    }
+
+    res.status(201).json({ ok: true, place: data, geocoded });
+  } catch (err) {
+    req.log.error({ err }, "discovery/community POST unexpected error");
+    res.status(500).json({ ok: false, reason: "unexpected_error" });
+  }
+});
+
+/**
+ * POST /api/discovery/community/:placeId/save  — save a community discovery place.
+ * Increments saved_count on discovery_places and upserts a row in
+ * discovery_place_saves so the user's saved set persists across sessions.
+ * Requires migrations 0029_discovery_places.sql and 0062_discovery_place_saves.sql.
+ * Gracefully returns ok:false if either table does not exist yet.
+ */
+router.post("/discovery/community/:placeId/save", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { placeId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(placeId)) {
+    sendError(res, "invalid_payload", "Invalid place id");
+    return;
+  }
+  const sc = getServiceClient();
+  if (!sc) { res.json({ ok: false, reason: "server_not_configured" }); return; }
+  try {
+    const { data: place, error: fetchErr } = await sc
+      .from("discovery_places")
+      .select("id, saved_count")
+      .eq("id", placeId)
+      .maybeSingle();
+    if (fetchErr) { res.json({ ok: false, reason: "unavailable" }); return; }
+    if (!place) { sendError(res, "not_found", "Place not found"); return; }
+    const { error: updateErr } = await sc
+      .from("discovery_places")
+      .update({ saved_count: ((place as any).saved_count ?? 0) + 1 })
+      .eq("id", placeId);
+    if (updateErr) { res.json({ ok: false, reason: "unavailable" }); return; }
+    // Record the per-user save so saved-ids endpoint can return it later.
+    const { error: upsertErr } = await sc
+      .from("discovery_place_saves")
+      .upsert({ user_id: user.id, place_id: placeId }, { onConflict: "user_id,place_id" });
+    if (upsertErr) { res.json({ ok: false, reason: "unavailable" }); return; }
+    res.json({ ok: true, placeId });
+  } catch {
+    res.json({ ok: false, reason: "unavailable" });
+  }
+});
+
+/**
+ * GET /api/discovery/community/saved-ids
+ * Returns the list of community place IDs saved by the current user.
+ * Used by the mobile app to pre-populate the filled-bookmark state across sessions.
+ * Returns { ids: string[] } — empty array on any error (fail-open).
+ * Requires migration 0062_discovery_place_saves.sql.
+ */
+router.get("/discovery/community/saved-ids", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const sc = getServiceClient();
+  if (!sc) { res.json({ ids: [] }); return; }
+  try {
+    const { data, error } = await sc
+      .from("discovery_place_saves")
+      .select("place_id")
+      .eq("user_id", user.id);
+    if (error) { res.json({ ids: [] }); return; }
+    res.json({ ids: (data ?? []).map((r: { place_id: string }) => r.place_id) });
+  } catch {
+    res.json({ ids: [] });
+  }
+});
+
+// ── Place reports ──────────────────────────────────────────────────────────────
+
+const PLACE_REPORT_REASONS = [
+  "spam", "offensive", "inaccurate", "unsafe", "duplicate", "other",
+] as const;
+
+const placeReportSchema = z.object({
+  reason: z.enum(PLACE_REPORT_REASONS),
+  notes:  z.string().max(500).optional(),
+});
+
+/**
+ * POST /api/discovery/community/:placeId/report
+ * Submit a moderation report for a community discovery place.
+ * One report per (place, reporter) pair — subsequent calls from the same user
+ * update the existing row (upsert).
+ */
+router.post("/discovery/community/:placeId/report", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { placeId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(placeId)) {
+    sendError(res, "invalid_payload", "Invalid place id");
+    return;
+  }
+
+  const parsed = placeReportSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { res.status(503).json({ ok: false, reason: "server_not_configured" }); return; }
+
+  // Verify the place exists and is active
+  const { data: place, error: placeErr } = await sc
+    .from("discovery_places")
+    .select("id")
+    .eq("id", placeId)
+    .maybeSingle();
+
+  if (placeErr || !place) {
+    sendError(res, "not_found", "Place not found");
+    return;
+  }
+
+  const { error } = await sc
+    .from("discovery_place_reports")
+    .upsert(
+      {
+        place_id:    placeId,
+        reporter_id: user.id,
+        reason:      parsed.data.reason,
+        notes:       parsed.data.notes ?? null,
+        created_at:  new Date().toISOString(),
+      },
+      { onConflict: "place_id,reporter_id" },
+    );
+
+  if (error) {
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.json({ ok: true });
+});
+
+export default router;

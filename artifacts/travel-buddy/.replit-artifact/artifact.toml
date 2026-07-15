@@ -1,0 +1,35 @@
+kind = "mobile"
+previewPath = "/"
+title = "Travel Buddy"
+version = "1.0.0"
+id = "artifacts/travel-buddy"
+router = "expo-domain"
+
+[[integratedSkills]]
+name = "expo"
+version = "1.0.0"
+
+[[services]]
+ensurePreviewReachable = "/status"
+name = "expo"
+paths = [ "/" ]
+localPort = 20682
+
+[services.development]
+run = "pnpm --filter @workspace/travel-buddy run dev"
+
+[services.production]
+
+[services.production.build]
+args = ["node", "artifacts/travel-buddy/scripts/build.js"]
+
+[services.production.run]
+args = ["node", "artifacts/travel-buddy/server/serve.js"]
+
+[services.production.run.env]
+PORT = "20682"
+BASE_PATH = "/"
+
+[services.env]
+PORT = "20682"
+BASE_PATH = "/"

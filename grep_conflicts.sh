@@ -1,0 +1,1 @@
+grep -r "<<<<<<<" . --include="*.md" > conflict_files.txt
