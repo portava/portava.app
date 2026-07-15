@@ -174,8 +174,29 @@ export function GlobalTimePicker({
             )}
           </ScrollView>
 
+          {/* Web fallback: browser-native time input for custom */}
+          {showNative && Platform.OS === 'web' && (
+            <View style={s.webPickerRow}>
+              <input
+                type="time"
+                value={toHHmm(nativeDate)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (!v) return;
+                  const d = fromHHmm(v);
+                  if (d) setNativeDate(d);
+                }}
+                style={webInputStyle}
+                aria-label="Select time"
+              />
+              <Pressable style={s.doneBtn} onPress={confirmCustom}>
+                <Text style={s.doneBtnText}>Done</Text>
+              </Pressable>
+            </View>
+          )}
+
           {/* Native time picker for custom */}
-          {showNative && (
+          {showNative && Platform.OS !== 'web' && (
             <>
               <DateTimePicker
                 mode="time"
@@ -195,6 +216,18 @@ export function GlobalTimePicker({
     </Modal>
   );
 }
+
+const webInputStyle: React.CSSProperties = {
+  flex: 1,
+  border: `1px solid ${color.haze}`,
+  borderRadius: radius.md,
+  background: color.paper,
+  fontSize: 15,
+  fontFamily: 'inherit',
+  color: color.ink,
+  padding: '8px 12px',
+  minWidth: 0,
+};
 
 const s = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end' },
@@ -229,6 +262,10 @@ const s = StyleSheet.create({
   rowLabelSelected: { color: color.signal },
   rowSub: { ...t.small, color: color.mute },
   rowSubSelected: { color: color.signal },
+  webPickerRow: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    paddingHorizontal: space.xl, paddingVertical: space.md,
+  },
   doneBtn: {
     alignItems: 'flex-end', paddingHorizontal: space.xl, paddingVertical: space.md,
   },
