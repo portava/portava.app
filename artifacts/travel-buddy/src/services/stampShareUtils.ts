@@ -50,8 +50,11 @@ function resolveWebOrigin(): string {
  *
  * Deep link:  travelbuddy://passport/@<username>?stamp=<id>  (with username)
  *             travelbuddy://stamps/<id>                      (without username)
- * Web URL:    <origin>/u/<username>                          (with username)
+ * Web URL:    <origin>/u/<username>?stamp=<id>               (with username)
  *             <origin>/passport                              (without username)
+ *
+ * The ?stamp=<id> query on the web URL lets the share-page server render a
+ * stamp-specific Open Graph preview (label + artwork) in chat apps.
  */
 export function makeStampShareLinks(
   stamp: PassportStampNew,
@@ -64,7 +67,7 @@ export function makeStampShareLinks(
     const u = encodeURIComponent(username);
     return {
       deepLink: `travelbuddy://passport/@${u}?stamp=${id}`,
-      webUrl: `${base}/u/${u}`,
+      webUrl: `${base}/u/${u}?stamp=${id}`,
     };
   }
   return {

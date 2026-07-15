@@ -797,6 +797,201 @@ async function renderOgPng(card: OgCardData | null): Promise<Buffer> {
   return sharp(Buffer.from(buildPassportOgSvg(card))).png().toBuffer();
 }
 
+/* ===========================================================================
+ * Stamp share preview support (?stamp=<id> on /u/<username> links)
+ * ===========================================================================
+ * Crawlers are always unauthenticated, so a stamp is only previewable when:
+ *   - the owner's profile is publicly visible (full / followers_only), AND
+ *   - the stamp belongs to that owner, is not revoked, and is public.
+ * Anything else falls back to the regular passport preview so link previews
+ * never leak private stamps or account state.
+ */
+
+const STAMP_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+interface StampPreviewData {
+  label: string;
+  artworkUrl: string | null;
+  city: string | null;
+  country: string | null;
+  earnedAt: string | null;
+}
+
+/**
+ * Load a publicly-visible stamp owned by `ownerId`. Returns null on any
+ * failure (missing tables, revoked, non-public, wrong owner) — never throws.
+ */
+async function fetchPublicStampPreview(
+  sc: any,
+  ownerId: string,
+  stampId: string,
+): Promise<StampPreviewData | null> {
+  if (!STAMP_UUID_RE.test(stampId)) return null;
+  try {
+    const BASE_COLS = "id, city, country, earned_at, title_override, visibility, is_revoked";
+    let { data, error } = await sc
+      .from("user_stamps")
+      .select(`${BASE_COLS}, stamp_definitions(name, stamp_type, universal_artwork_url)`)
+      .eq("id", stampId)
+      .eq("user_id", ownerId)
+      .maybeSingle();
+
+    // universal_artwork_url is added by a later migration — retry without it.
+    if (error && (error as any).code === "42703") {
+      ({ data, error } = await sc
+        .from("user_stamps")
+        .select(`${BASE_COLS}, stamp_definitions(name, stamp_type)`)
+        .eq("id", stampId)
+        .eq("user_id", ownerId)
+        .maybeSingle());
+    }
+
+    if (error || !data) return null;
+    if (data.is_revoked) return null;
+    // Crawlers are anonymous: only public stamps may be previewed.
+    if (data.visibility && data.visibility !== "public") return null;
+
+    const def = data.stamp_definitions ?? null;
+    const label =
+      data.title_override ??
+      def?.name ??
+      data.city ??
+      data.country ??
+      (def?.stamp_type ? String(def.stamp_type).replace(/_/g, " ").toUpperCase() : "Travel Stamp");
+
+    return {
+      label: String(label),
+      artworkUrl: def?.universal_artwork_url ?? null,
+      city: data.city ?? null,
+      country: data.country ?? null,
+      earnedAt: data.earned_at ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+interface StampOgCardData {
+  stampLabel: string;
+  ownerName: string | null;
+  ownerUsername: string | null;
+  place: string | null;
+  earnedAt: string | null;
+  artworkDataUri: string | null;
+}
+
+/** Build the 1200x630 stamp-share SVG in the same passport visual language. */
+function buildStampOgSvg(card: StampOgCardData): string {
+  const W = 1200;
+  const H = 630;
+  const navy = "#152642";
+  const navyLight = "#1D3358";
+  const gold = "#C9A227";
+  const goldSoft = "#E3C566";
+  const cream = "#F5EFE0";
+
+  const label = card.stampLabel.trim().slice(0, 40) || "Travel Stamp";
+  const owner = card.ownerName?.trim() || (card.ownerUsername ? `@${card.ownerUsername}` : null);
+  let dateLine: string | null = null;
+  if (card.earnedAt) {
+    const d = new Date(card.earnedAt);
+    if (!Number.isNaN(d.getTime())) {
+      dateLine = d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    }
+  }
+  const subLine = [card.place, dateLine].filter(Boolean).join("  ·  ");
+
+  // Stamp artwork in a dashed passport-stamp frame; fall back to a monogram.
+  const art = card.artworkDataUri
+    ? `<image href="${card.artworkDataUri}" x="106" y="185" width="260" height="260" clip-path="url(#stampClip)" preserveAspectRatio="xMidYMid slice"/>`
+    : `<circle cx="236" cy="315" r="130" fill="${navyLight}"/>
+       <text x="236" y="348" text-anchor="middle" font-family="Georgia, serif" font-size="96" font-weight="bold" fill="${goldSoft}">${escapeXml(label.slice(0, 1).toUpperCase() || "S")}</text>`;
+
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="stampClip"><circle cx="236" cy="315" r="130"/></clipPath>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="${navy}"/>
+      <stop offset="1" stop-color="#0E1B31"/>
+    </linearGradient>
+  </defs>
+  <rect width="${W}" height="${H}" fill="url(#bg)"/>
+  <rect x="28" y="28" width="${W - 56}" height="${H - 56}" fill="none" stroke="${gold}" stroke-width="3"/>
+  <rect x="40" y="40" width="${W - 80}" height="${H - 80}" fill="none" stroke="${gold}" stroke-width="1" opacity="0.55"/>
+  <!-- header -->
+  <text x="96" y="122" font-family="Georgia, serif" font-size="30" letter-spacing="12" fill="${gold}">TRAVEL BUDDY</text>
+  <text x="96" y="162" font-family="Georgia, serif" font-size="22" letter-spacing="8" fill="${cream}" opacity="0.7">·  PASSPORT STAMP  ·</text>
+  <!-- stamp artwork with dashed frame -->
+  ${art}
+  <circle cx="236" cy="315" r="134" fill="none" stroke="${gold}" stroke-width="4"/>
+  <circle cx="236" cy="315" r="150" fill="none" stroke="${cream}" stroke-width="3" stroke-dasharray="7 6" opacity="0.5"/>
+  <!-- stamp label block -->
+  <text x="428" y="300" font-family="Georgia, serif" font-size="${label.length > 20 ? 48 : 62}" font-weight="bold" fill="${cream}">${escapeXml(label)}</text>
+  ${subLine ? `<text x="428" y="356" font-family="Georgia, serif" font-size="30" fill="${goldSoft}">${escapeXml(subLine.slice(0, 60))}</text>` : ""}
+  ${owner ? `<text x="428" y="${subLine ? 420 : 368}" font-family="Georgia, serif" font-size="28" fill="${cream}" opacity="0.85">Earned by ${escapeXml(owner.slice(0, 40))}</text>` : ""}
+  <!-- footer rule -->
+  <line x1="96" y1="524" x2="760" y2="524" stroke="${gold}" stroke-width="1.5" opacity="0.6"/>
+  <text x="96" y="562" font-family="Georgia, serif" font-size="22" letter-spacing="4" fill="${cream}" opacity="0.55">SCAN THE WORLD, ONE STAMP AT A TIME</text>
+</svg>`;
+}
+
+async function renderStampOgPng(card: StampOgCardData): Promise<Buffer> {
+  const sharp = (await import("sharp")).default;
+  return sharp(Buffer.from(buildStampOgSvg(card))).png().toBuffer();
+}
+
+/* ===========================================================================
+ * GET /users/:username/stamps/:stampId/preview — JSON stamp card for share pages
+ * ===========================================================================
+ * Used by the share-page server to render OG title/description for
+ * /u/<username>?stamp=<id> links. Enforces the same visibility policy as the
+ * og-image endpoint; returns 404 whenever the stamp cannot be shown so the
+ * caller falls back to the passport preview without leaking anything.
+ */
+router.get("/users/:username/stamps/:stampId/preview", async (req, res) => {
+  const sc = getServiceClient();
+  if (!sc) { res.status(404).json({ error: "not_found" }); return; }
+
+  const username = req.params.username.replace(/^@/, "").toLowerCase().trim().replace(/[^a-z0-9_]/g, "");
+  const stampId = String(req.params.stampId || "");
+  if (!username || !STAMP_UUID_RE.test(stampId)) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+
+  try {
+    const { data: profile } = await sc
+      .from("profiles")
+      .select("id, username, display_name, name, passport_visibility, is_private")
+      .eq("handle", username)
+      .maybeSingle();
+    if (!profile) { res.status(404).json({ error: "not_found" }); return; }
+
+    // Share pages are rendered for anonymous crawlers — no viewer.
+    const { visibility } = await resolveProfileVisibility(sc, null, profile.id, profile);
+    if (visibility !== "full" && visibility !== "followers_only") {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+
+    const stamp = await fetchPublicStampPreview(sc, profile.id, stampId);
+    if (!stamp) { res.status(404).json({ error: "not_found" }); return; }
+
+    res.status(200).json({
+      label: stamp.label,
+      artworkUrl: stamp.artworkUrl,
+      city: stamp.city,
+      country: stamp.country,
+      earnedAt: stamp.earnedAt,
+      ownerDisplayName: profile.display_name ?? profile.name ?? null,
+      ownerUsername: profile.username ?? username,
+    });
+  } catch (e: any) {
+    req.log.warn({ err: e }, "stamp preview: lookup failed");
+    res.status(404).json({ error: "not_found" });
+  }
+});
+
 router.get("/users/:username/og-image.png", async (req, res) => {
   const sc = getServiceClient();
 
@@ -850,6 +1045,33 @@ router.get("/users/:username/og-image.png", async (req, res) => {
     if (visibility !== "full" && visibility !== "followers_only") {
       await sendPng(null);
       return;
+    }
+
+    // ── Stamp variant (?stamp=<id>) — falls back to the passport card ────────
+    const stampId = typeof req.query.stamp === "string" ? req.query.stamp : null;
+    if (stampId) {
+      const stamp = await fetchPublicStampPreview(sc, profile.id, stampId);
+      if (stamp) {
+        try {
+          const artworkDataUri = stamp.artworkUrl ? await fetchImageAsDataUri(stamp.artworkUrl) : null;
+          const png = await renderStampOgPng({
+            stampLabel: stamp.label,
+            ownerName: profile.display_name ?? profile.name ?? null,
+            ownerUsername: profile.username ?? username,
+            place: stamp.city ?? stamp.country ?? null,
+            earnedAt: stamp.earnedAt,
+            artworkDataUri,
+          });
+          res
+            .status(200)
+            .set({ "Content-Type": "image/png", "Cache-Control": "public, max-age=600" })
+            .send(png);
+          return;
+        } catch (e: any) {
+          req.log.warn({ err: e }, "og-image: stamp render failed, falling back to passport card");
+        }
+      }
+      // Stamp missing/locked/private → fall through to the passport card.
     }
 
     const [tripResult, stampResult] = await Promise.all([
