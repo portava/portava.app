@@ -588,6 +588,76 @@ describe("profile data-leak prevention", () => {
     });
   });
 
+  // ── PATCH /api/me/profile — clearing homeCity alongside DOB covers a different DB column path ──
+  //
+  // homeCity maps to home_city (a non-bio column) rather than preferred_language,
+  // which exercises yet another branch through the update-row builder and confirms
+  // the DOB strip is robust regardless of which other nullable field is co-cleared.
+
+  describe("PATCH /api/me/profile — clearing homeCity and dateOfBirth together", () => {
+    it("returns HTTP 200 when clearing dateOfBirth and homeCity in the same request", async () => {
+      const { status, body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: null, homeCity: null },
+        USER_TOKEN,
+      );
+      assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    });
+
+    it("does not include date_of_birth (snake_case) when clearing homeCity and dateOfBirth", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: null, homeCity: null },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("date_of_birth" in body),
+        `date_of_birth must not appear in response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dateOfBirth (camelCase) when clearing homeCity and dateOfBirth", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: null, homeCity: null },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dateOfBirth" in body),
+        `dateOfBirth must not appear in response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dob_verified (snake_case) when clearing homeCity and dateOfBirth", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: null, homeCity: null },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dob_verified" in body),
+        `dob_verified must not appear in response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dobVerified (camelCase) when clearing homeCity and dateOfBirth", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: null, homeCity: null },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dobVerified" in body),
+        `dobVerified must not appear in response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+  });
+
   // ── GET /api/buddies — admin and private fields must be absent ────────────────
 
   describe("GET /api/buddies", () => {

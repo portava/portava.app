@@ -308,7 +308,7 @@ const patchProfileSchema = z.object({
   displayName: z.string().min(1).max(60).optional(),
   username: z.string().optional(),
   bio: z.string().max(300).optional(),
-  homeCity: z.string().max(100).optional(),
+  homeCity: z.string().max(100).nullish(),
   homeCountry: z.string().max(100).optional(),
   currentCity: z.string().max(100).optional(),
   interests: z.array(z.string().max(50)).max(20).optional(),
