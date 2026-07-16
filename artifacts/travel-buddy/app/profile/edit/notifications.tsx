@@ -18,6 +18,7 @@ import type { NotificationCategory } from '../../../src/services/notifications';
 import {
   SettingsScreen, SettingsSection, SettingsRow, SettingsDivider, ToggleRow,
 } from '../../../src/components/settings/SettingsUI';
+import { getDeviceTimezone } from '../../../src/services/pushTokenService';
 
 const CATEGORY_LABELS: Record<NotificationCategory, { label: string; description: string }> = {
   plans:       { label: 'Plans',        description: 'Plan items, approvals, check-ins' },
@@ -290,6 +291,12 @@ export default function NotificationsScreen() {
 
       {/* Quiet hours */}
       <SettingsSection title="Quiet hours" subtitle="Suppress push during your quiet window.">
+        <View style={st.tzRow}>
+          <Text style={st.tzText}>
+            {`Quiet hours use ${prefs.timezone ? 'your saved timezone' : 'your device timezone'}: ${prefs.timezone ?? getDeviceTimezone() ?? 'unknown'}`}
+          </Text>
+        </View>
+        <SettingsDivider />
         <ToggleRow
           title="Enable quiet hours"
           subtitle="Suppress push during your quiet window"
@@ -396,4 +403,6 @@ const st = StyleSheet.create({
   timeBtn: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   timeDisplay: { ...t.bodyStrong, color: PP.inkLight, fontFamily: 'Courier' },
   timeEdit: { ...t.small, color: PP.inkLight, fontWeight: '600' },
+  tzRow: { paddingHorizontal: space.lg, paddingVertical: space.sm },
+  tzText: { ...t.small, color: PP.inkMuted },
 });
