@@ -328,7 +328,7 @@ export function useThreadMessages(threadId: string | null) {
 
   /** Optimistically append a message, then reconcile with the server response. */
   const send = useCallback(
-    async (body: string, opts?: { msgType?: string; subtype?: string }) => {
+    async (body: string, opts?: { msgType?: string; subtype?: string; replyToId?: string; replyToBody?: string | null; replyToSenderName?: string | null }) => {
       const trimmed = body.trim();
       if (!threadId || !trimmed) return;
       const clientId = makeClientId();
@@ -353,6 +353,9 @@ export function useThreadMessages(threadId: string | null) {
         canShowOriginal: false,
         msgType: opts?.msgType ?? 'text',
         subtype: opts?.subtype ?? null,
+        replyToId: opts?.replyToId ?? null,
+        replyToBody: opts?.replyToBody ?? null,
+        replyToSenderName: opts?.replyToSenderName ?? null,
         deliveryStatus: 'sending',
       };
 

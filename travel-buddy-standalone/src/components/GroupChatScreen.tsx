@@ -44,7 +44,7 @@ import { TelegraphSystemNotice } from './TelegraphSystemNotice';
 import { TranslationSettingsSheet } from './TranslationSettingsSheet';
 import { TripMembersSheet } from './TripMembersSheet';
 import type { Message } from '../services/messaging';
-import { deleteMessage, saveMessage } from '../services/messaging';
+import { deleteMessage, saveMessage, reportMessage } from '../services/messaging';
 import { getTripMembers, getCircleMembers, type FriendUser } from '../services/friends';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
@@ -123,7 +123,18 @@ function LongPressActionSheet({
               } else if (key === 'report') {
                 Alert.alert('Report message', 'Are you sure you want to report this message?', [
                   { text: 'Cancel', style: 'cancel' },
-                  { text: 'Report', style: 'destructive', onPress: () => {} },
+                  {
+                    text: 'Report',
+                    style: 'destructive',
+                    onPress: async () => {
+                      const res = await reportMessage(message.id, 'inappropriate_content').catch(() => null);
+                      if (res?.ok) {
+                        Alert.alert('Report submitted', 'Thank you. Our team will review this message.');
+                      } else {
+                        Alert.alert('Error', res?.message ?? 'Could not submit report. Please try again.');
+                      }
+                    },
+                  },
                 ]);
               } else if (key === 'reply') {
                 onReply(message);

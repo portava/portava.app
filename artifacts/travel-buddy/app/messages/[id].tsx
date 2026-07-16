@@ -24,7 +24,7 @@ import {
   ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight,
   CheckCircle, MoreVertical, Info, VolumeX, Languages, Paperclip, Compass,
   Bot, Reply, Copy, Trash2, Flag, CheckCheck, AlertCircle, Search, BookmarkPlus,
-  RefreshCw, Clock, ChevronDown,
+  RefreshCw, Clock, ChevronDown, X,
 } from 'lucide-react-native';
 import { useThreadMessages, useLanguageSettings, useOutgoingRequestStatus, markThreadRead } from '../../src/hooks/useMessaging';
 import { useTrip } from '../../src/hooks/useBackend';
@@ -39,7 +39,7 @@ import { supabase } from '../../src/lib/supabase';
 import { getMeetup, rsvpMeetup } from '../../src/services/meetups';
 import type { MeetupCounts, MeetupCreator, RsvpStatus, MeetupTimeOption, AttendeePreview } from '../../src/services/meetups';
 import type { Message } from '../../src/services/messaging';
-import { deleteMessage, muteThread, leaveThread, reportThread, retryTranslation } from '../../src/services/messaging';
+import { deleteMessage, muteThread, leaveThread, reportThread, retryTranslation, saveMessage } from '../../src/services/messaging';
 import { DiscoveryCardMessage } from '../../src/components/DiscoveryCardMessage';
 import { ThreadSafetySheet } from '../../src/components/ThreadSafetySheet';
 import { TelegraphRecommendationCard } from '../../src/components/TelegraphRecommendationCard';
@@ -131,11 +131,15 @@ function LongPressActionSheet({
   mine,
   onClose,
   onDeleteForMe,
+  onReply,
+  onSave,
 }: {
   message: Message | null;
   mine: boolean;
   onClose: () => void;
   onDeleteForMe: (id: string) => Promise<void>;
+  onReply: (msg: Message) => void;
+  onSave: (msg: Message) => void;
 }) {
   const [showReport, setShowReport] = useState(false);
   const [reportReason, setReportReason] = useState<ReasonCode | null>(null);
@@ -215,6 +219,14 @@ function LongPressActionSheet({
                     Alert.alert('Copied', 'Message copied to clipboard.');
                   } else if (key === 'report') {
                     setShowReport(true);
+                  } else if (key === 'reply') {
+                    onReply(message);
+                  } else if (key === 'save') {
+                    onClose();
+                    onSave(message);
+                  } else if (key === 'translate') {
+                    onClose();
+                    Alert.alert('Translation', 'Translations are applied automatically based on your language settings.');
                   } else {
                     onClose();
                     Alert.alert(label, 'This feature is coming soon.');
@@ -859,6 +871,17 @@ function MessageBubble({
           style={[styles.translationFlash, StyleSheet.absoluteFillObject, { opacity: flashAnim }]}
           pointerEvents="none"
         />
+        {item.replyToId && item.replyToBody ? (
+          <View style={[styles.replyQuote, mine && styles.replyQuoteMine]}>
+            <View style={styles.replyQuoteAccent} />
+            <View style={{ flex: 1 }}>
+              {item.replyToSenderName ? (
+                <Text style={styles.replyQuoteSender}>{item.replyToSenderName}</Text>
+              ) : null}
+              <Text style={styles.replyQuoteBody} numberOfLines={2}>{item.replyToBody}</Text>
+            </View>
+          </View>
+        ) : null}
         <RichText
           content={bodyToShow}
           // Span positions are computed from the original body server-side.
@@ -1067,6 +1090,7 @@ export default function TelegraphThread() {
   // Long-press action sheet state
   const [actionMsg, setActionMsg] = useState<Message | null>(null);
   const [actionMsgMine, setActionMsgMine] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   // Per-thread translation overrides (null = fall back to global langSettings)
   const [threadAutoTranslate, setThreadAutoTranslate] = useState<boolean | null>(null);
   const [threadShowOriginal, setThreadShowOriginal] = useState<boolean | null>(null);
@@ -1362,7 +1386,13 @@ export default function TelegraphThread() {
     setInput('');
     setLastSentMessage(text);
     setSendFailed(false);
-    const res = await send(text);
+    const currentReply = replyingTo;
+    setReplyingTo(null);
+    const res = await send(text, currentReply ? {
+      replyToId: currentReply.id,
+      replyToBody: currentReply.displayBody ?? currentReply.body ?? null,
+      replyToSenderName: currentReply.senderName ?? null,
+    } : undefined);
     if (!res?.ok) setSendFailed(true);
     listRef.current?.scrollToEnd({ animated: true });
   }
@@ -1727,6 +1757,22 @@ export default function TelegraphThread() {
         onSelect={(s) => mentionRef.current?.insertTag(s)}
       />
 
+      {replyingTo && (
+        <View style={styles.replyBar}>
+          <View style={styles.replyBarAccent} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.replyBarSender} numberOfLines={1}>
+              {replyingTo.senderName ?? 'Someone'}
+            </Text>
+            <Text style={styles.replyBarBody} numberOfLines={1}>
+              {replyingTo.displayBody ?? replyingTo.body ?? ''}
+            </Text>
+          </View>
+          <Pressable onPress={() => setReplyingTo(null)} hitSlop={8}>
+            <X size={16} color={color.mute} />
+          </Pressable>
+        </View>
+      )}
       <View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         {/* Attachment stub */}
         <Pressable style={styles.composeIconBtn} onPress={() => Alert.alert('Attach', 'File attachments coming soon.')} hitSlop={6}>
@@ -1866,6 +1912,14 @@ export default function TelegraphThread() {
         mine={actionMsgMine}
         onClose={() => setActionMsg(null)}
         onDeleteForMe={handleDeleteForMe}
+        onReply={(msg) => { setReplyingTo(msg); setActionMsg(null); }}
+        onSave={(msg) => {
+          if (!id) return;
+          saveMessage(id, msg.id).then((r) => {
+            if (r.ok) Alert.alert('Saved', 'Message saved to your collection.');
+            else Alert.alert('Error', r.message ?? 'Could not save message.');
+          });
+        }}
       />
 
       {/* Per-thread translation settings */}
@@ -2053,6 +2107,34 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
     marginTop: 4,
   },
+
+  replyBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: 8,
+    backgroundColor: color.paper,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: color.haze,
+  },
+  replyBarAccent: { width: 3, height: 32, borderRadius: 2, backgroundColor: color.deep },
+  replyBarSender: { ...t.stamp, color: color.deep, fontWeight: '600', marginBottom: 1 },
+  replyBarBody: { ...t.small, color: color.mute, fontSize: 12 },
+
+  replyQuote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    backgroundColor: 'rgba(0,0,0,0.06)',
+    borderRadius: radius.sm,
+    padding: 6,
+    marginBottom: 4,
+  },
+  replyQuoteMine: { backgroundColor: 'rgba(255,255,255,0.18)' },
+  replyQuoteAccent: { width: 3, borderRadius: 2, alignSelf: 'stretch', backgroundColor: color.deep },
+  replyQuoteSender: { ...t.stamp, color: color.deep, fontWeight: '600', marginBottom: 1 },
+  replyQuoteBody: { ...t.small, color: color.ink, fontSize: 12, lineHeight: 16 },
 
   compose: {
     flexDirection: 'row',
