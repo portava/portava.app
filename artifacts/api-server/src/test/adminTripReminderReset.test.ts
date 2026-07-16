@@ -18,9 +18,10 @@ import adminRouter from "../routes/admin.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const FAKE_TOKEN = "fake.jwt.token";
-const USER_ID    = "aaaaaaaa-1111-1111-1111-000000000001";
-const TRIP_ID    = "cccccccc-2222-2222-2222-000000000002";
+const FAKE_TOKEN    = "fake.jwt.token";
+const USER_ID       = "aaaaaaaa-1111-1111-1111-000000000001";
+const TRIP_ID       = "cccccccc-2222-2222-2222-000000000002";
+const UNKNOWN_TRIP  = "dddddddd-3333-3333-3333-000000000099";
 
 // ── Server ────────────────────────────────────────────────────────────────────
 
@@ -55,6 +56,50 @@ function makeFakeClient(role: "admin" | "member") {
         order:       () => b,
         limit:       () => b,
         maybeSingle: () => ({ data: profileRow, error: null }),
+        single:      () => ({ data: profileRow, error: null }),
+        then:        (resolve: any) => Promise.resolve({ data: [profileRow], error: null }).then(resolve),
+        get count() { return 1; },
+      };
+      return b;
+    },
+    rpc: async () => ({ data: [], error: null }),
+  };
+  return client;
+}
+
+/**
+ * Admin client where the trips table returns no row — simulates a valid UUID
+ * that doesn't match any trip in the database.
+ */
+function makeFakeClientWithNoTrip() {
+  const profileRow = { id: USER_ID, role: "admin", account_status: "active", handle: "testuser", display_name: null, username: null };
+
+  const client: any = {
+    auth: {
+      getUser: async (token: string) => {
+        if (!token || token === "bad") {
+          return { data: { user: null }, error: { message: "invalid token" } };
+        }
+        return { data: { user: { id: USER_ID } }, error: null };
+      },
+    },
+    from: (table: string) => {
+      const isTrips = table === "trips";
+      const b: any = {
+        select:      () => b,
+        eq:          () => b,
+        neq:         () => b,
+        is:          () => b,
+        in:          () => b,
+        update:      () => b,
+        insert:      () => b,
+        upsert:      () => b,
+        delete:      () => b,
+        order:       () => b,
+        limit:       () => b,
+        maybeSingle: () => isTrips
+          ? { data: null, error: null }
+          : { data: profileRow, error: null },
         single:      () => ({ data: profileRow, error: null }),
         then:        (resolve: any) => Promise.resolve({ data: [profileRow], error: null }).then(resolve),
         get count() { return 1; },
@@ -143,5 +188,15 @@ describe("POST /admin/trips/:tripId/reset-reminder — auth gate", () => {
     const r = await req(`/admin/trips/${TRIP_ID}/reset-reminder`);
     assert.equal(r.status, 401, `expected 401, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(r.body?.error, "unauthenticated", "error code should be 'unauthenticated'");
+  });
+
+  it("returns 404 when tripId is a valid UUID that matches no trip", async () => {
+    const fc = makeFakeClientWithNoTrip();
+    _setTestClient(fc, true);
+    _setTestServiceClient(fc);
+
+    const r = await req(`/admin/trips/${UNKNOWN_TRIP}/reset-reminder`, FAKE_TOKEN);
+    assert.equal(r.status, 404, `expected 404, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body?.error, "not_found", "error code should be 'not_found'");
   });
 });
