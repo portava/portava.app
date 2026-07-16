@@ -119,12 +119,10 @@ describe('SDK 54 downgrade — package version pins', () => {
   });
 
   it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-    // This file lives in the standalone tree, so `deps` above is the
-    // standalone package.json; compare against the main app's package.json.
-    const mainApp = readPkg('../../../artifacts/travel-buddy/package.json');
+    const standalone = readPkg('../../../../travel-buddy-standalone/package.json');
     const saDeps: Record<string, string> = {
-      ...mainApp.dependencies,
-      ...mainApp.devDependencies,
+      ...standalone.dependencies,
+      ...standalone.devDependencies,
     };
     const toCheck = [
       'expo-notifications',
