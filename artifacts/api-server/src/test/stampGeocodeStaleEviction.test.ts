@@ -185,6 +185,39 @@ describe("staleness-eviction: corrected_at probe", () => {
       "should make exactly two DB calls: initial load + probe (no re-read)");
   });
 
+  it("does not probe the DB for a negative (null) cache entry even after the interval elapses", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Return empty Nominatim response so forwardGeocodeCity resolves to null.
+    silentFetch();
+
+    let probeCount = 0;
+    const db = makeQueuedDbClient(
+      [
+        // call 0: readDbCache — no persisted row, so falls through to Nominatim
+        null,
+        // Any further call would be an unexpected correction probe — track it.
+        { corrected_at: new Date(T0 + 500).toISOString() },
+      ],
+      (idx) => { if (idx >= 1) probeCount++; },
+    );
+    _setGeocodeDbClientForTests(db);
+
+    // Seed the negative cache entry (result = null).
+    const first = await geocodeCityCountry("UnknownCity");
+    assert.equal(first, null, "pre-condition: unresolved city should return null");
+
+    // Advance well past the correction-check interval.
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000);
+
+    // Call again — the null entry must be returned immediately with no DB probe.
+    const second = await geocodeCityCountry("UnknownCity");
+    assert.equal(second, null, "should return the cached null without probing the DB");
+    assert.equal(probeCount, 0,
+      "correction probe must never fire for a negative (null) cache entry");
+  });
+
   it("does not probe the DB before the check interval has elapsed", async () => {
     const T0 = 1_700_000_000_000;
     mockNow(T0);
