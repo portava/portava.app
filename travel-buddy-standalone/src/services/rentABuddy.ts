@@ -393,10 +393,18 @@ export async function getMyWaitlist(): Promise<ApiResult<{ waitlist: Array<{ id:
   return apiFetch('/api/rent-a-buddy/waitlist');
 }
 
-export async function joinWaitlist(city: string, category?: string): Promise<ApiResult<{ ok: boolean }>> {
+export async function joinWaitlist(
+  city: string,
+  category?: string,
+  coords?: { lat?: number | null; lng?: number | null },
+): Promise<ApiResult<{ ok: boolean }>> {
   return apiFetch('/api/rent-a-buddy/waitlist', {
     method: 'POST',
-    body: JSON.stringify({ city, category }),
+    body: JSON.stringify({
+      city, category,
+      lat: coords?.lat ?? undefined,
+      lng: coords?.lng ?? undefined,
+    }),
   });
 }
 
@@ -747,6 +755,8 @@ export interface BuddyRequest {
   id: string;
   travelerId: string;
   city: string;
+  lat: number | null;
+  lng: number | null;
   category: string;
   desiredDate: string | null;
   desiredTime: string | null;
@@ -931,7 +941,7 @@ export async function clearAvailableNow(): Promise<ApiResult<{ ok: boolean }>> {
 // ── Marketplace — Requests & Offers ──────────────────────────────────────────
 
 export async function createRequest(payload: {
-  city: string; category: string; desiredDate?: string; desiredTime?: string;
+  city: string; lat?: number; lng?: number; category: string; desiredDate?: string; desiredTime?: string;
   durationMinutes?: number; groupSize?: number; budgetMinUsd?: number; budgetMaxUsd?: number;
   languageNeeded?: string; energyType?: string; safetyPrefs?: Record<string, boolean>;
   paymentModePref?: string; notes?: string;
@@ -1053,7 +1063,7 @@ export async function bookAgain(buddyId: string, payload?: { category?: string; 
 }
 
 export async function joinWaitlistV2(payload: {
-  city: string; category?: string; language?: string; budgetMaxUsd?: number;
+  city: string; lat?: number; lng?: number; category?: string; language?: string; budgetMaxUsd?: number;
   desiredDate?: string; desiredTime?: string; notes?: string; groupSize?: number; expiryDays?: number;
 }): Promise<ApiResult<{ entry: WaitlistEntry }>> {
   return apiFetch('/api/rent-a-buddy/waitlist/v2', { method: 'POST', body: JSON.stringify(payload) });

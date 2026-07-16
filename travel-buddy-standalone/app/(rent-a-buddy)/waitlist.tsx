@@ -32,6 +32,7 @@ export default function RentABuddyWaitlist() {
   const params = useLocalSearchParams<{ city?: string }>();
 
   const [city, setCity] = useState(params.city ?? '');
+  const [cityCoords, setCityCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<BuddyCategory | null>(null);
   const [desiredDate, setDesiredDate] = useState('');
@@ -49,7 +50,7 @@ export default function RentABuddyWaitlist() {
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSubmitting(true);
-    const res = await joinWaitlist(city.trim(), selectedCategory ?? undefined);
+    const res = await joinWaitlist(city.trim(), selectedCategory ?? undefined, cityCoords ?? undefined);
     setSubmitting(false);
     if (!res.ok) {
       Alert.alert('Error', res.error);
@@ -137,7 +138,10 @@ export default function RentABuddyWaitlist() {
         <GlobalPlacePicker
           visible={cityPickerOpen}
           onClose={() => setCityPickerOpen(false)}
-          onSelect={(place: Place) => setCity(place.city ?? place.name)}
+          onSelect={(place: Place) => {
+            setCity(place.city ?? place.name);
+            setCityCoords(place.lat != null && place.lng != null ? { lat: place.lat, lng: place.lng } : null);
+          }}
           mode="city"
           title="Which city are you visiting?"
           usedFor="buddy_waitlist"

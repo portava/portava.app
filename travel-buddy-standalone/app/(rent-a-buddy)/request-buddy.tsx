@@ -115,6 +115,7 @@ const POLICY_TEXT = "Requests must be for legitimate travel services only. Escor
 function OpenRequestForm() {
   const insets = useSafeAreaInsets();
   const [city, setCity]                       = useState('');
+  const [cityCoords, setCityCoords]           = useState<{ lat: number; lng: number } | null>(null);
   const [cityPickerOpen, setCityPickerOpen]   = useState(false);
   const [category, setCategory]               = useState('city');
   const [durationMinutes, setDurationMinutes] = useState(120);
@@ -131,7 +132,10 @@ function OpenRequestForm() {
     if (!city.trim()) { Alert.alert('Missing city', 'Please enter the city for your request.'); return; }
     setLoading(true);
     const result = await createRequest({
-      city: city.trim(), category, durationMinutes, groupSize,
+      city: city.trim(),
+      lat: cityCoords?.lat,
+      lng: cityCoords?.lng,
+      category, durationMinutes, groupSize,
       budgetMinUsd: budget.min ?? undefined,
       budgetMaxUsd: budget.max ?? undefined,
       languageNeeded: language.trim() || undefined,
@@ -145,7 +149,7 @@ function OpenRequestForm() {
       'Eligible Buddies in your city will see your request and can send you offers.',
       [{ text: 'View Offers', onPress: () => router.replace({ pathname: '/(rent-a-buddy)/offers' as any, params: { requestId: result.data.request.id } }) }]
     );
-  }, [city, category, durationMinutes, groupSize, budget, language, publicOnly, notes]);
+  }, [city, cityCoords, category, durationMinutes, groupSize, budget, language, publicOnly, notes]);
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
@@ -167,7 +171,10 @@ function OpenRequestForm() {
         <GlobalPlacePicker
           visible={cityPickerOpen}
           onClose={() => setCityPickerOpen(false)}
-          onSelect={(place: Place) => setCity(place.city ?? place.name)}
+          onSelect={(place: Place) => {
+            setCity(place.city ?? place.name);
+            setCityCoords(place.lat != null && place.lng != null ? { lat: place.lat, lng: place.lng } : null);
+          }}
           mode="city"
           title="Which city?"
           usedFor="buddy_request"
