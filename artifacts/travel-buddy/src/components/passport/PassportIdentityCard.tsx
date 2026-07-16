@@ -1,7 +1,7 @@
 /**
  * PassportIdentityCard — Passport document header.
  * Premium cream/ivory document card with vertical spine, gold-ring avatar,
- * Trust Score, decorative stamps.
+ * Trust Score, Passport brand stamp + Bio in the lower area.
  * Edge-to-edge: no outer margins, no floating-card border-radius.
  *
  * PassportStatsRow — separate stats/counter section rendered below the card.
@@ -13,8 +13,8 @@ import {
 import Svg, { Circle, Path, Rect, Text as SvgText } from 'react-native-svg';
 import {
   ShieldCheck, Globe, MapPin, Camera,
-  Bookmark, UserCircle2, UserPlus, UserCheck,
-  Briefcase, Users, Stamp,
+  UserPlus, UserCheck, MoreHorizontal,
+  Briefcase, Users, Stamp, PenLine,
 } from 'lucide-react-native';
 import type { OwnProfile, PublicProfile } from '../../types/models';
 import { resolveAvatarUrl, fallbackInitials } from '../../utils/identity';
@@ -47,8 +47,8 @@ interface Props {
   isFollowing?: boolean;
   followLoading?: boolean;
   onFollowPress?: () => void;
-  /** Owner: navigate to saved places */
-  onSavedPress?: () => void;
+  /** Owner: tap "Add a bio" empty state → navigate to edit profile */
+  onEditBio?: () => void;
 }
 
 const AVATAR_SIZE  = 76;
@@ -71,40 +71,16 @@ export const STAT_CFG: Record<string, StatConfig> = {
 };
 const STAT_FALLBACK: StatConfig = { color: MUTED, bg: '#F3F4F6', Icon: Globe };
 
-// ─── Decorative SVG stamps ────────────────────────────────────────────────────
+// ─── Passport brand stamp (lower-left identity mark) ─────────────────────────
 
-function AdventureStamp() {
+function PortavaBrandStamp() {
   return (
-    <Svg width={70} height={70} viewBox="0 0 90 90">
-      <Circle cx={45} cy={45} r={42} stroke="#3B82F6" strokeWidth={2.5} strokeDasharray="4 2" fill="none" />
-      <Circle cx={45} cy={45} r={36} stroke="#3B82F6" strokeWidth={1.2} fill="none" />
-      <SvgText x="45" y="21" textAnchor="middle" fill="#3B82F6" fontSize="6" fontWeight="700">ADVENTURE IS</SvgText>
-      <SvgText x="45" y="73" textAnchor="middle" fill="#3B82F6" fontSize="6" fontWeight="700">WORTHWHILE</SvgText>
-      {/* Plane silhouette */}
-      <Path d="M26 50 L37 39 L40 42 L34 48 L47 51 L44 54 L31 51 L33 57 L30 59 Z" fill="#3B82F6" opacity={0.8} />
-    </Svg>
-  );
-}
-
-function PortavaStamp() {
-  return (
-    <Svg width={96} height={58} viewBox="0 0 110 72">
+    <Svg width={56} height={34} viewBox="0 0 110 72">
       <Rect x={2} y={2} width={106} height={68} rx={6} stroke={GOLD} strokeWidth={2} strokeDasharray="3 2" fill="none" />
       <Rect x={6} y={6} width={98} height={60} rx={4} stroke={GOLD} strokeWidth={1} fill="none" opacity={0.4} />
       <SvgText x="55" y="19" textAnchor="middle" fill={GOLD} fontSize="6.5" fontWeight="700">PORTAVA PASSPORT</SvgText>
       <Path d="M40 44 L50 34 L53 37 L47 43 L58 46 L55 49 L44 46 L46 52 L43 54 Z" fill={GOLD} opacity={0.65} />
       <SvgText x="55" y="61" textAnchor="middle" fill={GOLD} fontSize="6" fontWeight="700">★  EXPLORE MORE  ★</SvgText>
-    </Svg>
-  );
-}
-
-function ArrivalStamp() {
-  return (
-    <Svg width={70} height={44} viewBox="0 0 80 52">
-      <Rect x={1} y={1} width={78} height={50} rx={4} stroke={GREEN_STAMP} strokeWidth={1.5} strokeDasharray="2 2" fill="none" />
-      <SvgText x="40" y="14" textAnchor="middle" fill={GREEN_STAMP} fontSize="5" fontWeight="600">2858 · ARRIVE</SvgText>
-      <SvgText x="40" y="30" textAnchor="middle" fill={GREEN_STAMP} fontSize="10" fontWeight="800">ARRIVAL</SvgText>
-      <SvgText x="40" y="44" textAnchor="middle" fill={GREEN_STAMP} fontSize="5.5" fontWeight="600">PASSPORT STAMP</SvgText>
     </Svg>
   );
 }
@@ -234,7 +210,7 @@ export function PassportIdentityCard({
   hasHighlights, allHighlightsViewed, onHighlightRingPress, onNewHighlightPress,
   trustScore, trustLabel, onTrustInfo,
   isFollowing, followLoading, onFollowPress,
-  onSavedPress,
+  onEditBio,
 }: Props) {
   const username      = 'username' in profile ? profile.username : null;
   const identity      = {
@@ -259,6 +235,9 @@ export function PassportIdentityCard({
     ? (profile.interests as string[]).slice(0, 3)
     : [];
 
+  // Bio — real backend value, not placeholder
+  const bio = 'bio' in profile ? (profile.bio ?? null) : null;
+
   return (
     <View style={s.card}>
       <View style={s.cardInner}>
@@ -278,14 +257,23 @@ export function PassportIdentityCard({
         {/* ── Card body ───────────────────────────────────────── */}
         <View style={s.body}>
 
+          {/* ── ⋯ menu — top-right, always visible ── */}
+          {onMenuPress ? (
+            <Pressable
+              style={s.menuBtn}
+              onPress={onMenuPress}
+              hitSlop={10}
+              accessibilityLabel={isOwner ? 'Passport menu' : 'More options'}
+            >
+              <MoreHorizontal size={20} color={INK} strokeWidth={2} />
+            </Pressable>
+          ) : null}
+
           {/* Columns */}
           <View style={s.columns}>
 
-            {/* LEFT COLUMN */}
+            {/* LEFT COLUMN — avatar only */}
             <View style={s.leftCol}>
-              <View style={s.adventureStampWrap}><AdventureStamp /></View>
-
-              {/* Avatar area */}
               <View style={s.avatarOuter}>
                 <View style={s.goldRing}>
                   <HighlightRing
@@ -328,14 +316,10 @@ export function PassportIdentityCard({
                   </Pressable>
                 ) : null}
               </View>
-
-              <View style={s.arrivalStampWrap}><ArrivalStamp /></View>
             </View>
 
-            {/* RIGHT COLUMN */}
+            {/* RIGHT COLUMN — identity info */}
             <View style={s.rightCol}>
-              <View style={s.portavaStampWrap}><PortavaStamp /></View>
-
               <Text style={s.travelerLabel}>TRAVELER ★</Text>
 
               {/* Name row — verified stamp replaces CheckCircle2 */}
@@ -373,27 +357,8 @@ export function PassportIdentityCard({
                 </View>
               ) : null}
 
-              {/* Owner actions — compact icon-only circular buttons */}
-              {isOwner ? (
-                <View style={s.ownerActions}>
-                  <Pressable
-                    style={s.actionIcon}
-                    onPress={onSavedPress}
-                    hitSlop={12}
-                    accessibilityLabel="Saved places"
-                  >
-                    <Bookmark size={18} color={INK} strokeWidth={1.8} />
-                  </Pressable>
-                  <Pressable
-                    style={s.actionIcon}
-                    onPress={onMenuPress}
-                    hitSlop={12}
-                    accessibilityLabel="Edit profile"
-                  >
-                    <UserCircle2 size={18} color={INK} strokeWidth={1.8} />
-                  </Pressable>
-                </View>
-              ) : (
+              {/* Public: Follow pill */}
+              {!isOwner ? (
                 <View style={s.publicActions}>
                   <Pressable
                     style={[s.followPill, isFollowing && s.followPillActive]}
@@ -416,7 +381,30 @@ export function PassportIdentityCard({
                     )}
                   </Pressable>
                 </View>
-              )}
+              ) : null}
+            </View>
+          </View>
+
+          {/* ── Passport stamp + Bio — lower area ──────────────── */}
+          <View style={s.bioSection}>
+            <View style={s.stampWrap}>
+              <PortavaBrandStamp />
+            </View>
+            <View style={s.bioContent}>
+              {bio ? (
+                <Text style={s.bioText} numberOfLines={3}>{bio}</Text>
+              ) : isOwner ? (
+                <Pressable
+                  style={s.addBioBtn}
+                  onPress={onEditBio}
+                  disabled={!onEditBio}
+                  hitSlop={8}
+                  accessibilityLabel="Add a bio"
+                >
+                  <PenLine size={13} color={MUTED} strokeWidth={1.8} />
+                  <Text style={s.addBioText}>Add a bio</Text>
+                </Pressable>
+              ) : null}
             </View>
           </View>
 
@@ -430,7 +418,6 @@ export function PassportIdentityCard({
 
 const s = StyleSheet.create({
   // Edge-to-edge: no horizontal margins, no outer border-radius, no floating shadow.
-  // Internal content retains its own padding.
   card: {
     backgroundColor: CREAM,
     overflow: 'hidden',
@@ -473,22 +460,35 @@ const s = StyleSheet.create({
     flex: 1,
     paddingTop: 10,
     paddingHorizontal: 10,
-    paddingBottom: 12,
+    paddingBottom: 14,
   },
+
+  /* ⋯ menu button — absolute top-right */
+  menuBtn: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(28,28,26,0.1)',
+    zIndex: 2,
+  },
+
   columns: {
     flexDirection: 'row',
     gap: 8,
+    paddingRight: 42, // clearance for the absolute menu button
   },
 
-  /* Left column */
+  /* Left column — avatar only */
   leftCol: {
     alignItems: 'center',
-    gap: 8,
     paddingTop: 4,
-  },
-  // Reduced from 0.9 — stamps read as atmospheric paper texture, not foreground UI
-  adventureStampWrap: {
-    opacity: 0.38,
   },
   avatarOuter: {
     alignItems: 'center',
@@ -534,23 +534,12 @@ const s = StyleSheet.create({
     borderWidth: 2,
     borderColor: CREAM,
   },
-  // Reduced from 0.9
-  arrivalStampWrap: {
-    opacity: 0.38,
-    marginTop: 4,
-  },
 
   /* Right column */
   rightCol: {
     flex: 1,
     gap: 4,
     paddingTop: 2,
-  },
-  // Reduced from 0.85
-  portavaStampWrap: {
-    alignSelf: 'flex-end',
-    opacity: 0.38,
-    marginBottom: 2,
   },
   travelerLabel: {
     fontSize: 10,
@@ -645,23 +634,6 @@ const s = StyleSheet.create({
     flex: 1,
   },
 
-  /* Owner actions — compact circular icon buttons */
-  ownerActions: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 4,
-  },
-  actionIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.75)',
-    borderWidth: 1,
-    borderColor: 'rgba(28,28,26,0.12)',
-  },
-
   /* Public follow */
   publicActions: {
     flexDirection: 'row',
@@ -684,6 +656,42 @@ const s = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#fff',
+  },
+
+  /* ── Passport stamp + Bio — lower identity area ── */
+  bioSection: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(184,151,78,0.25)',
+  },
+  stampWrap: {
+    opacity: 0.72,
+    marginTop: 2,
+  },
+  bioContent: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  bioText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: INK,
+    fontStyle: 'italic',
+    opacity: 0.82,
+  },
+  addBioBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  addBioText: {
+    fontSize: 13,
+    color: MUTED,
+    fontWeight: '500',
   },
 });
 
