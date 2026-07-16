@@ -658,6 +658,76 @@ describe("profile data-leak prevention", () => {
     });
   });
 
+  // ── PATCH /api/me/profile — null DOB with non-null sibling field (mixed update) ──
+  //
+  // Exercises the row-builder branch where dateOfBirth is cleared (null) while
+  // another field (bio) is simultaneously set to a real value. Confirms that
+  // mapProfile's DOB strip holds regardless of sibling field values.
+
+  describe("PATCH /api/me/profile — dateOfBirth: null with non-null bio (mixed update)", () => {
+    it("returns HTTP 200 when clearing dateOfBirth while setting a non-null bio", async () => {
+      const { status, body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: null, bio: "hello" },
+        USER_TOKEN,
+      );
+      assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    });
+
+    it("does not include date_of_birth (snake_case) after clearing DOB with non-null bio", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: null, bio: "hello" },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("date_of_birth" in body),
+        `date_of_birth must not appear in mixed-update PATCH response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dateOfBirth (camelCase) after clearing DOB with non-null bio", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: null, bio: "hello" },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dateOfBirth" in body),
+        `dateOfBirth must not appear in mixed-update PATCH response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dob_verified (snake_case) after clearing DOB with non-null bio", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: null, bio: "hello" },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dob_verified" in body),
+        `dob_verified must not appear in mixed-update PATCH response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dobVerified (camelCase) after clearing DOB with non-null bio", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: null, bio: "hello" },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dobVerified" in body),
+        `dobVerified must not appear in mixed-update PATCH response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+  });
+
   // ── GET /api/buddies — admin and private fields must be absent ────────────────
 
   describe("GET /api/buddies", () => {
