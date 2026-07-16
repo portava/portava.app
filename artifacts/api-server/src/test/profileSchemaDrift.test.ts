@@ -721,3 +721,102 @@ describe("PATCH /api/me/profile under schema drift (missing newer columns)", () 
     );
   });
 });
+
+// =============================================================================
+// GET /me/profile — fallback retry DB error is surfaced
+// =============================================================================
+// The GET route has the same PGRST204 drift pattern as PATCH (profile.ts
+// lines 267-272): if the first maybeSingle() returns PGRST204, it retries
+// with PROFILE_COLUMNS_FALLBACK.  If that second maybeSingle() also errors,
+// the route must return a non-200 with the error code — not a silent success.
+
+/**
+ * Fake client where:
+ *   - auth resolves correctly for ME_TOK
+ *   - the first profiles.maybeSingle() returns PGRST204 (schema-drift)
+ *   - the second profiles.maybeSingle() (fallback) returns a generic DB error
+ * maybeSingleCallCount is tracked at the client level so it persists across
+ * multiple from() calls (the route calls from("profiles") twice).
+ */
+function makeGetFallbackErrorClient() {
+  let maybeSingleCallCount = 0;
+
+  function makeBuilder(table: string) {
+    const builder: any = {
+      select() { return builder; },
+      eq() { return builder; },
+      neq() { return builder; },
+      limit() { return builder; },
+      update(patch: any) { void patch; return builder; },
+      insert() { return builder; },
+      maybeSingle() {
+        if (table === "profiles") {
+          maybeSingleCallCount++;
+          if (maybeSingleCallCount === 1) {
+            // First attempt: simulate PGRST204 schema-drift
+            return Promise.resolve({
+              data: null,
+              error: {
+                code: "PGRST204",
+                message: "Could not find the 'passport_tab_order' column of 'profiles' in the schema cache",
+              },
+            });
+          }
+          // Second attempt (fallback with PROFILE_COLUMNS_FALLBACK): generic DB error
+          return Promise.resolve({
+            data: null,
+            error: { code: "42P01", message: "relation \"profiles\" does not exist" },
+          });
+        }
+        return Promise.resolve({ data: null, error: null });
+      },
+      single() {
+        return Promise.resolve({ data: null, error: null });
+      },
+      then(onF: any, onR: any) {
+        return Promise.resolve({ data: [], error: null }).then(onF, onR);
+      },
+    };
+    return builder;
+  }
+
+  const client: any = {
+    auth: {
+      getUser: async (tok: string) =>
+        tok === ME_TOK
+          ? { data: { user: { id: ME } }, error: null }
+          : { data: { user: null }, error: { message: "invalid token" } },
+    },
+    from: (table: string) => makeBuilder(table),
+    storage: { from: () => ({ remove: async () => ({ error: null }) }) },
+  };
+  return client;
+}
+
+describe("GET /api/me/profile under schema drift — fallback retry error is surfaced", () => {
+  function getProfile() {
+    return fetch(`${base}/me/profile`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${ME_TOK}` },
+    });
+  }
+
+  it("returns non-200 when the fallback maybeSingle() also errors — not a silent success", async () => {
+    // First maybeSingle(): PGRST204 (triggers fallback)
+    // Second maybeSingle(): generic DB error
+    // Expected: the route surfaces that error instead of returning 200
+    const client = makeGetFallbackErrorClient();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await getProfile();
+    assert.notEqual(r.status, 200, "a DB error on the GET fallback retry must not return 200");
+    const body = await r.json() as any;
+    assert.ok(
+      body.code === "db_error" ||
+        JSON.stringify(body).includes("42P01") ||
+        JSON.stringify(body).includes("does not exist"),
+      `response body should surface the DB error — got: ${JSON.stringify(body)}`,
+    );
+  });
+});
