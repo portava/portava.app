@@ -15,7 +15,14 @@ import { join } from 'node:path';
 import process from 'node:process';
 
 // Known-broken node:test files, excluded from the run. Fix and remove.
-const KNOWN_BROKEN = [];
+// These two files import service modules that pull in supabase (CJS) at the
+// top level, which fails under --import tsx/esm.  They run correctly via the
+// dedicated named scripts (pnpm test:stamps / pnpm test:invite-gone) which
+// use --import tsx (CJS+ESM) instead.
+const KNOWN_BROKEN = [
+  'src/services/__tests__/stampGracefulDegradation.test.ts',
+  'src/services/__tests__/tripGoneError.test.ts',
+];
 
 const ROOTS = ['src', 'server'];
 
