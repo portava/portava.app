@@ -11,7 +11,7 @@
  * type default.
  */
 
-import type { PostCategory } from '../types/models';
+import type { PostCategory } from '../types/models.ts';
 
 /** Minimal subset of AsyncStorage needed by these helpers. */
 export interface StorageLike {

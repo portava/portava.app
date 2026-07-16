@@ -15,7 +15,7 @@ import {
   type LivePulseItem,
   type LivePulseContext,
   type GetLivePulseParams,
-} from '../services/livePulse';
+} from '../services/livePulse.ts';
 
 const AUTO_REFRESH_MS = 3 * 60 * 1000; // 3 minutes
 

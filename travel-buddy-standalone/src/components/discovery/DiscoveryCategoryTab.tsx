@@ -3,28 +3,28 @@ import {
   View, Text, FlatList, Pressable, StyleSheet, RefreshControl, Switch, Animated,
 } from 'react-native';
 import { Search } from 'lucide-react-native';
-import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace } from '../../services/discovery';
-import { getDiscoveryPlaces } from '../../services/discovery';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import PlaceCard from './PlaceCard';
-import { PlaceSkeletonList } from './PlaceSkeleton';
-import { DiscoveryMapView } from './DiscoveryMapView';
+import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace } from '../../services/discovery.ts';
+import { getDiscoveryPlaces } from '../../services/discovery.ts';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import PlaceCard from './PlaceCard.tsx';
+import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
+import { DiscoveryMapView } from './DiscoveryMapView.tsx';
 
 // ── Nearest chip press handler ────────────────────────────────────────────────
 //
 // Pure logic lives in filterStripNearest.ts (zero RN imports) so it can be
 // covered by node:test without pulling in the full React Native module graph.
-import { handleNearestChipPress } from './filterStripNearest';
-import { handleSortChipPress } from './filterStripSort';
+import { handleNearestChipPress } from './filterStripNearest.ts';
+import { handleSortChipPress } from './filterStripSort.ts';
 export { handleNearestChipPress };
 import {
   resolveNearestFetchCoords,
   shouldBootstrapNearestLoad,
   shouldRefreshNearestOnMovement,
-} from './discoveryCategoryTabNearest';
-import { usePopularCities } from '../../hooks/usePopularCities';
-import { POPULAR } from '../selectors/GlobalPlacePicker';
-import type { Place } from '../../lib/location/placeTypes';
+} from './discoveryCategoryTabNearest.ts';
+import { usePopularCities } from '../../hooks/usePopularCities.ts';
+import { POPULAR } from '../selectors/GlobalPlacePicker.tsx';
+import type { Place } from '../../lib/location/placeTypes.ts';
 
 // ── Sort labels ───────────────────────────────────────────────────────────────
 
@@ -337,11 +337,11 @@ interface DiscoveryCategoryTabProps {
   destination: string;
   onSelectPlace: (place: DiscoveryPlace) => void;
   onAddToPlan: (place: DiscoveryPlace) => void;
-  onAddToRoute?: (draft: import('../RouteBuilderSheet').RouteStopDraft) => void;
+  onAddToRoute?: (draft: import('../RouteBuilderSheet.tsx').RouteStopDraft) => void;
   onPickDestination?: (place: Place) => void;
   contextMode?: DiscoveryContextMode | null;
   viewMode?: 'list' | 'map';
-  ageFilter?: import('../../../src/services/discovery').DiscoveryAgeFilter | null;
+  ageFilter?: import('../../../src/services/discovery.ts').DiscoveryAgeFilter | null;
   customMinAge?: number | null;
   customMaxAge?: number | null;
   lat?: number | null;

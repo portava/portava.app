@@ -19,7 +19,7 @@ import {
 } from 'react-native';
 import { Sparkles, ArrowRight, Check } from 'lucide-react-native';
 import { router } from 'expo-router';
-import { color, space, radius, type as t } from '../../theme/tokens';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import {
   fetchCompassSettings,
   patchCompassSettings,
@@ -27,7 +27,7 @@ import {
   fetchCompassPreferences,
   postCompassAnalyticsEvent,
   COMPASS_ENGINE_VERSION,
-} from '../../services/compass';
+} from '../../services/compass.ts';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 

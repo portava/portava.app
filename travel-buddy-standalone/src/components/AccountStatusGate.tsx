@@ -8,9 +8,9 @@ import {
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { color, space, type as typeTokens } from '../theme/tokens';
-import { useSession } from '../context/SessionContext';
-import { reactivateAccount } from '../services/profile';
+import { color, space, type as typeTokens } from '../theme/tokens.ts';
+import { useSession } from '../context/SessionContext.tsx';
+import { reactivateAccount } from '../services/profile.ts';
 
 function formatDate(iso: string | null): string {
   if (!iso) return 'soon';

@@ -24,7 +24,7 @@
 
 import React from 'react';
 import { render } from '@testing-library/react-native';
-import { ReviewsSection } from '../ReviewsSection';
+import { ReviewsSection } from '../ReviewsSection.tsx';
 
 // ── expo-router mock ──────────────────────────────────────────────────────────
 
@@ -43,13 +43,13 @@ jest.mock('expo-router', () => {
 
 // ── Session context mock ──────────────────────────────────────────────────────
 
-jest.mock('../../context/SessionContext', () => ({
+jest.mock('../../context/SessionContext.tsx', () => ({
   useSession: () => ({ isAuthed: true }),
 }));
 
 // ── Reviews service mock ──────────────────────────────────────────────────────
 
-jest.mock('../../services/reviews', () => ({
+jest.mock('../../services/reviews.ts', () => ({
   getTripReviews:   jest.fn(),
   getPlaceReviews:  jest.fn(),
   getMyReview:      jest.fn(),
@@ -105,14 +105,14 @@ describe('ReviewsSection — place entity (gem detail screen)', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    const reviews = require('../../services/reviews');
+    const reviews = require('../../services/reviews.ts');
     getPlaceReviews = reviews.getPlaceReviews;
     getMyReview     = reviews.getMyReview;
     getMyReview.mockResolvedValue({ exists: false });
   });
 
   it('calls getPlaceReviews (not getTripReviews) for place entity type', async () => {
-    const reviews = require('../../services/reviews');
+    const reviews = require('../../services/reviews.ts');
     getPlaceReviews.mockResolvedValue(PLACE_EMPTY_RESPONSE);
 
     const { findByText } = await mountPlaceSection();

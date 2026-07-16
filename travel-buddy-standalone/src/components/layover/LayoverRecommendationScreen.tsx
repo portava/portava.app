@@ -17,7 +17,7 @@ import {
   type LayoverRecommendation,
   type LayoverSafetyResult,
   type SafetyRating,
-} from '../../services/layover';
+} from '../../services/layover.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

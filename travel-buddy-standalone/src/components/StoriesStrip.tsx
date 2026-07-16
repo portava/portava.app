@@ -4,10 +4,10 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import { color, radius, space, type as t } from '../theme/tokens';
-import { HighlightRing } from './HighlightRing';
-import { useSession } from '../context/SessionContext';
-import { getStoriesFeed, type StoryFeedUser, type Story } from '../services/stories';
+import { color, radius, space, type as t } from '../theme/tokens.ts';
+import { HighlightRing } from './HighlightRing.tsx';
+import { useSession } from '../context/SessionContext.tsx';
+import { getStoriesFeed, type StoryFeedUser, type Story } from '../services/stories.ts';
 
 const RING_SIZE = 64;
 const RING_GAP = space.md;

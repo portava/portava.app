@@ -10,7 +10,7 @@ import {
   patchCompassSettings,
   deleteCompassContext,
   type CompassSettings,
-} from '../../services/compass';
+} from '../../services/compass.ts';
 
 interface UseCompassSettingsReturn {
   settings:          CompassSettings | null;

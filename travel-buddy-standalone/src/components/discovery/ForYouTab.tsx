@@ -11,26 +11,26 @@ import {
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Sparkles, Info, Share2, Navigation, X } from 'lucide-react-native';
-import { DiscoveryShareSheet } from '../DiscoveryShareSheet';
-import type { DiscoverySharePayload } from '../DiscoveryShareSheet';
-import type { DiscoveryPlace } from '../../services/discovery';
-import { getDiscoveryPlaces, getSavedPlaceIds } from '../../services/discovery';
-import { PlaceSkeletonList } from './PlaceSkeleton';
-import PlaceCard from './PlaceCard';
-import { PlaceDetailSheet } from './PlaceDetailSheet';
-import { DiscoveryMapView } from './DiscoveryMapView';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import { useSession } from '../../context/SessionContext';
-import { useCommunityDiscovery } from '../../hooks/useCommunityDiscovery';
-import { HiddenGemsSection, TravelerPicksSection, prefillSavedPlaceIds } from '../DiscoveryWall';
-import type { RouteStopDraft } from '../RouteBuilderSheet';
-import { useCompassFeed } from '../../hooks/compass/useCompassFeed';
-import { CompassFeedbackMenu } from '../compass/CompassFeedbackMenu';
-import { CompassWhySheet } from '../compass/CompassWhySheet';
-import { postCompassFrontloadEvent, postCompassContext } from '../../services/compass';
-import { CompassPicksSection } from '../compass/CompassPicksSection';
-import { CompassTravelerRow } from '../compass/CompassTravelerRow';
-import { CompassOnboardingCard } from '../compass/CompassOnboardingCard';
+import { DiscoveryShareSheet } from '../DiscoveryShareSheet.tsx';
+import type { DiscoverySharePayload } from '../DiscoveryShareSheet.tsx';
+import type { DiscoveryPlace } from '../../services/discovery.ts';
+import { getDiscoveryPlaces, getSavedPlaceIds } from '../../services/discovery.ts';
+import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
+import PlaceCard from './PlaceCard.tsx';
+import { PlaceDetailSheet } from './PlaceDetailSheet.tsx';
+import { DiscoveryMapView } from './DiscoveryMapView.tsx';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { useSession } from '../../context/SessionContext.tsx';
+import { useCommunityDiscovery } from '../../hooks/useCommunityDiscovery.ts';
+import { HiddenGemsSection, TravelerPicksSection, prefillSavedPlaceIds } from '../DiscoveryWall.tsx';
+import type { RouteStopDraft } from '../RouteBuilderSheet.tsx';
+import { useCompassFeed } from '../../hooks/compass/useCompassFeed.ts';
+import { CompassFeedbackMenu } from '../compass/CompassFeedbackMenu.tsx';
+import { CompassWhySheet } from '../compass/CompassWhySheet.tsx';
+import { postCompassFrontloadEvent, postCompassContext } from '../../services/compass.ts';
+import { CompassPicksSection } from '../compass/CompassPicksSection.tsx';
+import { CompassTravelerRow } from '../compass/CompassTravelerRow.tsx';
+import { CompassOnboardingCard } from '../compass/CompassOnboardingCard.tsx';
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -38,7 +38,7 @@ interface ForYouTabProps {
   destination: string;
   onAddToPlan: (item: { id: string; name: string; category: string; address?: string | null }) => void;
   onAddToRoute?: (draft: RouteStopDraft) => void;
-  contextMode?: import('../../services/discovery').DiscoveryContextMode | null;
+  contextMode?: import('../../services/discovery.ts').DiscoveryContextMode | null;
   lat?: number | null;
   lng?: number | null;
   userLat?: number | null;
@@ -50,9 +50,9 @@ interface ForYouTabProps {
 
 type ForYouItem =
   | { kind: 'osm'; place: DiscoveryPlace }
-  | { kind: 'compass'; item: import('../../services/compass').CompassFeedItem; place: DiscoveryPlace };
+  | { kind: 'compass'; item: import('../../services/compass.ts').CompassFeedItem; place: DiscoveryPlace };
 
-function compassItemToPlace(item: import('../../services/compass').CompassFeedItem): DiscoveryPlace {
+function compassItemToPlace(item: import('../../services/compass.ts').CompassFeedItem): DiscoveryPlace {
   return {
     id:           item.id,
     name:         item.title ?? item.type,

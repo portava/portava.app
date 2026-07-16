@@ -4,7 +4,7 @@
  * Wraps the /api/saves and /api/users/me/collections endpoints.
  * Saves are private — content owners are never notified.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 function apiBase(): string {

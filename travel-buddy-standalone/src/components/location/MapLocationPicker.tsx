@@ -22,9 +22,9 @@ import { Map, Camera } from '@maplibre/maplibre-react-native';
 import type { NativeSyntheticEvent } from 'react-native';
 import type { ViewStateChangeEvent } from '@maplibre/maplibre-react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { reverseGeocodeToPlace } from '../../services/location';
-import { confirmMapCenterAsPlace } from './MapLocationPicker.machine';
-import type { Place } from '../../lib/location/placeTypes';
+import { reverseGeocodeToPlace } from '../../services/location.ts';
+import { confirmMapCenterAsPlace } from './MapLocationPicker.machine.ts';
+import type { Place } from '../../lib/location/placeTypes.ts';
 
 // ── Map tile style ─────────────────────────────────────────────────────────────
 

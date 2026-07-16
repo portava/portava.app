@@ -18,10 +18,10 @@ import {
   postEventUpdate, updateEvent, getEventWaitlist,
   postponeEvent, archiveEvent, closeRsvps, reopenRsvps, inviteUserToEvent,
   type EventDetail, type JoinRequest, type WaitlistEntry,
-} from '../services/events';
-import { searchUsers, type TravelerSearchResult } from '../services/follows';
-import { Avatar } from './ui';
-import { color, space, radius, type as t } from '../theme/tokens';
+} from '../services/events.ts';
+import { searchUsers, type TravelerSearchResult } from '../services/follows.ts';
+import { Avatar } from './ui.tsx';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 interface Props {
   event: EventDetail;

@@ -22,7 +22,7 @@
 
 import React from 'react';
 import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
-import ReviewComposerScreen from '../../../app/review/[entityType]/[entityId]';
+import ReviewComposerScreen from '../../../app/review/[entityType]/[entityId].tsx';
 
 // ── expo-router mock ──────────────────────────────────────────────────────────
 
@@ -33,13 +33,13 @@ jest.mock('expo-router', () => ({
 
 // ── Session context mock ──────────────────────────────────────────────────────
 
-jest.mock('../../context/SessionContext', () => ({
+jest.mock('../../context/SessionContext.tsx', () => ({
   useSession: () => ({ isAuthed: true }),
 }));
 
 // ── Reviews service mock ──────────────────────────────────────────────────────
 
-jest.mock('../../services/reviews', () => ({
+jest.mock('../../services/reviews.ts', () => ({
   getMyReview:       jest.fn(),
   createReview:      jest.fn().mockResolvedValue({}),
   updateReview:      jest.fn().mockResolvedValue({}),
@@ -56,7 +56,7 @@ jest.mock('../../services/reviews', () => ({
 // ── Typed refs ────────────────────────────────────────────────────────────────
 
 import { useLocalSearchParams } from 'expo-router';
-import { getMyReview, updateReview } from '../../services/reviews';
+import { getMyReview, updateReview } from '../../services/reviews.ts';
 
 const mockUseLocalSearchParams = useLocalSearchParams as jest.Mock;
 const mockGetMyReview          = getMyReview          as jest.Mock;

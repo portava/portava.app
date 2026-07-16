@@ -15,10 +15,10 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Users, X } from 'lucide-react-native';
-import { color, space, type as t } from '../theme/tokens';
-import { isLivePulseDismissible, type LivePulseItem } from '../services/livePulse';
-import { rsvpEvent, saveEvent, unsaveEvent } from '../services/events';
-import { saveGem } from '../services/hiddenGems';
+import { color, space, type as t } from '../theme/tokens.ts';
+import { isLivePulseDismissible, type LivePulseItem } from '../services/livePulse.ts';
+import { rsvpEvent, saveEvent, unsaveEvent } from '../services/events.ts';
+import { saveGem } from '../services/hiddenGems.ts';
 
 interface LivePulseCardProps {
   item: LivePulseItem;

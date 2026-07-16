@@ -16,11 +16,11 @@
  */
 
 import { renderHook, act } from '@testing-library/react-native';
-import { useGemCheckin } from '../useHiddenGems';
+import { useGemCheckin } from '../useHiddenGems.ts';
 
 // ── hiddenGems service mock ───────────────────────────────────────────────────
 
-jest.mock('../../services/hiddenGems', () => ({
+jest.mock('../../services/hiddenGems.ts', () => ({
   verifyGemVisit:      jest.fn(),
   listGems:            jest.fn(),
   getGem:              jest.fn(),
@@ -37,7 +37,7 @@ jest.mock('../../services/hiddenGems', () => ({
   sensitivityLabel:    () => '',
 }));
 
-import { verifyGemVisit } from '../../services/hiddenGems';
+import { verifyGemVisit } from '../../services/hiddenGems.ts';
 
 const mockVerifyGemVisit = verifyGemVisit as jest.MockedFunction<typeof verifyGemVisit>;
 

@@ -6,7 +6,7 @@
  * the token is fetched internally; callers do not need to pass it.
  */
 import { Platform } from 'react-native';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 // AsyncStorage v2.x uses TurboModules (codegenNativeComponent) — not available on web.

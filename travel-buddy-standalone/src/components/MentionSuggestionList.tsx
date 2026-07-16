@@ -27,8 +27,8 @@ import {
   type AnyMentionSuggestion,
   type EntityTagSuggestion,
   type HashtagSuggestion,
-} from '../services/tagging';
-import { color, space, radius, type as t } from '../theme/tokens';
+} from '../services/tagging.ts';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

@@ -17,20 +17,20 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
 import { Layers, MapPin, Navigation, Star, Users } from 'lucide-react-native';
-import type { DiscoveryPlace } from '../../services/discovery';
-import { color, space, radius, type as t } from '../../theme/tokens';
+import type { DiscoveryPlace } from '../../services/discovery.ts';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import {
   loadMapFilter,
   saveMapFilter,
   removeMapFilter,
   getCachedFilter,
   type MapFilter,
-} from './discoverMapFilterStorage';
-import { useMapTravelers } from '../../hooks/useMapTravelers';
-import { TravelerClusterMarkers } from './TravelerMapLayer';
-import { TravelerPreviewCard } from './TravelerPreviewCard';
-import type { MapTraveler } from '../../services/mapTravelers';
-export type { MapFilter } from './discoverMapFilterStorage';
+} from './discoverMapFilterStorage.ts';
+import { useMapTravelers } from '../../hooks/useMapTravelers.ts';
+import { TravelerClusterMarkers } from './TravelerMapLayer.tsx';
+import { TravelerPreviewCard } from './TravelerPreviewCard.tsx';
+import type { MapTraveler } from '../../services/mapTravelers.ts';
+export type { MapFilter } from './discoverMapFilterStorage.ts';
 
 /** AsyncStorage key for the travelers-layer toggle ('1' on / '0' off). */
 const TRAVELERS_TOGGLE_KEY = 'discovery_map_travelers';

@@ -12,10 +12,10 @@ import {
   StyleSheet, ActivityIndicator, Alert,
 } from 'react-native';
 import { X, Route, Trash2, MapPin, ChevronRight, Plus } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens';
-import { createRoutePlan, type CandidateStopInput, type RouteStyle, type FullRoutePlan } from '../services/routePlan';
-import { GlobalPlacePicker } from './selectors/GlobalPlacePicker';
-import type { Place } from '../lib/location/placeTypes';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { createRoutePlan, type CandidateStopInput, type RouteStyle, type FullRoutePlan } from '../services/routePlan.ts';
+import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
+import type { Place } from '../lib/location/placeTypes.ts';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 

@@ -10,13 +10,13 @@ import {
   View, Text, Modal, Pressable, StyleSheet, Animated, PanResponder, ActivityIndicator, Alert,
 } from 'react-native';
 import { GripVertical, RotateCcw } from 'lucide-react-native';
-import { updateMyProfile } from '../../services/profile';
+import { updateMyProfile } from '../../services/profile.ts';
 import {
   CANONICAL_SECTION_ORDER, SECTION_LABELS, isCanonicalOrder, resolveSectionOrder,
   type PassportSectionKey,
-} from './passportSections';
-import { PP, PP_LABEL } from '../../theme/passportTokens';
-import { space, radius, type as t } from '../../theme/tokens';
+} from './passportSections.ts';
+import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
+import { space, radius, type as t } from '../../theme/tokens.ts';
 
 const ROW_HEIGHT = 56;
 

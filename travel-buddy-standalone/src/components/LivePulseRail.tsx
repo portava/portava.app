@@ -20,14 +20,14 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { ChevronDown, ChevronUp, RefreshCw } from 'lucide-react-native';
-import { color, space, type as t } from '../theme/tokens';
-import { LivePulseCard } from './LivePulseCard';
-import { buildSummaryText, filterItems, RAIL_FILTERS, type RailFilter } from './LivePulseRail.machine';
-import type { UseLivePulseResult } from '../hooks/useLivePulse';
-import type { LivePulseItem } from '../services/livePulse';
+import { color, space, type as t } from '../theme/tokens.ts';
+import { LivePulseCard } from './LivePulseCard.tsx';
+import { buildSummaryText, filterItems, RAIL_FILTERS, type RailFilter } from './LivePulseRail.machine.ts';
+import type { UseLivePulseResult } from '../hooks/useLivePulse.ts';
+import type { LivePulseItem } from '../services/livePulse.ts';
 
 // Re-export so the test file can import from the component barrel if needed
-export { buildSummaryText } from './LivePulseRail.machine';
+export { buildSummaryText } from './LivePulseRail.machine.ts';
 
 // ── Empty state actions ────────────────────────────────────────────────────────
 

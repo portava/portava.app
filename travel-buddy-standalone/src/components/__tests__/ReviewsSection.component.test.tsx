@@ -16,7 +16,7 @@
 
 import React from 'react';
 import { render } from '@testing-library/react-native';
-import { ReviewsSection } from '../ReviewsSection';
+import { ReviewsSection } from '../ReviewsSection.tsx';
 
 // ── expo-router mock ──────────────────────────────────────────────────────────
 // Replace useFocusEffect with a plain useEffect so the callback fires on mount
@@ -39,13 +39,13 @@ jest.mock('expo-router', () => {
 
 // ── Session context mock ──────────────────────────────────────────────────────
 
-jest.mock('../../context/SessionContext', () => ({
+jest.mock('../../context/SessionContext.tsx', () => ({
   useSession: () => ({ isAuthed: true }),
 }));
 
 // ── Reviews service mock ──────────────────────────────────────────────────────
 
-jest.mock('../../services/reviews', () => ({
+jest.mock('../../services/reviews.ts', () => ({
   getTripReviews:  jest.fn(),
   getMyReview:     jest.fn(),
   getEventReviews: jest.fn().mockResolvedValue({ reviews: [] }),
@@ -101,7 +101,7 @@ describe('ReviewsSection — avgRating focus-refetch lifecycle', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    const reviews = require('../../services/reviews');
+    const reviews = require('../../services/reviews.ts');
     getTripReviews = reviews.getTripReviews;
     getMyReview    = reviews.getMyReview;
     // Default: user has not yet reviewed

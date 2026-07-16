@@ -14,21 +14,21 @@
 import React from 'react';
 import { Alert } from 'react-native';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
-import { TripSavedPlacesSection } from '../../components/TripPage';
-import { useTripSavedPlaces } from '../useTripSavedPlaces';
-import type { BookmarkedPlace } from '../../services/discoveryBookmarks';
+import { TripSavedPlacesSection } from '../../components/TripPage.tsx';
+import { useTripSavedPlaces } from '../useTripSavedPlaces.ts';
+import type { BookmarkedPlace } from '../../services/discoveryBookmarks.ts';
 
 // ── Module mocks ─────────────────────────────────────────────────────────────
 // Mock useTripSavedPlaces so we control returned state without async effects.
 // discoveryBookmarks is also mocked so the real hook can be used in the
 // integrated describe block below without touching real AsyncStorage.
-jest.mock('../../services/discoveryBookmarks', () => ({
+jest.mock('../../services/discoveryBookmarks.ts', () => ({
   listSaved: jest.fn(),
   toggleSave: jest.fn(),
   clearAllSaved: jest.fn(),
   removeSavedFromList: jest.fn(),
 }));
-jest.mock('../useTripSavedPlaces', () => ({
+jest.mock('../useTripSavedPlaces.ts', () => ({
   useTripSavedPlaces: jest.fn(),
 }));
 
@@ -49,25 +49,25 @@ jest.mock('expo-router', () => {
 
 // The remaining mocks prevent native-module imports inside TripPage.tsx's
 // other exported functions from blowing up when jest loads the module.
-jest.mock('../../components/AttachController', () => ({
+jest.mock('../../components/AttachController.tsx', () => ({
   useAttach: () => ({ open: jest.fn() }),
 }));
-jest.mock('../../context/AttachmentStore', () => ({
+jest.mock('../../context/AttachmentStore.tsx', () => ({
   useAttachments: () => ({ listAttachmentsByTarget: jest.fn().mockReturnValue([]) }),
 }));
-jest.mock('../../components/HighlightRing', () => ({
+jest.mock('../../components/HighlightRing.tsx', () => ({
   HighlightRing: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
-jest.mock('../../components/HighlightViewer', () => ({
+jest.mock('../../components/HighlightViewer.tsx', () => ({
   HighlightViewer: () => null,
 }));
-jest.mock('../useHighlightRingState', () => ({
+jest.mock('../useHighlightRingState.ts', () => ({
   useHighlightRingState: () => ({ allViewed: true }),
 }));
-jest.mock('../../components/PassportStampCard', () => ({
+jest.mock('../../components/PassportStampCard.tsx', () => ({
   PassportStampCard: () => null,
 }));
-jest.mock('../../components/primitives', () => ({
+jest.mock('../../components/primitives.tsx', () => ({
   TravelSectionHeader: ({ title }: { title: string }) => <>{title}</>,
   TravelEmptyState: () => null,
 }));
@@ -254,18 +254,18 @@ describe('TripSavedPlacesSection — integrated remove flow (real hook + mocked 
 
   beforeEach(() => {
     // Outer beforeEach already cleared mocks. Now set up integration-specific state.
-    const dm = jest.requireMock('../../services/discoveryBookmarks') as DiscoveryMocks;
+    const dm = jest.requireMock('../../services/discoveryBookmarks.ts') as DiscoveryMocks;
     dm.listSaved.mockResolvedValue([makePlace('p1'), makePlace('p2')]);
     dm.clearAllSaved.mockResolvedValue(undefined);
 
     // Override the module-level hook mock with the real implementation so the
     // component exercises the actual optimistic-remove + rollback logic.
-    const { useTripSavedPlaces: realHook } = jest.requireActual('../useTripSavedPlaces') as typeof import('../useTripSavedPlaces');
+    const { useTripSavedPlaces: realHook } = jest.requireActual('../useTripSavedPlaces.ts') as typeof import('../useTripSavedPlaces.ts');
     mockUseTripSavedPlaces.mockImplementation(realHook);
   });
 
   it('restores the item and shows an error Alert when storage rejects (end-to-end rollback)', async () => {
-    const dm = jest.requireMock('../../services/discoveryBookmarks') as DiscoveryMocks;
+    const dm = jest.requireMock('../../services/discoveryBookmarks.ts') as DiscoveryMocks;
     dm.removeSavedFromList.mockRejectedValue(new Error('disk full'));
 
     const { getByTestId } = await render(<TripSavedPlacesSection tripId="trip-1" />);
@@ -290,7 +290,7 @@ describe('TripSavedPlacesSection — integrated remove flow (real hook + mocked 
   });
 
   it('removes the item permanently when storage succeeds (no Alert)', async () => {
-    const dm = jest.requireMock('../../services/discoveryBookmarks') as DiscoveryMocks;
+    const dm = jest.requireMock('../../services/discoveryBookmarks.ts') as DiscoveryMocks;
     dm.removeSavedFromList.mockResolvedValue(undefined);
 
     const { getByTestId, queryByTestId } = await render(<TripSavedPlacesSection tripId="trip-1" />);

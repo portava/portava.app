@@ -12,8 +12,8 @@
 
 import React from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
-import { useTripSavedPlaces } from '../useTripSavedPlaces';
-import type { BookmarkedPlace } from '../../services/discoveryBookmarks';
+import { useTripSavedPlaces } from '../useTripSavedPlaces.ts';
+import type { BookmarkedPlace } from '../../services/discoveryBookmarks.ts';
 
 // useFocusEffect requires a navigation context at runtime.  In tests we only
 // need mount-time semantics, so we delegate to React.useEffect (deferred, not
@@ -28,7 +28,7 @@ jest.mock('expo-router', () => {
   };
 });
 
-jest.mock('../../services/discoveryBookmarks', () => ({
+jest.mock('../../services/discoveryBookmarks.ts', () => ({
   listSaved: jest.fn(),
   clearAllSaved: jest.fn(),
   toggleSave: jest.fn(),
@@ -36,7 +36,7 @@ jest.mock('../../services/discoveryBookmarks', () => ({
 }));
 
 const { listSaved, clearAllSaved, toggleSave: toggleSaveMock, removeSavedFromList: removeSavedFromListMock } =
-  jest.requireMock('../../services/discoveryBookmarks') as {
+  jest.requireMock('../../services/discoveryBookmarks.ts') as {
     listSaved: jest.Mock;
     clearAllSaved: jest.Mock;
     toggleSave: jest.Mock;

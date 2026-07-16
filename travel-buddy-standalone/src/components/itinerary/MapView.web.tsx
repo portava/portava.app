@@ -7,8 +7,8 @@
 import React from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
 import { MapPin, Navigation } from 'lucide-react-native';
-import type { TripPlanItem, TripPlanCategory } from '../../types/models';
-import { color, space, radius, type as t } from '../../theme/tokens';
+import type { TripPlanItem, TripPlanCategory } from '../../types/models.ts';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
 export interface MapViewProps {
   items: TripPlanItem[];

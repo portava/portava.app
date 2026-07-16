@@ -5,10 +5,10 @@
 import React, { useMemo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Map as MapIcon } from 'lucide-react-native';
-import { DiscoveryMapView } from '../discovery/DiscoveryMapView';
-import type { DiscoveryPlace } from '../../services/discovery';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import type { PlanStop, PublicAirport } from '../../services/layover';
+import { DiscoveryMapView } from '../discovery/DiscoveryMapView.tsx';
+import type { DiscoveryPlace } from '../../services/discovery.ts';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import type { PlanStop, PublicAirport } from '../../services/layover.ts';
 
 interface Props {
   airport: PublicAirport;

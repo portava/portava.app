@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Path, Defs, Pattern, Rect, Circle, G, Line } from 'react-native-svg';
 import { Plane } from 'lucide-react-native';
-import { color, radius, type as t } from '../theme/tokens';
+import { color, radius, type as t } from '../theme/tokens.ts';
 
 /**
  * Passport authenticity primitives. All subtle/low-opacity by design — these are

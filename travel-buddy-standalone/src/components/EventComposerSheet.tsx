@@ -14,11 +14,11 @@ import {
   KeyboardAvoidingView, Platform, ScrollView, Switch,
 } from 'react-native';
 import { X, ChevronRight, ChevronLeft, CalendarClock, MapPin, Settings2, Eye, Clock } from 'lucide-react-native';
-import { createEvent, type CreateEventInput, type EventSummary, type EventVisibility } from '../services/events';
-import { GlobalCalendarPicker } from './selectors/GlobalCalendarPicker';
-import { GlobalTimePicker } from './selectors/GlobalTimePicker';
-import { GlobalPlacePicker } from './selectors/GlobalPlacePicker';
-import { color, space, radius, type as t } from '../theme/tokens';
+import { createEvent, type CreateEventInput, type EventSummary, type EventVisibility } from '../services/events.ts';
+import { GlobalCalendarPicker } from './selectors/GlobalCalendarPicker.tsx';
+import { GlobalTimePicker } from './selectors/GlobalTimePicker.tsx';
+import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 interface Props {
   onDismiss: () => void;

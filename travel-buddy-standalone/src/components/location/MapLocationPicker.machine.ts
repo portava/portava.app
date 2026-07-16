@@ -33,7 +33,7 @@
  *   onConfirm(result);
  */
 
-import type { GpsCaptureResult, PlaceResultShape, FetchLike } from './GpsLocationCapture.machine';
+import type { GpsCaptureResult, PlaceResultShape, FetchLike } from './GpsLocationCapture.machine.ts';
 
 export type { GpsCaptureResult, PlaceResultShape, FetchLike };
 
@@ -100,7 +100,7 @@ export async function resolveMapPickerResult(opts: {
 
 // ── Place-based confirm flow (universal location system) ──────────────────────
 
-import type { Place } from '../../lib/location/placeTypes';
+import type { Place } from '../../lib/location/placeTypes.ts';
 
 /**
  * Pure async flow behind MapLocationPicker's handleConfirm.

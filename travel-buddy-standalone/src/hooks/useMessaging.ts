@@ -32,12 +32,12 @@ import {
   type ThreadSummary,
   type Message,
   type LanguageSettings,
-} from '../services/messaging';
+} from '../services/messaging.ts';
 import {
   telegraphRealtime,
   type TelegraphEvent,
-} from '../services/telegraphRealtimeService';
-import { useSession } from '../context/SessionContext';
+} from '../services/telegraphRealtimeService.ts';
+import { useSession } from '../context/SessionContext.tsx';
 
 // When realtime is connected we lean on pushed events and poll only as a slow
 // safety net. When realtime is unavailable the service reports 'polling' and

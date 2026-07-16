@@ -6,10 +6,10 @@ import {
   Fish, Landmark, Soup, Building2, Sparkles, Lock,
 } from 'lucide-react-native';
 import type { ComponentType } from 'react';
-import type { PassportStamp } from '../types/models';
-import { motifFor } from '../lib/stampMotif';
-import { IllustratedStamp, CITY_ART } from './IllustratedStamp';
-import { color, space, radius, type as t } from '../theme/tokens';
+import type { PassportStamp } from '../types/models.ts';
+import { motifFor } from '../lib/stampMotif.ts';
+import { IllustratedStamp, CITY_ART } from './IllustratedStamp.tsx';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 /* Safe icon resolution — every iconKey maps to a real lucide icon, with a
  * guaranteed fallback so an unknown key never crashes the stamp. */

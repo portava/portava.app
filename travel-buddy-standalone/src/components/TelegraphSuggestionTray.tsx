@@ -14,8 +14,8 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { View, Text, StyleSheet, Animated, ScrollView, Pressable } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Clock } from 'lucide-react-native';
-import { color, space, radius, type as t, icon } from '../theme/tokens';
-import { TelegraphChatCard } from './TelegraphChatCard';
+import { color, space, radius, type as t, icon } from '../theme/tokens.ts';
+import { TelegraphChatCard } from './TelegraphChatCard.tsx';
 import {
   getTelegraphSuggestions,
   dismissSuggestion,
@@ -23,7 +23,7 @@ import {
   getSuggestionMeetupPrefill,
   startTimePoll,
   type TelegraphSuggestion,
-} from '../services/telegraphChat';
+} from '../services/telegraphChat.ts';
 
 const MAX_CACHED = 10;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -122,7 +122,7 @@ export interface TelegraphSuggestionTrayProps {
   /** Called when user taps "Add to Plan" — receives suggestion + needs tripId from caller. */
   onAddToPlan?: (suggestion: TelegraphSuggestion) => Promise<string | null>;
   /** Called when user taps "Create Meetup" — receives prefill data. */
-  onCreateMeetup?: (prefill: import('../services/telegraphChat').MeetupPrefill) => void;
+  onCreateMeetup?: (prefill: import('../services/telegraphChat.ts').MeetupPrefill) => void;
   /** Called when user taps "View Ideas" / "View Place" */
   onViewPlace?: (suggestion: TelegraphSuggestion) => void;
 }

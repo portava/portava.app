@@ -20,7 +20,7 @@
 import React from 'react';
 import { Alert } from 'react-native';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
-import { ReviewsSection } from '../ReviewsSection';
+import { ReviewsSection } from '../ReviewsSection.tsx';
 
 // ── expo-router mock ──────────────────────────────────────────────────────────
 
@@ -39,13 +39,13 @@ jest.mock('expo-router', () => {
 
 // ── Session context mock ──────────────────────────────────────────────────────
 
-jest.mock('../../context/SessionContext', () => ({
+jest.mock('../../context/SessionContext.tsx', () => ({
   useSession: () => ({ isAuthed: true }),
 }));
 
 // ── Reviews service mock ──────────────────────────────────────────────────────
 
-jest.mock('../../services/reviews', () => ({
+jest.mock('../../services/reviews.ts', () => ({
   getTripReviews:   jest.fn(),
   getPlaceReviews:  jest.fn(),
   getMyReview:      jest.fn(),
@@ -140,7 +140,7 @@ describe('ReviewsSection — optimistic delete', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    const reviews = require('../../services/reviews');
+    const reviews = require('../../services/reviews.ts');
     getPlaceReviews = reviews.getPlaceReviews;
     getMyReview     = reviews.getMyReview;
     deleteReview    = reviews.deleteReview;

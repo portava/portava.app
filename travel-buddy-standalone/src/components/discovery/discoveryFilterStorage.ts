@@ -10,7 +10,7 @@
  * eliminating the "defaults flash" that occurs when Expo Router remounts
  * the screen during tab navigation.
  */
-import type { DiscoveryFilters } from '../../services/discovery';
+import type { DiscoveryFilters } from '../../services/discovery.ts';
 
 export const FILTER_STORAGE_KEY = 'discovery_filters';
 
