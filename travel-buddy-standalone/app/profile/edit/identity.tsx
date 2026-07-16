@@ -14,6 +14,7 @@ import {
 } from '../../../src/services/profile';
 import { classifyIdentitySaveFailure } from '../../../src/services/profileSaveFlow';
 import { getCurrentGps, reverseGeocodeToPlace } from '../../../src/services/location';
+import { runIdentityGpsFill } from '../../../src/services/identityGpsFill';
 import { ManualCityPicker } from '../../../src/components/ManualCityPicker';
 import { DatePickerField } from '../../../src/components/DatePickerField';
 import type { OwnProfile } from '../../../src/types/models';
@@ -148,10 +149,10 @@ export default function IdentityScreen() {
   }, [profile?.username]);
 
   const fillHomeFromGps = useCallback(async () => {
-    setGpsLoadingHome(true);
-    try {
-      const gps = await getCurrentGps();
-      if (!gps.granted) {
+    await runIdentityGpsFill({
+      getCurrentGps,
+      reverseGeocode: reverseGeocodeToPlace,
+      onPermissionDenied: () =>
         Alert.alert(
           'Location permission is off',
           'Enable it in settings or choose a city/place from search.',
@@ -160,28 +161,31 @@ export default function IdentityScreen() {
             { text: 'Choose from list', onPress: () => setShowHomePicker(true) },
             { text: 'Cancel', style: 'cancel' },
           ],
-        );
-        return;
-      }
-      if (gps.lat == null || gps.lng == null) return;
-      const place = await reverseGeocodeToPlace(gps.lat, gps.lng);
-      setForm((f) => ({
-        ...f,
-        homeCity: place.city ?? f.homeCity,
-        homeCountry: place.country ?? f.homeCountry,
-      }));
-    } catch {
-      // silent — user can still type manually
-    } finally {
-      setGpsLoadingHome(false);
-    }
+        ),
+      onGpsOrGeocodeFailed: () =>
+        Alert.alert(
+          'Could not detect your location',
+          'There was a problem getting your location. You can choose a city from the list instead.',
+          [
+            { text: 'Choose from list', onPress: () => setShowHomePicker(true) },
+            { text: 'Cancel', style: 'cancel' },
+          ],
+        ),
+      onSuccess: (city, country) =>
+        setForm((f) => ({
+          ...f,
+          homeCity: city ?? f.homeCity,
+          homeCountry: country ?? f.homeCountry,
+        })),
+      setLoading: setGpsLoadingHome,
+    });
   }, []);
 
   const fillCurrentFromGps = useCallback(async () => {
-    setGpsLoadingCurrent(true);
-    try {
-      const gps = await getCurrentGps();
-      if (!gps.granted) {
+    await runIdentityGpsFill({
+      getCurrentGps,
+      reverseGeocode: reverseGeocodeToPlace,
+      onPermissionDenied: () =>
         Alert.alert(
           'Location permission is off',
           'Enable it in settings or choose a city/place from search.',
@@ -190,20 +194,23 @@ export default function IdentityScreen() {
             { text: 'Choose from list', onPress: () => setShowCurrentPicker(true) },
             { text: 'Cancel', style: 'cancel' },
           ],
-        );
-        return;
-      }
-      if (gps.lat == null || gps.lng == null) return;
-      const place = await reverseGeocodeToPlace(gps.lat, gps.lng);
-      setForm((f) => ({
-        ...f,
-        currentCity: place.city ?? f.currentCity,
-      }));
-    } catch {
-      // silent — user can still type manually
-    } finally {
-      setGpsLoadingCurrent(false);
-    }
+        ),
+      onGpsOrGeocodeFailed: () =>
+        Alert.alert(
+          'Could not detect your location',
+          'There was a problem getting your location. You can choose a city from the list instead.',
+          [
+            { text: 'Choose from list', onPress: () => setShowCurrentPicker(true) },
+            { text: 'Cancel', style: 'cancel' },
+          ],
+        ),
+      onSuccess: (city, _country) =>
+        setForm((f) => ({
+          ...f,
+          currentCity: city ?? f.currentCity,
+        })),
+      setLoading: setGpsLoadingCurrent,
+    });
   }, []);
 
   const canSave = usernameStatus !== 'taken' && usernameStatus !== 'invalid'
