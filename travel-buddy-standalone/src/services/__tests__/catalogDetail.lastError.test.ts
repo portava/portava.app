@@ -243,3 +243,73 @@ describe('getAdminCatalogEntry — malformed queue.last_error in API response', 
     assert.equal(res.ok, false);
   });
 });
+
+// ── Suite 3: combined shortfall derivation — candidates present, queue null ───
+// Mirrors [catalogId].tsx lines 116-127 (shortfallFromMeta + shortfallFromQueue
+// + shortfall = shortfallFromMeta ?? shortfallFromQueue).
+
+function deriveShortfall(candidates: unknown[], queue: unknown): string | null {
+  const meta = (candidates[0] as any)?.generation_metadata ?? {};
+  const shortfallFromMeta =
+    typeof meta.candidates_expected === 'number' &&
+    typeof meta.candidates_produced === 'number' &&
+    meta.candidates_produced < meta.candidates_expected
+      ? `Only ${meta.candidates_produced} of ${meta.candidates_expected} candidates were generated.`
+      : null;
+  const shortfallFromQueue =
+    typeof (queue as any)?.last_error === 'string' &&
+    (queue as any).last_error.startsWith('candidate_shortfall')
+      ? (queue as any).last_error.replace(/^candidate_shortfall:\s*/, '')
+      : null;
+  return shortfallFromMeta ?? shortfallFromQueue;
+}
+
+describe('shortfall derivation — candidates present, queue null', () => {
+  it('returns null when one candidate has no generation_metadata and queue is null', () => {
+    const candidates = [{ id: 'v-1', status: 'candidate', provider: 'ai', public_url: null }];
+    const result = deriveShortfall(candidates, null);
+    assert.equal(result, null);
+  });
+
+  it('returns null when candidate generation_metadata is empty and queue is null', () => {
+    const candidates = [{ id: 'v-1', status: 'candidate', generation_metadata: {} }];
+    const result = deriveShortfall(candidates, null);
+    assert.equal(result, null);
+  });
+
+  it('returns null when candidate has complete generation_metadata (no shortfall) and queue is null', () => {
+    // produced === expected → no shortfall from meta either
+    const candidates = [
+      {
+        id: 'v-1',
+        status: 'candidate',
+        generation_metadata: { candidates_expected: 4, candidates_produced: 4 },
+      },
+    ];
+    const result = deriveShortfall(candidates, null);
+    assert.equal(result, null);
+  });
+
+  it('shortfallFromQueue is null when queue is null — does not throw', () => {
+    assert.doesNotThrow(() => {
+      const result = deriveShortfall(
+        [{ id: 'v-1', status: 'candidate' }],
+        null,
+      );
+      assert.equal(result, null);
+    });
+  });
+
+  it('still surfaces shortfallFromMeta even when queue is null', () => {
+    // Shortfall from metadata is independent of queue — confirm it still fires.
+    const candidates = [
+      {
+        id: 'v-1',
+        status: 'candidate',
+        generation_metadata: { candidates_expected: 4, candidates_produced: 2 },
+      },
+    ];
+    const result = deriveShortfall(candidates, null);
+    assert.equal(result, 'Only 2 of 4 candidates were generated.');
+  });
+});
