@@ -382,8 +382,6 @@ function PassportContent({
 
   const renderTabsSection = () => (
     <>
-      {/* ── Document-style tab bar ── */}
-      <PassportDivider />
       <View style={s.tabBar}>
         {TABS.map((tb) => (
           <Pressable
@@ -392,13 +390,12 @@ function PassportContent({
             onPress={() => setTab(tb.key)}
           >
             <Text style={[s.tabText, tab === tb.key && s.tabTextActive]}>
-              {tb.label}
+              {tb.label.toUpperCase()}
             </Text>
             {tab === tb.key && <View style={s.tabIndicator} />}
           </Pressable>
         ))}
       </View>
-      <View style={s.tabBarRule} />
 
       {/* ── Tab content ── */}
       <View style={s.tabContent}>
@@ -599,7 +596,7 @@ function PassportContent({
       >
         {sharing
           ? <ActivityIndicator size="small" color={PP.ink} />
-          : <Share2 size={18} color={PP.ink} />}
+          : <Share2 size={20} color={PP.ink} strokeWidth={1.5} />}
       </Pressable>
       <NotificationBell style={[s.bellBtn, { top: insets.top + space.sm }]} />
 
@@ -677,22 +674,26 @@ const s = StyleSheet.create({
   // Document-style tab bar
   tabBar: {
     flexDirection: 'row',
+    marginTop: 24,
+    marginBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: PP.borderLight,
     marginHorizontal: 16,
-    marginTop: 4,
   },
   tabItem: {
-    flex: 1, alignItems: 'center', paddingVertical: 10, position: 'relative',
+    paddingVertical: 12,
+    marginRight: 24,
+    position: 'relative',
   },
   tabText: {
-    ...PP_LABEL, fontSize: 10, color: PP.inkMuted, letterSpacing: 1.5,
+    ...PP_LABEL, fontSize: 13, color: PP.inkMuted, letterSpacing: 0, textTransform: 'none', fontWeight: '500'
   },
-  tabTextActive: { color: PP.ink },
+  tabTextActive: { color: PP.ink, fontWeight: '700' },
   tabIndicator: {
-    position: 'absolute', bottom: 0, left: '20%', right: '20%',
-    height: 2, borderRadius: 1, backgroundColor: PP.inkLight,
+    position: 'absolute', bottom: -1, left: 0, right: 0,
+    height: 2, backgroundColor: PP.ink,
   },
-  tabBarRule: { height: 1, backgroundColor: PP.borderLight, marginHorizontal: 16 },
-  tabContent: { marginTop: space.md },
+  tabContent: { marginTop: 0 },
 
   // Saved empty state
   savedEmpty: {

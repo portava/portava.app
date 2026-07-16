@@ -1,45 +1,42 @@
 /**
- * Passport palette — cream ivory paper, dark green ink, vermilion seal.
- * Used exclusively within Passport screen components.
+ * Passport palette — clean white/cream paper, black ink, red seal.
+ * Minimalist, Instagram-calm profile style.
  */
 import type { TextStyle } from 'react-native';
 
 export const PP = {
-  paper:        '#F8F3E8',
-  paperDeep:    '#EDE8D8',
-  paperShadow:  '#D4CEBC',
-  ink:          '#1A3A2A',
-  inkLight:     '#2D5F3F',
-  inkMuted:     '#4A6B58',
-  inkFaint:     'rgba(26,58,42,0.12)' as const,
-  seal:         '#C41E3A',
-  sealLight:    '#F9E8EB',
-  gold:         '#B89A0C',
-  goldLight:    '#FBF5DC',
-  securityLine: 'rgba(26,58,42,0.055)' as const,
-  border:       'rgba(26,58,42,0.18)' as const,
-  borderLight:  'rgba(26,58,42,0.09)' as const,
+  paper:        '#FFFFFF',
+  paperDeep:    '#F7F7F5',
+  paperShadow:  '#EBEBE8',
+  ink:          '#1C1C1A',
+  inkLight:     '#4A4A48',
+  inkMuted:     '#828280',
+  inkFaint:     'rgba(28,28,26,0.06)',
+  seal:         '#D32F2F',
+  sealLight:    '#FCEEED',
+  gold:         '#D4AF37',
+  goldLight:    '#FDF8E7',
+  securityLine: 'rgba(28,28,26,0.03)',
+  border:       'rgba(28,28,26,0.12)',
+  borderLight:  'rgba(28,28,26,0.06)',
 } as const;
 
-/** Small-caps official field label: PP.inkMuted */
 export const PP_LABEL: TextStyle = {
-  fontSize: 9,
-  letterSpacing: 1.8,
-  fontWeight: '700',
+  fontSize: 10,
+  letterSpacing: 1.2,
+  fontWeight: '600',
   textTransform: 'uppercase',
   color: PP.inkMuted,
-  fontFamily: 'Courier',
+  fontFamily: 'System', // clean sans-serif label
 };
 
-/** Document field value: PP.ink */
 export const PP_VALUE: TextStyle = {
   fontSize: 14,
-  fontWeight: '600',
+  fontWeight: '500',
   color: PP.ink,
   lineHeight: 18,
 };
 
-/** Returns a deterministic 8-char alphanumeric "passport number" from a user id. */
 export function passportNumber(id: string): string {
   let h = 0;
   for (let i = 0; i < id.length; i++) {
@@ -49,7 +46,6 @@ export function passportNumber(id: string): string {
   return n.slice(0, 3) + ' ' + n.slice(3, 6) + ' ' + n.slice(6, 8);
 }
 
-/** Country name → ISO 3166-1 alpha-2 code lookup (common countries). */
 const COUNTRY_CODES: Record<string, string> = {
   'Philippines': 'PH', 'United States': 'US', 'USA': 'US', 'United Kingdom': 'GB',
   'UK': 'GB', 'Japan': 'JP', 'South Korea': 'KR', 'Korea': 'KR', 'Singapore': 'SG',
@@ -68,20 +64,14 @@ const COUNTRY_CODES: Record<string, string> = {
   'Bangladesh': 'BD', 'Pakistan': 'PK', 'Nepal': 'NP', 'Maldives': 'MV',
 };
 
-/** Returns a flag emoji + ISO code string for a country name, or null. */
 export function countryFlag(countryName: string | null | undefined): { flag: string; code: string } | null {
   if (!countryName) return null;
   const code = COUNTRY_CODES[countryName];
   if (!code) return null;
-  const flag = code
-    .toUpperCase()
-    .split('')
-    .map((c) => String.fromCodePoint(0x1F1E6 + c.charCodeAt(0) - 65))
-    .join('');
-  return { flag, code };
+  // Fallback to empty string for flag since we can't use emojis
+  return { flag: '', code };
 }
 
-/** Format ISO date string to short month+year, e.g. "Jun 2024". */
 export function fmtMonthYear(iso: string | null | undefined): string {
   if (!iso) return '';
   try {

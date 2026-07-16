@@ -92,7 +92,7 @@ export default function StampsPage() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <ScreenHeader title="Passport Stamps" back />
+      <ScreenHeader title="STAMPS" back />
 
       <PulseFilterRail
         filters={FILTERS.map((f) => f.label)}
@@ -108,13 +108,28 @@ export default function StampsPage() {
             const leg = toLegacy(s);
             return (
               <View key={s.id} style={styles.cell}>
-                <StampArtwork stamp={leg} size={96} rotate={((i % 3) - 1) * 4} onPress={() => setSelected(s)} />
-                <Text style={styles.cellName} numberOfLines={1}>{leg.label}</Text>
-                {leg.sublabel ? <Text style={styles.cellSub} numberOfLines={1}>{leg.sublabel}</Text> : null}
-                {s.isRevoked ? <Text style={styles.revokedTag}>revoked</Text> : null}
+                <View style={styles.stampContainer}>
+                  <StampArtwork stamp={leg} size={90} rotate={((i % 3) - 1) * 4} onPress={() => setSelected(s)} />
+                </View>
+                <View style={styles.textContainer}>
+                  <Text style={styles.cellName} numberOfLines={1}>{leg.label}</Text>
+                  {leg.sublabel ? <Text style={styles.cellSub} numberOfLines={1}>{leg.sublabel}</Text> : null}
+                  {s.isRevoked ? <Text style={styles.revokedTag}>revoked</Text> : null}
+                </View>
               </View>
             );
           })}
+          {/* Static affordance for '+ more to come' — only when there are stamps to follow */}
+          {shown.length > 0 && (
+          <View style={styles.cell}>
+            <View style={[styles.stampContainer, styles.emptyStampContainer]}>
+               <Text style={styles.emptyStampPlus}>+</Text>
+            </View>
+            <View style={styles.textContainer}>
+               <Text style={styles.cellSub}>more to come</Text>
+            </View>
+          </View>
+          )}
           {shown.length === 0 && (
             <View style={styles.empty}><Text style={styles.emptyText}>No stamps in this category yet.</Text></View>
           )}
@@ -211,10 +226,14 @@ export default function StampsPage() {
 
 const styles = StyleSheet.create({
   center:      { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  grid:        { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', padding: space.lg, paddingTop: 0, rowGap: space.xl },
-  cell:        { width: '30%', alignItems: 'center', gap: 4 },
-  cellName:    { ...t.small, color: color.ink, fontWeight: '600', textAlign: 'center' },
-  cellSub:     { ...t.small, color: color.faint, fontSize: 10, textAlign: 'center' },
+  grid:        { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-start', padding: space.xl, paddingTop: 16, rowGap: 32, columnGap: '5%' },
+  cell:        { width: '30%', alignItems: 'center', gap: 8 },
+  stampContainer: { height: 100, alignItems: 'center', justifyContent: 'center' },
+  emptyStampContainer: { width: 90, height: 90, borderRadius: 45, borderWidth: 1, borderColor: color.haze, borderStyle: 'dashed' },
+  emptyStampPlus: { fontSize: 24, color: color.mute, fontWeight: '300' },
+  textContainer: { height: 32, alignItems: 'center', justifyContent: 'flex-start', gap: 2 },
+  cellName:    { fontSize: 11, color: color.ink, fontWeight: '700', textAlign: 'center', letterSpacing: 0.5 },
+  cellSub:     { fontSize: 10, color: color.mute, textAlign: 'center' },
   revokedTag:  { ...t.small, color: '#DC2626', fontFamily: 'Courier', fontSize: 10 },
   empty:       { width: '100%', padding: space.xl, alignItems: 'center' },
   emptyText:   { ...t.body, color: color.mute },

@@ -11,4 +11,5 @@
 - [Task validation diff scope](task-validation-diff-scope.md) — completion review diffs against the task base; other tasks' merged breakage becomes yours to fix, not revert.
 - [Floating pill vs stack routes](floating-pill-stack-routes.md) — the tab pill never overlays pushed stack routes (verified visually); fixed bottom CTAs on stack screens need no clearance.
 - [Spec alias URL rewrite](spec-alias-rewrite.md) — routes registered at alias paths (/api/buddy-bookings/*) are dead in production; register at canonical paths, test through the rewrite.
+- [Design-subagent restyle audits](design-subagent-restyles.md) — delegated rewrites can silently drop prop wiring (handlers, CTAs) while typechecking clean; grep every prop for render-side usage.
 - [Mobile test import extensions](mobile-test-ts-extensions.md) — travel-buddy node:test files need explicit .ts import extensions and manual registration in the package.json test list.
