@@ -2664,4 +2664,147 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     assert.equal(tombstoneEvents.length, 1, "Pass 2 evicted the tombstoned entry");
     assert.equal(tombstoneEvents[0].city_key, tombstonedKey);
   });
+
+  it("sweep hard-delete error is swallowed — in-memory entry is evicted but tombstone rows remain for the next cycle", async () => {
+    // The sweep evicts in-memory entries BEFORE issuing the hard-delete.
+    // If the hard-delete throws (DB outage, network error), the outer try/catch
+    // swallows the error.  Two invariants must hold:
+    //   (a) the in-memory entry was already evicted — the next geocode call re-resolves
+    //       from Nominatim, not from the now-stale cached result.
+    //   (b) the tombstone rows were NOT removed from the stateful DB — the next sweep
+    //       cycle will find them again and can retry the hard-delete.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "gr", country: "Greece" } }],
+      };
+    });
+
+    // Seed the in-memory cache via a DB load so the sweep has something to evict.
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({ country: "Greece", country_code: "GR", corrected_at: null, deleted_at: null }),
+    );
+    const seeded = await geocodeCityCountry("Athens");
+    assert.equal(seeded?.countryCode, "GR", "pre-condition: cache seeded with GR");
+    assert.equal(nominatimCalls, 0, "no Nominatim call during seed");
+
+    // Stateful tombstone store — the hard-delete must NOT mutate this when it throws.
+    const tombstoneStore = new Map<string, { city_key: string; deleted_at: string }>([
+      ["athens", { city_key: "athens", deleted_at: new Date(T0 - 1_000).toISOString() }],
+    ]);
+
+    let sweepQueryCount = 0;
+    let hardDeleteAttempts = 0;
+
+    const failingDeleteClient: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          delete() { isDelete = true; return chain; },
+          in(_col: string, _keys: string[]) {
+            return chain;
+          },
+          then(resolve: (v: any) => void, reject: (e: any) => void) {
+            if (isDelete) {
+              hardDeleteAttempts++;
+              // Throw to simulate a DB error on the hard-delete — the tombstone
+              // store is intentionally NOT mutated here.
+              reject(new Error("delete_connection_refused"));
+              return;
+            }
+            const q = sweepQueryCount++;
+            if (q === 0) {
+              // Pass 1 — corrected_at: nothing to evict from this pass.
+              resolve({ data: [], error: null });
+            } else {
+              // Pass 2 — deleted_at: return the tombstoned row.
+              resolve({ data: Array.from(tombstoneStore.values()), error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(failingDeleteClient);
+    await _runCorrectionSweepForTests();
+
+    // The sweep must have attempted both passes and the hard-delete.
+    assert.equal(sweepQueryCount, 2, "sweep ran both passes");
+    assert.equal(hardDeleteAttempts, 1, "hard-delete was attempted exactly once");
+
+    // ── Assertion (a): in-memory entry was evicted despite the hard-delete failing ─
+    // Switch to a null DB so a cache miss falls through to Nominatim.
+    _setGeocodeDbClientForTests(makeFixedDbClient(null));
+    const afterSweep = await geocodeCityCountry("Athens");
+
+    assert.equal(nominatimCalls, 1,
+      "Nominatim called once — in-memory entry was evicted even though the hard-delete threw");
+    assert.equal(afterSweep?.countryCode, "GR",
+      "fresh Nominatim lookup still returns GR");
+
+    // ── Assertion (b): tombstone rows remain in the stateful DB ──────────────────
+    // The hard-delete threw before completing, so the tombstone store must be intact.
+    assert.equal(tombstoneStore.size, 1,
+      "tombstone store still has 1 row — hard-delete error left it untouched");
+    assert.ok(tombstoneStore.has("athens"),
+      "athens tombstone row is still present — next sweep cycle can retry the hard-delete");
+
+    // ── Confirm: a second sweep cycle can pick up and clean the surviving tombstone ─
+    let cycle2QueryCount = 0;
+    const cycle2CleanedKeys: string[][] = [];
+    const recoverySweepClient: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          delete() { isDelete = true; return chain; },
+          in(_col: string, keys: string[]) {
+            cycle2CleanedKeys.push([...keys]);
+            return chain;
+          },
+          then(resolve: (v: any) => void) {
+            if (isDelete) {
+              // Successful hard-delete this time — remove from the store.
+              for (const key of (cycle2CleanedKeys[cycle2CleanedKeys.length - 1] ?? [])) {
+                tombstoneStore.delete(key);
+              }
+              resolve({ error: null });
+              return;
+            }
+            const q = cycle2QueryCount++;
+            if (q === 0) {
+              resolve({ data: [], error: null }); // pass 1: corrected_at
+            } else {
+              // Pass 2: tombstone row is still there (hard-delete failed in cycle 1).
+              resolve({ data: Array.from(tombstoneStore.values()), error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(recoverySweepClient);
+    await _runCorrectionSweepForTests();
+
+    assert.equal(cycle2CleanedKeys.length, 1,
+      "cycle 2: cleanup hard-delete was issued — tombstone row found again after cycle 1 failure");
+    assert.deepEqual(cycle2CleanedKeys[0], ["athens"],
+      "cycle 2: correct city_key was passed to the cleanup delete");
+    assert.equal(tombstoneStore.size, 0,
+      "tombstone store is empty after cycle 2 — hard-delete succeeded on retry");
+  });
 });
