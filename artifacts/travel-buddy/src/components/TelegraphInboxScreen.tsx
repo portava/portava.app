@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, FlatList, Image, Pressable, StyleSheet,
-  ScrollView, TextInput, ActivityIndicator, Alert,
+  ScrollView, TextInput, ActivityIndicator, Alert, Modal,
 } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Zap, Users, Globe, BellOff, Search, MessageCirclePlus, Compass, Bot, ShieldOff, Flag, UserCheck, UserMinus } from 'lucide-react-native';
@@ -475,6 +475,9 @@ function RequestCard({
   const [accepting, setAccepting] = useState(false);
   const [declining, setDeclining] = useState(false);
   const [blocking, setBlocking] = useState(false);
+  const [showReportNote, setShowReportNote] = useState(false);
+  const [reportNote, setReportNote] = useState('');
+  const [reportSending, setReportSending] = useState(false);
   const busy = accepting || declining || blocking;
 
   async function handleAccept() {
@@ -510,25 +513,32 @@ function RequestCard({
     );
   }
 
+  async function submitReport(reason: ReportReason, detail?: string) {
+    if (!request.sender?.id) return;
+    const trimmed = detail?.trim() ?? '';
+    setReportSending(true);
+    const res = await reportContent({
+      target_type: 'user',
+      target_id: request.sender.id,
+      reason_code: reason,
+      ...(trimmed ? { reason_detail: trimmed } : {}),
+    }).catch(() => ({ ok: false as const, error: undefined as string | undefined }));
+    setReportSending(false);
+    if (res.ok) {
+      setShowReportNote(false);
+      setReportNote('');
+      Alert.alert('Report submitted', 'Thank you — our team will review this request.');
+    } else {
+      Alert.alert('Error', res.error ?? 'Could not submit report');
+    }
+  }
+
   function handleReport() {
     if (!request.sender?.id) return;
-    const senderId = request.sender.id;
-    const submit = async (reason: ReportReason) => {
-      const res = await reportContent({
-        target_type: 'user',
-        target_id: senderId,
-        reason_code: reason,
-      });
-      if (res.ok) {
-        Alert.alert('Report submitted', 'Thank you — our team will review this request.');
-      } else {
-        Alert.alert('Error', res.error ?? 'Could not submit report');
-      }
-    };
     Alert.alert('Report this person', 'Why are you reporting this request?', [
-      { text: 'Spam', onPress: () => void submit('spam') },
-      { text: 'Harassment', onPress: () => void submit('harassment') },
-      { text: 'Something else', onPress: () => void submit('other') },
+      { text: 'Spam', onPress: () => void submitReport('spam') },
+      { text: 'Harassment', onPress: () => void submitReport('harassment') },
+      { text: 'Something else', onPress: () => { setReportNote(''); setShowReportNote(true); } },
       { text: 'Cancel', style: 'cancel' },
     ]);
   }
@@ -611,11 +621,62 @@ function RequestCard({
           <Text style={rc.secondaryBtnText}>Report</Text>
         </Pressable>
       </View>
+
+      {/* Optional note sheet for "Something else" reports */}
+      {showReportNote && (
+        <Modal visible animationType="slide" transparent onRequestClose={() => setShowReportNote(false)}>
+          <Pressable style={rc.reportOverlay} onPress={() => setShowReportNote(false)} />
+          <View style={rc.reportSheet}>
+            <View style={rc.reportHandle} />
+            <Text style={rc.reportTitle}>Report this person</Text>
+            <Text style={rc.reportSub}>Add a note so our team has more context.</Text>
+            <TextInput
+              style={rc.reportDetailInput}
+              value={reportNote}
+              onChangeText={setReportNote}
+              placeholder="Tell us more (optional)"
+              placeholderTextColor={color.mute}
+              multiline
+              maxLength={500}
+            />
+            <Pressable
+              style={[rc.reportBtn, reportSending && rc.reportBtnDisabled]}
+              onPress={() => void submitReport('other', reportNote)}
+              disabled={reportSending}
+            >
+              {reportSending
+                ? <ActivityIndicator size="small" color={color.onInk} />
+                : <Text style={rc.reportBtnLabel}>Submit Report</Text>}
+            </Pressable>
+            <Pressable style={rc.reportBackBtn} onPress={() => setShowReportNote(false)}>
+              <Text style={rc.reportBackLabel}>Cancel</Text>
+            </Pressable>
+          </View>
+        </Modal>
+      )}
     </View>
   );
 }
 
 const rc = StyleSheet.create({
+  reportOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
+  reportSheet: {
+    backgroundColor: color.paperRaised,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: space.lg,
+    paddingBottom: 34,
+    paddingTop: space.sm,
+  },
+  reportHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: color.haze, alignSelf: 'center', marginBottom: space.md },
+  reportTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700', fontSize: 15, marginBottom: 2 },
+  reportSub: { ...t.small, color: color.mute, marginBottom: space.md },
+  reportDetailInput: { ...t.body, color: color.ink, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingHorizontal: space.sm, paddingVertical: 10, minHeight: 64, textAlignVertical: 'top', marginTop: 2 },
+  reportBtn: { marginTop: space.md, backgroundColor: '#EF4444', borderRadius: radius.md, paddingVertical: 13, alignItems: 'center' },
+  reportBtnDisabled: { opacity: 0.45 },
+  reportBtnLabel: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },
+  reportBackBtn: { paddingVertical: 10, alignItems: 'center' },
+  reportBackLabel: { ...t.body, color: color.mute },
   card: {
     marginHorizontal: space.xl,
     marginTop: space.md,
