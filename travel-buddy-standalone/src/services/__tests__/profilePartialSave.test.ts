@@ -1,5 +1,5 @@
 /**
- * Partial-save warning tests — standalone fork
+ * Partial-save warning tests — main app
  *
  * PATCH /api/me/profile can return 200 with `unsavedFields` + `warning` when
  * database schema drift forces the server to drop some requested fields.
@@ -8,7 +8,7 @@
  * the "some fields couldn't be saved" message instead of plain success.
  *
  * Run:
- *   cd travel-buddy-standalone
+ *   cd artifacts/travel-buddy
  *   node --import tsx --test src/services/__tests__/profilePartialSave.test.ts
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
