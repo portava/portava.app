@@ -66,6 +66,14 @@ const CATALOG_ROW = {
   neighborhood: null,
 };
 
+interface FakeClientConfig {
+  /**
+   * When set, the queue `maybeSingle` returns this job fixture instead of the
+   * default JOB constant.
+   */
+  jobOverride?: typeof JOB;
+}
+
 /**
  * Fake Supabase client supporting the exact chains runGenerationCycle uses:
  * - queue claim:    from(q).select().eq().or().order().order().limit().maybeSingle()
@@ -73,9 +81,10 @@ const CATALOG_ROW = {
  * - lock + status:  from(q).update().eq()[.eq()][.select()]  (also awaitable)
  * - version insert: from(v).insert(rows)
  */
-function makeFakeClient() {
+function makeFakeClient(config: FakeClientConfig = {}) {
   const updates: RecordedUpdate[] = [];
   const inserts: RecordedInsert[] = [];
+  const queueJob = config.jobOverride ?? JOB;
 
   const sc: any = {
     from(table: string) {
@@ -89,7 +98,7 @@ function makeFakeClient() {
             limit() { return b; },
             maybeSingle() {
               if (table === "stamp_generation_queue") {
-                return Promise.resolve({ data: { ...JOB }, error: null });
+                return Promise.resolve({ data: { ...queueJob }, error: null });
               }
               if (table === "universal_stamp_catalog") {
                 return Promise.resolve({ data: { ...CATALOG_ROW }, error: null });
@@ -150,6 +159,12 @@ interface StorageConfig {
    * instead of succeeding. All other inserts are unaffected.
    */
   insertError?: { message: string };
+  /**
+   * When set, the queue `maybeSingle` returns this job fixture instead of the
+   * default JOB constant. Use to exercise exhausted-attempts scenarios without
+   * manually patching sc.from.
+   */
+  jobOverride?: typeof JOB;
 }
 
 interface StorageCall {
@@ -169,7 +184,7 @@ interface StorageDeleteCall {
  * `https://storage.fake/<path>`. Pass `onUpload` to inject failures.
  */
 function makeFakeClientWithStorage(opts: StorageConfig = {}) {
-  const base = makeFakeClient();
+  const base = makeFakeClient({ jobOverride: opts.jobOverride });
   const storageCalls: StorageCall[] = [];
   const deleteCalls: StorageDeleteCall[] = [];
   const publicUrlBase = opts.publicUrlBase ?? "https://storage.fake";
@@ -826,28 +841,11 @@ describe("runGenerationCycle — DB insert failure after all uploads succeed", (
     // Simulate a job that has already used max_attempts - 1 attempts.
     const exhaustedJob = { ...JOB, attempts: 2, max_attempts: 3 };
 
-    // Patch the queue select to return an exhausted job.
     const insertErrMsg = "insert failed: FK violation";
     const { sc, updates } = makeFakeClientWithStorage({
       insertError: { message: insertErrMsg },
+      jobOverride: exhaustedJob,
     });
-
-    // Override maybeSingle for the queue to return the exhausted job.
-    const originalFrom = sc.from.bind(sc);
-    sc.from = function (table: string) {
-      const proxy = originalFrom(table);
-      if (table === "stamp_generation_queue") {
-        const origSelect = proxy.select.bind(proxy);
-        proxy.select = function (cols: string) {
-          const b = origSelect(cols);
-          b.maybeSingle = function () {
-            return Promise.resolve({ data: { ...exhaustedJob }, error: null });
-          };
-          return b;
-        };
-      }
-      return proxy;
-    };
 
     _setTestServiceClient(sc);
     _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
