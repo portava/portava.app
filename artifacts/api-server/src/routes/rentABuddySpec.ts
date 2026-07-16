@@ -588,6 +588,11 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/report-no-show", async (req, 
   const isParty = b.traveler_id === auth.user.id || (callerBp && b.buddy_id === (callerBp as any).id);
   if (!isParty) return res.status(403).json({ error: "forbidden" });
 
+  // Reject if the booking is already in a no-show or disputed state to prevent duplicate reports.
+  if (b.status === "no_show_pending" || b.status === "disputed") {
+    return res.status(409).json({ error: "already_reported", status: b.status });
+  }
+
   // Resolve the no-show target's user_id:
   //   traveler reports → target is the buddy's user_id (looked up via rent_buddy_profiles)
   //   buddy reports    → target is traveler_id (already a profiles.id)

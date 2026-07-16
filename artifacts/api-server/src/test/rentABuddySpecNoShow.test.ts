@@ -257,4 +257,30 @@ describe("POST /api/rent-a-buddy/bookings/:id/report-no-show — spec router", (
     const r = await req("POST", `/api/rent-a-buddy/bookings/unknown-booking/report-no-show`);
     assert.equal(r.status, 404);
   });
+
+  it("returns 409 when the same party reports a no-show a second time (no_show_pending)", async () => {
+    // First report succeeds
+    const first = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`, { notes: "first report" });
+    assert.equal(first.status, 201, `first call should be 201, got ${first.status}: ${JSON.stringify(first.body)}`);
+
+    // Booking is now no_show_pending — second call must be rejected
+    const second = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`, { notes: "duplicate" });
+    assert.equal(second.status, 409, `second call should be 409, got ${second.status}: ${JSON.stringify(second.body)}`);
+    assert.equal(second.body.error, "already_reported");
+  });
+
+  it("does not insert a second safety event on a duplicate report", async () => {
+    await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`);
+    await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`);
+    const noShowEvents = state.safetyEvents.filter((e) => e.event_type === "no_show");
+    assert.equal(noShowEvents.length, 1, "only one safety event should exist after a duplicate report");
+  });
+
+  it("returns 409 when the booking is already in disputed status", async () => {
+    // Simulate a booking already in disputed state
+    state.bookings[BOOKING_ID].status = "disputed";
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`);
+    assert.equal(r.status, 409, `expected 409, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.error, "already_reported");
+  });
 });
