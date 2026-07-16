@@ -936,6 +936,88 @@ describe("PushRetryQueue.processQueue() — dead-token clearing on retry", () =>
   });
 
   /**
+   * Expo returns a 200 with two tickets, both DeviceNotRegistered.
+   * The reduce accumulator must aggregate them into a single count of 2,
+   * producing "DeviceNotRegistered × 2" — not "DeviceNotRegistered × 1, DeviceNotRegistered × 1".
+   */
+  function expoDualSameDeadTokenFetch(): typeof fetch {
+    return async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              status:  "error",
+              message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+              details: { error: "DeviceNotRegistered" },
+            },
+            {
+              status:  "error",
+              message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+              details: { error: "DeviceNotRegistered" },
+            },
+          ],
+        }),
+        { status: 200 },
+      ) as unknown as Response;
+  }
+
+  it("aggregates two DeviceNotRegistered tickets into 'DeviceNotRegistered × 2' — not × 1 twice", async () => {
+    // Two tokens in the batch; Expo reports DeviceNotRegistered for BOTH.
+    // The reduce accumulator must merge them into a single entry with count 2,
+    // so last_error is exactly "DeviceNotRegistered × 2".
+    // This exercises the same-code-multiple-occurrences path in the lastErr formatter.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN, LIVE_TOKEN_B],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    _setTestFetch(expoDualSameDeadTokenFetch());
+    await queue.processQueue();
+
+    // ── Queue row must be finalised as 'failed' with the aggregated count ─────
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(failedUpdate, "push_retry_queue must be finalised as 'failed' when all tokens are dead");
+    assert.equal(failedUpdate.filters.id, QUEUE_ROW_ID, "failed update must target the correct queue row");
+
+    // The critical assertion: two occurrences of the same code must be merged into × 2
+    assert.equal(
+      failedUpdate.patch.last_error,
+      "DeviceNotRegistered \u00d7 2",
+      "last_error must be 'DeviceNotRegistered × 2' when two tokens share the same dead-token code",
+    );
+
+    // Must NOT be re-queued — dead tokens are non-retryable regardless of remaining attempts
+    assert.ok(
+      !prqUpdates.some((c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID),
+      "must NOT re-queue a row where all tokens are permanently dead (same error code)",
+    );
+
+    // ── Delivery attempt must also be finalised as 'failed' with the same message ─
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status, "failed",   "delivery_attempt status must be 'failed'");
+    assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+    assert.equal(
+      ndaUpdate.patch.error_message,
+      "DeviceNotRegistered \u00d7 2",
+      "delivery_attempt error_message must mirror last_error ('DeviceNotRegistered × 2')",
+    );
+  });
+
+  /**
    * Expo returns a 200 with three tickets: the first token delivers ('ok'),
    * the second is DeviceNotRegistered, and the third is InvalidCredentials.
    * result.sent > 0, so the queue row must finalise as 'sent' — not 'failed'.
