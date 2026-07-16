@@ -1262,10 +1262,11 @@ describe("runGenerationCycle — orphan cleanup throws: original error preserved
 // ── Orphan cleanup: remove() returns error object instead of throwing ──────────
 
 describe("runGenerationCycle — orphan cleanup: remove() returns error object (no throw)", () => {
-  it("logs orphan_cleanup_error and still resets the job when remove() resolves with an error", async () => {
+  it("logs orphan_cleanup_error, preserves original last_error, and still resets the job when remove() resolves with an error", async () => {
     // Second upload fails → generation error path fires. The storage remove()
     // call does NOT throw; instead it resolves with { error: { message: "..." } }.
-    // The worker must detect the returned error and NOT log orphan_cleanup (success).
+    // The worker must detect the returned error, log orphan_cleanup_error (not
+    // the success event), and preserve the original generation error in last_error.
     let uploadCall = 0;
     const originalUploadError = "Storage upload failed: bucket quota exceeded";
     const removeErrorMessage = "object not found";
@@ -1298,13 +1299,25 @@ describe("runGenerationCycle — orphan cleanup: remove() returns error object (
     }
 
     // 1. Cycle reports failure (generation itself failed).
-    assert.equal(result!.processed, false);
+    assert.equal(result!.processed, false, "processed must be false when generation fails");
 
-    // 2. First upload succeeded; cleanup delete was called (remove resolved, did not throw).
+    // 2. No permanently_failed or review_required.
+    assert.equal(
+      updates.some((u) => u.payload.status === "permanently_failed"),
+      false,
+      "a silent cleanup error must never cause permanently_failed",
+    );
+    assert.equal(
+      updates.some((u) => u.payload.status === "review_required"),
+      false,
+      "a failed run must never reach review_required",
+    );
+
+    // 3. First upload succeeded; cleanup delete was called (remove resolved, did not throw).
     assert.equal(storageCalls.length, 1, "first upload should have succeeded before the second failed");
     assert.equal(deleteCalls.length, 1, "remove() must have been called for the orphaned upload");
 
-    // 3. orphan_cleanup_error must be logged — not the success event.
+    // 4. orphan_cleanup_error must be logged — not the success event.
     const hasCleanupError = loggedErrors.some(
       (l) => l.includes("orphan_cleanup_error") && l.includes(removeErrorMessage),
     );
@@ -1320,11 +1333,7 @@ describe("runGenerationCycle — orphan cleanup: remove() returns error object (
       "must NOT log orphan_cleanup (success) when remove() returned an error",
     );
 
-    // 4. Job is still reset — the original generation error is in last_error.
-    assert.equal(
-      updates.some((u) => u.payload.status === "review_required"),
-      false,
-    );
+    // 5. Job is reset and last_error carries the original generation error — not the cleanup error.
     const fail = updates.find(
       (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
     );
@@ -1336,10 +1345,14 @@ describe("runGenerationCycle — orphan cleanup: remove() returns error object (
         fail!.payload.last_error.includes(originalUploadError),
       `last_error must carry the original upload error, got: ${fail!.payload.last_error}`,
     );
+    assert.ok(
+      !fail!.payload.last_error.includes(removeErrorMessage),
+      `last_error must NOT be overwritten by the cleanup error, got: ${fail!.payload.last_error}`,
+    );
     assert.equal(fail!.payload.locked_until, null, "lock must be cleared even when cleanup returns an error");
     assert.equal(fail!.payload.locked_by, null);
 
-    // 5. No version rows inserted.
+    // 6. No version rows inserted.
     assert.equal(inserts.length, 0, "must not insert any version rows after a mid-batch failure");
   });
 });
