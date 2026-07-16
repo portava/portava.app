@@ -1,12 +1,14 @@
 /**
- * PassportIdentityCard — Minimalist white/cream profile style.
- * No gradient backgrounds, clean spacing, subtle lines.
+ * PassportIdentityCard — Modern cover-photo profile header.
+ * Cover banner with overlapping avatar, clean stats row with dividers.
+ * All data wiring and handlers preserved exactly.
  */
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, Image, Pressable, StyleSheet, ActivityIndicator,
 } from 'react-native';
-import { Settings, ShieldCheck, Camera, Plus } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Settings, ShieldCheck, Camera, Plus, UserCheck, UserPlus } from 'lucide-react-native';
 import type { OwnProfile, PublicProfile } from '../../types/models';
 import { resolveAvatarUrl, fallbackInitials } from '../../utils/identity';
 import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity';
@@ -14,7 +16,7 @@ import { isTravelBuddyVerified } from '../../lib/verification';
 import { HighlightRing } from '../HighlightRing';
 import { getPassportStats } from '../../services/passportStamps';
 import type { PassportStats } from '../../services/passportStamps';
-import { PP, PP_LABEL, PP_VALUE } from '../../theme/passportTokens';
+import { PP } from '../../theme/passportTokens';
 
 type AnyProfile = OwnProfile | PublicProfile;
 
@@ -41,6 +43,10 @@ interface Props {
   onStatPress?: (label: string) => void;
 }
 
+const COVER_HEIGHT = 168;
+const AVATAR_SIZE  = 88;
+const AVATAR_OVERLAP = AVATAR_SIZE / 2;
+
 export function PassportIdentityCard({
   profile, isOwner, onMenuPress, onAvatarPress, onChangeCover, coverUploading,
   hasHighlights, allHighlightsViewed, onHighlightRingPress, onNewHighlightPress,
@@ -62,54 +68,55 @@ export function PassportIdentityCard({
     name: 'name' in profile ? profile.name : null,
     username,
   };
-  const resolvedName = primaryIdentityText(identity);
+  const resolvedName  = primaryIdentityText(identity);
   const handleSubline = secondaryIdentityText(identity);
-  const avatarUrl = resolveAvatarUrl(profile.avatarUrl);
-  const initials = fallbackInitials(profile);
-  const isVerified = isTravelBuddyVerified(profile);
-  const verificationStatus = 'verificationStatus' in profile ? profile.verificationStatus : 'unverified';
-  
-  // Stats row matching the mockup: TRIPS, FOLLOWERS, FOLLOWING, STAMPS
+  const avatarUrl     = resolveAvatarUrl(profile.avatarUrl);
+  const coverUrl      = 'coverUrl' in profile ? (profile as any).coverUrl : null;
+  const initials      = fallbackInitials(profile);
+  const isVerified    = isTravelBuddyVerified(profile);
+
   const ownStats: StatItem[] = [
     {
       n: 'tripCount' in profile ? (profile.tripCount ?? 0) : 0,
-      label: 'TRIPS',
+      label: 'Trips',
       onPress: () => onStatPress?.('Trips'),
     },
     {
       n: 'followersCount' in profile ? (profile.followersCount ?? 0) : 0,
-      label: 'FOLLOWERS',
+      label: 'Followers',
       onPress: () => onStatPress?.('Followers'),
     },
     {
       n: 'followingCount' in profile ? (profile.followingCount ?? 0) : 0,
-      label: 'FOLLOWING',
+      label: 'Following',
     },
     {
       n: liveStats?.totalStamps ?? 0,
-      label: 'STAMPS',
+      label: 'Stamps',
       onPress: () => onStatPress?.('Stamps'),
-    }
+    },
   ];
   const stats = overrideStats ?? ownStats;
 
   return (
     <View style={s.card}>
-      {/* Top Bar: Cover Change (Owner) & Follow/Settings */}
-      <View style={s.topBar}>
-        <View style={s.topLeft}>
-          {isOwner && onChangeCover ? (
-            <Pressable style={s.iconBtn} onPress={onChangeCover} hitSlop={12} accessibilityLabel="Change cover photo">
-              {coverUploading ? (
-                <ActivityIndicator size="small" color={PP.inkMuted} />
-              ) : (
-                <Camera size={20} color={PP.inkMuted} strokeWidth={1.5} />
-              )}
-            </Pressable>
-          ) : null}
-        </View>
+      {/* ── Cover banner ─────────────────────────────────────── */}
+      <View style={s.coverWrap}>
+        {coverUrl ? (
+          <Image source={{ uri: coverUrl }} style={s.coverImg} />
+        ) : (
+          <View style={s.coverPlaceholder} />
+        )}
 
-        <View style={s.topRight}>
+        {/* Gradient scrim so icons stay legible */}
+        <LinearGradient
+          colors={['transparent', 'rgba(0,0,0,0.35)']}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+
+        {/* Top-right banner actions */}
+        <View style={s.bannerActions}>
           {!isOwner && onFollowPress ? (
             <Pressable
               style={[s.followBtn, isFollowing && s.followBtnActive]}
@@ -117,32 +124,62 @@ export function PassportIdentityCard({
               disabled={followLoading}
               hitSlop={12}
             >
-              <Text style={[s.followText, isFollowing && s.followTextActive]}>
-                {followLoading ? '…' : isFollowing ? 'Following' : 'Follow'}
-              </Text>
+              {followLoading ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : isFollowing ? (
+                <>
+                  <UserCheck size={13} color="#fff" strokeWidth={2} />
+                  <Text style={s.followBtnText}>Following</Text>
+                </>
+              ) : (
+                <>
+                  <UserPlus size={13} color="#fff" strokeWidth={2} />
+                  <Text style={s.followBtnText}>Follow</Text>
+                </>
+              )}
             </Pressable>
           ) : null}
 
           {isOwner && onMenuPress ? (
-            <Pressable style={s.iconBtn} onPress={onMenuPress} hitSlop={12} accessibilityLabel="Menu">
-              <Settings size={20} color={PP.ink} strokeWidth={1.5} />
+            <Pressable style={s.bannerIconBtn} onPress={onMenuPress} hitSlop={12} accessibilityLabel="Menu">
+              <Settings size={18} color="#fff" strokeWidth={1.8} />
             </Pressable>
           ) : null}
         </View>
+
+        {/* Camera button — bottom-right of cover */}
+        {isOwner && onChangeCover ? (
+          <Pressable
+            style={s.cameraBtn}
+            onPress={onChangeCover}
+            hitSlop={12}
+            accessibilityLabel="Change cover photo"
+          >
+            {coverUploading ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Camera size={15} color="#fff" strokeWidth={2} />
+            )}
+          </Pressable>
+        ) : null}
       </View>
 
-      {/* Main Profile Info */}
-      <View style={s.profileTop}>
+      {/* ── Avatar row (overlaps cover) ───────────────────────── */}
+      <View style={[s.avatarRow, { marginTop: -AVATAR_OVERLAP }]}>
         <View style={s.avatarWrap}>
           <HighlightRing
             hasActive={hasHighlights ?? false}
             allViewed={allHighlightsViewed ?? false}
-            size={96}
-            ringWidth={2}
-            gap={4}
+            size={AVATAR_SIZE}
+            ringWidth={2.5}
+            gap={3}
             onPress={onHighlightRingPress}
           >
-            <Pressable style={s.photoFrame} onPress={onAvatarPress} disabled={!onAvatarPress}>
+            <Pressable
+              style={s.photoFrame}
+              onPress={onAvatarPress}
+              disabled={!onAvatarPress}
+            >
               {avatarUrl ? (
                 <Image source={{ uri: avatarUrl }} style={s.photo} />
               ) : (
@@ -152,56 +189,72 @@ export function PassportIdentityCard({
               )}
             </Pressable>
           </HighlightRing>
-          
+
+          {/* Add-highlight badge */}
           {isOwner && onNewHighlightPress ? (
-            <Pressable style={s.addHighlightBtn} onPress={onNewHighlightPress} hitSlop={12} accessibilityLabel="Add Highlight">
-              <Plus size={16} color="#FFFFFF" strokeWidth={3} />
+            <Pressable
+              style={s.addHighlightBtn}
+              onPress={onNewHighlightPress}
+              hitSlop={12}
+              accessibilityLabel="Add Highlight"
+            >
+              <Plus size={13} color="#fff" strokeWidth={3} />
             </Pressable>
           ) : null}
 
+          {/* Verified badge */}
           {isVerified && (
             <View style={s.verifiedBadge}>
-              <ShieldCheck size={14} color="#FFFFFF" strokeWidth={2.5} />
+              <ShieldCheck size={12} color="#fff" strokeWidth={2.5} />
             </View>
           )}
         </View>
-
-        <View style={s.nameContainer}>
-          <Text style={s.displayName}>{resolvedName}</Text>
-          {handleSubline && <Text style={s.handle}>{handleSubline}</Text>}
-          
-          {/* Trust Score & Verification Status */}
-          {trustScore != null ? (
-            <Pressable style={s.trustWrap} onPress={onTrustInfo} hitSlop={12} disabled={!onTrustInfo}>
-               <Text style={s.trustText}>Trust Score: {Math.round(trustScore)}/100</Text>
-               <View style={s.trustDot} />
-               <Text style={s.verifiedText}>Travel Buddy Verified</Text>
-            </Pressable>
-          ) : (
-             <Text style={s.verifiedText}>{isVerified ? 'Travel Buddy Verified' : 'Traveler'}</Text>
-          )}
-        </View>
       </View>
 
-      {/* Stats Row */}
+      {/* ── Name / handle / trust ────────────────────────────── */}
+      <View style={s.nameBlock}>
+        <Text style={s.displayName} numberOfLines={1}>{resolvedName}</Text>
+        {handleSubline ? (
+          <Text style={s.handle}>{handleSubline}</Text>
+        ) : null}
+
+        {trustScore != null ? (
+          <Pressable style={s.trustRow} onPress={onTrustInfo} hitSlop={12} disabled={!onTrustInfo}>
+            <View style={s.trustPill}>
+              <ShieldCheck size={11} color="#0D9B6F" strokeWidth={2.5} />
+              <Text style={s.trustPillText}>Trust {Math.round(trustScore)}</Text>
+            </View>
+            <Text style={s.verifiedLabel}>Travel Buddy Verified</Text>
+          </Pressable>
+        ) : (
+          <Text style={s.verifiedLabel}>{isVerified ? 'Travel Buddy Verified' : 'Traveler'}</Text>
+        )}
+      </View>
+
+      {/* ── Stats row ─────────────────────────────────────────── */}
       <View style={s.statsRow}>
         {stats.map((item, i) => (
-          <View key={item.label} style={s.statItem}>
-            <Pressable onPress={item.onPress} disabled={!item.onPress} style={s.statPressable} hitSlop={8}>
+          <React.Fragment key={item.label}>
+            {i > 0 && <View style={s.statDivider} />}
+            <Pressable
+              style={s.statItem}
+              onPress={item.onPress}
+              disabled={!item.onPress}
+              hitSlop={8}
+            >
               <Text style={s.statN}>{item.n}</Text>
               <Text style={s.statL}>{item.label}</Text>
             </Pressable>
-          </View>
+          </React.Fragment>
         ))}
       </View>
 
-      {/* Bio / Description */}
-      {('bio' in profile && profile.bio) ? (
+      {/* ── Bio ───────────────────────────────────────────────── */}
+      {'bio' in profile && profile.bio ? (
         <View style={s.bioWrap}>
           <Text style={s.bioText}>{profile.bio}</Text>
         </View>
       ) : null}
-
     </View>
   );
 }
@@ -209,59 +262,103 @@ export function PassportIdentityCard({
 const s = StyleSheet.create({
   card: {
     backgroundColor: PP.paper,
-    paddingHorizontal: 20,
-    paddingBottom: 24,
-    paddingTop: 12,
+    paddingBottom: 20,
   },
-  topBar: {
+
+  /* Cover */
+  coverWrap: {
+    height: COVER_HEIGHT,
+    backgroundColor: '#E8E4DE',
+    overflow: 'hidden',
+  },
+  coverImg: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  coverPlaceholder: {
+    flex: 1,
+    backgroundColor: '#D8D2C8',
+  },
+  bannerActions: {
+    position: 'absolute',
+    top: 12,
+    right: 14,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    gap: 10,
   },
-  topLeft: {
-    alignItems: 'flex-start',
-  },
-  topRight: {
-    alignItems: 'flex-end',
-    flexDirection: 'row',
-    gap: 12,
-  },
-  iconBtn: {
-    padding: 4,
+  bannerIconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(0,0,0,0.32)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   followBtn: {
-    borderWidth: 1.5, borderColor: PP.ink, borderRadius: 20,
-    paddingHorizontal: 16, paddingVertical: 6,
-    backgroundColor: 'transparent',
-  },
-  followBtnActive: { backgroundColor: PP.ink },
-  followText: { fontSize: 13, fontWeight: '600', color: PP.ink },
-  followTextActive: { color: PP.paper },
-  profileTop: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.38)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.5)',
+  },
+  followBtnActive: {
+    backgroundColor: 'rgba(13,155,111,0.82)',
+    borderColor: 'rgba(13,155,111,0.6)',
+  },
+  followBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  cameraBtn: {
+    position: 'absolute',
+    bottom: 10,
+    right: 14,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: 'rgba(0,0,0,0.38)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.4)',
+  },
+
+  /* Avatar */
+  avatarRow: {
+    paddingHorizontal: 18,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
   },
   avatarWrap: {
     position: 'relative',
-    marginBottom: 16,
   },
   photoFrame: {
-    width: 96, height: 96,
-    borderRadius: 48,
-    backgroundColor: PP.paperDeep,
+    width: AVATAR_SIZE,
+    height: AVATAR_SIZE,
+    borderRadius: AVATAR_SIZE / 2,
+    backgroundColor: '#D8D2C8',
     overflow: 'hidden',
+    borderWidth: 3,
+    borderColor: PP.paper,
   },
   photo: { width: '100%', height: '100%' },
   photoFallback: { alignItems: 'center', justifyContent: 'center' },
-  initials: { fontSize: 32, fontWeight: '500', color: PP.inkMuted },
+  initials: { fontSize: 28, fontWeight: '500', color: PP.inkMuted },
   verifiedBadge: {
     position: 'absolute',
-    bottom: 0,
-    right: 0,
+    bottom: 2,
+    right: 2,
     backgroundColor: '#0D9B6F',
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
@@ -269,86 +366,105 @@ const s = StyleSheet.create({
   },
   addHighlightBtn: {
     position: 'absolute',
-    top: 0,
-    right: 0,
+    top: 2,
+    right: 2,
     backgroundColor: PP.ink,
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
     borderColor: PP.paper,
   },
-  nameContainer: {
-    alignItems: 'center',
-    gap: 4,
+
+  /* Name block */
+  nameBlock: {
+    paddingHorizontal: 20,
+    marginTop: 12,
+    gap: 3,
   },
   displayName: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '700',
     color: PP.ink,
-    letterSpacing: -0.5,
+    letterSpacing: -0.4,
   },
   handle: {
     fontSize: 14,
     color: PP.inkMuted,
+    fontWeight: '400',
   },
-  trustWrap: {
+  trustRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
     marginTop: 4,
   },
-  trustText: {
-    fontSize: 12,
-    color: PP.inkMuted,
-    fontWeight: '500',
+  trustPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#E8F5F0',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 20,
   },
-  trustDot: {
-    width: 3,
-    height: 3,
-    borderRadius: 1.5,
-    backgroundColor: PP.inkMuted,
+  trustPillText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#0D9B6F',
   },
-  verifiedText: {
+  verifiedLabel: {
     fontSize: 12,
     color: '#0D9B6F',
-    fontWeight: '600',
+    fontWeight: '500',
+    marginTop: 4,
   },
+
+  /* Stats */
   statsRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 24,
-    gap: 40,
+    marginTop: 20,
+    marginHorizontal: 20,
+    paddingVertical: 14,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: '#E4DFD9',
+  },
+  statDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 28,
+    backgroundColor: '#D8D2C8',
+    marginHorizontal: 24,
   },
   statItem: {
     alignItems: 'center',
-  },
-  statPressable: {
-    alignItems: 'center',
+    minWidth: 48,
   },
   statN: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
     color: PP.ink,
+    letterSpacing: -0.5,
   },
   statL: {
-    fontSize: 10,
+    fontSize: 11,
     color: PP.inkMuted,
-    marginTop: 4,
-    fontWeight: '600',
-    letterSpacing: 0.5,
+    marginTop: 2,
+    fontWeight: '500',
   },
+
+  /* Bio */
   bioWrap: {
-    marginTop: 24,
-    alignItems: 'center',
+    marginTop: 14,
+    paddingHorizontal: 20,
   },
   bioText: {
     fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 21,
     color: PP.ink,
-    textAlign: 'center',
-    maxWidth: '85%',
-  }
+  },
 });
