@@ -126,6 +126,19 @@ export async function sweepStaleArtwork(scOverride?: any): Promise<number> {
 
   if (staleCatalogIds.length === 0) return 0;
 
+  // Warn immediately when the stale query hit the page limit — more stale rows
+  // may exist beyond this page.  Emit unconditionally here so the warning is
+  // never suppressed by downstream early-returns (all-active-jobs, all-current,
+  // or insert-error).
+  if (staleRows && staleRows.length >= SWEEP_PAGE_SIZE) {
+    console.warn(JSON.stringify({
+      event:         "stamp.sweep.page_limit_reached",
+      page_size:     SWEEP_PAGE_SIZE,
+      style_version: STYLE_VERSION,
+      note:          "stale artwork query hit the page limit; more stale entries may remain — next sweep will process the next page",
+    }));
+  }
+
   // Pass 2: scoped current-version check — query only within the stale batch.
   // By scoping to staleCatalogIds, this query is always bounded (≤ page size)
   // and cannot be truncated regardless of total catalog size.  A catalog that

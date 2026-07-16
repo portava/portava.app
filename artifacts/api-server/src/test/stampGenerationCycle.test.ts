@@ -3662,6 +3662,108 @@ describe("sweepStaleArtwork — produces no jobs when all artwork is current", (
   });
 });
 
+describe("sweepStaleArtwork — logs a warning when the stale page hits the size limit", () => {
+  function captureWarn(): { get: () => string[]; restore: () => void } {
+    const captured: string[] = [];
+    const orig = console.warn;
+    console.warn = (...args: any[]) => { captured.push(...args.map(String)); };
+    return { get: () => captured, restore: () => { console.warn = orig; } };
+  }
+  function parseWarnEvents(captured: string[]) {
+    return captured
+      .map((a) => { try { return JSON.parse(a); } catch { return null; } })
+      .filter(Boolean);
+  }
+
+  it("emits a stamp.sweep.page_limit_reached warning when the stale query returns exactly 500 rows and jobs are enqueued", async () => {
+    const PAGE_SIZE = 500;
+    const staleVersionRows = Array.from({ length: PAGE_SIZE }, (_, i) => ({ catalog_id: `cat-limit-${i}` }));
+
+    const { sc } = makeSweepFakeClient({
+      staleVersionRows,
+      currentVersionRows: [],
+      activeJobRows: [],
+    });
+
+    const { get, restore } = captureWarn();
+    try {
+      await sweepStaleArtwork(sc);
+    } finally {
+      restore();
+    }
+
+    const limitWarn = parseWarnEvents(get()).find((e: any) => e.event === "stamp.sweep.page_limit_reached");
+    assert.ok(limitWarn, "must emit a stamp.sweep.page_limit_reached warning when the stale query hits the page limit");
+    assert.equal(limitWarn.page_size, PAGE_SIZE, "warning must include the page_size");
+  });
+
+  it("emits a page_limit_reached warning even when all 500 stale rows already have active jobs (toEnqueue=0)", async () => {
+    const PAGE_SIZE = 500;
+    const staleVersionRows = Array.from({ length: PAGE_SIZE }, (_, i) => ({ catalog_id: `cat-active-${i}` }));
+    // All stale catalog IDs already have active jobs — nothing is enqueued.
+    const activeJobRows = staleVersionRows.map((r) => ({ catalog_id: r.catalog_id }));
+
+    const { sc } = makeSweepFakeClient({
+      staleVersionRows,
+      currentVersionRows: [],
+      activeJobRows,
+    });
+
+    const { get, restore } = captureWarn();
+    try {
+      await sweepStaleArtwork(sc);
+    } finally {
+      restore();
+    }
+
+    const limitWarn = parseWarnEvents(get()).find((e: any) => e.event === "stamp.sweep.page_limit_reached");
+    assert.ok(limitWarn, "must emit a page_limit_reached warning even when no new jobs are enqueued (all rows already active)");
+    assert.equal(limitWarn.page_size, PAGE_SIZE, "warning must include the page_size");
+  });
+
+  it("emits a page_limit_reached warning even when all 500 stale rows are actually current-version (trulyStale=0)", async () => {
+    const PAGE_SIZE = 500;
+    const staleVersionRows = Array.from({ length: PAGE_SIZE }, (_, i) => ({ catalog_id: `cat-current-${i}` }));
+    // All entries in the stale page also have a current-version row — truly stale set is empty.
+    const currentVersionRows = staleVersionRows.map((r) => ({ catalog_id: r.catalog_id }));
+
+    const { sc } = makeSweepFakeClient({
+      staleVersionRows,
+      currentVersionRows,
+      activeJobRows: [],
+    });
+
+    const { get, restore } = captureWarn();
+    try {
+      await sweepStaleArtwork(sc);
+    } finally {
+      restore();
+    }
+
+    const limitWarn = parseWarnEvents(get()).find((e: any) => e.event === "stamp.sweep.page_limit_reached");
+    assert.ok(limitWarn, "must emit a page_limit_reached warning even when no catalogs are truly stale (all have current-version rows)");
+    assert.equal(limitWarn.page_size, PAGE_SIZE, "warning must include the page_size");
+  });
+
+  it("does not emit a page_limit_reached warning when fewer rows than the page size are returned", async () => {
+    const { sc } = makeSweepFakeClient({
+      staleVersionRows: [{ catalog_id: "cat-a" }, { catalog_id: "cat-b" }],
+      currentVersionRows: [],
+      activeJobRows: [],
+    });
+
+    const { get, restore } = captureWarn();
+    try {
+      await sweepStaleArtwork(sc);
+    } finally {
+      restore();
+    }
+
+    const limitWarn = parseWarnEvents(get()).find((e: any) => e.event === "stamp.sweep.page_limit_reached");
+    assert.equal(limitWarn, undefined, "must NOT emit a page_limit_reached warning when the page is not full");
+  });
+});
+
 // ── sweepStaleArtwork wired into runGenerationCycle ────────────────────────────
 
 describe("runGenerationCycle — calls sweepStaleArtwork when the sweep interval has elapsed", () => {
