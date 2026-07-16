@@ -246,6 +246,76 @@ describe("sendPushWithRetry", () => {
     );
   });
 
+  /**
+   * Mixed dead-token batch: 2 ok + 1 DeviceNotRegistered + 1 InvalidCredentials
+   *
+   * Verifies that the initial push path (sendPushWithRetry / push.ts) collects
+   * BOTH dead-token codes in a single clearDeadTokens call — matching the
+   * guarantee already tested for PushRetryQueue.processQueue.
+   *
+   * Requirements:
+   *   - profiles and rent_buddy_profiles each receive exactly ONE update whose
+   *     .in filter contains both dead tokens and neither live token.
+   *   - notification_devices receives exactly ONE delete whose .in filter
+   *     contains both dead tokens and neither live token.
+   */
+  it("collects DeviceNotRegistered and InvalidCredentials dead tokens in one clearDeadTokens call on the initial send path", async () => {
+    const TOKEN3 = "ExponentPushToken[user3-dead-dnr]";
+    const TOKEN4 = "ExponentPushToken[user4-dead-ic]";
+    const USER3  = "aa000000-0003-0003-0003-000000000003";
+    const USER4  = "aa000000-0004-0004-0004-000000000004";
+
+    // TOKEN1 ok, TOKEN2 ok, TOKEN3 DeviceNotRegistered, TOKEN4 InvalidCredentials
+    ticketFor = (to: string) => {
+      if (to === TOKEN3) return { status: "error", message: "gone",      details: { error: "DeviceNotRegistered" } };
+      if (to === TOKEN4) return { status: "error", message: "creds bad", details: { error: "InvalidCredentials"  } };
+      return { status: "ok", id: "t" };
+    };
+
+    const db = makeFakeDb();
+    const result = await sendPushWithRetry(
+      db,
+      [
+        { userId: USER1, tokens: [TOKEN1] },
+        { userId: USER2, tokens: [TOKEN2] },
+        { userId: USER3, tokens: [TOKEN3] },
+        { userId: USER4, tokens: [TOKEN4] },
+      ],
+      PAYLOAD,
+    );
+
+    // Two ok tickets delivered
+    assert.equal(result.sent, 2);
+    // Two per-token errors surfaced
+    assert.equal(result.errors.length, 2);
+
+    // ── Exactly one clearDeadTokens call (= one update per cleared table + one delete) ──
+
+    const profileUpdates = db.__updates.filter((u: any) => u.table === "profiles");
+    assert.equal(profileUpdates.length, 1, "profiles: exactly one .in() update (single clearDeadTokens call)");
+    const profileTokens = [...profileUpdates[0].filter.values].sort();
+    assert.deepEqual(profileTokens, [TOKEN3, TOKEN4].sort(), "profiles filter must contain both dead tokens");
+    assert.ok(!profileTokens.includes(TOKEN1), "live TOKEN1 must NOT appear in profiles filter");
+    assert.ok(!profileTokens.includes(TOKEN2), "live TOKEN2 must NOT appear in profiles filter");
+
+    const deviceDeletes = db.__deletes.filter((d: any) => d.table === "notification_devices");
+    assert.equal(deviceDeletes.length, 1, "notification_devices: exactly one .in() delete (single clearDeadTokens call)");
+    const deviceTokens = [...deviceDeletes[0].filter.values].sort();
+    assert.deepEqual(deviceTokens, [TOKEN3, TOKEN4].sort(), "notification_devices filter must contain both dead tokens");
+    assert.ok(!deviceTokens.includes(TOKEN1), "live TOKEN1 must NOT appear in notification_devices filter");
+    assert.ok(!deviceTokens.includes(TOKEN2), "live TOKEN2 must NOT appear in notification_devices filter");
+
+    const rentUpdates = db.__updates.filter((u: any) => u.table === "rent_buddy_profiles");
+    assert.equal(rentUpdates.length, 1, "rent_buddy_profiles: exactly one .in() update (single clearDeadTokens call)");
+    const rentTokens = [...rentUpdates[0].filter.values].sort();
+    assert.deepEqual(rentTokens, [TOKEN3, TOKEN4].sort(), "rent_buddy_profiles filter must contain both dead tokens");
+    assert.ok(!rentTokens.includes(TOKEN1), "live TOKEN1 must NOT appear in rent_buddy_profiles filter");
+    assert.ok(!rentTokens.includes(TOKEN2), "live TOKEN2 must NOT appear in rent_buddy_profiles filter");
+
+    // Nothing enqueued for retry — dead-token errors are non-retryable
+    assert.equal((db.__inserted["push_retry_queue"] ?? []).length, 0);
+  });
+
   it("does not throw on InvalidCredentials with a null db client", async () => {
     ticketFor = () => ({ status: "error", message: "creds bad", details: { error: "InvalidCredentials" } });
     const result = await sendPushWithRetry(null, { userId: USER1, tokens: [TOKEN1] }, PAYLOAD);
