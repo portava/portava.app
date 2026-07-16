@@ -2789,9 +2789,11 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
         },
       },
     };
-    // Seed the no_show_reported event so the sweeper can identify the original reporter.
+    // Seed the no_show_reported event with BUDDY_USER as the reporter — intentionally
+    // different from traveler_id (USER_ID) so the assertion can distinguish
+    // "read reporter from event row" from "fell back to traveler_id".
     (state as any).bookingEvents = [
-      { id: "ev-ns-1", booking_id: "bk-ns-expired", actor_user_id: USER_ID, event: "no_show_reported" },
+      { id: "ev-ns-1", booking_id: "bk-ns-expired", actor_user_id: BUDDY_USER, event: "no_show_reported" },
     ];
 
     const r = await reqSweep();
@@ -2805,6 +2807,18 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     assert.ok(
       (state.disputes ?? []).some((d: any) => d.booking_id === "bk-ns-expired" && d.reason === "no_show"),
       "a no_show dispute row must be created",
+    );
+    // Happy-path assertion: when a no_show_reported event row IS present the
+    // escalation event must record that reporter (BUDDY_USER) as actor_user_id —
+    // not the traveler_id (USER_ID) fallback, which differs from the reporter here.
+    const escalationEvent = ((state as any).bookingEvents ?? []).find(
+      (e: any) => e.booking_id === "bk-ns-expired" && e.event === "no_show_escalated",
+    );
+    assert.ok(escalationEvent, "a no_show_escalated event row must be written for the happy path");
+    assert.equal(
+      escalationEvent.actor_user_id,
+      BUDDY_USER,
+      "escalation event actor_user_id must equal the seeded reporter (BUDDY_USER), not the traveler_id fallback (USER_ID)",
     );
   });
 
