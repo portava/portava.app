@@ -334,6 +334,100 @@ describe('createGeocodeCacheWarningMachine — repair failure', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Machine: repairing=true is set mid-flight, banner clears after resolve
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('createGeocodeCacheWarningMachine — repairing spinner mid-flight then banner clears', () => {
+  it('repairing=true is set immediately when handleRepairNow is called, before the response arrives', async () => {
+    // Control when the repair call resolves so we can inspect state mid-flight.
+    let resolveRepair!: (result: AdminApiResult<DeleteGeocodeCacheResult>) => void;
+    const repairPromise = new Promise<AdminApiResult<DeleteGeocodeCacheResult>>(
+      (resolve) => { resolveRepair = resolve; },
+    );
+
+    let callCount = 0;
+    const fn: DeleteFn = async (_cityKey, _repairCatalog) => {
+      callCount++;
+      if (callCount === 1) {
+        // First call: initial delete — produces the warning banner.
+        return okDelete(5);
+      }
+      // Second call: repair — deliberately delayed so we can inspect mid-flight.
+      return repairPromise;
+    };
+
+    const machine = createGeocodeCacheWarningMachine(fn);
+
+    // Trigger the initial delete so the banner appears.
+    await machine.performDelete('paris__fr');
+    assert.equal(machine.hasWarning('paris__fr'), true,
+      'precondition: banner must be visible after delete');
+    assert.equal(machine.getWarning('paris__fr')!.repairing, false,
+      'precondition: repairing must be false before repair is triggered');
+
+    // Start the repair but do NOT await it yet — the in-flight promise is still pending.
+    const repairTask = machine.handleRepairNow('paris__fr');
+
+    // handleRepairNow calls warningsAfterRepairStart synchronously before its first
+    // await, so repairing must already be true at this point (JS is single-threaded;
+    // the async function won't advance past the await until we yield).
+    assert.equal(machine.getWarning('paris__fr')!.repairing, true,
+      'repairing must be true immediately after handleRepairNow is called — the spinner must show mid-flight');
+
+    // The banner itself must still exist while the repair is in-flight.
+    assert.equal(machine.hasWarning('paris__fr'), true,
+      'banner must still be present while the repair call is in-flight');
+
+    // Now let the repair response arrive.
+    resolveRepair(okRepair());
+    await repairTask;
+
+    // After a successful repair the banner must be gone entirely.
+    assert.equal(machine.hasWarning('paris__fr'), false,
+      'banner must be gone after the repair response resolves successfully — not left stuck');
+  });
+
+  it('other city banners stay intact while one city repair is in-flight', async () => {
+    let resolveRepair!: (result: AdminApiResult<DeleteGeocodeCacheResult>) => void;
+    const repairPromise = new Promise<AdminApiResult<DeleteGeocodeCacheResult>>(
+      (resolve) => { resolveRepair = resolve; },
+    );
+
+    let parisCount = 0;
+    const fn: DeleteFn = async (cityKey, _repairCatalog) => {
+      if (cityKey === 'paris__fr') {
+        parisCount++;
+        return parisCount === 1 ? okDelete(4) : repairPromise;
+      }
+      return okDelete(6);
+    };
+
+    const machine = createGeocodeCacheWarningMachine(fn);
+
+    await machine.performDelete('paris__fr');
+    await machine.performDelete('berlin__de');
+
+    const repairTask = machine.handleRepairNow('paris__fr');
+
+    // Paris is repairing; berlin's banner must be unaffected.
+    assert.equal(machine.getWarning('paris__fr')!.repairing, true,
+      'paris must be in repairing state mid-flight');
+    assert.equal(machine.getWarning('berlin__de')!.repairing, false,
+      'berlin repairing flag must not be touched');
+    assert.equal(machine.hasWarning('berlin__de'), true,
+      'berlin banner must remain visible while paris repair is in-flight');
+
+    resolveRepair(okRepair());
+    await repairTask;
+
+    assert.equal(machine.hasWarning('paris__fr'), false,
+      'paris banner must clear after repair resolves');
+    assert.equal(machine.hasWarning('berlin__de'), true,
+      'berlin banner must still be present after paris repair completes');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Machine: delete failure — no banner side-effects
 // ─────────────────────────────────────────────────────────────────────────────
 
