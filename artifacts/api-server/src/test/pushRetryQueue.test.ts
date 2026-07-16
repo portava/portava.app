@@ -2670,6 +2670,103 @@ describe("PushRetryQueue.processQueue() — two same-code dead tokens on the fin
       "delivery_attempt error_message must mirror last_error ('DeviceNotRegistered × 2')",
     );
   });
+
+  it("last_error is still 'DeviceNotRegistered × 2' when one cleanup step fails — partial cleanup failure must not suppress the count", async () => {
+    // Scenario: two tokens both return DeviceNotRegistered on the final attempt.
+    // clearDeadTokens is mocked to throw (simulating e.g. the notification_devices
+    // DELETE failing with a transient DB error).  The inner isolated try/catch in
+    // processItem must absorb the throw; the deadErrors array is already built from
+    // the Expo response and must still drive lastErr — the cleanup outcome is
+    // irrelevant to what gets written to last_error.
+    //
+    // A regression here would either:
+    //   (a) let the cleanup throw escape into the outer catch → re-queue (wrong status), or
+    //   (b) overwrite / suppress last_error with the cleanup error message.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [DEAD_TOKEN, LIVE_TOKEN_B],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       2,         // final attempt (2+1 = 3 = max_attempts)
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    // Both tokens report DeviceNotRegistered — same error code on both tickets
+    _setTestFetch(async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              status:  "error",
+              message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+              details: { error: "DeviceNotRegistered" },
+            },
+            {
+              status:  "error",
+              message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+              details: { error: "DeviceNotRegistered" },
+            },
+          ],
+        }),
+        { status: 200 },
+      ) as unknown as Response,
+    );
+
+    // Simulate a partial cleanup failure — e.g. the notification_devices DELETE errors.
+    // The real clearDeadTokens swallows per-table errors; here we throw from the whole
+    // function to exercise the inner catch in processItem.
+    _setTestClearDeadTokens(async (_db, _tokens) => {
+      throw new Error("simulated notification_devices DELETE failure during dead-token cleanup");
+    });
+
+    await queue.processQueue();
+
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+
+    // ── Must be finalised as 'failed' — cleanup failure must not change the outcome ─
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(
+      failedUpdate,
+      "push_retry_queue must be finalised as 'failed' even when clearDeadTokens throws",
+    );
+    assert.equal(failedUpdate.filters.id,       QUEUE_ROW_ID, "failed update must target the correct queue row");
+    assert.equal(failedUpdate.patch.attempt_count, 3,          "attempt_count must be 3 (the final attempt)");
+
+    // ── The critical assertion: cleanup failure must NOT suppress or corrupt last_error ─
+    assert.equal(
+      failedUpdate.patch.last_error,
+      "DeviceNotRegistered \u00d7 2",
+      "last_error must still be 'DeviceNotRegistered × 2' even when clearDeadTokens throws — partial cleanup failure must not suppress the count",
+    );
+
+    // ── Must NOT be re-queued — cleanup throw must stay inside the inner catch ─
+    const requeued = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(
+      !requeued,
+      "must NOT re-queue the row — cleanup throw must be absorbed by the inner catch, not escape to the outer catch",
+    );
+
+    // ── Delivery attempt must mirror the (unaffected) last_error ─────────────
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must still be updated on final failure");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status, "failed",   "delivery_attempt status must be 'failed'");
+    assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+    assert.equal(
+      ndaUpdate.patch.error_message,
+      "DeviceNotRegistered \u00d7 2",
+      "delivery_attempt error_message must mirror last_error ('DeviceNotRegistered × 2') — cleanup failure must not suppress it",
+    );
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
