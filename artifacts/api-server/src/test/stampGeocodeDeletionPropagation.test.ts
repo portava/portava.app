@@ -656,6 +656,96 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "sweep cleaned up the correct city_key tombstone");
   });
 
+  it("two concurrent callers after a deletion-eviction share one Nominatim call — not two parallel ones", async () => {
+    // Scenario: two simultaneous geocodeCityCountry() calls arrive just after the
+    // correction-check probe evicts the stale entry.  Both callers:
+    //   1. See the warm cached entry (not yet evicted).
+    //   2. Both await evictIfDbCorrected(), which finds deleted_at set and evicts.
+    //   3. Both fall through to the re-resolve path.
+    //   4. The first creates a _pending promise; the second finds it already there.
+    //   => Only one Nominatim request is issued; both callers receive the same result.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Nominatim stub — counts calls and returns a fixed result.
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "nl", country: "Netherlands" } }],
+      };
+    });
+
+    // Phase 1: warm-up via DB cache (no Nominatim call).
+    // The initial readDbCache hit plants the entry in _cache.
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({
+        country: "Netherlands",
+        country_code: "NL",
+        corrected_at: null,
+        deleted_at: null,
+      }),
+    );
+    const warm = await geocodeCityCountry("Amsterdam");
+    assert.equal(warm?.countryCode, "NL", "pre-condition: warm entry loaded from DB cache");
+    assert.equal(nominatimCalls, 0, "no Nominatim call during warm-up");
+
+    // Phase 2: simulate an admin soft-delete on another instance.
+    // Switch the DB client so every subsequent probe returns deleted_at set (tombstone),
+    // and readDbCache() also returns null (deleted row skipped).
+    let probeCallCount = 0;
+    _setGeocodeDbClientForTests({
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() {
+            probeCallCount++;
+            // Return a row with deleted_at set — triggers deletion-eviction.
+            // Also used by readDbCache(); deleted_at !== null causes readDbCache to return null.
+            return {
+              data: {
+                country: "Netherlands",
+                country_code: "NL",
+                corrected_at: null,
+                deleted_at: new Date(T0 - 1_000).toISOString(),
+              },
+              error: null,
+            };
+          },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            resolve({ data: [], error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient);
+
+    // Phase 3: advance past the correction-check interval so both concurrent
+    // callers will attempt the DB probe on their first entry.
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000);
+
+    // Fire two concurrent geocode calls for the same city.
+    const [resultA, resultB] = await Promise.all([
+      geocodeCityCountry("Amsterdam"),
+      geocodeCityCountry("Amsterdam"),
+    ]);
+
+    // Both callers should receive the same resolved result.
+    assert.equal(resultA?.countryCode, "NL", "caller A received the resolved country code");
+    assert.equal(resultB?.countryCode, "NL", "caller B received the resolved country code");
+
+    // Nominatim must have been called exactly once — the dedup _pending map
+    // ensured the second concurrent caller reused the first's in-flight promise.
+    assert.equal(nominatimCalls, 1,
+      "Nominatim called exactly once across both concurrent callers — dedup held after deletion-eviction");
+  });
+
   it("tombstone hard-delete is guarded by deleted_at IS NOT NULL — a row revived before the DELETE survives", async () => {
     // Regression guard for a race condition: the sweep SELECTs tombstoned rows,
     // then hard-DELETEs them. Between those two operations an admin PUT can
