@@ -649,10 +649,11 @@ describe('expo-clipboard ~8.0.8 — setStringAsync call contract (mirrors GroupC
 // exactly one version and that version is identical in both trees.
 
 describe('Lockfile-resolved transitive peer dep versions — @expo/config-plugins and expo-modules-core', () => {
-  // travel-buddy-standalone/pnpm-lock.yaml is 4 levels up from src/services/ in artifacts/travel-buddy/
-  const standaloneLockText = readFileSync(pathResolve(__dir, '../../../../travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
-  // monorepo root pnpm-lock.yaml is also 4 levels up from src/services/ in artifacts/travel-buddy/
-  const monoLockText = readFileSync(pathResolve(__dir, '../../../../pnpm-lock.yaml'), 'utf8');
+  // This test file lives in travel-buddy-standalone/src/services/, so:
+  //   2 levels up → travel-buddy-standalone/pnpm-lock.yaml (standalone lockfile)
+  //   3 levels up → workspace root pnpm-lock.yaml (monorepo lockfile)
+  const standaloneLockText = readFileSync(pathResolve(__dir, '../../pnpm-lock.yaml'), 'utf8');
+  const monoLockText = readFileSync(pathResolve(__dir, '../../../pnpm-lock.yaml'), 'utf8');
 
   /**
    * Scan a lockfile text for all resolved base versions of a given package.

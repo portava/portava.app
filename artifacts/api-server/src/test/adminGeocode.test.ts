@@ -821,6 +821,148 @@ describe("DELETE /admin/geocode-cache/:city_key with repair_catalog", () => {
     );
   });
 
+  it("merges all XX entries for a city when every one of them has a surviving real-code entry", async () => {
+    // Seed two XX entries for the same city with different stamp_types.  Each
+    // already has a real-code survivor in the catalog under the resolved key.
+    // The repair loop must merge both — catalogMerged must equal 2 and
+    // catalogRekeyed must stay at 0.
+    const XX_ID_1 = "cat-dual-xx-1";
+    const XX_ID_2 = "cat-dual-xx-2";
+    const SURVIVOR_ID_1 = "cat-dual-survivor-1";
+    const SURVIVOR_ID_2 = "cat-dual-survivor-2";
+
+    // Count how many times a merged XX entry is deleted from the catalog table.
+    let catalogMergeDeleteCount = 0;
+
+    const client: any = {
+      auth: {
+        getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+      },
+      from: (table: string) => {
+        if (table === "profiles") {
+          return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+        }
+
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: (_cols: string) => builder([]),
+            // DELETE handler soft-deletes via update(deleted_at).
+            update: (_fields: Record<string, unknown>) => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        if (table === "universal_stamp_catalog") {
+          return {
+            select: (cols: string) => {
+              // Full XX scan — select with many columns including canonical_location_key.
+              if (cols.includes("canonical_location_key")) {
+                return {
+                  eq: (_col: string, _val: unknown) => ({
+                    then: (resolve: (v: { data: unknown[]; error: null }) => void) =>
+                      resolve({
+                        data: [
+                          {
+                            id: XX_ID_1,
+                            canonical_location_key: "city:XX:mergedcity",
+                            stamp_type: "city",
+                            country: "Unknown",
+                            country_code: "XX",
+                            city: "Mergedcity",
+                            neighborhood: null,
+                            display_name: "Mergedcity",
+                          },
+                          {
+                            id: XX_ID_2,
+                            canonical_location_key: "neighborhood:XX:mergedcity:old-quarter",
+                            stamp_type: "neighborhood",
+                            country: "Unknown",
+                            country_code: "XX",
+                            city: "Mergedcity",
+                            neighborhood: "Old Quarter",
+                            display_name: "Old Quarter",
+                          },
+                        ],
+                        error: null,
+                      }),
+                  }),
+                };
+              }
+              // earn_count fetch during merge: select("id, earn_count").in(...)
+              if (cols === "id, earn_count") {
+                return {
+                  in: (_col: string, _ids: string[]) =>
+                    Promise.resolve({ data: [], error: null }),
+                };
+              }
+              // Survivor check: select("id").eq("canonical_location_key", newKey)
+              //   .eq("stamp_type", ...).neq("id", ...).maybeSingle()
+              // Capture the canonical_location_key argument to return the right survivor.
+              let resolvedSurvivorId: string = SURVIVOR_ID_1;
+              const survivorChain: any = {
+                eq: (col: string, val: unknown) => {
+                  if (col === "canonical_location_key" && typeof val === "string") {
+                    resolvedSurvivorId = val.startsWith("neighborhood:")
+                      ? SURVIVOR_ID_2
+                      : SURVIVOR_ID_1;
+                  }
+                  return survivorChain;
+                },
+                neq: () => survivorChain,
+                maybeSingle: async () => ({ data: { id: resolvedSurvivorId }, error: null }),
+              };
+              return survivorChain;
+            },
+            update: () => ({ eq: () => Promise.resolve({ data: null, error: null }) }),
+            delete: () => ({
+              eq: (_col: string, val: string) => {
+                if (val === XX_ID_1 || val === XX_ID_2) catalogMergeDeleteCount++;
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+        }
+
+        if (table === "user_stamps" || table === "passport_stamps" || table === "stamp_artwork_versions") {
+          return {
+            update: () => ({ eq: () => Promise.resolve({ data: null, error: null }) }),
+          };
+        }
+
+        if (table === "stamp_generation_queue") {
+          return {
+            delete: () => ({ eq: () => Promise.resolve({ data: null, error: null }) }),
+          };
+        }
+
+        return builder([]);
+      },
+    };
+
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Germany", "DE"));
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/mergedcity", undefined, "repair_catalog=true");
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.deleted, true);
+    assert.ok(r.body.repair, "response should include repair stats");
+    const repair = r.body.repair as RepairStats;
+
+    // Both XX entries must have been merged — neither re-keyed.
+    assert.equal(repair.catalogMerged, 2,
+      "all XX entries for the same city must be merged when every one has a surviving real-code entry");
+    assert.equal(repair.catalogRekeyed, 0,
+      "catalogRekeyed must be 0 — both entries took the merge path, not the re-key path");
+
+    // Each successful merge deletes the XX entry from the catalog table.
+    assert.equal(catalogMergeDeleteCount, 2,
+      "the XX catalog entry must be deleted once per successfully merged entry");
+  });
+
   // ── xx_entries_pending ──────────────────────────────────────────────────────
 
   it("includes xx_entries_pending when repair_catalog is not set and matching XX entries exist", async () => {
