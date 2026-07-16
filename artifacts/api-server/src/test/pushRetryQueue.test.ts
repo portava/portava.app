@@ -1399,3 +1399,57 @@ describe("PushRetryQueue.processQueue() — mixed four-token batch (two live, on
     assert.equal(ndaUpdate2.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 13 — Transient 5xx during retry must not touch rent_buddy_profiles
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * When Expo returns a transient 5xx (retryable: true) during a retry attempt,
+ * the row should be re-queued — identical to the initial-send path.  No token
+ * is permanently dead, so rent_buddy_profiles must NOT be updated.
+ *
+ * This mirrors the transient-failure guard already confirmed for the
+ * NotificationRouter initial-send path (notificationRouterCredentials.test.ts)
+ * and verifies the retry branch obeys the same rule.
+ */
+describe("PushRetryQueue.processQueue() — transient 5xx must not touch rent_buddy_profiles", () => {
+  it("does not null rent_buddy_profiles.expo_push_token on a transient 5xx during retry", async () => {
+    // attempt_count=1 means this is the second attempt — attempts remain, so the
+    // row will be re-queued rather than finalised as failed.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    _setTestFetch(expo503Fetch());   // Expo 5xx → retryable: true
+    await queue.processQueue();
+
+    // rent_buddy_profiles must NOT be touched — the token is not permanently dead
+    const rentUpdate = client.updateCalls.find(
+      (c) => c.table === "rent_buddy_profiles" && c.patch.expo_push_token === null,
+    );
+    assert.ok(
+      !rentUpdate,
+      "transient 5xx during retry must NOT null rent_buddy_profiles.expo_push_token",
+    );
+
+    // Confirm the row was re-queued (not silently dropped or finalised)
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+    const requeuedUpdate = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(requeuedUpdate, "row must be re-queued on transient 5xx when attempts remain");
+  });
+});
