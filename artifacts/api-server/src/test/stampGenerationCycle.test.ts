@@ -823,6 +823,51 @@ describe("runGenerationCycle — orphan cleanup on mid-batch failure", () => {
     assert.equal(storageCalls.length, 0, "no uploads should have succeeded");
     assert.equal(deleteCalls.length, 0, "no delete should be issued when nothing was uploaded");
   });
+
+  it("deletes only the real upload path when a mixed batch's second http download fails after the first upload", async () => {
+    // Provider: 1 data-URL placeholder (no download/upload) + 2 real http URLs.
+    // The first http download+upload succeeds; the second http download returns 404.
+    // Expected: exactly one delete call containing the path from the first real upload.
+    // The data-URL placeholder must never produce a storage path or appear in the delete list.
+    const { sc, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage();
+    _setTestServiceClient(sc);
+    // 1 data-URL + 2 http URLs = CANDIDATE_COUNT (3) candidates total.
+    _setTestStampImageProvider(makeMixedProvider(1, 2));
+    // First fetch (for the first real http URL) succeeds; second fetch fails with 404.
+    installFetch(failOnNthFetch(2));
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+
+    // The first real http candidate was uploaded before the second download failed.
+    assert.equal(storageCalls.length, 1, "exactly one real upload should have succeeded before the download failure");
+
+    // No DB rows inserted — the batch was abandoned on failure.
+    assert.equal(inserts.length, 0, "must not insert any version rows after a mid-batch download failure");
+
+    // Cleanup must issue exactly one delete call for the orphaned upload.
+    assert.equal(deleteCalls.length, 1, "must issue exactly one storage delete call for cleanup");
+    const { paths } = deleteCalls[0];
+    assert.equal(paths.length, 1, "deleted paths must contain exactly one entry (the first real upload)");
+
+    // The deleted path must follow the catalog/<catalogId>/<versionId>.png template.
+    assert.ok(
+      paths[0].startsWith("catalog/cat-1/"),
+      `deleted path must start with "catalog/cat-1/", got: ${paths[0]}`,
+    );
+    assert.ok(
+      paths[0].endsWith(".png"),
+      `deleted path must end with ".png", got: ${paths[0]}`,
+    );
+
+    // The deleted path must match the path that was actually uploaded (not a placeholder).
+    assert.equal(
+      paths[0],
+      storageCalls[0].path,
+      `deleted path must match the uploaded storage path, got: ${paths[0]} vs ${storageCalls[0].path}`,
+    );
+  });
 });
 
 /**
