@@ -334,6 +334,116 @@ describe('identity screen GPS denial wiring — Open Settings and city picker ar
   });
 });
 
+// ── Suite: GPS denial alert wiring — current-city path (setShowCurrentPicker) ─
+//
+// The current-city GPS button uses the same alert pattern as the home-city
+// button but wires "Choose from list" to setShowCurrentPicker instead of
+// setShowHomePicker. These tests guard that contract independently so a
+// copy-paste mistake (home vs. current) is caught immediately.
+
+describe('identity screen GPS denial wiring — current-city path: Open Settings and city picker are both reachable', () => {
+  it('"Open Settings" button reaches Linking.openSettings for the current-city denial', async () => {
+    let capturedButtons: AlertButton[] = [];
+    let openSettingsCalled = false;
+
+    const onPermissionDenied = buildDenialHandler({
+      alertFn: (_t, _m, buttons) => { capturedButtons = buttons; },
+      openSettings:  () => { openSettingsCalled = true; },
+      setShowPicker: () => {},
+    });
+
+    await runIdentityGpsFill({
+      getCurrentGps:        deniedGps(),
+      reverseGeocode:       geocode({ city: null, country: null }),
+      onPermissionDenied,
+      onGpsOrGeocodeFailed: () => {},
+      onSuccess:            () => {},
+      setLoading:           () => {},
+    });
+
+    assert.ok(capturedButtons.length > 0, 'alert must have been shown on GPS denial');
+
+    const btn = capturedButtons.find((b) => b.text === 'Open Settings');
+    assert.ok(btn, '"Open Settings" button must be present in the current-city denial alert');
+    btn!.onPress?.();
+    assert.equal(openSettingsCalled, true, '"Open Settings" onPress must reach Linking.openSettings for the current-city path');
+  });
+
+  it('"Choose from list" button reaches setShowCurrentPicker when current-city GPS is denied', async () => {
+    let capturedButtons: AlertButton[] = [];
+    let pickerShown = false;
+
+    // Mirrors fillCurrentFromGps: setShowPicker wires to setShowCurrentPicker
+    const onPermissionDenied = buildDenialHandler({
+      alertFn: (_t, _m, buttons) => { capturedButtons = buttons; },
+      openSettings:  () => {},
+      setShowPicker: (val) => { pickerShown = val; },
+    });
+
+    await runIdentityGpsFill({
+      getCurrentGps:        deniedGps(),
+      reverseGeocode:       geocode({ city: null, country: null }),
+      onPermissionDenied,
+      onGpsOrGeocodeFailed: () => {},
+      onSuccess:            () => {},
+      setLoading:           () => {},
+    });
+
+    const btn = capturedButtons.find((b) => b.text === 'Choose from list');
+    assert.ok(btn, '"Choose from list" button must be present in the current-city denial alert');
+    btn!.onPress?.();
+    assert.equal(pickerShown, true, '"Choose from list" onPress must call setShowCurrentPicker(true)');
+  });
+
+  it('both Open Settings and Choose from list are independently reachable for the current-city denial', async () => {
+    let capturedButtons: AlertButton[] = [];
+    let openSettingsCount = 0;
+    let pickerCount = 0;
+
+    const onPermissionDenied = buildDenialHandler({
+      alertFn: (_t, _m, buttons) => { capturedButtons = buttons; },
+      openSettings:  () => { openSettingsCount++; },
+      setShowPicker: () => { pickerCount++; },
+    });
+
+    await runIdentityGpsFill({
+      getCurrentGps:        deniedGps(),
+      reverseGeocode:       geocode({ city: null, country: null }),
+      onPermissionDenied,
+      onGpsOrGeocodeFailed: () => {},
+      onSuccess:            () => {},
+      setLoading:           () => {},
+    });
+
+    capturedButtons.find((b) => b.text === 'Open Settings')?.onPress?.();
+    capturedButtons.find((b) => b.text === 'Choose from list')?.onPress?.();
+
+    assert.equal(openSettingsCount, 1, '"Open Settings" handler must be independently callable for the current-city path');
+    assert.equal(pickerCount,       1, '"Choose from list" handler must be independently callable for the current-city path');
+  });
+
+  it('neither Open Settings nor current-city picker fires on a successful GPS fill (no false positives)', async () => {
+    let capturedButtons: AlertButton[] = [];
+    let openSettingsCalled = false;
+    let pickerShown = false;
+
+    const { deps } = makeIdentityScreenDeps({
+      onPermissionDenied: buildDenialHandler({
+        alertFn: (_t, _m, buttons) => { capturedButtons = buttons; },
+        openSettings:  () => { openSettingsCalled = true; },
+        setShowPicker: () => { pickerShown = true; },
+      }),
+    });
+
+    // GPS is granted (default in makeIdentityScreenDeps) — denial handler must not fire
+    await runIdentityGpsFill(deps);
+
+    assert.equal(capturedButtons.length, 0, 'alert must NOT be shown when GPS is granted (current-city path)');
+    assert.equal(openSettingsCalled,  false, 'Linking.openSettings must NOT be called on success (current-city path)');
+    assert.equal(pickerShown,         false, 'setShowCurrentPicker must NOT be called on success');
+  });
+});
+
 // ── Suite: success path — city picker not offered ─────────────────────────────
 
 describe('identity screen GPS wiring — success path', () => {
