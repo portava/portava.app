@@ -192,6 +192,12 @@ export default function ConnectedFeaturesScreen() {
             title="Feature Flags"
             onPress={() => router.push('/admin/feature-flags' as any)}
           />
+          <SettingsDivider />
+          <SettingsRow
+            title="Schema Drift"
+            subtitle="Database health vs. migrations"
+            onPress={() => router.push('/admin/schema-drift' as any)}
+          />
           {rentBuddyEnabled && (
             <>
               <SettingsDivider />
