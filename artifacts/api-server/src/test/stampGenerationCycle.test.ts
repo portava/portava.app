@@ -1,12 +1,18 @@
 /**
- * Stamp generation worker — end-to-end shortfall handling through
- * runGenerationCycle with a fake Supabase client and a fake image provider.
+ * Stamp generation worker — end-to-end shortfall handling and real-image
+ * upload path through runGenerationCycle with a fake Supabase client and
+ * a fake image provider.
  *
- * Proves that a degraded run (2 of 3 candidates) actually records the
- * shortfall on the queue row (last_error) and stamps
- * candidates_expected/candidates_produced into every version's
- * generation_metadata — and that a below-minimum run is retried (queued)
- * instead of being marked review_required.
+ * Covers:
+ * - Degraded run (2 of 3 candidates via data-URL provider): records shortfall
+ *   in last_error and stamps candidates_expected/candidates_produced on every
+ *   version's generation_metadata.
+ * - Below-minimum run: re-queued as retryable, no version rows inserted.
+ * - Real-image path (http URLs): successful download + storage upload inserts
+ *   version rows with public_url from storage.
+ * - Mid-batch download failure: no version rows inserted, status back to
+ *   queued with last_error describing the download failure.
+ * - Mid-batch storage upload failure: same — no version rows, status queued.
  *
  * Uses Node's built-in test runner (no Jest).
  * Run: node --import tsx/esm --test src/test/stampGenerationCycle.test.ts
@@ -132,10 +138,119 @@ function makeFakeProvider(count: number) {
   };
 }
 
+// ── Storage-aware fake client ─────────────────────────────────────────────────
+
+interface StorageConfig {
+  /** Called for every upload. Throw to simulate an upload failure. */
+  onUpload?: (path: string, buffer: Buffer) => void;
+  /** Base URL prepended to the storage path for getPublicUrl. */
+  publicUrlBase?: string;
+}
+
+interface StorageCall {
+  path: string;
+  bufferLength: number;
+}
+
+/**
+ * Extends the base fake client with a `storage` mock so tests can exercise
+ * the real downloadImageBuffer + uploadToStorage code paths (http URLs).
+ *
+ * By default every upload succeeds and returns a public URL of the form
+ * `https://storage.fake/<path>`. Pass `onUpload` to inject failures.
+ */
+function makeFakeClientWithStorage(opts: StorageConfig = {}) {
+  const base = makeFakeClient();
+  const storageCalls: StorageCall[] = [];
+  const publicUrlBase = opts.publicUrlBase ?? "https://storage.fake";
+
+  base.sc.storage = {
+    from(_bucket: string) {
+      return {
+        upload(path: string, buffer: Buffer) {
+          storageCalls.push({ path, bufferLength: buffer.length });
+          if (opts.onUpload) opts.onUpload(path, buffer);
+          return Promise.resolve({ error: null });
+        },
+        getPublicUrl(path: string) {
+          return { data: { publicUrl: `${publicUrlBase}/${path}` } };
+        },
+      };
+    },
+  };
+
+  return { ...base, storageCalls };
+}
+
+// ── Fetch mock helpers ────────────────────────────────────────────────────────
+
+/** A tiny fake image body (8 bytes is enough for a Buffer). */
+const FAKE_IMAGE_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+type FetchOverride = (url: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
+let _savedFetch: typeof globalThis.fetch | undefined;
+
+/**
+ * Replace globalThis.fetch for the duration of a test.
+ * The caller must call restoreFetch() in afterEach / cleanup.
+ */
+function installFetch(fn: FetchOverride) {
+  _savedFetch = globalThis.fetch;
+  (globalThis as any).fetch = fn;
+}
+
+function restoreFetch() {
+  if (_savedFetch !== undefined) {
+    (globalThis as any).fetch = _savedFetch;
+    _savedFetch = undefined;
+  }
+}
+
+/** Fetch that always returns a 200 with FAKE_IMAGE_BYTES. */
+function successFetch(): FetchOverride {
+  return async (_url) =>
+    new Response(FAKE_IMAGE_BYTES, {
+      status: 200,
+      headers: { "Content-Type": "image/png" },
+    });
+}
+
+/**
+ * Fetch that fails on the N-th call (1-based).
+ * Earlier calls return 200 with FAKE_IMAGE_BYTES.
+ */
+function failOnNthFetch(n: number): FetchOverride {
+  let call = 0;
+  return async (_url) => {
+    call++;
+    if (call === n) {
+      return new Response("Not Found", { status: 404 });
+    }
+    return new Response(FAKE_IMAGE_BYTES, {
+      status: 200,
+      headers: { "Content-Type": "image/png" },
+    });
+  };
+}
+
+/** Provider returning `count` real http URLs (triggers download + upload). */
+function makeFakeHttpProvider(count: number) {
+  return {
+    async generate(_prompt: string, _n?: number) {
+      return Array.from({ length: count }, (_, i) => ({
+        url: `https://img.fake/candidate-${i}.png`,
+        metadata: { model: "fake-provider", candidate_index: i },
+      }));
+    },
+  };
+}
+
 afterEach(() => {
   _setTestServiceClient(null);
   _setTestStampImageProvider(null);
   _resetProviderCache();
+  restoreFetch();
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -245,5 +360,142 @@ describe("runGenerationCycle — below-minimum run (1 of 3, STAMP_MIN_CANDIDATES
       updates.some((u) => u.payload.status === "permanently_failed"),
       false,
     );
+  });
+});
+
+// ── Real-image path (http URLs): download + storage upload ────────────────────
+
+describe("runGenerationCycle — real http images: successful download + upload", () => {
+  it("uploads each candidate buffer to storage and inserts version rows with public_url", async () => {
+    const { sc, updates, inserts, storageCalls } = makeFakeClientWithStorage();
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, true);
+    assert.equal(result.catalogId, "cat-1");
+
+    // One storage upload per candidate.
+    assert.equal(storageCalls.length, CANDIDATE_COUNT);
+    for (const call of storageCalls) {
+      assert.ok(call.path.startsWith("catalog/cat-1/"), `storage path must include catalogId, got: ${call.path}`);
+      assert.equal(call.bufferLength, FAKE_IMAGE_BYTES.length);
+    }
+
+    // One batch insert with all candidates.
+    assert.equal(inserts.length, 1);
+    const { table, rows } = inserts[0];
+    assert.equal(table, "stamp_artwork_versions");
+    assert.equal(rows.length, CANDIDATE_COUNT);
+    for (const row of rows) {
+      assert.equal(row.catalog_id, "cat-1");
+      assert.equal(row.status, "candidate");
+      // public_url must come from storage.getPublicUrl, not the original http URL.
+      assert.ok(
+        row.public_url.startsWith("https://storage.fake/catalog/cat-1/"),
+        `public_url should be from storage, got: ${row.public_url}`,
+      );
+      assert.ok(
+        row.storage_path.startsWith("catalog/cat-1/"),
+        `storage_path should be set, got: ${row.storage_path}`,
+      );
+    }
+
+    // Queue row marked review_required with no error.
+    const review = updates.find((u) => u.payload.status === "review_required");
+    assert.ok(review, "must mark the job review_required");
+    assert.equal(review!.payload.last_error, null);
+    assert.equal(review!.payload.locked_until, null);
+    assert.equal(review!.payload.locked_by, null);
+  });
+});
+
+describe("runGenerationCycle — real http images: mid-batch download failure", () => {
+  it("records no version rows and re-queues the job with last_error describing the failure", async () => {
+    // Fail the 2nd download so the first candidate is processed but the batch
+    // never reaches the insert step.
+    const { sc, updates, inserts, storageCalls } = makeFakeClientWithStorage();
+    _setTestServiceClient(sc);
+    // Provider returns CANDIDATE_COUNT http images; second download will 404.
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(failOnNthFetch(2));
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+
+    // No version rows inserted — the whole batch is abandoned on failure.
+    assert.equal(inserts.length, 0, "must not insert any version rows after a mid-batch failure");
+
+    // The first candidate uploaded before the failure — that's acceptable; what
+    // matters is no DB row references an orphaned upload.
+    // (storageCalls may be 1 because the first download succeeded before the 2nd failed)
+
+    // No review_required update.
+    assert.equal(
+      updates.some((u) => u.payload.status === "review_required"),
+      false,
+      "a failed batch must never reach review_required",
+    );
+
+    // Failure update present: back to queued (attempts 1 < max 3).
+    const fail = updates.find(
+      (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
+    );
+    assert.ok(fail, "must record a failure update on the queue row");
+    assert.equal(fail!.payload.status, "queued", "first failure (attempts < max) must go back to queued");
+    assert.equal(fail!.payload.attempts, 1);
+    assert.ok(
+      typeof fail!.payload.last_error === "string" && fail!.payload.last_error.includes("404"),
+      `last_error must mention the HTTP status, got: ${fail!.payload.last_error}`,
+    );
+    assert.equal(fail!.payload.locked_until, null);
+    assert.equal(fail!.payload.locked_by, null);
+  });
+});
+
+describe("runGenerationCycle — real http images: mid-batch storage upload failure", () => {
+  it("records no version rows and re-queues the job with last_error describing the upload failure", async () => {
+    let uploadCall = 0;
+    const { sc, updates, inserts } = makeFakeClientWithStorage({
+      onUpload(_path, _buf) {
+        uploadCall++;
+        // Fail the second upload.
+        if (uploadCall === 2) throw new Error("Storage upload failed: bucket quota exceeded");
+      },
+    });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+
+    // No version rows — batch never reached the insert.
+    assert.equal(inserts.length, 0, "must not insert any version rows after a storage upload failure");
+
+    // No review_required.
+    assert.equal(
+      updates.some((u) => u.payload.status === "review_required"),
+      false,
+    );
+
+    // Failure update with the storage error in last_error.
+    const fail = updates.find(
+      (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
+    );
+    assert.ok(fail, "must record a failure update on the queue row");
+    assert.equal(fail!.payload.status, "queued", "first storage failure must go back to queued for retry");
+    assert.equal(fail!.payload.attempts, 1);
+    assert.ok(
+      typeof fail!.payload.last_error === "string" &&
+        fail!.payload.last_error.toLowerCase().includes("storage"),
+      `last_error must mention storage failure, got: ${fail!.payload.last_error}`,
+    );
+    assert.equal(fail!.payload.locked_until, null);
+    assert.equal(fail!.payload.locked_by, null);
   });
 });
