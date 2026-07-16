@@ -2569,3 +2569,101 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
     );
   });
 });
+
+// ── PUT /admin/geocode-cache/:city_key — xx_entries_pending ───────────────────
+
+describe("PUT /admin/geocode-cache/:city_key — xx_entries_pending", () => {
+  it("returns xx_entries_pending: N when repair_catalog is not set and N XX entries exist", async () => {
+    const client = makeRepairClient({
+      xxEntries: [
+        {
+          id: "cat-put-pend-1",
+          canonical_location_key: "city:XX:putville",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Putville",
+          neighborhood: null,
+          display_name: "Putville",
+        },
+        {
+          id: "cat-put-pend-2",
+          canonical_location_key: "neighborhood:XX:putville:old-quarter",
+          stamp_type: "neighborhood",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Putville",
+          neighborhood: "Old Quarter",
+          display_name: "Old Quarter",
+        },
+      ],
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("PUT", "/admin/geocode-cache/putville", {
+      country_code: "DE",
+      country: "Germany",
+      // repair_catalog omitted
+    });
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.updated, true);
+    assert.ok(!r.body.repair, "repair field must be absent when repair_catalog is not set");
+    assert.equal(r.body.xx_entries_pending, 2,
+      "PUT without repair_catalog must report both matching XX entries as pending");
+  });
+
+  it("returns xx_entries_pending: 0 when no matching XX entries exist", async () => {
+    const client = makeRepairClient({
+      xxEntries: [], // no XX entries
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("PUT", "/admin/geocode-cache/cleanville", {
+      country_code: "AU",
+      country: "Australia",
+    });
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.updated, true);
+    assert.ok(!r.body.repair, "repair field must be absent");
+    assert.equal(r.body.xx_entries_pending, 0,
+      "xx_entries_pending must be 0 when no matching XX entries exist");
+  });
+
+  it("omits xx_entries_pending when repair_catalog is true (repair already ran)", async () => {
+    const client = makeRepairClient({
+      xxEntries: [
+        {
+          id: "cat-put-rep-1",
+          canonical_location_key: "city:XX:repville",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Repville",
+          neighborhood: null,
+          display_name: "Repville",
+        },
+      ],
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("France", "FR"));
+
+    const r = await apiReq("PUT", "/admin/geocode-cache/repville", {
+      country_code: "FR",
+      country: "France",
+      repair_catalog: true,
+    });
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.updated, true);
+    assert.ok(r.body.repair, "repair stats must be present when repair_catalog=true");
+    assert.equal(r.body.xx_entries_pending, undefined,
+      "xx_entries_pending must be absent when repair_catalog=true — repair already ran");
+  });
+});

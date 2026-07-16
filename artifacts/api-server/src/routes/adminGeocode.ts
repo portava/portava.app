@@ -188,6 +188,8 @@ router.put("/admin/geocode-cache/:city_key", async (req, res) => {
   evictGeocodeCacheKey(cityKey);
 
   let repairStats: import("../lib/stamps/xxCatalogRepair.js").RepairStats | undefined;
+  let xxEntriesPending: number | undefined;
+
   if (repair_catalog) {
     // Re-key catalog entries for this city using the corrected geocode.
     // The geocoder will now read the just-written DB cache row, so no
@@ -198,6 +200,11 @@ router.put("/admin/geocode-cache/:city_key", async (req, res) => {
       { info: console.log, warn: console.warn },
       { cityKeyFilter: cityKey },
     );
+  } else {
+    // Repair did not run — count how many XX catalog entries are still
+    // pending for this city so the caller can decide whether to re-issue
+    // the request with repair_catalog=true.
+    xxEntriesPending = await countXXEntriesForCityKey(sc, cityKey);
   }
 
   res.json({
@@ -206,6 +213,7 @@ router.put("/admin/geocode-cache/:city_key", async (req, res) => {
     country_code: normalised_code,
     country,
     ...(repairStats !== undefined ? { repair: repairStats } : {}),
+    ...(xxEntriesPending !== undefined ? { xx_entries_pending: xxEntriesPending } : {}),
   });
 });
 
