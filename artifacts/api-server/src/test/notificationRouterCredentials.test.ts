@@ -1051,4 +1051,39 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
       infoSpy.mock.restore();
     }
   });
+
+  it("logger.error fires — not just warn — when all three cleanup steps fail past the threshold in one call", async () => {
+    // Use LEGACY_TOKEN as both the device token and the legacy profile token so
+    // that all three cleanup steps are attempted in a single route() call:
+    //   Step 1 — notification_devices DELETE        (deleteDeviceError, counter → 1, warn)
+    //   Step 2 — profiles UPDATE (null legacy token) (profilesUpdateError, counter → 2, warn)
+    //   Step 3 — rent_buddy_profiles UPDATE          (rentBuddyUpdateError, counter → 3, ≥ threshold → error)
+    //
+    // The threshold check happens inside each catch block independently, so step 3
+    // must cross CLEANUP_ERROR_THRESHOLD (3) and emit logger.error rather than warn.
+    _setTestFetch(invalidCredFetch);
+    const STEP1_ERROR = new Error("notification_devices unavailable");
+    const STEP2_ERROR = new Error("profiles table unavailable");
+    const STEP3_ERROR = new Error("rent_buddy_profiles unavailable");
+    const { client } = makeFakeDb({
+      deviceToken: LEGACY_TOKEN,
+      legacyToken: LEGACY_TOKEN,
+      deleteDeviceError: STEP1_ERROR,
+      profilesUpdateError: STEP2_ERROR,
+      rentBuddyUpdateError: STEP3_ERROR,
+    });
+
+    const errorSpy = mock.method(_notificationRouterLogger, "error", () => {});
+    try {
+      const router = new NotificationRouter(client);
+      await router.route(BASE_NOTIF);
+
+      assert.ok(
+        errorSpy.mock.calls.length >= 1,
+        `logger.error must be called at least once when all three cleanup steps fail in one call (got ${errorSpy.mock.calls.length} error calls)`,
+      );
+    } finally {
+      errorSpy.mock.restore();
+    }
+  });
 });
