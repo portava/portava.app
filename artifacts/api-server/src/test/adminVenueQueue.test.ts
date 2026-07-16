@@ -146,6 +146,68 @@ function setClient(client: ReturnType<typeof makeQueueClient>) {
   _setTestServiceClient(client as any);
 }
 
+// ── Non-admin client factory ───────────────────────────────────────────────────
+const NON_ADMIN_USER_ID = "bbbbbbbb-0000-4000-0001-000000000002";
+
+function makeNonAdminClient() {
+  const db: Record<string, any[]> = {
+    profiles: [{ id: NON_ADMIN_USER_ID, role: "user" }],
+    discovery_places: [],
+  };
+
+  function chain(tableName: string, rows: any[]) {
+    let filtered = [...rows];
+    const b: any = {
+      select: (_cols?: string) => b,
+      eq: (col: string, val: any) => {
+        filtered = filtered.filter((r: any) => r[col] === val);
+        return b;
+      },
+      order: (_col: string, _opts?: any) => b,
+      limit: (_n: number) => b,
+      maybeSingle: () => Promise.resolve({ data: filtered[0] ?? null, error: null }),
+      single: () => Promise.resolve(
+        filtered[0]
+          ? { data: filtered[0], error: null }
+          : { data: null, error: { message: "No rows" } },
+      ),
+      then: (resolve: any, reject: any) =>
+        Promise.resolve({ data: filtered, error: null }).then(resolve, reject),
+    };
+    return b;
+  }
+
+  return {
+    from: (tableName: string) => chain(tableName, [...(db[tableName] ?? [])]),
+    auth: {
+      getUser: () =>
+        Promise.resolve({ data: { user: { id: NON_ADMIN_USER_ID } }, error: null }),
+    },
+    _db: db,
+  };
+}
+
+// ── Test 0: non-admin caller receives 403 ─────────────────────────────────────
+
+describe("GET /admin/venues/pending — non-admin caller", () => {
+  it("returns 403 with error code 'forbidden' when the caller has no admin role", async () => {
+    const client = makeNonAdminClient();
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+
+    const { status, body } = await req("GET", "/admin/venues/pending");
+
+    assert.equal(
+      status, 403,
+      `Expected 403, got ${status}: ${JSON.stringify(body)}`,
+    );
+    assert.equal(
+      body.error, "forbidden",
+      `Expected error code 'forbidden', got '${body.error}'`,
+    );
+  });
+});
+
 // ── Test 1: limit=200 is capped at 100 ────────────────────────────────────────
 
 describe("GET /admin/venues/pending — limit cap at 100", () => {
