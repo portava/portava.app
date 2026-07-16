@@ -892,3 +892,102 @@ describe('StampStudioIndex — backlog_growing with missing queued details shows
     expect(warningText.props.children).not.toMatch(/undefined/);
   });
 });
+
+// ── Suite 7: warning banner title labels ──────────────────────────────────────
+
+/**
+ * The warning banner renders a title label alongside the summary text:
+ *   - 'Stuck generation jobs'  for the stuck_jobs warning
+ *   - 'Backlog growing'        for the backlog_growing warning
+ *
+ * A swapped ternary branch (wrong key check) would display the wrong label
+ * with no automated signal.  These tests assert BOTH the title label AND the
+ * summary body text are present and correct for each warning type, so a swap
+ * is caught immediately.
+ */
+describe('StampStudioIndex — warning banner title labels are correct for both warning types', () => {
+  let spy: ReturnType<typeof makeIntervalSpy>;
+
+  afterEach(() => {
+    spy.teardown();
+    jest.clearAllMocks();
+  });
+
+  it('renders "Stuck generation jobs" title and correct body for stuck_jobs warning', async () => {
+    spy = makeIntervalSpy();
+    makeUseFocusEffectMock();
+
+    mockGetCatalog.mockResolvedValue(catalogOk(10));
+    mockGetHealth.mockResolvedValue({
+      ok: true as const,
+      data: {
+        warnings: [
+          { key: 'stuck_jobs' as const, message: 'stuck', details: { stuck_count: 4 } },
+        ],
+        health: {
+          worker_enabled: true,
+          worker_running: true,
+          worker_id: 'w1',
+          last_success_at: null,
+          queue_depth: {},
+          stuck_jobs: [],
+        },
+      },
+    });
+
+    render(<StampStudioIndex />);
+
+    // Wait for load() to complete so the warning banner is rendered.
+    await waitFor(() => screen.getByText('Stuck generation jobs'));
+
+    // Title label must be the stuck_jobs label — not the backlog_growing label.
+    expect(screen.getByText('Stuck generation jobs')).toBeTruthy();
+    expect(screen.queryByText('Backlog growing')).toBeNull();
+
+    // Body text must match warningSummary for stuck_jobs.
+    expect(
+      screen.getByText(/4 jobs stuck in 'generating' past lock expiry/),
+    ).toBeTruthy();
+  });
+
+  it('renders "Backlog growing" title and correct body for backlog_growing warning', async () => {
+    spy = makeIntervalSpy();
+    makeUseFocusEffectMock();
+
+    mockGetCatalog.mockResolvedValue(catalogOk(10));
+    mockGetHealth.mockResolvedValue({
+      ok: true as const,
+      data: {
+        warnings: [
+          {
+            key: 'backlog_growing' as const,
+            message: 'backlog growing',
+            details: { queued: 20, previous_queued: 5 },
+          },
+        ],
+        health: {
+          worker_enabled: true,
+          worker_running: true,
+          worker_id: 'w1',
+          last_success_at: null,
+          queue_depth: {},
+          stuck_jobs: [],
+        },
+      },
+    });
+
+    render(<StampStudioIndex />);
+
+    // Wait for load() to complete so the warning banner is rendered.
+    await waitFor(() => screen.getByText('Backlog growing'));
+
+    // Title label must be the backlog_growing label — not the stuck_jobs label.
+    expect(screen.getByText('Backlog growing')).toBeTruthy();
+    expect(screen.queryByText('Stuck generation jobs')).toBeNull();
+
+    // Body text must match warningSummary for backlog_growing.
+    expect(
+      screen.getByText(/Queued backlog grew from 5 to 20 while the worker is enabled/),
+    ).toBeTruthy();
+  });
+});
