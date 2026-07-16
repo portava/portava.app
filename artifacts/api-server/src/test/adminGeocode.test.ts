@@ -758,6 +758,9 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
     let xxEntryDeleted = false;
     let queueEntryDeleted = false;
 
+    // Track artwork repointing
+    let artworkRepointed: { newCatalogId: string; filteredOnXxId: string | null } | null = null;
+
     const client: any = {
       auth: {
         getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
@@ -850,8 +853,14 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
 
         if (table === "stamp_artwork_versions") {
           return {
-            update: (_fields: unknown) => ({
-              eq: () => Promise.resolve({ data: null, error: null }),
+            update: (fields: Record<string, unknown>) => ({
+              eq: (_col: string, val: string) => {
+                artworkRepointed = {
+                  newCatalogId: fields.catalog_id as string,
+                  filteredOnXxId: val,
+                };
+                return Promise.resolve({ data: null, error: null });
+              },
             }),
           };
         }
@@ -907,5 +916,155 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
     // XX entry was deleted
     assert.ok(xxEntryDeleted, "the XX catalog entry should have been deleted after merge");
     assert.ok(queueEntryDeleted, "stamp_generation_queue rows for the XX entry should have been deleted");
+
+    // Artwork rows were repointed to the survivor
+    assert.ok(artworkRepointed !== null, "stamp_artwork_versions rows should have been repointed");
+    assert.equal(artworkRepointed?.newCatalogId, SURVIVOR_ID,
+      "artwork rows should be repointed to the survivor catalog id");
+    assert.equal(artworkRepointed?.filteredOnXxId, XX_ID,
+      "artwork repoint should filter on the XX catalog id so no orphaned rows remain");
+  });
+
+  it("repoints artwork rows to the survivor — not just ownership stamps", async () => {
+    const XX_ID = "cat-xx-art-only";
+    const SURVIVOR_ID = "cat-survivor-art";
+
+    let artworkNewCatalogId: string | null = null;
+    let artworkFilterId: string | null = null;
+    let artworkRowsLeftOnXx = false;
+
+    const client: any = {
+      auth: {
+        getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+      },
+      from: (table: string) => {
+        if (table === "profiles") {
+          return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+        }
+
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: (_cols: string) => builder([]),
+            upsert: (_row: unknown, _o?: unknown) =>
+              Promise.resolve({ data: null, error: null }),
+          };
+        }
+
+        if (table === "universal_stamp_catalog") {
+          return {
+            select: (cols: string) => {
+              if (cols.includes("canonical_location_key")) {
+                return {
+                  eq: (_col: string, _val: unknown) => ({
+                    then: (resolve: (v: { data: unknown[]; error: null }) => void) =>
+                      resolve({
+                        data: [
+                          {
+                            id: XX_ID,
+                            canonical_location_key: "city:XX:artville",
+                            stamp_type: "city",
+                            country: "Unknown",
+                            country_code: "XX",
+                            city: "Artville",
+                            neighborhood: null,
+                            display_name: "Artville",
+                          },
+                        ],
+                        error: null,
+                      }),
+                  }),
+                };
+              }
+              if (cols === "id, earn_count") {
+                return {
+                  in: (_col: string, _ids: string[]) =>
+                    Promise.resolve({
+                      data: [
+                        { id: XX_ID, earn_count: 0 },
+                        { id: SURVIVOR_ID, earn_count: 2 },
+                      ],
+                      error: null,
+                    }),
+                };
+              }
+              // Survivor check
+              const survivorChain: any = {
+                eq: () => survivorChain,
+                neq: () => survivorChain,
+                maybeSingle: async () => ({ data: { id: SURVIVOR_ID }, error: null }),
+              };
+              return survivorChain;
+            },
+            update: (_fields: Record<string, unknown>) => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+            delete: () => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        if (table === "user_stamps" || table === "passport_stamps") {
+          return {
+            update: (_fields: Record<string, unknown>) => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        if (table === "stamp_artwork_versions") {
+          return {
+            update: (fields: Record<string, unknown>) => ({
+              eq: (_col: string, val: string) => {
+                // Record what catalog_id the artwork was pointed to
+                artworkNewCatalogId = fields.catalog_id as string;
+                artworkFilterId = val;
+                // If the filter value equals XX_ID the repoint targets the right rows;
+                // if it were ever called with SURVIVOR_ID as filter that would be a bug.
+                if (val === XX_ID && fields.catalog_id === XX_ID) {
+                  artworkRowsLeftOnXx = true;
+                }
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+        }
+
+        if (table === "stamp_generation_queue") {
+          return {
+            delete: () => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        return builder([]);
+      },
+    };
+
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("France", "FR"));
+
+    const r = await apiReq("PUT", "/admin/geocode-cache/artville", {
+      country_code: "FR",
+      country: "France",
+      repair_catalog: true,
+    });
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.ok(r.body.repair, "response should include repair stats");
+    assert.equal((r.body.repair as RepairStats).catalogMerged, 1, "should have merged into the survivor");
+
+    // Core assertion: artwork rows must be repointed to the survivor
+    assert.ok(artworkNewCatalogId !== null,
+      "stamp_artwork_versions.update() should have been called during merge");
+    assert.equal(artworkNewCatalogId, SURVIVOR_ID,
+      "artwork rows must point at the survivor after merge — not the deleted XX entry");
+    assert.equal(artworkFilterId, XX_ID,
+      "artwork repoint must filter on the XX catalog id to catch all orphaned rows");
+    assert.equal(artworkRowsLeftOnXx, false,
+      "no artwork update should leave rows still pointing at the XX catalog id");
   });
 });
