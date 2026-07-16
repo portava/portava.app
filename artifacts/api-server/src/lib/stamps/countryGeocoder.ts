@@ -205,7 +205,16 @@ async function evictIfDbCorrected(key: string, entry: CacheEntry): Promise<boole
       .select("corrected_at")
       .eq("city_key", key)
       .maybeSingle();
-    if (error || !data) return false;
+    if (error) return false; // Transient DB error — keep the cache, retry next interval.
+    if (!data) {
+      // Row is gone (admin DELETE on another instance).  Evict so the next
+      // geocodeCityCountry call re-resolves from a fresh Nominatim lookup
+      // instead of serving the now-invalid stale entry indefinitely.
+      _cache.delete(key);
+      _pending.delete(key);
+      logEvent("stamp.country_geocode.deletion_evicted", { city_key: key });
+      return true;
+    }
     const correctedAt = (data as any).corrected_at;
     if (!correctedAt) return false;
     if (new Date(correctedAt).getTime() > entry.writtenAt) {
