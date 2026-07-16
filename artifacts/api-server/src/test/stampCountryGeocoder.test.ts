@@ -17,6 +17,7 @@ import {
   geocodeCityCountry,
   resolveCountryWithGeocoding,
   _setGeocodeFetchForTests,
+  _setGeocodeDbClientForTests,
   _clearCountryGeocodeCache,
 } from "../lib/stamps/countryGeocoder.js";
 import {
@@ -97,6 +98,97 @@ describe("geocodeCityCountry", () => {
       "weird": { country_code: "canada", country: "Canada" },
     }));
     assert.equal(await geocodeCityCountry("Weird"), null);
+  });
+});
+
+// ── Persistent DB cache ───────────────────────────────────────────────────────
+
+interface GeoCacheRow { city_key: string; country: string; country_code: string; updated_at?: string }
+
+function makeFakeGeoCacheDb(rows: GeoCacheRow[]) {
+  const calls = { reads: 0, upserts: 0 };
+  const client = {
+    from(table: string) {
+      assert.equal(table, "city_country_geocode_cache");
+      let _key: string | null = null;
+      const chain: any = {
+        select() { return chain; },
+        eq(_col: string, val: string) { _key = val; return chain; },
+        async maybeSingle() {
+          calls.reads += 1;
+          return { data: rows.find((r) => r.city_key === _key) ?? null, error: null };
+        },
+        async upsert(row: GeoCacheRow) {
+          calls.upserts += 1;
+          const i = rows.findIndex((r) => r.city_key === row.city_key);
+          if (i >= 0) rows[i] = row; else rows.push(row);
+          return { error: null };
+        },
+      };
+      return chain;
+    },
+  } as unknown as SupabaseClient;
+  return { client, rows, calls };
+}
+
+describe("geocodeCityCountry persistent cache", () => {
+  it("serves a persisted positive result without hitting the geocoder", async () => {
+    _setGeocodeFetchForTests(async (url: string) => {
+      fetchCalls.push(url);
+      throw new Error("should not be called");
+    });
+    const db = makeFakeGeoCacheDb([{ city_key: "banff", country: "Canada", country_code: "CA" }]);
+    _setGeocodeDbClientForTests(db.client);
+    const r = await geocodeCityCountry("Banff");
+    assert.deepEqual(r, { country: "Canada", countryCode: "CA" });
+    assert.equal(fetchCalls.length, 0);
+
+    // Now in the in-memory (L1) cache — repeat calls don't re-read the DB.
+    await geocodeCityCountry("BANFF");
+    assert.equal(db.calls.reads, 1);
+  });
+
+  it("persists positive geocode results to the DB", async () => {
+    _setGeocodeFetchForTests(fakeNominatim({
+      "tromso": { country_code: "no", country: "Norway" },
+    }));
+    const db = makeFakeGeoCacheDb([]);
+    _setGeocodeDbClientForTests(db.client);
+    await geocodeCityCountry("Tromso");
+    assert.equal(db.calls.upserts, 1);
+    assert.deepEqual(db.rows[0].city_key, "tromso");
+    assert.equal(db.rows[0].country_code, "NO");
+    assert.equal(db.rows[0].country, "Norway");
+  });
+
+  it("does NOT persist negative results — failures stay retryable", async () => {
+    _setGeocodeFetchForTests(fakeNominatim({}));
+    const db = makeFakeGeoCacheDb([]);
+    _setGeocodeDbClientForTests(db.client);
+    assert.equal(await geocodeCityCountry("Nowhereville"), null);
+    assert.equal(db.calls.upserts, 0);
+  });
+
+  it("falls through to geocoding when the DB cache errors", async () => {
+    _setGeocodeFetchForTests(fakeNominatim({
+      "banff": { country_code: "ca", country: "Canada" },
+    }));
+    _setGeocodeDbClientForTests({
+      from() { throw new Error("db down"); },
+    } as unknown as SupabaseClient);
+    const r = await geocodeCityCountry("Banff");
+    assert.deepEqual(r, { country: "Canada", countryCode: "CA" });
+  });
+
+  it("ignores corrupt persisted rows and re-geocodes", async () => {
+    _setGeocodeFetchForTests(fakeNominatim({
+      "banff": { country_code: "ca", country: "Canada" },
+    }));
+    const db = makeFakeGeoCacheDb([{ city_key: "banff", country: "Canada", country_code: "CANADA" }]);
+    _setGeocodeDbClientForTests(db.client);
+    const r = await geocodeCityCountry("Banff");
+    assert.deepEqual(r, { country: "Canada", countryCode: "CA" });
+    assert.equal(fetchCalls.length, 1);
   });
 });
 

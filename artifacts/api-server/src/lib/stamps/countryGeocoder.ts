@@ -18,8 +18,10 @@
  *   - Every geocode outcome is logged as a structured JSON event.
  */
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveCountry, countryNameFromCode, type ResolvedCountry } from "./countryLookup.js";
 import { reverseGeocode } from "../../services/geocodingService.js";
+import { getServiceClient } from "../supabase.js";
 
 export interface GeocodedCountry {
   country: string;
@@ -62,10 +64,20 @@ function throttled(): Promise<void> {
 type FetchLike = (url: string, init?: any) => Promise<any>;
 let _fetchImpl: FetchLike = (url, init) => fetch(url, init);
 
-/** Test-only: swap the fetch implementation (also disables the throttle gap). */
+/**
+ * Test-only: swap the fetch implementation (also disables the throttle gap).
+ * Setting a fake fetch also detaches the persistent DB cache from the real
+ * Supabase client (tests must opt back in via _setGeocodeDbClientForTests).
+ */
 export function _setGeocodeFetchForTests(f: FetchLike | null): void {
   _fetchImpl = f ?? ((url, init) => fetch(url, init));
   _throttleDisabled = f != null;
+  _dbClientOverride = f != null ? null : undefined;
+}
+
+/** Test-only: inject a fake Supabase client for the persistent cache (null disables it). */
+export function _setGeocodeDbClientForTests(client: SupabaseClient | null | undefined): void {
+  _dbClientOverride = client;
 }
 
 /** Test-only: clear cached geocode results. */
@@ -73,6 +85,64 @@ export function _clearCountryGeocodeCache(): void {
   _cache.clear();
   _pending.clear();
   _lastCallAt = 0;
+}
+
+// ── Persistent (DB) cache ─────────────────────────────────────────────────────
+//
+// Second-level cache in the `city_country_geocode_cache` table so positive
+// results survive server restarts. Only POSITIVE results are persisted —
+// negative/failed geocodes stay in the short-TTL in-memory cache so transient
+// failures retry. All DB access is best-effort: any error falls through to
+// the normal geocode path.
+
+const DB_CACHE_TABLE = "city_country_geocode_cache";
+
+let _dbClientOverride: SupabaseClient | null | undefined; // undefined = use real client
+
+function dbClient(): SupabaseClient | null {
+  if (_dbClientOverride !== undefined) return _dbClientOverride;
+  try {
+    return getServiceClient();
+  } catch {
+    return null;
+  }
+}
+
+async function readDbCache(key: string): Promise<GeocodedCountry | null> {
+  const sc = dbClient();
+  if (!sc) return null;
+  try {
+    const { data, error } = await sc
+      .from(DB_CACHE_TABLE)
+      .select("country, country_code")
+      .eq("city_key", key)
+      .maybeSingle();
+    if (error || !data) return null;
+    return shapeResult((data as any).country_code, (data as any).country);
+  } catch {
+    return null;
+  }
+}
+
+async function writeDbCache(key: string, result: GeocodedCountry): Promise<void> {
+  const sc = dbClient();
+  if (!sc) return;
+  try {
+    const { error } = await sc.from(DB_CACHE_TABLE).upsert(
+      {
+        city_key: key,
+        country: result.country,
+        country_code: result.countryCode,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "city_key" },
+    );
+    if (error) {
+      logEvent("stamp.country_geocode.persist_failed", { city_key: key, error: error.message });
+    }
+  } catch (e: any) {
+    logEvent("stamp.country_geocode.persist_failed", { city_key: key, error: e?.message ?? String(e) });
+  }
 }
 
 // ── Core forward geocode ──────────────────────────────────────────────────────
@@ -133,6 +203,17 @@ export async function geocodeCityCountry(city: string): Promise<GeocodedCountry 
 
   const p = (async () => {
     try {
+      // Second-level persistent cache — positive results survive restarts.
+      const persisted = await readDbCache(key);
+      if (persisted) {
+        if (_cache.size >= MAX_CACHE_SIZE) {
+          const firstKey = _cache.keys().next().value;
+          if (firstKey !== undefined) _cache.delete(firstKey);
+        }
+        _cache.set(key, { result: persisted, expiresAt: Date.now() + POSITIVE_TTL_MS });
+        return persisted;
+      }
+
       const result = await forwardGeocodeCity(city);
       if (_cache.size >= MAX_CACHE_SIZE) {
         const firstKey = _cache.keys().next().value;
@@ -143,6 +224,7 @@ export async function geocodeCityCountry(city: string): Promise<GeocodedCountry 
         expiresAt: Date.now() + (result ? POSITIVE_TTL_MS : NEGATIVE_TTL_MS),
       });
       if (result) {
+        await writeDbCache(key, result);
         logEvent("stamp.country_geocode.resolved", { city, country_code: result.countryCode });
       } else {
         logEvent("stamp.country_geocode.unresolved", { city });
