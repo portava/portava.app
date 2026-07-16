@@ -4,80 +4,27 @@
  * Pattern mirrors trustAdmin.ts: fetch helpers that send the Supabase
  * Bearer token and hit /api/rent-a-buddy/admin/* endpoints.
  */
-import { supabase } from '../lib/supabase';
+import {
+  adminGet as sharedAdminGet,
+  adminPost as sharedAdminPost,
+  adminPatch as sharedAdminPatch,
+  type AdminApiResult,
+} from './adminApi';
 
-const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+// Rent a Buddy admin endpoints signal missing admin role with HTTP 403, which
+// callers detect via the 'forbidden' sentinel error.
+const FORBIDDEN = { treat403AsForbidden: true } as const;
 
-async function freshToken(): Promise<string | null> {
-  try {
-    const { data: refreshed } = await supabase.auth.refreshSession();
-    const s = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-    return s?.access_token ?? null;
-  } catch { return null; }
+function adminGet<T>(path: string): Promise<AdminApiResult<T>> {
+  return sharedAdminGet<T>(path, FORBIDDEN);
 }
 
-async function adminGet<T>(path: string): Promise<{ ok: boolean; data?: T; error?: string }> {
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (res.status === 403) return { ok: false, error: 'forbidden' };
-    if (!res.ok) {
-      const b = await res.json().catch(() => ({}));
-      return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
-    }
-    return { ok: true, data: await res.json() as T };
-  } catch (e: any) {
-    return { ok: false, error: e?.message ?? 'Network error' };
-  }
+function adminPost<T>(path: string, body?: Record<string, unknown>): Promise<AdminApiResult<T>> {
+  return sharedAdminPost<T>(path, body, FORBIDDEN);
 }
 
-async function adminPost<T>(
-  path: string,
-  body?: Record<string, unknown>,
-): Promise<{ ok: boolean; data?: T; error?: string }> {
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
-    if (res.status === 403) return { ok: false, error: 'forbidden' };
-    if (!res.ok) {
-      const b = await res.json().catch(() => ({}));
-      return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
-    }
-    return { ok: true, data: await res.json() as T };
-  } catch (e: any) {
-    return { ok: false, error: e?.message ?? 'Network error' };
-  }
-}
-
-async function adminPatch<T>(
-  path: string,
-  body: Record<string, unknown>,
-): Promise<{ ok: boolean; data?: T; error?: string }> {
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      method: 'PATCH',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (res.status === 403) return { ok: false, error: 'forbidden' };
-    if (!res.ok) {
-      const b = await res.json().catch(() => ({}));
-      return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
-    }
-    return { ok: true, data: await res.json() as T };
-  } catch (e: any) {
-    return { ok: false, error: e?.message ?? 'Network error' };
-  }
+function adminPatch<T>(path: string, body: Record<string, unknown>): Promise<AdminApiResult<T>> {
+  return sharedAdminPatch<T>(path, body, FORBIDDEN);
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────────
