@@ -126,12 +126,14 @@ router.put("/admin/geocode-cache/:city_key", async (req, res) => {
   const { country_code, country } = parsed.data;
   const normalised_code = country_code.toUpperCase();
 
+  const now = new Date().toISOString();
   const { error } = await sc.from(DB_CACHE_TABLE).upsert(
     {
       city_key: cityKey,
       country,
       country_code: normalised_code,
-      updated_at: new Date().toISOString(),
+      updated_at: now,
+      corrected_at: now,
     },
     { onConflict: "city_key" },
   );

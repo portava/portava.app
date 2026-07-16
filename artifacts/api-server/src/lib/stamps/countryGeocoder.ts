@@ -32,10 +32,16 @@ const VALID_CODE_RE = /^[A-Za-z]{2}$/;
 
 const POSITIVE_TTL_MS = 30 * 24 * 60 * 60 * 1_000; // 30 days
 const NEGATIVE_TTL_MS = 6 * 60 * 60 * 1_000;       // 6 hours
+// How often to re-probe the DB for corrected_at on a warm in-memory hit.
+// Limits DB load while still bounding how long a correction takes to propagate
+// to instances that didn't handle the admin request.
+const CORRECTION_CHECK_INTERVAL_MS = 5 * 60 * 1_000; // 5 minutes
 
 interface CacheEntry {
   result: GeocodedCountry | null;
   expiresAt: number;
+  writtenAt: number;           // epoch ms when this entry was placed in the cache
+  correctionCheckedAt?: number; // epoch ms of the last corrected_at probe for this key
 }
 
 const _cache = new Map<string, CacheEntry>();
@@ -118,13 +124,42 @@ function dbClient(): SupabaseClient | null {
   }
 }
 
+/**
+ * Probe the DB for corrected_at on a single key and evict the in-memory entry
+ * if it pre-dates the correction.  Returns true when the caller should re-resolve
+ * (entry was evicted), false when the cached value is still valid.
+ * Best-effort: returns false on any DB error so the cached value is kept.
+ */
+async function evictIfDbCorrected(key: string, entry: CacheEntry): Promise<boolean> {
+  const sc = dbClient();
+  if (!sc) return false;
+  try {
+    const { data, error } = await sc
+      .from(DB_CACHE_TABLE)
+      .select("corrected_at")
+      .eq("city_key", key)
+      .maybeSingle();
+    if (error || !data) return false;
+    const correctedAt = (data as any).corrected_at;
+    if (!correctedAt) return false;
+    if (new Date(correctedAt).getTime() > entry.writtenAt) {
+      _cache.delete(key);
+      _pending.delete(key);
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 async function readDbCache(key: string): Promise<GeocodedCountry | null> {
   const sc = dbClient();
   if (!sc) return null;
   try {
     const { data, error } = await sc
       .from(DB_CACHE_TABLE)
-      .select("country, country_code")
+      .select("country, country_code, corrected_at")
       .eq("city_key", key)
       .maybeSingle();
     if (error || !data) return null;
@@ -206,7 +241,26 @@ export async function geocodeCityCountry(city: string): Promise<GeocodedCountry 
   if (!key) return null;
 
   const cached = _cache.get(key);
-  if (cached && Date.now() < cached.expiresAt) return cached.result;
+  if (cached && Date.now() < cached.expiresAt) {
+    // Periodically probe the DB for admin corrections written on other instances.
+    // Only positive entries are ever admin-corrected; skip the probe for null entries.
+    if (cached.result != null) {
+      const lastCheck = cached.correctionCheckedAt ?? cached.writtenAt;
+      if (Date.now() - lastCheck >= CORRECTION_CHECK_INTERVAL_MS) {
+        const evicted = await evictIfDbCorrected(key, cached);
+        if (!evicted) {
+          // Still fresh — bump the checked timestamp so we don't re-probe for another interval.
+          _cache.set(key, { ...cached, correctionCheckedAt: Date.now() });
+          return cached.result;
+        }
+        // Entry was evicted — fall through to re-resolve from the DB.
+      } else {
+        return cached.result;
+      }
+    } else {
+      return cached.result;
+    }
+  }
 
   const existing = _pending.get(key);
   if (existing) return existing;
@@ -220,7 +274,8 @@ export async function geocodeCityCountry(city: string): Promise<GeocodedCountry 
           const firstKey = _cache.keys().next().value;
           if (firstKey !== undefined) _cache.delete(firstKey);
         }
-        _cache.set(key, { result: persisted, expiresAt: Date.now() + POSITIVE_TTL_MS });
+        const now = Date.now();
+        _cache.set(key, { result: persisted, expiresAt: now + POSITIVE_TTL_MS, writtenAt: now, correctionCheckedAt: now });
         return persisted;
       }
 
@@ -229,9 +284,11 @@ export async function geocodeCityCountry(city: string): Promise<GeocodedCountry 
         const firstKey = _cache.keys().next().value;
         if (firstKey !== undefined) _cache.delete(firstKey);
       }
+      const now = Date.now();
       _cache.set(key, {
         result,
-        expiresAt: Date.now() + (result ? POSITIVE_TTL_MS : NEGATIVE_TTL_MS),
+        expiresAt: now + (result ? POSITIVE_TTL_MS : NEGATIVE_TTL_MS),
+        writtenAt: now,
       });
       if (result) {
         await writeDbCache(key, result);
@@ -243,7 +300,8 @@ export async function geocodeCityCountry(city: string): Promise<GeocodedCountry 
     } catch (e: any) {
       // Transient failure — cache negatively for a short while so a flapping
       // provider doesn't get hammered, but retry after the TTL.
-      _cache.set(key, { result: null, expiresAt: Date.now() + NEGATIVE_TTL_MS });
+      const now = Date.now();
+      _cache.set(key, { result: null, expiresAt: now + NEGATIVE_TTL_MS, writtenAt: now });
       logEvent("stamp.country_geocode.failed", { city, error: e?.message ?? String(e) });
       return null;
     } finally {
