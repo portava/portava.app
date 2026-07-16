@@ -590,6 +590,34 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
     );
   });
 
+  it("counter increments twice per call when both step 1 and step 2 fail in the same cleanup", async () => {
+    // Use LEGACY_TOKEN as both the device token and the legacy profile token so
+    // that step 2 (profiles UPDATE) is always attempted alongside step 1 (DELETE).
+    // With deleteDeviceError AND profilesUpdateError both set, each route() call
+    // contributes 2 increments.  Two calls → 4 total, well above
+    // CLEANUP_ERROR_THRESHOLD (3), so the escalation check is valid even before
+    // a third call.
+    _setTestFetch(invalidCredFetch);
+    const STEP1_ERROR = new Error("notification_devices unavailable");
+    const STEP2_ERROR = new Error("profiles table unavailable");
+    const { client } = makeFakeDb({
+      deviceToken: LEGACY_TOKEN,
+      legacyToken: LEGACY_TOKEN,
+      deleteDeviceError: STEP1_ERROR,
+      profilesUpdateError: STEP2_ERROR,
+    });
+
+    const router = new NotificationRouter(client);
+
+    await router.route(BASE_NOTIF);
+    await router.route(BASE_NOTIF);
+
+    assert.ok(
+      _getCleanupFailureCount() >= 3,
+      `counter should reach CLEANUP_ERROR_THRESHOLD (3) after two calls with two failures each, got ${_getCleanupFailureCount()}`,
+    );
+  });
+
   it("does nothing when there are no push tokens registered for the user", async () => {
     const { deletedDeviceTokens, retryQueueInserts, deliveryAttempts, client } = makeFakeDb({
       deviceToken: null,
