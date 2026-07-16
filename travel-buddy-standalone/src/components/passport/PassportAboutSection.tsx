@@ -4,8 +4,8 @@
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import type { OwnProfile, PublicProfile } from '../../types/models.ts';
-import { PP, PP_LABEL, PP_VALUE } from '../../theme/passportTokens.ts';
+import type { OwnProfile, PublicProfile } from '../../types/models';
+import { PP, PP_LABEL, PP_VALUE } from '../../theme/passportTokens';
 
 type AnyProfile = OwnProfile | PublicProfile;
 

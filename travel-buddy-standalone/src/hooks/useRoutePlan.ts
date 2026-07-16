@@ -11,7 +11,7 @@ import {
   type CheckpointStatus,
   type PatchStopPayload,
   type RoutePlanMembersResult,
-} from '../services/routePlan.ts';
+} from '../services/routePlan';
 
 const POLL_INTERVAL_MS    = 10_000;
 const MEMBERS_POLL_MS     = 30_000;

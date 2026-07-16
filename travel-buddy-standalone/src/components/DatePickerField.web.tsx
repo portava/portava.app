@@ -8,7 +8,7 @@
 import React from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
 import { Calendar, Clock, X } from 'lucide-react-native';
-import { color, space, radius } from '../theme/tokens.ts';
+import { color, space, radius } from '../theme/tokens';
 
 export interface DatePickerFieldProps {
   value: string;

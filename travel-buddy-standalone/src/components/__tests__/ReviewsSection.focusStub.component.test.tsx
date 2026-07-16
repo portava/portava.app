@@ -15,7 +15,7 @@
 
 import React from 'react';
 import { act, render } from '@testing-library/react-native';
-import { ReviewsSection } from '../ReviewsSection.tsx';
+import { ReviewsSection } from '../ReviewsSection';
 
 // ── No expo-router override — file-level mock is used ─────────────────────────
 

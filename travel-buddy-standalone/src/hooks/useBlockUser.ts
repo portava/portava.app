@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { blockUser, unblockUser } from '../services/blocks.ts';
-import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
+import { blockUser, unblockUser } from '../services/blocks';
+import { useBlockedIds } from '../context/BlockedIdsContext';
 
 export function useBlockUser() {
   const { addBlock, removeBlock } = useBlockedIds();

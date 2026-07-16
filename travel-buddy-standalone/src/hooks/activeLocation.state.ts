@@ -15,8 +15,8 @@
  *     /api/me/location-state; it always carries the full place plus the
  *     legacy manualCity/manualCountry columns.
  */
-import type { ActiveLocationState } from './useActiveLocation.ts';
-import type { Place } from '../lib/location/placeTypes.ts';
+import type { ActiveLocationState } from './useActiveLocation';
+import type { Place } from '../lib/location/placeTypes';
 
 /** State transition applied when the user sets a manual location (picker, map, etc.). */
 export function buildManualCityState(

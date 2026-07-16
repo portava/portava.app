@@ -11,8 +11,8 @@ import {
   CheckCircle, Clock, DollarSign, Navigation, MapPin,
   Star, AlertCircle, UserCheck, PlusCircle,
 } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { TG } from '../../theme/telegraphTokens.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
+import { TG } from '../../theme/telegraphTokens';
 
 type MilestoneSubtype =
   | 'rent_buddy_confirmed'

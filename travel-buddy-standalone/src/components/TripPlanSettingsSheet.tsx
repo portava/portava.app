@@ -7,8 +7,8 @@ import { X, Users, Lock, UserCheck, CheckCircle2 } from 'lucide-react-native';
 import {
   fetchTripPlanPermission, updateTripPlanPermission,
   type PlanEditPermission, type TripPlanPermissionResult,
-} from '../services/tripPlan.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+} from '../services/tripPlan';
+import { color, space, radius, type as t } from '../theme/tokens';
 
 interface MemberRow {
   id: string;

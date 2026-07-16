@@ -33,8 +33,8 @@
 
 import React from 'react';
 import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
-import StampQueueScreen from '../../../app/admin/stamps/queue.tsx';
-import { getAdminStampCatalog } from '../../services/adminStamps.ts';
+import StampQueueScreen from '../../../app/admin/stamps/queue';
+import { getAdminStampCatalog } from '../../services/adminStamps';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 

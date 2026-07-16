@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { saveProfile, unsaveProfile, getSaveStatus } from '../services/saves.ts';
+import { saveProfile, unsaveProfile, getSaveStatus } from '../services/saves';
 
 export function useSavedProfileActions(userId: string) {
   const [saved, setSaved] = useState(false);

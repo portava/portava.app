@@ -6,20 +6,20 @@ import {
 import { router, useFocusEffect } from 'expo-router';
 import { Zap, Users, Globe, BellOff, Search, MessageCirclePlus, Compass, Bot, ShieldOff, Flag, UserCheck, UserMinus } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useMyThreads, useIncomingMessageRequests } from '../hooks/useMessaging.ts';
-import { useSession } from '../context/SessionContext.tsx';
-import { blockUser, getBlockList } from '../services/blocks.ts';
-import { reportContent, type ReportReason } from '../services/reports.ts';
-import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
-import { HighlightRing } from './HighlightRing.tsx';
-import { HighlightViewer } from './HighlightViewer.tsx';
-import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
-import { TG, TG_AVATAR } from '../theme/telegraphTokens.ts';
-import { TelegraphAvatar, TelegraphRow } from './telegraph/TelegraphPrimitives.tsx';
-import type { ThreadSummary, MessageRequest } from '../services/messaging.ts';
-import { circleCardInboxPreview } from './CircleStatusCardMessage.logic.ts';
-import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
+import { useMyThreads, useIncomingMessageRequests } from '../hooks/useMessaging';
+import { useSession } from '../context/SessionContext';
+import { blockUser, getBlockList } from '../services/blocks';
+import { reportContent, type ReportReason } from '../services/reports';
+import { useBlockedIds } from '../context/BlockedIdsContext';
+import { HighlightRing } from './HighlightRing';
+import { HighlightViewer } from './HighlightViewer';
+import { useHighlightRingState } from '../hooks/useHighlightRingState';
+import { color, space, radius, type as t } from '../theme/tokens';
+import { TG, TG_AVATAR } from '../theme/telegraphTokens';
+import { TelegraphAvatar, TelegraphRow } from './telegraph/TelegraphPrimitives';
+import type { ThreadSummary, MessageRequest } from '../services/messaging';
+import { circleCardInboxPreview } from './CircleStatusCardMessage.logic';
+import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity';
 
 type FilterKey = 'all' | 'direct' | 'trips' | 'circles' | 'unread' | 'requests';
 

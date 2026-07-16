@@ -14,11 +14,11 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { MapPin, ExternalLink, Edit2, X, Check, Search } from 'lucide-react-native';
-import type { MeetingPoint } from '../../services/circle.ts';
-import { postMeetingPoint, patchMeetingPoint } from '../../services/circle.ts';
-import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker.tsx';
-import type { Place } from '../../lib/location/placeTypes.ts';
-import { color, radius, type as t } from '../../theme/tokens.ts';
+import type { MeetingPoint } from '../../services/circle';
+import { postMeetingPoint, patchMeetingPoint } from '../../services/circle';
+import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker';
+import type { Place } from '../../lib/location/placeTypes';
+import { color, radius, type as t } from '../../theme/tokens';
 
 interface Props {
   meetingPoint: MeetingPoint | null;

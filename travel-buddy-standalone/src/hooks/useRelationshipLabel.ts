@@ -1,5 +1,5 @@
-import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
-import type { InteractionContext } from '../services/interactionContext.ts';
+import { useBlockedIds } from '../context/BlockedIdsContext';
+import type { InteractionContext } from '../services/interactionContext';
 
 export type RelationshipLabel =
   | 'blocked_by_you'

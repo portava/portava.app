@@ -9,8 +9,8 @@
  *   { ...full profile }                  → profile set, normal render
  */
 import { useState, useEffect } from 'react';
-import type { PublicProfile, PassportPostcard } from '../types/models.ts';
-import { getPublicPassport, getPublicPostcards } from '../services/profile.ts';
+import type { PublicProfile, PassportPostcard } from '../types/models';
+import { getPublicPassport, getPublicPostcards } from '../services/profile';
 
 export interface PublicPassportState {
   profile: PublicProfile | null;

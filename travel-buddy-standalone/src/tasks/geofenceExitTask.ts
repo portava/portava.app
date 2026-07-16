@@ -13,7 +13,7 @@
 
 import * as TaskManager from 'expo-task-manager';
 import * as Location from 'expo-location';
-import { exitGeofence } from '../services/posts.ts';
+import { exitGeofence } from '../services/posts';
 
 export const GEOFENCE_EXIT_TASK = 'geofence-exit-task';
 

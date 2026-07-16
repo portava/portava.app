@@ -4,7 +4,7 @@
  * Typed fetch helpers for all trip crew location endpoints.
  * Pattern: same as safeReturn.ts / trips.ts — EXPO_PUBLIC_API_BASE_URL + supabase Bearer token.
  */
-import { supabase } from '../lib/supabase.ts';
+import { supabase } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────

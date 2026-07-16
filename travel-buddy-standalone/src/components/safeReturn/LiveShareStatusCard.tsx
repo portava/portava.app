@@ -6,8 +6,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { MapPin, X } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { stopLiveShare } from '../../services/safeReturn.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
+import { stopLiveShare } from '../../services/safeReturn';
 
 interface Props {
   shareId: string;

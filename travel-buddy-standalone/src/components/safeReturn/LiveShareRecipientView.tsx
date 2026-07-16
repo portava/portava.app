@@ -8,7 +8,7 @@ import {
   View, Text, Pressable, StyleSheet, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { MapPin, Clock, MessageCircle } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
 
 interface RecipientShareData {
   shareId: string;

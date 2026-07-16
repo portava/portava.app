@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Linking } from 'react-native';
 import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route, ListPlus } from 'lucide-react-native';
-import type { DiscoveryPlace } from '../../services/discovery.ts';
-import { checkSaved, saveItem, unsaveItem } from '../../services/collections.ts';
-import { getSavedListIds } from '../../services/discoveryBookmarks.ts';
-import { usePlanPicker } from '../PlanPickerController.tsx';
-import type { RouteStopDraft } from '../RouteBuilderSheet.tsx';
-import { color, space, radius, type as t, shadow, layout } from '../../theme/tokens.ts';
-import { TripWishlistPicker } from './TripWishlistPicker.tsx';
+import type { DiscoveryPlace } from '../../services/discovery';
+import { checkSaved, saveItem, unsaveItem } from '../../services/collections';
+import { getSavedListIds } from '../../services/discoveryBookmarks';
+import { usePlanPicker } from '../PlanPickerController';
+import type { RouteStopDraft } from '../RouteBuilderSheet';
+import { color, space, radius, type as t, shadow, layout } from '../../theme/tokens';
+import { TripWishlistPicker } from './TripWishlistPicker';
 
 interface PlaceCardProps {
   place: DiscoveryPlace;

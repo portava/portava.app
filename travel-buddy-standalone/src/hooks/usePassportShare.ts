@@ -25,7 +25,7 @@ import { useRef, useState, useCallback } from 'react';
 import { View } from 'react-native';
 import { captureRef } from 'react-native-view-shot';
 import NativeShare from 'react-native-share';
-import { makeDeepLink, makeWebFallback, toFileUri } from '../services/passportShareUtils.ts';
+import { makeDeepLink, makeWebFallback, toFileUri } from '../services/passportShareUtils';
 
 export interface PassportShareState {
   sharing: boolean;

@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { Text, Pressable, StyleSheet } from 'react-native';
 import { MapPin, ChevronDown } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
-import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker.tsx';
-import type { Place } from '../../lib/location/placeTypes.ts';
+import { color, space, radius, type as t, shadow } from '../../theme/tokens';
+import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker';
+import type { Place } from '../../lib/location/placeTypes';
 
 interface DestinationBarProps {
   destination: string | null;

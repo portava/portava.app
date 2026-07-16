@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
-import type { PassportStats } from '../services/passportStamps.ts';
-import { getPassportStats } from '../services/passportStamps.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import type { PassportStats } from '../services/passportStamps';
+import { getPassportStats } from '../services/passportStamps';
+import { color, space, radius, type as t } from '../theme/tokens';
 
 interface Props {
   tripCount?: number;

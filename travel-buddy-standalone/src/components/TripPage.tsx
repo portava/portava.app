@@ -7,19 +7,19 @@ import {
   CalendarPlus, UserPlus, Sparkles, Settings, Bookmark, Plus, ChevronRight, Plane,
   MessageCircle, ShieldCheck, ImagePlus, Info, X,
 } from 'lucide-react-native';
-import { useTripSavedPlaces } from '../hooks/useTripSavedPlaces.ts';
-import { fetchCompassTripBrief, type CompassRecommendation } from '../services/compass.ts';
-import { openTripChat } from '../services/messaging.ts';
-import { createPlanItem } from '../services/tripPlan.ts';
-import type { BookmarkedPlace } from '../services/discoveryBookmarks.ts';
-import type { TripDetail, SavedIdea, TimelineDay, PassportStamp, User } from '../types/models.ts';
-import type { TripPlan, TripPlanStatus } from '../__fixtures__/tripDetail.ts';
-import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
-import { PassportStampCard } from './PassportStampCard.tsx';
-import { TravelSectionHeader, TravelEmptyState } from './primitives.tsx';
-import { HighlightRing } from './HighlightRing.tsx';
-import { HighlightViewer } from './HighlightViewer.tsx';
-import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
+import { useTripSavedPlaces } from '../hooks/useTripSavedPlaces';
+import { fetchCompassTripBrief, type CompassRecommendation } from '../services/compass';
+import { openTripChat } from '../services/messaging';
+import { createPlanItem } from '../services/tripPlan';
+import type { BookmarkedPlace } from '../services/discoveryBookmarks';
+import type { TripDetail, SavedIdea, TimelineDay, PassportStamp, User } from '../types/models';
+import type { TripPlan, TripPlanStatus } from '../__fixtures__/tripDetail';
+import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
+import { PassportStampCard } from './PassportStampCard';
+import { TravelSectionHeader, TravelEmptyState } from './primitives';
+import { HighlightRing } from './HighlightRing';
+import { HighlightViewer } from './HighlightViewer';
+import { useHighlightRingState } from '../hooks/useHighlightRingState';
 
 /* ── Progress ring (semicircle arc) ── */
 function ProgressRing({ pct }: { pct: number }) {
@@ -773,7 +773,7 @@ export function TripMapPreview() {
 }
 
 /* ── Trip Crew Map section ── */
-export { CrewMapSection as TripCrewSection } from './tripCrew/CrewMapSection.tsx';
+export { CrewMapSection as TripCrewSection } from './tripCrew/CrewMapSection';
 
 /* ── Safety / Check-In (compact stub) ── */
 export function TripSafety({ tripId }: { tripId?: string }) {

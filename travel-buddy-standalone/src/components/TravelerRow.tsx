@@ -1,16 +1,16 @@
 import React, { useState } from 'react';
 import { View, Text, Image, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import { UserCheck, UserPlus, Lock, User, Users, PlaneTakeoff, Sparkles } from 'lucide-react-native';
-import { followUser, unfollowUser, type TravelerSearchResult } from '../services/follows.ts';
-import { SaveButton } from './SaveButton.tsx';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
-import { HighlightRing } from './HighlightRing.tsx';
-import { HighlightViewer } from './HighlightViewer.tsx';
-import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
-import { UserAvatarButton } from './interaction/UserAvatarButton.tsx';
-import { UserNameButton } from './interaction/UserNameButton.tsx';
-import { UserOverflowMenu } from './interaction/UserOverflowMenu.tsx';
-import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
+import { followUser, unfollowUser, type TravelerSearchResult } from '../services/follows';
+import { SaveButton } from './SaveButton';
+import { color, space, radius, type as t } from '../theme/tokens';
+import { HighlightRing } from './HighlightRing';
+import { HighlightViewer } from './HighlightViewer';
+import { useHighlightRingState } from '../hooks/useHighlightRingState';
+import { UserAvatarButton } from './interaction/UserAvatarButton';
+import { UserNameButton } from './interaction/UserNameButton';
+import { UserOverflowMenu } from './interaction/UserOverflowMenu';
+import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity';
 
 function rowSignalIcon(signal: string) {
   const lower = signal.toLowerCase();

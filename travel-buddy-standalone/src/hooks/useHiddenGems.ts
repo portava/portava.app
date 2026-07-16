@@ -16,7 +16,7 @@ import {
   type HiddenGem,
   type ListGemsOptions,
   type GuideProfile,
-} from '../services/hiddenGems.ts';
+} from '../services/hiddenGems';
 
 // ── useGemList ─────────────────────────────────────────────────────────────────
 

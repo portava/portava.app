@@ -8,9 +8,9 @@ import {
   View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { AlertCircle } from 'lucide-react-native';
-import { StampCard } from './StampCard.tsx';
-import type { PassportStampNew } from '../../services/passportStamps.ts';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { StampCard } from './StampCard';
+import type { PassportStampNew } from '../../services/passportStamps';
+import { color, space, radius, type as t } from '../../theme/tokens';
 
 interface Props {
   stamps: PassportStampNew[];

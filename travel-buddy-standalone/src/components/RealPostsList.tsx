@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, ActivityIndicator, Pressable, StyleSheet } from 'react-native';
-import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
-import type { PostRow } from '../services/posts.ts';
-import { formatRelativeTime } from '../lib/dateTime/formatters.ts';
+import { color, space, radius, type as t, shadow } from '../theme/tokens';
+import type { PostRow } from '../services/posts';
+import { formatRelativeTime } from '../lib/dateTime/formatters';
 
 /**
  * Real-posts list — renders ACTUAL backend posts from GET /api/posts (via

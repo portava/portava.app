@@ -9,7 +9,7 @@ import {
   StyleProp,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t } from '../theme/tokens';
 
 /** Passport-stamp tag: monospace, uppercased, slightly rotated. The signature device. */
 export function Stamp({
