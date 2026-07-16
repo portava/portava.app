@@ -270,6 +270,57 @@ describe("POST /admin/venues/:id/moderate — not-found guard", () => {
   });
 });
 
+// ── Already-moderated venues are rejected ─────────────────────────────────────
+//
+// The route guards with .eq("status", "provisional"), so venues that have
+// already been moderated (blocked or verified) must return 404 not_found.
+// These tests pin the two concrete non-provisional states so a future change
+// to the filter cannot silently allow double-moderation.
+
+describe("POST /admin/venues/:id/moderate — already-moderated venues", () => {
+  it("returns 404 not_found when the venue is already 'blocked' and action is approve", async () => {
+    const client = makeVenueModerationClient({ venueStatus: "blocked" });
+    setClient(client);
+
+    const { status, body } = await req(
+      "POST",
+      `/admin/venues/${VENUE_ID}/moderate`,
+      { action: "approve" },
+    );
+
+    assert.equal(
+      status, 404,
+      `Expected 404 for an already-blocked venue, got ${status}: ${JSON.stringify(body)}`,
+    );
+    assert.equal(body.error, "not_found", "error code must be not_found");
+
+    // The venue status must not have changed.
+    const dbRow = client._db.discovery_places.find((r: any) => r.id === VENUE_ID);
+    assert.equal(dbRow?.status, "blocked", "blocked venue status must not be mutated");
+  });
+
+  it("returns 404 not_found when the venue is already 'verified' and action is reject", async () => {
+    const client = makeVenueModerationClient({ venueStatus: "verified" });
+    setClient(client);
+
+    const { status, body } = await req(
+      "POST",
+      `/admin/venues/${VENUE_ID}/moderate`,
+      { action: "reject", reason: "Duplicate listing" },
+    );
+
+    assert.equal(
+      status, 404,
+      `Expected 404 for an already-verified venue, got ${status}: ${JSON.stringify(body)}`,
+    );
+    assert.equal(body.error, "not_found", "error code must be not_found");
+
+    // The venue status must not have changed.
+    const dbRow = client._db.discovery_places.find((r: any) => r.id === VENUE_ID);
+    assert.equal(dbRow?.status, "verified", "verified venue status must not be mutated");
+  });
+});
+
 // ── Access control ─────────────────────────────────────────────────────────────
 
 describe("POST /admin/venues/:id/moderate — access control", () => {
