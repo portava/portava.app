@@ -159,7 +159,7 @@ async function call(method: string, path: string, fake: ReturnType<typeof makeFa
 // ── Completion ─────────────────────────────────────────────────────────────────
 
 describe("completed_count — booking completion", () => {
-  it("increments completed_count alongside completed_bookings", async () => {
+  it("increments completed_count (canonical counter) on completion", async () => {
     const fake = makeFakeClient({
       userId: TRAVELER_ID, bookingStatus: "in_progress",
       profileCounters: { completed_bookings: 7, completed_count: 7 },
@@ -167,12 +167,13 @@ describe("completed_count — booking completion", () => {
     const res = await call("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/complete`, fake);
     assert.equal(res.status, 200);
 
-    const legacy = profileUpdates(fake.updates).find((p) => "completed_bookings" in p);
-    assert.ok(legacy, "expected a completed_bookings update");
-    assert.equal(legacy.completed_bookings, 8);
+    // completed_count is the single source of truth; completed_bookings is no
+    // longer written on completion (legacy column, kept for historical reads).
     const pu = profileUpdates(fake.updates).find((p) => "completed_count" in p);
     assert.ok(pu, "expected a rent_buddy_profiles update with completed_count");
     assert.equal(pu.completed_count, 8);
+    const legacy = profileUpdates(fake.updates).find((p) => "completed_bookings" in p);
+    assert.ok(!legacy, "completed_bookings must no longer be written on completion");
   });
 });
 

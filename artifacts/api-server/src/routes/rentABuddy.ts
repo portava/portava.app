@@ -279,7 +279,7 @@ function mapProfile(row: any) {
     verifiedAt: row.verified_at,
     averageRating: row.average_rating ? Number(row.average_rating) : null,
     reviewCount: row.review_count ?? 0,
-    completedBookings: row.completed_bookings ?? 0,
+    completedBookings: row.completed_count ?? row.completed_bookings ?? 0,
     responseTimeH: row.response_time_h ? Number(row.response_time_h) : null,
     coverPhotoUrl: row.cover_photo_url,
     galleryUrls: row.gallery_urls ?? [],
@@ -1857,22 +1857,20 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
     metadata: isBuddyCompleting ? { disputeWindowH, disputeWindowExpiresAt } : {},
   });
 
-  // Fetch current count from profile (not from booking row)
+  // Fetch buddy user_id and current canonical counter for badge threshold checks.
   const { data: profRow } = await serviceClient
     .from("rent_buddy_profiles")
-    .select("completed_bookings, user_id")
+    .select("user_id, completed_count")
     .eq("id", (booking as any).buddy_id)
     .maybeSingle();
 
-  const currentCount = (profRow as any)?.completed_bookings ?? 0;
   const buddyUserId: string = (profRow as any)?.user_id ?? "";
+  // Pre-increment value — used below to decide which stamps to award.
+  const currentCount: number = (profRow as any)?.completed_count ?? 0;
 
-  await serviceClient
-    .from("rent_buddy_profiles")
-    .update({ completed_bookings: currentCount + 1, updated_at: now })
-    .eq("id", (booking as any).buddy_id);
-
-  // Reliability counter — atomic DB-side increment (see ReliabilityCounters).
+  // Canonical counter — atomic DB-side increment via ReliabilityCounters.
+  // completed_bookings is the legacy column; completed_count is the single
+  // source of truth exposed on public profiles and used for ranking.
   await adjustBuddyCounter(serviceClient, (booking as any).buddy_id, "completed_count", 1);
 
   void recordTrustEvent(serviceClient, {

@@ -247,7 +247,7 @@ function mapProfile(row: any) {
     verified: row.verified,
     averageRating: row.average_rating ? Number(row.average_rating) : null,
     reviewCount: row.review_count ?? 0,
-    completedBookings: row.completed_bookings ?? 0,
+    completedBookings: row.completed_count ?? row.completed_bookings ?? 0,
     responseTimeH: row.response_time_h ? Number(row.response_time_h) : null,
     coverPhotoUrl: row.cover_photo_url,
     galleryUrls: row.gallery_urls ?? [],
@@ -284,7 +284,7 @@ function toBuddyScoringData(row: any, trustScore: number): BuddyScoringData {
     buddyLevel: row.buddy_level ?? 'new',
     averageRating: row.average_rating ? Number(row.average_rating) : null,
     reviewCount: row.review_count ?? 0,
-    completedBookings: row.completed_bookings ?? 0,
+    completedBookings: row.completed_count ?? row.completed_bookings ?? 0,
     responseTimeH: row.response_time_h ? Number(row.response_time_h) : null,
     verified: row.verified ?? false,
     featured: row.featured ?? false,
@@ -478,7 +478,7 @@ router.get("/api/rent-a-buddy/sections", async (req, res) => {
     requestRows,
   ] = await Promise.all([
     section((q) => cityFilter(q).eq("available_now", true), 10),
-    section((q) => cityFilter(q).order("completed_bookings", { ascending: false }), 10),
+    section((q) => cityFilter(q).order("completed_count", { ascending: false }), 10),
     section((q) => cityFilter(q).eq("female_only_service", true), 10),
     section((q) => cityFilter(q).eq("nightlife_approved", true).contains("categories", ["nightlife"]), 10),
     section((q) => cityFilter(q).contains("categories", ["language"]), 10),
@@ -550,7 +550,7 @@ router.get("/api/rent-a-buddy/cities/:city/top", async (req, res) => {
     .eq("status", "active")
     .eq("admin_status", "active")
     .eq("city", city)
-    .order("completed_bookings", { ascending: false })
+    .order("completed_count", { ascending: false })
     .limit(20);
 
   if (error) return sendError(res, 'db_error', error.message);
