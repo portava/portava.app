@@ -778,6 +778,53 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
     );
   });
 
+  it("rent_buddy_profiles cleanup still runs when both step 1 (notification_devices DELETE) and step 2 (profiles UPDATE) fail", async () => {
+    // This covers the symmetric gap to the step-1-only failure test:
+    // if profiles UPDATE (step 2) also throws, step 3 must still execute so
+    // stale tokens in rent_buddy_profiles are cleared regardless.
+    _setTestFetch(invalidCredFetch);
+    const STEP1_ERROR = new Error("notification_devices table unavailable");
+    const STEP2_ERROR = new Error("profiles table unavailable");
+
+    // TOKEN is both the device token and the legacy profile token so that
+    // step 2 is actually attempted (legacyToken && staleTokens.includes(legacyToken)).
+    const { deletedDeviceTokens, profilesNulled, rentBuddyTokensNulled, client } = makeFakeDb({
+      deviceToken: TOKEN,
+      legacyToken: TOKEN,           // causes step 2 to be attempted
+      deleteDeviceError: STEP1_ERROR,  // step 1 fails
+      profilesUpdateError: STEP2_ERROR, // step 2 fails
+      // rentBuddyUpdateError intentionally not set — step 3 must succeed
+    });
+
+    const router = new NotificationRouter(client);
+    await router.route(BASE_NOTIF);
+
+    // Step 1 errored — no deletions recorded
+    assert.equal(
+      deletedDeviceTokens.length,
+      0,
+      "notification_devices DELETE failed — no tokens recorded as deleted",
+    );
+
+    // Step 2 errored — profile should NOT be nulled
+    assert.equal(
+      profilesNulled.length,
+      0,
+      "profiles UPDATE failed — profilesNulled must be empty",
+    );
+
+    // Step 3 must still have run despite both step 1 and step 2 failing
+    assert.equal(
+      rentBuddyTokensNulled.length,
+      1,
+      "rent_buddy_profiles UPDATE must still be called when steps 1 and 2 both fail",
+    );
+    assert.ok(
+      rentBuddyTokensNulled[0].includes(TOKEN),
+      `rent_buddy_profiles must include the stale token ${TOKEN} even when steps 1 and 2 both fail`,
+    );
+  });
+
   it("does nothing when there are no push tokens registered for the user", async () => {
     const { deletedDeviceTokens, retryQueueInserts, deliveryAttempts, client } = makeFakeDb({
       deviceToken: null,
