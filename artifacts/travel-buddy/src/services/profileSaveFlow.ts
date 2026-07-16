@@ -31,6 +31,26 @@ export function resolveProfileSaveOutcome<T>(
   return { kind: 'error', message: res.message ?? fallbackMessage };
 }
 
+/** Alert copy for the onboarding finish step. */
+export const ONBOARDING_SAVE_ALERT_TITLE = 'Could not save profile';
+export const ONBOARDING_SAVE_FALLBACK_MESSAGE =
+  "Your profile couldn't be saved right now. You can update it in Settings.";
+
+/**
+ * Build the onboarding save-failure alert. Surfaces the server's specific
+ * message (most importantly the partial-save "Some fields couldn't be
+ * saved: …" warning listing the dropped fields) instead of only the generic
+ * fallback, so a new user learns exactly which fields were lost.
+ */
+export function buildOnboardingSaveAlert(
+  res: Pick<ProfileResult<unknown>, 'ok' | 'message'>,
+): { title: string; message: string } {
+  const message = res.message
+    ? `${res.message}\n\nYou can update your profile in Settings.`
+    : ONBOARDING_SAVE_FALLBACK_MESSAGE;
+  return { title: ONBOARDING_SAVE_ALERT_TITLE, message };
+}
+
 /** Field-level routing used only by the Identity screen. */
 export type IdentitySaveFailure =
   | { field: 'username'; status: 'cooldown' | 'taken'; message: string }

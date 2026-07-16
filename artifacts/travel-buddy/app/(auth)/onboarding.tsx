@@ -6,6 +6,7 @@ import type { Interest, TravelStyle } from '../../src/types/models';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { updateMyProfile, getMyProfile } from '../../src/services/profile';
 import { buildOnboardingPatch } from '../../src/services/profilePatchBuilder';
+import { buildOnboardingSaveAlert } from '../../src/services/profileSaveFlow';
 import { getCurrentGps, reverseGeocodeToPlace } from '../../src/services/location';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 
@@ -81,9 +82,10 @@ export default function Onboarding() {
     const result = await updateMyProfile(patch);
     setSaving(false);
     if (!result.ok && result.errorKind !== 'config_error' && result.errorKind !== 'unauthenticated') {
+      const alert = buildOnboardingSaveAlert(result);
       Alert.alert(
-        'Could not save profile',
-        "Your profile couldn't be saved right now. You can update it in Settings.",
+        alert.title,
+        alert.message,
         [
           { text: 'Continue anyway', onPress: () => router.replace('/(tabs)' as any) },
           { text: 'Retry', onPress: handleFinish },
