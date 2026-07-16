@@ -71,7 +71,9 @@ function makeFakeClient(state: FakeState, opts: FakeClientOpts = {}) {
         filters.push((r) => r[col] != null && r[col] < val);
         return b;
       },
-      gte() { return b; }, lte() { return b; }, order() { return b; },
+      gte(col: string, val: any) { filters.push((r) => r[col] != null && r[col] >= val); return b; },
+      lte(col: string, val: any) { filters.push((r) => r[col] != null && r[col] <= val); return b; },
+      order() { return b; },
       then(onF: any, onR: any) {
         // Simulate a hard DB error (throw) for the configured table.
         if (opts.throwOnTable === table) {
@@ -112,10 +114,13 @@ after(() => { _setTestFetch(null); _setTestServiceClient(null); });
 afterEach(() => { pushCalls = []; _setTestFetch(okFetch()); });
 
 function baseState(tripId: string): FakeState {
+  // start_date within the normal 22-26h sweep window (now + 24h, date-only).
+  // Tests that need a specific start_date override it after calling baseState.
+  const defaultStartDate = new Date(Date.now() + 24 * 3_600_000).toISOString().slice(0, 10);
   return {
     trips: [{
       id: tripId, title: "Lisbon Adventure", owner_id: OWNER_ID, status: "upcoming",
-      reminder_retry_count: 0,
+      reminder_retry_count: 0, start_date: defaultStartDate,
     }],
     tripMembers: [{ trip_id: tripId, user_id: MEMBER_ID, role: "member" }],
     profiles: [
@@ -602,5 +607,65 @@ describe("TripReminderScheduler push", () => {
       state.trips![0].reminder_delivered_at,
       "reminder_delivered_at must be set after recovery",
     );
+  });
+
+  it("recovers when start_date equals the exact lower boundary date (windowLowerDate)", async () => {
+    // The recovery sweep uses .gte("start_date", windowLowerDate) where
+    // windowLowerDate = new Date(now + 20 h).toISOString().slice(0, 10).
+    // A trip whose start_date is exactly that date-only string must satisfy
+    // the >= comparison — equal is included, not excluded.
+    const STALE_CLAIM_MINUTES = 10;
+    const staleTime = new Date(Date.now() - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
+
+    // Mirror the scheduler's windowLowerDate formula: now + (WINDOW_LOWER_HRS - RECOVERY_DRIFT_HRS) h
+    const windowLowerDate = new Date(Date.now() + (22 - 2) * 3_600_000)
+      .toISOString().slice(0, 10);
+
+    const state = baseState("trip-exact-lower-boundary");
+    state.trips![0].reminder_sent_at     = staleTime;
+    state.trips![0].reminder_delivered_at = null;
+    state.trips![0].start_date           = windowLowerDate; // exact boundary date
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 1,
+      "recovery must fire when start_date equals the exact lower boundary date");
+    assert.deepEqual(
+      pushCalls[0].map((m: any) => m.to).sort(),
+      [OWNER_TOKEN, MEMBER_TOKEN].sort(),
+    );
+    assert.ok(
+      state.trips![0].reminder_delivered_at,
+      "reminder_delivered_at must be set after recovery at exact lower boundary",
+    );
+  });
+
+  it("does not recover when start_date is exactly one day before the lower boundary date", async () => {
+    // Confirms the fence-post: if start_date is (windowLowerDate - 1 day), the
+    // .gte stub now enforces the filter and the in-process check both agree —
+    // no recovery push should fire for a trip that is outside the window.
+    const STALE_CLAIM_MINUTES = 10;
+    const staleTime = new Date(Date.now() - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
+
+    const windowLowerDate = new Date(Date.now() + (22 - 2) * 3_600_000)
+      .toISOString().slice(0, 10);
+    // Subtract exactly one calendar day so the date string is strictly before windowLowerDate.
+    const dayBeforeLower = new Date(
+      new Date(windowLowerDate + "T00:00:00Z").getTime() - 24 * 3_600_000,
+    ).toISOString().slice(0, 10);
+
+    const state = baseState("trip-one-day-before-lower-boundary");
+    state.trips![0].reminder_sent_at     = staleTime;
+    state.trips![0].reminder_delivered_at = null;
+    state.trips![0].start_date           = dayBeforeLower; // one day before boundary
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 0,
+      "recovery must not fire when start_date is exactly one day before the lower boundary date");
   });
 });
