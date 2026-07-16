@@ -3,7 +3,7 @@
  *
  * Uses the same authedFetch / freshToken pattern as intelligence.ts.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 type AsyncStorageStub = {
@@ -11,12 +11,7 @@ type AsyncStorageStub = {
   getItem(k: string): Promise<string | null>;
   removeItem(k: string): Promise<void>;
 };
-let _testStorage: AsyncStorageStub | null | undefined = undefined;
-/** For tests only — inject a fake AsyncStorage implementation. Pass null to simulate unavailable storage, undefined to reset. */
-export function _setStorageForTest(store: AsyncStorageStub | null | undefined): void { _testStorage = store; }
-
 const getStorage = (): AsyncStorageStub | null => {
-  if (_testStorage !== undefined) return _testStorage;
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { Platform } = require('react-native') as { Platform: { OS: string } };
