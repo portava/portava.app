@@ -788,6 +788,45 @@ describe("runGenerationCycle — orphan cleanup on mid-batch failure", () => {
     );
   });
 
+  it("records status=queued, attempts=1, and last_error with 404 when the third download fails after two uploads", async () => {
+    const { sc, updates, inserts, storageCalls } = makeFakeClientWithStorage();
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    // First two downloads succeed (and their uploads complete); third returns 404.
+    installFetch(failOnNthFetch(3));
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+
+    // Two uploads succeeded before the third download failed.
+    assert.equal(storageCalls.length, 2, "two uploads should have succeeded before the third download failed");
+
+    // No DB rows inserted — the batch is abandoned on failure.
+    assert.equal(inserts.length, 0, "must not insert any version rows after a mid-batch download failure");
+
+    // No review_required update.
+    assert.equal(
+      updates.some((u) => u.payload.status === "review_required"),
+      false,
+      "a failed batch must never reach review_required",
+    );
+
+    // Failure update: back to queued (attempts 1 < max 3), last_error mentions 404.
+    const fail = updates.find(
+      (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
+    );
+    assert.ok(fail, "must record a failure update on the queue row");
+    assert.equal(fail!.payload.status, "queued", "first failure (attempts < max) must go back to queued");
+    assert.equal(fail!.payload.attempts, 1);
+    assert.ok(
+      typeof fail!.payload.last_error === "string" && fail!.payload.last_error.includes("404"),
+      `last_error must mention the HTTP 404 status, got: ${fail!.payload.last_error}`,
+    );
+    assert.equal(fail!.payload.locked_until, null);
+    assert.equal(fail!.payload.locked_by, null);
+  });
+
   it("does not issue a delete when the first download fails before any upload", async () => {
     const { sc, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage();
     _setTestServiceClient(sc);
