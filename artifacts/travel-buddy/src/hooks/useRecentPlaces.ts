@@ -4,17 +4,11 @@
  * the server is unavailable.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '../lib/supabase';
 import type { Place } from '../lib/location/placeTypes';
+import { freshToken } from '../services/apiToken';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-}
-
-async function freshToken(): Promise<string | null> {
-  const { data } = await supabase.auth.refreshSession();
-  const session = data?.session ?? (await supabase.auth.getSession()).data.session;
-  return session?.access_token ?? null;
 }
 
 /** Module-level cache so recents survive across modal open/close within a session */

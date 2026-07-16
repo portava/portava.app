@@ -11,23 +11,14 @@
  *  - Unauthenticated users simply get the unresolved place back.
  *  - Successful resolutions are cached per place id for the session.
  */
-import { supabase } from '../supabase';
 import type { Place } from './placeTypes';
+import { freshToken } from '../../services/apiToken';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 }
 
 const cache = new Map<string, Place>();
-
-async function freshToken(): Promise<string | null> {
-  try {
-    const { data } = await supabase.auth.getSession();
-    return data?.session?.access_token ?? null;
-  } catch {
-    return null;
-  }
-}
 
 export async function resolveCanonicalPlace(
   place: Place,
