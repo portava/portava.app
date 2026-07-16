@@ -655,6 +655,118 @@ describe("runGenerationCycle — orphan cleanup on mid-batch failure", () => {
   });
 });
 
+/**
+ * Provider returning a mix of data-URL placeholders (no download/upload) and
+ * real http URLs (download + upload path).  The data-URLs come first so the
+ * upload loop encounters the placeholder BEFORE any real upload.
+ */
+function makeMixedProvider(dataUrlCount: number, httpCount: number) {
+  return {
+    async generate(_prompt: string, _n?: number) {
+      const results: Array<{ url: string; metadata: Record<string, unknown> }> = [];
+      for (let i = 0; i < dataUrlCount; i++) {
+        results.push({
+          url: `data:image/svg+xml,fake-placeholder-${i}`,
+          metadata: { model: "fake-provider", candidate_index: i },
+        });
+      }
+      for (let i = 0; i < httpCount; i++) {
+        results.push({
+          url: `https://img.fake/real-candidate-${i}.png`,
+          metadata: { model: "fake-provider", candidate_index: dataUrlCount + i },
+        });
+      }
+      return results;
+    },
+  };
+}
+
+// ── Placeholder data-URL candidates excluded from orphan cleanup ──────────────
+
+describe("runGenerationCycle — placeholder data-URL candidates excluded from orphan cleanup", () => {
+  it("deletes only the real upload when a later http upload fails after a placeholder candidate", async () => {
+    // Provider: one data-URL placeholder, then two real http URLs (= CANDIDATE_COUNT total).
+    // Storage: first real upload succeeds; second real upload fails.
+    // Expected: cleanup issues one delete — for the real upload path, not the placeholder.
+    let uploadCall = 0;
+    const { sc, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage({
+      onUpload(_path, _buf) {
+        uploadCall++;
+        // Fail the second storage upload (third overall candidate, second real one).
+        if (uploadCall === 2) throw new Error("Storage upload failed: quota exceeded");
+      },
+    });
+    _setTestServiceClient(sc);
+    // 1 data-URL + 2 http URLs = CANDIDATE_COUNT (3) candidates total.
+    _setTestStampImageProvider(makeMixedProvider(1, 2));
+    installFetch(successFetch());
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+
+    // No DB rows inserted — the batch failed before the insert step.
+    assert.equal(inserts.length, 0, "must not insert any version rows after a mid-batch failure");
+
+    // Only the first real (http) upload succeeded before the second failed.
+    assert.equal(storageCalls.length, 1, "exactly one real upload should have succeeded");
+
+    // Cleanup must issue exactly one delete call — for the real upload only.
+    assert.equal(deleteCalls.length, 1, "must issue exactly one storage delete for cleanup");
+    const { paths } = deleteCalls[0];
+    assert.equal(paths.length, 1, "deleted paths must contain exactly one entry (the real candidate)");
+
+    // The deleted path must be a real catalog storage path, not a placeholder path.
+    assert.ok(
+      paths[0].startsWith("catalog/cat-1/") && paths[0].endsWith(".png"),
+      `deleted path must be a real storage path (catalog/...), got: ${paths[0]}`,
+    );
+
+    // The deleted path must match the path that was actually uploaded.
+    assert.equal(
+      paths[0],
+      storageCalls[0].path,
+      "deleted path must match the uploaded path",
+    );
+
+    // The placeholder path must never appear in the delete list.
+    assert.equal(
+      paths.some((p: string) => p.startsWith("placeholder/")),
+      false,
+      "placeholder paths must never appear in the orphan cleanup delete list",
+    );
+  });
+
+  it("issues no delete when only a data-URL placeholder precedes a download failure", async () => {
+    // Provider: one data-URL placeholder, then one real http URL.
+    // With STAMP_MIN_CANDIDATES=2 and 2 total candidates this is a degraded-but-reviewable
+    // run — the shortfall check passes and the loop starts.  The real http URL fails to
+    // download, so the loop throws.  Because the data-URL never triggers a storage upload,
+    // uploadedStoragePaths stays empty and no delete should be issued.
+    const { sc, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage();
+    _setTestServiceClient(sc);
+    // 1 data-URL + 1 http URL = 2 candidates (≥ STAMP_MIN_CANDIDATES=2, < CANDIDATE_COUNT=3).
+    _setTestStampImageProvider(makeMixedProvider(1, 1));
+    // Every fetch fails so the real http URL's download throws.
+    installFetch(async (_url) => new Response("Not Found", { status: 404 }));
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+    assert.equal(inserts.length, 0, "must not insert version rows after a download failure");
+
+    // The data-URL candidate must not trigger any storage upload.
+    assert.equal(storageCalls.length, 0, "data-URL candidates must not trigger storage uploads");
+
+    // No real upload ever succeeded, so no orphan delete should be issued.
+    assert.equal(
+      deleteCalls.length,
+      0,
+      "must not issue any delete when no real uploads preceded the failure",
+    );
+  });
+});
+
 // ── DB insert failure after all uploads succeed ───────────────────────────────
 
 describe("runGenerationCycle — DB insert failure after all uploads succeed", () => {
