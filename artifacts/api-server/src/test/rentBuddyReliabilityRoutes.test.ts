@@ -1296,6 +1296,55 @@ describe("saved-buddies display cards — completed_count takes precedence over 
   });
 });
 
+// ── top-buddies-in-city display card counter precedence ───────────────────────
+//
+// GET /api/rent-a-buddy/cities/:city/top returns up to 20 buddies ranked by
+// completed_count. Each card is built by mapProfile(row), which reads
+// completed_count ?? completed_bookings. When the two counters disagree,
+// completed_count must win so the "sessions completed" shown on prominent
+// Top Buddies cards is accurate.
+
+describe("top-buddies-in-city display cards — completed_count takes precedence over completed_bookings", () => {
+  it("returns completedBookings=5 (not 1) when completed_count=5 and completed_bookings=1", async () => {
+    const buddyRow = {
+      id: BP_ID, user_id: BUDDY_USER_ID, city: "Manila",
+      status: "active", admin_status: "active",
+      display_name: "Test Buddy", tagline: null,
+      country: "Philippines",
+      categories: ["city"], languages: ["English"],
+      hourly_rate_usd: 20, half_day_rate_usd: null,
+      full_day_rate_usd: null, nightlife_rate_usd: null, arrival_rate_usd: null,
+      average_rating: null, review_count: 0,
+      completed_bookings: 1,  // legacy counter — must be ignored
+      completed_count: 5,     // canonical counter — must win
+      response_time_h: null, cover_photo_url: null, gallery_urls: [],
+      vibe_tags: [], safety_badges: [], buddy_level: "experienced",
+      verified: false, featured: false, city_ambassador: false,
+      available_now: false, female_only_service: false, public_meetup_only: false,
+      group_approved: false, nightlife_approved: false,
+      energy_type: null, max_group_size: 4,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    };
+
+    const fake = makeMatchFakeClient(buddyRow);
+    const res = await call("GET", "/api/rent-a-buddy/cities/Manila/top", fake as any);
+
+    assert.equal(res.status, 200, "top endpoint should return 200");
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.buddies), "response.buddies should be an array");
+    assert.equal(body.buddies.length, 1, "should return the one buddy");
+
+    // mapProfile: completedBookings: row.completed_count ?? row.completed_bookings ?? 0
+    // With completed_count=5  → completedBookings=5  ← expected
+    // With completed_bookings=1 → completedBookings=1  ← would indicate a regression
+    assert.equal(
+      body.buddies[0].completedBookings,
+      5,
+      `top-buddies card must use completed_count=5, not completed_bookings=1; got ${body.buddies[0].completedBookings}`,
+    );
+  });
+});
+
 describe("toBuddyScoringData — completed_count takes precedence over completed_bookings", () => {
   it("uses completed_count=7 (not completed_bookings=3) when ranking via POST /api/rent-a-buddy/match", async () => {
     // Buddy row deliberately has the two counters out of sync.
