@@ -1,0 +1,367 @@
+Map the entire app before judging anything.
+
+Capture every:
+
+* Tab
+* Screen
+* Route
+* Modal
+* Sheet
+* Menu
+* Form
+* Button
+* Card
+* Link
+* Deep link
+* Notification route
+* Admin screen
+* Hidden/conditional screen
+
+Output a master inventory with:
+Feature | Screen | Route | Entry Point | Status | Dependencies
+
+Phase 2: End-to-end feature audit
+
+Audit each major system as a complete user journey, not just as UI.
+
+Core areas should include:
+
+* Auth / onboarding
+* Profile
+* Passport
+* Passport customization
+* Postcards
+* Memories
+* Plans
+* Trips
+* Events
+* Pulse
+* Discovery
+* Search
+* Telegraph
+* Circles
+* Find Your Circle
+* Rent a Buddy
+* Follows
+* Notifications
+* Map / GPS
+* Safety / Safe Return / SOS
+* Verification
+* Trust Score
+* Stamps
+* Uploads/media
+* Settings/privacy
+* Admin
+* Payments/bookings if present
+
+For each system, verify:
+
+UI → Button → Navigation → API → Backend → Database → RLS → Storage → Realtime → Refresh → Error state
+
+Phase 3: Every-button audit
+
+Create a true interaction matrix.
+
+For every interactive element check:
+
+* Does it respond?
+* Does it open the right thing?
+* Is the destination real?
+* Does back navigation work?
+* Does it save correctly?
+* Does it refresh correctly?
+* Does it fail gracefully?
+* Does owner/public behavior differ correctly?
+* Does it work when logged out, where applicable?
+
+Status each as:
+
+Working
+Partially Working
+Dead End
+Broken
+Not Wired
+Placeholder
+
+Phase 4: Backend/database wiring audit
+
+Trace every major visible field back to its source.
+
+Check for:
+
+* Hardcoded data
+* Mock data
+* Local-only state
+* Wrong table
+* Missing table
+* Missing column
+* Missing migration
+* Duplicate tables
+* Duplicate APIs
+* Conflicting services
+* Wrong Supabase project/environment
+* Missing RLS
+* Overly permissive RLS
+* Missing foreign keys
+* Missing indexes
+* Broken triggers
+* Missing RPCs/functions
+
+This is where we confirm whether the UI and production database actually agree.
+
+Phase 5: Single-source-of-truth audit
+
+This is especially important for your app.
+
+Find features where multiple parts of the app may be using different truths.
+
+Examples:
+
+* Username vs handle
+* Profile data
+* Verification
+* Trust Score
+* Followers
+* Stamps
+* Location
+* Trip membership
+* Circle membership
+* Event attendance
+* Availability
+* Notifications
+
+For each one, identify the canonical source of truth and every place that reads or writes it.
+
+Phase 6: Navigation and route audit
+
+Build the full navigation graph.
+
+Check:
+
+* Tab → screen
+* Screen → detail
+* Modal → action
+* Notification → destination
+* Deep link → destination
+* Search result → destination
+* Profile link → Passport
+* Circle → Telegraph
+* Trip → Crew
+* Event → Join
+* Map pin → detail
+
+Look for orphan screens and routes that nothing can reach.
+
+Phase 7: Forms and write-path audit
+
+Every create/edit/save flow should be tested separately.
+
+Examples:
+
+* Edit Profile
+* Change username
+* Upload profile photo
+* Change cover
+* Create trip
+* Join trip
+* Create event
+* Join event
+* Create postcard
+* Upload memory
+* Send message
+* Follow user
+* Hire buddy
+* Save place
+
+Verify that writes persist after refresh and on another device/session.
+
+Phase 8: Owner/public/privacy audit
+
+For every user-facing area test:
+
+Owner
+Follower
+Non-follower
+Private account
+Blocked user
+Unauthenticated user
+
+Make sure UI hiding is not the only protection.
+
+Confirm backend authorization matches frontend visibility.
+
+Phase 9: Realtime and sync audit
+
+Check systems that should update live.
+
+Especially:
+
+* Telegraph
+* Notifications
+* Follows
+* Trip/Circle membership
+* Event attendance
+* Pulse
+* Profile changes
+
+Verify no stale state and no duplicate subscriptions.
+
+Phase 10: Media/storage audit
+
+Audit:
+
+* Profile photos
+* Covers
+* Postcards
+* Memories
+* Videos
+* Stories/highlights
+* Stamp artwork
+
+Check upload, delete, permissions, broken URLs, bucket existence, MIME limits, and orphan files.
+
+Phase 11: GPS/map audit
+
+Because you’ve already seen location problems, this should be its own audit.
+
+Verify:
+
+* Permission request
+* Current location
+* Accuracy
+* City detection
+* Nearby content
+* Map pins
+* Hidden gems
+* Events
+* Trips
+* Find Your Circle
+* Delayed geotag posting
+
+Confirm every location feature uses the same location service.
+
+Phase 12: Background workers and jobs
+
+Audit anything that relies on asynchronous processing.
+
+Examples:
+
+* Stamp generation
+* Stamp reconciliation
+* Artwork worker
+* Notifications
+* Safety escalation
+* Media processing
+* Scheduled jobs
+
+Check whether required migrations and tables actually exist in production.
+
+Phase 13: Environment and deployment audit
+
+Verify:
+
+* Required environment variables
+* Missing secrets
+* Dev vs production values
+* Supabase keys
+* Service-role usage
+* Storage configuration
+* Push credentials
+* Map credentials
+* Payment credentials
+
+Do not expose secret values in the report.
+
+Phase 14: Regression-risk map
+
+Before recommending any fix, identify shared components and dependencies.
+
+For example:
+
+Changing Profile may affect:
+
+* Passport
+* Search
+* Telegraph
+* Circles
+* Trip Crew
+* Rent a Buddy
+
+This creates a blast-radius map so later fixes don’t silently break other areas.
+
+Phase 15: Final status classification
+
+Every feature should end up in exactly one bucket:
+
+Fully Complete
+
+Working end-to-end with real backend data.
+
+Complete With Minor Issues
+
+Core flow works but has small UX or edge-case gaps.
+
+Partially Complete
+
+Some parts work, others are missing or disconnected.
+
+UI Only
+
+Visible but not wired.
+
+Backend Only
+
+Backend exists but UI doesn’t use it.
+
+Broken
+
+Implemented but failing.
+
+Blocked
+
+Cannot work because of missing dependency/migration/configuration.
+
+Not Started
+
+No meaningful implementation found.
+
+Final deliverables
+
+The audit should produce:
+
+1. Executive summary
+
+Overall readiness.
+
+2. Master feature matrix
+
+Every system and status.
+
+3. Every-button/path matrix
+
+Dead ends clearly identified.
+
+4. Database/backend dependency map
+
+5. Source-of-truth conflicts
+
+6. Missing migrations/configuration
+
+7. Regression-risk map
+
+8. Beta blockers
+
+Things that must be fixed before live testing.
+
+9. Priority fix queue
+
+Ordered:
+
+P0 — Blocks app
+P1 — Core feature broken
+P2 — Partial/UX
+P3 — Polish
+
+10. Explicit “Do Not Touch” list
+
+Working systems that should not be refactored during fixes.
