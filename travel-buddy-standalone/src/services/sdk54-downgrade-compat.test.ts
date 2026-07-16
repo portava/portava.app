@@ -119,7 +119,8 @@ describe('SDK 54 downgrade — package version pins', () => {
   });
 
   it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-    const standalone = readPkg('../../../../travel-buddy-standalone/package.json');
+    // In this (standalone) tree, compare against the main app's package.json.
+    const standalone = readPkg('../../../artifacts/travel-buddy/package.json');
     const saDeps: Record<string, string> = {
       ...standalone.dependencies,
       ...standalone.devDependencies,

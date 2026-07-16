@@ -42,46 +42,9 @@ export async function getMyProfile(): Promise<ProfileRow | null> {
   return mapProfile(data);
 }
 
-export async function updateMyProfile(patch: Partial<ProfileRow>): Promise<ProfileRow | null> {
-  if (!isSupabaseConfigured) return null;
-  // Route through the API server so the update uses the service role key,
-  // bypassing PostgREST's JWT verification (P-256 key rotation issue).
-  const token = await freshToken();
-  if (!token) return null;
-  const body: Record<string, unknown> = {};
-  if (patch.name !== undefined) body.displayName = patch.name;
-  if (patch.bio !== undefined) body.bio = patch.bio;
-  if (patch.avatarUrl !== undefined) body.avatarUrl = patch.avatarUrl;
-  if (patch.currentCity !== undefined) body.currentCity = patch.currentCity;
-  if (patch.openToMeet !== undefined) body.openToMeet = patch.openToMeet;
-  if (patch.isPrivate !== undefined) body.isPrivate = patch.isPrivate;
-  if (patch.interests !== undefined) body.interests = patch.interests;
-  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-  const res = await fetch(`${apiBase}/api/me/profile`, {
-    method: 'PATCH',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) return null;
-  const data = await res.json().catch(() => null);
-  if (!data) return null;
-  // API returns camelCase; map back to ProfileRow
-  return {
-    id: data.id,
-    handle: data.handle ?? data.username ?? '',
-    name: data.displayName ?? data.name ?? '',
-    avatarUrl: data.avatarUrl ?? null,
-    homeCity: data.homeCity ?? null,
-    homeCountry: data.homeCountry ?? null,
-    currentCity: data.currentCity ?? null,
-    travelStyle: data.travelStyle ?? null,
-    interests: data.interests ?? [],
-    verified: data.verified ?? false,
-    openToMeet: data.openToMeet ?? false,
-    isPrivate: data.isPrivate ?? false,
-    bio: data.bio ?? null,
-  };
-}
+// NOTE: profile updates must go through `updateMyProfile` in services/profile.ts,
+// which surfaces partial saves (`partial_save` / unsavedFields) and typed errors.
+// A duplicate updater here previously swallowed those warnings — do not re-add it.
 
 /* ---------- Trips ---------- */
 export interface TripRow {
