@@ -10,15 +10,13 @@
  */
 
 /**
- * Returns `{ lat, lng }` only when BOTH values are finite numbers.
- * Returns an empty object when either value is missing, null, or NaN.
+ * Returns `{ lat, lng }` when BOTH values are finite numbers, otherwise null.
  *
- * Usage:
- *   body: JSON.stringify({ city, ...cityCoordSpread(coords) })
+ * This is the single source of truth for the both-or-null guard.
  */
-export function cityCoordSpread(
+export function buildCityCoords(
   coords?: { lat?: number | null; lng?: number | null } | null,
-): { lat: number; lng: number } | Record<never, never> {
+): { lat: number; lng: number } | null {
   if (
     coords != null &&
     typeof coords.lat === 'number' &&
@@ -28,5 +26,19 @@ export function cityCoordSpread(
   ) {
     return { lat: coords.lat, lng: coords.lng };
   }
-  return {};
+  return null;
+}
+
+/**
+ * Returns `{ lat, lng }` only when BOTH values are finite numbers.
+ * Returns an empty object when either value is missing, null, or NaN.
+ *
+ * Usage:
+ *   body: JSON.stringify({ city, ...cityCoordSpread(coords) })
+ */
+export function cityCoordSpread(
+  coords?: { lat?: number | null; lng?: number | null } | null,
+): { lat: number; lng: number } | Record<never, never> {
+  const result = buildCityCoords(coords);
+  return result !== null ? result : {};
 }
