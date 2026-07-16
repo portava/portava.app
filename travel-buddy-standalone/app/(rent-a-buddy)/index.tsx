@@ -19,7 +19,6 @@ import { searchBuddies, getLaunchStatus, getAvailableNow, type BuddyProfile } fr
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import type { Place } from '../../src/lib/location/placeTypes';
-import { buildCityCoords } from '../../src/lib/cityCoords';
 
 const CATEGORIES = [
   { key: 'city', label: 'City Explorer', icon: MapPin, desc: 'Navigate like a local' },
@@ -261,7 +260,7 @@ export default function RentABuddyLanding() {
         onClose={() => setCityPickerOpen(false)}
         onSelect={(place: Place) => {
           setCity(place.city ?? place.name);
-          setCityCoords(buildCityCoords(place));
+          setCityCoords(place.lat != null && place.lng != null ? { lat: place.lat, lng: place.lng } : null);
         }}
         mode="city"
         title="Where do you need a Buddy?"
