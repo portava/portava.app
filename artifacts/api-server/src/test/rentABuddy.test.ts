@@ -350,6 +350,16 @@ function makeClient(userId: string, role = "user") {
           return { data: rows, count: rows.length, error: null };
         }
 
+        if (t === "rent_buddy_disputes") {
+          const disputes = state.disputes ?? [];
+          let rows = [...disputes];
+          for (const [op, col, val] of this._filters) {
+            if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
+          }
+          if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
+          return { data: rows, count: rows.length, error: null };
+        }
+
         if (t === "rent_buddy_policy_flags") {
           const flags = state.policyFlags ?? [];
           let rows = [...flags];
@@ -2713,5 +2723,54 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     assert.equal(state.bookings!["bk-sched"].status, "scheduled",  "scheduled booking must not be touched");
     assert.equal(state.bookings!["bk-disp"].status,  "disputed",   "disputed booking must not be touched");
     assert.equal(state.bookings!["bk-comp"].status,  "completed",  "completed booking must not be touched");
+  });
+
+  it("reuses an existing no_show dispute row — does not create a duplicate", async () => {
+    // Simulate a concurrent sweep run that already created the dispute row.
+    // The sweep must reuse it (exactly one dispute row) and still promote the booking.
+    const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+
+    state = {
+      bookings: {
+        "bk-ns-dup": {
+          id: "bk-ns-dup",
+          traveler_id: USER_ID,
+          buddy_id: BUDDY_PROF,
+          status: "no_show_pending",
+          no_show_grace_expires_at: PAST,
+        },
+      },
+      // Pre-seed an existing no_show dispute row, as if a concurrent sweep already inserted it.
+      disputes: [
+        { id: "disp-existing-1", booking_id: "bk-ns-dup", raised_by: USER_ID, reason: "no_show", status: "open" },
+      ],
+    };
+    (state as any).bookingEvents = [
+      { id: "ev-ns-dup-1", booking_id: "bk-ns-dup", actor_user_id: USER_ID, event: "no_show_reported" },
+    ];
+
+    const r = await reqSweep();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.noShowEscalated, 1, JSON.stringify(r.body));
+
+    // Booking must be promoted to disputed.
+    assert.equal(
+      state.bookings!["bk-ns-dup"].status,
+      "disputed",
+      "booking must be promoted to disputed even when a dispute row already exists",
+    );
+
+    // Exactly one dispute row must exist — no duplicate was inserted.
+    const noShowDisputes = (state.disputes ?? []).filter(
+      (d: any) => d.booking_id === "bk-ns-dup" && d.reason === "no_show",
+    );
+    assert.equal(
+      noShowDisputes.length,
+      1,
+      `expected exactly 1 no_show dispute row but found ${noShowDisputes.length}`,
+    );
   });
 });
