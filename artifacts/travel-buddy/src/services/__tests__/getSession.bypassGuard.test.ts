@@ -112,6 +112,66 @@ function extractFunctionBodies(src: string): string[] {
 }
 
 /**
+ * Extracts the expression text of every expression-body arrow function found
+ * in `src` (i.e. arrows without a brace-delimited block: `() => expr`).
+ *
+ * Scans forward from the end of the arrow (`=>`) token, skipping whitespace
+ * (including newlines, so multi-line expressions like `() =>\n  expr;` are
+ * captured in full).  Collection stops at a semicolon or an unmatched closing
+ * paren/bracket at depth 0.  Nested calls such as `.then(...)` are included
+ * because their parens raise the depth above 0.
+ *
+ * Complements `extractFunctionBodies`, which only handles block bodies (`{…}`).
+ */
+function extractExpressionArrowBodies(src: string): string[] {
+  // Matches the declarator + arrow of an expression-body arrow function.
+  // Must NOT capture the `{` that a block-body arrow would have next.
+  const fnStart =
+    /(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>/g;
+
+  const bodies: string[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = fnStart.exec(src)) !== null) {
+    let i = match.index + match[0].length;
+
+    // Skip all whitespace (including newlines) to reach the expression start.
+    while (i < src.length && /\s/.test(src[i])) i++;
+
+    // If the next non-space character is `{` this is a block body — already
+    // handled by extractFunctionBodies; skip it here to avoid double-counting.
+    if (i >= src.length || src[i] === '{') continue;
+
+    // Collect the expression body, tracking paren/bracket nesting so that
+    // nested calls like `.then(…)` are fully included.
+    let depth = 0;
+    const start = i;
+    while (i < src.length) {
+      const ch = src[i];
+      if (ch === '(' || ch === '[') {
+        depth++;
+      } else if (ch === ')' || ch === ']') {
+        if (depth > 0) {
+          depth--;
+        } else {
+          // Unmatched closing delimiter — we have stepped outside the
+          // expression (e.g. the arrow is itself inside a call argument).
+          break;
+        }
+      } else if (ch === ';' && depth === 0) {
+        break;
+      }
+      i++;
+    }
+    if (i > start) {
+      bodies.push(src.slice(start, i));
+    }
+  }
+
+  return bodies;
+}
+
+/**
  * Returns true when `src` contains a locally-defined function whose body
  * contains both `getSession` and `access_token`.
  *
@@ -119,12 +179,24 @@ function extractFunctionBodies(src: string): string[] {
  * like `async function freshToken()` or `const getToken = async () => { … }`
  * that is defined outside the primary scanned directories (services/hooks/lib),
  * so the top-level file-scan guard would never see it.
+ *
+ * Expression-body arrows (`const getToken = () => expr`) are also checked via
+ * `extractExpressionArrowBodies` so that a chained call like:
+ *   `const getToken = () => supabase.auth.getSession().then(…access_token…);`
+ * is not able to sneak past the guard.
  */
 function definesLocalTokenWrapper(src: string): boolean {
   // Fast pre-filter: both strings must be present somewhere in the file.
   if (!src.includes('getSession') || !src.includes('access_token')) return false;
-  // Check whether any individual function body contains both strings.
-  return extractFunctionBodies(src).some(
+  // Check whether any individual block-body function contains both strings.
+  if (
+    extractFunctionBodies(src).some(
+      (body) => body.includes('getSession') && body.includes('access_token'),
+    )
+  )
+    return true;
+  // Also check expression-body arrows — extractFunctionBodies skips these.
+  return extractExpressionArrowBodies(src).some(
     (body) => body.includes('getSession') && body.includes('access_token'),
   );
 }
@@ -159,6 +231,71 @@ const ALL_SRC_FILES = existsSync(SRC_DIR)
         !f.endsWith('.test.tsx'),
     )
   : [];
+
+// ── unit tests for definesLocalTokenWrapper (expression-body arrows) ───────────
+
+describe('definesLocalTokenWrapper — expression-body arrow detection', () => {
+  it('flags a single-line expression-body arrow that chains getSession + access_token', () => {
+    const src = `const getToken = () => supabase.auth.getSession().then(({ data }) => data.session?.access_token);`;
+    assert.ok(
+      definesLocalTokenWrapper(src),
+      'Single-line expression-body arrow with getSession + access_token should be flagged',
+    );
+  });
+
+  it('flags a multi-line expression-body arrow spanning getSession + access_token', () => {
+    const src = [
+      'const getToken = () =>',
+      '  supabase.auth.getSession().then(({ data }) => data.session?.access_token);',
+    ].join('\n');
+    assert.ok(
+      definesLocalTokenWrapper(src),
+      'Multi-line expression-body arrow with getSession + access_token should be flagged',
+    );
+  });
+
+  it('flags an async expression-body arrow with getSession + access_token', () => {
+    const src = `const getToken = async () => supabase.auth.getSession().then(({ data }) => data.session?.access_token);`;
+    assert.ok(
+      definesLocalTokenWrapper(src),
+      'Async expression-body arrow with getSession + access_token should be flagged',
+    );
+  });
+
+  it('does NOT flag an expression-body arrow that uses getSession without access_token', () => {
+    const src = `const getUserId = () => supabase.auth.getSession().then(({ data }) => data.session?.user?.id);`;
+    assert.ok(
+      !definesLocalTokenWrapper(src),
+      'Expression-body arrow reading user.id (no access_token) should pass',
+    );
+  });
+
+  it('does NOT flag a file that has access_token as a plain string constant unrelated to getSession', () => {
+    const src = `const HEADER = 'access_token';\nconst doThing = () => supabase.auth.getSession().then(s => s.data.session?.user?.id);`;
+    assert.ok(
+      !definesLocalTokenWrapper(src),
+      'access_token as an unrelated constant with getSession-only-for-userId should pass',
+    );
+  });
+
+  it('still flags a block-body arrow that wraps getSession + access_token', () => {
+    const src = [
+      'const getToken = async () => {',
+      '  const { data } = await supabase.auth.getSession();',
+      '  return data.session?.access_token;',
+      '};',
+    ].join('\n');
+    assert.ok(
+      definesLocalTokenWrapper(src),
+      'Block-body arrow with getSession + access_token should still be flagged',
+    );
+  });
+
+  it('does NOT flag a file with neither getSession nor access_token', () => {
+    const src = `const add = (a: number, b: number) => a + b;`;
+    assert.ok(!definesLocalTokenWrapper(src), 'Unrelated arrow should pass');
+  });
+});
 
 // ── primary guard ─────────────────────────────────────────────────────────────
 
