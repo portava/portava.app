@@ -501,6 +501,24 @@ describe("PATCH /admin/events/:eventId/moderate — event_activity_log insert fa
 
       assert.equal(captureActivity.length, 0, `event_activity_log must have 0 persisted rows for '${action}'`);
       assert.equal(captureModerationActions.length, 0, `moderation_actions must have 0 rows for '${action}'`);
+
+      // Pending reports for EVENT_ID_A must remain unresolved after a failed
+      // activity log insert — warn_host does not resolve reports on success, but
+      // this guards against a future regression where report-resolution is moved
+      // before the audit write.
+      const evAReports = client._db.reports.filter(
+        (r: any) => r.target_id === EVENT_ID_A,
+      );
+      assert.ok(
+        evAReports.length > 0,
+        `Expected seeded pending reports for EVENT_ID_A to be present for '${action}'`,
+      );
+      for (const report of evAReports) {
+        assert.equal(
+          report.status, "pending",
+          `Report ${report.id} for EVENT_ID_A must still be pending after failed event_activity_log insert for '${action}'`,
+        );
+      }
     });
   }
 });
