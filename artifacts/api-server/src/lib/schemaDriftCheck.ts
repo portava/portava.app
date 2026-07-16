@@ -112,6 +112,25 @@ export interface SchemaDriftResult {
   missingFunctions: FunctionProbe[];
 }
 
+export interface CachedSchemaDriftResult extends SchemaDriftResult {
+  /** ISO timestamp of when the check that produced this result ran. */
+  checkedAt: string;
+}
+
+// Last completed check result (startup or on-demand). Lets the admin health
+// endpoint answer cheaply without re-probing the live schema every request.
+let lastResult: CachedSchemaDriftResult | null = null;
+
+/** Result of the most recent schema-drift check, or null if none has run. */
+export function getCachedSchemaDriftResult(): CachedSchemaDriftResult | null {
+  return lastResult;
+}
+
+/** Test-only: reset the cached result. */
+export function _resetSchemaDriftCache(): void {
+  lastResult = null;
+}
+
 /**
  * Probes every declared column and function against the live schema and
  * logs ONE consolidated warning naming everything that is missing plus the
@@ -177,5 +196,10 @@ export async function runSchemaDriftCheck(
     logger.info("startup: schema drift check passed — all critical columns present");
   }
 
+  lastResult = {
+    missingColumns,
+    missingFunctions,
+    checkedAt: new Date().toISOString(),
+  };
   return { missingColumns, missingFunctions };
 }

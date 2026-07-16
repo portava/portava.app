@@ -22,6 +22,11 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
+import { logger } from "../lib/logger";
+import {
+  runSchemaDriftCheck,
+  getCachedSchemaDriftResult,
+} from "../lib/schemaDriftCheck";
 
 const router = Router();
 
@@ -2227,6 +2232,48 @@ router.get("/admin/users/:userId/moderation-summary", async (req, res) => {
     moderationActions: modActionsRes.data      ?? [],
     reportsReceived:   reportsReceivedRes.data ?? [],
     reportsFiled:      reportsFiledRes.data    ?? [],
+  });
+});
+
+// ── Schema drift health ───────────────────────────────────────────────────────
+
+/**
+ * GET /admin/health/schema-drift
+ *
+ * Returns the result of the schema-drift check (missing critical columns /
+ * SQL functions plus the migration to apply). By default serves the cached
+ * result from the last run (startup or on-demand) so the endpoint is cheap;
+ * pass ?refresh=true to re-probe the live schema on demand — e.g. to
+ * confirm a migration landed.
+ */
+router.get("/admin/health/schema-drift", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+
+  const refresh = req.query["refresh"] === "true" || req.query["refresh"] === "1";
+  let cached = getCachedSchemaDriftResult();
+  let fromCache = true;
+
+  if (refresh || !cached) {
+    await runSchemaDriftCheck(admin.sc, logger);
+    cached = getCachedSchemaDriftResult();
+    fromCache = false;
+  }
+
+  if (!cached) {
+    sendError(res, "db_error", "Schema drift check did not produce a result");
+    return;
+  }
+
+  res.json({
+    status:
+      cached.missingColumns.length + cached.missingFunctions.length > 0
+        ? "drift"
+        : "ok",
+    missingColumns: cached.missingColumns,
+    missingFunctions: cached.missingFunctions,
+    checkedAt: cached.checkedAt,
+    cached: fromCache,
   });
 });
 
