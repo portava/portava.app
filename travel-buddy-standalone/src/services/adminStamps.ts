@@ -52,7 +52,7 @@ export interface ArtworkVersion {
 export interface CatalogDetail {
   entry: CatalogEntry;
   versions: ArtworkVersion[];
-  queue: any | null;
+  queue: GenerationQueueJob | null;
   audit: any[];
   earnSample: any[];
 }
