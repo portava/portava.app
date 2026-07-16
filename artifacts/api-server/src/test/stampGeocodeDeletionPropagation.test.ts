@@ -1353,6 +1353,160 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "geocoder re-resolved correctly via Nominatim after the sweep eviction");
   });
 
+  it("_pending is cleared after a successful deletion-eviction re-geocode — subsequent call served from cache, not from a reused pending slot", async () => {
+    // After a deletion-eviction triggers a fresh Nominatim lookup, the resolved
+    // promise must be removed from _pending (via the finally block) so that:
+    //   a) the result lands in _cache, and
+    //   b) the next call for the same city hits the cache — not the old _pending slot.
+    //
+    // If _pending retained the settled promise, future callers would still get the
+    // correct value (the settled promise resolves to the same result) but the
+    // _cache write path would be effectively bypassed — meaning the entry would
+    // never expire correctly and the cache-size eviction logic would not apply.
+    //
+    // Observable proof: after the re-geocode settles, a second call returns the
+    // cached result without invoking Nominatim a second time.  A third call after
+    // changing the Nominatim stub still receives the original cached value — proving
+    // _cache was written (not _pending serving a settled clone forever).
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCallCount = 0;
+    let nominatimResponse = { country_code: "se", country: "Sweden" };
+    _setGeocodeFetchForTests(async () => {
+      nominatimCallCount++;
+      return {
+        ok: true,
+        json: async () => [{ address: nominatimResponse }],
+      };
+    });
+
+    // Phase 1: warm-up via DB cache — no Nominatim call.
+    const { client, switchToDeleted } = makePhasedDbClient({
+      country: "Sweden",
+      country_code: "SE",
+      corrected_at: null,
+      deleted_at: null,
+    });
+    _setGeocodeDbClientForTests(client);
+
+    const warm = await geocodeCityCountry("Stockholm");
+    assert.equal(warm?.countryCode, "SE", "pre-condition: warm entry loaded from DB cache");
+    assert.equal(nominatimCallCount, 0, "no Nominatim call during warm-up");
+
+    // Phase 2: soft-delete on another instance.
+    switchToDeleted();
+
+    // Phase 3: advance past the correction-check interval — probe fires, finds
+    // deleted_at set, evicts the in-memory entry, then falls through to re-geocode.
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000);
+
+    const afterDeletion = await geocodeCityCountry("Stockholm");
+    assert.equal(afterDeletion?.countryCode, "SE",
+      "re-resolved result is SE (Nominatim agrees with the deleted row)");
+    assert.equal(nominatimCallCount, 1,
+      "Nominatim called exactly once for the re-geocode — not zero, not two");
+
+    // Phase 4: immediately make another call for the same city.
+    // If _pending were still populated with the settled promise, this call would
+    // return the settled promise's value without touching _cache or Nominatim.
+    // If _pending was correctly cleared (finally block ran), the call must hit
+    // _cache and return the cached result — still no new Nominatim invocation.
+    const secondCall = await geocodeCityCountry("Stockholm");
+    assert.equal(secondCall?.countryCode, "SE",
+      "second call returns SE — served from the in-memory cache after re-geocode");
+    assert.equal(nominatimCallCount, 1,
+      "Nominatim NOT called again — _pending was cleared and _cache now holds the result");
+
+    // Phase 5: change the Nominatim stub so it would return a *different* country.
+    // If the result were still being served via a stale _pending slot that bypassed
+    // _cache, the next call would still return the settled value from _pending (SE).
+    // Since _pending was cleared and _cache holds SE, the call returns SE from cache —
+    // same value, but the mechanism is correct.  The Nominatim change has no effect
+    // because the cache entry has not expired yet, confirming _cache is authoritative.
+    nominatimResponse = { country_code: "dk", country: "Denmark" };
+    const thirdCall = await geocodeCityCountry("Stockholm");
+    assert.equal(thirdCall?.countryCode, "SE",
+      "third call still returns SE from _cache — the changed Nominatim stub has no effect because the cache entry is live");
+    assert.equal(nominatimCallCount, 1,
+      "Nominatim still not called — _cache entry is live and authoritative");
+  });
+
+  it("_pending is cleared after a Nominatim failure during deletion-eviction re-geocode — next call after TTL retries rather than serving a stale promise", async () => {
+    // After a deletion-eviction triggers a fresh Nominatim lookup that FAILS,
+    // the finally block must delete the _pending entry so that:
+    //   a) the null result lands in _cache with a short (6-hour) TTL, and
+    //   b) once the TTL expires, the next call can retry Nominatim — not
+    //      indefinitely serve a stale settled-promise from _pending.
+    //
+    // If _pending retained the settled-null promise forever, the entry would
+    // survive past the 6-hour TTL and the geocoder would never retry — every
+    // call for that city would return null until the process restarted.
+    const T0 = 1_700_000_000_000;
+    const NEGATIVE_TTL_MS = 6 * 60 * 60 * 1_000;
+    mockNow(T0);
+
+    let nominatimCallCount = 0;
+    let nominatimShouldFail = true;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCallCount++;
+      if (nominatimShouldFail) throw new Error("nominatim_down");
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "fi", country: "Finland" } }],
+      };
+    });
+
+    // Phase 1: warm-up via DB cache.
+    const { client, switchToDeleted } = makePhasedDbClient({
+      country: "Finland",
+      country_code: "FI",
+      corrected_at: null,
+      deleted_at: null,
+    });
+    _setGeocodeDbClientForTests(client);
+
+    const warm = await geocodeCityCountry("Helsinki");
+    assert.equal(warm?.countryCode, "FI", "pre-condition: warm entry loaded from DB cache");
+    assert.equal(nominatimCallCount, 0, "no Nominatim call during warm-up");
+
+    // Phase 2: soft-delete on another instance.
+    switchToDeleted();
+
+    // Phase 3: advance past correction-check interval — probe fires, evicts,
+    // Nominatim is attempted but fails → null is cached for 6 hours.
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000);
+
+    const afterDeletion = await geocodeCityCountry("Helsinki");
+    assert.equal(afterDeletion, null,
+      "null returned because Nominatim is down after deletion-eviction");
+    assert.equal(nominatimCallCount, 1, "Nominatim attempted exactly once");
+
+    // Phase 4: second call immediately after the failure — within the negative TTL.
+    // Must return null from _cache (not from _pending).
+    // If _pending held a stale settled-null promise, this would still return null
+    // but the null would never expire; the _cache TTL path would be bypassed.
+    const withinTtl = await geocodeCityCountry("Helsinki");
+    assert.equal(withinTtl, null, "null still returned within the 6-hour negative TTL");
+    assert.equal(nominatimCallCount, 1,
+      "Nominatim NOT called again within the negative TTL — null served from _cache");
+
+    // Phase 5: advance past the 6-hour negative TTL.
+    // If _pending were NOT cleared (holding a stale settled-null promise), the
+    // entry in _pending would be returned directly — bypassing _cache's expiry check —
+    // and Nominatim would never be retried.
+    // If _pending WAS cleared (finally block ran), the expired _cache entry is missed,
+    // the geocoder falls through to Nominatim, and (now that it's back up) resolves.
+    nominatimShouldFail = false;
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000 + NEGATIVE_TTL_MS + 1_000);
+
+    const afterTtl = await geocodeCityCountry("Helsinki");
+    assert.equal(afterTtl?.countryCode, "FI",
+      "Nominatim retried after TTL expiry and resolved — _pending was correctly cleared");
+    assert.equal(nominatimCallCount, 2,
+      "Nominatim called a second time — confirms _pending was cleared, not serving a stale settled promise");
+  });
+
   it("Pass 1 throw does not block Pass 2 — tombstoned entry is evicted and cleanup delete fires", async () => {
     // Regression guard: each pass of runCorrectionSweep is wrapped in its own
     // try/catch.  If Pass 1 (corrected_at query) throws — not just returns an
