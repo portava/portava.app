@@ -639,11 +639,13 @@ describe('expo-clipboard ~8.0.8 — setStringAsync call contract (mirrors GroupC
 // ── 7. Lockfile-resolved peer dep versions ────────────────────────────────────
 //
 // The semver ranges in package.json only constrain what pnpm may resolve;
-// transitive peer deps like @expo/config-plugins and expo-modules-core are not
+// transitive peer deps like @expo/config-plugins, expo-modules-core, and the
+// metro bundler family (metro, metro-resolver, @expo/metro-config) are not
 // declared directly in either package.json — their pinned resolved versions live
 // only in the pnpm lockfile.  If those resolved versions drift between the two
 // lockfiles, runtime breakage can occur silently even when the declared ranges
-// match.
+// match.  Metro bundler version gaps in particular only surface at Expo build
+// time with confusing stack traces.
 //
 // @babel/core is also checked here: both trees pin ^7.25.2 in package.json but
 // the resolved version is only locked in each pnpm-lock.yaml.  A drift (e.g.
@@ -654,7 +656,7 @@ describe('expo-clipboard ~8.0.8 — setStringAsync call contract (mirrors GroupC
 // This section reads both lockfiles and asserts that each package resolves to
 // exactly one version and that version is identical in both trees.
 
-describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/config-plugins and expo-modules-core', () => {
+describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/config-plugins, expo-modules-core, and metro bundler family', () => {
   // travel-buddy-standalone/pnpm-lock.yaml is 4 levels up from src/services/ in artifacts/travel-buddy/
   const standaloneLockText = readFileSync(pathResolve(__dir, '../../../../travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
   // monorepo root pnpm-lock.yaml is also 4 levels up from src/services/ in artifacts/travel-buddy/
@@ -724,6 +726,68 @@ describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/
         `  travel-buddy-standalone/pnpm-lock.yaml resolved: ${saVer}\n` +
         `  root pnpm-lock.yaml resolved:                    ${monoVer}\n` +
         `A drift here can cause silent SDK 54 runtime breakage even when package.json ranges match.`,
+      );
+    });
+  }
+});
+
+// ── 8. Lockfile-resolved metro bundler family versions ────────────────────────
+//
+// metro, metro-resolver, and @expo/metro-config are resolved purely as
+// transitive deps in both lockfiles — they are never declared directly in
+// either package.json.  A version gap here causes bundler incompatibilities
+// that only surface silently at Expo build time with confusing stack traces.
+//
+// Unlike @expo/config-plugins / expo-modules-core, the metro family can
+// legitimately resolve at multiple versions when different packages in the
+// dependency tree require different sub-versions.  The check below therefore
+// compares the complete sorted set of resolved versions (not requiring a single
+// version), so any drift between the two lockfiles fails with a clear diff.
+
+describe('Lockfile-resolved metro bundler family versions — metro, metro-resolver, @expo/metro-config', () => {
+  // Reuse the same lockfile texts read in section 7.
+  const standaloneLockText = readFileSync(pathResolve(__dir, '../../../../travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
+  const monoLockText = readFileSync(pathResolve(__dir, '../../../../pnpm-lock.yaml'), 'utf8');
+
+  function resolvedVersions(lockText: string, pkgName: string): string[] {
+    const escaped = pkgName.replace(/[.*+?^${}()|[\]\\]/g, (c) => '\\' + c).replace(/\//g, (c) => '\\' + c);
+    const re = new RegExp(`^  ['"]?${escaped}@([\\d][\\d.]+)`, 'gm');
+    const found = new Set<string>();
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(lockText)) !== null) {
+      found.add(m[1]!);
+    }
+    return [...found].sort();
+  }
+
+  const metroPkgs = ['metro', 'metro-resolver', '@expo/metro-config'];
+
+  for (const pkg of metroPkgs) {
+    it(`${pkg} — resolved in both lockfiles (not missing)`, () => {
+      const saVersions = resolvedVersions(standaloneLockText, pkg);
+      const monoVersions = resolvedVersions(monoLockText, pkg);
+
+      assert.ok(
+        saVersions.length > 0,
+        `${pkg} not found in travel-buddy-standalone/pnpm-lock.yaml — lockfile may be out of date`,
+      );
+      assert.ok(
+        monoVersions.length > 0,
+        `${pkg} not found in root pnpm-lock.yaml — lockfile may be out of date`,
+      );
+    });
+
+    it(`${pkg} — resolved version set matches between travel-buddy-standalone and monorepo lockfiles`, () => {
+      const saVersions = resolvedVersions(standaloneLockText, pkg);
+      const monoVersions = resolvedVersions(monoLockText, pkg);
+
+      assert.equal(
+        saVersions.join(', '),
+        monoVersions.join(', '),
+        `${pkg} lockfile version mismatch:\n` +
+        `  travel-buddy-standalone/pnpm-lock.yaml resolved: ${saVersions.join(', ')}\n` +
+        `  root pnpm-lock.yaml resolved:                    ${monoVersions.join(', ')}\n` +
+        `A version gap here can cause bundler incompatibilities that only surface at Expo build time.`,
       );
     });
   }
