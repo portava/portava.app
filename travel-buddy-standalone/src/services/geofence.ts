@@ -2,7 +2,7 @@
  * Plan geofence service — typed wrappers for the geofence API.
  * All coordinates stay server-side; clients receive labels and status text only.
  */
-import { supabase } from '../lib/supabase.ts';
+import { supabase } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';

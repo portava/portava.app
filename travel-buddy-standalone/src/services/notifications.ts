@@ -8,7 +8,7 @@
  *   - Notification preferences (read + update)
  *   - Device registration (push token)
  */
-import { supabase } from '../lib/supabase.ts';
+import { supabase } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 function apiBase(): string { return process.env.EXPO_PUBLIC_API_BASE_URL ?? ''; }
