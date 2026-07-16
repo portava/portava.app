@@ -4,7 +4,7 @@
  * createTrip / createPost). Reads also go through the API server so we can
  * do server-side joins/filtering cleanly.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import type { OwnProfile, PublicProfile, PassportPostcard, PassportStamp, PostcardMediaItem } from '../types/models';
 
 function apiBase(): string {
