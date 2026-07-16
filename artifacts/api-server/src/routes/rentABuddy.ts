@@ -6059,11 +6059,20 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => 
   const rebookBlocking = await findBlockingAvailabilityException(serviceClient, buddyProfileId, bookingDate);
   if (rebookBlocking) return sendBuddyUnavailable(res, rebookBlocking.exception_type);
 
-  // Compute price with current buddy rates
-  const newDurationH = Number(durationH ?? (original as any).duration_h ?? 2);
-  const newGroupSize = Number(groupSize ?? (original as any).group_size ?? 1);
+  // Compute price with current buddy rates.
+  // Prefer explicit overrides from the request; fall back to the original's
+  // values; leave null when neither the request nor the original supplies a value
+  // (avoid silently substituting arbitrary defaults like 2 h / 1 person).
+  const newDurationH: number | null =
+    durationH != null ? Number(durationH)
+    : (original as any).duration_h != null ? Number((original as any).duration_h)
+    : null;
+  const newGroupSize: number | null =
+    groupSize != null ? Number(groupSize)
+    : (original as any).group_size != null ? Number((original as any).group_size)
+    : null;
   const rateUsd = (buddyProfile as any).hourly_rate_usd ? Number((buddyProfile as any).hourly_rate_usd) : 0;
-  const totalUsd = Math.round(rateUsd * newDurationH * 100) / 100;
+  const totalUsd = newDurationH != null ? Math.round(rateUsd * newDurationH * 100) / 100 : 0;
 
   const { data: newBooking, error } = await serviceClient
     .from("rent_buddy_bookings")

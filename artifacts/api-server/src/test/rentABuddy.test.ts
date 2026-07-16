@@ -2277,6 +2277,32 @@ describe("Rent a Buddy — rebook", () => {
     assert.equal(r.body.booking?.start_time ?? null, null, "start_time should be null when neither client nor original supplies one");
   });
 
+  it("rebook with no duration_h or group_size on original yields null for both fields (201)", async () => {
+    setupRebookState("completed");
+    // Strip the optional numeric fields from the original booking so neither
+    // the client nor the original supplies them — server must not substitute
+    // arbitrary defaults (0, 1, 2, etc.).
+    delete (state.bookings![ORIG_BOOKING_ID] as any).duration_h;
+    delete (state.bookings![ORIG_BOOKING_ID] as any).group_size;
+    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
+      bookingDate: FUTURE_DATE,
+      startTime: "11:00",
+      // durationH and groupSize intentionally omitted
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.ok(r.body.bookingId, "should return new bookingId");
+    assert.equal(
+      r.body.booking?.duration_h ?? null,
+      null,
+      "duration_h should be null when the original omits it and client sends none",
+    );
+    assert.equal(
+      r.body.booking?.group_size ?? null,
+      null,
+      "group_size should be null when the original omits it and client sends none",
+    );
+  });
+
   it("rebook for someone else's booking returns 403", async () => {
     state = {
       featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
