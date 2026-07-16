@@ -17,7 +17,7 @@ import {
   _setTestAuthToken,
   fetchCompassTravelerMatches,
   type CompassTravelerResult,
-} from "../services/compass.ts";
+} from "../compass.ts";
 
 const FAKE_TOKEN = "fake-test-token-blocked-users";
 const API_BASE   = "http://localhost:9999";

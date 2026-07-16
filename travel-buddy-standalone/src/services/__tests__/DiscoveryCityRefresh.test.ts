@@ -18,7 +18,7 @@ import {
   _setTestAuthToken,
   fetchCompassTravelerMatches,
   fetchCompassBuddyMatches,
-} from "../services/compass.ts";
+} from "../compass.ts";
 
 const FAKE_TOKEN = "fake-test-token-city-refresh";
 const API_BASE   = "http://localhost:9998";

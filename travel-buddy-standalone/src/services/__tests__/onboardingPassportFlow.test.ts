@@ -18,15 +18,15 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildOnboardingPatch,
-} from '../services/profilePatchBuilder.ts';
+} from '../profilePatchBuilder.ts';
 import {
   _setTestAuthToken,
   updateMyProfile,
-} from '../services/profile.ts';
+} from '../profile.ts';
 import {
   PROFILE_NOT_FOUND_TITLE,
   PROFILE_NOT_FOUND_SUB,
-} from '../constants/profileScreenCopy.ts';
+} from '../../constants/profileScreenCopy.ts';
 
 const FAKE_TOKEN = 'fake-test-token-onboarding-flow';
 

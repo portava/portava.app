@@ -44,11 +44,11 @@ import {
   _setTestAuthToken,
   reactivateAccount,
   deactivateAccount,
-} from '../services/profile.ts';
+} from '../profile.ts';
 import {
   resolveAccountButton,
   applyReactivateResult,
-} from '../../app/settings/settings.machine.ts';
+} from '../../../app/settings/settings.machine.ts';
 
 const FAKE_TOKEN = 'fake-test-token-account-activation';
 

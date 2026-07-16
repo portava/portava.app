@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import {
   ensureProfile,
   _setTestSessionToken,
-} from '../services/auth.ts';
+} from '../auth.ts';
 
 // ── Fetch mock helpers ────────────────────────────────────────────────────────
 
