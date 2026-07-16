@@ -824,6 +824,36 @@ describe("PushRetryQueue.processQueue() — dead-token clearing on retry", () =>
       "InvalidCredentials \u00d7 1",
       "delivery_attempt error_message must match last_error ('InvalidCredentials × 1') on dead-token final attempt",
     );
+
+    // ── Dead-token cleanup must have run for all three tables ─────────────────
+    // clearDeadTokens is gated only on deadTokens.length > 0, not attempt count.
+    // Verify it fired even though this was the final (exhausted) attempt.
+    assert.ok(
+      client.updateCalls.some(
+        (c) => c.table === "profiles" &&
+               c.patch.expo_push_token === null &&
+               Array.isArray(c.inFilters["expo_push_token"]) &&
+               (c.inFilters["expo_push_token"] as string[]).includes(DEAD_TOKEN_IC),
+      ),
+      "profiles.expo_push_token must be nulled for DEAD_TOKEN_IC on the final InvalidCredentials attempt",
+    );
+    assert.ok(
+      client.deleteCalls.some(
+        (c) => c.table === "notification_devices" &&
+               Array.isArray(c.inFilters["push_token"]) &&
+               (c.inFilters["push_token"] as string[]).includes(DEAD_TOKEN_IC),
+      ),
+      "notification_devices row must be deleted for DEAD_TOKEN_IC on the final InvalidCredentials attempt",
+    );
+    assert.ok(
+      client.updateCalls.some(
+        (c) => c.table === "rent_buddy_profiles" &&
+               c.patch.expo_push_token === null &&
+               Array.isArray(c.inFilters["expo_push_token"]) &&
+               (c.inFilters["expo_push_token"] as string[]).includes(DEAD_TOKEN_IC),
+      ),
+      "rent_buddy_profiles.expo_push_token must be nulled for DEAD_TOKEN_IC on the final InvalidCredentials attempt",
+    );
   });
 
   /**
