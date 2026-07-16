@@ -40,6 +40,7 @@ function makeFakeClient(state: FakeState) {
   function builder(table: string) {
     const filters: Array<(r: any) => boolean> = [];
     let pendingInsert: any = null;
+    let pendingUpdate: any = null;
     const b: any = {
       select() { return b; },
       insert(row: any) {
@@ -48,13 +49,23 @@ function makeFakeClient(state: FakeState) {
         inserted[table].push(row);
         return b;
       },
+      update(patch: any) { pendingUpdate = patch; return b; },
       eq(col: string, val: any)  { filters.push((r) => r[col] === val); return b; },
       in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return b; },
+      is(col: string, val: any) {
+        filters.push((r) => (val === null ? r[col] == null : r[col] === val));
+        return b;
+      },
       gte() { return b; }, lte() { return b; }, order() { return b; },
       then(onF: any, onR: any) {
         if (pendingInsert) return Promise.resolve({ data: pendingInsert, error: null }).then(onF, onR);
-        const data = rowsFor(table).filter((r) => filters.every((f) => f(r)));
-        return Promise.resolve({ data, error: null }).then(onF, onR);
+        const matched = rowsFor(table).filter((r) => filters.every((f) => f(r)));
+        if (pendingUpdate) {
+          // Mutate matched rows like a real UPDATE ... RETURNING would.
+          for (const row of matched) Object.assign(row, pendingUpdate);
+          return Promise.resolve({ data: matched, error: null }).then(onF, onR);
+        }
+        return Promise.resolve({ data: matched, error: null }).then(onF, onR);
       },
     };
     return b;
@@ -126,5 +137,45 @@ describe("TripReminderScheduler push", () => {
       assert.equal(row.payload.data.type, "trip_24h_reminder");
       assert.equal(row.payload.data.tripId, "trip-503");
     }
+  });
+
+  it("marks reminder_sent_at when sending", async () => {
+    const state = baseState("trip-claim");
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 1);
+    assert.ok(state.trips![0].reminder_sent_at, "reminder_sent_at set on the trip row");
+  });
+
+  it("does not re-send when reminder_sent_at is already set (e.g. after a restart)", async () => {
+    // Fresh trip id so the in-memory Set can't be what dedups — only the
+    // persisted reminder_sent_at column stands between us and a double-send.
+    const state = baseState("trip-already-sent");
+    state.trips![0].reminder_sent_at = "2026-07-15T09:00:00.000Z";
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 0, "no push for an already-reminded trip");
+  });
+
+  it("does not double-send when the same trip reappears with a cleared in-memory set", async () => {
+    const state = baseState("trip-restart");
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+    assert.equal(pushCalls.length, 1);
+
+    // Simulate a restart: new client over the same (already-claimed) DB rows.
+    // The in-memory Set would dedup here too, but the claim UPDATE returning
+    // zero rows is what guarantees it; verify via the persisted column.
+    pushCalls = [];
+    const svc2 = makeFakeClient(state);
+    _setTestServiceClient(svc2);
+    await runOnce();
+    assert.equal(pushCalls.length, 0, "second run sends nothing");
+    assert.ok(state.trips![0].reminder_sent_at);
   });
 });

@@ -4,8 +4,10 @@
  * Polls once per hour for trips whose start_date falls within the next 22–26 hours
  * and sends a "Your trip starts tomorrow!" push notification to the owner and all
  * accepted crew members. A deduplication column (`reminder_sent_at`) on the trips
- * table prevents double-sending; if the column does not exist we fall back to a
- * lightweight in-memory set that persists for the lifetime of the process.
+ * table (migration 0138) prevents double-sending across restarts: each trip is
+ * atomically claimed (UPDATE ... WHERE reminder_sent_at IS NULL) before the push
+ * is sent. An in-memory set additionally short-circuits repeat polls within one
+ * process.
  */
 import { logger as rootLogger } from "./logger.js";
 import { getServiceClient } from "./supabase.js";
@@ -34,6 +36,7 @@ export async function runOnce() {
     .gte("start_date", lower.slice(0, 10))
     .lte("start_date", upper.slice(0, 10))
     .in("status", ["upcoming", "planning"])
+    .is("reminder_sent_at", null)
     .order("start_date", { ascending: true });
 
   if (error) { logger.warn({ err: error }, "TripReminderScheduler: query error"); return; }
@@ -42,6 +45,26 @@ export async function runOnce() {
   for (const trip of trips as any[]) {
     const tripId = trip.id as string;
     if (reminded.has(tripId)) continue;
+
+    // Atomically claim the trip before sending: only the process that flips
+    // reminder_sent_at from NULL wins, so restarts (or concurrent instances)
+    // can't double-send. Claiming before the push errs on the side of at-most-once.
+    const { data: claimed, error: claimError } = await sc
+      .from("trips")
+      .update({ reminder_sent_at: new Date().toISOString() })
+      .eq("id", tripId)
+      .is("reminder_sent_at", null)
+      .select("id");
+
+    if (claimError) {
+      logger.warn({ err: claimError, tripId }, "TripReminderScheduler: failed to claim trip for reminder");
+      continue;
+    }
+    if (!claimed || claimed.length === 0) {
+      // Someone else (or a previous run) already sent this reminder.
+      reminded.add(tripId);
+      continue;
+    }
     reminded.add(tripId);
 
     try {
