@@ -218,6 +218,36 @@ export async function getStampDuplicates(): Promise<ApiResult<any>> {
   return adminGet('/api/admin/stamps/duplicates');
 }
 
+// ── Worker health ──────────────────────────────────────────────────────────────
+
+export interface WorkerHealthWarning {
+  key: 'stuck_jobs' | 'backlog_growing';
+  message: string;
+  details: Record<string, unknown>;
+}
+
+export interface StampWorkerHealth {
+  worker_enabled: boolean;
+  worker_running: boolean;
+  worker_id: string;
+  last_success_at: string | null;
+  queue_depth: Record<string, number>;
+  stuck_jobs: Array<{
+    id: string;
+    catalog_id: string;
+    locked_by: string | null;
+    locked_until: string | null;
+    updated_at: string | null;
+  }>;
+}
+
+export async function getStampWorkerHealth(): Promise<ApiResult<{
+  health: StampWorkerHealth;
+  warnings: WorkerHealthWarning[];
+}>> {
+  return adminGet('/api/admin/stamps/worker-health');
+}
+
 // ── Public catalog batch fetch ─────────────────────────────────────────────────
 
 export async function batchFetchCatalogEntries(catalogIds: string[]): Promise<ApiResult<{

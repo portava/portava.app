@@ -18,7 +18,11 @@ import { ArrowLeft, Image as ImageIcon, Clock, CheckCircle, AlertTriangle, XCirc
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
-import { getAdminStampCatalog } from '../../../src/services/adminStamps';
+import {
+  getAdminStampCatalog,
+  getStampWorkerHealth,
+  type WorkerHealthWarning,
+} from '../../../src/services/adminStamps';
 
 type StatusCounts = {
   pending_artwork: number;
@@ -37,15 +41,20 @@ export default function StampStudioIndex() {
     pending_artwork: 0, review_required: 0, approved: 0, rejected: 0, archived: 0, retryable_failed: 0,
   });
   const [recentEntries, setRecentEntries] = useState<any[]>([]);
+  const [healthWarnings, setHealthWarnings] = useState<WorkerHealthWarning[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
-    const res = await getAdminStampCatalog({ limit: 10 });
+    const [res, healthRes] = await Promise.all([
+      getAdminStampCatalog({ limit: 10 }),
+      getStampWorkerHealth(),
+    ]);
     if (res.ok) {
       setStatusCounts((res.data as any).statusCounts ?? {});
       setRecentEntries((res.data as any).entries ?? []);
     }
+    if (healthRes.ok) setHealthWarnings(healthRes.data.warnings ?? []);
     setLoading(false);
     setRefreshing(false);
   }, []);
@@ -79,6 +88,19 @@ export default function StampStudioIndex() {
           contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + space.xl }]}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
+          {/* Worker health warnings */}
+          {healthWarnings.map((w) => (
+            <View key={w.key} style={styles.warnBanner}>
+              <AlertTriangle size={18} color="#B45309" strokeWidth={2} />
+              <View style={styles.warnBody}>
+                <Text style={styles.warnTitle}>
+                  {w.key === 'stuck_jobs' ? 'Stuck generation jobs' : 'Backlog growing'}
+                </Text>
+                <Text style={styles.warnText}>{warningSummary(w)}</Text>
+              </View>
+            </View>
+          ))}
+
           {/* Status tiles */}
           <Text style={styles.sectionTitle}>Catalog Status</Text>
           <View style={styles.tilesRow}>
@@ -135,6 +157,16 @@ export default function StampStudioIndex() {
   );
 }
 
+function warningSummary(w: WorkerHealthWarning): string {
+  if (w.key === 'stuck_jobs') {
+    const n = Number((w.details as any)?.stuck_count ?? 0);
+    return `${n} job${n === 1 ? '' : 's'} stuck in 'generating' past lock expiry — the worker may have crashed.`;
+  }
+  const queued = (w.details as any)?.queued;
+  const prev = (w.details as any)?.previous_queued;
+  return `Queued backlog grew from ${prev ?? '?'} to ${queued ?? '?'} while the worker is enabled — it may be stalled.`;
+}
+
 function statusBg(status: string) {
   switch (status) {
     case 'approved':        return '#D1FAE5';
@@ -152,6 +184,10 @@ const styles = StyleSheet.create({
   center:       { flex: 1, justifyContent: 'center', alignItems: 'center' },
   content:      { padding: space.md, gap: space.sm },
   sectionTitle: { ...t.small, color: color.mute, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: space.md, marginBottom: space.xs },
+  warnBanner:   { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm, backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#FCD34D', borderRadius: radius.md, padding: space.md },
+  warnBody:     { flex: 1, gap: 2 },
+  warnTitle:    { ...t.body, color: '#92400E', fontWeight: '700' },
+  warnText:     { ...t.small, color: '#92400E' },
   tilesRow:     { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   tile:         { flex: 1, minWidth: 140, backgroundColor: color.paperRaised, borderRadius: radius.md, padding: space.md, borderLeftWidth: 4, gap: 4, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 4, elevation: 2 },
   tileCount:    { fontSize: 28, fontWeight: '800', fontFamily: 'Courier' },
