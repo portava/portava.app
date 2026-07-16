@@ -289,4 +289,32 @@ describe("POST /api/rent-a-buddy/bookings/:id/dispute — terminal-status guard"
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "no_show" });
     assert.equal(r.body.currentStatus, "disputed", "response must echo 'disputed' as the status that caused the rejection");
   });
+
+  // ── 'no_show_pending' status guard ───────────────────────────────────────
+
+  it("returns 409 when booking status is 'no_show_pending'", async () => {
+    state.bookings[BOOKING_ID].status = "no_show_pending";
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "no_show" });
+    assert.equal(r.status, 409, `expected 409 for no_show_pending booking, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.error, "invalid_transition");
+  });
+
+  it("does not insert a dispute row when the booking is no_show_pending", async () => {
+    state.bookings[BOOKING_ID].status = "no_show_pending";
+    await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "no_show" });
+    assert.equal(state.disputes.length, 0, "no dispute row must be inserted for a no_show_pending booking");
+  });
+
+  it("buddy party also gets 409 when booking is no_show_pending", async () => {
+    state.bookings[BOOKING_ID].status = "no_show_pending";
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "no_show" }, BUDDY_TOKEN);
+    assert.equal(r.status, 409, `expected 409 for no_show_pending booking (buddy), got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.error, "invalid_transition");
+  });
+
+  it("the 409 response echoes currentStatus as 'no_show_pending' for a no_show_pending booking", async () => {
+    state.bookings[BOOKING_ID].status = "no_show_pending";
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "no_show" });
+    assert.equal(r.body.currentStatus, "no_show_pending", "response must echo 'no_show_pending' as the status that caused the rejection");
+  });
 });
