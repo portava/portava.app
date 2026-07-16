@@ -637,3 +637,93 @@ describe("PushRetryQueue.processQueue() — partial success (one ok, one dead)",
     assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8 — Partial-success on the FINAL attempt: must not re-queue
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("PushRetryQueue.processQueue() — partial success on final attempt", () => {
+  it("clears dead token, finalises as 'sent', and does NOT re-queue when attempt_count=2 (final)", async () => {
+    // attempt_count=2 means two prior failures; this run is attempt 3 (= max_attempts).
+    // Expo returns one ok (PUSH_TOKEN) and one DeviceNotRegistered (DEAD_TOKEN).
+    // Expected: dead-token cleanup runs, queue row → 'sent', NOT re-queued.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN, DEAD_TOKEN],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       2,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    // Expo: first ticket ok (PUSH_TOKEN), second ticket DeviceNotRegistered (DEAD_TOKEN)
+    _setTestFetch(expoPartialSuccessFetch());
+    await queue.processQueue();
+
+    // ── Dead-token cleanup must run for DEAD_TOKEN ────────────────────────────
+
+    // profiles.expo_push_token nulled via update().in([DEAD_TOKEN])
+    const profileUpdate = client.updateCalls.find(
+      (c) => c.table === "profiles" && c.patch.expo_push_token === null,
+    );
+    assert.ok(profileUpdate, "profiles.expo_push_token must be nulled for the dead token on final attempt");
+    assert.deepEqual(
+      profileUpdate.inFilters["expo_push_token"],
+      [DEAD_TOKEN],
+      "profiles update must target only the dead token",
+    );
+
+    // notification_devices row deleted via delete().in([DEAD_TOKEN])
+    const deviceDelete = client.deleteCalls.find((c) => c.table === "notification_devices");
+    assert.ok(deviceDelete, "notification_devices row must be deleted for the dead token on final attempt");
+    assert.deepEqual(
+      deviceDelete.inFilters["push_token"],
+      [DEAD_TOKEN],
+      "notification_devices delete must target only the dead token",
+    );
+
+    // rent_buddy_profiles.expo_push_token nulled via update().in([DEAD_TOKEN])
+    const rentUpdate = client.updateCalls.find(
+      (c) => c.table === "rent_buddy_profiles" && c.patch.expo_push_token === null,
+    );
+    assert.ok(rentUpdate, "rent_buddy_profiles.expo_push_token must be nulled for the dead token on final attempt");
+    assert.deepEqual(
+      rentUpdate.inFilters["expo_push_token"],
+      [DEAD_TOKEN],
+      "rent_buddy_profiles update must target only the dead token",
+    );
+
+    // ── Queue row must be finalised as 'sent' (partial delivery counts) ───────
+
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+
+    const sentUpdate = prqUpdates.find((c) => c.patch.status === "sent");
+    assert.ok(sentUpdate, "push_retry_queue must be finalised as 'sent' when at least one token delivered on final attempt");
+    assert.equal(sentUpdate.filters.id,      QUEUE_ROW_ID, "sent update must target the correct queue row");
+    assert.equal(sentUpdate.patch.attempt_count, 3,        "attempt_count must be 3 (the final attempt)");
+
+    // Must NOT be marked failed
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(!failedUpdate, "must NOT mark the queue row 'failed' when partial delivery succeeded on final attempt");
+
+    // ── MUST NOT re-queue — this was the last allowed attempt ─────────────────
+    const requeued = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(!requeued, "must NOT re-queue the row after the final attempt, even for partial success");
+
+    // ── Delivery attempt must also be marked 'sent' ───────────────────────────
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated on final-attempt partial success");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status, "sent",    "delivery_attempt status must be 'sent'");
+    assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+  });
+});
