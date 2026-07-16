@@ -4106,4 +4106,22 @@ describe("Rent a Buddy — notifications: recipient is the other party", () => {
     assert.notEqual(note.user_id, BUDDY_USER,
       "notification must not target the buddy who reported the no-show");
   });
+
+  it("booking_requested: buddy (not the traveler actor) receives booking_requested notification", async () => {
+    // Traveler (USER_ID) creates booking → buddy (BUDDY_USER) must be notified
+    setupState();
+    const r = await req("POST", "/api/rent-a-buddy/bookings", {
+      buddyId: BUDDY_PROF, bookingDate: new Date().toISOString().slice(0, 10),
+      durationH: 1, city: "Shinjuku Station", category: "city",
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    await drain();
+    const notes: any[] = (state as any).notifications ?? [];
+    const note = notes.find((n: any) => n.event_type === "rent_buddy.booking_requested");
+    assert.ok(note, "expected a booking_requested notification row");
+    assert.equal(note.user_id, BUDDY_USER,
+      `notification recipient must be the buddy (${BUDDY_USER}), got: ${note.user_id}`);
+    assert.notEqual(note.user_id, USER_ID,
+      "notification must not target the traveler who placed the request");
+  });
 });
