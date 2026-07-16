@@ -41,7 +41,7 @@
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve as pathResolve, dirname } from 'node:path';
 
@@ -63,7 +63,7 @@ import {
   toFileUri,
 } from './passportShareUtils.ts';
 
-const __filename = fileURLToPath(import.meta.url);
+const __filename = realpathSync(fileURLToPath(import.meta.url));
 const __dir = dirname(__filename);
 
 function readPkg(relPath: string): Record<string, any> {
@@ -119,10 +119,10 @@ describe('SDK 54 downgrade — package version pins', () => {
   });
 
   it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-    const standalone = readPkg('../../../../travel-buddy-standalone/package.json');
-    const saDeps: Record<string, string> = {
-      ...standalone.dependencies,
-      ...standalone.devDependencies,
+    const tbPkg = readPkg('../../../artifacts/travel-buddy/package.json');
+    const tbDeps: Record<string, string> = {
+      ...tbPkg.dependencies,
+      ...tbPkg.devDependencies,
     };
     const toCheck = [
       'expo-notifications',
@@ -134,8 +134,8 @@ describe('SDK 54 downgrade — package version pins', () => {
     for (const name of toCheck) {
       assert.equal(
         deps[name],
-        saDeps[name],
-        `${name} version mismatch: artifacts/travel-buddy="${deps[name]}" travel-buddy-standalone="${saDeps[name]}"`,
+        tbDeps[name],
+        `${name} version mismatch: travel-buddy-standalone="${deps[name]}" artifacts/travel-buddy="${tbDeps[name]}"`,
       );
     }
   });
