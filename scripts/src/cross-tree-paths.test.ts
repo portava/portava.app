@@ -117,9 +117,39 @@ function isAssignedFromPathResolver(identifier: string, fileContent: string): bo
   // path.resolve, path.join, pathResolve, and fileURLToPath are unambiguous —
   // they are always path-computing calls regardless of imports.
   const unambiguousPat = new RegExp(
-    `\\b(?:const|let|var)\\s+${identifier}\\s*=\\s*(?:path\\.resolve|path\\.join|pathResolve|fileURLToPath)\\s*\\(`,
+    `\\b(?:const|let|var)\\s+${identifier}\\s*=\\s*(?:path\\.resolve|path\\.join|pathResolve|fileURLToPath)\\s*\\(([^)]*)\\)`,
   );
-  if (unambiguousPat.test(fileContent)) return true;
+  const um = unambiguousPat.exec(fileContent);
+  if (um) {
+    // Guard against a broken intermediate chain: when the first argument is a
+    // plain identifier, check whether that identifier is itself assigned from a
+    // bare resolve()/join() that is NOT imported from 'node:path'.  If so the
+    // chain is broken and we must NOT suppress the UNRESOLVABLE warning.
+    const rawArgs = um[1]!;
+    const firstArg = (rawArgs.split(',')[0] ?? '').trim();
+    if (
+      firstArg !== '__dirname' &&
+      firstArg !== '__dir' &&
+      /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(firstArg)
+    ) {
+      const baseBarePat = new RegExp(
+        `\\b(?:const|let|var)\\s+${firstArg}\\s*=\\s*(resolve|join)\\s*\\(`,
+      );
+      const bbm = baseBarePat.exec(fileContent);
+      if (bbm) {
+        const fnName = bbm[1]!;
+        const importPat = new RegExp(
+          `import\\s*\\{[^}]*\\b${fnName}\\b[^}]*\\}\\s*from\\s*['"]node:path['"]`,
+        );
+        if (!importPat.test(fileContent)) {
+          // The intermediate variable comes from a non-path package — the chain
+          // is broken; do NOT suppress the UNRESOLVABLE warning.
+          return false;
+        }
+      }
+    }
+    return true;
+  }
 
   // Bare resolve() / join() are only path-computing when the name is imported
   // from 'node:path'.  A resolve() from a promise library (or any other
@@ -770,6 +800,32 @@ describe('extractCrossTreePaths — template-literal and non-literal detection',
     assert.ok(
       entry,
       `expected an unresolvable entry for "crossTreePath"; got: ${JSON.stringify(unresolvableEntries)}`,
+    );
+  });
+
+  it('flags pkg as unresolvable when an intermediate variable uses a non-path resolve() in a chain', () => {
+    // cross-tree-non-path-resolve-chain.test.ts has:
+    //   const root = resolve('../../../')          ← resolve from 'some-promise-lib'
+    //   const pkg  = path.resolve(root, 'package.json')
+    //   fs.readFileSync(pkg, 'utf8')
+    //
+    // Because `root` is produced by a non-path resolve(), tryResolveStaticVariable
+    // cannot trace the chain to a static path and returns null.  The guard must
+    // then NOT suppress the UNRESOLVABLE warning via isAssignedFromPathResolver —
+    // it must flag `pkg` as unresolvable so the broken chain is visible.
+    const fixture = path.join(FIXTURES_DIR, 'cross-tree-non-path-resolve-chain.test.ts');
+    const entries = extractCrossTreePaths(fixture);
+
+    const unresolvableEntries = entries.filter((e) => e.unresolvable === true);
+    assert.ok(
+      unresolvableEntries.length >= 1,
+      `expected at least one UNRESOLVABLE entry when path.resolve() chains through a non-path resolve(); got: ${JSON.stringify(entries)}`,
+    );
+
+    const entry = unresolvableEntries.find((e) => e.rawArg === 'pkg');
+    assert.ok(
+      entry,
+      `expected an unresolvable entry for the identifier "pkg"; got: ${JSON.stringify(unresolvableEntries)}`,
     );
   });
 
