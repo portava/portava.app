@@ -506,6 +506,37 @@ describe("report-no-show — non-party receives 403", () => {
   });
 });
 
+// ── POST /report-no-show — 404 for unknown booking ───────────────────────────
+//
+// The route fetches the booking row before any isParty check. When that row is
+// absent the handler must respond with 404 / { error: "not_found" } so that
+// callers cannot distinguish a missing booking from a forbidden one via a
+// status-code difference.
+
+describe("report-no-show — unknown booking returns 404", () => {
+  it("returns 404 with { error: 'not_found' } when the booking does not exist", async () => {
+    // bookingExists: false makes the fake client return null for rent_buddy_bookings,
+    // simulating a POST against an unknown booking ID. The route must respond
+    // with 404 before reaching the isParty check so callers cannot probe
+    // booking existence from a 403 vs 404 difference.
+    const UNKNOWN_BOOKING_ID = "00000000-0000-0000-0000-000000000000";
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "in_progress",
+      bookingExists: false,
+    });
+    const res = await call(
+      "POST",
+      `/api/buddy-bookings/${UNKNOWN_BOOKING_ID}/report-no-show`,
+      fake,
+      { notes: "they never showed" },
+    );
+    assert.equal(res.status, 404, `expected 404 for unknown booking, got ${res.status}`);
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "not_found");
+  });
+});
+
 // ── Safety check-in history — non-party authorization ────────────────────────
 //
 // GET /api/rent-a-buddy/bookings/:bookingId/events (alias: /api/buddy-bookings/:id/events)
