@@ -503,6 +503,42 @@ describe("booking events (check-in history) — non-party receives 403", () => {
     assert.equal(body.error, "forbidden");
     // No safety rows should have been read — the 403 fires before the DB fetch.
   });
+
+  it("returns 200 and an events array when the traveler calls GET /api/buddy-bookings/:id/events", async () => {
+    // TRAVELER_ID matches booking.traveler_id so isParty is true without needing
+    // a rent_buddy_profiles row (completingUserHasBuddyProfile defaults to false).
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: false,
+    });
+    const res = await call(
+      "GET",
+      `/api/buddy-bookings/${BOOKING_ID}/events`,
+      fake,
+    );
+    assert.equal(res.status, 200, "traveler must receive 200");
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.events), "response must include an events array");
+  });
+
+  it("returns 200 and an events array when the buddy calls GET /api/buddy-bookings/:id/events", async () => {
+    // BUDDY_USER_ID's rent_buddy_profiles row has id=BP_ID which matches
+    // booking.buddy_id, so isParty evaluates to true via the buddy branch.
+    const fake = makeFakeClient({
+      userId: BUDDY_USER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: true,
+    });
+    const res = await call(
+      "GET",
+      `/api/buddy-bookings/${BOOKING_ID}/events`,
+      fake,
+    );
+    assert.equal(res.status, 200, "buddy must receive 200");
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.events), "response must include an events array");
+  });
 });
 
 describe("complete — non-party receives 403", () => {
