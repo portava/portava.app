@@ -583,6 +583,27 @@ describe("complete — non-party receives 403", () => {
     const body = (await res.json()) as any;
     assert.equal(body.error, "forbidden");
   });
+
+  it("returns 404 with { error: 'not_found' } when the booking does not exist", async () => {
+    // bookingExists: false makes the fake client return null for the booking
+    // lookup, simulating a POST to an unknown booking ID. The route must
+    // respond with 404 before reaching the isParty or status checks, so
+    // callers cannot infer booking existence from a 403 vs 404 difference.
+    const UNKNOWN_BOOKING_ID = "00000000-0000-0000-0000-000000000000";
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "in_progress",
+      bookingExists: false,
+    });
+    const res = await call(
+      "POST",
+      `/api/buddy-bookings/${UNKNOWN_BOOKING_ID}/complete`,
+      fake,
+    );
+    assert.equal(res.status, 404, `expected 404 for unknown booking, got ${res.status}`);
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "not_found");
+  });
 });
 
 describe("cancel — non-party receives 403", () => {
@@ -602,6 +623,27 @@ describe("cancel — non-party receives 403", () => {
     assert.equal(res.status, 403, "non-party must be rejected with 403");
     const body = (await res.json()) as any;
     assert.equal(body.error, "forbidden");
+  });
+
+  it("returns 404 with { error: 'not_found' } when the booking does not exist", async () => {
+    // bookingExists: false makes the fake client return null for the booking
+    // lookup, simulating a POST to an unknown booking ID. The route must
+    // respond with 404 before reaching the isParty or status checks, so
+    // callers cannot infer booking existence from a 403 vs 404 difference.
+    const UNKNOWN_BOOKING_ID = "00000000-0000-0000-0000-000000000000";
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "in_progress",
+      bookingExists: false,
+    });
+    const res = await call(
+      "POST",
+      `/api/buddy-bookings/${UNKNOWN_BOOKING_ID}/cancel`,
+      fake,
+    );
+    assert.equal(res.status, 404, `expected 404 for unknown booking, got ${res.status}`);
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "not_found");
   });
 });
 
