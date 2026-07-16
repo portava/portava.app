@@ -230,6 +230,12 @@ const OWNERSHIP_PAGE_SIZE = 1_000;
  * have a city but no country. Shared by the manual backfill script and the
  * periodic sweep.
  *
+ * NOTE (verified 2026-07-16 against live information_schema): neither
+ * user_stamps nor passport_stamps carries a `country_code` column — only
+ * `country` (text, nullable). The backfill therefore sets only `country`.
+ * Do NOT add a `country_code` field to the update payload; PGRST204 would
+ * fail the entire batch update if the column doesn't exist.
+ *
  * Scans ALL candidate rows via keyset pagination (ordered by id) so rows with
  * unresolvable cities can never starve later resolvable rows out of a run.
  * `maxBackfillsPerTable` bounds only the number of rows *updated* per table
