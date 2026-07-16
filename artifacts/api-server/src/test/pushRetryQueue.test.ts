@@ -48,10 +48,11 @@ const BASE_PAYLOAD = { title: "Retry Test", body: "Push retry queue unit test" }
 // eq("status","processing") naturally yields [] because test rows start as "queued".
 
 interface UpdateCall {
-  table:    string;
-  patch:    Record<string, unknown>;
-  filters:  Record<string, unknown>;
+  table:     string;
+  patch:     Record<string, unknown>;
+  filters:   Record<string, unknown>;
   inFilters: Record<string, unknown[]>;
+  ltFilters: Record<string, unknown>;
 }
 
 interface DeleteCall {
@@ -73,6 +74,8 @@ function makeFakeClient(queueRows: Record<string, unknown>[] = []) {
     const eqFilters:  Record<string, unknown>   = {};
     const inFilters:  Record<string, unknown[]>  = {};
 
+    const ltFilters: Record<string, unknown>  = {};
+
     const b: Record<string, unknown> = {
       select(_cols?: string)          { hasSelect = true; return b; },
       insert(row: unknown)            {
@@ -87,7 +90,7 @@ function makeFakeClient(queueRows: Record<string, unknown>[] = []) {
       eq(col: string, val: unknown)   { eqFilters[col] = val; return b; },
       in(col: string, vals: unknown[]) { inFilters[col] = vals; return b; },
       neq()                           { return b; },
-      lt()                            { return b; },
+      lt(col: string, val: unknown)   { ltFilters[col] = val; return b; },
       lte()                           { return b; },
       then(onF: (v: unknown) => unknown, onR: (e: unknown) => unknown) {
         return resolve().then(onF, onR);
@@ -110,10 +113,11 @@ function makeFakeClient(queueRows: Record<string, unknown>[] = []) {
       // UPDATE
       if (pendingUpdate !== null) {
         updateCalls.push({
-          table:    tableName,
-          patch:    pendingUpdate,
-          filters:  { ...eqFilters },
+          table:     tableName,
+          patch:     pendingUpdate,
+          filters:   { ...eqFilters },
           inFilters: { ...inFilters },
+          ltFilters: { ...ltFilters },
         });
 
         // The claim step: UPDATE push_retry_queue … .eq("status","queued") … .select()
@@ -1221,6 +1225,61 @@ describe("PushRetryQueue.recoverStaleProcessing() — stale row reset", () => {
       recoveryUpdate.patch["attempt_count"],
       undefined,
       "recovery patch must NOT include attempt_count — stale row reset must not consume a retry attempt",
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 10b — Stale 'processing' recovery: within-threshold row must NOT be reset
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("PushRetryQueue.recoverStaleProcessing() — within-threshold row left alone", () => {
+  it("applies lt('updated_at', staleThreshold) with a cutoff ≈ now − 2 min, leaving a 30-second-old row untouched", async () => {
+    // We only want to verify the cutoff timestamp passed to .lt(); no queued
+    // rows are needed because we are not testing the claim/process path.
+    const client = makeFakeClient([]);
+    const queue  = new PushRetryQueue(client as never);
+
+    const before = Date.now();
+    await queue.processQueue();
+    const after  = Date.now();
+
+    // recoverStaleProcessing() must issue an UPDATE with eq("status","processing")
+    const recoveryUpdate = client.updateCalls.find(
+      (c) => c.table === "push_retry_queue" && c.filters["status"] === "processing",
+    );
+    assert.ok(
+      recoveryUpdate,
+      "recoverStaleProcessing must issue an UPDATE on push_retry_queue filtered by status='processing'",
+    );
+
+    // The lt("updated_at", staleThreshold) filter must be present and carry
+    // a cutoff of approximately now − 2 minutes (STALE_PROCESSING_THRESHOLD_MS).
+    const cutoffRaw = recoveryUpdate.ltFilters["updated_at"];
+    assert.ok(
+      cutoffRaw !== undefined,
+      "recoverStaleProcessing must pass an lt('updated_at', ...) filter so fresh rows are excluded",
+    );
+
+    const cutoffMs = new Date(cutoffRaw as string).getTime();
+
+    // The cutoff must be ≈ (now − 2 min).  Allow ±500 ms clock slop.
+    const THRESHOLD_MS = 2 * 60 * 1_000;
+    const expectedMin  = before - THRESHOLD_MS - 500;
+    const expectedMax  = after  - THRESHOLD_MS + 500;
+
+    assert.ok(
+      cutoffMs >= expectedMin && cutoffMs <= expectedMax,
+      `lt cutoff must be ≈ now−2min; got ${cutoffRaw} ` +
+      `(expected range ${new Date(expectedMin).toISOString()}–${new Date(expectedMax).toISOString()})`,
+    );
+
+    // Demonstrate what the filter means: a row updated only 30 seconds ago
+    // has updated_at > cutoff, so lt("updated_at", cutoff) would NOT match it.
+    const thirtySecondsAgoMs = Date.now() - 30_000;
+    assert.ok(
+      thirtySecondsAgoMs > cutoffMs,
+      "a row updated 30 seconds ago must be newer than the stale cutoff — lt() would not match it",
     );
   });
 });
