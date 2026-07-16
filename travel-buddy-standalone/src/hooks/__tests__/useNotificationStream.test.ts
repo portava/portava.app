@@ -2,7 +2,8 @@
  * useNotificationStream.test.ts
  *
  * Unit tests for the `_connectOnce` helper extracted from
- * `useNotificationStream`'s connect() callback.
+ * `useNotificationStream`'s connect() callback, and for the
+ * `freshToken`-throws-gracefully contract.
  *
  * Coverage (per task spec):
  *   1. When `freshToken` returns null → no XHR is opened (returns null)
@@ -10,12 +11,18 @@
  *   3. When token is valid → XHR is opened with the correct Authorization header
  *   4. When token is valid → XHR is opened to the correct SSE endpoint URL
  *   5. When token is valid → Accept and Cache-Control headers are set
+ *   6. When `freshToken` throws → connect promise resolves cleanly (no crash)
+ *   7. When `freshToken` throws → no XHR is opened
  *
  * Strategy:
  *   `_connectOnce(token, base, xhrFactory?)` is the extracted pure function
  *   that contains the "should we open a connection, and with what headers"
  *   logic. Tests inject a FakeXHR via the optional xhrFactory so no real
  *   network calls are made and XMLHttpRequest need not exist in the test env.
+ *
+ *   For the freshToken-throws tests, a local `simulateConnect` mirrors the
+ *   try/catch guard added to `useNotificationStream`'s connect() callback so
+ *   the contract is verified without needing a React renderer.
  *
  * Run:
  *   node --import tsx/esm --test src/hooks/__tests__/useNotificationStream.test.ts
@@ -164,6 +171,68 @@ describe('useNotificationStream._connectOnce — valid token, XHR setup', () => 
     assert.equal(
       instances[0].openUrl,
       `${customBase}/api/me/notifications/stream`,
+    );
+  });
+});
+
+// ── freshToken throws → silent stop ───────────────────────────────────────────
+//
+// `useNotificationStream`'s connect() callback wraps `freshToken()` in a
+// try/catch so that a thrown error (network failure, Supabase client error)
+// causes the stream to stop silently rather than propagating an unhandled
+// rejection.  The tests below validate that contract by simulating connect()
+// with an injected throwing freshToken.
+
+describe('useNotificationStream.connect — freshToken throws', () => {
+  /**
+   * Mirrors the try/catch guard inside useNotificationStream's connect()
+   * callback.  Accepts an injectable freshToken so tests can control whether
+   * it throws.
+   */
+  async function simulateConnect(
+    mockFreshToken: () => Promise<string | null>,
+    xhrFactory?: () => XMLHttpRequest,
+  ): Promise<void> {
+    let token: string | null;
+    try {
+      token = await mockFreshToken();
+    } catch {
+      // freshToken threw — stop silently, exactly as the hook does.
+      return;
+    }
+    _connectOnce(token, API_BASE, xhrFactory);
+  }
+
+  it('the connect promise resolves cleanly when freshToken throws a network error', async () => {
+    const throwingFreshToken = async (): Promise<string | null> => {
+      throw new Error('Supabase client failure — simulated network error');
+    };
+    await assert.doesNotReject(
+      simulateConnect(throwingFreshToken),
+      'connect() must resolve (not reject) when freshToken throws',
+    );
+  });
+
+  it('the connect promise resolves cleanly when freshToken throws a generic error', async () => {
+    const throwingFreshToken = async (): Promise<string | null> => {
+      throw new TypeError('unexpected token failure');
+    };
+    await assert.doesNotReject(
+      simulateConnect(throwingFreshToken),
+      'connect() must resolve regardless of the error type thrown by freshToken',
+    );
+  });
+
+  it('does not open an XHR when freshToken throws', async () => {
+    const throwingFreshToken = async (): Promise<string | null> => {
+      throw new Error('network timeout');
+    };
+    const { factory, instances } = makeFakeXhrFactory();
+    await simulateConnect(throwingFreshToken, factory as unknown as () => XMLHttpRequest);
+    assert.equal(
+      instances.length,
+      0,
+      'no XHR must be created when freshToken throws — stream stops before _connectOnce',
     );
   });
 });

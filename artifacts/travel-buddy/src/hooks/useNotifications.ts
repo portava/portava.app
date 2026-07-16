@@ -175,7 +175,13 @@ export function useNotificationStream() {
     if (!activeRef.current) return;
     if (appStateRef.current !== 'active') return;
 
-    const token = await freshToken();
+    let token: string | null;
+    try {
+      token = await freshToken();
+    } catch {
+      // freshToken threw (network error, Supabase client failure) — stop silently.
+      return;
+    }
     const base = process.env.EXPO_PUBLIC_API_BASE_URL ?? null;
 
     xhrRef.current?.abort();
