@@ -2,7 +2,7 @@
  * Emergency Contacts mobile service.
  * Profile-level contacts managed from Settings → Emergency Contacts.
  */
-import { supabase } from '../lib/supabase.ts';
+import { supabase } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';

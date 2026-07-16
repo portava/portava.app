@@ -5,7 +5,7 @@
  * coordinate coarsening (city centroid or ~2 km grid). Coordinates received
  * here are already safe to render as-is.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 function apiBase(): string {

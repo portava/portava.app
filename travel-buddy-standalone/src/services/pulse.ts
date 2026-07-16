@@ -2,8 +2,8 @@
  * Pulse service — calls /api/pulse and returns posts + place recommendation cards.
  * This is the primary data source for the Pulse Wall; the static mock feed is not used.
  */
-import { supabase } from '../lib/supabase.ts';
-import type { PulseFeedItem } from '../types/models.ts';
+import { supabase } from '../lib/supabase';
+import type { PulseFeedItem } from '../types/models';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';

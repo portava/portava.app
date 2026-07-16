@@ -13,7 +13,7 @@ import type {
   Weekday,
   CityEvent,
   TripWindow,
-} from '../types/models.ts';
+} from '../types/models';
 
 const WEEKDAYS: Weekday[] = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 

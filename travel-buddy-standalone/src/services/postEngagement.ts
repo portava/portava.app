@@ -4,7 +4,7 @@
  * All mutations go through the API server (bearer token auth).
  * Mirrors the pattern from posts.ts: never call supabase directly.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
