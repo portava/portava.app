@@ -2212,13 +2212,17 @@ describe("Rent a Buddy — rebook", () => {
     assert.equal(r.body.booking?.status, "pending");
   });
 
-  it("rebook without startTime returns 400", async () => {
+  it("rebook without startTime succeeds and inherits original start_time (201)", async () => {
     setupRebookState("completed");
+    // Seed a start_time on the original so we can verify it is carried forward.
+    state.bookings![ORIG_BOOKING_ID].start_time = "09:00";
     const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
       bookingDate: FUTURE_DATE,
+      // startTime intentionally omitted — server must fall back to original
     });
-    assert.equal(r.status, 400, JSON.stringify(r.body));
-    assert.equal(r.body.error, "invalid_payload");
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.ok(r.body.bookingId, "should return new bookingId");
+    assert.equal(r.body.booking?.start_time, "09:00", "should inherit original start_time");
   });
 
   it("rebook blocked when buddy marked unavailable on the requested date", async () => {

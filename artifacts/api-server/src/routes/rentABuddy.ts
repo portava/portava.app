@@ -6322,9 +6322,9 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => 
   if (!bookingDate) {
     return res.status(400).json({ error: "invalid_payload", message: "bookingDate is required to rebook." });
   }
-  if (!startTime) {
-    return res.status(400).json({ error: "invalid_payload", message: "startTime is required to rebook." });
-  }
+  // startTime is optional — when omitted the new booking inherits the original
+  // booking's start_time (see insert below). Clients may omit it to carry the
+  // same time slot forward without having to re-send it.
 
   const { data: original } = await serviceClient
     .from("rent_buddy_bookings")
