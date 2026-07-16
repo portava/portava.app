@@ -163,6 +163,48 @@ describe("PATCH /api/me/profile under schema drift (missing newer columns)", () 
     // displayName, which also writes the base `name` column).
     const r = await patchProfile({ coverUrl: "https://example.com/c.jpg" });
     assert.notEqual(r.status, 200, "a write that saves nothing must not return 200");
+    const body = await r.json() as any;
+    assert.match(JSON.stringify(body), /coverUrl/, "error should name the unsaved field");
     assert.equal(client.__updates.length, 0);
+  });
+
+  it("partial save returns unsavedFields listing exactly what was dropped", async () => {
+    const client = makeDriftedClient();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await patchProfile({ bio: "kept bio", coverUrl: "https://example.com/c.jpg" });
+    assert.equal(r.status, 200, "base column still saves");
+    const body = await r.json() as any;
+    assert.deepEqual(body.unsavedFields, ["coverUrl"], "response must list the fields that were not saved");
+    assert.match(body.warning ?? "", /coverUrl/, "warning message should name the unsaved field");
+    assert.equal(client.__updates.length, 1);
+    assert.equal(client.__updates[0].patch.bio, "kept bio");
+    assert.ok(!("cover_photo_url" in client.__updates[0].patch));
+  });
+
+  it("displayName is NOT reported unsaved when the base name column still persists it", async () => {
+    const client = makeDriftedClient();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await patchProfile({ displayName: "New Name" });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.equal(body.unsavedFields, undefined, "display_name stripped but `name` saved — not a partial save");
+    assert.equal(client.__updates.length, 1);
+    assert.equal(client.__updates[0].patch.name, "New Name");
+  });
+
+  it("fully successful saves carry no unsavedFields or warning", async () => {
+    const client = makeDriftedClient();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await patchProfile({ bio: "just a bio" });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.equal(body.unsavedFields, undefined);
+    assert.equal(body.warning, undefined);
   });
 });

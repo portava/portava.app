@@ -500,30 +500,39 @@ router.patch("/me/profile", async (req, res) => {
     // The DB schema is missing one or more newer columns (schema drift).
     // Retry with only the base columns — but never silently drop fields the
     // client explicitly asked to change.
-    const FALLBACK_STRIPPED_COLUMNS = [
-      "display_name",
-      "spoken_languages",
-      "default_language",
-      "travel_styles",
-      "travel_pace",
-      "budget_style",
-      "travel_group_style",
-      "looking_for",
-      "comfort_level",
-      "availability_tags",
-      "planning_style",
-      "public_social_links",
-      "cover_photo_url",
-      "passport_section_order",
-    ];
+    // Column → client-facing field name, for reporting which requested fields
+    // could not be saved by the fallback write.
+    const FALLBACK_STRIPPED_COLUMNS: Record<string, string> = {
+      display_name: "displayName",
+      spoken_languages: "spokenLanguages",
+      default_language: "defaultLanguage",
+      travel_styles: "travelStyles",
+      travel_pace: "travelPace",
+      budget_style: "budgetStyle",
+      travel_group_style: "travelGroupStyle",
+      looking_for: "lookingFor",
+      comfort_level: "comfortLevel",
+      availability_tags: "availabilityTags",
+      planning_style: "planningStyle",
+      public_social_links: "publicSocialLinks",
+      cover_photo_url: "coverUrl",
+      passport_section_order: "passportSectionOrder",
+    };
     const safeRow = { ...row };
     const stripped: string[] = [];
-    for (const col of FALLBACK_STRIPPED_COLUMNS) {
+    for (const col of Object.keys(FALLBACK_STRIPPED_COLUMNS)) {
       if (col in safeRow) {
         stripped.push(col);
         delete safeRow[col];
       }
     }
+    // Fields the client asked to change that will NOT be persisted by the
+    // fallback write. display_name is exempt when the base `name` column is
+    // still being written — mapProfile falls back to `name`, so the display
+    // name is effectively saved.
+    const unsavedFields = stripped
+      .filter((col) => !(col === "display_name" && "name" in safeRow))
+      .map((col) => FALLBACK_STRIPPED_COLUMNS[col]);
 
     // passport_section_order saves must never silently no-op: if the column
     // is missing from the live schema, surface a real error instead of
@@ -551,7 +560,11 @@ router.patch("/me/profile", async (req, res) => {
     if (Object.keys(safeRow).length === 0) {
       // Everything the client asked to change was stripped — nothing would be
       // saved, so a 200 here would be a lie.
-      sendError(res, "db_error", "Could not save profile: the database is missing the required column(s) for every requested field (schema drift).");
+      sendError(
+        res,
+        "db_error",
+        `Could not save profile: the database is missing the required column(s) for every requested field (schema drift). Fields not saved: ${unsavedFields.join(", ")}.`,
+      );
       return;
     }
 
@@ -561,6 +574,17 @@ router.patch("/me/profile", async (req, res) => {
       .eq("id", user.id)
       .select(PROFILE_COLUMNS_FALLBACK)
       .single());
+
+    if (!updateError && unsavedFields.length > 0) {
+      // Partial success: base columns saved, but some requested fields were
+      // dropped by the fallback. Tell the client exactly which ones.
+      res.status(200).json({
+        ...mapProfile(updated),
+        unsavedFields,
+        warning: `Some fields could not be saved because the database is missing their columns (schema drift): ${unsavedFields.join(", ")}.`,
+      });
+      return;
+    }
   }
 
   if (updateError) {
