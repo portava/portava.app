@@ -586,11 +586,31 @@ router.patch("/admin/stamps/catalog/:id/reject", async (req, res) => {
     .from("universal_stamp_catalog")
     .update({ status: "rejected", updated_at: new Date().toISOString() })
     .eq("id", id)
+    .neq("status", "rejected") // Guard: skip update (and audit log) if already rejected
     .select()
     .maybeSingle();
 
-  if (error || !data) {
-    sendError(res, "not_found", "Catalog entry not found");
+  if (error) {
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  if (!data) {
+    // Either the entry doesn't exist or it was already rejected.
+    // Fetch the current row to distinguish the two cases.
+    const { data: existing } = await sc
+      .from("universal_stamp_catalog")
+      .select()
+      .eq("id", id)
+      .maybeSingle();
+
+    if (!existing) {
+      sendError(res, "not_found", "Catalog entry not found");
+      return;
+    }
+
+    // Already rejected — idempotent success, no duplicate audit log.
+    res.json({ entry: existing });
     return;
   }
 
@@ -827,12 +847,19 @@ router.post("/admin/stamps/catalog/:id/merge-into/:targetId", async (req, res) =
 
   // Verify both exist
   const [sourceRes, targetRes] = await Promise.all([
-    sc.from("universal_stamp_catalog").select("id, canonical_location_key, stamp_type").eq("id", sourceId).maybeSingle(),
+    sc.from("universal_stamp_catalog").select("id, canonical_location_key, stamp_type, status").eq("id", sourceId).maybeSingle(),
     sc.from("universal_stamp_catalog").select("id").eq("id", targetId).maybeSingle(),
   ]);
 
   if (!sourceRes.data) { sendError(res, "not_found", "Source catalog entry not found"); return; }
   if (!targetRes.data) { sendError(res, "not_found", "Target catalog entry not found"); return; }
+
+  // Guard: if source was already archived by a prior merge call, return success
+  // without re-running the re-point or writing a duplicate audit entry.
+  if ((sourceRes.data as any).status === "archived") {
+    res.json({ ok: true, mergedIntoId: targetId });
+    return;
+  }
 
   // Re-point all user ownership records to target
   await Promise.all([
