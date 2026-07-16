@@ -321,6 +321,11 @@ export default function BuddyDashboard() {
           onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard/availability' as any)}
         />
         <NavTile
+          label="Meetup spot"
+          sub="Pin the approximate area where you meet travellers"
+          onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard/meetup-pin' as any)}
+        />
+        <NavTile
           label="Packages"
           sub="Create and manage your service packages"
           onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard/packages' as any)}
