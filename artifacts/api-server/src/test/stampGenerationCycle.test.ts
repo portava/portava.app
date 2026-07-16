@@ -2097,6 +2097,168 @@ describe("runGenerationCycle — orphaned paths do not accumulate across retries
   });
 });
 
+// ── cleanup_error_paths accumulates across retries (DB-level) ─────────────────
+
+describe("runGenerationCycle — cleanup_error_paths accumulates on the queue row across retries", () => {
+  it("appends new orphaned paths to existing cleanup_error_paths rather than overwriting them", async () => {
+    // Each cycle: 1st upload succeeds, 2nd throws → generation error path fires.
+    // storage.remove() throws every time → orphan_cleanup_error fires each cycle.
+    //
+    // After two cycles the DB column must hold paths from BOTH cycles combined,
+    // not just the most recent one.
+    let storedCleanupPaths: string[] | null = null;
+    let uploadCallTotal = 0;
+
+    const { sc, storageCalls } = makeFakeClientWithStorage({
+      onUpload(_path, _buf) {
+        uploadCallTotal++;
+        // Fail the 2nd upload of every pair so exactly one path is orphaned per cycle.
+        if (uploadCallTotal % 2 === 0) throw new Error("Storage upload failed: quota exceeded");
+      },
+      onRemove(_paths) {
+        throw new Error("Storage remove failed: bucket unreachable");
+      },
+    });
+
+    // Patch sc.from to be stateful for cleanup_error_paths:
+    //   - select("cleanup_error_paths")…maybeSingle() returns the current stored state
+    //   - update({ cleanup_error_paths })  updates the stored state
+    // This lets persistCleanupError read what a previous cycle wrote.
+    const originalFrom = sc.from.bind(sc);
+    sc.from = function (table: string) {
+      const proxy = originalFrom(table);
+      if (table === "stamp_generation_queue") {
+        const originalSelect = proxy.select.bind(proxy);
+        proxy.select = function (cols: string) {
+          if (cols === "cleanup_error_paths") {
+            const b: any = {
+              eq() { return b; },
+              maybeSingle() {
+                return Promise.resolve({
+                  data:  { cleanup_error_paths: storedCleanupPaths },
+                  error: null,
+                });
+              },
+            };
+            return b;
+          }
+          return originalSelect(cols);
+        };
+
+        const originalUpdate = proxy.update.bind(proxy);
+        proxy.update = function (payload: any) {
+          if ("cleanup_error_paths" in payload) {
+            storedCleanupPaths = payload.cleanup_error_paths;
+          }
+          return originalUpdate(payload);
+        };
+      }
+      return proxy;
+    };
+
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    // Cycle 1: orphaned path written → [pathA]
+    const result1 = await runGenerationCycle();
+    // Cycle 2: reads [pathA], merges with pathB → [pathA, pathB]
+    const result2 = await runGenerationCycle();
+
+    assert.equal(result1.processed, false, "cycle 1 must report failure");
+    assert.equal(result2.processed, false, "cycle 2 must report failure");
+
+    // Each cycle uploaded exactly one file before the batch failed.
+    assert.equal(storageCalls.length, 2, "exactly one upload must have succeeded per cycle");
+
+    // The DB column must hold both paths, not just the last cycle's.
+    assert.ok(storedCleanupPaths !== null, "cleanup_error_paths must be persisted on the queue row");
+    assert.equal(
+      storedCleanupPaths!.length,
+      2,
+      "cleanup_error_paths must accumulate paths from both cycles (not overwrite)",
+    );
+    assert.ok(
+      storedCleanupPaths!.includes(storageCalls[0].path),
+      `must include cycle 1 path (${storageCalls[0].path}), got: ${JSON.stringify(storedCleanupPaths)}`,
+    );
+    assert.ok(
+      storedCleanupPaths!.includes(storageCalls[1].path),
+      `must include cycle 2 path (${storageCalls[1].path}), got: ${JSON.stringify(storedCleanupPaths)}`,
+    );
+  });
+});
+
+describe("runGenerationCycle — removeErr path persists cleanup_error_paths to the DB", () => {
+  it("writes cleanup_error_paths when remove() resolves with an error object (not just when it throws)", async () => {
+    // remove() resolves with { error: { message: "..." } } — the silent-error path.
+    // The worker must persist cleanup_error_paths to the queue row, not just log.
+    let storedCleanupPaths: string[] | null = null;
+    let uploadCall = 0;
+    const removeErrorMessage = "bucket not found";
+
+    const { sc, storageCalls } = makeFakeClientWithStorage({
+      onUpload(_path, _buf) {
+        uploadCall++;
+        if (uploadCall === 2) throw new Error("Storage upload failed: server error");
+      },
+      removeError: { message: removeErrorMessage },
+    });
+
+    // Patch sc.from to track cleanup_error_paths writes.
+    const originalFrom = sc.from.bind(sc);
+    sc.from = function (table: string) {
+      const proxy = originalFrom(table);
+      if (table === "stamp_generation_queue") {
+        const originalSelect = proxy.select.bind(proxy);
+        proxy.select = function (cols: string) {
+          if (cols === "cleanup_error_paths") {
+            const b: any = {
+              eq() { return b; },
+              maybeSingle() {
+                return Promise.resolve({
+                  data:  { cleanup_error_paths: storedCleanupPaths },
+                  error: null,
+                });
+              },
+            };
+            return b;
+          }
+          return originalSelect(cols);
+        };
+
+        const originalUpdate = proxy.update.bind(proxy);
+        proxy.update = function (payload: any) {
+          if ("cleanup_error_paths" in payload) {
+            storedCleanupPaths = payload.cleanup_error_paths;
+          }
+          return originalUpdate(payload);
+        };
+      }
+      return proxy;
+    };
+
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false, "cycle must report failure");
+    assert.equal(storageCalls.length, 1, "first upload must have succeeded before the second failed");
+
+    // cleanup_error_paths must have been written to the DB even though remove()
+    // resolved (did not throw).
+    assert.ok(storedCleanupPaths !== null, "cleanup_error_paths must be persisted even when remove() resolves with an error");
+    assert.equal(storedCleanupPaths!.length, 1, "must record exactly one orphaned path");
+    assert.equal(
+      storedCleanupPaths![0],
+      storageCalls[0].path,
+      "persisted path must match the orphaned upload",
+    );
+  });
+});
+
 // ── Null city in catalog row ───────────────────────────────────────────────────
 
 describe("runGenerationCycle — catalog row with null city", () => {

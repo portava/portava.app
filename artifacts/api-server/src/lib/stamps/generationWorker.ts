@@ -291,15 +291,17 @@ export async function requeueStaleFailedJobs(scOverride?: any): Promise<number> 
     const { data: updated, error: updErr } = await sc
       .from("stamp_generation_queue")
       .update({
-        status:              "queued",
-        attempts:            0,
-        last_error:          null,
-        cleanup_error:       null,
-        cleanup_error_paths: null,
-        locked_until:        null,
-        locked_by:           null,
-        requeue_count:       count + 1,
-        updated_at:          new Date().toISOString(),
+        status:        "queued",
+        attempts:      0,
+        last_error:    null,
+        // cleanup_error and cleanup_error_paths are intentionally preserved:
+        // orphaned files remain in the bucket even after re-queue and ops must
+        // be able to enumerate them from the admin UI until they manually
+        // remove the files and the admin clears the error.
+        locked_until:  null,
+        locked_by:     null,
+        requeue_count: count + 1,
+        updated_at:    new Date().toISOString(),
       })
       .in("id", ids)
       .eq("status", "retryable_failed")
@@ -375,6 +377,60 @@ async function uploadToStorage(
     .getPublicUrl(path);
 
   return urlData?.publicUrl ?? path;
+}
+
+// ── Orphan-cleanup error persistence ─────────────────────────────────────────
+
+/**
+ * Reads the existing `cleanup_error_paths` from the queue row, merges the new
+ * failed paths into the accumulated list (deduplicating), then writes the
+ * combined list back. This ensures paths from previous failed cleanup attempts
+ * are never silently discarded across retries or worker restarts.
+ *
+ * Errors thrown by the DB read/write are caught and logged so a secondary
+ * failure here never shadows the original generation error.
+ */
+async function persistCleanupError(
+  sc: any,
+  jobId: string,
+  errorMsg: string,
+  newPaths: string[],
+): Promise<void> {
+  try {
+    const { data: existing } = await sc
+      .from("stamp_generation_queue")
+      .select("cleanup_error_paths")
+      .eq("id", jobId)
+      .maybeSingle();
+
+    const existingPaths: string[] = (existing?.cleanup_error_paths ?? []) as string[];
+    // Deduplicate so the same path never appears twice even if two cleanup
+    // attempts race on a restarted worker.
+    const combined = [...new Set([...existingPaths, ...newPaths])];
+
+    const { error: ceErr } = await sc
+      .from("stamp_generation_queue")
+      .update({
+        cleanup_error:       errorMsg,
+        cleanup_error_paths: combined,
+        updated_at:          new Date().toISOString(),
+      })
+      .eq("id", jobId);
+
+    if (ceErr) {
+      console.error(JSON.stringify({
+        event:  "stamp.generation.cleanup_error_persist_failed",
+        job_id: jobId,
+        error:  ceErr.message,
+      }));
+    }
+  } catch (e: any) {
+    console.error(JSON.stringify({
+      event:  "stamp.generation.cleanup_error_persist_failed",
+      job_id: jobId,
+      error:  e?.message,
+    }));
+  }
 }
 
 // ── Single generation cycle ───────────────────────────────────────────────────
@@ -587,24 +643,9 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
             error:      removeErr?.message,
             paths:      uploadedStoragePaths,
           }));
-          // Record cleanup failure on the queue row so it surfaces in the
-          // admin UI (fire-and-forget — must not shadow the original error).
-          sc.from("stamp_generation_queue")
-            .update({
-              cleanup_error:       removeErr.message,
-              cleanup_error_paths: uploadedStoragePaths,
-              updated_at:          new Date().toISOString(),
-            })
-            .eq("id", jobId)
-            .then(({ error: ceErr }: { error: any }) => {
-              if (ceErr) {
-                console.error(JSON.stringify({
-                  event:  "stamp.generation.cleanup_error_persist_failed",
-                  job_id: jobId,
-                  error:  ceErr.message,
-                }));
-              }
-            });
+          // Accumulate orphaned paths on the queue row across retries and
+          // restarts so ops can enumerate them from the admin UI.
+          await persistCleanupError(sc, jobId, removeErr.message ?? String(removeErr), uploadedStoragePaths);
         } else {
           console.log(JSON.stringify({
             event:      "stamp.generation.orphan_cleanup",
@@ -622,25 +663,9 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
           error:      cleanupErrMsg,
           paths:      uploadedStoragePaths,
         }));
-        // Record cleanup failure on the queue row so it surfaces in the admin UI.
-        // We do this as a best-effort fire-and-forget; a failure here must not
-        // shadow the original generation error that caused the catch block.
-        sc.from("stamp_generation_queue")
-          .update({
-            cleanup_error:       cleanupErrMsg,
-            cleanup_error_paths: uploadedStoragePaths,
-            updated_at:          new Date().toISOString(),
-          })
-          .eq("id", jobId)
-          .then(({ error: ceErr }: { error: any }) => {
-            if (ceErr) {
-              console.error(JSON.stringify({
-                event:  "stamp.generation.cleanup_error_persist_failed",
-                job_id: jobId,
-                error:  ceErr.message,
-              }));
-            }
-          });
+        // Accumulate orphaned paths on the queue row across retries and
+        // restarts so ops can enumerate them from the admin UI.
+        await persistCleanupError(sc, jobId, cleanupErrMsg, uploadedStoragePaths);
       }
     }
 
