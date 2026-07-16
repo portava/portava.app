@@ -12,8 +12,8 @@
  */
 import React, { useState } from 'react';
 import { View, Image, Text, StyleSheet } from 'react-native';
-import { StampArtwork } from '../StampArtwork';
-import type { PassportStamp } from '../../types/models';
+import { StampArtwork } from '../StampArtwork.tsx';
+import type { PassportStamp } from '../../types/models.ts';
 
 interface Props {
   activeArtworkUrl?: string | null;

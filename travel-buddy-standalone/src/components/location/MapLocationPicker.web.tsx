@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { View, Text, TouchableOpacity, Modal, StyleSheet } from 'react-native';
-import type { MapLocationPickerProps } from './MapLocationPicker';
+import type { MapLocationPickerProps } from './MapLocationPicker.tsx';
 
 export function MapLocationPicker({ visible, onCancel }: MapLocationPickerProps) {
   return (

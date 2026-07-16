@@ -9,11 +9,11 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Heart, Search } from 'lucide-react-native';
-import { color, radius, space, type as t } from '../theme/tokens';
+import { color, radius, space, type as t } from '../theme/tokens.ts';
 import {
   getCloseFriends, addCloseFriend, removeCloseFriend,
   type CloseFriend,
-} from '../services/stories';
+} from '../services/stories.ts';
 
 interface Props {
   visible: boolean;

@@ -5,7 +5,7 @@
  * Purely visual: shared by inbox, conversation, group chat, and requests.
  */
 import type { TextStyle, ViewStyle } from 'react-native';
-import { color } from './tokens';
+import { color } from './tokens.ts';
 
 export const TG = {
   /** Screen background — soft off-white, distinct from Passport cream #F8F3E8 */

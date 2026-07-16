@@ -33,7 +33,7 @@
  *     intentionally NOT applied here, since it must be typechecked against the live
  *     project first.
  */
-import type { DiscoveryPlace } from '../../services/discovery';
+import type { DiscoveryPlace } from '../../services/discovery.ts';
 
 /** Provider-agnostic pin types Travel Buddy may render on the map later. */
 export type MapPinType =

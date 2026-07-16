@@ -5,7 +5,7 @@
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import Svg, { Defs, Pattern, Rect, Path, Line } from 'react-native-svg';
-import { PP } from '../../theme/passportTokens';
+import { PP } from '../../theme/passportTokens.ts';
 
 interface Props {
   opacity?: number;

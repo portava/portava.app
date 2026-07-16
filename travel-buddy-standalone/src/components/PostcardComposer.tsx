@@ -24,12 +24,12 @@ import {
   validatePostcardMedia,
   type PostcardVisibility,
   type UploadCancelRef,
-} from '../services/postcards';
-import { color, space, radius, type as t, shadow } from '../theme/tokens';
-import { GlobalPlacePicker } from './selectors/GlobalPlacePicker';
-import type { Place } from '../lib/location/placeTypes';
-import { StampPickerSheet } from './StampPickerSheet';
-import { StampOverlayBadge } from './StampOverlayBadge';
+} from '../services/postcards.ts';
+import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
+import type { Place } from '../lib/location/placeTypes.ts';
+import { StampPickerSheet } from './StampPickerSheet.tsx';
+import { StampOverlayBadge } from './StampOverlayBadge.tsx';
 import {
   clamp,
   clampOverlayPosition,
@@ -43,7 +43,7 @@ import {
   STAMP_OVERLAY_SCALE_STEP,
   STAMP_OVERLAY_STYLES,
   type StampOverlayDraft,
-} from '../lib/stampOverlay';
+} from '../lib/stampOverlay.ts';
 
 type Phase = 'pick' | 'uploading';
 

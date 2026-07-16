@@ -9,8 +9,8 @@ import {
 } from 'react-native';
 import { MapPin, CheckCircle2, Clock, Navigation, Info } from 'lucide-react-native';
 import * as Location from 'expo-location';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import { checkIn, type GeofenceData, type AttendanceStatus } from '../../services/geofence';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { checkIn, type GeofenceData, type AttendanceStatus } from '../../services/geofence.ts';
 
 // ── Status display ─────────────────────────────────────────────────────────────
 

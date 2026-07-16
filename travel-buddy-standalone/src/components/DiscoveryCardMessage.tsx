@@ -18,9 +18,9 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Compass, MapPin, Bookmark, CalendarPlus, ExternalLink } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens';
-import { TG } from '../theme/telegraphTokens';
-import { TripWishlistPicker, type AddToTripPayload } from './discovery/TripWishlistPicker';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { TG } from '../theme/telegraphTokens.ts';
+import { TripWishlistPicker, type AddToTripPayload } from './discovery/TripWishlistPicker.tsx';
 
 export interface DiscoveryCardPayload {
   sourceId: string;

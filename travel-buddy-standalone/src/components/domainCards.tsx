@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Sparkles, Info, MapPin, Plus, Bookmark } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow, icon, layout } from '../theme/tokens';
-import { TravelButton } from './primitives';
+import { color, space, radius, type as t, shadow, icon, layout } from '../theme/tokens.ts';
+import { TravelButton } from './primitives.tsx';
 
 /**
  * Domain cards used across Discovery / Pulse / Trip. Thin, token-driven.
@@ -101,8 +101,8 @@ const idc = StyleSheet.create({
 });
 
 /* Re-exports so all spec-named primitives resolve from one import site. */
-export { AvailabilityCard as AvailabilityStatusCard } from './AvailabilityCard';
-export { TrustChip } from './PassportSections';
-export { PassportStampCard } from './PassportStampCard';
-export { PassportInkStamp, PassportHeroBackdrop } from './PassportMarks';
-export { PostcardTile } from './PostcardTile';
+export { AvailabilityCard as AvailabilityStatusCard } from './AvailabilityCard.tsx';
+export { TrustChip } from './PassportSections.tsx';
+export { PassportStampCard } from './PassportStampCard.tsx';
+export { PassportInkStamp, PassportHeroBackdrop } from './PassportMarks.tsx';
+export { PostcardTile } from './PostcardTile.tsx';

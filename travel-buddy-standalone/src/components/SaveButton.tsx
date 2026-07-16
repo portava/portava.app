@@ -17,12 +17,12 @@ import {
   Pressable, StyleSheet, ActivityIndicator, Platform,
 } from 'react-native';
 import { Bookmark } from 'lucide-react-native';
-import type { EntityType } from '../services/collections';
-import { saveItem, unsaveItem, checkSaved } from '../services/collections';
-import { color } from '../theme/tokens';
-import { SaveToCollectionSheet } from './SaveToCollectionSheet';
-import { useSession } from '../context/SessionContext';
-import { getSaved, setSaved as writeSavedCache } from '../services/savedPostsCache';
+import type { EntityType } from '../services/collections.ts';
+import { saveItem, unsaveItem, checkSaved } from '../services/collections.ts';
+import { color } from '../theme/tokens.ts';
+import { SaveToCollectionSheet } from './SaveToCollectionSheet.tsx';
+import { useSession } from '../context/SessionContext.tsx';
+import { getSaved, setSaved as writeSavedCache } from '../services/savedPostsCache.ts';
 
 interface SaveButtonProps {
   entityType: EntityType;

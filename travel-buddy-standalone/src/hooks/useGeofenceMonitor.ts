@@ -14,7 +14,7 @@
  * Usage: call useGeofenceMonitor() once in app/(tabs)/_layout.tsx so it stays
  * mounted regardless of which tab is active.
  *
- * Prerequisite: import '../../src/tasks/geofenceExitTask' in app/_layout.tsx
+ * Prerequisite: import '../../src/tasks/geofenceExitTask.ts' in app/_layout.tsx
  * BEFORE any call to Location.startGeofencingAsync (TaskManager.defineTask must
  * be registered at module root first).
  */
@@ -22,8 +22,8 @@
 import { useEffect, useRef } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import * as Location from 'expo-location';
-import { getPendingPosts, exitGeofence, type PendingPostRow } from '../services/posts';
-import { GEOFENCE_EXIT_TASK } from '../tasks/geofenceExitTask';
+import { getPendingPosts, exitGeofence, type PendingPostRow } from '../services/posts.ts';
+import { GEOFENCE_EXIT_TASK } from '../tasks/geofenceExitTask.ts';
 
 const GPS_POLL_MS      = 30_000;       // foreground fallback: GPS check interval
 const POSTS_REFRESH_MS = 5 * 60_000;  // how often to refresh pending-posts list

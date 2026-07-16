@@ -1,8 +1,8 @@
 /**
  * Shared formatting helpers for Layover Mode UI.
  */
-import { color } from '../../theme/tokens';
-import type { LayoverTier } from '../../services/layover';
+import { color } from '../../theme/tokens.ts';
+import type { LayoverTier } from '../../services/layover.ts';
 
 /** Format an instant as HH:MM in the airport's timezone (falls back to UTC slice). */
 export function fmtClock(iso: string | Date | null | undefined, tz?: string | null): string {

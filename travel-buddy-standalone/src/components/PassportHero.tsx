@@ -2,13 +2,13 @@ import React from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import Svg, { Path, Defs, Pattern, Rect, Circle } from 'react-native-svg';
 import { Plane, MapPin, MoreHorizontal, Camera, ShieldCheck, Calendar } from 'lucide-react-native';
-import type { OwnProfile, PublicProfile } from '../types/models';
-import { PassportMonogramWatermark, PassportInkStamp, PassportHeroBackdrop } from './PassportMarks';
-import { isTravelBuddyVerified, getVerificationOwnerPrompt } from '../lib/verification';
-import { resolveAvatarUrl, fallbackInitials } from '../utils/identity';
-import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity';
-import { color, space, radius, type as t, shadow } from '../theme/tokens';
-import { HighlightRing } from './HighlightRing';
+import type { OwnProfile, PublicProfile } from '../types/models.ts';
+import { PassportMonogramWatermark, PassportInkStamp, PassportHeroBackdrop } from './PassportMarks.tsx';
+import { isTravelBuddyVerified, getVerificationOwnerPrompt } from '../lib/verification.ts';
+import { resolveAvatarUrl, fallbackInitials } from '../utils/identity.ts';
+import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
+import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { HighlightRing } from './HighlightRing.tsx';
 
 const INTEREST_LABEL: Record<string, string> = {
   nightlife: 'Nightlife', food: 'Food', beach: 'Beach', luxury: 'Luxury',

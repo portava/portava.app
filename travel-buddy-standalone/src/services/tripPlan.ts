@@ -1,5 +1,5 @@
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import type { TripPlanItem, TripPlanCategory, TripPlanItemStatus, TripPlanSourceType } from '../types/models';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
+import type { TripPlanItem, TripPlanCategory, TripPlanItemStatus, TripPlanSourceType } from '../types/models.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';

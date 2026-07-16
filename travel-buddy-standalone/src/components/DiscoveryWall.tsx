@@ -6,20 +6,20 @@ import {
   Compass, Search, SlidersHorizontal, Bookmark, MapPin, Plus, Sparkles, Info, ChevronRight,
   Gem, Share2, Route, Flag,
 } from 'lucide-react-native';
-import type { RouteStopDraft } from './RouteBuilderSheet';
-import type { DiscoveryItem } from '../data/discovery';
-import type { NeighborhoodVibe, TravelerPick, SavedDiscoveryItem } from '../data/discovery';
-import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
-import { usePlanPicker } from './PlanPickerController';
-import { TravelSectionHeader, TravelEmptyState } from './primitives';
-import { DiscoveryShareSheet } from './DiscoveryShareSheet';
-import type { DiscoverySharePayload } from './DiscoveryShareSheet';
-import { HighlightRing } from './HighlightRing';
-import { HighlightViewer } from './HighlightViewer';
-import { useHighlightRingState } from '../hooks/useHighlightRingState';
-import { saveCommunityPlace, reportCommunityPlace } from '../services/discovery';
-import { removeSaved } from '../services/discoveryBookmarks';
-import type { PlaceReportReason } from '../services/discovery';
+import type { RouteStopDraft } from './RouteBuilderSheet.tsx';
+import type { DiscoveryItem } from '../data/discovery.ts';
+import type { NeighborhoodVibe, TravelerPick, SavedDiscoveryItem } from '../data/discovery.ts';
+import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
+import { usePlanPicker } from './PlanPickerController.tsx';
+import { TravelSectionHeader, TravelEmptyState } from './primitives.tsx';
+import { DiscoveryShareSheet } from './DiscoveryShareSheet.tsx';
+import type { DiscoverySharePayload } from './DiscoveryShareSheet.tsx';
+import { HighlightRing } from './HighlightRing.tsx';
+import { HighlightViewer } from './HighlightViewer.tsx';
+import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
+import { saveCommunityPlace, reportCommunityPlace } from '../services/discovery.ts';
+import { removeSaved } from '../services/discoveryBookmarks.ts';
+import type { PlaceReportReason } from '../services/discovery.ts';
 
 // Module-level set so saved state survives card unmount/remount during scroll recycling.
 // Pre-populated by prefillSavedPlaceIds() on Discovery load so returning users

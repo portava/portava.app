@@ -746,6 +746,50 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "Nominatim called exactly once across both concurrent callers — dedup held after deletion-eviction");
   });
 
+  it("negative-cache entry (null result) skips the correction-check probe even after CORRECTION_CHECK_INTERVAL_MS — no DB round-trip", async () => {
+    // A cached null means the geocode previously failed (Nominatim returned nothing).
+    // The row was never written to the DB, so probing corrected_at would always
+    // return no data — a useless DB round-trip.  The geocoder must return null from
+    // cache without ever calling maybeSingle().
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      // Nominatim returns nothing — this is the "unknown city" path.
+      return { ok: true, json: async () => [] };
+    });
+
+    // No DB row exists for this city; readDbCache returns null.
+    let probeCallCount = 0;
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient(null, {
+        onCall: () => { probeCallCount++; },
+      }),
+    );
+
+    // First call: cache miss → Nominatim called → null result cached for 6 hours.
+    const first = await geocodeCityCountry("Atlantis");
+    assert.equal(first, null, "first call returns null (Nominatim found nothing)");
+    assert.equal(nominatimCalls, 1, "Nominatim called once on cache miss");
+    // probeCallCount may be 1 here due to readDbCache (the initial DB lookup before
+    // Nominatim is tried) — reset it so we only count probes after the warm cache hit.
+    probeCallCount = 0;
+
+    // Advance well past CORRECTION_CHECK_INTERVAL_MS — if the probe were triggered
+    // for null entries, it would fire now.
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 10_000);
+
+    // Second call: the negative-cache entry is still live (within 6-hour TTL).
+    // The code must return null directly, skipping the correction-check probe.
+    const second = await geocodeCityCountry("Atlantis");
+    assert.equal(second, null, "null is returned from the negative cache");
+    assert.equal(nominatimCalls, 1, "Nominatim NOT called again — null served from cache");
+    assert.equal(probeCallCount, 0,
+      "maybeSingle() probe must NOT be called for a cached null entry — no useful DB round-trip possible");
+  });
+
   it("tombstone hard-delete is guarded by deleted_at IS NOT NULL — a row revived before the DELETE survives", async () => {
     // Regression guard for a race condition: the sweep SELECTs tombstoned rows,
     // then hard-DELETEs them. Between those two operations an admin PUT can

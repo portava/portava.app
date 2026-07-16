@@ -31,16 +31,16 @@ import {
   X, MapPin, CalendarClock, Users, Check, ChevronDown, ChevronUp,
   Plus, Trash2, Search, ChevronRight,
 } from 'lucide-react-native';
-import { GlobalPlacePicker } from './selectors/GlobalPlacePicker';
-import { DatePickerField } from './DateTimePickerField';
+import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
+import { DatePickerField } from './DateTimePickerField.tsx';
 import {
   createMeetup, addTimeOption, getFrequentInvitees,
   type MeetupSummary, type TimeBlock, type MeetupVisibility, type FrequentInvitee,
-} from '../services/meetups';
+} from '../services/meetups.ts';
 import {
   getMyFriends, getTripInvitableUsers, getCircleInvitableUsers, type FriendUser,
-} from '../services/friends';
-import { color, space, radius, type as t } from '../theme/tokens';
+} from '../services/friends.ts';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

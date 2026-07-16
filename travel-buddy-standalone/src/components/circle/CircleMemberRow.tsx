@@ -2,10 +2,10 @@ import React, { useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { MessageCircle, User, MoreHorizontal } from 'lucide-react-native';
 import { router } from 'expo-router';
-import type { CircleMember } from '../../services/circle';
-import { blockUser } from '../../services/blocks';
-import { openDirectThread } from '../../services/messaging';
-import { color, radius, type as t } from '../../theme/tokens';
+import type { CircleMember } from '../../services/circle.ts';
+import { blockUser } from '../../services/blocks.ts';
+import { openDirectThread } from '../../services/messaging.ts';
+import { color, radius, type as t } from '../../theme/tokens.ts';
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; textColor: string }> = {
   active:     { label: 'Available',   bg: '#E8F5E9', textColor: '#2E7D32' },

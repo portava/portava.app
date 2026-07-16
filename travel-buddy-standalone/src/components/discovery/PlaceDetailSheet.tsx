@@ -3,11 +3,11 @@ import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Linking,
 } from 'react-native';
 import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star, ListPlus } from 'lucide-react-native';
-import type { DiscoveryPlace } from '../../services/discovery';
-import { checkSaved, toggleSave } from '../../services/collections';
-import { color, space, radius, type as t, shadow } from '../../theme/tokens';
-import { categoryColor } from './PlaceCard';
-import { TripWishlistPicker } from './TripWishlistPicker';
+import type { DiscoveryPlace } from '../../services/discovery.ts';
+import { checkSaved, toggleSave } from '../../services/collections.ts';
+import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import { categoryColor } from './PlaceCard.tsx';
+import { TripWishlistPicker } from './TripWishlistPicker.tsx';
 
 interface PlaceDetailSheetProps {
   place: DiscoveryPlace | null;
