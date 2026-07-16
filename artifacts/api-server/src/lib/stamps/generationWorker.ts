@@ -299,6 +299,10 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
 
   console.log(JSON.stringify({ event: "stamp.generation.started", job_id: jobId, catalog_id: catalogId }));
 
+  // Track storage paths uploaded in this batch so they can be deleted
+  // if the loop fails mid-way (preventing orphaned storage files).
+  const uploadedStoragePaths: string[] = [];
+
   try {
     // Load catalog entry
     const { data: catalogRow, error: catErr } = await sc
@@ -357,6 +361,8 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
         const buffer = await downloadImageBuffer(img.url);
         publicUrl   = await uploadToStorage(sc, catalogId, versionId, buffer);
         storagePath = `catalog/${catalogId}/${versionId}.png`;
+        // Track so we can clean up on failure later in this batch.
+        uploadedStoragePaths.push(storagePath);
       }
 
       versionInserts.push({
@@ -418,6 +424,27 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
       catalog_id: catalogId,
       error:      errorMsg,
     }));
+
+    // Clean up any files that were successfully uploaded before the failure so
+    // they don't become orphaned (no DB row will reference them).
+    if (uploadedStoragePaths.length > 0) {
+      try {
+        await sc.storage.from(STORAGE_BUCKET).remove(uploadedStoragePaths);
+        console.log(JSON.stringify({
+          event:      "stamp.generation.orphan_cleanup",
+          job_id:     jobId,
+          catalog_id: catalogId,
+          deleted:    uploadedStoragePaths.length,
+        }));
+      } catch (cleanupErr: any) {
+        console.error(JSON.stringify({
+          event:      "stamp.generation.orphan_cleanup_error",
+          job_id:     jobId,
+          catalog_id: catalogId,
+          error:      cleanupErr?.message,
+        }));
+      }
+    }
 
     // Increment attempts. Known-permanent errors (e.g. deleted catalog entry)
     // skip retries entirely and go straight to terminal permanently_failed;

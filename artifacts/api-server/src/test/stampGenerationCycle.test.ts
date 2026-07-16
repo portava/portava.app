@@ -152,6 +152,10 @@ interface StorageCall {
   bufferLength: number;
 }
 
+interface StorageDeleteCall {
+  paths: string[];
+}
+
 /**
  * Extends the base fake client with a `storage` mock so tests can exercise
  * the real downloadImageBuffer + uploadToStorage code paths (http URLs).
@@ -162,24 +166,31 @@ interface StorageCall {
 function makeFakeClientWithStorage(opts: StorageConfig = {}) {
   const base = makeFakeClient();
   const storageCalls: StorageCall[] = [];
+  const deleteCalls: StorageDeleteCall[] = [];
   const publicUrlBase = opts.publicUrlBase ?? "https://storage.fake";
 
   base.sc.storage = {
     from(_bucket: string) {
       return {
         upload(path: string, buffer: Buffer) {
-          storageCalls.push({ path, bufferLength: buffer.length });
+          // Call the hook first so a thrown error prevents the path from being
+          // recorded as a successful upload (mirrors real storage behaviour).
           if (opts.onUpload) opts.onUpload(path, buffer);
+          storageCalls.push({ path, bufferLength: buffer.length });
           return Promise.resolve({ error: null });
         },
         getPublicUrl(path: string) {
           return { data: { publicUrl: `${publicUrlBase}/${path}` } };
         },
+        remove(paths: string[]) {
+          deleteCalls.push({ paths });
+          return Promise.resolve({ error: null });
+        },
       };
     },
   };
 
-  return { ...base, storageCalls };
+  return { ...base, storageCalls, deleteCalls };
 }
 
 // ── Fetch mock helpers ────────────────────────────────────────────────────────
@@ -497,5 +508,126 @@ describe("runGenerationCycle — real http images: mid-batch storage upload fail
     );
     assert.equal(fail!.payload.locked_until, null);
     assert.equal(fail!.payload.locked_by, null);
+  });
+});
+
+// ── Orphan cleanup: delete already-uploaded files when a later step fails ─────
+
+describe("runGenerationCycle — orphan cleanup on mid-batch failure", () => {
+  it("deletes the first candidate's storage file when the second upload fails", async () => {
+    let uploadCall = 0;
+    const { sc, updates, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage({
+      onUpload(_path, _buf) {
+        uploadCall++;
+        if (uploadCall === 2) throw new Error("Storage upload failed: bucket quota exceeded");
+      },
+    });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+
+    // First upload succeeded before the second one failed.
+    assert.equal(storageCalls.length, 1, "exactly one upload should have succeeded before the failure");
+
+    // No DB rows inserted.
+    assert.equal(inserts.length, 0, "must not insert any version rows after a mid-batch failure");
+
+    // Cleanup: the worker must have issued a storage delete for the orphaned file.
+    assert.equal(deleteCalls.length, 1, "must issue exactly one storage delete call for cleanup");
+    const { paths } = deleteCalls[0];
+    assert.equal(paths.length, 1, "one path must be deleted (the first successfully-uploaded candidate)");
+    assert.ok(
+      paths[0].startsWith("catalog/cat-1/") && paths[0].endsWith(".png"),
+      `deleted path must be the catalog storage path, got: ${paths[0]}`,
+    );
+
+    // The deleted path must match the uploaded path.
+    assert.equal(paths[0], storageCalls[0].path, "deleted path must match the path that was uploaded");
+  });
+
+  it("deletes the first two candidates' storage files when the third upload fails", async () => {
+    let uploadCall = 0;
+    const { sc, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage({
+      onUpload(_path, _buf) {
+        uploadCall++;
+        if (uploadCall === 3) throw new Error("Storage upload failed: bucket quota exceeded");
+      },
+    });
+    _setTestServiceClient(sc);
+    // Use a provider that returns exactly 3 candidates (the default CANDIDATE_COUNT).
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+
+    // Two uploads succeeded before the third failed.
+    assert.equal(storageCalls.length, 2, "two uploads should have succeeded before the third failed");
+
+    // No DB rows inserted.
+    assert.equal(inserts.length, 0, "must not insert any version rows after a mid-batch failure");
+
+    // Cleanup: both uploaded paths must be deleted.
+    assert.equal(deleteCalls.length, 1, "must issue exactly one storage delete call for cleanup");
+    const { paths } = deleteCalls[0];
+    assert.equal(paths.length, 2, "both previously-uploaded paths must be deleted");
+    for (const p of paths) {
+      assert.ok(
+        p.startsWith("catalog/cat-1/") && p.endsWith(".png"),
+        `deleted path must be a catalog storage path, got: ${p}`,
+      );
+    }
+    // All uploaded paths must appear in the delete list.
+    for (const call of storageCalls) {
+      assert.ok(paths.includes(call.path), `uploaded path ${call.path} must be in the delete list`);
+    }
+  });
+
+  it("deletes the successfully-uploaded candidate when the second download fails", async () => {
+    const { sc, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage();
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    // First download succeeds, second returns 404 (triggering an exception in downloadImageBuffer).
+    installFetch(failOnNthFetch(2));
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+
+    // First candidate was uploaded before the second download failed.
+    assert.equal(storageCalls.length, 1, "first candidate should have been uploaded before the download failure");
+
+    // No DB rows inserted.
+    assert.equal(inserts.length, 0);
+
+    // Cleanup delete must be issued for the orphaned upload.
+    assert.equal(deleteCalls.length, 1, "must issue a storage delete for the orphaned upload");
+    const { paths } = deleteCalls[0];
+    assert.equal(paths.length, 1);
+    assert.equal(paths[0], storageCalls[0].path, "deleted path must match the orphaned upload path");
+  });
+
+  it("does not issue a delete when no uploads preceded the failure", async () => {
+    const { sc, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage({
+      onUpload(_path, _buf) {
+        // Fail the very first upload.
+        throw new Error("Storage upload failed: service unavailable");
+      },
+    });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+    assert.equal(inserts.length, 0);
+    assert.equal(storageCalls.length, 0, "no uploads should have succeeded");
+    assert.equal(deleteCalls.length, 0, "no delete should be issued when nothing was uploaded");
   });
 });
