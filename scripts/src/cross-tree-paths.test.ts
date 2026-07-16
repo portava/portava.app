@@ -114,10 +114,29 @@ const NON_LITERAL_PATTERN =
  */
 function isAssignedFromPathResolver(identifier: string, fileContent: string): boolean {
   // Match:  const/let/var <identifier> = <resolver>(
-  const pat = new RegExp(
-    `\\b(?:const|let|var)\\s+${identifier}\\s*=\\s*(?:path\\.resolve|path\\.join|resolve|pathResolve|fileURLToPath)\\s*\\(`,
+  // path.resolve, path.join, pathResolve, and fileURLToPath are unambiguous —
+  // they are always path-computing calls regardless of imports.
+  const unambiguousPat = new RegExp(
+    `\\b(?:const|let|var)\\s+${identifier}\\s*=\\s*(?:path\\.resolve|path\\.join|pathResolve|fileURLToPath)\\s*\\(`,
   );
-  return pat.test(fileContent);
+  if (unambiguousPat.test(fileContent)) return true;
+
+  // Bare resolve() / join() are only path-computing when the name is imported
+  // from 'node:path'.  A resolve() from a promise library (or any other
+  // package) must NOT suppress the UNRESOLVABLE warning.
+  const bareNamePat = new RegExp(
+    `\\b(?:const|let|var)\\s+${identifier}\\s*=\\s*(resolve|join)\\s*\\(`,
+  );
+  const bm = bareNamePat.exec(fileContent);
+  if (bm) {
+    const fnName = bm[1]!;
+    const importPat = new RegExp(
+      `import\\s*\\{[^}]*\\b${fnName}\\b[^}]*\\}\\s*from\\s*['"]node:path['"]`,
+    );
+    if (importPat.test(fileContent)) return true;
+  }
+
+  return false;
 }
 
 /**
@@ -711,6 +730,26 @@ describe('extractCrossTreePaths — template-literal and non-literal detection',
       fs.existsSync(entry.resolved),
       false,
       `expected the resolved path "${entry.resolved}" to be missing (intentionally broken helper fixture)`,
+    );
+  });
+
+  it('flags an identifier assigned from resolve() imported outside node:path as unresolvable', () => {
+    // cross-tree-non-path-resolve.test.ts imports `resolve` from 'some-promise-lib',
+    // not from 'node:path'.  The guard must NOT treat this as a path-computing
+    // call and must emit an UNRESOLVABLE entry for `crossTreePath`.
+    const fixture = path.join(FIXTURES_DIR, 'cross-tree-non-path-resolve.test.ts');
+    const entries = extractCrossTreePaths(fixture);
+
+    const unresolvableEntries = entries.filter((e) => e.unresolvable === true);
+    assert.ok(
+      unresolvableEntries.length >= 1,
+      `expected at least one UNRESOLVABLE entry when resolve() comes from a non-path package; got: ${JSON.stringify(entries)}`,
+    );
+
+    const entry = unresolvableEntries.find((e) => e.rawArg === 'crossTreePath');
+    assert.ok(
+      entry,
+      `expected an unresolvable entry for "crossTreePath"; got: ${JSON.stringify(unresolvableEntries)}`,
     );
   });
 
