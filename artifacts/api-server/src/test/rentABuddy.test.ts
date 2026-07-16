@@ -3328,6 +3328,26 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
       "requested",
       "booking status must remain 'requested' when the expiry update DB call errors",
     );
+
+    // No buddy_booking_events rows must have been inserted — side-effects are
+    // suppressed when the status update fails.
+    const expiredEvents = ((state as any).bookingEvents ?? []).filter(
+      (e: any) => e.event === "request_expired",
+    );
+    assert.equal(
+      expiredEvents.length,
+      0,
+      "no request_expired booking events must be inserted when the status update DB call errors",
+    );
+
+    // No notifications must have been queued — notifyBookingParty is inside the
+    // same if (!expireErr) guard and must not fire when the update fails.
+    const notifications = (state as any).notifications ?? [];
+    assert.equal(
+      notifications.length,
+      0,
+      "no notifications must be queued when the expired-request status update DB call errors",
+    );
   });
 
   it("both stale bookings retain status 'requested' when the batch expiry update errors — confirms .in() atomicity", async () => {
