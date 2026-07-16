@@ -1045,7 +1045,58 @@ describe("PushRetryQueue.processQueue() — all-dead batch (every token DeviceNo
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 10 — Surgical precision: three-token batch, only one dead
+// 10 — Stale 'processing' recovery: attempt_count must not change
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("PushRetryQueue.recoverStaleProcessing() — stale row reset", () => {
+  it("resets a stale 'processing' row to 'queued' without touching attempt_count", async () => {
+    // No queued rows to process — we only want to exercise recoverStaleProcessing().
+    // The fake client has no rows to claim so processQueue() returns early after recovery.
+    const client = makeFakeClient([]);
+    const queue  = new PushRetryQueue(client as never);
+
+    const before = Date.now();
+    await queue.processQueue();
+    const after = Date.now();
+
+    // recoverStaleProcessing() issues an UPDATE … .eq("status","processing")
+    // The fake client records every update call regardless of whether real rows matched.
+    const recoveryUpdate = client.updateCalls.find(
+      (c) => c.table === "push_retry_queue" && c.filters["status"] === "processing",
+    );
+    assert.ok(
+      recoveryUpdate,
+      "recoverStaleProcessing must issue an UPDATE on push_retry_queue with eq('status','processing')",
+    );
+
+    // The patch must flip status back to 'queued'
+    assert.equal(
+      recoveryUpdate.patch.status,
+      "queued",
+      "recovery patch must set status='queued'",
+    );
+
+    // next_retry_at must be ≈ now so the row is picked up immediately on the next tick
+    const nextMs    = new Date(recoveryUpdate.patch.next_retry_at as string).getTime();
+    const expectMin = before - 100;  // tiny clock-skew tolerance
+    const expectMax = after  + 500;  // generous upper bound
+    assert.ok(
+      nextMs >= expectMin && nextMs <= expectMax,
+      `next_retry_at must be ≈ now for crash recovery; got ${recoveryUpdate.patch.next_retry_at} (window ${expectMin}–${expectMax})`,
+    );
+
+    // attempt_count must NOT be present in the patch — stale recovery must never
+    // consume a retry attempt; incrementing here would exhaust the budget one attempt early.
+    assert.equal(
+      recoveryUpdate.patch["attempt_count"],
+      undefined,
+      "recovery patch must NOT include attempt_count — stale row reset must not consume a retry attempt",
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 11 — Surgical precision: three-token batch, only one dead
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
