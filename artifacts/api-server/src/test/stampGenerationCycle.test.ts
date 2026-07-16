@@ -2743,6 +2743,31 @@ describe("isArtworkStale — detects rows generated with an outdated STYLE_VERSI
 // ── Null country guard ────────────────────────────────────────────────────────
 
 describe("buildStampPrompt — null country guard", () => {
+  it("omits the Country line entirely when both country and country_code are null", () => {
+    const entry = {
+      ...CATALOG_ROW,
+      country: null,
+      country_code: null,
+    } as any;
+
+    const prompt = buildStampPrompt(entry);
+
+    // No "Country:" line must appear — both fields are null so the branch
+    // must be skipped entirely, not produce "Country: null" or "Country: ".
+    assert.equal(
+      prompt.includes("Country:"),
+      false,
+      `prompt must not contain "Country:" when both country and country_code are null; got:\n${prompt.slice(0, 400)}`,
+    );
+
+    // The word "null" must not appear anywhere in the prompt.
+    assert.equal(
+      prompt.includes("null"),
+      false,
+      `prompt must not contain the literal string "null" when both country fields are null; got:\n${prompt.slice(0, 400)}`,
+    );
+  });
+
   it("does not produce the literal string 'null' in the prompt when country is null", async () => {
     const catalogWithNullCountry = { ...CATALOG_ROW, country: null } as any;
     const { sc } = makeFakeClient({ catalogOverride: catalogWithNullCountry });
