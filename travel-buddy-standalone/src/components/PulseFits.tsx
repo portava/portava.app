@@ -2,11 +2,11 @@ import React, { useState } from 'react';
 import { View, Text, Image, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { MapPin, ChevronRight } from 'lucide-react-native';
-import type { CityEvent } from '../types/models.ts';
-import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
-import { HighlightRing } from './HighlightRing.tsx';
-import { HighlightViewer } from './HighlightViewer.tsx';
-import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
+import type { CityEvent } from '../types/models';
+import { color, space, radius, type as t, shadow } from '../theme/tokens';
+import { HighlightRing } from './HighlightRing';
+import { HighlightViewer } from './HighlightViewer';
+import { useHighlightRingState } from '../hooks/useHighlightRingState';
 
 /* avatar stack for attendees — shows count without fixture data */
 function AvatarStack({ count }: { count: number }) {

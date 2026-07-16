@@ -12,9 +12,9 @@ import {
   TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
 import { X, MapPin, Globe, Users, Eye, Lock, Shield } from 'lucide-react-native';
-import type { PassportMemory, MemoryVisibility } from '../services/passportStamps.ts';
-import { acceptPassportSuggestion, dismissPassportSuggestion } from '../services/passportStamps.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import type { PassportMemory, MemoryVisibility } from '../services/passportStamps';
+import { acceptPassportSuggestion, dismissPassportSuggestion } from '../services/passportStamps';
+import { color, space, radius, type as t } from '../theme/tokens';
 
 function verificationLabel(level: string): string {
   if (level === 'gps') return 'GPS verified';

@@ -6,11 +6,11 @@ import {
 import {
   MapPin, Clock, Tag, FileText, AlertTriangle, Pencil, Trash2, X, CheckCircle2, ChevronDown, Shield, ChevronRight,
 } from 'lucide-react-native';
-import type { TripPlanItem, TripPlanItemStatus, TripPlanCategory } from '../../types/models.ts';
-import { updatePlanItem, removePlanItem } from '../../services/tripPlan.ts';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { DatePickerField } from '../DateTimePickerField.tsx';
-import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker.tsx';
+import type { TripPlanItem, TripPlanItemStatus, TripPlanCategory } from '../../types/models';
+import { updatePlanItem, removePlanItem } from '../../services/tripPlan';
+import { color, space, radius, type as t } from '../../theme/tokens';
+import { DatePickerField } from '../DateTimePickerField';
+import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker';
 
 // ── Category / status maps ────────────────────────────────────────────────────
 

@@ -16,9 +16,9 @@
 import React from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import type { CityEvent } from '../types/models.ts';
-import { space, radius } from '../theme/tokens.ts';
-import { pv } from '../theme/pulseTheme.ts';
+import type { CityEvent } from '../types/models';
+import { space, radius } from '../theme/tokens';
+import { pv } from '../theme/pulseTheme';
 
 const HOUR = 60 * 60 * 1000;
 const DEFAULT_DURATION = 2 * HOUR;

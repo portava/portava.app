@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { fetchInteractionContext, type InteractionContext } from '../services/interactionContext.ts';
+import { fetchInteractionContext, type InteractionContext } from '../services/interactionContext';
 
 interface UseUserInteractionContextResult {
   context: InteractionContext | null;

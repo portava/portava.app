@@ -1,7 +1,7 @@
 /**
  * Pure utility functions for trip plan data — no React Native deps, fully testable.
  */
-import type { TripPlanItem } from '../types/models.ts';
+import type { TripPlanItem } from '../types/models';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

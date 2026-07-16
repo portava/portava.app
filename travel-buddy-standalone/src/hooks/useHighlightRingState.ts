@@ -9,7 +9,7 @@
  */
 import { useState, useEffect, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { fetchUserHighlights, type Highlight } from '../services/highlights.ts';
+import { fetchUserHighlights, type Highlight } from '../services/highlights';
 
 export interface HighlightRingState {
   hasActive: boolean;

@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Heart, MessageCircle, Bookmark, Share2 } from 'lucide-react-native';
-import { color, space, type as t } from '../theme/tokens.ts';
+import { color, space, type as t } from '../theme/tokens';
 
 function compact(n: number) {
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;

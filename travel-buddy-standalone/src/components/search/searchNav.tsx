@@ -10,8 +10,8 @@ import React from 'react';
 import {
   Users, Calendar, PlaneTakeoff, MapPin, Hash, FileText, Globe, Award, Sparkles,
 } from 'lucide-react-native';
-import type { UnifiedSearchResult } from '../../services/discovery.ts';
-import { color } from '../../theme/tokens.ts';
+import type { UnifiedSearchResult } from '../../services/discovery';
+import { color } from '../../theme/tokens';
 
 export function TypeIcon({ type, size = 15, tint }: { type: string; size?: number; tint?: string }) {
   const c = tint ?? color.deep;

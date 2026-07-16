@@ -11,8 +11,8 @@ import {
   StyleSheet,
 } from 'react-native';
 import { Compass, MapPin } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
-import { TG } from '../theme/telegraphTokens.ts';
+import { color, space, radius, type as t } from '../theme/tokens';
+import { TG } from '../theme/telegraphTokens';
 
 export interface CompassCardPayload {
   id:          string;

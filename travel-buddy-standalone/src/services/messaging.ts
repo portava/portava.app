@@ -12,7 +12,7 @@
  * All writes go through the API server (service-role + JWT verification).
  * No private posts, trip data, live location, or GPS are accessible here.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type MessageVerdict = 'allowed' | 'requires_request' | 'denied';

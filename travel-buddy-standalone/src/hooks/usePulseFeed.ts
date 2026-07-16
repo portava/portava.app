@@ -10,8 +10,8 @@
  *   - hasMore — true when the last page returned a full limit
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { getPulseData, pulsePostToFeedItem, placeCardToFeedItem } from '../services/pulse.ts';
-import type { PulseFeedItem } from '../types/models.ts';
+import { getPulseData, pulsePostToFeedItem, placeCardToFeedItem } from '../services/pulse';
+import type { PulseFeedItem } from '../types/models';
 
 const PAGE_SIZE = 20;
 

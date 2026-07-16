@@ -170,7 +170,7 @@ export function mapCaptureToFormCoords(result: GpsCaptureResult | null): {
 
 // ── Place-based capture flow (universal location system) ──────────────────────
 
-import type { Place } from '../../lib/location/placeTypes.ts';
+import type { Place } from '../../lib/location/placeTypes';
 
 /** Discriminated union of outcomes from runPlaceCapture(). */
 export type PlaceCaptureOutcome =

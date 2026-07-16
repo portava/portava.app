@@ -1,7 +1,7 @@
 /**
  * Circle age settings service — typed wrappers over /api/circle-age-settings.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 export interface CircleAgeSettings {

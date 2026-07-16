@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
+import { PP, PP_LABEL } from '../../theme/passportTokens';
 
 interface Props {
   label?: string;

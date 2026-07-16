@@ -32,7 +32,7 @@ import Animated, {
   Easing,
   cancelAnimation,
 } from 'react-native-reanimated';
-import { color, space, type as t, font } from '../../theme/tokens.ts';
+import { color, space, type as t, font } from '../../theme/tokens';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 

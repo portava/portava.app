@@ -2,8 +2,8 @@
  * Mock trip detail for the Trip Page (Pass 1). Mock seam — swap to backend later.
  * Marked as mock; do not present as live trip data.
  */
-import type { TripDetail } from '../types/models.ts';
-import { users } from './cebu.ts';
+import type { TripDetail } from '../types/models';
+import { users } from './cebu';
 
 export const mockTripDetail: TripDetail = {
   id: 't1',
@@ -68,7 +68,7 @@ export const mockNextUp = {
 };
 
 /* ── Trip Pass 2 mock data (plans, circle, stamps) — clearly mock, replaceable ── */
-import type { PassportStamp } from '../types/models.ts';
+import type { PassportStamp } from '../types/models';
 
 export type TripPlanStatus = 'joined' | 'hosting' | 'requested' | 'saved' | 'past';
 export interface TripPlan {

@@ -4,9 +4,9 @@
  * configured these return empty/false so the app still runs on mock screens.
  */
 import { useEffect, useState, useCallback } from 'react';
-import { isSupabaseConfigured } from '../lib/supabase.ts';
-import { getSessionUserId, onAuthChange } from '../services/auth.ts';
-import { listMyTrips, getTrip, type TripRow, getPendingTripInvites, type TripInvite } from '../services/trips.ts';
+import { isSupabaseConfigured } from '../lib/supabase';
+import { getSessionUserId, onAuthChange } from '../services/auth';
+import { listMyTrips, getTrip, type TripRow, getPendingTripInvites, type TripInvite } from '../services/trips';
 
 export function useSession() {
   const [userId, setUserId] = useState<string | null>(null);

@@ -6,17 +6,17 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
-import type { PassportStamp } from '../types/models.ts';
-import type { PassportStampNew } from '../services/passportStamps.ts';
-import { getMyPassportStamps, getUserStampsByUsername } from '../services/passportStamps.ts';
-import { getMyProgress } from '../services/stamps.ts';
-import type { StampProgress } from '../services/stamps.ts';
-import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
-import { StampCategoryFilter } from './stamps/StampCategoryFilter.tsx';
-import type { StampCategory } from './stamps/StampCategoryFilter.tsx';
-import { StampGrid } from './stamps/StampGrid.tsx';
-import { StampDetailModal } from './stamps/StampDetailModal.tsx';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import type { PassportStamp } from '../types/models';
+import type { PassportStampNew } from '../services/passportStamps';
+import { getMyPassportStamps, getUserStampsByUsername } from '../services/passportStamps';
+import { getMyProgress } from '../services/stamps';
+import type { StampProgress } from '../services/stamps';
+import { useBlockedIds } from '../context/BlockedIdsContext';
+import { StampCategoryFilter } from './stamps/StampCategoryFilter';
+import type { StampCategory } from './stamps/StampCategoryFilter';
+import { StampGrid } from './stamps/StampGrid';
+import { StampDetailModal } from './stamps/StampDetailModal';
+import { color, space, radius, type as t } from '../theme/tokens';
 
 /** Client-side category filter — maps new category slugs to stamp fields. */
 function matchesCategory(stamp: PassportStampNew, cat: StampCategory): boolean {

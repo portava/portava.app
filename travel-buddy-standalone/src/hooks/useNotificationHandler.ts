@@ -21,7 +21,7 @@ import { router } from 'expo-router';
 import {
   getLastNotificationResponseAsync,
   addNotificationResponseReceivedListener,
-} from '../lib/safeNotifications.ts';
+} from '../lib/safeNotifications';
 
 type NotifData = Record<string, unknown> | null | undefined;
 

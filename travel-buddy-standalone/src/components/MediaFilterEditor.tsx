@@ -28,9 +28,9 @@ import {
 import Slider from '@react-native-community/slider';
 import { X, RotateCcw, PlayCircle, Check } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
-import { mediaFilters, getMediaFilter, buildCssFilter } from '../lib/media/filters.ts';
-import { renderFilteredImage } from '../lib/media/renderFilteredImage.ts';
+import { color, space, radius, type as t, shadow } from '../theme/tokens';
+import { mediaFilters, getMediaFilter, buildCssFilter } from '../lib/media/filters';
+import { renderFilteredImage } from '../lib/media/renderFilteredImage';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 

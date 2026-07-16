@@ -7,7 +7,7 @@
  * share one Promise.
  */
 import { useState, useEffect, useRef } from 'react';
-import type { Place } from '../lib/location/placeTypes.ts';
+import type { Place } from '../lib/location/placeTypes';
 import {
   getCached,
   setCached,
@@ -15,7 +15,7 @@ import {
   setInFlight,
   deleteInFlight,
   makeCacheKey,
-} from '../lib/location/placeSearchCache.ts';
+} from '../lib/location/placeSearchCache';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';

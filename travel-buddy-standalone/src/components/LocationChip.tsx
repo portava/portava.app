@@ -14,7 +14,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { MapPin, Navigation, EyeOff, Lock } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t } from '../theme/tokens';
 
 export type LocationChipVariant =
   | 'current_city'

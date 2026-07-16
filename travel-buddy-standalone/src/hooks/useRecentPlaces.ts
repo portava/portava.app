@@ -4,8 +4,8 @@
  * the server is unavailable.
  */
 import { useState, useEffect, useCallback } from 'react';
-import type { Place } from '../lib/location/placeTypes.ts';
-import { freshToken } from '../services/apiToken.ts';
+import type { Place } from '../lib/location/placeTypes';
+import { freshToken } from '../services/apiToken';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';

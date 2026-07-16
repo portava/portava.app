@@ -7,7 +7,7 @@
 import React from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
 import { CalendarClock, X } from 'lucide-react-native';
-import { color, space, radius } from '../theme/tokens.ts';
+import { color, space, radius } from '../theme/tokens';
 
 interface Props {
   value: Date | null;
