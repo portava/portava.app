@@ -585,7 +585,26 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
             job_id:     jobId,
             catalog_id: catalogId,
             error:      removeErr?.message,
+            paths:      uploadedStoragePaths,
           }));
+          // Record cleanup failure on the queue row so it surfaces in the
+          // admin UI (fire-and-forget — must not shadow the original error).
+          sc.from("stamp_generation_queue")
+            .update({
+              cleanup_error:       removeErr.message,
+              cleanup_error_paths: uploadedStoragePaths,
+              updated_at:          new Date().toISOString(),
+            })
+            .eq("id", jobId)
+            .then(({ error: ceErr }: { error: any }) => {
+              if (ceErr) {
+                console.error(JSON.stringify({
+                  event:  "stamp.generation.cleanup_error_persist_failed",
+                  job_id: jobId,
+                  error:  ceErr.message,
+                }));
+              }
+            });
         } else {
           console.log(JSON.stringify({
             event:      "stamp.generation.orphan_cleanup",

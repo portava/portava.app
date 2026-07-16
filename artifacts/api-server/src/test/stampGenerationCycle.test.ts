@@ -1647,6 +1647,59 @@ describe("runGenerationCycle — orphan cleanup: remove() returns error object (
     // 6. No version rows inserted.
     assert.equal(inserts.length, 0, "must not insert any version rows after a mid-batch failure");
   });
+
+  it("writes cleanup_error and cleanup_error_paths to the queue row when remove() resolves with an error", async () => {
+    // Ensures the admin badge appears for the silent-error path — not just
+    // when remove() throws.
+    let uploadCall = 0;
+    const originalUploadError = "Storage upload failed: quota exceeded";
+    const removeErrorMessage = "object not found";
+
+    const { sc, updates, storageCalls, deleteCalls } = makeFakeClientWithStorage({
+      onUpload(_path, _buf) {
+        uploadCall++;
+        if (uploadCall === 2) throw new Error(originalUploadError);
+      },
+      removeError: { message: removeErrorMessage },
+    });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    try {
+      await runGenerationCycle();
+    } finally {
+      restoreFetch();
+      _setTestServiceClient(null);
+      _setTestStampImageProvider(null);
+    }
+
+    // remove() was called once (one orphaned upload from the first slot).
+    assert.equal(storageCalls.length, 1, "first upload should have succeeded");
+    assert.equal(deleteCalls.length, 1, "remove() must have been called");
+
+    // Wait one microtask tick so the fire-and-forget .then() resolves.
+    await Promise.resolve();
+
+    // A cleanup_error update must have been written to the queue row.
+    const cleanupUpdate = updates.find(
+      (u) => u.table === "stamp_generation_queue" && u.payload.cleanup_error !== undefined,
+    );
+    assert.ok(
+      cleanupUpdate,
+      "must write cleanup_error to the queue row when remove() resolves with an error object",
+    );
+    assert.equal(
+      cleanupUpdate!.payload.cleanup_error,
+      removeErrorMessage,
+      "cleanup_error must carry the remove() error message",
+    );
+    assert.ok(
+      Array.isArray(cleanupUpdate!.payload.cleanup_error_paths) &&
+        cleanupUpdate!.payload.cleanup_error_paths.length > 0,
+      "cleanup_error_paths must list the orphaned file paths",
+    );
+  });
 });
 
 // ── Unrecognized country code: explicit fallback, not wrong art-direction ─────
