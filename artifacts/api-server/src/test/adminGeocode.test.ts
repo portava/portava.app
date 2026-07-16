@@ -2717,9 +2717,12 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
   it("silently swallows a 'table does not exist' error on passport_stamps repoint and still counts the merge", async () => {
     const XX_ID = "cat-xx-no-table-passport";
     const SURVIVOR_ID = "cat-survivor-no-table-passport";
+    const XX_EARN_COUNT = 4;
+    const SURVIVOR_EARN_COUNT = 1;
 
     const warnMessages: string[] = [];
     let xxEntryDeleted = false;
+    let earnCountUpdate: number | null = null;
 
     const client: any = {
       auth: {
@@ -2782,8 +2785,14 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
               };
               return survivorChain;
             },
-            update: (_fields: Record<string, unknown>) => ({
-              eq: () => Promise.resolve({ data: null, error: null }),
+            update: (fields: Record<string, unknown>) => ({
+              eq: (_col: string, val: string) => {
+                // Capture the earn_count written to the survivor row
+                if (val === SURVIVOR_ID && typeof fields.earn_count === "number") {
+                  earnCountUpdate = fields.earn_count as number;
+                }
+                return Promise.resolve({ data: null, error: null });
+              },
             }),
             delete: () => ({
               eq: (_col: string, val: string) => {
@@ -2874,6 +2883,18 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
     );
     assert.equal(passportStampsWarn, undefined,
       `warn must NOT be called for a 'table does not exist' error on passport_stamps — got: ${JSON.stringify(warnMessages)}`);
+
+    // earn_count must still be transferred to the survivor even though passport_stamps warned —
+    // the non-fatal path must not short-circuit the earn_count block
+    assert.ok(
+      earnCountUpdate !== null,
+      "earn_count UPDATE must be issued for the survivor even when passport_stamps repoint is non-fatal",
+    );
+    assert.equal(
+      earnCountUpdate,
+      XX_EARN_COUNT + SURVIVOR_EARN_COUNT,
+      `survivor earn_count should be ${XX_EARN_COUNT} + ${SURVIVOR_EARN_COUNT} = ${XX_EARN_COUNT + SURVIVOR_EARN_COUNT}`,
+    );
   });
 
   it("does not count a merge as successful when the XX entry DELETE fails", async () => {
