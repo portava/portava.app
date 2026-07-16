@@ -797,7 +797,7 @@ describe("runGenerationCycle — DB insert failure after all uploads succeed", (
   it("resets job status to queued, records last_error, and clears the lock", async () => {
     // All uploads succeed; the version-row batch insert returns a DB error.
     const insertErrMsg = "duplicate key value violates unique constraint \"stamp_artwork_versions_pkey\"";
-    const { sc, updates, inserts, storageCalls } = makeFakeClientWithStorage({
+    const { sc, updates, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage({
       insertError: { message: insertErrMsg },
     });
     _setTestServiceClient(sc);
@@ -844,6 +844,82 @@ describe("runGenerationCycle — DB insert failure after all uploads succeed", (
     assert.equal(fail!.payload.locked_until, null, "locked_until must be cleared after insert failure");
     assert.equal(fail!.payload.locked_by, null, "locked_by must be cleared after insert failure");
     assert.deepEqual(fail!.eqFilters, [["id", "job-1"]]);
+
+    // Orphan cleanup: a storage delete must be issued for each uploaded path so
+    // the successfully-uploaded objects don't remain without a DB row.
+    assert.equal(
+      deleteCalls.length,
+      1,
+      "must issue exactly one storage delete call after a DB insert failure",
+    );
+    const { paths: deletedPaths } = deleteCalls[0];
+    assert.equal(
+      deletedPaths.length,
+      CANDIDATE_COUNT,
+      "every uploaded storage path must be included in the delete call",
+    );
+    for (const call of storageCalls) {
+      assert.ok(
+        deletedPaths.includes(call.path),
+        `uploaded path ${call.path} must appear in the orphan-cleanup delete list`,
+      );
+    }
+  });
+
+  it("still resets the job even when the storage delete itself throws", async () => {
+    // All uploads succeed; the version insert fails; and the cleanup remove call
+    // throws synchronously (e.g. network error). The job must still be reset
+    // and the real insert error must be preserved in last_error.
+    const insertErrMsg = "insert failed: connection timeout";
+    const { sc, updates, inserts, storageCalls } = makeFakeClientWithStorage({
+      insertError: { message: insertErrMsg },
+    });
+
+    // Override the storage remove to throw.
+    const originalStorageFrom = sc.storage.from.bind(sc.storage);
+    sc.storage.from = function (bucket: string) {
+      const b = originalStorageFrom(bucket);
+      b.remove = function (_paths: string[]) {
+        throw new Error("Storage remove failed: network error");
+      };
+      return b;
+    };
+
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    const result = await runGenerationCycle();
+
+    // All uploads completed before the insert failure.
+    assert.equal(storageCalls.length, CANDIDATE_COUNT);
+
+    // Insert was attempted but failed.
+    assert.equal(inserts.length, 1);
+
+    // Despite the cleanup throwing, the cycle must still report failure (not
+    // crash) and the queue row must be updated with the original insert error.
+    assert.equal(result.processed, false);
+
+    assert.equal(
+      updates.some((u) => u.payload.status === "review_required"),
+      false,
+      "a failed insert must never reach review_required even when cleanup also throws",
+    );
+
+    const fail = updates.find(
+      (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
+    );
+    assert.ok(fail, "must record a failure update on the queue row");
+    assert.equal(fail!.payload.status, "queued", "first failure must go back to queued");
+    assert.equal(fail!.payload.attempts, 1);
+    assert.ok(
+      typeof fail!.payload.last_error === "string" &&
+        fail!.payload.last_error.includes(insertErrMsg),
+      `last_error must carry the original insert error, not the cleanup error; got: ${fail!.payload.last_error}`,
+    );
+    assert.equal(fail!.payload.locked_until, null, "lock must be cleared even when cleanup throws");
+    assert.equal(fail!.payload.locked_by, null);
   });
 
   it("still deletes orphaned files when the insert failure follows all uploads", async () => {
