@@ -514,6 +514,10 @@ describe("PATCH /admin/events/:eventId/moderate — moderation_actions insert fa
       `moderation_actions insert failure must not surface as a 500 — got ${status}: ${JSON.stringify(body)}`,
     );
     assert.equal(body.ok, true, "response body should still have ok: true");
+    assert.equal(
+      body.error, undefined,
+      `fail-open response must not carry an error field — got: ${JSON.stringify(body.error)}`,
+    );
     assert.equal(body.action, "hide");
     assert.equal(body.eventId, EVENT_ID_A);
 
