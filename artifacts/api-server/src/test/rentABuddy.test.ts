@@ -306,12 +306,23 @@ function makeClient(userId: string, role = "user") {
             return { data: null, error: null };
           }
           if (t === "rent_buddy_bookings") {
-            for (const [, col, val] of this._filters) {
-              if (col === "id" && state.bookings?.[val]) {
+            for (const [op, col, val] of this._filters) {
+              if (op === "eq" && col === "id" && state.bookings?.[val]) {
                 if (this._updateData === "__delete__") {
                   delete state.bookings[val];
                 } else {
                   state.bookings[val] = { ...state.bookings[val], ...this._updateData };
+                }
+              }
+              if (op === "in" && col === "id") {
+                for (const id of val as string[]) {
+                  if (state.bookings?.[id]) {
+                    if (this._updateData === "__delete__") {
+                      delete state.bookings[id];
+                    } else {
+                      state.bookings[id] = { ...state.bookings[id], ...this._updateData };
+                    }
+                  }
                 }
               }
             }
@@ -3514,6 +3525,57 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
       notifications.length,
       0,
       "no completion notifications must be queued when the batch status update DB call errors",
+    );
+  });
+
+  it("auto-complete leg promotes all eligible bookings together — not just the first", async () => {
+    // Seed two completed_pending_traveler_confirmation bookings whose
+    // dispute windows have both expired.  The .in("id", ids2) batch update
+    // must advance every one of them to completed in a single sweep run.
+    const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+
+    state = {
+      bookings: {
+        "bk-ac-multi-1": {
+          id: "bk-ac-multi-1",
+          traveler_id: USER_ID,
+          buddy_id: BUDDY_PROF,
+          status: "completed_pending_traveler_confirmation",
+          dispute_window_expires_at: PAST,
+        },
+        "bk-ac-multi-2": {
+          id: "bk-ac-multi-2",
+          traveler_id: USER_ID,
+          buddy_id: BUDDY_PROF,
+          status: "completed_pending_traveler_confirmation",
+          dispute_window_expires_at: PAST,
+        },
+      },
+    };
+
+    const r = await reqSweep();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    // The sweep must report both bookings as auto-completed.
+    assert.equal(
+      r.body.autoCompleted,
+      2,
+      "autoCompleted must equal the number of seeded eligible bookings (2)",
+    );
+
+    // Every eligible booking must have been promoted — not just the first one.
+    assert.equal(
+      state.bookings!["bk-ac-multi-1"].status,
+      "completed",
+      "first booking must be promoted to completed",
+    );
+    assert.equal(
+      state.bookings!["bk-ac-multi-2"].status,
+      "completed",
+      "second booking must also be promoted to completed — the .in() call must cover all ids",
     );
   });
 });
