@@ -407,3 +407,62 @@ describe('StampQueueScreen — search filter', () => {
     expect(clearCall.search).toBeUndefined();
   });
 });
+
+// ── API error suite ────────────────────────────────────────────────────────────
+
+/**
+ * Verifies that when getAdminStampCatalog returns { ok: false }, the screen
+ * shows a user-visible error message rather than silently rendering a blank
+ * list that an admin might mistake for an empty catalog.
+ *
+ * ## Why this test exists
+ *
+ * Before this fix, the load() callback had no else branch for !res.ok —
+ * the screen would fall through to setLoading(false) and render an empty
+ * FlatList. An admin refreshing after a network error would see "No entries
+ * found" with no indication anything went wrong.
+ */
+
+describe('StampQueueScreen — API error', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('shows an error message when getAdminStampCatalog returns ok: false', async () => {
+    mockGetCatalog.mockResolvedValue({ ok: false });
+
+    render(<StampQueueScreen />);
+
+    await waitFor(() => screen.getByTestId('catalog-queue-error'));
+    expect(screen.getByTestId('catalog-queue-error')).toBeTruthy();
+    expect(screen.getByText('Failed to load catalog. Please try again.')).toBeTruthy();
+  });
+
+  it('does not render the empty-list message when the API fails', async () => {
+    mockGetCatalog.mockResolvedValue({ ok: false });
+
+    render(<StampQueueScreen />);
+
+    await waitFor(() => screen.getByTestId('catalog-queue-error'));
+
+    // "No entries found" is the ListEmptyComponent text — it must not appear
+    // on an error because it implies a successful empty fetch, not a failure.
+    expect(screen.queryByText('No entries found')).toBeNull();
+  });
+
+  it('clears the error and shows entries when a subsequent load succeeds', async () => {
+    mockGetCatalog
+      .mockResolvedValueOnce({ ok: false })
+      .mockResolvedValue(catalogOk([ENTRY_A]));
+
+    render(<StampQueueScreen />);
+    await waitFor(() => screen.getByTestId('catalog-queue-error'));
+
+    const list = screen.getByTestId('catalog-queue-list');
+    await act(async () => { list.props.refreshControl.props.onRefresh(); });
+
+    await waitFor(() => screen.getByText('Paris Eiffel'));
+    expect(screen.getByText('Paris Eiffel')).toBeTruthy();
+    expect(screen.queryByTestId('catalog-queue-error')).toBeNull();
+  });
+});

@@ -33,6 +33,7 @@ export default function StampQueueScreen() {
   const [search, setSearch]         = useState('');
   const [status, setStatus]         = useState<string>(params.status ?? '');
   const [total, setTotal]           = useState(0);
+  const [error, setError]           = useState<string | null>(null);
 
   const load = useCallback(async (reset = true) => {
     const res = await getAdminStampCatalog({
@@ -42,6 +43,7 @@ export default function StampQueueScreen() {
       search: search || undefined,
     });
     if (res.ok) {
+      setError(null);
       const raw = Array.isArray(res.data.entries) ? res.data.entries : [];
       const valid = raw.filter((e: unknown) => {
         if (
@@ -57,6 +59,8 @@ export default function StampQueueScreen() {
       });
       setEntries(valid as CatalogListEntry[]);
       setTotal(res.data.total ?? 0);
+    } else {
+      setError('Failed to load catalog. Please try again.');
     }
     setLoading(false);
     setRefreshing(false);
@@ -137,6 +141,12 @@ export default function StampQueueScreen() {
         ))}
       </View>
 
+      {error ? (
+        <View style={styles.errorBanner} testID="catalog-queue-error">
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      ) : null}
+
       {loading ? (
         <View style={styles.center}><ActivityIndicator color={color.ink} /></View>
       ) : (
@@ -147,7 +157,7 @@ export default function StampQueueScreen() {
           renderItem={renderEntry}
           contentContainerStyle={{ paddingBottom: insets.bottom + space.xl }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-          ListEmptyComponent={<Text style={styles.empty}>No entries found</Text>}
+          ListEmptyComponent={error ? null : <Text style={styles.empty}>No entries found</Text>}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
         />
       )}
@@ -193,4 +203,6 @@ const styles = StyleSheet.create({
   cleanupBadge:      { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FEF3C7', borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3, marginTop: 4, alignSelf: 'flex-start' },
   cleanupBadgeTitle: { fontSize: 10, fontWeight: '700', color: '#92400E' },
   cleanupPaths:      { ...t.small, color: '#78350F', fontFamily: 'monospace', marginTop: 2, fontSize: 10 },
+  errorBanner:       { margin: space.md, padding: space.md, backgroundColor: '#FEE2E2', borderRadius: radius.md, borderWidth: 1, borderColor: '#FCA5A5' },
+  errorText:         { ...t.body, color: '#B91C1C' },
 });
