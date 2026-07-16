@@ -3175,6 +3175,73 @@ describe("buildStampPrompt — landmarkHint is suppressed for every non-country 
   });
 });
 
+// ── Recognized stamp_type → type-specific typeHint text ──────────────────────
+
+describe("buildStampPrompt — every recognized stamp_type produces its own type hint", () => {
+  /**
+   * Map every stamp_type that has an explicit entry in the typeHints record to
+   * the unique substring that must appear in its hint.  These strings are copied
+   * verbatim from artDirection.ts so a missing key (or a typo in the key) will
+   * cause typeHints[entry.stamp_type] to be undefined, the ?? fallback to fire,
+   * and the wrong hint to appear — which the assertion will catch.
+   */
+  const RECOGNIZED_HINT_TYPES: Array<{
+    stampType: string;
+    expectedFragment: string;
+  }> = [
+    { stampType: "city",          expectedFragment: "iconic city skyline or landmark silhouette" },
+    { stampType: "country",       expectedFragment: "national symbol, flag colors as accent palette" },
+    { stampType: "region",        expectedFragment: "regional landscape or natural feature" },
+    { stampType: "neighborhood",  expectedFragment: "street-level scene or local architectural detail" },
+    { stampType: "landmark",      expectedFragment: "dominant illustration filling most of the stamp area" },
+    { stampType: "hidden_gem",    expectedFragment: "Mysterious, intimate illustration" },
+    { stampType: "special_event", expectedFragment: "Dynamic, celebratory imagery" },
+  ];
+
+  /** Unique text from the city fallback — must NOT appear for non-city types. */
+  const CITY_FALLBACK_FRAGMENT = "iconic city skyline";
+
+  for (const { stampType, expectedFragment } of RECOGNIZED_HINT_TYPES) {
+    it(`stamp_type "${stampType}" includes its own type hint and not the city-fallback`, () => {
+      const prompt = buildStampPrompt({
+        id:                    "cat-hint-test",
+        display_name:          "Test Place",
+        country:               "Testland",
+        country_code:          "TS",
+        region:                null,
+        city:                  null,
+        neighborhood:          null,
+        stamp_type:            stampType,
+        canonical_location_key: "ts/test-place",
+      });
+
+      // Must be non-empty.
+      assert.ok(
+        prompt.length > 0,
+        `buildStampPrompt must return a non-empty prompt for stamp_type "${stampType}"`,
+      );
+
+      // Must contain the type-specific hint text.
+      assert.ok(
+        prompt.includes(expectedFragment),
+        `buildStampPrompt for stamp_type "${stampType}" must include the type hint ` +
+          `"${expectedFragment}"; got prompt snippet: ${prompt.slice(0, 400)}`,
+      );
+
+      // For non-city types the ?? fallback must NOT have fired.
+      if (stampType !== "city") {
+        assert.equal(
+          prompt.includes(CITY_FALLBACK_FRAGMENT),
+          false,
+          `buildStampPrompt for stamp_type "${stampType}" must NOT include the city-fallback ` +
+            `hint text "${CITY_FALLBACK_FRAGMENT}" — each type must resolve to its own hint; ` +
+            `got prompt snippet: ${prompt.slice(0, 400)}`,
+        );
+      }
+    });
+  }
+});
+
 // ── sweepStaleArtwork ─────────────────────────────────────────────────────────
 
 /**
