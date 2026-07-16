@@ -2076,6 +2076,156 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
     assert.ok(xxEntryDeleted, "XX catalog entry should still be deleted after a null earn_count pair result");
   });
 
+  it("does not issue an earn_count update and does not corrupt the survivor when only the survivor row is returned by the pair select", async () => {
+    // Edge case: the earn_count select returns a partial result — only the survivor
+    // row is present; the XX row is entirely absent (earn_count undefined on lookup).
+    // The `?? 0` fallback must apply to xxCount only.  The survivor's own count must
+    // not be written with a garbage value (e.g. survivorCount + phantom 0 write is
+    // technically harmless, but the guard `xxCount > 0` must prevent the update
+    // altogether so the survivor's count is never touched unnecessarily).
+    const XX_ID = "cat-xx-partial-pair";
+    const SURVIVOR_ID = "cat-survivor-partial-pair";
+    const SURVIVOR_EARN_COUNT = 7;
+
+    let earnCountUpdateCalled = false;
+    let earnCountWrittenValue: number | null = null;
+    let xxEntryDeleted = false;
+
+    const client: any = {
+      auth: {
+        getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+      },
+      from: (table: string) => {
+        if (table === "profiles") {
+          return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+        }
+
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: (_cols: string) => builder([]),
+            upsert: (_row: unknown, _o?: unknown) =>
+              Promise.resolve({ data: null, error: null }),
+          };
+        }
+
+        if (table === "universal_stamp_catalog") {
+          return {
+            select: (cols: string) => {
+              if (cols.includes("canonical_location_key")) {
+                return {
+                  eq: (_col: string, _val: unknown) => ({
+                    then: (resolve: (v: { data: unknown[]; error: null }) => void) =>
+                      resolve({
+                        data: [
+                          {
+                            id: XX_ID,
+                            canonical_location_key: "city:XX:partialtown",
+                            stamp_type: "city",
+                            country: "Unknown",
+                            country_code: "XX",
+                            city: "Partialtown",
+                            neighborhood: null,
+                            display_name: "Partialtown",
+                          },
+                        ],
+                        error: null,
+                      }),
+                  }),
+                };
+              }
+              // earn_count select returns only the survivor row — XX row is absent.
+              // This simulates a partial DB result where the XX entry is missing.
+              if (cols === "id, earn_count") {
+                return {
+                  in: (_col: string, _ids: string[]) =>
+                    Promise.resolve({
+                      data: [{ id: SURVIVOR_ID, earn_count: SURVIVOR_EARN_COUNT }],
+                      error: null,
+                    }),
+                };
+              }
+              // Survivor lookup
+              const survivorChain: any = {
+                eq: () => survivorChain,
+                neq: () => survivorChain,
+                maybeSingle: async () => ({ data: { id: SURVIVOR_ID }, error: null }),
+              };
+              return survivorChain;
+            },
+            update: (fields: Record<string, unknown>) => {
+              if (typeof fields.earn_count === "number") {
+                earnCountUpdateCalled = true;
+                earnCountWrittenValue = fields.earn_count as number;
+              }
+              return { eq: () => Promise.resolve({ data: null, error: null }) };
+            },
+            delete: () => ({
+              eq: (_col: string, val: string) => {
+                if (val === XX_ID) xxEntryDeleted = true;
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+        }
+
+        if (table === "user_stamps" || table === "passport_stamps") {
+          return {
+            update: (_fields: Record<string, unknown>) => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        if (table === "stamp_artwork_versions") {
+          return {
+            update: (_fields: Record<string, unknown>) => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        if (table === "stamp_generation_queue") {
+          return {
+            delete: () => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        return builder([]);
+      },
+    };
+
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Germany", "DE"));
+
+    const r = await apiReq("PUT", "/admin/geocode-cache/partialtown", {
+      country_code: "DE",
+      country: "Germany",
+      repair_catalog: true,
+    });
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.ok(r.body.repair, "response should include repair stats");
+    const repair = r.body.repair as RepairStats;
+
+    // Merge still completes
+    assert.equal(repair.catalogMerged, 1,
+      "merge should complete even when only the survivor row is returned by the pair select");
+    assert.equal(repair.catalogRekeyed, 0, "re-key count must be 0 when a merge occurred");
+
+    // xxCount falls back to 0 via ?? 0, so the guard (xxCount > 0) must prevent the update
+    assert.equal(earnCountUpdateCalled, false,
+      "earn_count update must not be issued when the XX row is absent from the pair result (xxCount ?? 0 === 0)");
+    assert.equal(earnCountWrittenValue, null,
+      "no earn_count value should have been written — survivor's count must stay untouched");
+
+    // XX entry must still be deleted to complete the merge
+    assert.ok(xxEntryDeleted, "XX catalog entry must still be deleted even when its earn_count row is absent");
+  });
+
   it("prevents a success count when a user_stamps ownership repoint errors during merge", async () => {
     const XX_ID = "cat-xx-ownership-fail";
     const SURVIVOR_ID = "cat-survivor-ownership-fail";
