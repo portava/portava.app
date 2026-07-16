@@ -681,6 +681,116 @@ describe("match display cards — completed_count takes precedence over complete
   });
 });
 
+// ── Future GET /safety-checkins — non-party authorization skeleton ────────────
+//
+// rent_buddy_safety_checkins is currently write-only from the API. If a GET
+// route is ever added to expose check-in history directly (i.e. outside the
+// buddy_booking_events view), it MUST carry the same isParty guard as the POST
+// handler. This describe block documents that contract so the guard cannot be
+// silently omitted.
+//
+// Assertion strategy: assert res.status !== 200 (not a strict 403) so the test
+// passes today when the route doesn't exist (404 → no data exposed) AND after
+// the route is added with the guard (403 → correct). A 200 response — the
+// dangerous case — will make the test fail. Tighten to assert.equal(403) once
+// the route is implemented.
+
+describe("GET safety-checkins — non-party must not receive 200", () => {
+  it("returns a non-200 status when a stranger calls GET /api/rent-a-buddy/bookings/:id/safety-checkins", async () => {
+    // The stranger is neither the traveler nor the buddy on this booking.
+    // completingUserHasBuddyProfile: false means the rent_buddy_profiles lookup
+    // returns null, so any isParty check evaluates to false.
+    // Expected: 403 once the route exists with the guard; 404 today.
+    // NOT acceptable: 200 — that would expose safety data to a stranger.
+    const fake = makeFakeClient({
+      userId: STRANGER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: false,
+    });
+    const res = await call(
+      "GET",
+      `/api/rent-a-buddy/bookings/${BOOKING_ID}/safety-checkins`,
+      fake,
+    );
+    assert.notEqual(
+      res.status,
+      200,
+      `non-party must not receive 200 on GET safety-checkins (got ${res.status}); ` +
+        "if this route now exists, add isParty enforcement and tighten this assertion to 403",
+    );
+  });
+
+  it("returns a non-200 status when a stranger calls GET /api/buddy-bookings/:id/safety-checkins via alias URL", async () => {
+    // Same contract exercised through the alias path that the mobile client uses.
+    const fake = makeFakeClient({
+      userId: STRANGER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: false,
+    });
+    const res = await call(
+      "GET",
+      `/api/buddy-bookings/${BOOKING_ID}/safety-checkins`,
+      fake,
+    );
+    assert.notEqual(
+      res.status,
+      200,
+      `non-party must not receive 200 on GET safety-checkins via alias (got ${res.status}); ` +
+        "if this route now exists, add isParty enforcement and tighten this assertion to 403",
+    );
+  });
+});
+
+// ── Future GET /safety-events — non-party authorization skeleton ──────────────
+//
+// rent_buddy_safety_events is also currently write-only from the API. The same
+// isParty requirement applies: a stranger must never receive event rows for a
+// booking they are not part of. This skeleton ensures the guard is tested before
+// the route is written, not after.
+
+describe("GET safety-events — non-party must not receive 200", () => {
+  it("returns a non-200 status when a stranger calls GET /api/rent-a-buddy/bookings/:id/safety-events", async () => {
+    // Expected: 403 once the route exists with the guard; 404 today.
+    // NOT acceptable: 200 — that would expose safety event data to a stranger.
+    const fake = makeFakeClient({
+      userId: STRANGER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: false,
+    });
+    const res = await call(
+      "GET",
+      `/api/rent-a-buddy/bookings/${BOOKING_ID}/safety-events`,
+      fake,
+    );
+    assert.notEqual(
+      res.status,
+      200,
+      `non-party must not receive 200 on GET safety-events (got ${res.status}); ` +
+        "if this route now exists, add isParty enforcement and tighten this assertion to 403",
+    );
+  });
+
+  it("returns a non-200 status when a stranger calls GET /api/buddy-bookings/:id/safety-events via alias URL", async () => {
+    // Same contract exercised through the alias path.
+    const fake = makeFakeClient({
+      userId: STRANGER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: false,
+    });
+    const res = await call(
+      "GET",
+      `/api/buddy-bookings/${BOOKING_ID}/safety-events`,
+      fake,
+    );
+    assert.notEqual(
+      res.status,
+      200,
+      `non-party must not receive 200 on GET safety-events via alias (got ${res.status}); ` +
+        "if this route now exists, add isParty enforcement and tighten this assertion to 403",
+    );
+  });
+});
+
 // ── toBuddyScoringData counter precedence ─────────────────────────────────────
 //
 // toBuddyScoringData picks completed_count ?? completed_bookings. When both
