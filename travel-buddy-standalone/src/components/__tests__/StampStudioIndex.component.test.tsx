@@ -310,6 +310,26 @@ describe('StampStudioIndex — returning focus triggers an immediate catalog re-
 
     expect(mockGetCatalog.mock.calls.length).toBeGreaterThan(callsAfterRefocus);
   });
+
+  it('re-registers the 45-second health interval after re-focus and invoking it calls getStampWorkerHealth', async () => {
+    render(<StampStudioIndex />);
+    await waitFor(() => expect(mockGetCatalog).toHaveBeenCalledTimes(1));
+
+    // Simulate leaving the screen and returning — the useFocusEffect cleanup runs
+    // then the callback fires again, re-registering all three intervals.
+    await focusControl.simulateRefocus();
+
+    // The freshly registered 45-second interval must be present in the spy.
+    const healthPoll = spy.captured.find((e) => e.delay === 45_000);
+    expect(healthPoll).toBeDefined();
+
+    const healthCallsAfterRefocus = mockGetHealth.mock.calls.length;
+
+    // Manually tick the interval to confirm it calls getStampWorkerHealth.
+    await act(async () => { healthPoll!.fn(); });
+
+    expect(mockGetHealth.mock.calls.length).toBeGreaterThan(healthCallsAfterRefocus);
+  });
 });
 
 // ── Suite 3: pull-to-refresh ───────────────────────────────────────────────────
