@@ -95,12 +95,14 @@ function makeModerationClient(opts: {
   actorRole?:   string;
   captureActivity?:          any[];
   captureModerationActions?: any[];
+  modInsertError?:           boolean;
 } = {}) {
   const {
     actorUserId = ADMIN_USER_ID,
     actorRole   = "admin",
     captureActivity          = [],
     captureModerationActions = [],
+    modInsertError           = false,
   } = opts;
 
   const db: Record<string, any[]> = {
@@ -139,7 +141,17 @@ function makeModerationClient(opts: {
         const newRows = Array.isArray(data) ? data : [data];
         db[tableName] = [...(db[tableName] ?? []), ...newRows];
         if (tableName === "event_activity_log") captureActivity.push(...newRows);
-        if (tableName === "moderation_actions")  captureModerationActions.push(...newRows);
+        if (tableName === "moderation_actions") {
+          captureModerationActions.push(...newRows);
+          // When modInsertError is set, return a thenable that resolves with an error
+          // so the route's `const { error: modErr } = await sc.from(...).insert(...)` path fires.
+          if (modInsertError) {
+            return {
+              then: (resolve: any) =>
+                Promise.resolve({ data: null, error: { message: "moderation_actions insert failed" } }).then(resolve),
+            };
+          }
+        }
         filtered = newRows;
         return b;
       },
@@ -346,5 +358,42 @@ describe("PATCH /admin/events/:eventId/moderate — access control", () => {
     );
     assert.equal(status, 400);
     assert.equal(body.error, "invalid_payload");
+  });
+});
+
+// ── Audit fail-open: moderation_actions insert failure must not surface as 500 ──
+
+describe("PATCH /admin/events/:eventId/moderate — moderation_actions insert failure is fail-open", () => {
+  it("still returns 200 with ok:true when the moderation_actions insert fails", async () => {
+    const captureActivity: any[] = [];
+    const captureModerationActions: any[] = [];
+    const client = makeModerationClient({
+      captureActivity,
+      captureModerationActions,
+      modInsertError: true,
+    });
+    setClient(client);
+
+    const { status, body } = await req(
+      "PATCH",
+      `/admin/events/${EVENT_ID_A}/moderate`,
+      { action: "hide", reason: "audit-fail-open test" },
+    );
+
+    assert.equal(
+      status, 200,
+      `moderation_actions insert failure must not surface as a 500 — got ${status}: ${JSON.stringify(body)}`,
+    );
+    assert.equal(body.ok, true, "response body should still have ok: true");
+    assert.equal(body.action, "hide");
+    assert.equal(body.eventId, EVENT_ID_A);
+
+    // The insert was still attempted — the route must not have skipped it.
+    assert.equal(
+      captureModerationActions.length, 1,
+      "the moderation_actions insert must have been attempted even though it failed",
+    );
+    assert.equal(captureModerationActions[0].action_type, "event_hide");
+    assert.equal(captureModerationActions[0].performed_by, ADMIN_USER_ID);
   });
 });

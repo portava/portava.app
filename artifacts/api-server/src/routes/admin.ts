@@ -2153,8 +2153,9 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
     metadata:       { event_id: eventId, event_title: (ev as any).title },
   });
   if (modErr) {
-    req.log.error({ err: modErr, eventId, action }, "moderation_actions insert failed");
-    sendError(res, "db_error", "Failed to write moderation audit; event mutation was applied but audit is incomplete"); return;
+    // Fail-open: the event mutation is already applied; log the audit failure but
+    // do not surface it to the caller as a 500.
+    req.log.warn({ err: modErr, eventId, action }, "moderation_actions insert failed — event action was applied");
   }
 
   // Resolve pending reports for hide/cancel/remove actions
