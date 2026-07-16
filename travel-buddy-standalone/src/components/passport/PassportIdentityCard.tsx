@@ -13,7 +13,7 @@ import {
 import Svg, { Circle, Path, Rect, Text as SvgText } from 'react-native-svg';
 import {
   ShieldCheck, Globe, MapPin, Camera,
-  Bookmark, UserCircle2, UserPlus, UserCheck, CheckCircle2,
+  Bookmark, UserCircle2, UserPlus, UserCheck,
   Briefcase, Users, Stamp,
 } from 'lucide-react-native';
 import type { OwnProfile, PublicProfile } from '../../types/models';
@@ -47,6 +47,8 @@ interface Props {
   isFollowing?: boolean;
   followLoading?: boolean;
   onFollowPress?: () => void;
+  /** Owner: navigate to saved places */
+  onSavedPress?: () => void;
 }
 
 const AVATAR_SIZE  = 76;
@@ -55,6 +57,7 @@ const INK          = '#1C1C1A';
 const MUTED        = '#8A7E6E';
 const CREAM        = '#F5F0E8';
 const GREEN_STAMP  = '#2D6A4F';
+const NAVY         = '#1C3A6E';
 
 // ─── Stat accent config ───────────────────────────────────────────────────────
 
@@ -106,6 +109,32 @@ function ArrivalStamp() {
   );
 }
 
+// ─── Passport-style verified stamp (replaces generic CheckCircle2) ─────────────
+
+function PassportVerifiedStamp() {
+  return (
+    <Svg
+      width={26}
+      height={26}
+      viewBox="0 0 30 30"
+      accessibilityLabel="Verified traveler"
+    >
+      {/* Outer dashed ring */}
+      <Circle cx={15} cy={15} r={13} stroke={NAVY} strokeWidth={2} strokeDasharray="3 1.5" fill="none" />
+      {/* Inner thin ring */}
+      <Circle cx={15} cy={15} r={9.5} stroke={NAVY} strokeWidth={0.8} fill="none" opacity={0.55} />
+      {/* Plane silhouette pointing upper-right */}
+      <Path
+        d="M7.5 16.5 L12 9 L14 11.5 L10.5 14.5 L18 16.8 L16 19.2 L9.5 17 L10.5 21 L8.5 22 Z"
+        fill={NAVY}
+        opacity={0.9}
+      />
+      {/* Decorative dots at bottom */}
+      <SvgText x="15" y="27.5" textAnchor="middle" fill={NAVY} fontSize="3.5" fontWeight="800" opacity={0.6}>✦ ✦ ✦</SvgText>
+    </Svg>
+  );
+}
+
 // ─── Trust Score bar ──────────────────────────────────────────────────────────
 
 function TrustScoreBar({ score, onPress }: { score: number; onPress?: () => void }) {
@@ -125,18 +154,24 @@ function TrustScoreBar({ score, onPress }: { score: number; onPress?: () => void
   );
 }
 
-// ─── Stat ticket with icon ────────────────────────────────────────────────────
+// ─── Stat ticket ──────────────────────────────────────────────────────────────
+// iconOnly=true  → icon bg + number, no label text  (scrolled / compact)
+// iconOnly=false → label text + number, no icon bg  (expanded, default)
 
-export function StatTicket({ n, label, onPress }: StatItem) {
+export function StatTicket({ n, label, onPress, iconOnly }: StatItem & { iconOnly?: boolean }) {
   const cfg = STAT_CFG[label] ?? STAT_FALLBACK;
   const { Icon, color, bg } = cfg;
   return (
     <Pressable style={st.statTicket} onPress={onPress} disabled={!onPress} hitSlop={6}>
-      <View style={[st.statIconBg, { backgroundColor: bg }]}>
-        <Icon size={16} color={color} strokeWidth={1.8} />
-      </View>
+      {iconOnly ? (
+        <View style={[st.statIconBg, { backgroundColor: bg }]}>
+          <Icon size={16} color={color} strokeWidth={1.8} />
+        </View>
+      ) : null}
       <Text style={[st.statN, { color }]}>{n}</Text>
-      <Text style={st.statL}>{label}</Text>
+      {!iconOnly ? (
+        <Text style={st.statL}>{label}</Text>
+      ) : null}
       <View style={[st.statUnderline, { backgroundColor: color }]} />
     </Pressable>
   );
@@ -157,9 +192,11 @@ interface StatsRowProps {
   isOwner: boolean;
   overrideStats?: StatItem[];
   onStatPress?: (label: string) => void;
+  /** When true: show icon + count, hide label. When false/undefined: show label + count, hide icon. */
+  iconOnly?: boolean;
 }
 
-export function PassportStatsRow({ profile, isOwner, overrideStats, onStatPress }: StatsRowProps) {
+export function PassportStatsRow({ profile, isOwner, overrideStats, onStatPress, iconOnly }: StatsRowProps) {
   const [liveStats, setLiveStats] = useState<PassportStats | null>(null);
 
   useEffect(() => {
@@ -182,7 +219,7 @@ export function PassportStatsRow({ profile, isOwner, overrideStats, onStatPress 
     <View style={st.section}>
       <View style={st.statsRow}>
         {stats.map((item) => (
-          <StatTicket key={item.label} {...item} />
+          <StatTicket key={item.label} {...item} iconOnly={iconOnly} />
         ))}
       </View>
     </View>
@@ -197,6 +234,7 @@ export function PassportIdentityCard({
   hasHighlights, allHighlightsViewed, onHighlightRingPress, onNewHighlightPress,
   trustScore, trustLabel, onTrustInfo,
   isFollowing, followLoading, onFollowPress,
+  onSavedPress,
 }: Props) {
   const username      = 'username' in profile ? profile.username : null;
   const identity      = {
@@ -300,13 +338,12 @@ export function PassportIdentityCard({
 
               <Text style={s.travelerLabel}>TRAVELER ★</Text>
 
+              {/* Name row — verified stamp replaces CheckCircle2 */}
               <View style={s.nameRow}>
                 <Text style={s.displayName} numberOfLines={1}>
                   {resolvedName.toUpperCase()}
                 </Text>
-                {isVerified ? (
-                  <CheckCircle2 size={18} color="#2563EB" fill="#2563EB" strokeWidth={0} style={s.verifiedCheck} />
-                ) : null}
+                {isVerified ? <PassportVerifiedStamp /> : null}
               </View>
 
               {handleSubline ? (
@@ -316,14 +353,6 @@ export function PassportIdentityCard({
               {/* Trust Score — compact, inside identity area */}
               {trustScore != null ? (
                 <TrustScoreBar score={trustScore} onPress={onTrustInfo} />
-              ) : null}
-
-              {/* Verified pill */}
-              {isVerified ? (
-                <View style={s.verifiedPill}>
-                  <CheckCircle2 size={11} color="#2563EB" fill="#2563EB" strokeWidth={0} />
-                  <Text style={s.verifiedPillText}>Verified</Text>
-                </View>
               ) : null}
 
               {/* Interests tags */}
@@ -344,16 +373,24 @@ export function PassportIdentityCard({
                 </View>
               ) : null}
 
-              {/* Owner actions */}
+              {/* Owner actions — compact icon-only circular buttons */}
               {isOwner ? (
                 <View style={s.ownerActions}>
-                  <Pressable style={s.actionCard} onPress={() => {}} hitSlop={8} accessibilityLabel="Saved">
-                    <Bookmark size={15} color={INK} strokeWidth={1.8} />
-                    <Text style={s.actionCardText}>Saved</Text>
+                  <Pressable
+                    style={s.actionIcon}
+                    onPress={onSavedPress}
+                    hitSlop={12}
+                    accessibilityLabel="Saved places"
+                  >
+                    <Bookmark size={16} color={INK} strokeWidth={1.8} />
                   </Pressable>
-                  <Pressable style={s.actionCard} onPress={onMenuPress} hitSlop={8} accessibilityLabel="Edit Profile">
-                    <UserCircle2 size={15} color={INK} strokeWidth={1.8} />
-                    <Text style={s.actionCardText}>Edit Profile</Text>
+                  <Pressable
+                    style={s.actionIcon}
+                    onPress={onMenuPress}
+                    hitSlop={12}
+                    accessibilityLabel="Edit profile"
+                  >
+                    <UserCircle2 size={16} color={INK} strokeWidth={1.8} />
                   </Pressable>
                 </View>
               ) : (
@@ -449,8 +486,9 @@ const s = StyleSheet.create({
     gap: 8,
     paddingTop: 4,
   },
+  // Reduced from 0.9 — stamps read as atmospheric paper texture, not foreground UI
   adventureStampWrap: {
-    opacity: 0.9,
+    opacity: 0.38,
   },
   avatarOuter: {
     alignItems: 'center',
@@ -496,8 +534,9 @@ const s = StyleSheet.create({
     borderWidth: 2,
     borderColor: CREAM,
   },
+  // Reduced from 0.9
   arrivalStampWrap: {
-    opacity: 0.9,
+    opacity: 0.38,
     marginTop: 4,
   },
 
@@ -507,9 +546,10 @@ const s = StyleSheet.create({
     gap: 4,
     paddingTop: 2,
   },
+  // Reduced from 0.85
   portavaStampWrap: {
     alignSelf: 'flex-end',
-    opacity: 0.85,
+    opacity: 0.38,
     marginBottom: 2,
   },
   travelerLabel: {
@@ -531,9 +571,6 @@ const s = StyleSheet.create({
     color: INK,
     letterSpacing: -0.5,
     flexShrink: 1,
-  },
-  verifiedCheck: {
-    flexShrink: 0,
   },
   handle: {
     fontSize: 13,
@@ -584,25 +621,6 @@ const s = StyleSheet.create({
     borderRadius: 2,
   },
 
-  /* Verified pill */
-  verifiedPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    alignSelf: 'flex-start',
-    backgroundColor: '#EFF6FF',
-    borderRadius: 20,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  verifiedPillText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#2563EB',
-  },
-
   /* Interests tags */
   tagsRow: {
     flexDirection: 'row',
@@ -627,29 +645,21 @@ const s = StyleSheet.create({
     flex: 1,
   },
 
-  /* Owner actions */
+  /* Owner actions — compact circular icon buttons */
   ownerActions: {
     flexDirection: 'row',
-    gap: 6,
+    gap: 8,
     marginTop: 4,
   },
-  actionCard: {
-    flex: 1,
-    flexDirection: 'row',
+  actionIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    paddingVertical: 7,
-    paddingHorizontal: 6,
     backgroundColor: 'rgba(255,255,255,0.75)',
-    borderRadius: 10,
     borderWidth: 1,
     borderColor: 'rgba(28,28,26,0.12)',
-  },
-  actionCardText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: INK,
   },
 
   /* Public follow */

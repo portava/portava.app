@@ -316,15 +316,16 @@ export default function IdentityScreen() {
 
       <SettingsSection title="Basics">
         <View style={st.field}>
-          <FieldLabel>Display Name</FieldLabel>
+          <FieldLabel right={<Text style={st.charCount}>{form.displayName.length}/40</Text>}>Display Name</FieldLabel>
           <TextField
             value={form.displayName}
-            onChangeText={(text) => setForm((f) => ({ ...f, displayName: text }))}
+            onChangeText={(text) => setForm((f) => ({ ...f, displayName: text.slice(0, 40) }))}
             placeholder="Your name"
-            maxLength={60}
+            maxLength={40}
             autoCapitalize="words"
             returnKeyType="next"
           />
+          <FieldHint>Maximum 40 characters.</FieldHint>
         </View>
 
         <View style={st.field}>

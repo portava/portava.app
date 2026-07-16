@@ -379,6 +379,11 @@ function PassportContent({
   }, [reload]));
 
   const navScrollHandler = useNavBarScrollHandler();
+  const [statsIconOnly, setStatsIconOnly] = useState(false);
+  const handleScroll = useCallback((e: any) => {
+    navScrollHandler(e);
+    setStatsIconOnly(e.nativeEvent.contentOffset.y > 60);
+  }, [navScrollHandler]);
 
   const renderTabsSection = () => (
     <>
@@ -454,7 +459,7 @@ function PassportContent({
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingTop: insets.top }}
         showsVerticalScrollIndicator={false}
-        onScroll={navScrollHandler}
+        onScroll={handleScroll}
         scrollEventThrottle={16}
       >
         {sectionOrder.map((sectionKey) => (
@@ -476,10 +481,12 @@ function PassportContent({
           trustScore={profile.trustScore ?? undefined}
           trustLabel={profile.trustLabel ?? undefined}
           onTrustInfo={() => setTrustSheetOpen(true)}
+          onSavedPress={() => router.push('/saved' as any)}
         />
         <PassportStatsRow
           profile={profile}
           isOwner
+          iconOnly={statsIconOnly}
           onStatPress={(label) => {
             if (label === 'Trips') setTab('plans');
             else if (label === 'Stamps') setStampsViewOpen(true);
