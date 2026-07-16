@@ -738,6 +738,37 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
     );
   });
 
+  it("counter increments three times in a single call when all three cleanup steps fail together", async () => {
+    // Use LEGACY_TOKEN as both the device token and the legacy profile token so
+    // that all three cleanup steps are attempted:
+    //   Step 1 — notification_devices DELETE        (deleteDeviceError)
+    //   Step 2 — profiles UPDATE (null legacy token) (profilesUpdateError, triggered because legacyToken === deviceToken)
+    //   Step 3 — rent_buddy_profiles UPDATE          (rentBuddyUpdateError)
+    // Each of the three steps catches its error and increments
+    // _consecutiveCleanupFailures independently, so a single route() call
+    // must produce exactly 3 increments — reaching CLEANUP_ERROR_THRESHOLD (3).
+    // Three calls would therefore reach 9, well past any future threshold bump.
+    _setTestFetch(invalidCredFetch);
+    const STEP1_ERROR = new Error("notification_devices unavailable");
+    const STEP2_ERROR = new Error("profiles table unavailable");
+    const STEP3_ERROR = new Error("rent_buddy_profiles unavailable");
+    const { client } = makeFakeDb({
+      deviceToken: LEGACY_TOKEN,
+      legacyToken: LEGACY_TOKEN,
+      deleteDeviceError: STEP1_ERROR,
+      profilesUpdateError: STEP2_ERROR,
+      rentBuddyUpdateError: STEP3_ERROR,
+    });
+
+    const router = new NotificationRouter(client);
+    await router.route(BASE_NOTIF);
+
+    assert.ok(
+      _getCleanupFailureCount() >= 3,
+      `all three steps failing in one call should drive the counter to CLEANUP_ERROR_THRESHOLD (3), got ${_getCleanupFailureCount()}`,
+    );
+  });
+
   it("profiles and rent_buddy_profiles cleanup still run when notification_devices DELETE fails", async () => {
     // Step 1 (notification_devices DELETE) throws a DB error.
     // Steps 2 and 3 must still execute despite that failure —
