@@ -119,10 +119,12 @@ describe('SDK 54 downgrade — package version pins', () => {
   });
 
   it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-    const standalone = readPkg('../../../../travel-buddy-standalone/package.json');
+    // In this fork, `pkg` (deps) IS travel-buddy-standalone; compare against
+    // the main app at artifacts/travel-buddy (workspace root is ../../..).
+    const mainApp = readPkg('../../../artifacts/travel-buddy/package.json');
     const saDeps: Record<string, string> = {
-      ...standalone.dependencies,
-      ...standalone.devDependencies,
+      ...mainApp.dependencies,
+      ...mainApp.devDependencies,
     };
     const toCheck = [
       'expo-notifications',
@@ -135,7 +137,7 @@ describe('SDK 54 downgrade — package version pins', () => {
       assert.equal(
         deps[name],
         saDeps[name],
-        `${name} version mismatch: artifacts/travel-buddy="${deps[name]}" travel-buddy-standalone="${saDeps[name]}"`,
+        `${name} version mismatch: travel-buddy-standalone="${deps[name]}" artifacts/travel-buddy="${saDeps[name]}"`,
       );
     }
   });

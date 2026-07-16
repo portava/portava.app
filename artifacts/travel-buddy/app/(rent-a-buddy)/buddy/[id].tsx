@@ -19,6 +19,7 @@ import {
 import { reportContent } from '../../../src/services/reports';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { UserOverflowMenu } from '../../../src/components/interaction/UserOverflowMenu';
+import { MeetupAreaPreview } from '../../../src/components/location/MeetupAreaPreview';
 import { formatAwayRange, upcomingAwayRanges } from '../../../src/lib/awayDates';
 
 function ReviewSection({ buddyId, initialReviews, total, avgRating }: {
@@ -336,6 +337,11 @@ export default function BuddyProfileScreen() {
             <MapPin size={16} color={color.signal} />
             <Text style={styles.sectionTitle}>Public meetup locations</Text>
           </View>
+          {buddy.meetupBaseLat != null && buddy.meetupBaseLng != null && (
+            <View style={{ marginBottom: space.sm }}>
+              <MeetupAreaPreview lat={buddy.meetupBaseLat} lng={buddy.meetupBaseLng} />
+            </View>
+          )}
           <Text style={styles.safetySub}>
             All first meetups must take place in a busy, well-lit public space of your choosing — a hotel lobby, busy café, or transit hub. Never agree to a private location for your first meeting.
           </Text>
