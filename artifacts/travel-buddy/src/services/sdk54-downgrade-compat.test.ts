@@ -141,6 +141,86 @@ describe('SDK 54 downgrade — package version pins', () => {
   });
 });
 
+// ── 1b. Peer dep sync — transitive Expo SDK 54 peer deps ─────────────────────
+//
+// The five downgraded packages declare peer dependencies on react-native, expo,
+// and react.  A drift in any of those peer deps can cause silent runtime
+// breakage even when the pinned-package versions are identical.  This section
+// ensures that the key peer deps are also kept in sync between the two
+// package.json files.
+//
+// Packages and their key peer deps:
+//   expo-notifications  → react-native, expo, react
+//   expo-dev-client     → react-native, expo, react
+//   expo-calendar       → react-native, expo, react
+//   expo-clipboard      → react-native, expo, react
+//   react-native-view-shot → react-native, react
+
+describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
+  // artifacts/travel-buddy/package.json is 2 levels up from src/services.
+  const tb = readPkg('../../package.json');
+  const tbAll: Record<string, string> = {
+    ...tb.dependencies,
+    ...tb.devDependencies,
+  };
+
+  // travel-buddy-standalone/package.json is 4 levels up from src/services.
+  const sa = readPkg('../../../../travel-buddy-standalone/package.json');
+  const saAll: Record<string, string> = {
+    ...sa.dependencies,
+    ...sa.devDependencies,
+  };
+
+  // Key peer deps shared by all five downgraded packages.
+  const peerDepsToCheck: Array<{ pkg: string; peerDep: string }> = [
+    // react-native — primary peer dep for every Expo package
+    { pkg: 'expo-notifications',   peerDep: 'react-native' },
+    { pkg: 'expo-dev-client',      peerDep: 'react-native' },
+    { pkg: 'expo-calendar',        peerDep: 'react-native' },
+    { pkg: 'expo-clipboard',       peerDep: 'react-native' },
+    { pkg: 'react-native-view-shot', peerDep: 'react-native' },
+
+    // expo — SDK version gate for all expo-* packages
+    { pkg: 'expo-notifications',   peerDep: 'expo' },
+    { pkg: 'expo-dev-client',      peerDep: 'expo' },
+    { pkg: 'expo-calendar',        peerDep: 'expo' },
+    { pkg: 'expo-clipboard',       peerDep: 'expo' },
+
+    // react — required by all packages that render React components
+    { pkg: 'expo-notifications',   peerDep: 'react' },
+    { pkg: 'expo-dev-client',      peerDep: 'react' },
+    { pkg: 'expo-calendar',        peerDep: 'react' },
+    { pkg: 'expo-clipboard',       peerDep: 'react' },
+    { pkg: 'react-native-view-shot', peerDep: 'react' },
+  ];
+
+  // Deduplicate to one test per peer dep (all downgraded packages share the same
+  // react-native / expo / react version in a given project, so testing per peer
+  // dep is sufficient and produces clearer failure messages).
+  const uniquePeerDeps = [...new Set(peerDepsToCheck.map(e => e.peerDep))];
+
+  for (const peerDep of uniquePeerDeps) {
+    it(`${peerDep} is in sync between artifacts/travel-buddy and travel-buddy-standalone (peer dep of SDK 54 downgraded packages)`, () => {
+      const tbVer = tbAll[peerDep];
+      const saVer = saAll[peerDep];
+
+      assert.ok(
+        tbVer !== undefined,
+        `${peerDep} is missing from artifacts/travel-buddy/package.json — required as a peer dep of the SDK 54 downgraded packages`,
+      );
+      assert.ok(
+        saVer !== undefined,
+        `${peerDep} is missing from travel-buddy-standalone/package.json — required as a peer dep of the SDK 54 downgraded packages`,
+      );
+      assert.equal(
+        tbVer,
+        saVer,
+        `${peerDep} peer dep mismatch: artifacts/travel-buddy="${tbVer}" travel-buddy-standalone="${saVer}" — a drift here can cause silent SDK 54 runtime breakage`,
+      );
+    });
+  }
+});
+
 // ── 2. expo-calendar ~15.0.8 — addMeetupToCalendar integration ───────────────
 //
 // Calls the REAL addMeetupToCalendar() from calendar.ts with a mock
