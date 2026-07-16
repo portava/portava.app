@@ -247,6 +247,44 @@ function apiReq(
   });
 }
 
+function apiReqWithBody(
+  method: string,
+  path: string,
+  body: unknown,
+  token?: string,
+): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(path, base);
+    const payload = JSON.stringify(body);
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      "content-length": Buffer.byteLength(payload).toString(),
+    };
+    if (token) headers.authorization = `Bearer ${token}`;
+    const r = http.request(
+      {
+        hostname: url.hostname,
+        port: Number(url.port),
+        path: url.pathname + url.search,
+        method,
+        headers,
+      },
+      (inRes) => {
+        let raw = "";
+        inRes.on("data", (c) => (raw += c));
+        inRes.on("end", () => {
+          let parsed: any;
+          try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+          resolve({ status: inRes.statusCode ?? 0, body: parsed });
+        });
+      },
+    );
+    r.on("error", reject);
+    r.write(payload);
+    r.end();
+  });
+}
+
 // ── Test suite ────────────────────────────────────────────────────────────────
 
 describe("profile data-leak prevention", () => {
@@ -343,6 +381,72 @@ describe("profile data-leak prevention", () => {
     it("does not include dobVerified (camelCase) in public profile response", async () => {
       const { body } = await apiReq("GET", `/api/users/${USER_ID}`);
       assert.ok(!("dobVerified" in body), "dobVerified must not appear in public profile");
+    });
+  });
+
+  // ── PATCH /api/me/profile — response must not leak DOB after an update ────────
+
+  describe("PATCH /api/me/profile — date of birth leak prevention", () => {
+    it("returns HTTP 200 after patching dateOfBirth", async () => {
+      const { status, body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: "1990-03-15" },
+        USER_TOKEN,
+      );
+      assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    });
+
+    it("does not include date_of_birth (snake_case) in PATCH response", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: "1990-03-15" },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("date_of_birth" in body),
+        `date_of_birth must not appear in PATCH response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dateOfBirth (camelCase) in PATCH response", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: "1990-03-15" },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dateOfBirth" in body),
+        `dateOfBirth must not appear in PATCH response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dob_verified (snake_case) in PATCH response", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: "1990-03-15" },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dob_verified" in body),
+        `dob_verified must not appear in PATCH response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dobVerified (camelCase) in PATCH response", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: "1990-03-15" },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dobVerified" in body),
+        `dobVerified must not appear in PATCH response — got keys: ${Object.keys(body).join(", ")}`,
+      );
     });
   });
 
