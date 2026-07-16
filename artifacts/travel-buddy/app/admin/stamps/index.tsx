@@ -79,18 +79,35 @@ export default function StampStudioIndex() {
   }, []);
   const refreshHealthRef = useRef(refreshHealth);
   refreshHealthRef.current = refreshHealth;
+
+  // Lightweight re-fetch of catalog status counts + recent entries (no spinners).
+  const refreshCatalog = useCallback(async () => {
+    const res = await getAdminStampCatalog({ limit: 10 });
+    if (res.ok) {
+      setStatusCounts((res.data as any).statusCounts ?? {});
+      setRecentEntries((res.data as any).entries ?? []);
+    }
+  }, []);
+  const refreshCatalogRef = useRef(refreshCatalog);
+  refreshCatalogRef.current = refreshCatalog;
+
   const firstFocusRef = useRef(true);
 
-  // Poll worker health while the screen is focused; stop when unfocused.
+  // Poll worker health and catalog while the screen is focused; stop when unfocused.
   useFocusEffect(
     useCallback(() => {
       // Refresh right away when returning to the screen so stale data doesn't linger.
-      if (!firstFocusRef.current) refreshHealthRef.current();
+      if (!firstFocusRef.current) {
+        refreshHealthRef.current();
+        refreshCatalogRef.current();
+      }
       firstFocusRef.current = false;
-      const pollId = setInterval(() => { refreshHealthRef.current(); }, 45_000);
-      const tickId = setInterval(() => { setClockTick((n) => n + 1); }, 30_000);
+      const healthPollId  = setInterval(() => { refreshHealthRef.current(); },  45_000);
+      const catalogPollId = setInterval(() => { refreshCatalogRef.current(); }, 60_000);
+      const tickId        = setInterval(() => { setClockTick((n) => n + 1); },  30_000);
       return () => {
-        clearInterval(pollId);
+        clearInterval(healthPollId);
+        clearInterval(catalogPollId);
         clearInterval(tickId);
       };
     }, []),
