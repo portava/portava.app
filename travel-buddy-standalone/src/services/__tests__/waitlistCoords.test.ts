@@ -80,13 +80,6 @@ describe('cityCoordSpread — both-or-null contract', () => {
 });
 
 // ── Waitlist payload contract ─────────────────────────────────────────────────
-//
-// These tests mirror the exact body construction used by joinWaitlist:
-//
-//   body: JSON.stringify({ city, category, ...cityCoordSpread(coords) })
-//
-// They confirm that every partial-coords scenario produces a payload that
-// never contains lat without lng or lng without lat.
 
 function buildWaitlistPayload(
   city: string,
