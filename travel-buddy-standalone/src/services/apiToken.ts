@@ -47,12 +47,13 @@ export async function freshToken(): Promise<string | null> {
 
     const needsRefresh =
       !session ||
+      !session.access_token ||
       !session.expires_at ||
       session.expires_at - EXPIRY_MARGIN_SECONDS <= Math.floor(Date.now() / 1000);
 
     if (needsRefresh) {
       const { data: refreshed } = await _client.auth.refreshSession();
-      return refreshed?.session?.access_token ?? null;
+      return refreshed?.session?.access_token || null;
     }
 
     return session.access_token;

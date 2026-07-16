@@ -172,6 +172,47 @@ describe('freshToken() — no session at all', () => {
   });
 });
 
+describe('freshToken() — empty access_token triggers refresh', () => {
+  it('calls refreshSession() when access_token is an empty string and expires_at is valid', async () => {
+    const fake = makeFakeClient({
+      session: { access_token: '', expires_at: nowPlusSeconds(3600) },
+      refreshedSession: { access_token: 'refreshed-after-empty', expires_at: nowPlusSeconds(3600) },
+    });
+    _setTestSupabase(fake);
+
+    const token = await freshToken();
+
+    assert.equal(token, 'refreshed-after-empty', 'must refresh when access_token is empty');
+    assert.equal(fake.refreshCalls, 1, 'must call refreshSession() exactly once');
+  });
+
+  it('returns null when access_token is empty and refreshSession also returns an empty token', async () => {
+    const fake = makeFakeClient({
+      session: { access_token: '', expires_at: nowPlusSeconds(3600) },
+      refreshedSession: { access_token: '', expires_at: nowPlusSeconds(3600) },
+    });
+    _setTestSupabase(fake);
+
+    const token = await freshToken();
+
+    assert.equal(token, null, 'must return null when refreshSession also yields an empty token');
+    assert.equal(fake.refreshCalls, 1, 'must call refreshSession() exactly once');
+  });
+
+  it('returns null when access_token is empty and refreshSession returns null', async () => {
+    const fake = makeFakeClient({
+      session: { access_token: '', expires_at: nowPlusSeconds(3600) },
+      refreshedSession: null,
+    });
+    _setTestSupabase(fake);
+
+    const token = await freshToken();
+
+    assert.equal(token, null, 'must return null when refresh also fails');
+    assert.equal(fake.refreshCalls, 1);
+  });
+});
+
 describe('freshToken() — error handling', () => {
   it('returns null when getSession throws', async () => {
     _setTestSupabase({
