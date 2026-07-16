@@ -476,6 +476,35 @@ describe("report-no-show — non-party receives 403", () => {
   });
 });
 
+// ── Safety check-in history — non-party authorization ────────────────────────
+//
+// GET /api/rent-a-buddy/bookings/:bookingId/events (alias: /api/buddy-bookings/:id/events)
+// returns safety check-in and event rows for a booking. The route enforces the
+// same isParty check as the POST check-in and report-no-show handlers, so a
+// stranger must receive 403 — not 200 with someone else's safety data.
+
+describe("booking events (check-in history) — non-party receives 403", () => {
+  it("returns 403 when a stranger calls GET /api/buddy-bookings/:id/events via alias URL", async () => {
+    // The stranger is neither the traveler nor the buddy on this booking.
+    // completingUserHasBuddyProfile defaults to false so the rent_buddy_profiles
+    // lookup returns null, making isParty evaluate to false.
+    const fake = makeFakeClient({
+      userId: STRANGER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: false,
+    });
+    const res = await call(
+      "GET",
+      `/api/buddy-bookings/${BOOKING_ID}/events`,
+      fake,
+    );
+    assert.equal(res.status, 403, "non-party must be rejected with 403");
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "forbidden");
+    // No safety rows should have been read — the 403 fires before the DB fetch.
+  });
+});
+
 describe("complete — non-party receives 403", () => {
   it("returns 403 when a stranger calls POST /api/buddy-bookings/:id/complete via alias URL", async () => {
     // The stranger is neither the traveler nor the buddy on this booking.
