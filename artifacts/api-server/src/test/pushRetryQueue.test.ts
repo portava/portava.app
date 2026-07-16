@@ -2412,5 +2412,80 @@ describe("PushRetryQueue.processQueue() — clearDeadTokens throws during partia
     assert.equal(ndaUpdate2.patch.status, "sent",    "delivery_attempt status must be 'sent'");
     assert.equal(ndaUpdate2.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
   });
+
+  it("mid-sequence all-dead-token attempt finalises as 'failed' — not re-queued — when clearDeadTokens throws", async () => {
+    // attempt_count=1, max_attempts=3 → mid-sequence (attempt 2 would be possible for retryable errors).
+    // BUT all tokens are DeviceNotRegistered, which is non-retryable regardless of remaining attempts.
+    // clearDeadTokens is configured to throw to confirm the isolated try/catch swallows the error
+    // and does NOT cause the item to fall into the outer catch block's re-queue path.
+    //
+    // Expected outcome:
+    //   - push_retry_queue row → 'failed' (non-retryable dead tokens are never re-queued)
+    //   - Must NOT be re-queued (status='queued' with filters.id=QUEUE_ROW_ID absent)
+    //   - notification_delivery_attempts → 'failed' with error_message = "DeviceNotRegistered × 1"
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,        // mid-sequence: attempt 2 is still possible for retryable errors
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    // All tokens are DeviceNotRegistered → non-retryable, result.sent === 0
+    _setTestFetch(expoDeadTokenFetch("DeviceNotRegistered"));
+
+    // clearDeadTokens throws — must be swallowed by the inner isolated try/catch,
+    // NOT surface into the outer catch that triggers re-queue logic
+    _setTestClearDeadTokens(async (_db, _tokens) => {
+      throw new Error("transient DB error during dead-token cleanup — mid-sequence all-dead");
+    });
+
+    await queue.processQueue();
+
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+
+    // Must be finalised as 'failed' — DeviceNotRegistered is non-retryable; cleanup error must not change this
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(
+      failedUpdate,
+      "push_retry_queue must be finalised as 'failed' when all tokens are DeviceNotRegistered, even when clearDeadTokens throws",
+    );
+    assert.equal(failedUpdate.filters.id, QUEUE_ROW_ID, "failed update must target the correct queue row");
+    assert.equal(failedUpdate.patch.attempt_count, 2,   "attempt_count must be 2 (the mid-sequence attempt number)");
+    assert.equal(
+      failedUpdate.patch.last_error,
+      "DeviceNotRegistered \u00d7 1",
+      "last_error must name the dead-token error code and count",
+    );
+
+    // Must NOT be re-queued — the cleanup throw must stay inside the inner catch
+    const requeued = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(
+      !requeued,
+      "must NOT re-queue a mid-sequence row whose only token is DeviceNotRegistered — even when clearDeadTokens throws",
+    );
+
+    // Delivery attempt must also be finalised as 'failed' with the dead-token error
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated on non-retryable dead-token failure");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status, "failed",   "delivery_attempt status must be 'failed'");
+    assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+    assert.equal(
+      ndaUpdate.patch.error_message,
+      "DeviceNotRegistered \u00d7 1",
+      "delivery_attempt error_message must mirror last_error ('DeviceNotRegistered × 1')",
+    );
+  });
 });
 
