@@ -1,15 +1,12 @@
 /**
  * Gem submission wizard — pure validation and payload logic.
  *
- * Extracted from submit.tsx so that the step-gating rules and submit-payload
- * shape can be exercised with jest/node:test without mounting a React Native
- * component.
- *
- * Tested in:
- *   src/services/__tests__/gems.submit.wizard.component.test.ts
+ * Extracted from app/gems/submit.tsx so that the step-gating rules and
+ * submit-payload shape can be exercised without mounting a React Native
+ * component. Lives outside app/ so Expo Router does not treat it as a route.
  */
 
-import type { GemCategory, GemSensitivity } from '../../src/services/hiddenGems';
+import type { GemCategory, GemSensitivity } from '../../services/hiddenGems';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

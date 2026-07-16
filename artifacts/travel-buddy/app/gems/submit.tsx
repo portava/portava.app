@@ -15,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { submitGem, type GemCategory, type GemSensitivity } from '../../src/services/hiddenGems';
 import { GpsLocationCapture } from '../../src/components/location/GpsLocationCapture';
 import type { Place } from '../../src/lib/location/placeTypes';
-import { canNext as wizardCanNext, buildSubmitPayload } from './submit.machine';
+import { canNext as wizardCanNext, buildSubmitPayload } from '../../src/lib/gems/submitMachine';
 import { GemLocationPreview } from '../../src/components/gems/GemLocationPreview';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
