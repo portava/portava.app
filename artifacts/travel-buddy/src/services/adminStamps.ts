@@ -2,70 +2,9 @@
  * Admin Stamp Catalog service — typed fetch wrappers for all admin stamp
  * catalog endpoints. Uses the same auth pattern as other mobile services.
  */
-import { supabase } from '../lib/supabase';
+import { adminGet, adminPost, adminPatch, type AdminApiResult } from './adminApi';
 
-function apiBase(): string {
-  return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-}
-
-async function freshToken(): Promise<string | null> {
-  try {
-    const { data: refreshed } = await supabase.auth.refreshSession();
-    const s = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-    return s?.access_token ?? null;
-  } catch { return null; }
-}
-
-type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string };
-
-async function adminGet<T>(path: string): Promise<ApiResult<T>> {
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) {
-      const b = await res.json().catch(() => ({}));
-      return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
-    }
-    return { ok: true, data: await res.json() as T };
-  } catch (e: any) { return { ok: false, error: e?.message ?? 'Network error' }; }
-}
-
-async function adminPost<T>(path: string, body: unknown): Promise<ApiResult<T>> {
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const b = await res.json().catch(() => ({}));
-      return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
-    }
-    return { ok: true, data: await res.json() as T };
-  } catch (e: any) { return { ok: false, error: e?.message ?? 'Network error' }; }
-}
-
-async function adminPatch<T>(path: string, body: unknown): Promise<ApiResult<T>> {
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      method: 'PATCH',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const b = await res.json().catch(() => ({}));
-      return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
-    }
-    return { ok: true, data: await res.json() as T };
-  } catch (e: any) { return { ok: false, error: e?.message ?? 'Network error' }; }
-}
+type ApiResult<T> = AdminApiResult<T>;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -263,18 +202,5 @@ export async function batchFetchCatalogEntries(catalogIds: string[]): Promise<Ap
     earnCount: number;
   }>
 }>> {
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api/stamps/catalog/batch`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ catalogIds }),
-    });
-    if (!res.ok) {
-      const b = await res.json().catch(() => ({}));
-      return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
-    }
-    return { ok: true, data: await res.json() };
-  } catch (e: any) { return { ok: false, error: e?.message ?? 'Network error' }; }
+  return adminPost('/api/stamps/catalog/batch', { catalogIds });
 }

@@ -13,7 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ArrowLeft, Search, ShieldOff, Shield, TrendingDown, TrendingUp, Edit2, GitMerge } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
-import { supabase } from '../../src/lib/supabase';
+import { adminGet, adminPost, adminPatch } from '../../src/services/adminApi';
 import { useSession } from '../../src/context/SessionContext';
 import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
 
@@ -26,65 +26,6 @@ interface AdminHashtag {
   isBlocked: boolean;
   hideTrending: boolean;
   reportCount?: number;
-}
-
-// ── API helpers ────────────────────────────────────────────────────────────────
-
-function apiBase() { return process.env.EXPO_PUBLIC_API_BASE_URL ?? ''; }
-
-async function freshToken(): Promise<string | null> {
-  try {
-    const { data: refreshed } = await supabase.auth.refreshSession();
-    const s = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-    return s?.access_token ?? null;
-  } catch { return null; }
-}
-
-async function adminGet<T>(path: string): Promise<{ ok: boolean; data?: T; error?: string }> {
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}${path}`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) {
-      const b = await res.json().catch(() => ({}));
-      return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
-    }
-    return { ok: true, data: await res.json() as T };
-  } catch (e: any) { return { ok: false, error: e?.message ?? 'Network error' }; }
-}
-
-async function adminPost<T>(path: string, body: unknown = {}): Promise<{ ok: boolean; data?: T; error?: string }> {
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const b = await res.json().catch(() => ({}));
-      return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
-    }
-    return { ok: true, data: await res.json() as T };
-  } catch (e: any) { return { ok: false, error: e?.message ?? 'Network error' }; }
-}
-
-async function adminPatch<T>(path: string, body: unknown): Promise<{ ok: boolean; data?: T; error?: string }> {
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      method: 'PATCH',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const b = await res.json().catch(() => ({}));
-      return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
-    }
-    return { ok: true, data: await res.json() as T };
-  } catch (e: any) { return { ok: false, error: e?.message ?? 'Network error' }; }
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
@@ -120,7 +61,7 @@ export default function AdminHashtagsScreen() {
     const qs = q ? `?q=${encodeURIComponent(q)}` : '';
     const res = await adminGet<{ hashtags: any[] }>(`/api/admin/hashtags${qs}`);
     setLoading(false);
-    if (!res.ok || !res.data) {
+    if (!res.ok) {
       setError(res.error ?? 'Failed to load hashtags');
       return;
     }
