@@ -88,7 +88,7 @@ describe('getSession bypass guard — travel-buddy services/hooks/lib', () => {
     const label = relative(SRC_DIR, filePath);
 
     it(`${label} does not use getSession() to extract an access token`, () => {
-      const src = readFileSync(filePath, 'utf8');
+      const src = readFileSync(path.resolve(filePath), 'utf8');
       const violates = bypassesTokenHelper(src);
       assert.ok(
         !violates,
