@@ -1,0 +1,128 @@
+Update the Passport page layout so the Passport header is truly edge-to-edge across the full screen width, and separate the stats/counter section from the header.
+
+Do not redesign the entire Passport page. This is a targeted layout correction.
+
+PASSPORT HEADER
+
+Make the Passport header/cover area flush to the left and right edges of the screen.
+
+Requirements:
+
+- Remove horizontal page padding around the Passport header.
+- Remove card-style side margins around the header.
+- The cover/header background must extend fully from the left edge of the device screen to the right edge.
+- It should visually touch both screen edges.
+- Preserve only the required top safe-area spacing.
+- Do not introduce rounded outer corners that make the entire header look like a floating card.
+- Internal header content such as the profile photo, name, handle, menu button, and Identity Information can still use appropriate internal padding.
+- The outer Passport header container itself must remain full-bleed / edge-to-edge.
+
+The goal is:
+
+SCREEN EDGE
+→ full-width Passport header
+→ SCREEN EDGE
+
+Not:
+
+SCREEN EDGE
+→ margin
+→ floating Passport card
+→ margin
+→ SCREEN EDGE
+
+COUNTER / STATS SECTION
+
+Separate the profile counters from the Passport header.
+
+The counters currently shown for things such as:
+
+- Followers
+- Following
+- Trips
+- Stamps
+
+should no longer be visually embedded inside the main Passport identity header.
+
+Create a clearly separate stats/counter section directly underneath the Passport header.
+
+Structure should be approximately:
+
+[ FULL-WIDTH PASSPORT HEADER ]
+
+[ SEPARATE COUNTER / STATS ROW ]
+
+[ PASSPORT STAMPS / TABS / CONTENT ]
+
+The counter section should:
+
+- Have its own visual container or section boundary.
+- Remain compact.
+- Be horizontally aligned and balanced.
+- Use the existing Portava design language.
+- Not visually merge with the cover or Identity Information area.
+- Preserve all current counter functionality.
+- Preserve tapping Followers and Following to open their respective lists.
+- Continue using real backend counts.
+- Not introduce duplicate counter components or duplicate data fetching.
+
+Keep the counter section visually cleaner and lighter than the Passport header.
+
+RESPONSIVE LAYOUT
+
+The full-width Passport header must work correctly on:
+
+- Small phones
+- Large phones
+- Tablets
+
+Do not hard-code screen widths.
+
+Pay attention to parent containers. If a parent screen wrapper currently applies horizontal padding globally, override or restructure only the Passport header so the header can extend edge-to-edge while the content below can keep normal page padding.
+
+A preferred structure is:
+
+Outer screen container
+  → Full-width PassportHeader
+  → Padded content container
+      → StatsCounterSection
+      → Passport stamps
+      → Tabs
+      → Remaining Passport content
+
+Do not solve this by applying large negative margins unless absolutely necessary. Fix the component/container hierarchy properly.
+
+IMPORTANT
+
+Do not move the Trust Score back into the counters.
+
+Trust Score stays small inside the Identity Information section of the Passport header.
+
+The separate counter section is only for actual profile statistics such as Followers, Following, Trips, and Stamps.
+
+Do not change backend logic.
+
+Do not change Passport navigation.
+
+Do not remove existing profile functionality.
+
+Do not break owner/public Passport behavior.
+
+VALIDATE
+
+After making the change, verify:
+
+1. Passport header touches both left and right screen edges.
+2. There is no visible outer margin around the header.
+3. Safe-area spacing still works correctly.
+4. Header internal content still has proper readable padding.
+5. Counters are completely separate from the main header.
+6. Trust Score remains inside Identity Information.
+7. Followers and Following remain clickable.
+8. All counts still come from the existing backend source.
+9. Layout works on different device widths.
+10. No horizontal overflow or clipping occurs.
+11. Existing Passport tabs and content remain unchanged.
+12. No TypeScript or runtime errors are introduced.
+
+When complete, report exactly which components and layout wrappers were changed.

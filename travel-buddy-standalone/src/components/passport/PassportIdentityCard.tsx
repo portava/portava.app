@@ -1,8 +1,10 @@
 /**
  * PassportIdentityCard — Passport document header.
  * Premium cream/ivory document card with vertical spine, gold-ring avatar,
- * Trust Score, decorative stamps, and boarding-pass stats strip with icons.
- * All data wiring and handlers preserved exactly.
+ * Trust Score, decorative stamps.
+ * Edge-to-edge: no outer margins, no floating-card border-radius.
+ *
+ * PassportStatsRow — separate stats/counter section rendered below the card.
  */
 import React, { useState, useEffect } from 'react';
 import {
@@ -24,7 +26,8 @@ import type { PassportStats } from '../../services/passportStamps';
 import { PP } from '../../theme/passportTokens';
 
 type AnyProfile = OwnProfile | PublicProfile;
-interface StatItem { n: number | string; label: string; onPress?: () => void }
+
+export interface StatItem { n: number | string; label: string; onPress?: () => void }
 
 interface Props {
   profile: AnyProfile;
@@ -44,8 +47,6 @@ interface Props {
   isFollowing?: boolean;
   followLoading?: boolean;
   onFollowPress?: () => void;
-  overrideStats?: StatItem[];
-  onStatPress?: (label: string) => void;
 }
 
 const AVATAR_SIZE  = 76;
@@ -58,7 +59,7 @@ const GREEN_STAMP  = '#2D6A4F';
 // ─── Stat accent config ───────────────────────────────────────────────────────
 
 type StatConfig = { color: string; bg: string; Icon: React.ComponentType<any> };
-const STAT_CFG: Record<string, StatConfig> = {
+export const STAT_CFG: Record<string, StatConfig> = {
   Trips:     { color: '#7C3AED', bg: '#EDE9FE', Icon: Briefcase   },
   Followers: { color: '#DB2777', bg: '#FCE7F3', Icon: Users        },
   Following: { color: '#059669', bg: '#D1FAE5', Icon: UserPlus     },
@@ -126,27 +127,66 @@ function TrustScoreBar({ score, onPress }: { score: number; onPress?: () => void
 
 // ─── Stat ticket with icon ────────────────────────────────────────────────────
 
-function StatTicket({ n, label, onPress }: StatItem) {
+export function StatTicket({ n, label, onPress }: StatItem) {
   const cfg = STAT_CFG[label] ?? STAT_FALLBACK;
   const { Icon, color, bg } = cfg;
   return (
-    <Pressable style={s.statTicket} onPress={onPress} disabled={!onPress} hitSlop={6}>
-      <View style={[s.statIconBg, { backgroundColor: bg }]}>
+    <Pressable style={st.statTicket} onPress={onPress} disabled={!onPress} hitSlop={6}>
+      <View style={[st.statIconBg, { backgroundColor: bg }]}>
         <Icon size={16} color={color} strokeWidth={1.8} />
       </View>
-      <Text style={[s.statN, { color }]}>{n}</Text>
-      <Text style={s.statL}>{label}</Text>
-      <View style={[s.statUnderline, { backgroundColor: color }]} />
+      <Text style={[st.statN, { color }]}>{n}</Text>
+      <Text style={st.statL}>{label}</Text>
+      <View style={[st.statUnderline, { backgroundColor: color }]} />
     </Pressable>
   );
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatStatN(n: number | string): string {
+export function formatStatN(n: number | string): string {
   if (typeof n === 'string') return n;
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K`;
   return String(n);
+}
+
+// ─── Separate stats/counter row (rendered below the card by the screen) ───────
+
+interface StatsRowProps {
+  profile: AnyProfile;
+  isOwner: boolean;
+  overrideStats?: StatItem[];
+  onStatPress?: (label: string) => void;
+}
+
+export function PassportStatsRow({ profile, isOwner, overrideStats, onStatPress }: StatsRowProps) {
+  const [liveStats, setLiveStats] = useState<PassportStats | null>(null);
+
+  useEffect(() => {
+    if (!isOwner) return;
+    getPassportStats()
+      .then((res) => { if (res.ok) setLiveStats(res.data); })
+      .catch(() => {});
+  }, [isOwner]);
+
+  const ownStats: StatItem[] = [
+    { n: formatStatN('tripCount'      in profile ? (profile.tripCount      ?? 0) : 0), label: 'Trips',     onPress: () => onStatPress?.('Trips')     },
+    { n: formatStatN('followersCount' in profile ? (profile.followersCount ?? 0) : 0), label: 'Followers', onPress: () => onStatPress?.('Followers') },
+    { n: formatStatN('followingCount' in profile ? (profile.followingCount ?? 0) : 0), label: 'Following', onPress: () => onStatPress?.('Following') },
+    { n: liveStats?.countries ?? 0,                                                     label: 'Countries', onPress: () => onStatPress?.('Countries') },
+    { n: liveStats?.totalStamps ?? 0,                                                   label: 'Stamps',    onPress: () => onStatPress?.('Stamps')    },
+  ];
+  const stats = overrideStats ?? ownStats;
+
+  return (
+    <View style={st.section}>
+      <View style={st.statsRow}>
+        {stats.map((item) => (
+          <StatTicket key={item.label} {...item} />
+        ))}
+      </View>
+    </View>
+  );
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -157,17 +197,7 @@ export function PassportIdentityCard({
   hasHighlights, allHighlightsViewed, onHighlightRingPress, onNewHighlightPress,
   trustScore, trustLabel, onTrustInfo,
   isFollowing, followLoading, onFollowPress,
-  overrideStats, onStatPress,
 }: Props) {
-  const [liveStats, setLiveStats] = useState<PassportStats | null>(null);
-
-  useEffect(() => {
-    if (!isOwner) return;
-    getPassportStats()
-      .then((res) => { if (res.ok) setLiveStats(res.data); })
-      .catch(() => {});
-  }, [isOwner]);
-
   const username      = 'username' in profile ? profile.username : null;
   const identity      = {
     displayName: 'displayName' in profile ? profile.displayName : null,
@@ -190,15 +220,6 @@ export function PassportIdentityCard({
   const interests: string[] = 'interests' in profile && Array.isArray(profile.interests)
     ? (profile.interests as string[]).slice(0, 3)
     : [];
-
-  const ownStats: StatItem[] = [
-    { n: formatStatN('tripCount'      in profile ? (profile.tripCount      ?? 0) : 0), label: 'Trips',     onPress: () => onStatPress?.('Trips')     },
-    { n: formatStatN('followersCount' in profile ? (profile.followersCount ?? 0) : 0), label: 'Followers', onPress: () => onStatPress?.('Followers') },
-    { n: formatStatN('followingCount' in profile ? (profile.followingCount ?? 0) : 0), label: 'Following'                                            },
-    { n: liveStats?.countries ?? 0,                                                     label: 'Countries', onPress: () => onStatPress?.('Countries') },
-    { n: liveStats?.totalStamps ?? 0,                                                   label: 'Stamps',    onPress: () => onStatPress?.('Stamps')    },
-  ];
-  const stats = overrideStats ?? ownStats;
 
   return (
     <View style={s.card}>
@@ -362,39 +383,22 @@ export function PassportIdentityCard({
             </View>
           </View>
 
-          {/* ── Stats boarding-pass strip ────────────────────── */}
-          <View style={s.statsStrip}>
-            <View style={s.stripDividerTop} />
-            <View style={s.statsRow}>
-              {stats.map((item) => (
-                <StatTicket key={item.label} {...item} />
-              ))}
-            </View>
-            <View style={s.stripDividerBot} />
-          </View>
-
         </View>
       </View>
     </View>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Card styles ──────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
+  // Edge-to-edge: no horizontal margins, no outer border-radius, no floating shadow.
+  // Internal content retains its own padding.
   card: {
-    marginHorizontal: 12,
-    marginTop: 8,
-    borderRadius: 18,
     backgroundColor: CREAM,
-    shadowColor: GOLD,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    elevation: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(184,151,78,0.18)',
     overflow: 'hidden',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(184,151,78,0.22)',
   },
   cardInner: {
     flexDirection: 'row',
@@ -432,7 +436,7 @@ const s = StyleSheet.create({
     flex: 1,
     paddingTop: 10,
     paddingHorizontal: 10,
-    paddingBottom: 0,
+    paddingBottom: 12,
   },
   columns: {
     flexDirection: 'row',
@@ -671,27 +675,21 @@ const s = StyleSheet.create({
     fontWeight: '600',
     color: '#fff',
   },
+});
 
-  /* Stats strip */
-  statsStrip: {
-    marginTop: 12,
-    marginHorizontal: -10,
-  },
-  stripDividerTop: {
-    height: 1,
-    backgroundColor: 'rgba(184,151,78,0.2)',
-    marginHorizontal: 10,
+// ─── Stats row styles (separate section below the card) ───────────────────────
+
+const st = StyleSheet.create({
+  section: {
+    backgroundColor: PP.paper,
+    borderBottomWidth: 1,
+    borderBottomColor: PP.borderLight,
   },
   statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    paddingVertical: 10,
+    paddingVertical: 12,
     paddingHorizontal: 4,
-  },
-  stripDividerBot: {
-    height: 1,
-    backgroundColor: 'rgba(184,151,78,0.12)',
-    marginHorizontal: 10,
   },
   statTicket: {
     alignItems: 'center',

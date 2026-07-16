@@ -27,7 +27,7 @@ import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { PP, PP_LABEL } from '../../src/theme/passportTokens';
 
 // New passport design components
-import { PassportIdentityCard } from '../../src/components/passport/PassportIdentityCard';
+import { PassportIdentityCard, PassportStatsRow } from '../../src/components/passport/PassportIdentityCard';
 import { PassportDivider } from '../../src/components/passport/PassportDivider';
 import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
@@ -300,6 +300,10 @@ export default function PassportDeepLinkScreen() {
           isFollowing={isAuthed ? follow.isFollowing : undefined}
           followLoading={isAuthed ? (follow.loading || follow.toggling) : undefined}
           onFollowPress={isAuthed ? follow.toggle : undefined}
+        />
+        <PassportStatsRow
+          profile={profile}
+          isOwner={false}
           overrideStats={visitorStats}
         />
 

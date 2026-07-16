@@ -35,7 +35,7 @@ import { getMyBuddyProfile, type BuddyProfile } from '../../src/services/rentABu
 import type { VerificationLevelStatus } from '../../src/components/VerificationLevelsRail';
 
 // ── New passport design components ──────────────────────────────────────────
-import { PassportIdentityCard } from '../../src/components/passport/PassportIdentityCard';
+import { PassportIdentityCard, PassportStatsRow } from '../../src/components/passport/PassportIdentityCard';
 import { PassportDivider } from '../../src/components/passport/PassportDivider';
 import { PassportStampCollection } from '../../src/components/passport/PassportStampCollection';
 import { PassportStampsFullView } from '../../src/components/passport/PassportStampsFullView';
@@ -476,6 +476,10 @@ function PassportContent({
           trustScore={profile.trustScore ?? undefined}
           trustLabel={profile.trustLabel ?? undefined}
           onTrustInfo={() => setTrustSheetOpen(true)}
+        />
+        <PassportStatsRow
+          profile={profile}
+          isOwner
           onStatPress={(label) => {
             if (label === 'Trips') setTab('plans');
             else if (label === 'Stamps') setStampsViewOpen(true);
