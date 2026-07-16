@@ -51,7 +51,14 @@ export default function Onboarding() {
       if (place.city) setHomeCity(place.city);
       if (place.country) setHomeCountry(place.country);
     } catch {
-      // silent
+      Alert.alert(
+        'Could not detect location',
+        'GPS or reverse-geocoding failed. Choose a city manually instead.',
+        [
+          { text: 'Choose from list', onPress: () => setShowHomePicker(true) },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+      );
     } finally {
       setGpsLoadingHome(false);
     }
