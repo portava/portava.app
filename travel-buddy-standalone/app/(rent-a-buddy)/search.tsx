@@ -19,7 +19,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CompassBuddyRow } from '../../src/components/compass/CompassBuddyRow';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import type { Place } from '../../src/lib/location/placeTypes';
-import { buildCityCoords } from '../../src/lib/cityCoords';
 
 class CompassBuddyErrorBoundary extends Component<
   { children: React.ReactNode },
@@ -98,10 +97,11 @@ export default function RentABuddySearch() {
         : 'categories'
   );
   const [city, setCity] = useState(params.city ?? '');
-  const [cityCoords, setCityCoords] = useState<{ lat: number; lng: number } | null>(
-    params.lat && params.lng
-      ? { lat: Number(params.lat), lng: Number(params.lng) }
-      : null,
+  const [cityLat, setCityLat] = useState<number | undefined>(
+    params.lat ? Number(params.lat) : undefined,
+  );
+  const [cityLng, setCityLng] = useState<number | undefined>(
+    params.lng ? Number(params.lng) : undefined,
   );
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<BuddyCategory | undefined>(
@@ -126,7 +126,8 @@ export default function RentABuddySearch() {
     if (reset) { setLoading(true); setError(null); }
     const res = await searchBuddies({
       city,
-      ...(cityCoords ? { lat: cityCoords.lat, lng: cityCoords.lng } : {}),
+      ...(cityLat != null ? { lat: cityLat } : {}),
+      ...(cityLng != null ? { lng: cityLng } : {}),
       category: selectedCategory,
       page: nextPage,
       perPage: 10,
@@ -140,7 +141,7 @@ export default function RentABuddySearch() {
     setTotal(res.data.total);
     setPage(nextPage);
     setHasMore(newBuddies.length === 10 && (nextPage * 10) < res.data.total);
-  }, [city, cityCoords, selectedCategory, page, bookingDate]);
+  }, [city, cityLat, cityLng, selectedCategory, page, bookingDate]);
 
   useEffect(() => {
     if (mode === 'results') doSearch(true);
@@ -202,7 +203,7 @@ export default function RentABuddySearch() {
             </Text>
           </Pressable>
           {city.length > 0 && (
-            <Pressable onPress={() => { setCity(''); setCityCoords(null); setBuddies([]); setMode('categories'); }}>
+            <Pressable onPress={() => { setCity(''); setCityLat(undefined); setCityLng(undefined); setBuddies([]); setMode('categories'); }}>
               <X size={14} color={color.mute} />
             </Pressable>
           )}
@@ -213,7 +214,8 @@ export default function RentABuddySearch() {
           visible={cityPickerOpen}
           onClose={() => setCityPickerOpen(false)}
           onSelect={(place: Place) => {
-            setCityCoords(buildCityCoords(place));
+            setCityLat(place.lat ?? undefined);
+            setCityLng(place.lng ?? undefined);
             setCity(place.city ?? place.name);
             setMode('results');
           }}

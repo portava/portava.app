@@ -11,7 +11,6 @@ import { TravelErrorState, TravelLoadingState } from '../../src/components/primi
 import { BuddyCard } from '../../src/components/BuddyCard';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import type { Place } from '../../src/lib/location/placeTypes';
-import { buildCityCoords } from '../../src/lib/cityCoords';
 import {
   searchBuddies, type BuddyProfile, type BuddyCategory, type BuddySortBy,
 } from '../../src/services/rentABuddy';
@@ -64,7 +63,8 @@ export default function Marketplace() {
   const { fromQuiz, city: cityParam } = useLocalSearchParams<{ fromQuiz?: string; city?: string }>();
 
   const [city, setCity]                       = useState(cityParam ?? '');
-  const [cityCoords, setCityCoords]           = useState<{ lat: number; lng: number } | null>(null);
+  const [cityLat, setCityLat]                 = useState<number | undefined>(undefined);
+  const [cityLng, setCityLng]                 = useState<number | undefined>(undefined);
   const [category, setCategory]               = useState<BuddyCategory | 'all'>('all');
   const [sortBy, setSortBy]                   = useState<BuddySortBy>('best_match');
   const [language, setLanguage]               = useState('');
@@ -98,7 +98,8 @@ export default function Marketplace() {
     }
     const res = await searchBuddies({
       city: city.trim(),
-      ...(cityCoords ? { lat: cityCoords.lat, lng: cityCoords.lng } : {}),
+      ...(cityLat != null ? { lat: cityLat } : {}),
+      ...(cityLng != null ? { lng: cityLng } : {}),
       ...(category !== 'all' ? { category: category as BuddyCategory } : {}),
       sortBy,
       verifiedOnly: verifiedOnly || undefined,
@@ -131,7 +132,7 @@ export default function Marketplace() {
     }
     setTotal(res.data.total);
     setPage(pg);
-  }, [city, cityCoords, category, sortBy, verifiedOnly, language, budget, rating, sessionMode]);
+  }, [city, cityLat, cityLng, category, sortBy, verifiedOnly, language, budget, rating, sessionMode]);
 
   useEffect(() => {
     if (city.trim().length > 1) load(1);
@@ -173,7 +174,8 @@ export default function Marketplace() {
           visible={cityPickerOpen}
           onClose={() => setCityPickerOpen(false)}
           onSelect={(place: Place) => {
-            setCityCoords(buildCityCoords(place));
+            setCityLat(place.lat ?? undefined);
+            setCityLng(place.lng ?? undefined);
             setCity(place.city ?? place.name);
           }}
           mode="city"
