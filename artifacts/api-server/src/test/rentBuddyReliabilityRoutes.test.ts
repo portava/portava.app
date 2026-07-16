@@ -975,6 +975,63 @@ describe("GET safety-events — traveler and buddy receive 200", () => {
   });
 });
 
+// ── GET /safety-checkins — 404 for unknown booking ───────────────────────────
+//
+// The route fetches the booking row before the isParty check. When the booking
+// does not exist it must return 404 so callers can distinguish "booking not
+// found" from "you are not on this booking" (403).
+
+describe("GET safety-checkins — unknown booking returns 404", () => {
+  it("returns 404 with { error: 'not_found' } when the booking does not exist", async () => {
+    // bookingExists: false makes the fake client return null for rent_buddy_bookings,
+    // simulating a GET by an unknown booking ID. The route must respond with 404
+    // before reaching the isParty check so callers cannot infer booking existence
+    // from a response-code difference between 403 and 404.
+    const UNKNOWN_BOOKING_ID = "00000000-0000-0000-0000-000000000000";
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "in_progress",
+      bookingExists: false,
+    });
+    const res = await call(
+      "GET",
+      `/api/rent-a-buddy/bookings/${UNKNOWN_BOOKING_ID}/safety-checkins`,
+      fake,
+    );
+    assert.equal(res.status, 404, `expected 404 for unknown booking, got ${res.status}`);
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "not_found");
+  });
+});
+
+// ── GET /safety-events — 404 for unknown booking ─────────────────────────────
+//
+// Same guard for the safety-events route: 404 must be returned before the
+// isParty check when the booking row is absent.
+
+describe("GET safety-events — unknown booking returns 404", () => {
+  it("returns 404 with { error: 'not_found' } when the booking does not exist", async () => {
+    // bookingExists: false makes the fake client return null for rent_buddy_bookings,
+    // simulating a GET by an unknown booking ID. The route must respond with 404
+    // before reaching the isParty check so callers cannot infer booking existence
+    // from a response-code difference between 403 and 404.
+    const UNKNOWN_BOOKING_ID = "00000000-0000-0000-0000-000000000000";
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "in_progress",
+      bookingExists: false,
+    });
+    const res = await call(
+      "GET",
+      `/api/rent-a-buddy/bookings/${UNKNOWN_BOOKING_ID}/safety-events`,
+      fake,
+    );
+    assert.equal(res.status, 404, `expected 404 for unknown booking, got ${res.status}`);
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "not_found");
+  });
+});
+
 // ── toBuddyScoringData counter precedence ─────────────────────────────────────
 //
 // toBuddyScoringData picks completed_count ?? completed_bookings. When both
