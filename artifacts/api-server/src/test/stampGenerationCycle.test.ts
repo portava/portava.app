@@ -3705,3 +3705,28 @@ describe("runGenerationCycle — calls sweepStaleArtwork when the sweep interval
     assert.equal(cycleInserts[0].rows[0].triggered_by_action, "style_version_sweep");
   });
 });
+
+// ── landmarkHint null country_code fallback ───────────────────────────────────
+
+describe("buildStampPrompt — country stamp with null country_code", () => {
+  it("falls back to the generic landmark motif phrase without emitting 'null'", () => {
+    const entry = {
+      ...CATALOG_ROW,
+      stamp_type: "country",
+      country_code: null,
+    };
+
+    const prompt = buildStampPrompt(entry);
+
+    assert.ok(
+      !prompt.includes("null"),
+      `prompt must not contain the literal string "null", got:\n${prompt}`,
+    );
+    assert.ok(
+      prompt.includes(
+        "Use a generalized destination motif representing the country's most iconic natural or cultural feature.",
+      ),
+      `prompt must contain the generic landmark fallback text, got:\n${prompt}`,
+    );
+  });
+});

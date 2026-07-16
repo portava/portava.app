@@ -421,7 +421,7 @@ describe("POST /admin/venues/:id/moderate — missing or malformed venue ID", ()
 // ── PATCH /admin/venues/:id/status — UUID guard ────────────────────────────────
 
 describe("PATCH /admin/venues/:id/status — UUID guard", () => {
-  it("non-UUID venue id returns 400 with invalid_payload before any DB query", async () => {
+  it("non-UUID venue id returns 404 not_found before any DB query", async () => {
     const client = makeVenueModerationClient();
     setClient(client);
 
@@ -431,8 +431,8 @@ describe("PATCH /admin/venues/:id/status — UUID guard", () => {
       { status: "removed" },
     );
 
-    assert.equal(status, 400, `Expected 400 for non-UUID id, got ${status}: ${JSON.stringify(body)}`);
-    assert.equal(body.error, "invalid_payload");
+    assert.equal(status, 404, `Expected 404 for non-UUID id, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.error, "not_found");
   });
 });
 
