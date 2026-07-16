@@ -3141,4 +3141,20 @@ describe("Rent a Buddy — no-show: duplicate-report guard", () => {
     assert.equal(r.body.error, "already_reported", JSON.stringify(r.body));
     assert.equal(r.body.status, "no_show_pending", JSON.stringify(r.body));
   });
+
+  it("returns 409 already_reported when buddy party calls after booking is already disputed", async () => {
+    setupState({
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+          status: "disputed",
+          updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+        },
+      },
+    });
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/no-show`, {}, BUDDY_TOKEN);
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(r.body.error, "already_reported", JSON.stringify(r.body));
+    assert.equal(r.body.status, "disputed", JSON.stringify(r.body));
+  });
 });
