@@ -865,6 +865,81 @@ describe("background correction sweep", () => {
     assert.equal(upsertCalls[0].country, "United Kingdom", "upsert must carry the correct country name");
   });
 
+  it("after deletion-eviction re-geocode, the upsert payload explicitly sets deleted_at to null", async () => {
+    // Step 1: populate the in-memory cache with a stale entry (CA for Banff).
+    _setGeocodeFetchForTests(fakeNominatim({
+      "banff": { country_code: "ca", country: "Canada" },
+    }));
+    await geocodeCityCountry("Banff");
+    assert.equal(fetchCalls.length, 1, "first resolve should hit Nominatim");
+
+    // Step 2: build a DB client that simulates a soft-deleted row (deleted_at set):
+    //   • sweep query returns corrected_at post-dating writtenAt → triggers eviction
+    //   • readDbCache (maybeSingle) returns null — the row is tombstoned
+    //   • records the full upsert payload so deleted_at can be inspected
+    const correctedAt = new Date(Date.now() + 1_000).toISOString();
+    const upsertPayloads: Array<Record<string, unknown>> = [];
+    const tombstonedDb = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache");
+        let _isMaybeSingle = false;
+        const chain: any = {
+          select()      { return chain; },
+          eq()          { return chain; },
+          gte()         { return chain; },
+          maybeSingle() { _isMaybeSingle = true; return chain; },
+          async upsert(row: any) {
+            upsertPayloads.push(row);
+            return { error: null };
+          },
+          then(resolve: (v: any) => void) {
+            if (_isMaybeSingle) {
+              // readDbCache path: tombstoned row — treated as not found
+              resolve({ data: null, error: null });
+            } else {
+              // sweep path: signal eviction
+              resolve({ data: [{ city_key: "banff", corrected_at: correctedAt }], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    // Step 3: run the sweep — evicts the stale CA entry from the in-memory cache.
+    _setGeocodeDbClientForTests(tombstonedDb);
+    await _runCorrectionSweepForTests();
+
+    // Step 4: configure Nominatim to return a fresh result (FR for this test).
+    fetchCalls = [];
+    _setGeocodeFetchForTests(fakeNominatim({
+      "banff": { country_code: "fr", country: "France" },
+    }));
+
+    // Re-inject the DB client (setGeocodeFetch resets _dbClientOverride to null).
+    _setGeocodeDbClientForTests(tombstonedDb);
+
+    // Step 5: geocodeCityCountry resolves via Nominatim and writes back to the DB.
+    const r = await geocodeCityCountry("Banff");
+
+    assert.ok(r !== null, "should return a resolved result");
+    assert.equal(r!.countryCode, "FR");
+
+    // Core assertion: the write-back upsert must carry deleted_at: null so that
+    // the previously tombstoned row is revived as a live cache entry. Without
+    // this field, readDbCache would continue to filter out the row on the next
+    // server restart and force an unnecessary Nominatim round-trip.
+    assert.equal(upsertPayloads.length, 1, "exactly one upsert must be issued");
+    assert.strictEqual(
+      upsertPayloads[0].deleted_at,
+      null,
+      "upsert payload must explicitly set deleted_at to null to clear the soft-delete tombstone",
+    );
+    assert.equal(upsertPayloads[0].city_key, "banff", "upsert must use the normalised city_key");
+    assert.equal(upsertPayloads[0].country_code, "FR", "upsert must carry the correct country_code");
+    assert.equal(upsertPayloads[0].country, "France", "upsert must carry the correct country name");
+  });
+
   it("bumps correctionCheckedAt after a transient DB error — second call skips the probe", async () => {
     // Step 1: seed the in-memory cache with a valid entry.
     _setGeocodeFetchForTests(fakeNominatim({ "reykjavik": { country_code: "is", country: "Iceland" } }));
