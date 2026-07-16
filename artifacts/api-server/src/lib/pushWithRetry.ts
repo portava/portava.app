@@ -12,46 +12,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger } from "./logger.js";
 import { sendPushNotification, type PushPayload, type PushResult } from "./push.js";
 import { PushRetryQueue } from "./pushRetryQueue.js";
+import { clearDeadTokens } from "./pushTokenCleanup.js";
 
 export interface PushRecipient {
   userId: string;
   tokens: (string | null | undefined)[];
-}
-
-/**
- * Clear tokens Expo reported as DeviceNotRegistered from every place they are
- * stored: profiles.expo_push_token, notification_devices.push_token, and
- * rent_buddy_profiles.expo_push_token. Never throws — each step is wrapped so
- * a failure in one table doesn't block the others.
- */
-async function clearDeadTokens(db: SupabaseClient, staleTokens: string[]): Promise<void> {
-  try {
-    const { error } = await db
-      .from("profiles")
-      .update({ expo_push_token: null })
-      .in("expo_push_token", staleTokens);
-    if (error) throw error;
-  } catch (err) {
-    logger.warn({ err, staleCount: staleTokens.length }, "push: failed to clear dead tokens from profiles");
-  }
-  try {
-    const { error } = await db
-      .from("notification_devices")
-      .delete()
-      .in("push_token", staleTokens);
-    if (error) throw error;
-  } catch (err) {
-    logger.warn({ err, staleCount: staleTokens.length }, "push: failed to delete dead tokens from notification_devices");
-  }
-  try {
-    const { error } = await db
-      .from("rent_buddy_profiles")
-      .update({ expo_push_token: null })
-      .in("expo_push_token", staleTokens);
-    if (error) throw error;
-  } catch (err) {
-    logger.warn({ err, staleCount: staleTokens.length }, "push: failed to clear dead tokens from rent_buddy_profiles");
-  }
 }
 
 function validTokens(tokens: (string | null | undefined)[]): string[] {

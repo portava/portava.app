@@ -45,20 +45,30 @@ const BASE_PAYLOAD = { title: "Retry Test", body: "Push retry queue unit test" }
 // eq("status","processing") naturally yields [] because test rows start as "queued".
 
 interface UpdateCall {
-  table:   string;
-  patch:   Record<string, unknown>;
-  filters: Record<string, unknown>;
+  table:    string;
+  patch:    Record<string, unknown>;
+  filters:  Record<string, unknown>;
+  inFilters: Record<string, unknown[]>;
+}
+
+interface DeleteCall {
+  table:    string;
+  filters:  Record<string, unknown>;
+  inFilters: Record<string, unknown[]>;
 }
 
 function makeFakeClient(queueRows: Record<string, unknown>[] = []) {
   const insertedRows: Record<string, Record<string, unknown>[]> = {};
   const updateCalls:  UpdateCall[] = [];
+  const deleteCalls:  DeleteCall[] = [];
 
   function builder(tableName: string) {
     let pendingInsert: unknown = null;
     let pendingUpdate: Record<string, unknown> | null = null;
-    let hasSelect = false;
-    const eqFilters: Record<string, unknown> = {};
+    let isDelete      = false;
+    let hasSelect     = false;
+    const eqFilters:  Record<string, unknown>   = {};
+    const inFilters:  Record<string, unknown[]>  = {};
 
     const b: Record<string, unknown> = {
       select(_cols?: string)          { hasSelect = true; return b; },
@@ -70,7 +80,9 @@ function makeFakeClient(queueRows: Record<string, unknown>[] = []) {
         return b;
       },
       update(patch: Record<string, unknown>) { pendingUpdate = patch; return b; },
+      delete()                        { isDelete = true; return b; },
       eq(col: string, val: unknown)   { eqFilters[col] = val; return b; },
+      in(col: string, vals: unknown[]) { inFilters[col] = vals; return b; },
       neq()                           { return b; },
       lt()                            { return b; },
       lte()                           { return b; },
@@ -86,9 +98,20 @@ function makeFakeClient(queueRows: Record<string, unknown>[] = []) {
         return { data: { id: `${tableName}-new`, ...(row as object) }, error: null };
       }
 
+      // DELETE
+      if (isDelete) {
+        deleteCalls.push({ table: tableName, filters: { ...eqFilters }, inFilters: { ...inFilters } });
+        return { data: null, error: null };
+      }
+
       // UPDATE
       if (pendingUpdate !== null) {
-        updateCalls.push({ table: tableName, patch: pendingUpdate, filters: { ...eqFilters } });
+        updateCalls.push({
+          table:    tableName,
+          patch:    pendingUpdate,
+          filters:  { ...eqFilters },
+          inFilters: { ...inFilters },
+        });
 
         // The claim step: UPDATE push_retry_queue … .eq("status","queued") … .select()
         // Returns all queueRows matching the eq filters so processItem() can work on them.
@@ -119,8 +142,10 @@ function makeFakeClient(queueRows: Record<string, unknown>[] = []) {
     auth: { getUser: async () => ({ data: { user: null }, error: null }) },
     /** All rows passed to insert(), keyed by table name. */
     get insertedRows() { return insertedRows; },
-    /** Every update() call recorded in order, with patch and eq filters. */
+    /** Every update() call recorded in order, with patch, eq, and in filters. */
     get updateCalls()  { return updateCalls; },
+    /** Every delete() call recorded in order, with eq and in filters. */
+    get deleteCalls()  { return deleteCalls; },
   };
 }
 
@@ -355,5 +380,140 @@ describe("PushRetryQueue.processQueue() — re-queue with exponential delay", ()
     // Must NOT update notification_delivery_attempts — only finalise() does that
     const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
     assert.equal(ndaUpdates.length, 0, "must NOT update delivery_attempt on re-queue (only on final resolution)");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6 — Dead-token clearing during retries
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Expo returns a 200 with per-token error tickets for dead tokens.
+ * DeviceNotRegistered and InvalidCredentials both mean the token is
+ * permanently invalid and must be wiped from the three storage tables.
+ */
+function expoDeadTokenFetch(errorCode: "DeviceNotRegistered" | "InvalidCredentials"): typeof fetch {
+  return async () =>
+    new Response(
+      JSON.stringify({
+        data: [{
+          status:  "error",
+          message: `The push notification service reported that the push token is invalid: ${errorCode}`,
+          details: { error: errorCode },
+        }],
+      }),
+      { status: 200 },
+    ) as unknown as Response;
+}
+
+describe("PushRetryQueue.processQueue() — dead-token clearing on retry", () => {
+  it("clears DeviceNotRegistered tokens from all three tables and finalises the queue row as 'failed'", async () => {
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    _setTestFetch(expoDeadTokenFetch("DeviceNotRegistered"));
+    await queue.processQueue();
+
+    // profiles — nulled out via update().in()
+    const profileUpdate = client.updateCalls.find(
+      (c) => c.table === "profiles" && c.patch.expo_push_token === null,
+    );
+    assert.ok(profileUpdate, "profiles.expo_push_token must be nulled for dead token");
+    assert.deepEqual(
+      profileUpdate.inFilters["expo_push_token"],
+      [PUSH_TOKEN],
+      "profiles update must target the dead token",
+    );
+
+    // notification_devices — row deleted via delete().in()
+    const deviceDelete = client.deleteCalls.find((c) => c.table === "notification_devices");
+    assert.ok(deviceDelete, "notification_devices row must be deleted for dead token");
+    assert.deepEqual(
+      deviceDelete.inFilters["push_token"],
+      [PUSH_TOKEN],
+      "notification_devices delete must target the dead token",
+    );
+
+    // rent_buddy_profiles — nulled out via update().in()
+    const rentUpdate = client.updateCalls.find(
+      (c) => c.table === "rent_buddy_profiles" && c.patch.expo_push_token === null,
+    );
+    assert.ok(rentUpdate, "rent_buddy_profiles.expo_push_token must be nulled for dead token");
+    assert.deepEqual(
+      rentUpdate.inFilters["expo_push_token"],
+      [PUSH_TOKEN],
+      "rent_buddy_profiles update must target the dead token",
+    );
+
+    // Queue row must be finalised as 'failed' (non-retryable — not re-queued)
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(failedUpdate, "push_retry_queue must be finalised as 'failed'");
+    assert.equal(failedUpdate.filters.id, QUEUE_ROW_ID, "failed update must target the correct row");
+
+    // Must NOT re-queue — token is dead, retrying would be wasteful
+    const requeued = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(!requeued, "must NOT re-queue a row whose token is permanently dead");
+  });
+
+  it("clears InvalidCredentials tokens from all three tables and finalises as 'failed'", async () => {
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    _setTestFetch(expoDeadTokenFetch("InvalidCredentials"));
+    await queue.processQueue();
+
+    // All three tables must have been cleaned up
+    assert.ok(
+      client.updateCalls.some((c) => c.table === "profiles" && c.patch.expo_push_token === null),
+      "profiles.expo_push_token must be cleared for InvalidCredentials token",
+    );
+    assert.ok(
+      client.deleteCalls.some((c) => c.table === "notification_devices"),
+      "notification_devices row must be deleted for InvalidCredentials token",
+    );
+    assert.ok(
+      client.updateCalls.some((c) => c.table === "rent_buddy_profiles" && c.patch.expo_push_token === null),
+      "rent_buddy_profiles.expo_push_token must be cleared for InvalidCredentials token",
+    );
+
+    // Row must be finalised as failed, never re-queued
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+    assert.ok(
+      prqUpdates.some((c) => c.patch.status === "failed"),
+      "push_retry_queue must be finalised as 'failed' for InvalidCredentials",
+    );
+    assert.ok(
+      !prqUpdates.some((c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID),
+      "must NOT re-queue a row whose token reported InvalidCredentials",
+    );
   });
 });

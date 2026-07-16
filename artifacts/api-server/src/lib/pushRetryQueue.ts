@@ -16,6 +16,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "./logger.js";
 import { sendPushNotification, type PushPayload } from "./push.js";
+import { clearDeadTokens } from "./pushTokenCleanup.js";
 
 const logger = rootLogger.child({ service: "PushRetryQueue" });
 
@@ -163,6 +164,19 @@ export class PushRetryQueue {
 
     try {
       const result = await sendPushNotification(tokens as string[], payload as PushPayload);
+
+      // Clear any tokens that became permanently invalid since the item was enqueued
+      // (DeviceNotRegistered = device gone; InvalidCredentials = always undeliverable).
+      const deadTokens = result.errors
+        .filter((e) => e.error === "DeviceNotRegistered" || e.error === "InvalidCredentials")
+        .map((e) => e.token);
+      if (deadTokens.length > 0) {
+        await clearDeadTokens(this.db, deadTokens);
+        logger.info(
+          { id, userId, deadCleared: deadTokens.length },
+          "push retry: cleared dead tokens found during retry",
+        );
+      }
 
       if (result.sent > 0 || (!result.retryable && result.errors.length === 0)) {
         // Success (or all tokens had per-device errors — nothing to retry)
