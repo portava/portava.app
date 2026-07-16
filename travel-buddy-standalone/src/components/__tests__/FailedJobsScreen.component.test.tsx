@@ -25,9 +25,10 @@
  */
 
 import React from 'react';
-import { render, act, waitFor, screen } from '@testing-library/react-native';
+import { Alert } from 'react-native';
+import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
 import FailedJobsScreen from '../../../app/admin/stamps/failed';
-import { getAdminStampQueue } from '../../services/adminStamps';
+import { getAdminStampQueue, requeueFailedJob } from '../../services/adminStamps';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
@@ -51,12 +52,14 @@ jest.mock('../../services/adminStamps', () => ({
 jest.mock('lucide-react-native', () => ({
   ArrowLeft: () => null,
   RefreshCw: () => null,
+  TriangleAlert: () => null,
   XCircle: () => null,
 }));
 
 // ── Typed mock refs ────────────────────────────────────────────────────────────
 
-const mockGetQueue = getAdminStampQueue as jest.Mock;
+const mockGetQueue  = getAdminStampQueue as jest.Mock;
+const mockRequeue   = requeueFailedJob  as jest.Mock;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -171,5 +174,121 @@ describe('FailedJobsScreen — pull-to-refresh', () => {
       const updated = screen.getByTestId('failed-jobs-list');
       expect(updated.props.refreshControl.props.refreshing).toBe(false);
     });
+  });
+});
+
+// ── Re-queue flow ───────────────────────────────────────────────────────────────
+
+/**
+ * ## What's covered
+ *
+ * 1. Pressing "Re-queue" opens the confirmation Alert and passes the correct
+ *    job id to requeueFailedJob.
+ * 2. On a successful API response the job row is removed from the list.
+ * 3. On a failed API response the job row stays and an error Alert is shown.
+ *
+ * ## How Alert interactions are tested
+ *
+ * React Native's Alert.alert is mocked via jest.spyOn.  The spy captures the
+ * button array, and the helper `pressAlertButton` finds the button by label
+ * and invokes its onPress handler synchronously inside act() — the same
+ * technique used by other admin-screen component tests in this project.
+ */
+
+/** Invoke the first Alert button whose `text` matches `label`. */
+async function pressAlertButton(alertSpy: jest.SpyInstance, label: string) {
+  const calls = alertSpy.mock.calls;
+  if (calls.length === 0) throw new Error('Alert.alert was never called');
+  const buttons: Array<{ text: string; onPress?: () => void | Promise<void> }> =
+    calls[calls.length - 1][2];
+  const btn = buttons.find((b) => b.text === label);
+  if (!btn) throw new Error(`No Alert button labelled "${label}"`);
+  await act(async () => { await btn.onPress?.(); });
+}
+
+describe('FailedJobsScreen — re-queue flow', () => {
+  let alertSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    // Full reset — clears queued mockResolvedValueOnce values AND implementations
+    // left over from the pull-to-refresh suite above, preventing state leakage.
+    mockGetQueue.mockReset();
+    mockRequeue.mockReset();
+    alertSpy = jest.spyOn(Alert, 'alert');
+    // Default: initial load returns both jobs so there's always something to act on.
+    mockGetQueue.mockResolvedValue(queueOk([JOB_A, JOB_B]));
+  });
+
+  afterEach(() => {
+    alertSpy.mockRestore();
+    jest.clearAllMocks();
+  });
+
+  it('calls requeueFailedJob with the correct job id when the admin confirms', async () => {
+    mockRequeue.mockResolvedValueOnce({ ok: true });
+
+    render(<FailedJobsScreen />);
+    await waitFor(() => screen.getByText('Paris Eiffel'));
+
+    // Press the Re-queue button for JOB_A.
+    const buttons = screen.getAllByText('Re-queue');
+    fireEvent.press(buttons[0]);
+
+    // Confirm in the Alert dialog.
+    await pressAlertButton(alertSpy, 'Re-queue');
+
+    expect(mockRequeue).toHaveBeenCalledTimes(1);
+    expect(mockRequeue).toHaveBeenCalledWith(JOB_A.id);
+  });
+
+  it('removes the job row from the list after a successful re-queue', async () => {
+    mockRequeue.mockResolvedValueOnce({ ok: true });
+
+    render(<FailedJobsScreen />);
+    await waitFor(() => screen.getByText('Paris Eiffel'));
+
+    // Both jobs should be visible before the action.
+    expect(screen.getByText('Paris Eiffel')).toBeTruthy();
+    expect(screen.getByText('Tokyo Tower')).toBeTruthy();
+
+    // Re-queue JOB_A (first button = first job row).
+    const buttons = screen.getAllByText('Re-queue');
+    fireEvent.press(buttons[0]);
+    await pressAlertButton(alertSpy, 'Re-queue');
+
+    // JOB_A must be gone; JOB_B must still be present.
+    await waitFor(() => expect(screen.queryByText('Paris Eiffel')).toBeNull());
+    expect(screen.getByText('Tokyo Tower')).toBeTruthy();
+  });
+
+  it('keeps the job row in the list when the re-queue API call fails', async () => {
+    mockRequeue.mockResolvedValueOnce({ ok: false, error: 'DB write failed' });
+
+    render(<FailedJobsScreen />);
+    await waitFor(() => screen.getByText('Paris Eiffel'));
+
+    const buttons = screen.getAllByText('Re-queue');
+    fireEvent.press(buttons[0]);
+    await pressAlertButton(alertSpy, 'Re-queue');
+
+    // Job must still be in the list after the failed API call.
+    await waitFor(() => expect(screen.getByText('Paris Eiffel')).toBeTruthy());
+  });
+
+  it('shows an error Alert when the re-queue API call fails', async () => {
+    mockRequeue.mockResolvedValueOnce({ ok: false, error: 'DB write failed' });
+
+    render(<FailedJobsScreen />);
+    await waitFor(() => screen.getByText('Paris Eiffel'));
+
+    const buttons = screen.getAllByText('Re-queue');
+    fireEvent.press(buttons[0]);
+    await pressAlertButton(alertSpy, 'Re-queue');
+
+    // Wait for the error Alert to be shown (second Alert call after the confirmation one).
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(2));
+    const errorCall = alertSpy.mock.calls[1];
+    expect(errorCall[0]).toBe('Error');
+    expect(errorCall[1]).toBe('DB write failed');
   });
 });
