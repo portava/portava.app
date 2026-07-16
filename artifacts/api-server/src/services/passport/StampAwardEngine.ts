@@ -14,6 +14,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import { resolveOrEnqueue } from "../../lib/stamps/StampCatalogService.js";
 import { canonicalLocationKeyFromStrings } from "../../lib/stamps/locationKey.js";
+import { resolveCountry } from "../../lib/stamps/countryLookup.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -155,13 +156,20 @@ async function _awardStampCore(
     sourceType = "system",
     sourceId = "none",
     city,
-    country,
+    country: rawCountry,
     lat,
     lng,
     metadata,
     awardReason,
     adminId,
   } = input;
+
+  // Resolve real country info up front: if the caller passed only a city
+  // (production trips often lack country), derive the country from a
+  // well-known-city lookup so the stamp row and its canonical catalog key are
+  // written with a *real* country code instead of "XX" or a spelling guess.
+  const resolvedCountry = resolveCountry({ country: rawCountry, city });
+  const country = rawCountry ?? resolvedCountry.country ?? undefined;
 
   // 1. Load definition
   const { data: def, error: defErr } = await sc
@@ -334,9 +342,8 @@ async function _awardStampCore(
   // This never blocks the award or throws — any failure is logged and ignored.
   Promise.resolve().then(async () => {
     try {
-      const countryCode = (country ?? "").trim().length === 2
-        ? (country ?? "").trim()
-        : (country ?? "XX").trim().slice(0, 2);
+      // Real ISO code only — never abbreviated from the country's spelling.
+      const countryCode = resolvedCountry.countryCode;
 
       const displayName = city ?? country ?? definitionSlug;
       // Use the definition's actual stamp_type column — never infer from slug.

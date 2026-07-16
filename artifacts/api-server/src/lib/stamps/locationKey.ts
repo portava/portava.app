@@ -17,6 +17,8 @@
  * → strip punctuation except hyphens → collapse multiple hyphens → trim.
  */
 
+import { resolveCountry } from "./countryLookup.js";
+
 export interface LocationKeyInput {
   stampType: string;
   countryCode?: string | null;
@@ -50,47 +52,18 @@ export function normalizeSegment(raw: string): string {
 
 /**
  * Resolve the best 2-char country code from input.
- * Accepts ISO 3166-1 alpha-2 codes directly. Falls back to first 2 chars of
- * country name (uppercased) when no explicit code is provided.
+ * Accepts ISO 3166-1 alpha-2 codes directly, resolves full country names via
+ * the shared lookup table, and falls back to a city → country lookup for
+ * well-known cities. Returns "XX" when no *real* code is derivable — it never
+ * abbreviates a country name from its spelling (that produced fake codes and
+ * unstable canonical keys).
  */
 function resolveCountryCode(input: LocationKeyInput): string {
-  if (input.countryCode && input.countryCode.length === 2) {
-    return input.countryCode.toUpperCase();
-  }
-  if (input.country) {
-    // Common country name → code mappings for the most-visited destinations
-    const NAME_MAP: Record<string, string> = {
-      "philippines":    "PH",
-      "united states":  "US",
-      "usa":            "US",
-      "united kingdom": "GB",
-      "uk":             "GB",
-      "japan":          "JP",
-      "australia":      "AU",
-      "france":         "FR",
-      "germany":        "DE",
-      "thailand":       "TH",
-      "indonesia":      "ID",
-      "singapore":      "SG",
-      "malaysia":       "MY",
-      "vietnam":        "VN",
-      "south korea":    "KR",
-      "korea":          "KR",
-      "spain":          "ES",
-      "italy":          "IT",
-      "canada":         "CA",
-      "mexico":         "MX",
-      "brazil":         "BR",
-      "india":          "IN",
-      "china":          "CN",
-      "new zealand":    "NZ",
-    };
-    const normalized = input.country.toLowerCase().trim();
-    if (NAME_MAP[normalized]) return NAME_MAP[normalized];
-    // Fallback: first 2 letters uppercase
-    return input.country.trim().slice(0, 2).toUpperCase();
-  }
-  return "XX";
+  return resolveCountry({
+    countryCode: input.countryCode,
+    country:     input.country,
+    city:        input.city,
+  }).countryCode;
 }
 
 /**

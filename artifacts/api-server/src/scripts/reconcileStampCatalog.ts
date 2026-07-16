@@ -13,6 +13,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { canonicalLocationKeyFromStrings, definitionScopedKey } from "../lib/stamps/locationKey.js";
+import { resolveCountry } from "../lib/stamps/countryLookup.js";
 import { STYLE_VERSION } from "../lib/stamps/artDirection.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.EXPO_PUBLIC_SUPABASE_URL ?? "";
@@ -119,20 +120,23 @@ async function main() {
     let displayName: string;
     let countryCode: string;
 
+    let resolvedCountryName: string | null;
+
     try {
+      // Resolve a *real* country code — from the country name or a
+      // well-known-city lookup. Never abbreviated from the country's spelling.
+      const resolved = resolveCountry({ country: combo.country, city: combo.city });
+      countryCode         = resolved.countryCode;
+      resolvedCountryName = resolved.country;
+
       canonKey = canonicalLocationKeyFromStrings({
         stampType:    combo.stamp_type ?? "city",
-        country:      combo.country,
+        country:      resolvedCountryName ?? combo.country,
         city:         combo.city,
         neighborhood: combo.neighborhood ?? null,
       });
 
-      displayName = combo.city ?? combo.country ?? "Unknown";
-      // Very rough country code: if country looks like 2 chars, use it; else abbreviate
-      const rawCountry = combo.country ?? "XX";
-      countryCode = rawCountry.length === 2
-        ? rawCountry.toUpperCase()
-        : rawCountry.slice(0, 2).toUpperCase();
+      displayName = combo.city ?? resolvedCountryName ?? "Unknown";
     } catch (e: any) {
       console.warn("[reconcile] Failed to build key:", combo, e?.message);
       stats.flagged++;
@@ -158,7 +162,7 @@ async function main() {
           canonical_location_key:  canonKey,
           stamp_type:              combo.stamp_type ?? "city",
           display_name:            displayName,
-          country:                 combo.country ?? "Unknown",
+          country:                 resolvedCountryName ?? combo.country ?? "Unknown",
           country_code:            countryCode,
           city:                    combo.city ?? null,
           status:                  "pending_artwork",
