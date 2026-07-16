@@ -412,6 +412,64 @@ describe("Candidate artwork versions are archived after regenerate", () => {
     );
   });
 
+  it("regenerate does not archive candidate versions belonging to a different catalog entry", async () => {
+    // CATALOG_ID has CANDIDATE_VER; MULTI_ID has CANDIDATE_VER2 and CANDIDATE_VER3.
+    // Regenerating only CATALOG_ID must leave MULTI_ID's candidates untouched.
+
+    // ── Pre-condition: both catalog entries have candidate versions ─────────────
+    const beforeMulti = await get(`/admin/stamps/catalog/${MULTI_ID}`);
+    assert.equal(beforeMulti.status, 200);
+    const candidatesBeforeMulti = beforeMulti.body.versions.filter(
+      (v: any) => v.status === "candidate",
+    );
+    assert.equal(
+      candidatesBeforeMulti.length,
+      2,
+      `expected 2 candidate versions on MULTI_ID before regenerate, got ${candidatesBeforeMulti.length}`,
+    );
+
+    // ── Action: regenerate only CATALOG_ID ───────────────────────────────────
+    const regen = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      regen.status, 200,
+      `regenerate must return 200, got ${regen.status}: ${JSON.stringify(regen.body)}`,
+    );
+    assert.deepEqual(regen.body, { ok: true });
+
+    // ── CATALOG_ID's candidate must be archived ───────────────────────────────
+    const afterCatalog = await get(`/admin/stamps/catalog/${CATALOG_ID}`);
+    assert.equal(afterCatalog.status, 200);
+    const catalogCandidate = afterCatalog.body.versions.find(
+      (v: any) => v.id === CANDIDATE_VER,
+    );
+    assert.ok(catalogCandidate, "CATALOG_ID candidate version must still appear in detail");
+    assert.equal(
+      catalogCandidate.status,
+      "archived",
+      "CATALOG_ID candidate version must be archived after its regenerate",
+    );
+
+    // ── MULTI_ID's candidates must remain "candidate" ─────────────────────────
+    const afterMulti = await get(`/admin/stamps/catalog/${MULTI_ID}`);
+    assert.equal(
+      afterMulti.status, 200,
+      `GET detail for MULTI_ID must return 200, got ${afterMulti.status}`,
+    );
+
+    for (const id of [CANDIDATE_VER2, CANDIDATE_VER3]) {
+      const ver = afterMulti.body.versions.find((v: any) => v.id === id);
+      assert.ok(
+        ver,
+        `MULTI_ID version ${id} must still appear in detail after CATALOG_ID regenerate`,
+      );
+      assert.equal(
+        ver.status,
+        "candidate",
+        `MULTI_ID version ${id} must remain 'candidate' — regenerating a different catalog entry must not archive it`,
+      );
+    }
+  });
+
   it("multiple candidate versions for the same catalog entry are all archived in one regenerate", async () => {
     // MULTI_ID has two candidate versions: CANDIDATE_VER2 and CANDIDATE_VER3.
     const before = await get(`/admin/stamps/catalog/${MULTI_ID}`);
