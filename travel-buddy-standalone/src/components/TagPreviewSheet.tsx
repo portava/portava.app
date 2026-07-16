@@ -18,12 +18,12 @@ import {
   X, Hash, User, Plane, Users, Calendar, MapPin, Flag,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t, shadow } from '../theme/tokens';
+import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
 import {
   getHashtag, getUserByHandle, followHashtag, unfollowHashtag, reportHashtag,
   type HashtagMeta, type UserPreview,
-} from '../services/hashtag';
-import type { RichTextEntityType } from './RichText';
+} from '../services/hashtag.ts';
+import type { RichTextEntityType } from './RichText.tsx';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 

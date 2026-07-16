@@ -3,9 +3,9 @@ import {
   View, Text, ScrollView, Pressable, StyleSheet,
 } from 'react-native';
 import { ShieldCheck, Plane } from 'lucide-react-native';
-import { color, space, radius } from '../theme/tokens';
-import type { PassportStamp } from '../types/models';
-import { VERIFY_TEAL, VERIFY_TEAL_BG } from './PassportVerificationStamp';
+import { color, space, radius } from '../theme/tokens.ts';
+import type { PassportStamp } from '../types/models.ts';
+import { VERIFY_TEAL, VERIFY_TEAL_BG } from './PassportVerificationStamp.tsx';
 
 interface Props {
   stamps: PassportStamp[];

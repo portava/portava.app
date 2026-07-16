@@ -4,7 +4,7 @@
  * NOT live truth. UI must label as "Starter city notes". Replace later with
  * OSM / Wikidata / GeoNames sourced records + attribution.
  */
-import type { CityKnowledge } from '../types/models';
+import type { CityKnowledge } from '../types/models.ts';
 
 const SEED_AT = '2026-06-16T00:00:00Z';
 

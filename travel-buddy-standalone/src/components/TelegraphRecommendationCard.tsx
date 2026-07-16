@@ -8,10 +8,10 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Zap, MapPin, Clock, DollarSign, X, CalendarPlus, Bookmark, Share2, ThumbsDown } from 'lucide-react-native';
-import type { TelegraphActivityRecommendation } from '../types/models';
-import { color, space, radius, type as t } from '../theme/tokens';
-import { TG } from '../theme/telegraphTokens';
-import { RichText } from './RichText';
+import type { TelegraphActivityRecommendation } from '../types/models.ts';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { TG } from '../theme/telegraphTokens.ts';
+import { RichText } from './RichText.tsx';
 
 const CATEGORY_COLOR: Record<string, string> = {
   food:      '#C8851A',

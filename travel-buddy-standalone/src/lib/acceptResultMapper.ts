@@ -1,4 +1,4 @@
-import type { AcceptInviteResult } from '../services/trips';
+import type { AcceptInviteResult } from '../services/trips.ts';
 
 /**
  * Possible actions the invite-accept handler can take after receiving a result

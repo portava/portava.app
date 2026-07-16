@@ -16,7 +16,7 @@ import {
   setReturnDeadline,
   type LayoverSafetyResult,
   type CompassAnswer,
-} from '../../services/layover';
+} from '../../services/layover.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

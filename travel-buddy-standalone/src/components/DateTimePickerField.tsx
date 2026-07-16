@@ -18,7 +18,7 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { CalendarClock, X } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 interface Props {
   value: Date | null;

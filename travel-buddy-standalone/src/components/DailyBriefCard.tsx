@@ -13,9 +13,9 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Zap, ChevronDown, ChevronUp, Clock, AlertTriangle, Calendar, Sparkles, RefreshCw, Ticket, Cloud, CloudRain, Sun, MapPin, Globe } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens';
-import { fetchDailyBrief, refreshDailyBrief, dismissBriefRecommendation } from '../services/intelligence';
-import { TelegraphFeedbackMenu } from './TelegraphFeedbackMenu';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { fetchDailyBrief, refreshDailyBrief, dismissBriefRecommendation } from '../services/intelligence.ts';
+import { TelegraphFeedbackMenu } from './TelegraphFeedbackMenu.tsx';
 
 interface DailyBriefCardProps {
   tripId: string;

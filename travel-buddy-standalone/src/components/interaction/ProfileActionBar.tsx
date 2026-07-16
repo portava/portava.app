@@ -1,9 +1,9 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { MessageCircle, UserPlus, UserMinus, Bookmark, BookmarkCheck } from 'lucide-react-native';
-import type { InteractionContext } from '../../services/interactionContext';
-import { useSavedProfileActions } from '../../hooks/useSavedProfileActions';
-import { color, space, radius, type as t } from '../../theme/tokens';
+import type { InteractionContext } from '../../services/interactionContext.ts';
+import { useSavedProfileActions } from '../../hooks/useSavedProfileActions.ts';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
 interface Props {
   userId: string;

@@ -29,9 +29,9 @@ import {
   PlusCircle,
 } from 'lucide-react-native';
 import { router } from 'expo-router';
-import { color, space, radius, type as t } from '../theme/tokens';
-import { getMyThreads, sendMessage } from '../services/messaging';
-import type { ThreadSummary } from '../services/messaging';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { getMyThreads, sendMessage } from '../services/messaging.ts';
+import type { ThreadSummary } from '../services/messaging.ts';
 
 export interface DiscoverySharePayload {
   sourceId: string;

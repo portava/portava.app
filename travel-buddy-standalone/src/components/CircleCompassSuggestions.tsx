@@ -19,9 +19,9 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Users, Radio, MapPin } from 'lucide-react-native';
-import { getCompassSuggestions, type CompassCircleCard } from '../services/circle';
-import { useSession } from '../context/SessionContext';
-import { color, space, radius, type as t } from '../theme/tokens';
+import { getCompassSuggestions, type CompassCircleCard } from '../services/circle.ts';
+import { useSession } from '../context/SessionContext.tsx';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 const MAX_CARDS = 3;
 

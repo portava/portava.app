@@ -10,11 +10,11 @@ import {
   StyleSheet, TextInput, ActivityIndicator,
 } from 'react-native';
 import { Bookmark, FolderPlus, Check, X } from 'lucide-react-native';
-import type { EntityType, Collection } from '../services/collections';
+import type { EntityType, Collection } from '../services/collections.ts';
 import {
   getCollections, createCollection, saveItem,
-} from '../services/collections';
-import { color, space, radius, type as t, shadow } from '../theme/tokens';
+} from '../services/collections.ts';
+import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
 
 interface SaveToCollectionSheetProps {
   visible: boolean;

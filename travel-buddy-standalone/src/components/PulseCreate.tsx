@@ -3,32 +3,32 @@ import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, TextInput,
   Image, ActivityIndicator, Switch, Platform, KeyboardAvoidingView,
 } from 'react-native';
-import { MentionInput, type MentionInputHandle } from './MentionInput';
-import { MentionSuggestionList } from './MentionSuggestionList';
-import type { AnyMentionSuggestion, TagSpan } from '../services/tagging';
+import { MentionInput, type MentionInputHandle } from './MentionInput.tsx';
+import { MentionSuggestionList } from './MentionSuggestionList.tsx';
+import type { AnyMentionSuggestion, TagSpan } from '../services/tagging.ts';
 import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import {
   X, Check, PenLine, HelpCircle, Gem, Camera, Mail, UtensilsCrossed,
   MapPin, SlidersHorizontal, Video as VideoIcon,
 } from 'lucide-react-native';
-import { GlobalPlacePicker } from './selectors/GlobalPlacePicker';
+import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { PULSE_FILTERS } from '../types/models';
-import type { PulseFilter, PostCategory } from '../types/models';
-import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
-import { usePostActions } from '../hooks/usePosts';
-import type { PostVisibility, LocationPrivacyMode } from '../services/posts';
-import { uploadMedia, validateMedia, type PickedMedia } from '../services/media';
-import { useSession } from '../context/SessionContext';
-import type { Place } from '../lib/location/placeTypes';
-import { HighlightComposer } from './HighlightComposer';
-import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor';
+import { PULSE_FILTERS } from '../types/models.ts';
+import type { PulseFilter, PostCategory } from '../types/models.ts';
+import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
+import { usePostActions } from '../hooks/usePosts.ts';
+import type { PostVisibility, LocationPrivacyMode } from '../services/posts.ts';
+import { uploadMedia, validateMedia, type PickedMedia } from '../services/media.ts';
+import { useSession } from '../context/SessionContext.tsx';
+import type { Place } from '../lib/location/placeTypes.ts';
+import { HighlightComposer } from './HighlightComposer.tsx';
+import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor.tsx';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { createComposerDismissHandlers, createSubmitLock, createOnceGuard, handleSubmitResult, handleUploadResult, handleFilterApplyResult, TYPE_CATEGORY, CATEGORY_OPTIONS, resolveDefaultCategory, handleCategoryChipPress, resolveCreateCategory, validateCategoryGate } from './PulseCreate.machine';
-import { createFilterDismissHandlers } from './PulseFilterSheet.machine';
+import { createComposerDismissHandlers, createSubmitLock, createOnceGuard, handleSubmitResult, handleUploadResult, handleFilterApplyResult, TYPE_CATEGORY, CATEGORY_OPTIONS, resolveDefaultCategory, handleCategoryChipPress, resolveCreateCategory, validateCategoryGate } from './PulseCreate.machine.ts';
+import { createFilterDismissHandlers } from './PulseFilterSheet.machine.ts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { loadLastCategory, saveLastCategory, clearLastCategory } from './pulseCreateCategoryStorage';
+import { loadLastCategory, saveLastCategory, clearLastCategory } from './pulseCreateCategoryStorage.ts';
 
 /* ── Types ── */
 

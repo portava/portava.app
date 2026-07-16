@@ -3,7 +3,7 @@
  *
  * Uses the same authedFetch / freshToken pattern as intelligence.ts.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 type AsyncStorageStub = {

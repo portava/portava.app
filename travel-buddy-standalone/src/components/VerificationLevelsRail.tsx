@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { ShieldCheck, Shield } from 'lucide-react-native';
-import { color, space, radius } from '../theme/tokens';
-import { VERIFY_TEAL, VERIFY_TEAL_DIM, VERIFY_TEAL_BG } from './PassportVerificationStamp';
+import { color, space, radius } from '../theme/tokens.ts';
+import { VERIFY_TEAL, VERIFY_TEAL_DIM, VERIFY_TEAL_BG } from './PassportVerificationStamp.tsx';
 
 export interface VerificationLevelStatus {
   basicVerified: boolean;

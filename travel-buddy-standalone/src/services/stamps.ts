@@ -7,19 +7,19 @@ export {
   getMyPassportStamps as getMyStamps,
   getUserStampsByUsername,
   getMyPassportStamps,
-} from './passportStamps';
+} from './passportStamps.ts';
 
 export type {
   PassportStampNew,
   StampDefinition,
   StampVisibility,
-} from './passportStamps';
+} from './passportStamps.ts';
 
 /** Visibility values used by the new /api/stamps/* endpoints (v2). */
 export type NewStampVisibility = 'public' | 'friends_only' | 'private';
 
-import { supabase } from '../lib/supabase';
-import type { PassportStampNew, StampDefinition } from './passportStamps';
+import { supabase } from '../lib/supabase.ts';
+import type { PassportStampNew, StampDefinition } from './passportStamps.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 type ApiResult<T> = { ok: true; data: T } | { ok: false; message: string };

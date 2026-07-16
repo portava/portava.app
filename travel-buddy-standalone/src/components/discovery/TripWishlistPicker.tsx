@@ -27,13 +27,13 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { X, MapPin, Check, ListPlus, AlertCircle, Plus } from 'lucide-react-native';
-import { listMyTrips, type TripRow } from '../../services/trips';
+import { listMyTrips, type TripRow } from '../../services/trips.ts';
 import {
   toggleSave,
   getSavedListIds,
   type BookmarkedPlace,
-} from '../../services/discoveryBookmarks';
-import { color, space, radius, type as t, shadow } from '../../theme/tokens';
+} from '../../services/discoveryBookmarks.ts';
+import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 
 // ── Shared payload type ────────────────────────────────────────────────────────
 

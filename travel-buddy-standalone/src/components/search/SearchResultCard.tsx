@@ -7,13 +7,13 @@ import {
   UserPlus, UserCheck, MapPin, Bookmark, BookmarkCheck,
   Clock, Lock,
 } from 'lucide-react-native';
-import { UserAvatarButton } from '../interaction/UserAvatarButton';
-import { followUser, unfollowUser } from '../../services/follows';
-import { rsvpEvent } from '../../services/events';
-import { saveItem, unsaveItem } from '../../services/collections';
-import type { UnifiedSearchResult } from '../../services/discovery';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import { TypeIcon, resolveRoute } from './searchNav';
+import { UserAvatarButton } from '../interaction/UserAvatarButton.tsx';
+import { followUser, unfollowUser } from '../../services/follows.ts';
+import { rsvpEvent } from '../../services/events.ts';
+import { saveItem, unsaveItem } from '../../services/collections.ts';
+import type { UnifiedSearchResult } from '../../services/discovery.ts';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { TypeIcon, resolveRoute } from './searchNav.tsx';
 
 export type { UnifiedSearchResult };
 

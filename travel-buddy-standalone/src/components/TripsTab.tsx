@@ -2,8 +2,8 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { MapPin, Calendar, ChevronRight } from 'lucide-react-native';
-import type { TripRow } from '../services/trips';
-import { color, space, radius, type as t } from '../theme/tokens';
+import type { TripRow } from '../services/trips.ts';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 const STATUS_COLOR: Record<string, string> = {
   planning: color.mute,

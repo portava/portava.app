@@ -14,9 +14,9 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { Marker } from '@maplibre/maplibre-react-native';
-import { color } from '../../theme/tokens';
-import { primaryIdentityText } from '../../lib/displayIdentity';
-import type { MapTraveler } from '../../services/mapTravelers';
+import { color } from '../../theme/tokens.ts';
+import { primaryIdentityText } from '../../lib/displayIdentity.ts';
+import type { MapTraveler } from '../../services/mapTravelers.ts';
 
 // ── Clustering (pure, grid-based) ─────────────────────────────────────────────
 

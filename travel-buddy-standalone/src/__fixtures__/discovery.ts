@@ -13,7 +13,7 @@
  * When production data is populated in discovery_places, this file can be fully
  * retired.
  */
-import type { Interest } from '../types/models';
+import type { Interest } from '../types/models.ts';
 
 export type DiscoverySource = 'seed' | 'traveler' | 'compass';
 export type DiscoveryStatus = 'provisional' | 'sourced' | 'verified';

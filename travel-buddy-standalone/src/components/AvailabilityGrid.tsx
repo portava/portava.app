@@ -15,8 +15,8 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { CalendarPlus, X } from 'lucide-react-native';
-import { type MemberAvailability, type Weekday } from '../services/availability';
-import { color, space, radius, type as t } from '../theme/tokens';
+import { type MemberAvailability, type Weekday } from '../services/availability.ts';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 

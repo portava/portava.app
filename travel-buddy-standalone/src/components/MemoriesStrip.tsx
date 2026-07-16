@@ -4,8 +4,8 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { BookImage } from 'lucide-react-native';
-import { getMemoryFeed, type Memory } from '../services/memories';
-import { color, space, radius, type as t } from '../theme/tokens';
+import { getMemoryFeed, type Memory } from '../services/memories.ts';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 interface MemoriesStripProps {
   limit?: number;

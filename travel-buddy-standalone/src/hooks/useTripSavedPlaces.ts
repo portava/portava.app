@@ -23,7 +23,7 @@ import {
   removeSavedFromList,
   clearAllSaved,
   type BookmarkedPlace,
-} from '../services/discoveryBookmarks';
+} from '../services/discoveryBookmarks.ts';
 
 export interface UseTripSavedPlacesResult {
   places: BookmarkedPlace[];

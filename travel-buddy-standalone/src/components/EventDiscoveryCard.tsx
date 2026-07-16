@@ -12,10 +12,10 @@ import {
   CalendarClock, MapPin, Users, ChevronRight,
   Bookmark, BookmarkCheck, Lock, Globe, UserCheck, ShieldCheck,
 } from 'lucide-react-native';
-import { Avatar } from './ui';
-import { color, space, radius, type as t, shadow } from '../theme/tokens';
-import type { EventListItem, EventRsvpStatus } from '../services/events';
-import { primaryIdentityText } from '../lib/displayIdentity';
+import { Avatar } from './ui.tsx';
+import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import type { EventListItem, EventRsvpStatus } from '../services/events.ts';
+import { primaryIdentityText } from '../lib/displayIdentity.ts';
 
 interface Props {
   event: EventListItem;

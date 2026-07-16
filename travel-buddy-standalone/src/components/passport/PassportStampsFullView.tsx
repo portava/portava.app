@@ -7,10 +7,10 @@ import {
   View, Text, Pressable, StyleSheet, Modal, SafeAreaView,
 } from 'react-native';
 import { ArrowLeft } from 'lucide-react-native';
-import { StampsTab } from '../StampsTab';
-import { PassportSecurityPattern } from './PassportSecurityPattern';
-import { PP, PP_LABEL } from '../../theme/passportTokens';
-import type { PassportStamp } from '../../types/models';
+import { StampsTab } from '../StampsTab.tsx';
+import { PassportSecurityPattern } from './PassportSecurityPattern.tsx';
+import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
+import type { PassportStamp } from '../../types/models.ts';
 
 interface Props {
   visible: boolean;

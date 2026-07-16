@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { restrictUser, unrestrictUser } from '../services/restrict';
+import { restrictUser, unrestrictUser } from '../services/restrict.ts';
 
 export function useRestrictUser() {
   const [loading, setLoading] = useState(false);

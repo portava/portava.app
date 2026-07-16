@@ -1563,3 +1563,107 @@ describe("runGenerationCycle — orphaned paths do not accumulate across retries
     }
   });
 });
+
+// ── Null city in catalog row ───────────────────────────────────────────────────
+
+describe("runGenerationCycle — catalog row with null city", () => {
+  it("completes successfully and produces a prompt without literal 'null' or 'undefined' for the city", async () => {
+    // Capture the prompt that the provider receives so we can inspect it.
+    let capturedPrompt: string | undefined;
+    const capturingProvider = {
+      async generate(prompt: string, _n?: number) {
+        capturedPrompt = prompt;
+        // Return CANDIDATE_COUNT data-URL placeholders so the cycle succeeds.
+        return Array.from({ length: CANDIDATE_COUNT }, (_, i) => ({
+          url: `data:image/svg+xml,fake-${i}`,
+          metadata: { model: "fake-provider", candidate_index: i },
+        }));
+      },
+    };
+
+    const { sc, updates, inserts } = makeFakeClient({
+      catalogOverride: { ...CATALOG_ROW, city: null },
+    });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(capturingProvider);
+
+    const result = await runGenerationCycle();
+
+    // The worker must report success — a null city must not cause a crash or
+    // silent failure.
+    assert.equal(result.processed, true, "a null city must not prevent the cycle from completing");
+    assert.equal(result.catalogId, "cat-1");
+
+    // Version rows must be inserted — the run is not aborted.
+    assert.equal(inserts.length, 1, "must insert exactly one batch of version rows");
+    assert.equal(inserts[0].rows.length, CANDIDATE_COUNT, "must insert all candidate rows");
+
+    // Queue row must be marked review_required.
+    const review = updates.find((u) => u.payload.status === "review_required");
+    assert.ok(review, "must mark the job review_required on success");
+    assert.equal(review!.payload.last_error, null, "last_error must be null on a clean run");
+
+    // The prompt must have been built (provider was called).
+    assert.ok(
+      typeof capturedPrompt === "string" && capturedPrompt.length > 0,
+      "provider must be called with a non-empty prompt",
+    );
+
+    // The prompt must NOT contain the literal strings "null" or "undefined"
+    // that would result from naively interpolating a null city value.
+    assert.equal(
+      capturedPrompt!.includes("City: null"),
+      false,
+      `prompt must not contain "City: null"; got prompt snippet: ${capturedPrompt!.slice(0, 200)}`,
+    );
+    assert.equal(
+      capturedPrompt!.includes("City: undefined"),
+      false,
+      `prompt must not contain "City: undefined"; got prompt snippet: ${capturedPrompt!.slice(0, 200)}`,
+    );
+
+    // The prompt must still contain the destination's display name and country.
+    assert.ok(
+      capturedPrompt!.includes("Tokyo"),
+      "prompt must still include the display_name even when city is null",
+    );
+    assert.ok(
+      capturedPrompt!.includes("Japan"),
+      "prompt must still include the country even when city is null",
+    );
+  });
+
+  it("does not insert a garbled City line when city is null", async () => {
+    // Separate check: confirm the prompt contains no "City:" line at all when
+    // city is null (the guard in destinationInstruction skips it entirely).
+    let capturedPrompt: string | undefined;
+    const capturingProvider = {
+      async generate(prompt: string, _n?: number) {
+        capturedPrompt = prompt;
+        return Array.from({ length: CANDIDATE_COUNT }, (_, i) => ({
+          url: `data:image/svg+xml,fake-${i}`,
+          metadata: { model: "fake-provider", candidate_index: i },
+        }));
+      },
+    };
+
+    const { sc } = makeFakeClient({
+      catalogOverride: { ...CATALOG_ROW, city: null },
+    });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(capturingProvider);
+
+    await runGenerationCycle();
+
+    assert.ok(
+      typeof capturedPrompt === "string",
+      "provider must be called",
+    );
+    // When city is null the entire "City: ..." line must be absent.
+    assert.equal(
+      /^City:/m.test(capturedPrompt!),
+      false,
+      `prompt must not contain any "City:" line when city is null; got: ${capturedPrompt!.slice(0, 300)}`,
+    );
+  });
+});

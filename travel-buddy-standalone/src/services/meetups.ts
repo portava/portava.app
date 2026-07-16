@@ -3,7 +3,7 @@
  *
  * PRIVACY: No lat/lng on meetups. Location is text-only (location_name).
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type MeetupStatus    = 'draft' | 'active' | 'confirmed' | 'cancelled';

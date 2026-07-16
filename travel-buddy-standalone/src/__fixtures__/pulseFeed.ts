@@ -6,8 +6,8 @@
  *
  * This is a MOCK seam. Swap to real feed API later. Not presented as live.
  */
-import type { PulseFeedItem } from '../types/models';
-import { users } from './cebu';
+import type { PulseFeedItem } from '../types/models.ts';
+import { users } from './cebu.ts';
 
 const A = (i: number) => ({ id: users[i % users.length].id, name: users[i % users.length].name, avatarUrl: users[i % users.length].avatarUrl });
 

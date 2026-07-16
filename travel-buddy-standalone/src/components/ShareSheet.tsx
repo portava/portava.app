@@ -28,7 +28,7 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Share2, Link, MessageCircle, Users, Plane, Circle, X } from 'lucide-react-native';
-import { color, space, radius, shadow } from '../theme/tokens';
+import { color, space, radius, shadow } from '../theme/tokens.ts';
 
 export type ShareTarget = 'external' | 'copy_link' | 'dm' | 'group_chat' | 'trip_crew' | 'circle';
 

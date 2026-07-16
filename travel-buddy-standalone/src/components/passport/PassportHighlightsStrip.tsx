@@ -8,7 +8,7 @@ import {
   View, Text, Pressable, StyleSheet, ScrollView, Image,
 } from 'react-native';
 import { Plus } from 'lucide-react-native';
-import { PP, PP_LABEL } from '../../theme/passportTokens';
+import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
 
 interface Highlight {
   id: string;

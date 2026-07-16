@@ -26,9 +26,9 @@ import {
   TextInput,
   Animated,
 } from 'react-native';
-import { MentionInput, type MentionInputHandle } from './MentionInput';
-import { MentionSuggestionList } from './MentionSuggestionList';
-import type { AnyMentionSuggestion } from '../services/tagging';
+import { MentionInput, type MentionInputHandle } from './MentionInput.tsx';
+import { MentionSuggestionList } from './MentionSuggestionList.tsx';
+import type { AnyMentionSuggestion } from '../services/tagging.ts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import {
@@ -37,20 +37,20 @@ import {
   AlertCircle, RefreshCw, CalendarClock, Clock,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useGroupChat } from '../hooks/useGroupChat';
-import { useSession } from '../context/SessionContext';
-import { color, space, radius, type as t } from '../theme/tokens';
-import { TG, TG_SPACING } from '../theme/telegraphTokens';
-import { TelegraphSystemNotice } from './TelegraphSystemNotice';
-import { TranslationSettingsSheet } from './TranslationSettingsSheet';
-import { TripMembersSheet } from './TripMembersSheet';
-import type { Message } from '../services/messaging';
-import { deleteMessage, saveMessage } from '../services/messaging';
-import { reportContent, type ReasonCode } from '../services/reports';
-import { getTripMembers, getCircleMembers, type FriendUser } from '../services/friends';
+import { useGroupChat } from '../hooks/useGroupChat.ts';
+import { useSession } from '../context/SessionContext.tsx';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { TG, TG_SPACING } from '../theme/telegraphTokens.ts';
+import { TelegraphSystemNotice } from './TelegraphSystemNotice.tsx';
+import { TranslationSettingsSheet } from './TranslationSettingsSheet.tsx';
+import { TripMembersSheet } from './TripMembersSheet.tsx';
+import type { Message } from '../services/messaging.ts';
+import { deleteMessage, saveMessage } from '../services/messaging.ts';
+import { reportContent, type ReasonCode } from '../services/reports.ts';
+import { getTripMembers, getCircleMembers, type FriendUser } from '../services/friends.ts';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
-import { MessageEntrance, useMessageEntranceGate } from './MessageEntrance';
+import { MessageEntrance, useMessageEntranceGate } from './MessageEntrance.tsx';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
