@@ -1,13 +1,20 @@
 import React, { useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { Star, CheckCircle, Globe, Zap, Clock, Bookmark, BookmarkCheck } from 'lucide-react-native';
+import { Star, CheckCircle, Globe, Zap, Clock, Bookmark, BookmarkCheck, MapPin } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
 import { Stamp } from './ui';
 import type { BuddyProfile } from '../services/rentABuddy';
 import { saveBuddy, unsaveBuddy } from '../services/rentABuddy';
 import { CompassFeedbackMenu } from './compass/CompassFeedbackMenu';
 import { CompassWhySheet } from './compass/CompassWhySheet';
+
+/** "650 m away" / "2.3 km away" / "12 km away" */
+export function formatDistanceAway(km: number): string {
+  if (km < 1) return `${Math.max(50, Math.round(km * 1000 / 50) * 50)} m away`;
+  if (km < 10) return `${km.toFixed(1)} km away`;
+  return `${Math.round(km)} km away`;
+}
 
 function deriveLevel(reviewCount: number, verified: boolean): { label: string; color: string } {
   if (!verified || reviewCount < 5) return { label: 'New Buddy', color: color.mute };
@@ -125,6 +132,12 @@ export function BuddyCard({
           <View style={[styles.levelBadge, { borderColor: level.color }]}>
             <Text style={[styles.levelText, { color: level.color }]}>{level.label}</Text>
           </View>
+          {buddy.distanceKm != null && (
+            <View style={styles.distancePill}>
+              <MapPin size={9} color={color.deep} />
+              <Text style={styles.distanceText}>{formatDistanceAway(buddy.distanceKm)}</Text>
+            </View>
+          )}
           {buddy.responseTimeH != null && (
             <View style={styles.responsePill}>
               <Clock size={9} color={color.deep} />
@@ -272,6 +285,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.sm, paddingVertical: 3,
   },
   responseText: { fontSize: 9, fontWeight: '700', color: color.deep, fontFamily: 'Courier', letterSpacing: 0.3 },
+  distancePill: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: '#EAF2F5', borderRadius: 999,
+    paddingHorizontal: space.sm, paddingVertical: 3,
+  },
+  distanceText: { fontSize: 9, fontWeight: '700', color: color.deep, fontFamily: 'Courier', letterSpacing: 0.3 },
   tags: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs, marginTop: space.xs },
   langRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   lang: { ...t.small, color: color.mute, flex: 1 },

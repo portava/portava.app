@@ -24,6 +24,8 @@ import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js
 import { endFairExposure } from "../compass/CompassFairExposureEngine.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { checkRentBuddyAccess } from "./rentABuddyRollout.js";
+import { haversineKm } from "../lib/canonicalLocations.js";
+import { SEED_CITIES } from "../lib/popularCities.js";
 import {
   POLICY_TEXT,
   isPrivateLocation,
@@ -438,6 +440,50 @@ router.get("/api/rent-a-buddy/cities/:city/available", async (req, res) => {
 
 // ── Search ────────────────────────────────────────────────────────────────────
 
+// City → coordinates resolver used for proximity ranking / distance labels.
+// Buddy profiles carry only a city name (no coordinates), so distance is
+// measured from the queried point to the buddy's city centre.
+// Seed-city lookup first (no network), then Nominatim with an in-memory cache.
+// Failures are cached briefly so a geocoder outage cannot flood it with retries.
+const GEOCODE_OK_TTL_MS   = 24 * 60 * 60 * 1000;
+const GEOCODE_FAIL_TTL_MS = 10 * 60 * 1000;
+const cityCoordsCache = new Map<string, { coords: { lat: number; lng: number } | null; expiresAt: number }>();
+
+async function geocodeBuddyCity(city: string, country: string | null): Promise<{ lat: number; lng: number } | null> {
+  const key = `${city.trim().toLowerCase()}|${(country ?? "").trim().toLowerCase()}`;
+  const hit = cityCoordsCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.coords;
+
+  const seed = SEED_CITIES.find((s) => s.name.toLowerCase() === city.trim().toLowerCase());
+  if (seed) {
+    const coords = { lat: seed.lat, lng: seed.lng };
+    cityCoordsCache.set(key, { coords, expiresAt: Date.now() + GEOCODE_OK_TTL_MS });
+    return coords;
+  }
+
+  let coords: { lat: number; lng: number } | null = null;
+  try {
+    const q = country ? `${city}, ${country}` : city;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 4000);
+    const resp = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`,
+      { headers: { "User-Agent": "TravelBuddy/1.0 (travel-buddy app)" }, signal: ctrl.signal },
+    ).finally(() => clearTimeout(t));
+    if (resp.ok) {
+      const rows = await resp.json() as Array<{ lat: string; lon: string }>;
+      const r = rows?.[0];
+      if (r) coords = { lat: parseFloat(r.lat), lng: parseFloat(r.lon) };
+    }
+  } catch { /* treated as a miss; cached below with short TTL */ }
+
+  cityCoordsCache.set(key, {
+    coords,
+    expiresAt: Date.now() + (coords ? GEOCODE_OK_TTL_MS : GEOCODE_FAIL_TTL_MS),
+  });
+  return coords;
+}
+
 router.post("/api/rent-a-buddy/search", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ buddies: [], total: 0, page: 1, perPage: 20 });
@@ -445,16 +491,26 @@ router.post("/api/rent-a-buddy/search", async (req, res) => {
 
   const {
     city, category, language, maxBudgetUsd, buddyLevel,
-    nightlifeAvailable, publicMeetupOnly, page = 1, perPage = 20,
+    nightlifeAvailable, publicMeetupOnly, lat, lng, page = 1, perPage = 20,
   } = req.body ?? {};
+
+  const origin = typeof lat === "number" && Number.isFinite(lat)
+    && typeof lng === "number" && Number.isFinite(lng)
+    ? { lat, lng }
+    : null;
 
   let query = serviceClient
     .from("rent_buddy_profiles")
     .select(BUDDY_PUBLIC_COLUMNS, { count: "exact" })
     .eq("status", "active")
     .eq("admin_status", "active")
-    .order("review_count", { ascending: false })
-    .range((page - 1) * perPage, page * perPage - 1);
+    .order("review_count", { ascending: false });
+
+  // With an origin point, proximity ranking happens in JS across the whole
+  // candidate pool, so pagination must also happen after sorting.
+  query = origin
+    ? query.limit(500)
+    : query.range((page - 1) * perPage, page * perPage - 1);
 
   if (city)          query = query.ilike("city", `%${city}%`);
   if (category)      query = query.contains("categories", [category]);
@@ -467,8 +523,51 @@ router.post("/api/rent-a-buddy/search", async (req, res) => {
   const { data, count, error } = await query;
   if (error) return sendError(res, "db_error", error.message);
 
+  let rows: Record<string, unknown>[] = data ?? [];
+  const distanceById = new Map<string, number | null>();
+
+  if (origin) {
+    // Resolve coordinates for each distinct buddy city (cached), then rank by
+    // distance from the queried point. Unresolvable cities sort last, keeping
+    // their review-count order.
+    const distinctCities = new Map<string, { city: string; country: string | null }>();
+    for (const r of rows) {
+      const c = String(r.city ?? "").trim();
+      if (!c) continue;
+      const k = `${c.toLowerCase()}|${String(r.country ?? "").trim().toLowerCase()}`;
+      if (!distinctCities.has(k)) distinctCities.set(k, { city: c, country: (r.country as string | null) ?? null });
+    }
+    const coordsByKey = new Map<string, { lat: number; lng: number } | null>();
+    await Promise.all([...distinctCities.entries()].map(async ([k, v]) => {
+      coordsByKey.set(k, await geocodeBuddyCity(v.city, v.country));
+    }));
+
+    for (const r of rows) {
+      const c = String(r.city ?? "").trim();
+      const k = `${c.toLowerCase()}|${String(r.country ?? "").trim().toLowerCase()}`;
+      const coords = c ? coordsByKey.get(k) ?? null : null;
+      distanceById.set(
+        String(r.id),
+        coords ? Math.round(haversineKm(origin.lat, origin.lng, coords.lat, coords.lng) * 10) / 10 : null,
+      );
+    }
+
+    rows = [...rows].sort((a, b) => {
+      const da = distanceById.get(String(a.id));
+      const db = distanceById.get(String(b.id));
+      if (da == null && db == null) return 0;
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return da - db;
+    });
+    rows = rows.slice((page - 1) * perPage, page * perPage);
+  }
+
   return res.json({
-    buddies: (data ?? []).map((p: Record<string, unknown>) => mapProfile(stripBuddyPrivateFields(p, false))),
+    buddies: rows.map((p: Record<string, unknown>) => ({
+      ...mapProfile(stripBuddyPrivateFields(p, false)),
+      distanceKm: distanceById.get(String(p.id)) ?? null,
+    })),
     total: count ?? 0,
     page,
     perPage,

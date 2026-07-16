@@ -626,6 +626,31 @@ describe("feature flag", () => {
   });
 });
 
+// ── Search proximity ──────────────────────────────────────────────────────────
+
+describe("search proximity", () => {
+  it("includes distanceKm for each buddy when lat/lng are provided", async () => {
+    setupState();
+    // Coordinates in central Tokyo — buddy city "Tokyo" resolves via seed cities (no network).
+    const r = await req("POST", "/api/rent-a-buddy/search", { city: "Tokyo", lat: 35.68, lng: 139.7 });
+    assert.equal(r.status, 200);
+    assert.ok(r.body.buddies.length > 0, "expected at least one buddy");
+    for (const b of r.body.buddies) {
+      assert.equal(typeof b.distanceKm, "number", "distanceKm should be a number");
+      assert.ok(b.distanceKm < 50, "Tokyo buddy should be near central Tokyo coords");
+    }
+  });
+
+  it("returns null distanceKm when no coordinates are sent", async () => {
+    setupState();
+    const r = await req("POST", "/api/rent-a-buddy/search", { city: "Tokyo" });
+    assert.equal(r.status, 200);
+    for (const b of r.body.buddies) {
+      assert.equal(b.distanceKm, null);
+    }
+  });
+});
+
 // ── Policy text ───────────────────────────────────────────────────────────────
 
 describe("policy text", () => {
