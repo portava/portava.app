@@ -383,4 +383,54 @@ describe('StampStudioIndex — pull-to-refresh picks up newly approved artwork',
     const updated = screen.getByTestId('stamp-studio-scroll');
     expect(updated.props.refreshControl.props.refreshing).toBe(false);
   });
+
+  it('getStampWorkerHealth is called again and updated health warnings appear after pull-to-refresh', async () => {
+    // Override the beforeEach mock: first health call returns no data so the
+    // health strip is absent on initial load; subsequent calls return a
+    // stuck_jobs warning so it becomes visible after the gesture.
+    mockGetHealth.mockReset();
+    mockGetHealth
+      .mockResolvedValueOnce({ ok: false })
+      .mockResolvedValue({
+        ok: true as const,
+        data: {
+          warnings: [
+            { key: 'stuck_jobs' as const, message: 'stuck', details: { stuck_count: 2 } },
+          ],
+          health: {
+            worker_enabled: true,
+            worker_running: true,
+            worker_id: 'w1',
+            last_success_at: null,
+            queue_depth: {},
+            stuck_jobs: [],
+          },
+        },
+      });
+
+    render(<StampStudioIndex />);
+    await waitFor(() => screen.getByText('5'));
+
+    // No health warnings rendered yet — initial load got ok: false.
+    expect(screen.queryByText(/stuck in 'generating'/)).toBeNull();
+
+    const healthCallsBefore = mockGetHealth.mock.calls.length;
+
+    const scrollView = screen.getByTestId('stamp-studio-scroll');
+    await act(async () => { scrollView.props.refreshControl.props.onRefresh(); });
+
+    // Wait for the catalog count update so load() has fully resolved.
+    await waitFor(() => screen.getByText('77'));
+
+    // getStampWorkerHealth must have been called again during the refresh.
+    expect(mockGetHealth.mock.calls.length).toBeGreaterThan(healthCallsBefore);
+
+    // The warning text produced by warningSummary for stuck_jobs is now visible.
+    await waitFor(() =>
+      screen.getByText(/2 jobs stuck in 'generating' past lock expiry/),
+    );
+    expect(
+      screen.getByText(/2 jobs stuck in 'generating' past lock expiry/),
+    ).toBeTruthy();
+  });
 });
