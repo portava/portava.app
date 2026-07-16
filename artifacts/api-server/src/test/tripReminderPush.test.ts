@@ -715,6 +715,76 @@ describe("TripReminderScheduler push", () => {
       "recovery must not fire when start_date is exactly one day before the lower boundary date");
   });
 
+  // ── MAX_RECOVERY_AGE_MS exact-boundary tests ──────────────────────────────
+  // recoverStaleClaims uses .gte("reminder_sent_at", recoveryFloor) where
+  // recoveryFloor = new Date(now - MAX_RECOVERY_AGE_MS).toISOString().
+  // A claim at (now - MAX_RECOVERY_AGE_MS + 1 ms) satisfies >= so it IS
+  // recovered; a claim at (now - MAX_RECOVERY_AGE_MS - 1 ms) is strictly
+  // below the floor and must NOT be recovered.
+
+  it("recovers a stale claim whose reminder_sent_at is 1 ms inside the MAX_RECOVERY_AGE_MS floor", async () => {
+    // Pin the clock so every timestamp in this test is derived from the same
+    // epoch value — the scheduler reads getNow(), which respects _setTestNow.
+    const PINNED_NOW = new Date("2026-07-16T12:00:00.000Z").getTime();
+    _setTestNow(PINNED_NOW);
+
+    // MAX_RECOVERY_AGE_MS = WINDOW_UPPER_HRS * 3_600_000 = 26 h (mirror the constant).
+    const MAX_RECOVERY_AGE_MS = 26 * 3_600_000;
+
+    // Exactly 1 ms newer than the recovery floor → satisfies >=.
+    const justInsideFloor = new Date(PINNED_NOW - MAX_RECOVERY_AGE_MS + 1).toISOString();
+
+    // start_date must be inside the recovery window (now + 20 h … now + 28 h).
+    // Use now + 24 h, always safely inside, computed from the pinned clock.
+    const startDate = new Date(PINNED_NOW + 24 * 3_600_000).toISOString().slice(0, 10);
+
+    const state = baseState("trip-age-floor-inside");
+    state.trips![0].reminder_sent_at      = justInsideFloor;
+    state.trips![0].reminder_delivered_at = null;
+    state.trips![0].start_date            = startDate;
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 1,
+      "recovery must fire when reminder_sent_at is 1 ms inside the MAX_RECOVERY_AGE_MS floor");
+    assert.ok(
+      state.trips![0].reminder_delivered_at,
+      "reminder_delivered_at must be set after recovery at the inside boundary",
+    );
+  });
+
+  it("does not recover a stale claim whose reminder_sent_at is 1 ms outside the MAX_RECOVERY_AGE_MS floor", async () => {
+    // Same pinned clock as above.
+    const PINNED_NOW = new Date("2026-07-16T12:00:00.000Z").getTime();
+    _setTestNow(PINNED_NOW);
+
+    const MAX_RECOVERY_AGE_MS = 26 * 3_600_000;
+
+    // Exactly 1 ms older than the recovery floor → fails >=, claim is too old.
+    const justOutsideFloor = new Date(PINNED_NOW - MAX_RECOVERY_AGE_MS - 1).toISOString();
+
+    const startDate = new Date(PINNED_NOW + 24 * 3_600_000).toISOString().slice(0, 10);
+
+    const state = baseState("trip-age-floor-outside");
+    state.trips![0].reminder_sent_at      = justOutsideFloor;
+    state.trips![0].reminder_delivered_at = null;
+    state.trips![0].start_date            = startDate;
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 0,
+      "recovery must not fire when reminder_sent_at is 1 ms outside the MAX_RECOVERY_AGE_MS floor");
+    assert.equal(
+      state.trips![0].reminder_delivered_at ?? null,
+      null,
+      "reminder_delivered_at must remain null when the claim is beyond the recovery floor",
+    );
+  });
+
   // ── midnight-clock boundary tests ─────────────────────────────────────────
   // These four tests pin Date.now() to 23:00 UTC so that the window boundary
   // dates straddle midnight.  With the clock at 23:00:
