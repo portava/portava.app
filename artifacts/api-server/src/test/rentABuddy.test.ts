@@ -167,6 +167,7 @@ function makeClient(userId: string, role = "user") {
       like(col: string, val: any) { this._filters.push(["like", col, val]); return this; },
       ilike(col: string, val: any) { this._filters.push(["ilike", col, val]); return this; },
       contains(col: string, val: any) { this._filters.push(["contains", col, val]); return this; },
+      neq(col: string, val: any) { this._filters.push(["neq", col, val]); return this; },
       or(expr: string) { return this; },
       is(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
       limit(n: number) { this._limit = n; return this; },
@@ -389,6 +390,7 @@ function makeClient(userId: string, role = "user") {
           let rows = Object.values(bks);
           for (const [op, col, val] of this._filters) {
             if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
+            if (op === "neq") rows = rows.filter((r: any) => r[col] !== val);
             if (op === "in") rows = rows.filter((r: any) => (val as any[]).includes(r[col]));
             if (op === "lt") rows = rows.filter((r: any) => r[col] < val);
             if (op === "gt") rows = rows.filter((r: any) => r[col] > val);
@@ -3332,5 +3334,154 @@ describe("Rent a Buddy — dispute: duplicate-report guard", () => {
     assert.equal(r.status, 409, JSON.stringify(r.body));
     assert.equal(r.body.error, "invalid_transition", JSON.stringify(r.body));
     assert.equal(r.body.currentStatus, "disputed", JSON.stringify(r.body));
+  });
+});
+
+// ── Message payload correctness: booking_id / sender_id ───────────────────────
+// Asserts that milestone and card messages inserted into state.messages carry
+// the correct sender_id (the acting user) and booking_id (in the card body
+// JSON) for each major booking transition.  A swapped or blank value would
+// silently corrupt thread history.
+
+describe("Rent a Buddy — message payload: booking_id and sender_id correctness", () => {
+  const THREAD_ID = "thread-msg-payload-1";
+
+  function baseBooking(status: string, extra: Record<string, any> = {}) {
+    const futureDate = new Date();
+    futureDate.setDate(futureDate.getDate() + 10);
+    return {
+      id: BOOKING_ID,
+      buddy_id: BUDDY_PROF,
+      traveler_id: USER_ID,
+      booking_date: futureDate.toISOString().slice(0, 10),
+      start_time: "14:00",
+      duration_h: 2,
+      city: "Tokyo",
+      category: "city",
+      total_usd: 50,
+      deposit_usd: 50,
+      cash_balance_usd: 0,
+      safety_status: "normal",
+      route_plan: [],
+      payment_mode: "full_in_app",
+      telegraph_thread_id: THREAD_ID,
+      status,
+      updated_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      ...extra,
+    };
+  }
+
+  it("cancel: milestone and card carry traveler sender_id and correct booking_id", async () => {
+    setupState({ bookings: { [BOOKING_ID]: baseBooking("confirmed") } });
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/cancel`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    const msgs: any[] = (state as any).messages ?? [];
+
+    const milestone = msgs.find((m: any) => m.subtype === "rent_buddy_cancelled");
+    assert.ok(milestone, "expected rent_buddy_cancelled milestone in state.messages");
+    assert.equal(milestone.sender_id, USER_ID, "cancel milestone sender_id must be the traveler (actor), not blank or swapped");
+    assert.equal(milestone.msg_type, "system");
+    assert.equal(milestone.body, "Booking cancelled.");
+
+    const card = msgs.find((m: any) => m.subtype === "booking_status_cancelled");
+    assert.ok(card, "expected booking_status_cancelled card in state.messages");
+    assert.equal(card.sender_id, USER_ID, "cancel card sender_id must be the traveler (actor)");
+    assert.equal(card.msg_type, "booking_card");
+    const cardBody = JSON.parse(card.body);
+    assert.equal(cardBody.booking_id, BOOKING_ID, "card body booking_id must match the booking, not blank or swapped");
+    assert.equal(cardBody.status, "cancelled");
+  });
+
+  it("accept: milestones and card carry buddy sender_id and correct booking_id", async () => {
+    setupState({ bookings: { [BOOKING_ID]: baseBooking("pending") } });
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/accept`, undefined, BUDDY_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    const msgs: any[] = (state as any).messages ?? [];
+
+    const accepted = msgs.find((m: any) => m.subtype === "rent_buddy_accepted");
+    assert.ok(accepted, "expected rent_buddy_accepted milestone in state.messages");
+    assert.equal(accepted.sender_id, BUDDY_USER, "accepted milestone sender_id must be the buddy user, not blank or swapped");
+
+    const confirmed = msgs.find((m: any) => m.subtype === "rent_buddy_confirmed");
+    assert.ok(confirmed, "expected rent_buddy_confirmed milestone in state.messages");
+    assert.equal(confirmed.sender_id, BUDDY_USER, "confirmed milestone sender_id must be the buddy user");
+
+    const card = msgs.find((m: any) => m.subtype === "booking_status_scheduled");
+    assert.ok(card, "expected booking_status_scheduled card in state.messages");
+    assert.equal(card.sender_id, BUDDY_USER, "accept card sender_id must be the buddy user");
+    assert.equal(card.msg_type, "booking_card");
+    const cardBody = JSON.parse(card.body);
+    assert.equal(cardBody.booking_id, BOOKING_ID, "card body booking_id must match the booking");
+    assert.equal(cardBody.status, "scheduled");
+  });
+
+  it("start: milestone and card carry buddy sender_id and correct booking_id", async () => {
+    setupState({ bookings: { [BOOKING_ID]: baseBooking("scheduled") } });
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/start`, undefined, BUDDY_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    const msgs: any[] = (state as any).messages ?? [];
+
+    const milestone = msgs.find((m: any) => m.subtype === "rent_buddy_started");
+    assert.ok(milestone, "expected rent_buddy_started milestone in state.messages");
+    assert.equal(milestone.sender_id, BUDDY_USER, "start milestone sender_id must be the buddy user, not blank or swapped");
+    assert.equal(milestone.msg_type, "system");
+    assert.equal(milestone.body, "Meetup started — enjoy your time together!");
+
+    const card = msgs.find((m: any) => m.subtype === "booking_status_in_progress");
+    assert.ok(card, "expected booking_status_in_progress card in state.messages");
+    assert.equal(card.sender_id, BUDDY_USER, "start card sender_id must be the buddy user");
+    assert.equal(card.msg_type, "booking_card");
+    const cardBody = JSON.parse(card.body);
+    assert.equal(cardBody.booking_id, BOOKING_ID, "card body booking_id must match the booking");
+    assert.equal(cardBody.status, "in_progress");
+  });
+
+  it("complete (traveler path): milestone and card carry traveler sender_id and correct booking_id", async () => {
+    setupState({ bookings: { [BOOKING_ID]: baseBooking("in_progress") } });
+    // Traveler completes (no buddy profile for USER_ID) → isBuddyCompleting = false
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/complete`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    const msgs: any[] = (state as any).messages ?? [];
+
+    const milestone = msgs.find((m: any) => m.subtype === "rent_buddy_completed");
+    assert.ok(milestone, "expected rent_buddy_completed milestone in state.messages");
+    assert.equal(milestone.sender_id, USER_ID, "complete milestone sender_id must be the traveler (actor), not blank or swapped");
+    assert.equal(milestone.msg_type, "system");
+    assert.equal(milestone.body, "Booking completed — hope you had a great time!");
+
+    const card = msgs.find((m: any) => m.subtype === "booking_status_completed");
+    assert.ok(card, "expected booking_status_completed card in state.messages");
+    assert.equal(card.sender_id, USER_ID, "complete card sender_id must be the traveler (actor)");
+    assert.equal(card.msg_type, "booking_card");
+    const cardBody = JSON.parse(card.body);
+    assert.equal(cardBody.booking_id, BOOKING_ID, "card body booking_id must match the booking");
+    assert.equal(cardBody.status, "completed");
+  });
+
+  it("dispute: milestone and card carry traveler sender_id and correct booking_id", async () => {
+    setupState({ bookings: { [BOOKING_ID]: baseBooking("in_progress") } });
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "other" });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    const msgs: any[] = (state as any).messages ?? [];
+
+    const milestone = msgs.find((m: any) => m.subtype === "rent_buddy_disputed");
+    assert.ok(milestone, "expected rent_buddy_disputed milestone in state.messages");
+    assert.equal(milestone.sender_id, USER_ID, "dispute milestone sender_id must be the traveler (actor), not blank or swapped");
+    assert.equal(milestone.msg_type, "system");
+    assert.equal(milestone.body, "A dispute has been opened. Our team will review and reach out within 24 hours.");
+
+    const card = msgs.find((m: any) => m.subtype === "booking_status_disputed");
+    assert.ok(card, "expected booking_status_disputed card in state.messages");
+    assert.equal(card.sender_id, USER_ID, "dispute card sender_id must be the traveler (actor)");
+    assert.equal(card.msg_type, "booking_card");
+    const cardBody = JSON.parse(card.body);
+    assert.equal(cardBody.booking_id, BOOKING_ID, "card body booking_id must match the booking");
+    assert.equal(cardBody.status, "disputed");
   });
 });
