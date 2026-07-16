@@ -23,7 +23,7 @@ import { requireUser, isAcceptedTripMember, sendError, canEditPlan } from "../li
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { enrichSpans } from "../lib/enrichSpans.js";
-import { sendPushNotification } from "../lib/push.js";
+import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import {
   getAgeEligibilityReason,
   formatAgeLimitLabel,
@@ -1080,11 +1080,12 @@ async function pushMeetupTimeConfirmed(
 
   const when = formatMeetupWhen(startsAt);
 
-  const pushTokens = (tokenRows ?? []).map(
-    (r: any) => r.expo_push_token as string | null,
-  );
+  const recipients = (tokenRows ?? []).map((r: any) => ({
+    userId: r.id as string,
+    tokens: [r.expo_push_token as string | null],
+  }));
 
-  await sendPushNotification(pushTokens, {
+  await sendPushWithRetry(sc, recipients, {
     title: `${confirmerName} confirmed a meetup time`,
     body: `${meetupTitle} — ${when}`,
     data: { screen: "meetup", meetupId },

@@ -17,7 +17,7 @@ import {
   sendError,
   type ApiErrorCode,
 } from "../lib/http.js";
-import { sendPushNotification } from "../lib/push.js";
+import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity.js";
 
 const router = Router();
@@ -561,16 +561,16 @@ router.post("/trips/:tripId/cancel", async (req, res) => {
         sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
         sc2.from("trip_members").select("user_id").eq("trip_id", tripId).eq("role", "member"),
       ]);
-      const tokens: Array<string | undefined> = [];
+      const recipients: Array<{ userId: string; tokens: (string | null | undefined)[] }> = [];
       if (members && members.length > 0) {
         const memberIds = (members as any[]).map((m: any) => m.user_id).filter((id: string) => id !== user.id);
         if (memberIds.length > 0) {
-          const { data: profiles } = await sc2.from("profiles").select("expo_push_token").in("id", memberIds);
-          (profiles ?? []).forEach((p: any) => tokens.push(p.expo_push_token));
+          const { data: profiles } = await sc2.from("profiles").select("id, expo_push_token").in("id", memberIds);
+          (profiles ?? []).forEach((p: any) => recipients.push({ userId: p.id as string, tokens: [p.expo_push_token] }));
         }
       }
-      if (tokens.length > 0) {
-        await sendPushNotification(tokens, {
+      if (recipients.length > 0) {
+        await sendPushWithRetry(sc2, recipients, {
           title: "Trip cancelled",
           body:  `${(tripRow as any)?.title ?? "A trip"} has been cancelled`,
           data:  { type: "trip_cancelled", tripId },
@@ -639,16 +639,16 @@ router.post("/trips/:tripId/archive", async (req, res) => {
         sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
         sc2.from("trip_members").select("user_id").eq("trip_id", tripId).eq("role", "member"),
       ]);
-      const tokens: Array<string | undefined> = [];
+      const recipients: Array<{ userId: string; tokens: (string | null | undefined)[] }> = [];
       if (members && members.length > 0) {
         const memberIds = (members as any[]).map((m: any) => m.user_id).filter((id: string) => id !== user.id);
         if (memberIds.length > 0) {
-          const { data: profiles } = await sc2.from("profiles").select("expo_push_token").in("id", memberIds);
-          (profiles ?? []).forEach((p: any) => tokens.push(p.expo_push_token));
+          const { data: profiles } = await sc2.from("profiles").select("id, expo_push_token").in("id", memberIds);
+          (profiles ?? []).forEach((p: any) => recipients.push({ userId: p.id as string, tokens: [p.expo_push_token] }));
         }
       }
-      if (tokens.length > 0) {
-        await sendPushNotification(tokens, {
+      if (recipients.length > 0) {
+        await sendPushWithRetry(sc2, recipients, {
           title: "Trip archived",
           body:  `${(tripRow as any)?.title ?? "A trip"} has been archived`,
           data:  { type: "trip_archived", tripId },
@@ -765,7 +765,7 @@ router.post("/trips/:tripId/join-request", async (req, res) => {
       const requesterName = requesterNameAllowed
         ? ((requesterRow as any)?.display_name ?? ((requesterRow as any)?.handle ? `@${(requesterRow as any).handle}` : "Someone"))
         : ((requesterRow as any)?.handle ? `@${(requesterRow as any).handle}` : "Someone");
-      await sendPushNotification([(ownerRow as any)?.expo_push_token], {
+      await sendPushWithRetry(sc2, { userId: ownerId, tokens: [(ownerRow as any)?.expo_push_token] }, {
         title: "New join request",
         body:  `${requesterName} wants to join ${(tripRow as any)?.title ?? "your trip"}`,
         data:  { type: "trip_join_request_received", tripId },
@@ -838,7 +838,7 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
         sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
         sc2.from("profiles").select("expo_push_token").eq("id", requestedUserId).maybeSingle(),
       ]);
-      await sendPushNotification([(requesterRow as any)?.expo_push_token], {
+      await sendPushWithRetry(sc2, { userId: requestedUserId, tokens: [(requesterRow as any)?.expo_push_token] }, {
         title: "Join request approved!",
         body:  `You've been added to ${(tripRow as any)?.title ?? "the trip"}`,
         data:  { type: "trip_join_approved", tripId },
@@ -903,7 +903,7 @@ router.post("/trips/:tripId/join-requests/:requestId/decline", async (req, res) 
         sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
         sc2.from("profiles").select("expo_push_token").eq("id", declinedUserId).maybeSingle(),
       ]);
-      await sendPushNotification([(requesterRow as any)?.expo_push_token], {
+      await sendPushWithRetry(sc2, { userId: declinedUserId, tokens: [(requesterRow as any)?.expo_push_token] }, {
         title: "Join request update",
         body:  `Your request to join ${(tripRow as any)?.title ?? "the trip"} was not approved`,
         data:  { type: "trip_join_declined", tripId },

@@ -16,7 +16,7 @@ import { z } from "zod";
 import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
-import { sendPushNotification } from "../lib/push.js";
+import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
 
 const router = Router();
@@ -427,11 +427,12 @@ async function sendAvailabilityNudges(
     day: "numeric",
   });
 
-  const pushTokens = (tokenRows ?? []).map(
-    (r: any) => r.expo_push_token as string | null,
-  );
+  const recipients = (tokenRows ?? []).map((r: any) => ({
+    userId: r.id as string,
+    tokens: [r.expo_push_token as string | null],
+  }));
 
-  await sendPushNotification(pushTokens, {
+  await sendPushWithRetry(sc, recipients, {
     title: "Availability update 📅",
     body: `${senderName} is free ${dateLabel} — are you?`,
     data: { screen: "availability", tripId, tripTitle },

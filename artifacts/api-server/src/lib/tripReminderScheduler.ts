@@ -9,7 +9,7 @@
  */
 import { logger as rootLogger } from "./logger.js";
 import { getServiceClient } from "./supabase.js";
-import { sendPushNotification } from "./push.js";
+import { sendPushWithRetry } from "./pushWithRetry.js";
 
 const logger = rootLogger.child({ job: "TripReminderScheduler" });
 
@@ -20,7 +20,7 @@ const WINDOW_UPPER_HRS  = 26;
 /** In-memory dedup so we don't double-fire within a single process restart cycle. */
 const reminded = new Set<string>();
 
-async function runOnce() {
+export async function runOnce() {
   const sc = getServiceClient();
   if (!sc) return;
 
@@ -59,20 +59,20 @@ async function runOnce() {
 
       const { data: profiles } = await sc
         .from("profiles")
-        .select("expo_push_token")
+        .select("id, expo_push_token")
         .in("id", recipientIds);
 
-      const tokens = (profiles ?? [])
-        .map((p: any) => p.expo_push_token as string | undefined)
-        .filter(Boolean);
+      const recipients = (profiles ?? [])
+        .filter((p: any) => Boolean(p.expo_push_token))
+        .map((p: any) => ({ userId: p.id as string, tokens: [p.expo_push_token as string] }));
 
-      if (tokens.length > 0) {
-        await sendPushNotification(tokens, {
+      if (recipients.length > 0) {
+        await sendPushWithRetry(sc, recipients, {
           title: "Your trip starts tomorrow! 🌍",
           body:  `${trip.title ?? "Your upcoming trip"} starts in about 24 hours. Have a great trip!`,
           data:  { type: "trip_24h_reminder", tripId },
         });
-        logger.info({ tripId, recipients: tokens.length }, "TripReminderScheduler: 24h reminder sent");
+        logger.info({ tripId, recipients: recipients.length }, "TripReminderScheduler: 24h reminder sent");
       }
     } catch (err) {
       logger.warn({ err, tripId }, "TripReminderScheduler: failed to send reminder for trip");

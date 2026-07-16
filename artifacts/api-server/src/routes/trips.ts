@@ -6,7 +6,7 @@ import { requireUser, isAcceptedTripMember, requireTripMember, sendError, canEdi
 import { toCamel } from "./plan.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
-import { sendPushNotification } from "../lib/push.js";
+import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity";
 
@@ -711,10 +711,16 @@ router.patch("/trips/:tripId", async (req, res) => {
               }),
             ),
           );
-          const { data: devices } = await sc.from("notification_devices").select("expo_push_token").in("user_id", memberIds);
-          const tokens: string[] = ((devices as any[]) ?? []).map((d: any) => d.expo_push_token).filter(Boolean);
-          if (tokens.length > 0) {
-            await sendPushNotification(tokens, {
+          const { data: devices } = await sc.from("notification_devices").select("user_id, expo_push_token").in("user_id", memberIds);
+          const tokensByUser = new Map<string, (string | null | undefined)[]>();
+          for (const d of (devices as any[]) ?? []) {
+            const uid = d.user_id as string;
+            if (!tokensByUser.has(uid)) tokensByUser.set(uid, []);
+            tokensByUser.get(uid)!.push(d.expo_push_token);
+          }
+          const recipients = [...tokensByUser.entries()].map(([userId, tokens]) => ({ userId, tokens }));
+          if (recipients.length > 0) {
+            await sendPushWithRetry(sc, recipients, {
               title: "How was the trip?",
               body: `Leave a review for "${tripTitle}" — your feedback helps the community.`,
               data: { type: "review_prompt", entityType: "trip", entityId: tripId, entityName: tripTitle },
@@ -838,7 +844,7 @@ router.post("/trips/:tripId/invite", async (req, res) => {
       const inviterName = inviterNameAllowed
         ? ((inviterRow as any)?.display_name ?? ((inviterRow as any)?.handle ? `@${(inviterRow as any).handle}` : "Someone"))
         : ((inviterRow as any)?.handle ? `@${(inviterRow as any).handle}` : "Someone");
-      await sendPushNotification([(inviteeRow as any)?.expo_push_token], {
+      await sendPushWithRetry(sc2, { userId, tokens: [(inviteeRow as any)?.expo_push_token] }, {
         title: "Trip invitation",
         body:  `${inviterName} invited you to join ${tripTitle}`,
         data:  { type: "trip_invite_received", tripId },
@@ -892,7 +898,7 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
       const acceptorName = acceptorNameAllowed
         ? ((acceptorRow as any)?.display_name ?? ((acceptorRow as any)?.handle ? `@${(acceptorRow as any).handle}` : "Someone"))
         : ((acceptorRow as any)?.handle ? `@${(acceptorRow as any).handle}` : "Someone");
-      await sendPushNotification([(ownerRow as any)?.expo_push_token], {
+      await sendPushWithRetry(sc2, { userId: (tripRow as any).owner_id as string, tokens: [(ownerRow as any)?.expo_push_token] }, {
         title: (tripRow as any).title ?? "Your trip",
         body: `${acceptorName} joined your trip!`,
         data: { type: "trip_invite_accepted", tripId },
@@ -944,7 +950,7 @@ router.post("/trips/:tripId/decline-invite", async (req, res) => {
       const declinerName = declinerNameAllowed
         ? ((declinerRow as any)?.display_name ?? ((declinerRow as any)?.handle ? `@${(declinerRow as any).handle}` : "Someone"))
         : ((declinerRow as any)?.handle ? `@${(declinerRow as any).handle}` : "Someone");
-      await sendPushNotification([(ownerRow as any)?.expo_push_token], {
+      await sendPushWithRetry(sc2, { userId: ownerId, tokens: [(ownerRow as any)?.expo_push_token] }, {
         title: "Invite declined",
         body:  `${declinerName} declined your invitation to ${(tripRow as any)?.title ?? "your trip"}`,
         data:  { type: "trip_invite_declined", tripId },

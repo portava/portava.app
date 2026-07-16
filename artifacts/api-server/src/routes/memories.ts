@@ -30,7 +30,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
-import { sendPushNotification } from "../lib/push.js";
+import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
 
 const router = Router();
@@ -192,7 +192,7 @@ async function notifyTagged(sc: any, memory: any, taggedUserId: string): Promise
       const ownerName = ownerNameAllowed
         ? (owner?.name ?? (owner?.handle ? `@${owner.handle}` : "Someone"))
         : (owner?.handle ? `@${owner.handle}` : "Someone");
-      await sendPushNotification([tagged.expo_push_token], {
+      await sendPushWithRetry(sc, { userId: taggedUserId, tokens: [tagged.expo_push_token] }, {
         title: "You were tagged in a Memory",
         body: `${ownerName} tagged you in a memory. Tap to approve or remove.`,
         data: { screen: "memory", memoryId: memory.id },
@@ -229,7 +229,7 @@ async function notifyLike(sc: any, memoryId: string, ownerId: string, likerId: s
       const likerName = likerNameAllowed
         ? (liker?.name ?? (liker?.handle ? `@${liker.handle}` : "Someone"))
         : (liker?.handle ? `@${liker.handle}` : "Someone");
-      await sendPushNotification([owner.expo_push_token], {
+      await sendPushWithRetry(sc, { userId: ownerId, tokens: [owner.expo_push_token] }, {
         title: "New like on your Memory",
         body: `${likerName} liked your memory.`,
         data: { screen: "memory", memoryId },

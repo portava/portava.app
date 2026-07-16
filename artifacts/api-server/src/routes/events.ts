@@ -183,7 +183,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
-import { sendPushNotification } from "../lib/push.js";
+import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 
 const router = Router();
@@ -325,8 +325,9 @@ async function promoteNextWaitlisted(sc: any, eventId: string): Promise<void> {
     .eq("id", (next as any).user_id)
     .maybeSingle();
   if ((profile as any)?.expo_push_token) {
-    await sendPushNotification(
-      [(profile as any).expo_push_token],
+    await sendPushWithRetry(
+      sc,
+      { userId: (next as any).user_id, tokens: [(profile as any).expo_push_token] },
       { title: "A spot opened up!", body: "You're next on the waitlist. You have 24 hours to accept." },
     );
   }
@@ -406,8 +407,11 @@ async function checkEventEligibility(
   return { ok: true };
 }
 
-/** Get push tokens for Going/Maybe RSVPs on an event */
-async function getAttendeeTokens(sc: any, eventId: string): Promise<string[]> {
+/** Get push recipients ({ userId, tokens }) for Going/Maybe RSVPs on an event */
+async function getAttendeeRecipients(
+  sc: any,
+  eventId: string,
+): Promise<{ userId: string; tokens: (string | null | undefined)[] }[]> {
   const { data: rsvps } = await sc
     .from("event_rsvps")
     .select("user_id")
@@ -419,13 +423,13 @@ async function getAttendeeTokens(sc: any, eventId: string): Promise<string[]> {
 
   const { data: profiles } = await sc
     .from("profiles")
-    .select("expo_push_token")
+    .select("id, expo_push_token")
     .in("id", ids)
     .not("expo_push_token", "is", null);
 
   return ((profiles as any[]) ?? [])
-    .map((p: any) => p.expo_push_token as string)
-    .filter(Boolean);
+    .map((p: any) => ({ userId: p.id as string, tokens: [p.expo_push_token as string] }))
+    .filter((r: any) => r.tokens[0]);
 }
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -1802,9 +1806,9 @@ router.patch("/events/:id", async (req, res) => {
   if (changed && isPublished) {
     void (async () => {
       try {
-        const tokens = await getAttendeeTokens(sc, id);
-        if (tokens.length > 0) {
-          await sendPushNotification(tokens, {
+        const recipients = await getAttendeeRecipients(sc, id);
+        if (recipients.length > 0) {
+          await sendPushWithRetry(sc, recipients, {
             title: "Event updated",
             body: `"${(updated as any).title}" has been updated — check the details.`,
             data: { eventId: id, type: "event_updated" },
@@ -1830,14 +1834,14 @@ router.patch("/events/:id", async (req, res) => {
           .not("confirmed_at", "is", null);
 
         if (confirmed && (confirmed as any[]).length > 0) {
-          const tokens: string[] = (confirmed as any[])
-            .map((r: any) => r.profiles?.expo_push_token)
-            .filter(Boolean);
+          const recipients = (confirmed as any[])
+            .map((r: any) => ({ userId: r.user_id as string, tokens: [r.profiles?.expo_push_token] }))
+            .filter((r: any) => r.tokens[0]);
 
           const eventTitle = (updated as any).title ?? "your event";
 
-          if (tokens.length > 0) {
-            await sendPushNotification(tokens, {
+          if (recipients.length > 0) {
+            await sendPushWithRetry(sc, recipients, {
               title: "How was the event?",
               body: `Leave a review for "${eventTitle}" — your feedback helps the community.`,
               data: {
@@ -1898,9 +1902,9 @@ router.delete("/events/:id", async (req, res) => {
   // Notify all Going/Maybe attendees (fire-and-forget)
   void (async () => {
     try {
-      const tokens = await getAttendeeTokens(sc, id);
-      if (tokens.length > 0) {
-        await sendPushNotification(tokens, {
+      const recipients = await getAttendeeRecipients(sc, id);
+      if (recipients.length > 0) {
+        await sendPushWithRetry(sc, recipients, {
           title: "Event cancelled",
           body: `"${(ev as any).title}" has been cancelled by the host.`,
           data: { eventId: id, type: "event_cancelled" },
@@ -2508,7 +2512,7 @@ router.post("/events/:id/requests", async (req, res) => {
     try {
       const { data: hp } = await sc.from("profiles").select("expo_push_token").eq("id", (ev as any).host_id).maybeSingle();
       if ((hp as any)?.expo_push_token) {
-        await sendPushNotification([(hp as any).expo_push_token], {
+        await sendPushWithRetry(sc, { userId: (ev as any).host_id, tokens: [(hp as any).expo_push_token] }, {
           title: "New join request",
           body: `Someone wants to join "${(ev as any).title}"`,
           data: { eventId: id, type: "event_join_request" },
@@ -2664,7 +2668,7 @@ router.patch("/events/:id/requests/:userId", async (req, res) => {
       const { data: evData } = await sc.from("events").select("title").eq("id", id).maybeSingle();
       const { data: hp } = await sc.from("profiles").select("expo_push_token").eq("id", userId).maybeSingle();
       if ((hp as any)?.expo_push_token) {
-        await sendPushNotification([(hp as any).expo_push_token], {
+        await sendPushWithRetry(sc, { userId, tokens: [(hp as any).expo_push_token] }, {
           title: action === "approve" ? "You're in! 🎉" : "Join request declined",
           body: action === "approve"
             ? `Your request to join "${(evData as any)?.title}" was approved.`
@@ -3117,10 +3121,10 @@ router.post("/events/:id/updates", async (req, res) => {
   if (pinned) {
     void (async () => {
       try {
-        const tokens = await getAttendeeTokens(sc, id);
-        if (tokens.length > 0) {
+        const recipients = await getAttendeeRecipients(sc, id);
+        if (recipients.length > 0) {
           const { data: ev } = await sc.from("events").select("title").eq("id", id).maybeSingle();
-          await sendPushNotification(tokens, {
+          await sendPushWithRetry(sc, recipients, {
             title: `Update: ${(ev as any)?.title ?? "Event"}`,
             body,
             data: { eventId: id, type: "event_update" },
@@ -3746,9 +3750,9 @@ router.post("/events/:id/cancel", async (req, res) => {
 
   void (async () => {
     try {
-      const tokens = await getAttendeeTokens(sc, id);
-      if (tokens.length > 0) {
-        await sendPushNotification(tokens, {
+      const recipients = await getAttendeeRecipients(sc, id);
+      if (recipients.length > 0) {
+        await sendPushWithRetry(sc, recipients, {
           title: "Event cancelled",
           body: `"${(ev as any).title}" has been cancelled.`,
           data: { eventId: id, type: "event_cancelled" },
@@ -3789,9 +3793,9 @@ router.post("/events/:id/postpone", async (req, res) => {
 
   void (async () => {
     try {
-      const tokens = await getAttendeeTokens(sc, id);
-      if (tokens.length > 0) {
-        await sendPushNotification(tokens, {
+      const recipients = await getAttendeeRecipients(sc, id);
+      if (recipients.length > 0) {
+        await sendPushWithRetry(sc, recipients, {
           title: "Event postponed",
           body: `"${(ev as any).title}" has been postponed. Stay tuned for updates.`,
           data: { eventId: id, type: "event_postponed" },
@@ -3873,11 +3877,13 @@ router.post("/events/:id/complete", async (req, res) => {
         // Send review-prompt push notifications to checked-in attendees (excluding host)
         const attendeeIds = checkinUserIds.filter((uid) => uid !== evData.host_id);
         if (attendeeIds.length > 0) {
-          const { data: profiles } = await sc.from("profiles").select("expo_push_token")
+          const { data: profiles } = await sc.from("profiles").select("id, expo_push_token")
             .in("id", attendeeIds).not("expo_push_token", "is", null);
-          const tokens = ((profiles as any[]) ?? []).map((p: any) => p.expo_push_token as string).filter(Boolean);
-          if (tokens.length > 0) {
-            await sendPushNotification(tokens, {
+          const recipients = ((profiles as any[]) ?? [])
+            .map((p: any) => ({ userId: p.id as string, tokens: [p.expo_push_token as string] }))
+            .filter((r: any) => r.tokens[0]);
+          if (recipients.length > 0) {
+            await sendPushWithRetry(sc, recipients, {
               title: "How was the event?",
               body: `Leave a review for "${evData.title ?? "the event"}"`,
               data: { eventId: id, type: "event_review_prompt" },
@@ -4116,7 +4122,7 @@ router.post("/events/:id/join-request", async (req, res) => {
     try {
       const { data: hp } = await sc.from("profiles").select("expo_push_token").eq("id", (ev as any).host_id).maybeSingle();
       if ((hp as any)?.expo_push_token) {
-        await sendPushNotification([(hp as any).expo_push_token], {
+        await sendPushWithRetry(sc, { userId: (ev as any).host_id, tokens: [(hp as any).expo_push_token] }, {
           title: "New join request",
           body: `Someone wants to join "${(ev as any).title}"`,
           data: { eventId: id, type: "event_join_request" },
@@ -4276,7 +4282,7 @@ router.post("/events/:id/invite", async (req, res) => {
         sc.from("profiles").select("expo_push_token").eq("id", inviteeId).maybeSingle(),
       ]);
       if ((inviteeProfile as any).data?.expo_push_token) {
-        await sendPushNotification([(inviteeProfile as any).data.expo_push_token], {
+        await sendPushWithRetry(sc, { userId: inviteeId, tokens: [(inviteeProfile as any).data.expo_push_token] }, {
           title: "You're invited!",
           body: `You've been invited to "${(evData as any).data?.title ?? "an event"}"`,
           data: { eventId: id, type: "event_invite", inviteId: (invite as any).id },
@@ -5457,14 +5463,14 @@ async function sendEventNotification(
   try {
     const { data: profiles } = await sc
       .from("profiles")
-      .select("expo_push_token")
+      .select("id, expo_push_token")
       .in("id", recipientUserIds)
       .not("expo_push_token", "is", null);
-    const tokens = ((profiles as any[]) ?? [])
-      .map((p: any) => p.expo_push_token as string)
-      .filter(Boolean);
-    if (!tokens.length) return;
-    await sendPushNotification(tokens, {
+    const recipients = ((profiles as any[]) ?? [])
+      .map((p: any) => ({ userId: p.id as string, tokens: [p.expo_push_token as string] }))
+      .filter((r: any) => r.tokens[0]);
+    if (!recipients.length) return;
+    await sendPushWithRetry(sc, recipients, {
       ...payload,
       data: { eventId, type: notificationType, ...payload.data },
     });

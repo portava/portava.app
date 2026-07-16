@@ -17,7 +17,7 @@
 
 import { getServiceClient, isServiceClientReady } from "./supabase.js";
 import { logger as rootLogger } from "./logger.js";
-import { sendPushNotification } from "./push.js";
+import { sendPushWithRetry } from "./pushWithRetry.js";
 
 const logger = rootLogger.child({ job: "DelayedPostPublisher" });
 
@@ -214,7 +214,7 @@ export async function runDelayedPostPublisher(opts?: { client?: any }): Promise<
       // Send push notification only on confirmed publish success.
       // Fire-and-forget — never blocks publish count or throws.
       fetchPushToken(db, post.author_id).then((token) => {
-        sendPushNotification([token], {
+        sendPushWithRetry(db, { userId: post.author_id, tokens: [token] }, {
           title: "Post published",
           body: buildNotificationBody(post),
           data: { screen: "post", postId: post.id },
