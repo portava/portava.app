@@ -119,10 +119,12 @@ describe('SDK 54 downgrade — package version pins', () => {
   });
 
   it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-    const standalone = readPkg('../../../../travel-buddy-standalone/package.json');
+    // This file lives in travel-buddy-standalone; compare against the main
+    // app in the monorepo (../../ = standalone root, ../../../ = workspace).
+    const mainApp = readPkg('../../../artifacts/travel-buddy/package.json');
     const saDeps: Record<string, string> = {
-      ...standalone.dependencies,
-      ...standalone.devDependencies,
+      ...mainApp.dependencies,
+      ...mainApp.devDependencies,
     };
     const toCheck = [
       'expo-notifications',
