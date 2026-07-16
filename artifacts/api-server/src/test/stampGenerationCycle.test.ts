@@ -2221,3 +2221,64 @@ describe("runGenerationCycle — null display_name in catalog row", () => {
     );
   });
 });
+
+// ── Recognized stamp_type → type-specific shape instruction ───────────────────
+
+describe("buildStampPrompt — every recognized stamp_type produces its own shape instruction", () => {
+  /**
+   * Map every recognized stamp_type to the unique text that must appear in the
+   * shape instruction returned by shapeInstruction(). These strings come
+   * directly from artDirection.ts so a case-label typo will cause the switch
+   * to fall through to the default and the assertion will fail.
+   */
+  const RECOGNIZED_TYPES: Array<{ stampType: string; expectedFragment: string }> = [
+    { stampType: "city",          expectedFragment: "bold circular badge with concentric ring border detail" },
+    { stampType: "check_in",      expectedFragment: "bold circular badge with concentric ring border detail" },
+    { stampType: "country",       expectedFragment: "rectangular passport-visa frame with ornate corner flourishes" },
+    { stampType: "region",        expectedFragment: "large oval with decorative border featuring regional motifs" },
+    { stampType: "neighborhood",  expectedFragment: "compact hexagonal badge with clean single-line border" },
+    { stampType: "landmark",      expectedFragment: "irregular organic silhouette echoing the landmark's form, with ink-splatter edge" },
+    { stampType: "hidden_gem",    expectedFragment: "diamond or irregular star with rough hand-carved edge" },
+    { stampType: "special_event", expectedFragment: "festive pennant or ribbon-banner shape with dynamic edge" },
+  ];
+
+  const DEFAULT_SHAPE_TEXT = "classic circular stamp";
+
+  for (const { stampType, expectedFragment } of RECOGNIZED_TYPES) {
+    it(`stamp_type "${stampType}" includes its own shape instruction and not the default fallback`, () => {
+      const prompt = buildStampPrompt({
+        id: "cat-shape-test",
+        display_name: "Test Place",
+        country: "Testland",
+        country_code: "TS",
+        region: null,
+        city: null,
+        neighborhood: null,
+        stamp_type: stampType,
+        canonical_location_key: "ts/test-place",
+      });
+
+      // Must be non-empty.
+      assert.ok(
+        prompt.length > 0,
+        `buildStampPrompt must return a non-empty prompt for stamp_type "${stampType}"`,
+      );
+
+      // Must contain the type-specific shape text.
+      assert.ok(
+        prompt.includes(expectedFragment),
+        `buildStampPrompt for stamp_type "${stampType}" must include "${expectedFragment}"; ` +
+          `got prompt snippet: ${prompt.slice(0, 400)}`,
+      );
+
+      // Must NOT fall through to the default shape instruction.
+      assert.equal(
+        prompt.includes(DEFAULT_SHAPE_TEXT),
+        false,
+        `buildStampPrompt for stamp_type "${stampType}" must NOT include the default shape text ` +
+          `"${DEFAULT_SHAPE_TEXT}" — it should be using the type-specific shape; ` +
+          `got prompt snippet: ${prompt.slice(0, 400)}`,
+      );
+    });
+  }
+});
