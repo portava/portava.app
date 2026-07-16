@@ -41,7 +41,7 @@
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve as pathResolve, dirname } from 'node:path';
 
@@ -118,19 +118,11 @@ describe('SDK 54 downgrade — package version pins', () => {
     );
   });
 
-  it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', (t) => {
-    // This file lives in travel-buddy-standalone; the counterpart tree is the
-    // monorepo's artifacts/travel-buddy. When the standalone tree is checked
-    // out on its own, the sibling tree does not exist — skip rather than fail.
-    const mainPkgPath = pathResolve(__dir, '../../../artifacts/travel-buddy/package.json');
-    if (!existsSync(mainPkgPath)) {
-      t.skip('artifacts/travel-buddy not present (standalone checkout)');
-      return;
-    }
-    const mainTree = readPkg('../../../artifacts/travel-buddy/package.json');
+  it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
+    const standalone = readPkg('../../../../travel-buddy-standalone/package.json');
     const saDeps: Record<string, string> = {
-      ...mainTree.dependencies,
-      ...mainTree.devDependencies,
+      ...standalone.dependencies,
+      ...standalone.devDependencies,
     };
     const toCheck = [
       'expo-notifications',
@@ -143,7 +135,7 @@ describe('SDK 54 downgrade — package version pins', () => {
       assert.equal(
         deps[name],
         saDeps[name],
-        `${name} version mismatch: travel-buddy-standalone="${deps[name]}" artifacts/travel-buddy="${saDeps[name]}"`,
+        `${name} version mismatch: artifacts/travel-buddy="${deps[name]}" travel-buddy-standalone="${saDeps[name]}"`,
       );
     }
   });
