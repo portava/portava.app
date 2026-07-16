@@ -2985,6 +2985,48 @@ describe("runGenerationCycle — null display_name in catalog row", () => {
     );
   });
 
+  it("completes without throwing and prompt avoids 'null' for a country stamp when country_code is null", async () => {
+    // This exercises the landmarkHint branch: stamp_type === "country" but
+    // country_code is null, so the function must return the generic fallback
+    // string rather than ever interpolating the literal "null" into the prompt.
+    const nullCountryCodeCountryStamp = {
+      ...CATALOG_ROW,
+      stamp_type: "country",
+      country_code: null,
+    };
+
+    let capturedPrompt: string | undefined;
+    const capturingProvider = {
+      async generate(prompt: string, _n?: number) {
+        capturedPrompt = prompt;
+        return Array.from({ length: CANDIDATE_COUNT }, (_, i) => ({
+          url: `data:image/svg+xml,fake-${i}`,
+          metadata: { model: "fake-provider", candidate_index: i },
+        }));
+      },
+    };
+
+    const { sc } = makeFakeClient({ catalogOverride: nullCountryCodeCountryStamp as any });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(capturingProvider);
+
+    // Must not throw — landmarkHint must degrade gracefully when country_code is null.
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, true, "cycle must complete successfully with a country stamp and null country_code");
+    assert.ok(typeof capturedPrompt === "string", "provider must be called");
+    assert.equal(
+      capturedPrompt!.includes("null"),
+      false,
+      `prompt must not contain the literal string "null" for a country stamp with null country_code; got: ${capturedPrompt!.slice(0, 500)}`,
+    );
+    // landmarkHint must have returned the generic fallback text — not an empty string.
+    assert.ok(
+      capturedPrompt!.includes("generalized destination motif"),
+      `prompt must contain the generic landmark fallback for a country stamp with null country_code; got: ${capturedPrompt!.slice(0, 500)}`,
+    );
+  });
+
   it("completes without throwing and Typography line avoids 'null' when country_code is null", async () => {
     const nullCountryCodeCatalog = {
       ...CATALOG_ROW,
