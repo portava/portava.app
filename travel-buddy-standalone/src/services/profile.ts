@@ -38,6 +38,8 @@ export interface ProfileResult<T> {
   data: T | null;
   errorKind?: string;
   message?: string;
+  /** Fields the server could not persist (schema drift partial save). */
+  unsavedFields?: string[];
 }
 
 /* ---------- Own profile ---------- */
@@ -111,7 +113,20 @@ export async function updateMyProfile(patch: UpdateProfileInput): Promise<Profil
       const body = await res.json().catch(() => ({}));
       return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message ?? `API ${res.status}` };
     }
-    return { ok: true, data: await res.json() };
+    const data = (await res.json()) as OwnProfile & { unsavedFields?: string[]; warning?: string };
+    if (Array.isArray(data.unsavedFields) && data.unsavedFields.length > 0) {
+      // Partial success: the server saved what it could but dropped some fields
+      // (database schema drift). Surface as a failure so every save screen shows
+      // the message instead of pretending everything saved.
+      return {
+        ok: false,
+        data,
+        errorKind: 'partial_save',
+        message: data.warning ?? `Some fields could not be saved: ${data.unsavedFields.join(', ')}`,
+        unsavedFields: data.unsavedFields,
+      };
+    }
+    return { ok: true, data };
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
