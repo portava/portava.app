@@ -594,6 +594,32 @@ describe("PATCH /api/me/profile under schema drift (missing newer columns)", () 
   // retry itself can fail (e.g. a constraint violation or transient DB error).
   // The handler must propagate that error as a 4xx/5xx — not silently 200.
 
+  it("all-fields-stripped error names every dropped field when two drifted-only fields are sent", async () => {
+    // coverUrl → cover_photo_url (drifted in DRIFTED_COLUMNS)
+    // spokenLanguages → spoken_languages (stripped by FALLBACK_STRIPPED_COLUMNS on any drift)
+    // Neither maps to a surviving base column, so safeRow is empty → error path fires.
+    const client = makeDriftedClient();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await patchProfile({
+      coverUrl: "https://example.com/c.jpg",
+      spokenLanguages: ["en"],
+    });
+    assert.notEqual(r.status, 200, "must not return 200 when every requested field would be stripped");
+    const body = await r.json() as any;
+    const bodyStr = JSON.stringify(body);
+    assert.ok(
+      bodyStr.includes("coverUrl"),
+      `error body must mention "coverUrl" — got: ${bodyStr}`,
+    );
+    assert.ok(
+      bodyStr.includes("spokenLanguages"),
+      `error body must mention "spokenLanguages" — got: ${bodyStr}`,
+    );
+    assert.equal(client.__updates.length, 0, "no write should have been committed");
+  });
+
   it("fallback retry DB error returns a non-200 response with the error code", async () => {
     // bio is a base column; displayName maps to display_name (drifted) + name (base).
     // First update: PGRST204 because display_name is missing.
