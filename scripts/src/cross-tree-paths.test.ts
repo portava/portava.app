@@ -31,9 +31,15 @@
  *     artifacts/travel-buddy/src/**\/*.test.ts
  *     artifacts/travel-buddy/src/**\/__fixtures__\/*.ts
  *     artifacts/travel-buddy/src/**\/__mocks__\/*.ts
+ *     artifacts/travel-buddy/src/**\/__helpers__\/*.ts
+ *     artifacts/travel-buddy/src/**\/__testUtils__\/*.ts
+ *     artifacts/travel-buddy/src/**\/__support__\/*.ts
  *     travel-buddy-standalone/src/**\/*.test.ts
  *     travel-buddy-standalone/src/**\/__fixtures__\/*.ts
  *     travel-buddy-standalone/src/**\/__mocks__\/*.ts
+ *     travel-buddy-standalone/src/**\/__helpers__\/*.ts
+ *     travel-buddy-standalone/src/**\/__testUtils__\/*.ts
+ *     travel-buddy-standalone/src/**\/__support__\/*.ts
  *
  *   Explicitly NOT scanned:
  *     scripts/src/__fixtures__/  ← guard input files, not guard targets
@@ -320,7 +326,13 @@ function collectHelperFiles(dir: string): string[] {
         !entry.name.endsWith('.test.tsx')
       ) {
         const parentDir = path.basename(d);
-        if (parentDir === '__fixtures__' || parentDir === '__mocks__') {
+        if (
+          parentDir === '__fixtures__' ||
+          parentDir === '__mocks__' ||
+          parentDir === '__helpers__' ||
+          parentDir === '__testUtils__' ||
+          parentDir === '__support__'
+        ) {
           results.push(full);
         }
       }
@@ -674,6 +686,32 @@ describe('extractCrossTreePaths — template-literal and non-literal detection',
       fs.existsSync(entry.resolved),
       false,
       `expected the resolved path "${entry.resolved}" to be missing (intentionally broken helper fixture)`,
+    );
+  });
+
+  it('detects a broken cross-tree path in a __helpers__-style non-test file', () => {
+    // cross-tree-helpers-style-broken.ts simulates the kind of helper that
+    // would live inside a __helpers__, __testUtils__, or __support__ directory.
+    // It contains an intentionally broken readFileSync path.  This test verifies
+    // that extractCrossTreePaths catches broken paths in such files — mirroring
+    // what the expanded collectHelperFiles scan now does for those directories
+    // in addition to __fixtures__ and __mocks__.
+    const fixture = path.join(FIXTURES_DIR, 'cross-tree-helpers-style-broken.ts');
+    const entries = extractCrossTreePaths(fixture);
+
+    const brokenEntries = entries.filter(
+      (e) => !e.unresolvable && e.rawArg.includes('this-helpers-style-file-does-not-exist'),
+    );
+    assert.ok(
+      brokenEntries.length >= 1,
+      'expected at least one resolvable entry referencing "this-helpers-style-file-does-not-exist" in the __helpers__-style broken fixture',
+    );
+
+    const entry = brokenEntries[0]!;
+    assert.equal(
+      fs.existsSync(entry.resolved),
+      false,
+      `expected the resolved path "${entry.resolved}" to be missing (intentionally broken __helpers__-style fixture)`,
     );
   });
 });
