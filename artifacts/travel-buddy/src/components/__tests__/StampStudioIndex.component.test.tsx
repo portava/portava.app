@@ -592,6 +592,54 @@ describe('StampStudioIndex — 45-second health poll updates the warning strip',
     // The health-only poll must not trigger a catalog fetch.
     expect(mockGetCatalog.mock.calls.length).toBe(catalogCallsBefore);
   });
+
+  it('backlog_growing warning appears in the UI after the 45-second health poll fires', async () => {
+    // Override the beforeEach mock so subsequent health calls return a
+    // backlog_growing warning instead of stuck_jobs.
+    mockGetHealth.mockReset();
+    mockGetHealth
+      .mockResolvedValueOnce({ ok: false })
+      .mockResolvedValue({
+        ok: true as const,
+        data: {
+          warnings: [
+            {
+              key: 'backlog_growing' as const,
+              message: 'backlog growing',
+              details: { queued: 20, previous_queued: 11 },
+            },
+          ],
+          health: {
+            worker_enabled: true,
+            worker_running: true,
+            worker_id: 'w1',
+            last_success_at: null,
+            queue_depth: {},
+            stuck_jobs: [],
+          },
+        },
+      });
+
+    render(<StampStudioIndex />);
+    await waitFor(() => screen.getByText('10'));
+
+    // No warning strip on initial render — first health call returned ok: false.
+    expect(screen.queryByText(/Queued backlog grew/)).toBeNull();
+
+    const healthPoll = spy.captured.find((e) => e.delay === 45_000);
+    expect(healthPoll).toBeDefined();
+
+    await act(async () => { healthPoll!.fn(); });
+
+    // After the poll tick the backlog_growing warning must now be visible with
+    // the correct queued / previous_queued values read from details.
+    await waitFor(() =>
+      screen.getByText(/Queued backlog grew from 11 to 20 while the worker is enabled/),
+    );
+    expect(
+      screen.getByText(/Queued backlog grew from 11 to 20 while the worker is enabled/),
+    ).toBeTruthy();
+  });
 });
 
 // ── Suite 5: blur clears all three intervals ───────────────────────────────────
