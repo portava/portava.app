@@ -1,13 +1,14 @@
 /**
  * rentABuddyHalfPairCoords.test.ts
  *
- * Confirms that all three rent-a-buddy endpoints that accept coordinates
+ * Confirms that all four rent-a-buddy endpoints that accept coordinates
  * reject a "half-pair" payload (only lat, or only lng) with 400
  * invalid_payload — the server-side defence that complements the
  * client-side cityCoordSpread guard.
  *
  * Endpoints under test:
  *   POST /api/rent-a-buddy/search        (rentABuddy router)
+ *   POST /api/rent-a-buddy/waitlist      (rentABuddy router — v1)
  *   POST /api/rent-a-buddy/requests      (rentABuddyMarketplace router)
  *   POST /api/rent-a-buddy/waitlist/v2   (rentABuddyMarketplace router)
  *
@@ -340,6 +341,54 @@ describe("POST /api/rent-a-buddy/requests — non-numeric coord rejection", () =
     });
     assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
     assert.equal(res.body.error, "invalid_payload");
+  });
+});
+
+// ── Suite: POST /api/rent-a-buddy/waitlist (v1) ───────────────────────────────
+
+describe("POST /api/rent-a-buddy/waitlist — half-pair coord rejection (v1)", () => {
+  const requiredFields = { city: "Bangkok" };
+
+  it("rejects lat without lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/waitlist", {
+      ...requiredFields,
+      lat: 13.7563,
+      // lng omitted
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects lng without lat", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/waitlist", {
+      ...requiredFields,
+      // lat omitted
+      lng: 100.5018,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("accepts both lat and lng (valid pair)", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/waitlist", {
+      ...requiredFields,
+      lat: 13.7563,
+      lng: 100.5018,
+    });
+    if (res.status === 400) {
+      assert.notEqual(res.body.error, "invalid_payload",
+        `coord validation incorrectly rejected a valid pair: ${JSON.stringify(res.body)}`);
+    }
+  });
+
+  it("accepts neither lat nor lng (both omitted)", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/waitlist", {
+      ...requiredFields,
+    });
+    if (res.status === 400) {
+      assert.notEqual(res.body.error, "invalid_payload",
+        `coord validation incorrectly rejected missing coords: ${JSON.stringify(res.body)}`);
+    }
   });
 });
 

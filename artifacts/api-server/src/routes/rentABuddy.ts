@@ -3290,16 +3290,22 @@ router.post("/api/rent-a-buddy/waitlist", async (req, res) => {
   const serviceClient = sc(auth.client);
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
+  const { city, category, lat, lng } = req.body ?? {};
+  if (!city) return res.status(400).json({ error: "invalid_payload", message: "city required." });
+
+  const latPresent = typeof lat === "number" && Number.isFinite(lat);
+  const lngPresent = typeof lng === "number" && Number.isFinite(lng);
+  if (latPresent !== lngPresent) {
+    return res.status(400).json({ error: "invalid_payload", message: "lat and lng must both be provided together." });
+  }
+
   const waitlistRollout = await checkRentBuddyAccess({
     sc: serviceClient, userId: auth.user.id,
-    city: req.body?.city, category: req.body?.category, action: "waitlist",
+    city, category, action: "waitlist",
   });
   if (!waitlistRollout.allowed) {
     return res.status(waitlistRollout.httpStatus).json({ error: waitlistRollout.code, message: waitlistRollout.message });
   }
-
-  const { city, category, lat, lng } = req.body ?? {};
-  if (!city) return res.status(400).json({ error: "invalid_payload", message: "city required." });
 
   await serviceClient.from("rent_buddy_waitlist").upsert(
     {
