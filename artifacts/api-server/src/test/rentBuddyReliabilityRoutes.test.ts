@@ -912,6 +912,65 @@ describe("available-now — completed_count takes precedence over completed_book
 
 // ── toBuddyScoringData counter precedence ─────────────────────────────────────
 
+// ── sections display card counter precedence ──────────────────────────────────
+//
+// GET /api/rent-a-buddy/sections returns 13 discovery sections. Each section
+// calls mapProfile(row) to build the display card. mapProfile reads
+// completed_count ?? completed_bookings. When the two counters disagree,
+// completed_count must win so the "sessions completed" shown on buddy cards
+// throughout the Discover tab is accurate.
+
+describe("sections display cards — completed_count takes precedence over completed_bookings", () => {
+  it("returns completedBookings=9 (not 2) in at least one section when completed_count=9 and completed_bookings=2", async () => {
+    const buddyRow = {
+      id: BP_ID, user_id: BUDDY_USER_ID, city: "Manila",
+      status: "active", admin_status: "active",
+      display_name: "Test Buddy", tagline: null,
+      country: "Philippines",
+      categories: ["city"], languages: ["English"],
+      hourly_rate_usd: 20, half_day_rate_usd: null,
+      full_day_rate_usd: null, nightlife_rate_usd: null, arrival_rate_usd: null,
+      average_rating: null, review_count: 0,
+      completed_bookings: 2,  // legacy counter — must be ignored
+      completed_count: 9,     // canonical counter — must win
+      response_time_h: null, cover_photo_url: null, gallery_urls: [],
+      vibe_tags: [], safety_badges: [], buddy_level: "experienced",
+      verified: false, featured: false, city_ambassador: false,
+      available_now: false, female_only_service: false, public_meetup_only: false,
+      group_approved: false, nightlife_approved: false,
+      energy_type: null, max_group_size: 4,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    };
+
+    // makeMatchFakeClient returns [buddyRow] for any rent_buddy_profiles query,
+    // which is exactly what each of the 13 section queries needs.
+    const fake = makeMatchFakeClient(buddyRow);
+    const res = await call("GET", "/api/rent-a-buddy/sections?city=Manila", fake as any);
+
+    assert.equal(res.status, 200, "sections endpoint should return 200");
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.sections), "response.sections should be an array");
+    assert.ok(body.sections.length > 0, "sections array should not be empty");
+
+    // Find at least one section that has a buddy card — not all sections will
+    // match every filter in the fake client (e.g. available_now=false means
+    // the available_now section is empty), but at least one must have a row.
+    const sectionWithBuddy = body.sections.find(
+      (s: any) => Array.isArray(s.buddies) && s.buddies.length > 0,
+    );
+    assert.ok(
+      sectionWithBuddy,
+      "at least one section must contain a buddy card",
+    );
+
+    assert.equal(
+      sectionWithBuddy.buddies[0].completedBookings,
+      9,
+      `mapProfile must use completed_count=9, not completed_bookings=2; got ${sectionWithBuddy.buddies[0].completedBookings}`,
+    );
+  });
+});
+
 describe("toBuddyScoringData — completed_count takes precedence over completed_bookings", () => {
   it("uses completed_count=7 (not completed_bookings=3) when ranking via POST /api/rent-a-buddy/match", async () => {
     // Buddy row deliberately has the two counters out of sync.
