@@ -879,6 +879,50 @@ describe("runGenerationCycle — orphan cleanup on mid-batch failure", () => {
     assert.equal(fail!.payload.locked_by, null);
   });
 
+  it("uses retryable_failed — not queued — when the third-download failure exhausts all attempts", async () => {
+    // Job has already consumed max_attempts - 1 attempts; this run is the last one.
+    const exhaustedJob = { ...JOB, attempts: 2, max_attempts: 3 };
+    const { sc, updates, inserts } = makeFakeClientWithStorage({
+      jobOverride: exhaustedJob,
+    });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    // First two downloads succeed (and their uploads complete); third returns 404.
+    installFetch(failOnNthFetch(3));
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+
+    // No version rows inserted — the batch is abandoned on failure.
+    assert.equal(inserts.length, 0, "must not insert any version rows after a mid-batch download failure");
+
+    // No review_required update.
+    assert.equal(
+      updates.some((u) => u.payload.status === "review_required"),
+      false,
+      "a failed batch must never reach review_required",
+    );
+
+    // With attempts 2 + 1 = 3 >= max_attempts 3, status must be retryable_failed.
+    const fail = updates.find(
+      (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
+    );
+    assert.ok(fail, "must record a failure update on the queue row");
+    assert.equal(
+      fail!.payload.status,
+      "retryable_failed",
+      "exhausted attempts on a download failure must produce retryable_failed, not queued",
+    );
+    assert.equal(fail!.payload.attempts, 3);
+    assert.ok(
+      typeof fail!.payload.last_error === "string" && fail!.payload.last_error.includes("404"),
+      `last_error must mention the HTTP 404 status, got: ${fail!.payload.last_error}`,
+    );
+    assert.equal(fail!.payload.locked_until, null);
+    assert.equal(fail!.payload.locked_by, null);
+  });
+
   it("does not issue a delete when the first download fails before any upload", async () => {
     const { sc, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage();
     _setTestServiceClient(sc);
