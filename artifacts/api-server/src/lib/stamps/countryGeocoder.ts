@@ -372,10 +372,13 @@ export async function geocodeCityCountry(city: string): Promise<GeocodedCountry 
     if (cached.result != null) {
       const lastCheck = cached.correctionCheckedAt ?? cached.writtenAt;
       if (Date.now() - lastCheck >= CORRECTION_CHECK_INTERVAL_MS) {
+        // Optimistically bump correctionCheckedAt BEFORE awaiting the probe.
+        // A concurrent caller arriving at the same warm entry will re-read the
+        // cache, see the freshly-bumped timestamp, and skip the probe entirely —
+        // preventing two simultaneous DB round-trips for the same key.
+        _cache.set(key, { ...cached, correctionCheckedAt: Date.now() });
         const evicted = await evictIfDbCorrected(key, cached);
         if (!evicted) {
-          // Still fresh — bump the checked timestamp so we don't re-probe for another interval.
-          _cache.set(key, { ...cached, correctionCheckedAt: Date.now() });
           return cached.result;
         }
         // Entry was evicted — fall through to re-resolve from the DB.

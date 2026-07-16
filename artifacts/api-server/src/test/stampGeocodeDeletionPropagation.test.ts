@@ -1694,4 +1694,71 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     assert.equal(maybeSingleCalls, 0,
       "no DB probe on the follow-up call — positive entry is still within its 30-day TTL");
   });
+
+  it("two concurrent warm-cache callers fire the correction-check DB probe at most once — not twice simultaneously", async () => {
+    // Scenario: two simultaneous geocodeCityCountry() calls arrive at the same
+    // warm cache entry after the CORRECTION_CHECK_INTERVAL_MS has elapsed.
+    // Without a dedup guard both callers would enter the evictIfDbCorrected()
+    // branch concurrently, issuing two independent maybySingle() DB probes for
+    // the same key.
+    //
+    // The fix: correctionCheckedAt is bumped BEFORE awaiting the probe.  When
+    // the second caller reads the cache entry the timestamp is already fresh, so
+    // the interval check fails and it returns the cached result directly —
+    // at most one DB probe is issued regardless of how many callers are in flight.
+    //
+    // Confirmed assertions:
+    //   - maybeSingle() called at most once across both concurrent callers.
+    //   - Both callers receive the cached country code.
+    //   - No Nominatim call is triggered (the entry was not evicted).
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "ch", country: "Switzerland" } }],
+      };
+    });
+
+    // Phase 1: seed the warm cache entry via a DB read (no Nominatim call).
+    let probeCallCount = 0;
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient(
+        { country: "Switzerland", country_code: "CH", corrected_at: null, deleted_at: null },
+        { onCall: () => { probeCallCount++; } },
+      ),
+    );
+    const warm = await geocodeCityCountry("Zurich");
+    assert.equal(warm?.countryCode, "CH", "pre-condition: warm entry loaded from DB cache");
+    assert.equal(nominatimCalls, 0, "no Nominatim call during warm-up");
+    // Reset the probe counter — the readDbCache call above may have incremented it.
+    probeCallCount = 0;
+
+    // Phase 2: advance past the correction-check interval so both concurrent
+    // callers see an elapsed interval on first inspection.
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000);
+
+    // Phase 3: fire two concurrent geocode calls for the same city.
+    const [resultA, resultB] = await Promise.all([
+      geocodeCityCountry("Zurich"),
+      geocodeCityCountry("Zurich"),
+    ]);
+
+    // Both callers must receive the (unmodified) cached result.
+    assert.equal(resultA?.countryCode, "CH", "caller A received the cached country code");
+    assert.equal(resultB?.countryCode, "CH", "caller B received the cached country code");
+
+    // No Nominatim call — the DB probe found no correction so the entry was kept.
+    assert.equal(nominatimCalls, 0, "Nominatim must not be called — entry was not evicted");
+
+    // The critical assertion: at most one DB probe issued across both callers.
+    // Without the optimistic correctionCheckedAt bump this would be 2.
+    assert.ok(
+      probeCallCount <= 1,
+      `DB probe (maybeSingle) called ${probeCallCount} time(s) — expected at most 1 across two concurrent warm-cache callers`,
+    );
+  });
 });
