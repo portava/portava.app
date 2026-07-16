@@ -4,8 +4,8 @@
  * Extracted from useStampShare so these functions can be imported and
  * tested in Node.js without React / React Native native module bindings.
  */
-import type { PassportStampNew } from './passportStamps';
-import type { PassportStamp } from '../types/models';
+import type { PassportStampNew } from './passportStamps.ts';
+import type { PassportStamp } from '../types/models.ts';
 
 /** Convert the new stamp shape to the legacy PassportStamp used by StampShareCard. */
 export function stampToLegacy(s: PassportStampNew): PassportStamp {

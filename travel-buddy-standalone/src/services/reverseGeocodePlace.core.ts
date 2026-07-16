@@ -16,7 +16,7 @@
  *   Stage 3 — both fail → coordinate-only stub Place. Never throws, never
  *             returns null — callers always receive a complete Place object.
  */
-import type { Place } from '../lib/location/placeTypes';
+import type { Place } from '../lib/location/placeTypes.ts';
 
 /** Minimal shape of one expo-location reverse-geocode address result. */
 export interface ExpoGeocodeAddress {

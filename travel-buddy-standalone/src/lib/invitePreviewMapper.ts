@@ -4,7 +4,7 @@
  * Converts an InvitePreviewResult from the service layer into the appropriate
  * ScreenState variant, with no React or React Native dependencies.
  */
-import type { InvitePreview, InvitePreviewResult, TripTombstone } from '../services/trips';
+import type { InvitePreview, InvitePreviewResult, TripTombstone } from '../services/trips.ts';
 
 export type ScreenState =
   | { kind: 'loading' }
