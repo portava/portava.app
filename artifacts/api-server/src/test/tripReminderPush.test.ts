@@ -197,9 +197,14 @@ describe("TripReminderScheduler push", () => {
     const STALE_CLAIM_MINUTES = 10;
     const staleTime = new Date(Date.now() - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
 
+    // start_date must be within the 22-26h window (±2h drift buffer = 20-28h).
+    // Use "tomorrow" (24h from now) which always falls inside the window.
+    const tomorrowStr = new Date(Date.now() + 24 * 3_600_000).toISOString().slice(0, 10);
+
     const state = baseState("trip-crash-recovery");
     state.trips![0].reminder_sent_at    = staleTime;   // claimed, but stale
     state.trips![0].reminder_delivered_at = null;       // never delivered
+    state.trips![0].start_date          = tomorrowStr; // still inside window
 
     const svc = makeFakeClient(state);
     _setTestServiceClient(svc);
@@ -266,5 +271,28 @@ describe("TripReminderScheduler push", () => {
 
     assert.equal(pushCalls.length, 0,
       "recovery must not resend when the trip window has already closed");
+  });
+
+  it("does not resend when the stale claim's start_date is in the future but outside the 22-26 h window", async () => {
+    // Simulates: a crash happened and recovery runs, but the trip doesn't
+    // start for another 3 days — far outside the 22-26 h notification window
+    // (even with the ±2 h drift buffer: 20-28 h).  Sending "starts tomorrow!"
+    // 3 days early would be wrong, so recovery must stay silent.
+    const STALE_CLAIM_MINUTES = 10;
+    const staleTime = new Date(Date.now() - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
+    // 3 days from now — well outside the 20-28 h recovery window.
+    const farFuture = new Date(Date.now() + 3 * 24 * 3_600_000).toISOString().slice(0, 10);
+
+    const state = baseState("trip-future-outside-window");
+    state.trips![0].reminder_sent_at    = staleTime;
+    state.trips![0].reminder_delivered_at = null;
+    state.trips![0].start_date          = farFuture;
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 0,
+      "recovery must not resend when start_date is outside the 22-26 h window");
   });
 });

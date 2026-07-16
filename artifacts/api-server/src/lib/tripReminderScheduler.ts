@@ -42,6 +42,11 @@ const STALE_CLAIM_MINUTES = 10;
  *  Capped at WINDOW_UPPER_HRS so recovery never fires outside the valid window
  *  and naturally terminates after at most one window-width of hourly retries. */
 const MAX_RECOVERY_AGE_MS  = WINDOW_UPPER_HRS * 3_600_000; // 26 h
+/** Extra buffer (hours) added on each side of the 22-26 h window when checking
+ *  whether a stale-claimed trip is still worth recovering.  Accounts for clock
+ *  drift between server restarts and timezone offsets in date-only start_date
+ *  values. */
+const RECOVERY_DRIFT_HRS = 2;
 
 /** In-memory dedup so we don't double-fire within a single process restart cycle. */
 const reminded = new Set<string>();
@@ -108,13 +113,19 @@ async function markDelivered(
  * mark delivered so the reminder is not permanently lost.
  */
 async function recoverStaleClaims(sc: ReturnType<typeof getServiceClient>): Promise<void> {
-  const staleThreshold = new Date(Date.now() - STALE_CLAIM_MINUTES * 60_000).toISOString();
+  const now            = new Date();
+  const staleThreshold = new Date(now.getTime() - STALE_CLAIM_MINUTES * 60_000).toISOString();
   // Don't recover claims older than MAX_RECOVERY_AGE_MS: the reminder window has
   // passed, so there is nothing useful to deliver and retries would be indefinite.
-  const recoveryFloor  = new Date(Date.now() - MAX_RECOVERY_AGE_MS).toISOString();
-  // Only recover reminders for trips that haven't started yet — no point
-  // sending "trip starts tomorrow" after the trip window has already closed.
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const recoveryFloor  = new Date(now.getTime() - MAX_RECOVERY_AGE_MS).toISOString();
+
+  // Only recover trips whose start_date is still within the 22-26 h notification
+  // window (widened by RECOVERY_DRIFT_HRS on each side to tolerate clock drift
+  // and the date-only resolution of start_date).
+  const windowLowerDate = new Date(now.getTime() + (WINDOW_LOWER_HRS - RECOVERY_DRIFT_HRS) * 3_600_000)
+    .toISOString().slice(0, 10);
+  const windowUpperDate = new Date(now.getTime() + (WINDOW_UPPER_HRS + RECOVERY_DRIFT_HRS) * 3_600_000)
+    .toISOString().slice(0, 10);
 
   const { data: stale, error } = await (sc as any)
     .from("trips")
@@ -122,7 +133,8 @@ async function recoverStaleClaims(sc: ReturnType<typeof getServiceClient>): Prom
     .is("reminder_delivered_at", null)
     .lt("reminder_sent_at", staleThreshold)
     .gte("reminder_sent_at", recoveryFloor)
-    .gte("start_date", todayStr)
+    .gte("start_date", windowLowerDate)
+    .lte("start_date", windowUpperDate)
     .in("status", ["upcoming", "planning"]);
 
   if (error) {
@@ -134,11 +146,12 @@ async function recoverStaleClaims(sc: ReturnType<typeof getServiceClient>): Prom
   for (const trip of stale as any[]) {
     const tripId = trip.id as string;
 
-    // Belt-and-suspenders: skip if the trip's start date has already passed
-    // (guards against DB engines that don't push the gte filter all the way down).
-    if (trip.start_date && trip.start_date < todayStr) {
-      logger.info({ tripId, startDate: trip.start_date },
-        "TripReminderScheduler: skipping stale recovery — trip window already closed");
+    // Belt-and-suspenders: re-verify the start_date window in process, guarding
+    // against DB engines that don't fully push down gte/lte on date columns.
+    if (trip.start_date &&
+        (trip.start_date < windowLowerDate || trip.start_date > windowUpperDate)) {
+      logger.info({ tripId, startDate: trip.start_date, windowLowerDate, windowUpperDate },
+        "TripReminderScheduler: skipping stale recovery — start_date outside notification window");
       continue;
     }
 
