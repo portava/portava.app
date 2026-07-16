@@ -1029,6 +1029,64 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
     assert.equal(retryQueueInserts.length, 0, "must NOT enqueue on push_retry_queue");
   });
 
+  it("rent_buddy_profiles cleanup still runs when only profiles UPDATE fails — step 1 (notification_devices DELETE) succeeds", async () => {
+    // Scenario: step 1 (notification_devices DELETE) succeeds, but step 2
+    // (profiles UPDATE — null legacy expo_push_token) throws a DB error.
+    // Step 3 (rent_buddy_profiles UPDATE) must still execute despite step 2
+    // failing, so stale tokens are not left behind due to a targeted profiles
+    // table outage.
+    _setTestFetch(invalidCredFetch);
+    const PROFILES_ERROR = new Error("profiles table unavailable");
+
+    // LEGACY_TOKEN is both the device token and the legacy profile token so
+    // that the condition `legacyToken && staleTokens.includes(legacyToken)` is
+    // true, ensuring step 2 is always attempted.
+    const {
+      deletedDeviceTokens,
+      profilesNulled,
+      rentBuddyTokensNulled,
+      client,
+    } = makeFakeDb({
+      deviceToken: LEGACY_TOKEN,
+      legacyToken: LEGACY_TOKEN,
+      // Step 1 (DELETE notification_devices) intentionally NOT set → succeeds
+      profilesUpdateError: PROFILES_ERROR, // step 2 fails
+      // Step 3 (rent_buddy_profiles UPDATE) intentionally NOT set → succeeds
+    });
+
+    const router = new NotificationRouter(client);
+    await router.route(BASE_NOTIF);
+
+    // Step 1 succeeded — the stale token must appear in the DELETE call
+    assert.equal(
+      deletedDeviceTokens.length,
+      1,
+      "step 1 succeeded — exactly one DELETE call on notification_devices",
+    );
+    assert.ok(
+      deletedDeviceTokens[0].includes(LEGACY_TOKEN),
+      `step 1 succeeded — deleted tokens should include ${LEGACY_TOKEN}`,
+    );
+
+    // Step 2 errored — no profile should have been nulled
+    assert.equal(
+      profilesNulled.length,
+      0,
+      "step 2 errored — profilesNulled must be empty",
+    );
+
+    // Step 3 must still have run and nulled the rent_buddy row
+    assert.equal(
+      rentBuddyTokensNulled.length,
+      1,
+      "step 3 must still run when only step 2 fails — one IN-update call on rent_buddy_profiles",
+    );
+    assert.ok(
+      rentBuddyTokensNulled[0].includes(LEGACY_TOKEN),
+      `rent_buddy_profiles must include the stale token ${LEGACY_TOKEN} even when step 2 fails`,
+    );
+  });
+
   it("success log is NOT emitted when a cleanup step fails (deleteDeviceError)", async () => {
     // notification_devices DELETE fails → anyFailure is set → the success info
     // log must be suppressed, preventing operators from seeing a false "all-clear".
