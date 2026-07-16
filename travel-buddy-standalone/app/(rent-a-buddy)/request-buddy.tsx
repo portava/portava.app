@@ -18,6 +18,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import type { Place } from '../../src/lib/location/placeTypes';
+import { buildCityCoords } from '../../src/lib/cityCoords';
 import {
   ArrowLeft, Send, Users, Clock, Shield, AlertTriangle,
 } from 'lucide-react-native';
@@ -173,7 +174,7 @@ function OpenRequestForm() {
           onClose={() => setCityPickerOpen(false)}
           onSelect={(place: Place) => {
             setCity(place.city ?? place.name);
-            setCityCoords(place.lat != null && place.lng != null ? { lat: place.lat, lng: place.lng } : null);
+            setCityCoords(buildCityCoords(place.lat, place.lng));
           }}
           mode="city"
           title="Which city?"

@@ -14,6 +14,7 @@ import type { Place } from '../../src/lib/location/placeTypes';
 import {
   searchBuddies, type BuddyProfile, type BuddyCategory, type BuddySortBy,
 } from '../../src/services/rentABuddy';
+import { cityCoordSpread } from '../../src/lib/cityCoords';
 
 type SessionMode = 'any' | 'in_person' | 'remote';
 
@@ -98,8 +99,7 @@ export default function Marketplace() {
     }
     const res = await searchBuddies({
       city: city.trim(),
-      ...(cityLat != null ? { lat: cityLat } : {}),
-      ...(cityLng != null ? { lng: cityLng } : {}),
+      ...cityCoordSpread(cityLat, cityLng),
       ...(category !== 'all' ? { category: category as BuddyCategory } : {}),
       sortBy,
       verifiedOnly: verifiedOnly || undefined,
