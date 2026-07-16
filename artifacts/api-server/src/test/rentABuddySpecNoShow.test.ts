@@ -267,6 +267,7 @@ describe("POST /api/rent-a-buddy/bookings/:id/report-no-show — spec router", (
     const second = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`, { notes: "duplicate" });
     assert.equal(second.status, 409, `second call should be 409, got ${second.status}: ${JSON.stringify(second.body)}`);
     assert.equal(second.body.error, "already_reported");
+    assert.equal(state.safetyEvents.length, 1, "no second safety event should be inserted when the guard rejects the duplicate");
   });
 
   it("does not insert a second safety event on a duplicate report", async () => {
@@ -295,6 +296,7 @@ describe("POST /api/rent-a-buddy/bookings/:id/report-no-show — spec router", (
     const second = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`, { notes: "duplicate buddy report" }, BUDDY_TOKEN);
     assert.equal(second.status, 409, `second buddy call should be 409, got ${second.status}: ${JSON.stringify(second.body)}`);
     assert.equal(second.body.error, "already_reported");
+    assert.equal(state.safetyEvents.length, 1, "no second safety event should be inserted when the buddy's duplicate is rejected");
   });
 
   it("returns 409 when the traveler tries to report after the buddy already filed a no-show", async () => {
@@ -306,6 +308,7 @@ describe("POST /api/rent-a-buddy/bookings/:id/report-no-show — spec router", (
     const travelerReport = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`, { notes: "cross-party duplicate" }, TRAVELER_TOKEN);
     assert.equal(travelerReport.status, 409, `traveler cross-party call should be 409, got ${travelerReport.status}: ${JSON.stringify(travelerReport.body)}`);
     assert.equal(travelerReport.body.error, "already_reported");
+    assert.equal(state.safetyEvents.length, 1, "no second safety event should be inserted when the cross-party duplicate is rejected");
   });
 
   it("returns 409 when the booking is already completed", async () => {
