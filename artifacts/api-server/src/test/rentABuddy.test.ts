@@ -4124,4 +4124,78 @@ describe("Rent a Buddy — notifications: recipient is the other party", () => {
     assert.notEqual(note.user_id, USER_ID,
       "notification must not target the traveler who placed the request");
   });
+
+  // ── change_request_raised via /suggest ──────────────────────────────────────
+
+  it("suggest by traveler: buddy (not the traveler actor) receives change_request_raised notification", async () => {
+    // Traveler (USER_ID) suggests a change → buddy (BUDDY_USER) must be notified
+    setupState();
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/suggest`, {
+      proposedDate: "2026-09-01",
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    await drain();
+    const notes: any[] = (state as any).notifications ?? [];
+    const note = notes.find((n: any) => n.event_type === "rent_buddy.change_request_raised");
+    assert.ok(note, "expected a change_request_raised notification row");
+    assert.equal(note.user_id, BUDDY_USER,
+      `notification recipient must be the buddy (${BUDDY_USER}), got: ${note.user_id}`);
+    assert.notEqual(note.user_id, USER_ID,
+      "notification must not target the traveler who raised the change request");
+  });
+
+  it("suggest by buddy: traveler (not the buddy actor) receives change_request_raised notification", async () => {
+    // Buddy (BUDDY_USER) suggests a change → traveler (USER_ID) must be notified
+    setupState();
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/suggest`, {
+      proposedDate: "2026-09-01",
+    }, BUDDY_TOKEN);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    await drain();
+    const notes: any[] = (state as any).notifications ?? [];
+    const note = notes.find((n: any) => n.event_type === "rent_buddy.change_request_raised");
+    assert.ok(note, "expected a change_request_raised notification row");
+    assert.equal(note.user_id, USER_ID,
+      `notification recipient must be the traveler (${USER_ID}), got: ${note.user_id}`);
+    assert.notEqual(note.user_id, BUDDY_USER,
+      "notification must not target the buddy who raised the change request");
+  });
+
+  // ── change_request_raised via /change-request ───────────────────────────────
+
+  it("change-request by traveler: buddy (not the traveler actor) receives change_request_raised notification", async () => {
+    // Traveler (USER_ID) raises a change request → buddy (BUDDY_USER) must be notified
+    setupState();
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/change-request`, {
+      changeField: "duration_h",
+      proposedValue: { duration_h: 3 },
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    await drain();
+    const notes: any[] = (state as any).notifications ?? [];
+    const note = notes.find((n: any) => n.event_type === "rent_buddy.change_request_raised");
+    assert.ok(note, "expected a change_request_raised notification row");
+    assert.equal(note.user_id, BUDDY_USER,
+      `notification recipient must be the buddy (${BUDDY_USER}), got: ${note.user_id}`);
+    assert.notEqual(note.user_id, USER_ID,
+      "notification must not target the traveler who raised the change request");
+  });
+
+  it("change-request by buddy: traveler (not the buddy actor) receives change_request_raised notification", async () => {
+    // Buddy (BUDDY_USER) raises a change request → traveler (USER_ID) must be notified
+    setupState();
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/change-request`, {
+      changeField: "duration_h",
+      proposedValue: { duration_h: 3 },
+    }, BUDDY_TOKEN);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    await drain();
+    const notes: any[] = (state as any).notifications ?? [];
+    const note = notes.find((n: any) => n.event_type === "rent_buddy.change_request_raised");
+    assert.ok(note, "expected a change_request_raised notification row");
+    assert.equal(note.user_id, USER_ID,
+      `notification recipient must be the traveler (${USER_ID}), got: ${note.user_id}`);
+    assert.notEqual(note.user_id, BUDDY_USER,
+      "notification must not target the buddy who raised the change request");
+  });
 });
