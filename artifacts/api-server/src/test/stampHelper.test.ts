@@ -43,4 +43,26 @@ describe("buildCityStampLabels", () => {
     const { label } = buildCityStampLabels("ho chi minh", "VN");
     assert.equal(label, "HO CHI MINH");
   });
+
+  // "Unknown" is a sentinel value for unresolved ownership rows; slicing it
+  // would produce "UN · 2026" which looks like a country code but is meaningless.
+  it('falls back to year-only when country is "Unknown"', () => {
+    const { sublabel } = buildCityStampLabels("somewhere", "Unknown");
+    assert.equal(sublabel, String(YEAR));
+  });
+
+  it('falls back to year-only when country is "unknown" (lowercase)', () => {
+    const { sublabel } = buildCityStampLabels("somewhere", "unknown");
+    assert.equal(sublabel, String(YEAR));
+  });
+
+  it('falls back to year-only when country is "UNKNOWN" (uppercase)', () => {
+    const { sublabel } = buildCityStampLabels("somewhere", "UNKNOWN");
+    assert.equal(sublabel, String(YEAR));
+  });
+
+  it('falls back to year-only when country is "  Unknown  " (whitespace-padded)', () => {
+    const { sublabel } = buildCityStampLabels("somewhere", "  Unknown  ");
+    assert.equal(sublabel, String(YEAR));
+  });
 });

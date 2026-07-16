@@ -26,7 +26,13 @@ export function buildCityStampLabels(
 ): { label: string; sublabel: string } {
   const label = city.trim().toUpperCase();
   const year = new Date().getFullYear();
-  const countryCode = country?.trim().slice(0, 2).toUpperCase() ?? null;
+  const trimmed = country?.trim() ?? null;
+  // Treat "Unknown" (any casing) the same as null — it is a sentinel value for
+  // unresolved ownership rows, not a real country name, so slicing "UN" from it
+  // would produce a meaningless ISO-looking code.
+  const isUnknown =
+    trimmed === null || trimmed.toLowerCase() === "unknown";
+  const countryCode = isUnknown ? null : trimmed.slice(0, 2).toUpperCase();
   const sublabel = countryCode ? `${countryCode} · ${year}` : String(year);
   return { label, sublabel };
 }
