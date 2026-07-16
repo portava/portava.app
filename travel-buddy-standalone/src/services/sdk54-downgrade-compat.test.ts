@@ -119,12 +119,10 @@ describe('SDK 54 downgrade — package version pins', () => {
   });
 
   it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-    // From travel-buddy-standalone/src/services, go up 3 levels to workspace root,
-    // then down into artifacts/travel-buddy.
-    const tbPkg = readPkg('../../../artifacts/travel-buddy/package.json');
-    const tbDeps: Record<string, string> = {
-      ...tbPkg.dependencies,
-      ...tbPkg.devDependencies,
+    const standalone = readPkg('../../../../travel-buddy-standalone/package.json');
+    const saDeps: Record<string, string> = {
+      ...standalone.dependencies,
+      ...standalone.devDependencies,
     };
     const toCheck = [
       'expo-notifications',
@@ -136,8 +134,8 @@ describe('SDK 54 downgrade — package version pins', () => {
     for (const name of toCheck) {
       assert.equal(
         deps[name],
-        tbDeps[name],
-        `${name} version mismatch: travel-buddy-standalone="${deps[name]}" artifacts/travel-buddy="${tbDeps[name]}"`,
+        saDeps[name],
+        `${name} version mismatch: artifacts/travel-buddy="${deps[name]}" travel-buddy-standalone="${saDeps[name]}"`,
       );
     }
   });
@@ -159,17 +157,15 @@ describe('SDK 54 downgrade — package version pins', () => {
 //   react-native-view-shot → react-native, react
 
 describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-  // Read artifacts/travel-buddy from the perspective of the standalone test runner.
-  // __dir is travel-buddy-standalone/src/services, so we go up 3 levels to reach
-  // the monorepo root, then down into artifacts/travel-buddy.
-  const tb = readPkg('../../../artifacts/travel-buddy/package.json');
+  // artifacts/travel-buddy/package.json is 2 levels up from src/services.
+  const tb = readPkg('../../package.json');
   const tbAll: Record<string, string> = {
     ...tb.dependencies,
     ...tb.devDependencies,
   };
 
-  // travel-buddy-standalone/package.json is 2 levels up from src/services.
-  const sa = readPkg('../../package.json');
+  // travel-buddy-standalone/package.json is 4 levels up from src/services.
+  const sa = readPkg('../../../../travel-buddy-standalone/package.json');
   const saAll: Record<string, string> = {
     ...sa.dependencies,
     ...sa.devDependencies,
