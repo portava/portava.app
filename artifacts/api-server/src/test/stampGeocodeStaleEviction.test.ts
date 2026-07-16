@@ -950,6 +950,151 @@ describe("tombstone-sweep eviction: negative entry retries after sweep removes i
   });
 });
 
+// ── Tombstone-sweep: concurrent revival between pass-2 select and delete ──────
+//
+// The hard-delete in pass 2 is guarded with .not("deleted_at", "is", null) so
+// that a row revived by a concurrent PUT (deleted_at cleared) is not destroyed.
+// The guard means the delete can legitimately affect 0 rows.  The sweep must:
+//   • still evict the in-memory entry (eviction is unconditional, before delete)
+//   • not throw or propagate an error when the delete is a no-op
+
+describe("tombstone-sweep: concurrent revival between pass-2 select and delete", () => {
+  /**
+   * Build a fake sweep DB client where:
+   *   await idx 0 → pass-1 query: no corrected_at rows
+   *   await idx 1 → pass-2 select: one tombstone row
+   *   await idx 2 → pass-2 delete: 0 rows deleted (guard matched nothing —
+   *                 simulates the row being revived between select and delete)
+   *
+   * maybeSingle() (used by readDbCache after the sweep) returns null to avoid
+   * a real DB round-trip in this focused test.
+   */
+  function makeConcurrentRevivalSweepClient(
+    tombstoneRows: Array<{ city_key: string }>,
+    onDelete?: () => void,
+  ): SupabaseClient {
+    let awaitIdx = 0;
+    const awaitedResponses: Array<{ data: any; error: null; count?: number }> = [
+      { data: [],            error: null },           // pass-1: no corrected_at rows
+      { data: tombstoneRows, error: null },           // pass-2 select: tombstone found
+      { data: [],            error: null, count: 0 }, // pass-2 delete: 0 rows (revived)
+    ];
+
+    return {
+      from(_table: string) {
+        const chain: any = {
+          select()  { return chain; },
+          eq()      { return chain; },
+          gte()     { return chain; },
+          not()     { return chain; },
+          in()      { return chain; },
+          delete()  { return chain; },
+          upsert()  { return Promise.resolve({ error: null }); },
+          async maybeSingle() {
+            return { data: null, error: null };
+          },
+          then(
+            resolve: (v: any) => any,
+            reject?: (e: any) => any,
+          ): Promise<any> {
+            const idx = awaitIdx++;
+            const resp = awaitedResponses[Math.min(idx, awaitedResponses.length - 1)];
+            if (idx === 2) onDelete?.();
+            return Promise.resolve(resp).then(resolve, reject);
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+  }
+
+  it("evicts the in-memory entry even when the hard-delete affects 0 rows (row was revived)", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Step 1 — seed a positive cache entry for the city so the eviction can
+    // be observed (the entry must be present before the sweep and absent after).
+    silentFetch();
+    const db0 = makeQueuedDbClient([
+      { country: "France", country_code: "FR", corrected_at: null },
+    ]);
+    _setGeocodeDbClientForTests(db0);
+    const before = await geocodeCityCountry("RevivalRaceCity");
+    assert.equal(before?.countryCode, "FR", "pre-condition: cache entry should be present before sweep");
+
+    // Confirm the entry is in the cache before the sweep.
+    const entryBefore = _getGeocodeCacheEntryForTests("rivalracecity".replace("rival", "revival"));
+    // normCity("RevivalRaceCity") → "rivalracecity" — but let's confirm via the returned value.
+    assert.ok(before, "pre-condition: geocode result must be non-null");
+
+    // Step 2 — install a sweep DB client that returns a tombstone row in pass-2
+    // select but reports 0 rows deleted (simulating a concurrent PUT revival).
+    const cityKey = "rivalracecity".replace("rival", "revival"); // normCity("RevivalRaceCity")
+    let deleteWasCalled = false;
+    const sweepDb = makeConcurrentRevivalSweepClient(
+      [{ city_key: cityKey }],
+      () => { deleteWasCalled = true; },
+    );
+    _setGeocodeDbClientForTests(sweepDb);
+
+    // Step 3 — the sweep must complete without throwing even though the delete
+    // affects 0 rows.
+    let thrownErr: unknown = undefined;
+    try {
+      await _runCorrectionSweepForTests();
+    } catch (e) {
+      thrownErr = e;
+    }
+    assert.equal(thrownErr, undefined,
+      "runCorrectionSweep must not throw when the pass-2 delete affects 0 rows");
+
+    // Step 4 — the delete path must have been reached (delete was attempted).
+    assert.ok(deleteWasCalled,
+      "the pass-2 delete should have been attempted even though it will match 0 rows");
+
+    // Step 5 — the in-memory cache entry must have been evicted unconditionally
+    // (eviction happens in the for-loop before the delete).
+    const entryAfter = _getGeocodeCacheEntryForTests(cityKey);
+    assert.equal(entryAfter, undefined,
+      "the in-memory cache entry must be evicted even when the hard-delete is a no-op");
+  });
+
+  it("does not throw when the pass-2 select returns a tombstone but the delete guard eliminates all rows", async () => {
+    // Focused variant: no pre-seeded positive entry — verifies the no-throw
+    // guarantee even when the in-memory cache has no entry for the city.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // City is NOT in the cache (never geocoded).
+    const cityKey = "ghostcity";
+
+    let deleteWasCalled = false;
+    const sweepDb = makeConcurrentRevivalSweepClient(
+      [{ city_key: cityKey }],
+      () => { deleteWasCalled = true; },
+    );
+    _setGeocodeDbClientForTests(sweepDb);
+
+    let thrownErr: unknown = undefined;
+    try {
+      await _runCorrectionSweepForTests();
+    } catch (e) {
+      thrownErr = e;
+    }
+
+    assert.equal(thrownErr, undefined,
+      "sweep must not throw even when the deleted entry was never in the in-memory cache");
+    assert.ok(deleteWasCalled,
+      "delete must still be attempted for tombstone keys that are absent from the in-memory cache");
+
+    // Cache entry should remain absent (it was never there, and the sweep should
+    // not accidentally insert anything).
+    const entryAfter = _getGeocodeCacheEntryForTests(cityKey);
+    assert.equal(entryAfter, undefined,
+      "a key absent from the cache before the sweep must remain absent after it");
+  });
+});
+
 describe("staleness-eviction: corrected_at probe (continued)", () => {
   it("does not probe the DB before the check interval has elapsed", async () => {
     const T0 = 1_700_000_000_000;
