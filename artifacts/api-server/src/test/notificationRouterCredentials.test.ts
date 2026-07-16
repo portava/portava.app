@@ -13,7 +13,7 @@
  *
  * Run: node --import tsx/esm --test src/test/notificationRouterCredentials.test.ts
  */
-import { describe, it, beforeEach, afterEach } from "node:test";
+import { describe, it, mock, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 
 import { _setTestFetch } from "../lib/push.js";
@@ -21,6 +21,7 @@ import {
   NotificationRouter,
   _resetCleanupFailureCount,
   _getCleanupFailureCount,
+  _notificationRouterLogger,
 } from "../services/notifications/NotificationRouter.js";
 import type { NotificationRow } from "../services/notifications/NotificationService.js";
 
@@ -794,5 +795,49 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
       pushAttempts.every((a) => a.status === "suppressed"),
       "push attempt logged as suppressed (no tokens)",
     );
+  });
+
+  it("success log IS emitted when all cleanup steps succeed", async () => {
+    // All DB steps succeed → anyFailure stays false → the info log must fire.
+    _setTestFetch(invalidCredFetch);
+    const { client } = makeFakeDb({ deviceToken: TOKEN, legacyToken: null });
+
+    const infoSpy = mock.method(_notificationRouterLogger, "info", () => {});
+    try {
+      const router = new NotificationRouter(client);
+      await router.route(BASE_NOTIF);
+
+      const calls = infoSpy.mock.calls.map((c) => c.arguments[1] as string | undefined);
+      const emitted = calls.some((msg) => msg?.includes("removed stale push tokens"));
+      assert.ok(
+        emitted,
+        "info log 'removed stale push tokens' must be emitted when all cleanup steps succeed",
+      );
+    } finally {
+      infoSpy.mock.restore();
+    }
+  });
+
+  it("success log is NOT emitted when a cleanup step fails (deleteDeviceError)", async () => {
+    // notification_devices DELETE fails → anyFailure is set → the success info
+    // log must be suppressed, preventing operators from seeing a false "all-clear".
+    _setTestFetch(invalidCredFetch);
+    const DB_ERROR = new Error("notification_devices unavailable");
+    const { client } = makeFakeDb({ deviceToken: TOKEN, legacyToken: null, deleteDeviceError: DB_ERROR });
+
+    const infoSpy = mock.method(_notificationRouterLogger, "info", () => {});
+    try {
+      const router = new NotificationRouter(client);
+      await router.route(BASE_NOTIF);
+
+      const calls = infoSpy.mock.calls.map((c) => c.arguments[1] as string | undefined);
+      const emitted = calls.some((msg) => msg?.includes("removed stale push tokens"));
+      assert.ok(
+        !emitted,
+        "info log 'removed stale push tokens' must NOT be emitted when a cleanup step fails",
+      );
+    } finally {
+      infoSpy.mock.restore();
+    }
   });
 });

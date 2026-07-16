@@ -44,6 +44,9 @@ export function _getCleanupFailureCount(): number {
   return _consecutiveCleanupFailures;
 }
 
+/** Exported for unit tests to spy on logger calls (e.g. info-level success log). */
+export { logger as _notificationRouterLogger };
+
 /**
  * Map a NotificationRow's category/eventType to a CompassNotificationType
  * priority level. Safety-related events are always treated as highest priority
