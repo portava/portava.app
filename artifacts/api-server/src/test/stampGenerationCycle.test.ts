@@ -494,6 +494,54 @@ describe("runGenerationCycle — below-minimum run (1 of 3, STAMP_MIN_CANDIDATES
     assert.equal(fail!.payload.locked_by, null);
     assert.deepEqual(fail!.eqFilters, [["id", "job-1"]]);
   });
+
+  it("reaches retryable_failed when attempts are exhausted and provider returns 0 candidates", async () => {
+    // Zero-candidate path: provider returns nothing at all (different code path
+    // from the 1-candidate case) but must still reach retryable_failed when
+    // all attempts are used up.
+    const exhaustedJob = { ...JOB, attempts: 2, max_attempts: 3 };
+
+    const { sc, updates, inserts } = makeFakeClientWithStorage({
+      jobOverride: exhaustedJob,
+    });
+    _setTestServiceClient(sc);
+    // Provider returns 0 candidates — zero-candidate shortfall path.
+    _setTestStampImageProvider(makeFakeProvider(0));
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+
+    // No version rows must be inserted for a failed run.
+    assert.equal(inserts.length, 0);
+
+    // No review_required update at all.
+    assert.equal(
+      updates.some((u) => u.payload.status === "review_required"),
+      false,
+      "a zero-candidate run must never reach review_required",
+    );
+
+    // With attempts 2 + 1 = 3 >= max_attempts 3, status must be retryable_failed.
+    const fail = updates.find(
+      (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
+    );
+    assert.ok(fail, "must record a failure update");
+    assert.equal(
+      fail!.payload.status,
+      "retryable_failed",
+      "exhausted zero-candidate shortfall must produce retryable_failed, not queued",
+    );
+    assert.equal(fail!.payload.attempts, 3);
+    assert.ok(
+      typeof fail!.payload.last_error === "string" &&
+        fail!.payload.last_error.startsWith(CANDIDATE_SHORTFALL_PREFIX),
+      `last_error must carry the shortfall prefix, got: ${fail!.payload.last_error}`,
+    );
+    assert.equal(fail!.payload.locked_until, null);
+    assert.equal(fail!.payload.locked_by, null);
+    assert.deepEqual(fail!.eqFilters, [["id", "job-1"]]);
+  });
 });
 
 // ── Real-image path (http URLs): download + storage upload ────────────────────

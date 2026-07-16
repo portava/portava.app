@@ -475,10 +475,6 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
     const provider = getStampImageProvider();
     const images = await provider.generate(prompt, CANDIDATE_COUNT);
 
-    if (images.length === 0) {
-      throw new Error("No images generated — all provider calls failed");
-    }
-
     // Shortfall handling: below the configured minimum the run is treated as a
     // retryable failure; a degraded-but-reviewable run records the shortfall on
     // the queue row (last_error) so admins see generation was degraded.
