@@ -3127,6 +3127,104 @@ describe("DELETE then PUT for the same city_key — tombstone revival", () => {
     assert.equal(geocoded.countryCode, "JP", "revived entry must have country_code JP, not null");
   });
 
+  it("PUT evicts a null in-memory entry seeded between DELETE and PUT so next geocode returns the revived result", async () => {
+    // Scenario: a geocodeCityCountry call races between DELETE and PUT.
+    // At that moment the DB row is tombstoned, so readDbCache returns null and
+    // forwardGeocodeCity fails → null is cached with a 6-hour negative TTL.
+    // The subsequent PUT must call evictGeocodeCacheKey to clear that null entry
+    // so the very next geocodeCityCountry call returns the correct revived result.
+
+    const CITY = "betweencity";
+
+    // Step 1: Seed a null in-memory entry by calling geocodeCityCountry while
+    // the DB row is tombstoned (deleted_at set) and Nominatim returns nothing.
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests({
+      from: (table: string) => {
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  // Tombstoned row — readDbCache must skip it (returns null).
+                  data: { country: "Japan", country_code: "JP", corrected_at: null, deleted_at: "2026-01-01T00:00:00.000Z" },
+                  error: null,
+                }),
+              }),
+            }),
+            upsert: () => Promise.resolve({ data: null, error: null }),
+          };
+        }
+        return {};
+      },
+    } as any);
+
+    const nullResult = await geocodeCityCountry(CITY);
+    assert.equal(nullResult, null, "pre-condition: null should be cached while row is tombstoned");
+
+    // Step 2: Issue PUT via the admin endpoint — this must evict the null entry.
+    const client: any = {
+      auth: {
+        getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+      },
+      from: (table: string) => {
+        if (table === "profiles") {
+          return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+        }
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: (_cols: string) => builder([]),
+            upsert: (_row: unknown, _opts?: unknown) =>
+              Promise.resolve({ data: null, error: null }),
+          };
+        }
+        return builder([]);
+      },
+    };
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const putResp = await apiReq("PUT", `/admin/geocode-cache/${CITY}`, {
+      country_code: "JP",
+      country: "Japan",
+    });
+    assert.equal(putResp.status, 200);
+    assert.equal(putResp.body.updated, true);
+
+    // Step 3: After PUT, point the geocoder at a DB that returns the revived row
+    // (deleted_at: null) and confirm the null in-memory entry is gone.
+    let fetchCalled = false;
+    _setGeocodeFetchForTests(async () => {
+      fetchCalled = true;
+      return { ok: true, json: async () => [] }; // Nominatim not needed — DB hit
+    });
+    _setGeocodeDbClientForTests({
+      from: (table: string) => {
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  // Row is live after PUT — deleted_at is null.
+                  data: { country: "Japan", country_code: "JP", corrected_at: null, deleted_at: null },
+                  error: null,
+                }),
+              }),
+            }),
+            upsert: () => Promise.resolve({ data: null, error: null }),
+          };
+        }
+        return {};
+      },
+    } as any);
+
+    const revived = await geocodeCityCountry(CITY);
+    assert.ok(revived, "geocodeCityCountry must return a result — null in-memory entry should have been evicted by PUT");
+    assert.equal(revived.countryCode, "JP", "revived entry must reflect the PUT country_code, not the stale null");
+    // Nominatim should NOT have been called — the revived DB row was hit instead.
+    assert.equal(fetchCalled, false, "Nominatim must not be called when the DB cache has the revived row");
+  });
+
   it("readDbCache returns null when deleted_at is still set — tombstone not yet cleared", async () => {
     // Confirm the inverse: if a row has deleted_at set, readDbCache skips it.
     // This validates the guard that makes the tombstone-clearing test meaningful.
