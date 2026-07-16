@@ -21,16 +21,16 @@
  *
  * Run:
  *   cd travel-buddy-standalone
- *   node --import tsx --test src/test/tripGoneError.test.ts
+ *   node --import tsx --test src/services/__tests__/tripGoneError.test.ts
  */
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   _setTestAuthToken,
   acceptTripInvite,
-} from '../services/trips.ts';
-import { classifyInviteAcceptError } from '../lib/inviteCardGoneHandler.ts';
-import { mapAcceptResultToAction } from '../lib/acceptResultMapper.ts';
+} from '../trips.ts';
+import { classifyInviteAcceptError } from '../../lib/inviteCardGoneHandler.ts';
+import { mapAcceptResultToAction } from '../../lib/acceptResultMapper.ts';
 
 const FAKE_TOKEN = 'fake-test-token-trip-gone';
 const FAKE_TRIP_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
