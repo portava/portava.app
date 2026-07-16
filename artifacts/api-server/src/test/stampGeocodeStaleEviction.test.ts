@@ -20,6 +20,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   geocodeCityCountry,
+  evictGeocodeCacheKey,
   _setGeocodeFetchForTests,
   _setGeocodeDbClientForTests,
   _clearCountryGeocodeCache,
@@ -1032,5 +1033,125 @@ describe("staleness-eviction: corrected_at probe (continued)", () => {
       "should return the cached Nominatim result without probing the DB");
     assert.equal(dbCallCount, 1,
       "the correctionCheckedAt ?? writtenAt fallback must prevent a DB probe before the interval elapses");
+  });
+});
+
+// ── PUT-revival race: in-flight null must not re-poison cache after eviction ──
+//
+// When a geocodeCityCountry call is in-flight (awaiting a Nominatim fetch that
+// will return null because the DB row is tombstoned) and evictGeocodeCacheKey
+// runs concurrently (simulating a PUT revival), the in-flight promise must NOT
+// write its null result back into the cache after it settles.  Without the
+// _pending.get(key) === p guard, the null write re-poisons the entry and the
+// next caller gets null instead of re-resolving from the freshly-revived DB row.
+
+describe("PUT-revival race: in-flight null does not re-poison cache after eviction", () => {
+  it("next call re-resolves from DB when eviction races the in-flight Nominatim null", async () => {
+    // Gate that lets us suspend the Nominatim fetch mid-flight so eviction
+    // runs between the fetch start and fetch settle.
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => { releaseFetch = resolve; });
+
+    // The in-flight fetch suspends until released, then returns empty (null geocode).
+    _setGeocodeFetchForTests(async () => {
+      await fetchGate;
+      return { ok: true, json: async () => [] };
+    });
+
+    let dbCallCount = 0;
+    // call 0: readDbCache during the in-flight call — no row (tombstoned/absent)
+    // call 1: readDbCache on the subsequent call after eviction — valid FR result
+    //         (the PUT revival wrote this row to the DB while the fetch was in-flight)
+    const db = makeQueuedDbClient(
+      [
+        null,
+        { country: "France", country_code: "FR", corrected_at: null },
+      ],
+      (idx) => { dbCallCount = idx + 1; },
+    );
+    _setGeocodeDbClientForTests(db);
+
+    // Start the geocode call — it suspends inside forwardGeocodeCity awaiting the fetch.
+    const inFlightPromise = geocodeCityCountry("EvictionRaceCity");
+
+    // Simulate the PUT revival handler calling evictGeocodeCacheKey while the
+    // Nominatim fetch is still pending.  This removes the key from both _cache
+    // and _pending.  The fix: the in-flight promise checks _pending.get(key) === p
+    // before writing to _cache, and skips the write when evicted.
+    evictGeocodeCacheKey("evictionracecity"); // normCity("EvictionRaceCity")
+
+    // Release the suspended fetch — Nominatim returns nothing → result is null.
+    // Without the fix this would write _cache.set("evictionracecity", { result: null, ... }).
+    releaseFetch();
+    const inFlightResult = await inFlightPromise;
+    assert.equal(inFlightResult, null,
+      "the in-flight call itself should return null (Nominatim found nothing)");
+
+    // The critical assertion: the cache must NOT contain a re-poisoned null entry.
+    // The next call should see no valid cache entry and fall through to readDbCache,
+    // which now returns the FR row written by the PUT revival.
+    const second = await geocodeCityCountry("EvictionRaceCity");
+    assert.equal(second?.countryCode, "FR",
+      "after PUT eviction the next call must re-resolve from the DB — not serve the re-poisoned null");
+    assert.equal(second?.country, "France");
+    assert.equal(dbCallCount, 2,
+      "exactly two DB calls: one during in-flight readDbCache (null) and one after eviction (FR)");
+  });
+
+  it("eviction during readDbCache (before the Nominatim fetch) also prevents the null write", async () => {
+    // A subtler variant: eviction happens between readDbCache returning null and
+    // forwardGeocodeCity being called.  The guard must also protect this path.
+    let releaseDb!: () => void;
+    const dbGate = new Promise<void>((resolve) => { releaseDb = resolve; });
+
+    let dbCallIndex = 0;
+    const db: any = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache");
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          async maybySingle() { return { data: null, error: null }; },
+          async maybeSingle() {
+            const idx = dbCallIndex++;
+            if (idx === 0) {
+              // First call (readDbCache during in-flight): suspend so we can
+              // interleave the eviction before forwardGeocodeCity starts.
+              await dbGate;
+              return { data: null, error: null };
+            }
+            // Second call (readDbCache after eviction): return a valid DE row.
+            return { data: { country: "Germany", country_code: "DE", corrected_at: null }, error: null };
+          },
+          upsert() { return Promise.resolve({ error: null }); },
+        };
+        return chain;
+      },
+    };
+
+    // IMPORTANT: call _setGeocodeFetchForTests BEFORE _setGeocodeDbClientForTests.
+    // _setGeocodeFetchForTests resets _dbClientOverride to null; the subsequent
+    // _setGeocodeDbClientForTests call overwrites it with our fake DB client.
+    // Reversing this order would null out the DB client and break readDbCache.
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(db);
+
+    // Start the geocode call — suspends inside readDbCache awaiting the dbGate.
+    const inFlightPromise = geocodeCityCountry("EarlyEvictionCity");
+
+    // Evict while readDbCache is suspended.
+    evictGeocodeCacheKey("earlyevictioncity"); // normCity("EarlyEvictionCity")
+
+    // Release readDbCache → returns null → forwardGeocodeCity runs → null result.
+    releaseDb();
+    const inFlightResult = await inFlightPromise;
+    assert.equal(inFlightResult, null,
+      "in-flight call should return null (Nominatim empty)");
+
+    // The next call must re-resolve from the DB, not serve a poisoned null.
+    const second = await geocodeCityCountry("EarlyEvictionCity");
+    assert.equal(second?.countryCode, "DE",
+      "after early eviction the next call must re-resolve from DB — not serve the null the in-flight settled with");
+    assert.equal(second?.country, "Germany");
   });
 });

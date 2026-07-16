@@ -393,31 +393,46 @@ export async function geocodeCityCountry(city: string): Promise<GeocodedCountry 
   const existing = _pending.get(key);
   if (existing) return existing;
 
-  const p = (async () => {
+  // `let p!` (definite-assignment assertion) allows self-reference inside the
+  // async body.  At runtime `p` is always assigned before any `await` resolves,
+  // so `_pending.get(key) === p` is safe.
+  let p!: Promise<GeocodedCountry | null>;
+  p = (async () => {
     try {
       // Second-level persistent cache — positive results survive restarts.
       const persisted = await readDbCache(key);
       if (persisted) {
+        // Guard: skip the cache write if evictGeocodeCacheKey ran while we
+        // were awaiting readDbCache — the promise is no longer ours to commit.
+        if (_pending.get(key) === p) {
+          if (_cache.size >= MAX_CACHE_SIZE) {
+            const firstKey = _cache.keys().next().value;
+            if (firstKey !== undefined) _cache.delete(firstKey);
+          }
+          const now = Date.now();
+          _cache.set(key, { result: persisted, expiresAt: now + POSITIVE_TTL_MS, writtenAt: now, correctionCheckedAt: now });
+        }
+        return persisted;
+      }
+
+      const result = await forwardGeocodeCity(city);
+      // Guard: skip the cache write if evictGeocodeCacheKey ran while the
+      // Nominatim fetch was in-flight.  Without this check a null result from
+      // a tombstoned/unresolvable city would re-poison the cache entry that
+      // the PUT revival just cleared, causing the next caller to receive null
+      // instead of re-resolving from the freshly-written DB row.
+      if (_pending.get(key) === p) {
         if (_cache.size >= MAX_CACHE_SIZE) {
           const firstKey = _cache.keys().next().value;
           if (firstKey !== undefined) _cache.delete(firstKey);
         }
         const now = Date.now();
-        _cache.set(key, { result: persisted, expiresAt: now + POSITIVE_TTL_MS, writtenAt: now, correctionCheckedAt: now });
-        return persisted;
+        _cache.set(key, {
+          result,
+          expiresAt: now + (result ? POSITIVE_TTL_MS : NEGATIVE_TTL_MS),
+          writtenAt: now,
+        });
       }
-
-      const result = await forwardGeocodeCity(city);
-      if (_cache.size >= MAX_CACHE_SIZE) {
-        const firstKey = _cache.keys().next().value;
-        if (firstKey !== undefined) _cache.delete(firstKey);
-      }
-      const now = Date.now();
-      _cache.set(key, {
-        result,
-        expiresAt: now + (result ? POSITIVE_TTL_MS : NEGATIVE_TTL_MS),
-        writtenAt: now,
-      });
       if (result) {
         await writeDbCache(key, result);
         logEvent("stamp.country_geocode.resolved", { city, country_code: result.countryCode });
@@ -428,8 +443,11 @@ export async function geocodeCityCountry(city: string): Promise<GeocodedCountry 
     } catch (e: any) {
       // Transient failure — cache negatively for a short while so a flapping
       // provider doesn't get hammered, but retry after the TTL.
-      const now = Date.now();
-      _cache.set(key, { result: null, expiresAt: now + NEGATIVE_TTL_MS, writtenAt: now });
+      // Guard: skip the write if we were evicted while the request was in-flight.
+      if (_pending.get(key) === p) {
+        const now = Date.now();
+        _cache.set(key, { result: null, expiresAt: now + NEGATIVE_TTL_MS, writtenAt: now });
+      }
       logEvent("stamp.country_geocode.failed", { city, error: e?.message ?? String(e) });
       return null;
     } finally {
