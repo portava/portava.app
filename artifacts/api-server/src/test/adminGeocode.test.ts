@@ -3408,6 +3408,137 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
       `unresolvedCities must be empty when the city resolved — got: ${JSON.stringify(repair.unresolvedCities)}`,
     );
   });
+
+  it("does not abort the loop when the first catalog re-key fails — the second entry for the same city is still processed", async () => {
+    // Seed two XX entries for the same city.  The first catalog update call
+    // deliberately returns a DB error; the second must still be attempted and
+    // must count as a success.  catalogRekeyed must therefore be 1 (not 0 or 2).
+    // unresolvedCities must be empty because the city geocoded successfully.
+    let updateCallCount = 0;
+    const successfulUpdates: Record<string, unknown>[] = [];
+
+    const catalogFake = {
+      select: (cols: string) => {
+        if (cols.includes("canonical_location_key")) {
+          return {
+            eq: (_col: string, _val: unknown) => ({
+              then: (resolve: (v: { data: unknown[]; error: null }) => void) =>
+                resolve({
+                  data: [
+                    {
+                      id: "cat-put-loop-fail-1",
+                      canonical_location_key: "city:XX:rekeyfailburg",
+                      stamp_type: "city",
+                      country: "Unknown",
+                      country_code: "XX",
+                      city: "Rekeyfailburg",
+                      neighborhood: null,
+                      display_name: "Rekeyfailburg",
+                    },
+                    {
+                      id: "cat-put-loop-fail-2",
+                      canonical_location_key: "neighborhood:XX:rekeyfailburg:old-quarter",
+                      stamp_type: "neighborhood",
+                      country: "Unknown",
+                      country_code: "XX",
+                      city: "Rekeyfailburg",
+                      neighborhood: "Old Quarter",
+                      display_name: "Old Quarter",
+                    },
+                  ],
+                  error: null,
+                }),
+            }),
+          };
+        }
+        // Survivor-check chain — no survivor for either entry.
+        const chain: any = {
+          eq: () => chain,
+          neq: () => chain,
+          maybeSingle: async () => ({ data: null, error: null }),
+        };
+        return chain;
+      },
+      update: (fields: Record<string, unknown>) => {
+        updateCallCount += 1;
+        const callIndex = updateCallCount;
+        if (callIndex > 1) {
+          successfulUpdates.push(fields);
+        }
+        return {
+          eq: () =>
+            Promise.resolve({
+              data: null,
+              // Only the first call errors; subsequent calls succeed.
+              error:
+                callIndex === 1
+                  ? { message: "permission denied for table universal_stamp_catalog" }
+                  : null,
+            }),
+        };
+      },
+    };
+
+    const client: any = {
+      auth: {
+        getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+      },
+      from: (table: string) => {
+        if (table === "profiles") {
+          return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+        }
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: (_cols: string) => builder([]),
+            upsert: (_row: unknown, _o?: unknown) =>
+              Promise.resolve({ data: null, error: null }),
+          };
+        }
+        if (table === "universal_stamp_catalog") {
+          return catalogFake;
+        }
+        return builder([]);
+      },
+    };
+
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    // Geocoder resolves successfully to Austria (AT) for both entries.
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Austria", "AT"));
+
+    const r = await apiReq("PUT", "/admin/geocode-cache/rekeyfailburg", {
+      country_code: "AT",
+      country: "Austria",
+      repair_catalog: true,
+    });
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.ok(r.body.repair, "response should include repair stats");
+    const repair = r.body.repair as RepairStats;
+
+    // Only the second entry succeeded — catalogRekeyed must be exactly 1.
+    assert.equal(
+      repair.catalogRekeyed,
+      1,
+      `catalogRekeyed must be 1 (first failed, second succeeded) — got ${repair.catalogRekeyed}`,
+    );
+
+    // The second update must have been attempted — the loop must not have aborted.
+    assert.equal(
+      updateCallCount,
+      2,
+      `catalog update must have been called twice (once per entry) — got ${updateCallCount}`,
+    );
+
+    // The city resolved successfully, so unresolvedCities must be empty.
+    assert.equal(
+      repair.unresolvedCities.length,
+      0,
+      `unresolvedCities must be empty — got: ${JSON.stringify(repair.unresolvedCities)}`,
+    );
+  });
 });
 
 // ── PUT /admin/geocode-cache/:city_key — xx_entries_pending ───────────────────
