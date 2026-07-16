@@ -269,6 +269,169 @@ describe("geocode DELETE cross-instance propagation", () => {
       "result is still KR — re-resolved fresh from Nominatim");
   });
 
+  // ── Null-result (Nominatim-down) path after admin deletion ───────────────────
+
+  it("caches null for 6 hours when Nominatim is down after deletion-eviction — does NOT write null to DB", async () => {
+    const T0 = 1_700_000_000_000;
+    const NEGATIVE_TTL_MS = 6 * 60 * 60 * 1_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    let upsertCalls = 0;
+
+    // Nominatim is down — simulated as a network error throw.
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      throw new Error("network_error");
+    });
+
+    // Phase 1: DB has the row — warm-up loads from DB cache.
+    const { client, switchToDeleted } = makePhasedDbClient({
+      country: "France",
+      country_code: "FR",
+      corrected_at: null,
+    });
+
+    // Wrap the client to count upsert (writeDbCache) calls.
+    const trackingClient = {
+      from(table: string) {
+        const inner = (client as any).from(table);
+        return {
+          ...inner,
+          select() { return this; },
+          eq() { return this; },
+          gte() { return this; },
+          async maybeSingle() { return inner.maybeSingle(); },
+          upsert() {
+            upsertCalls++;
+            return Promise.resolve({ error: null });
+          },
+          then(resolve: (v: any) => void) {
+            resolve({ data: [], error: null });
+          },
+        };
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(trackingClient);
+
+    const first = await geocodeCityCountry("Paris");
+    assert.equal(first?.countryCode, "FR", "pre-condition: DB cache hit returns FR");
+    assert.equal(nominatimCalls, 0, "no Nominatim call on DB cache hit");
+    assert.equal(upsertCalls, 0, "no writeDbCache on DB cache hit");
+
+    // Admin deletes the row — next probe will find it gone.
+    switchToDeleted();
+
+    // Advance past the correction-check interval — probe fires, row is gone, evict.
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000);
+
+    const afterDeletion = await geocodeCityCountry("Paris");
+
+    assert.equal(afterDeletion, null,
+      "null is returned because Nominatim is down after deletion-eviction");
+    assert.equal(nominatimCalls, 1, "Nominatim was attempted exactly once");
+    assert.equal(upsertCalls, 0,
+      "writeDbCache must NOT be called for a null (negative) result — DB row was intentionally deleted");
+
+    // The null result is cached for 6 hours.  A second request within the
+    // window should serve the cached null without hitting Nominatim again.
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000 + NEGATIVE_TTL_MS - 1_000);
+    const withinTtl = await geocodeCityCountry("Paris");
+    assert.equal(withinTtl, null, "null is still returned within the 6-hour negative TTL");
+    assert.equal(nominatimCalls, 1, "Nominatim not called again within the negative TTL window");
+    assert.equal(upsertCalls, 0, "writeDbCache still never called during the negative TTL window");
+  });
+
+  it("returns null from cache for a second request within the 6-hour window — no crash, no infinite loop", async () => {
+    const T0 = 1_700_000_000_000;
+    const NEGATIVE_TTL_MS = 6 * 60 * 60 * 1_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      throw new Error("nominatim_503");
+    });
+
+    const { client, switchToDeleted } = makePhasedDbClient({
+      country: "Italy",
+      country_code: "IT",
+      corrected_at: null,
+    });
+    _setGeocodeDbClientForTests(client);
+
+    // Warm-up from DB.
+    await geocodeCityCountry("Rome");
+
+    switchToDeleted();
+
+    // Trigger eviction and first null-result (Nominatim down).
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000);
+    const first = await geocodeCityCountry("Rome");
+    assert.equal(first, null, "first post-eviction call returns null");
+    assert.equal(nominatimCalls, 1, "Nominatim attempted once");
+
+    // Immediately request again — should serve the cached null, not call Nominatim again.
+    const second = await geocodeCityCountry("Rome");
+    assert.equal(second, null, "second request within window returns null from cache");
+    assert.equal(nominatimCalls, 1,
+      "Nominatim not called a second time — null is served from the in-memory negative cache");
+
+    // Halfway through the TTL — still cached null.
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000 + Math.floor(NEGATIVE_TTL_MS / 2));
+    const midTtl = await geocodeCityCountry("Rome");
+    assert.equal(midTtl, null, "null still served halfway through the TTL");
+    assert.equal(nominatimCalls, 1, "still no additional Nominatim call mid-TTL");
+  });
+
+  it("retries Nominatim after the 6-hour negative TTL expires — not stuck null forever", async () => {
+    const T0 = 1_700_000_000_000;
+    const NEGATIVE_TTL_MS = 6 * 60 * 60 * 1_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    let nominatimShouldSucceed = false;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      if (nominatimShouldSucceed) {
+        return {
+          ok: true,
+          json: async () => [{ address: { country_code: "es", country: "Spain" } }],
+        };
+      }
+      throw new Error("nominatim_down");
+    });
+
+    const { client, switchToDeleted } = makePhasedDbClient({
+      country: "Spain",
+      country_code: "ES",
+      corrected_at: null,
+    });
+    _setGeocodeDbClientForTests(client);
+
+    // Warm-up from DB.
+    await geocodeCityCountry("Barcelona");
+
+    switchToDeleted();
+
+    // Evict + first Nominatim attempt (fails → 6-hour negative cache).
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000);
+    const firstNull = await geocodeCityCountry("Barcelona");
+    assert.equal(firstNull, null, "null after deletion when Nominatim is down");
+    assert.equal(nominatimCalls, 1, "one Nominatim attempt");
+
+    // Advance to just after the 6-hour TTL — cache entry is expired.
+    // Nominatim is now back up.
+    nominatimShouldSucceed = true;
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000 + NEGATIVE_TTL_MS + 1_000);
+
+    const afterTtl = await geocodeCityCountry("Barcelona");
+    assert.equal(afterTtl?.countryCode, "ES",
+      "geocoder retries Nominatim after the 6-hour negative TTL and resolves successfully");
+    assert.equal(nominatimCalls, 2, "Nominatim called again after the TTL expired");
+  });
+
   it("sweep does NOT evict a deleted city — deletion propagation relies solely on the on-request probe", async () => {
     const T0 = 1_700_000_000_000;
     mockNow(T0);
