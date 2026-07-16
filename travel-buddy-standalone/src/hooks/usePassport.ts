@@ -5,12 +5,12 @@
  * Falls back to mock data if backend is not configured.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { OwnProfile, PassportPostcard, PassportStamp } from '../types/models';
-import type { PassportMemory } from '../services/passportStamps';
-import { getMyProfile, getMyPassportPostcards, getMyStamps } from '../services/profile';
-import { getMyPassportMemories, getMyPassportSuggestions } from '../services/passportStamps';
-import { isSupabaseConfigured } from '../lib/supabase';
-import { mockPassport } from '../data/passport';
+import type { OwnProfile, PassportPostcard, PassportStamp } from '../types/models.ts';
+import type { PassportMemory } from '../services/passportStamps.ts';
+import { getMyProfile, getMyPassportPostcards, getMyStamps } from '../services/profile.ts';
+import { getMyPassportMemories, getMyPassportSuggestions } from '../services/passportStamps.ts';
+import { isSupabaseConfigured } from '../lib/supabase.ts';
+import { mockPassport } from '../data/passport.ts';
 
 export interface PassportState {
   profile: OwnProfile | null;

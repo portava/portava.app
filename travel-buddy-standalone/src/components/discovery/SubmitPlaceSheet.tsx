@@ -14,9 +14,9 @@ import {
   ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { X, MapPin, Star, ChevronDown, ChevronUp } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import { submitCommunityPlace } from '../../services/discovery';
-import { GpsLocationCapture } from '../location/GpsLocationCapture';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { submitCommunityPlace } from '../../services/discovery.ts';
+import { GpsLocationCapture } from '../location/GpsLocationCapture.tsx';
 
 const CATEGORIES = [
   'hidden_gem', 'food', 'nightlife', 'activities',

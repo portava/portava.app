@@ -2,8 +2,8 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import Svg, { Path, Defs, Pattern, Rect, Line, Circle } from 'react-native-svg';
 import { Stamp as StampIcon, Users, CalendarDays, MapPin, ChevronRight } from 'lucide-react-native';
-import type { TravelStats } from '../types/models';
-import { color, space, radius, type as t } from '../theme/tokens';
+import type { TravelStats } from '../types/models.ts';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 /**
  * Clickable info bar — icon-circle items, each routes somewhere (never dead).

@@ -7,9 +7,9 @@
  * profile id is a real Supabase UUID so HighlightRing activates correctly.
  */
 import { useEffect, useState, useRef, useCallback } from 'react';
-import type { DiscoveryItem, TravelerPick } from '../data/discovery';
-import { getCommunityPlaces } from '../services/discovery';
-import type { CommunityPlaceItem, DiscoveryPlace } from '../services/discovery';
+import type { DiscoveryItem, TravelerPick } from '../data/discovery.ts';
+import { getCommunityPlaces } from '../services/discovery.ts';
+import type { CommunityPlaceItem, DiscoveryPlace } from '../services/discovery.ts';
 
 function timeAgo(isoString: string): string {
   const diff = Date.now() - new Date(isoString).getTime();

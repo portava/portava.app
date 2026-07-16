@@ -42,12 +42,12 @@
 import React from 'react';
 import { ScrollView } from 'react-native';
 import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
-import StampStudioIndex from '../../../app/admin/stamps/index';
+import StampStudioIndex from '../../../app/admin/stamps/index.tsx';
 import { useFocusEffect } from 'expo-router';
 import {
   getAdminStampCatalog,
   getStampWorkerHealth,
-} from '../../services/adminStamps';
+} from '../../services/adminStamps.ts';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 

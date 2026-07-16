@@ -6,9 +6,9 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { ChevronDown, ChevronUp, DoorOpen, HelpCircle } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import { fmtClock, fmtDur } from './layoverFormat';
-import type { LeaveAdvice, LayoverWindow, PublicAirport } from '../../services/layover';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { fmtClock, fmtDur } from './layoverFormat.ts';
+import type { LeaveAdvice, LayoverWindow, PublicAirport } from '../../services/layover.ts';
 
 interface Props {
   advice: LeaveAdvice;

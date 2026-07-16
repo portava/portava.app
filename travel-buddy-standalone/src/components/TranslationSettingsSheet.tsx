@@ -15,7 +15,7 @@ import {
   Switch,
 } from 'react-native';
 import { X } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 interface Props {
   visible: boolean;

@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, Image, StyleSheet } from 'react-native';
 import { Plane, Map, Award } from 'lucide-react-native';
-import { color, space, radius } from '../theme/tokens';
-import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity';
+import { color, space, radius } from '../theme/tokens.ts';
+import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
 
 export interface PassportShareCardProps {
   displayName: string | null;

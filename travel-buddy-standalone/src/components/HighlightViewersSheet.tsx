@@ -9,8 +9,8 @@ import {
 } from 'react-native';
 import { X, Heart } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t, shadow } from '../theme/tokens';
-import { fetchHighlightViewers, type HighlightViewer } from '../services/highlights';
+import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { fetchHighlightViewers, type HighlightViewer } from '../services/highlights.ts';
 
 interface Props {
   visible: boolean;

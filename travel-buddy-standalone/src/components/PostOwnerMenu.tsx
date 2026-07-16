@@ -28,9 +28,9 @@ import {
   X, Pencil, Clock, Users, EyeOff, Eye,
   Share2, Repeat2, Archive, Trash2, ChevronRight,
 } from 'lucide-react-native';
-import { color, space, shadow } from '../theme/tokens';
-import { updatePostSettings, archivePost, deletePost } from '../services/postEngagement';
-import { EditHistorySheet } from './EditHistorySheet';
+import { color, space, shadow } from '../theme/tokens.ts';
+import { updatePostSettings, archivePost, deletePost } from '../services/postEngagement.ts';
+import { EditHistorySheet } from './EditHistorySheet.tsx';
 
 export interface PostSettings {
   commentsSetting: 'everyone' | 'friends' | 'circle' | 'trip_crew' | 'verified' | 'disabled';

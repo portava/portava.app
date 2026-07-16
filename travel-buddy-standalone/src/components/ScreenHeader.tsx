@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft } from 'lucide-react-native';
-import { color, space, type as t } from '../theme/tokens';
+import { color, space, type as t } from '../theme/tokens.ts';
 
 export function ScreenHeader({
   title,

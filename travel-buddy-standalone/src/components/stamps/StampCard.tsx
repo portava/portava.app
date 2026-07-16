@@ -7,10 +7,10 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Lock, EyeOff } from 'lucide-react-native';
-import { UniversalStampArtwork } from './UniversalStampArtwork';
-import type { PassportStamp } from '../../types/models';
-import type { PassportStampNew } from '../../services/passportStamps';
-import { color, space, radius, type as t } from '../../theme/tokens';
+import { UniversalStampArtwork } from './UniversalStampArtwork.tsx';
+import type { PassportStamp } from '../../types/models.ts';
+import type { PassportStampNew } from '../../services/passportStamps.ts';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
 const RARITY_COLORS: Record<string, string> = {
   common:    '#6B7280',

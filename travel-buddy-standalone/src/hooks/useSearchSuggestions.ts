@@ -10,8 +10,8 @@
  *  - Stale-response guard: only the latest request may commit state.
  */
 import { useEffect, useRef, useState } from 'react';
-import { getSearchSuggestions } from '../services/discovery';
-import type { SuggestGroup } from '../services/discovery';
+import { getSearchSuggestions } from '../services/discovery.ts';
+import type { SuggestGroup } from '../services/discovery.ts';
 
 const DEBOUNCE_MS = 250;
 const CACHE_TTL_MS = 60_000;

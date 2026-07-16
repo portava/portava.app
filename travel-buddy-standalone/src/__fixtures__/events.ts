@@ -2,8 +2,8 @@
  * MOCK availability + city events — TEMPORARY local fallback.
  * Replace with useAvailability()/useCityPulse() backed by the API.
  */
-import type { Availability, CityEvent } from '../types/models';
-import { users, cebu } from './cebu';
+import type { Availability, CityEvent } from '../types/models.ts';
+import { users, cebu } from './cebu.ts';
 
 // Drae is on a Cebu trip, open evenings/late; recurring weekend evenings.
 export const mockAvailability: Availability = {

@@ -16,7 +16,7 @@
 
 import React from 'react';
 import { render } from '@testing-library/react-native';
-import { ReviewsSection } from '../ReviewsSection';
+import { ReviewsSection } from '../ReviewsSection.tsx';
 
 // ── expo-router mock ──────────────────────────────────────────────────────────
 // Replace useFocusEffect with a plain useEffect so the callback fires on mount

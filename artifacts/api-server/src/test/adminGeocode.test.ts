@@ -1095,6 +1095,161 @@ describe("DELETE /admin/geocode-cache/:city_key with repair_catalog", () => {
     );
   });
 
+  it("does not abort the loop when the first catalog update fails — the second entry is still attempted", async () => {
+    // Seed two XX entries for the same city.  The first catalog update call
+    // deliberately returns a DB error; the second must still be attempted and
+    // must count as a success.  catalogRekeyed must therefore be 1 (not 0 or 2).
+    const catalogUpdates: Record<string, unknown>[] = [];
+    let updateCallCount = 0;
+
+    // Build a custom catalog fake whose update only errors on the first call.
+    const catalogFakeWithPartialError = {
+      select: (cols: string) => {
+        if (cols.includes("canonical_location_key")) {
+          return {
+            eq: (_col: string, _val: unknown) => ({
+              then: (resolve: (v: { data: unknown[]; error: null }) => void) =>
+                resolve({
+                  data: [
+                    {
+                      id: "cat-loop-fail-1",
+                      canonical_location_key: "city:XX:loopburg",
+                      stamp_type: "city",
+                      country: "Unknown",
+                      country_code: "XX",
+                      city: "Loopburg",
+                      neighborhood: null,
+                      display_name: "Loopburg",
+                    },
+                    {
+                      id: "cat-loop-fail-2",
+                      canonical_location_key: "neighborhood:XX:loopburg:old-quarter",
+                      stamp_type: "neighborhood",
+                      country: "Unknown",
+                      country_code: "XX",
+                      city: "Loopburg",
+                      neighborhood: "Old Quarter",
+                      display_name: "Old Quarter",
+                    },
+                  ],
+                  error: null,
+                }),
+            }),
+          };
+        }
+        // Survivor-check chain — no survivor for either entry.
+        const chain: any = {
+          eq: () => chain,
+          neq: () => chain,
+          maybeSingle: async () => ({ data: null, error: null }),
+        };
+        return chain;
+      },
+      update: (fields: Record<string, unknown>) => {
+        updateCallCount += 1;
+        const callIndex = updateCallCount;
+        return {
+          eq: () =>
+            Promise.resolve({
+              data: null,
+              // Only the first call errors; subsequent calls succeed.
+              error:
+                callIndex === 1
+                  ? { message: "permission denied for table universal_stamp_catalog" }
+                  : null,
+            }),
+        };
+        // Record updates that succeed (call index > 1).
+      },
+    };
+
+    // Wrap in a full fake client so it can record successful updates.
+    const successfulUpdates: Record<string, unknown>[] = [];
+    const catalogFake = {
+      select: catalogFakeWithPartialError.select,
+      update: (fields: Record<string, unknown>) => {
+        updateCallCount += 1;
+        const callIndex = updateCallCount;
+        if (callIndex > 1) {
+          successfulUpdates.push(fields);
+          catalogUpdates.push(fields);
+        }
+        return {
+          eq: () =>
+            Promise.resolve({
+              data: null,
+              error:
+                callIndex === 1
+                  ? { message: "permission denied for table universal_stamp_catalog" }
+                  : null,
+            }),
+        };
+      },
+    };
+
+    // Reset counter before building the client.
+    updateCallCount = 0;
+
+    const client: any = {
+      auth: {
+        getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+      },
+      from: (table: string) => {
+        if (table === "profiles") {
+          return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+        }
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: (_cols: string) => builder([]),
+            update: (_fields: Record<string, unknown>) => ({
+              eq: (_col: string, _key: string) =>
+                Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+        if (table === "universal_stamp_catalog") {
+          return catalogFake;
+        }
+        return builder([]);
+      },
+    };
+
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    // Geocoder resolves successfully to Austria (AT) for both entries.
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Austria", "AT"));
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/loopburg", undefined, "repair_catalog=true");
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.deleted, true);
+    assert.ok(r.body.repair, "response should include repair stats");
+    const repair = r.body.repair as RepairStats;
+
+    // Only the second entry succeeded — catalogRekeyed must be exactly 1.
+    assert.equal(
+      repair.catalogRekeyed,
+      1,
+      `catalogRekeyed must be 1 (first failed, second succeeded) — got ${repair.catalogRekeyed}`,
+    );
+
+    // The second update must have been attempted — the loop must not have aborted.
+    assert.equal(
+      updateCallCount,
+      2,
+      `catalog update must have been called twice (once per entry) — got ${updateCallCount}`,
+    );
+
+    // The city resolved successfully, so unresolvedCities must be empty.
+    assert.equal(
+      repair.unresolvedCities.length,
+      0,
+      `unresolvedCities must be empty — got: ${JSON.stringify(repair.unresolvedCities)}`,
+    );
+  });
+
   it("reports accurate xx_entries_pending on a second DELETE after the geocode row is re-added via PUT", async () => {
     // Scenario: admin deletes the geocode row, then immediately re-adds it via
     // PUT (no repair_catalog), then deletes again.  The XX catalog entries were

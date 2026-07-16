@@ -9,9 +9,9 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { Sparkles, ChevronRight, Star, Shield, Zap, Globe, Award } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import { fetchCompassActiveReward, type CompassActiveReward } from '../../services/compass';
-import { useSession } from '../../context/SessionContext';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { fetchCompassActiveReward, type CompassActiveReward } from '../../services/compass.ts';
+import { useSession } from '../../context/SessionContext.tsx';
 
 const BADGE_LABELS: Record<string, string> = {
   city_ambassador_candidate: 'Ambassador',

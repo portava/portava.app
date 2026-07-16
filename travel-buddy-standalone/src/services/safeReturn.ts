@@ -3,7 +3,7 @@
  * All network calls go through EXPO_PUBLIC_API_BASE_URL (the API server proxy).
  * Auth token comes from the shared refresh-first helper — same pattern as trips.ts.
  */
-import { supabase } from '../lib/supabase';
+import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';

@@ -3,18 +3,18 @@ import {
   View, Text, Image, Pressable, StyleSheet, Platform, Dimensions,
 } from 'react-native';
 import { router } from 'expo-router';
-import { getMediaFilter, buildCssFilter } from '../lib/media/filters';
+import { getMediaFilter, buildCssFilter } from '../lib/media/filters.ts';
 import { MapPin, Sparkles, MessageCircleQuestion, CalendarDays, PlayCircle, MoreVertical } from 'lucide-react-native';
-import type { Post } from '../types/models';
-import { color, space, radius, type as t, shadow } from '../theme/tokens';
-import { Stamp, Avatar, Scrim, needsContrastFallback } from './ui';
-import { ActionBar } from './ActionBar';
-import { RichText } from './RichText';
-import { useSession } from '../context/SessionContext';
-import { ReportPostSheet } from './ReportPostSheet';
-import { PostOwnerMenu, type PostSettings } from './PostOwnerMenu';
-import { MediaStampOverlay } from './StampOverlayBadge';
-import { SaveButton } from './SaveButton';
+import type { Post } from '../types/models.ts';
+import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { Stamp, Avatar, Scrim, needsContrastFallback } from './ui.tsx';
+import { ActionBar } from './ActionBar.tsx';
+import { RichText } from './RichText.tsx';
+import { useSession } from '../context/SessionContext.tsx';
+import { ReportPostSheet } from './ReportPostSheet.tsx';
+import { PostOwnerMenu, type PostSettings } from './PostOwnerMenu.tsx';
+import { MediaStampOverlay } from './StampOverlayBadge.tsx';
+import { SaveButton } from './SaveButton.tsx';
 
 const { height: _screenH } = Dimensions.get('window');
 const HERO_HEIGHT = Math.min(Math.round(_screenH * 0.60), 560);

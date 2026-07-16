@@ -7,8 +7,8 @@
 import React from 'react';
 import { Pressable, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { MapPin, ChevronDown } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens';
-import { useLocationContext } from '../context/LocationContext';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { useLocationContext } from '../context/LocationContext.tsx';
 
 interface Props {
   fallbackLabel?: string;
