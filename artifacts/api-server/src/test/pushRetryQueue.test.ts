@@ -2270,6 +2270,17 @@ describe("PushRetryQueue.processQueue() — duplicate error code (2× DeviceNotR
     const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
     assert.equal(ndaUpdate.patch.status, "failed",   "delivery_attempt status must be 'failed'");
     assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+    // error_message must mirror last_error — both the aggregated count and the second code
+    // must appear in the delivery attempt so operators see the same detail as the queue row.
+    const ndaErrorMsg = ndaUpdate.patch.error_message as string;
+    assert.ok(
+      ndaErrorMsg && ndaErrorMsg.includes("DeviceNotRegistered \u00d7 2"),
+      `delivery_attempt error_message must include "DeviceNotRegistered × 2"; got: ${ndaErrorMsg}`,
+    );
+    assert.ok(
+      ndaErrorMsg.includes("InvalidCredentials \u00d7 1"),
+      `delivery_attempt error_message must include "InvalidCredentials × 1"; got: ${ndaErrorMsg}`,
+    );
   });
 });
 
