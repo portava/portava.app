@@ -3355,6 +3355,200 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
       "a warn should have been emitted for the failed passport_stamps repoint so it is not silently swallowed");
   });
 
+  it("continues the repair loop after one merge fails — the second entry is still merged and counted", async () => {
+    // Two XX catalog entries for the same city ("Loopburg").  Both have a
+    // real-code survivor already in the catalog, so both take the merge path.
+    // The first entry's user_stamps repoint returns an error, so mergeCatalogEntry
+    // returns false and the first XX entry is NOT deleted.  The loop must
+    // continue to the second entry: mergeCatalogEntry returns true, the entry
+    // IS deleted, and catalogMerged ends up at 1 (not 0).
+    const XX_ID_1 = "cat-loop-xx-1";
+    const XX_ID_2 = "cat-loop-xx-2";
+    const SURVIVOR_ID_1 = "cat-loop-survivor-1";
+    const SURVIVOR_ID_2 = "cat-loop-survivor-2";
+
+    const deletedIds: string[] = [];
+    const warnMessages: string[] = [];
+
+    const client: any = {
+      auth: {
+        getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+      },
+      from: (table: string) => {
+        if (table === "profiles") {
+          return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+        }
+
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: (_cols: string) => builder([]),
+            upsert: (_row: unknown, _o?: unknown) =>
+              Promise.resolve({ data: null, error: null }),
+          };
+        }
+
+        if (table === "universal_stamp_catalog") {
+          return {
+            select: (cols: string) => {
+              // Full XX scan — many columns including canonical_location_key.
+              if (cols.includes("canonical_location_key")) {
+                return {
+                  eq: (_col: string, _val: unknown) => ({
+                    then: (resolve: (v: { data: unknown[]; error: null }) => void) =>
+                      resolve({
+                        data: [
+                          {
+                            id: XX_ID_1,
+                            canonical_location_key: "city:XX:loopburg",
+                            stamp_type: "city",
+                            country: "Unknown",
+                            country_code: "XX",
+                            city: "Loopburg",
+                            neighborhood: null,
+                            display_name: "Loopburg",
+                          },
+                          {
+                            id: XX_ID_2,
+                            canonical_location_key: "neighborhood:XX:loopburg:old-loop",
+                            stamp_type: "neighborhood",
+                            country: "Unknown",
+                            country_code: "XX",
+                            city: "Loopburg",
+                            neighborhood: "Old Loop",
+                            display_name: "Old Loop",
+                          },
+                        ],
+                        error: null,
+                      }),
+                  }),
+                };
+              }
+              // earn_count fetch during merge
+              if (cols === "id, earn_count") {
+                return {
+                  in: (_col: string, ids: string[]) =>
+                    Promise.resolve({
+                      data: ids.map((id) => ({ id, earn_count: 0 })),
+                      error: null,
+                    }),
+                };
+              }
+              // Survivor lookup: return the right survivor per stamp_type
+              let resolvedSurvivorId = SURVIVOR_ID_1;
+              const survivorChain: any = {
+                eq: (col: string, val: unknown) => {
+                  if (col === "canonical_location_key" && typeof val === "string") {
+                    resolvedSurvivorId = val.startsWith("neighborhood:")
+                      ? SURVIVOR_ID_2
+                      : SURVIVOR_ID_1;
+                  }
+                  return survivorChain;
+                },
+                neq: () => survivorChain,
+                maybeSingle: async () => ({ data: { id: resolvedSurvivorId }, error: null }),
+              };
+              return survivorChain;
+            },
+            update: () => ({ eq: () => Promise.resolve({ data: null, error: null }) }),
+            delete: () => ({
+              eq: (_col: string, val: string) => {
+                deletedIds.push(val);
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+        }
+
+        if (table === "user_stamps") {
+          return {
+            // Fail only for XX_ID_1; succeed for XX_ID_2.
+            update: (_fields: Record<string, unknown>) => ({
+              eq: (_col: string, val: string) => {
+                if (val === XX_ID_1) {
+                  return Promise.resolve({
+                    data: null,
+                    error: { message: "deadlock detected" },
+                  });
+                }
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+        }
+
+        if (table === "passport_stamps") {
+          return {
+            update: (_fields: Record<string, unknown>) => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        if (table === "stamp_artwork_versions") {
+          return {
+            update: (_fields: unknown) => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        if (table === "stamp_generation_queue") {
+          return {
+            delete: () => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        return builder([]);
+      },
+    };
+
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Germany", "DE"));
+
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnMessages.push(args.map(String).join(" "));
+    };
+
+    let r: { status: number; body: any };
+    try {
+      r = await apiReq("PUT", "/admin/geocode-cache/loopburg", {
+        country_code: "DE",
+        country: "Germany",
+        repair_catalog: true,
+      });
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.equal(r!.status, 200, `expected 200, got ${r!.status}: ${JSON.stringify(r!.body)}`);
+    assert.ok(r!.body.repair, "response should include repair stats");
+    const repair = r!.body.repair as RepairStats;
+
+    // The second merge succeeded — catalogMerged must be 1, not 0.
+    assert.equal(repair.catalogMerged, 1,
+      "catalogMerged must be 1: the loop must continue past the first failed merge and count the second");
+
+    // The first XX entry must NOT be deleted (its merge returned false).
+    assert.equal(deletedIds.includes(XX_ID_1), false,
+      "the first XX entry must not be deleted when its user_stamps repoint errored");
+
+    // The second XX entry MUST be deleted (its merge succeeded).
+    assert.equal(deletedIds.includes(XX_ID_2), true,
+      "the second XX entry must be deleted — its merge succeeded even though the first entry failed");
+
+    // The repoint failure was logged.
+    const repointWarn = warnMessages.find(
+      (m) => m.includes("user_stamps") && m.includes("repoint"),
+    );
+    assert.ok(repointWarn,
+      "a warn must be emitted for the failed user_stamps repoint on the first entry");
+  });
+
   it("does not count a catalog re-key as successful when the DB update call fails", async () => {
     // The city resolves successfully (unresolvedCities must be empty), but the
     // DB write that re-keys the catalog entry returns an error.  The repair stats

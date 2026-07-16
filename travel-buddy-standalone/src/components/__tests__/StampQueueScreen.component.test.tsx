@@ -103,11 +103,12 @@ describe('StampQueueScreen — pull-to-refresh', () => {
 
   it('renders the initial entry from the first fetch', async () => {
     render(<StampQueueScreen />);
-    // Use findByText instead of waitFor(() => getByText(...)) to avoid act()
-    // boundary mismatches that cause intermittent "render function has not been
-    // called" timeouts on slow CI runs.
-    const entry = await screen.findByText('Paris Eiffel');
-    expect(entry).toBeTruthy();
+    // waitFor matches the pattern used by all other tests in this file and
+    // avoids the screen.findByText "render function has not been called" error
+    // that appears under React 19 + RNTL 14 when the async-act scope races
+    // with the query's internal polling setup.
+    await waitFor(() => screen.getByText('Paris Eiffel'));
+    expect(screen.getByText('Paris Eiffel')).toBeTruthy();
   });
 
   it('calls getAdminStampCatalog again when the user pulls to refresh', async () => {
