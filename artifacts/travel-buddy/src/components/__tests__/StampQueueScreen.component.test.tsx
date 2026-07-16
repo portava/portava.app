@@ -409,6 +409,94 @@ describe('StampQueueScreen — search filter', () => {
   });
 });
 
+// ── Combined status + search filter suite ─────────────────────────────────────
+
+/**
+ * Verifies that selecting a status chip while a search term is typed (or vice
+ * versa) causes getAdminStampCatalog to receive BOTH filters in the same call.
+ *
+ * ## Why these tests exist
+ *
+ * `load` is a useCallback that closes over both `status` and `search`.  A
+ * stale-closure bug or a missing dependency in the deps array ([status, search])
+ * would silently drop one of the two values when both are set simultaneously —
+ * the filtered results would include wrong-status entries or ignore the search
+ * term with no error in the console.
+ */
+
+describe('StampQueueScreen — combined status + search filters', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('passes both status and search to the API when a chip is active and the user types', async () => {
+    // Initial load (status='', search='') → returns ENTRY_A.
+    // After chip press (status='approved', search='') → returns ENTRY_B.
+    // After search typed (status='approved', search='Tokyo') → returns ENTRY_B.
+    mockGetCatalog
+      .mockResolvedValueOnce(catalogOk([ENTRY_A]))       // initial
+      .mockResolvedValueOnce(catalogOk([ENTRY_B]))       // after chip press
+      .mockResolvedValue(catalogOk([ENTRY_B]));          // after search typed
+
+    render(<StampQueueScreen />);
+    await waitFor(() => screen.getByText('Paris Eiffel'));
+
+    // Press the "approved" status chip.
+    const approvedChip = screen.getByText('approved');
+    await act(async () => { fireEvent.press(approvedChip); });
+
+    // Type a search term.
+    const input = screen.getByPlaceholderText('Search by name…');
+    await act(async () => { fireEvent.changeText(input, 'Tokyo'); });
+
+    // At least one call must include both status: 'approved' and search: 'Tokyo'.
+    await waitFor(() => {
+      const calls = mockGetCatalog.mock.calls;
+      const combinedCall = calls.find(
+        (args) => args[0]?.status === 'approved' && args[0]?.search === 'Tokyo',
+      );
+      expect(combinedCall).toBeDefined();
+    });
+  });
+
+  it('passes status but not search after the search field is cleared while a chip is active', async () => {
+    // Initial → after chip press → after search typed → after search cleared.
+    mockGetCatalog
+      .mockResolvedValueOnce(catalogOk([ENTRY_A]))       // initial
+      .mockResolvedValueOnce(catalogOk([ENTRY_B]))       // chip pressed
+      .mockResolvedValueOnce(catalogOk([ENTRY_B]))       // search typed
+      .mockResolvedValue(catalogOk([ENTRY_B]));          // search cleared
+
+    render(<StampQueueScreen />);
+    await waitFor(() => screen.getByText('Paris Eiffel'));
+
+    // Press the "approved" chip.
+    const approvedChip = screen.getByText('approved');
+    await act(async () => { fireEvent.press(approvedChip); });
+
+    // Type a search term.
+    const input = screen.getByPlaceholderText('Search by name…');
+    await act(async () => { fireEvent.changeText(input, 'Tokyo'); });
+
+    // Wait for the combined-filter call to settle.
+    await waitFor(() => {
+      const calls = mockGetCatalog.mock.calls;
+      expect(calls.some((a) => a[0]?.status === 'approved' && a[0]?.search === 'Tokyo')).toBe(true);
+    });
+
+    // Clear the search field.
+    await act(async () => { fireEvent.changeText(input, ''); });
+
+    // The last call must carry status: 'approved' but no search.
+    await waitFor(() => {
+      const calls = mockGetCatalog.mock.calls;
+      const last = calls[calls.length - 1][0];
+      expect(last.status).toBe('approved');
+      expect(last.search).toBeUndefined();
+    });
+  });
+});
+
 // ── API error suite ────────────────────────────────────────────────────────────
 
 /**
