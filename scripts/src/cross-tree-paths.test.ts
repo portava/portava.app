@@ -880,6 +880,48 @@ describe('extractCrossTreePaths — template-literal and non-literal detection',
       `expected the resolved path "${entry.resolved}" to be missing (intentionally broken __helpers__-style fixture)`,
     );
   });
+
+  it('flags a __testUtils__ helper with a genuinely broken path — not silently skipped', () => {
+    // Simulate a helper file that would live inside a real __testUtils__ directory.
+    // It contains a readFileSync(pathResolve(__dir, '../../nonexistent.json')) call
+    // whose path does not resolve to any existing file.  extractCrossTreePaths must
+    // return an entry whose resolved path does NOT exist — confirming the guard would
+    // flag it rather than silently skipping it.
+    const tmpDir = path.join(import.meta.dirname, '__tmp-testUtils__');
+    const tmpFile = path.join(tmpDir, 'brokenHelper.ts');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    fs.writeFileSync(
+      tmpFile,
+      [
+        `import fs from 'node:fs';`,
+        `import { resolve as pathResolve } from 'node:path';`,
+        `const __dir = import.meta.dirname;`,
+        `// Intentionally broken: this file does not exist`,
+        `fs.readFileSync(pathResolve(__dir, '../../nonexistent.json'), 'utf8');`,
+      ].join('\n') + '\n',
+      'utf8',
+    );
+    try {
+      const entries = extractCrossTreePaths(tmpFile);
+
+      const brokenEntries = entries.filter(
+        (e) => !e.unresolvable && e.rawArg.includes('../../nonexistent.json'),
+      );
+      assert.ok(
+        brokenEntries.length >= 1,
+        `expected at least one resolvable entry referencing "../../nonexistent.json" in the __testUtils__ helper; got: ${JSON.stringify(entries)}`,
+      );
+
+      const entry = brokenEntries[0]!;
+      assert.equal(
+        fs.existsSync(entry.resolved),
+        false,
+        `expected the resolved path "${entry.resolved}" to be missing — the broken __testUtils__ path must be flagged, not silently skipped`,
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ── Tests: collectHelperFiles directory-name matching ─────────────────────────
