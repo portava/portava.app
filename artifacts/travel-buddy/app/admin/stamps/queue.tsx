@@ -63,8 +63,15 @@ export default function StampQueueScreen() {
         <Text style={styles.rowName} numberOfLines={1}>{item.display_name}</Text>
         <Text style={styles.rowSub}>{item.stamp_type} · {item.country_code} · {item.earn_count ?? 0} earners</Text>
       </View>
-      <View style={[styles.badge, { backgroundColor: statusBg(item.status) }]}>
-        <Text style={styles.badgeText}>{item.status?.replace(/_/g, ' ')}</Text>
+      <View style={styles.badgeCol}>
+        {item.status === 'review_required' && typeof item.last_error === 'string' && item.last_error.startsWith('candidate_shortfall') && (
+          <View style={[styles.badge, styles.degradedBadge]}>
+            <Text style={[styles.badgeText, styles.degradedBadgeText]}>degraded</Text>
+          </View>
+        )}
+        <View style={[styles.badge, { backgroundColor: statusBg(item.status) }]}>
+          <Text style={styles.badgeText}>{item.status?.replace(/_/g, ' ')}</Text>
+        </View>
       </View>
     </Pressable>
   );
@@ -152,7 +159,10 @@ const styles = StyleSheet.create({
   rowMeta:       { flex: 1 },
   rowName:       { ...t.body, color: color.ink, fontWeight: '600' },
   rowSub:        { ...t.small, color: color.mute },
+  badgeCol:      { alignItems: 'flex-end', gap: 4 },
   badge:         { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
+  degradedBadge: { backgroundColor: '#FEE2E2', borderWidth: 1, borderColor: '#FCA5A5' },
+  degradedBadgeText: { color: '#B91C1C' },
   badgeText:     { fontSize: 10, fontWeight: '700', color: '#374151' },
   sep:           { height: 1, backgroundColor: color.haze, marginLeft: space.md },
   empty:         { textAlign: 'center', color: color.mute, padding: space.xl },

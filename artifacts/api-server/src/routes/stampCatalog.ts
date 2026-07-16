@@ -202,6 +202,24 @@ router.get("/admin/stamps/catalog", async (req, res) => {
   const { data, error, count } = await q;
   if (error) { sendError(res, "db_error", error.message); return; }
 
+  // Attach queue last_error to review_required entries so the list can flag
+  // degraded generations (e.g. candidate_shortfall) without opening each row.
+  const entries: any[] = (data ?? []) as any[];
+  const reviewIds = entries.filter((e) => e.status === "review_required").map((e) => e.id);
+  if (reviewIds.length > 0) {
+    const { data: queueRows } = await sc
+      .from("stamp_generation_queue")
+      .select("catalog_id, last_error")
+      .in("catalog_id", reviewIds)
+      .eq("status", "review_required");
+    const errByCatalog = new Map<string, string | null>(
+      ((queueRows ?? []) as any[]).map((r) => [r.catalog_id, r.last_error ?? null])
+    );
+    for (const e of entries) {
+      if (errByCatalog.has(e.id)) e.last_error = errByCatalog.get(e.id);
+    }
+  }
+
   // Status counts
   const { data: counts } = await sc
     .from("universal_stamp_catalog")
@@ -240,7 +258,7 @@ router.get("/admin/stamps/catalog", async (req, res) => {
   }
 
   res.json({
-    entries: data ?? [],
+    entries,
     total: count ?? 0,
     page,
     statusCounts,
