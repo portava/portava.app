@@ -894,6 +894,73 @@ describe("PushRetryQueue.processQueue() — dead-token clearing on retry", () =>
     assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
   });
 
+  it("mirrors both dead-token codes in delivery_attempt error_message on a non-final attempt (attempt_count=1)", async () => {
+    // attempt_count=1 means this is the second attempt (newAttemptCount=2) — a re-queue would
+    // still be possible by attempt count alone.  But dead tokens are non-retryable regardless,
+    // so the row is finalised immediately.  This test confirms that finalise() copies last_error
+    // into notification_delivery_attempts.error_message even in this mixed-code, non-final case.
+    // A regression in finalise() would leave error_message null and silently hide both codes.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [DEAD_TOKEN, DEAD_TOKEN_IC],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    _setTestFetch(expoMixedDeadTokenFetch());
+    await queue.processQueue();
+
+    // ── Queue row must be finalised as 'failed' — never re-queued ─────────────
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(failedUpdate, "push_retry_queue must be finalised as 'failed' for mixed dead-token batch at attempt_count=1");
+    assert.equal(failedUpdate.filters.id, QUEUE_ROW_ID, "failed update must target the correct queue row");
+
+    // last_error must name both codes
+    const lastError = failedUpdate.patch.last_error as string;
+    assert.ok(
+      lastError && lastError.includes("DeviceNotRegistered \u00d7 1"),
+      `last_error must include "DeviceNotRegistered × 1"; got: ${lastError}`,
+    );
+    assert.ok(
+      lastError.includes("InvalidCredentials \u00d7 1"),
+      `last_error must include "InvalidCredentials × 1"; got: ${lastError}`,
+    );
+
+    // Must NOT be re-queued — dead tokens are non-retryable regardless of remaining attempts
+    assert.ok(
+      !prqUpdates.some((c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID),
+      "must NOT re-queue a row where all tokens are permanently dead (mixed error codes, non-final attempt)",
+    );
+
+    // ── Delivery attempt error_message must mirror last_error ─────────────────
+    // This is the core regression guard: finalise() must copy last_error into error_message.
+    // If it does not, error_message will be null and both codes will be silently lost.
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated for mixed dead-token batch");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status, "failed",   "delivery_attempt status must be 'failed'");
+    assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+    const ndaErrorMsg = ndaUpdate.patch.error_message as string;
+    assert.ok(
+      ndaErrorMsg && ndaErrorMsg.includes("DeviceNotRegistered \u00d7 1"),
+      `delivery_attempt error_message must include "DeviceNotRegistered × 1"; got: ${ndaErrorMsg}`,
+    );
+    assert.ok(
+      ndaErrorMsg.includes("InvalidCredentials \u00d7 1"),
+      `delivery_attempt error_message must include "InvalidCredentials × 1"; got: ${ndaErrorMsg}`,
+    );
+  });
+
   it("names both DeviceNotRegistered and InvalidCredentials in last_error on the final attempt (attempt_count=2)", async () => {
     // attempt_count=2 means two prior failures; this run is attempt 3 — the final attempt.
     // Two tokens: one DeviceNotRegistered (DEAD_TOKEN), one InvalidCredentials (DEAD_TOKEN_IC).
