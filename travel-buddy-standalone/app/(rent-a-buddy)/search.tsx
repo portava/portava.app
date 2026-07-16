@@ -126,7 +126,8 @@ export default function RentABuddySearch() {
     if (reset) { setLoading(true); setError(null); }
     const res = await searchBuddies({
       city,
-      ...(cityLat != null && cityLng != null ? { lat: cityLat, lng: cityLng } : {}),
+      ...(cityLat != null ? { lat: cityLat } : {}),
+      ...(cityLng != null ? { lng: cityLng } : {}),
       category: selectedCategory,
       page: nextPage,
       perPage: 10,

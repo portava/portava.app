@@ -98,7 +98,8 @@ export default function Marketplace() {
     }
     const res = await searchBuddies({
       city: city.trim(),
-      ...(cityLat != null && cityLng != null ? { lat: cityLat, lng: cityLng } : {}),
+      ...(cityLat != null ? { lat: cityLat } : {}),
+      ...(cityLng != null ? { lng: cityLng } : {}),
       ...(category !== 'all' ? { category: category as BuddyCategory } : {}),
       sortBy,
       verifiedOnly: verifiedOnly || undefined,
