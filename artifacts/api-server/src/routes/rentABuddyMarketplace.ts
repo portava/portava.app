@@ -76,6 +76,7 @@ import { Router } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
+import { isNonNumericCoord } from "../lib/coords.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import {
@@ -682,8 +683,6 @@ router.post("/api/rent-a-buddy/requests", async (req, res) => {
   if (!city || !category) return sendError(res, 'invalid_payload', "city and category are required.");
 
   // Reject any non-numeric (but present) coord value — string, boolean, object, etc.
-  const isNonNumericCoord = (v: unknown) =>
-    v !== undefined && v !== null && (typeof v !== "number" || !Number.isFinite(v as number));
   if (isNonNumericCoord(lat) || isNonNumericCoord(lng)) {
     return sendError(res, 'invalid_payload', "lat and lng must be finite numbers.");
   }
@@ -1640,8 +1639,6 @@ router.post("/api/rent-a-buddy/waitlist/v2", async (req, res) => {
   if (!city) return sendError(res, 'invalid_payload', "city is required.");
 
   // Reject any non-numeric (but present) coord value — string, boolean, object, etc.
-  const isNonNumericCoord = (v: unknown) =>
-    v !== undefined && v !== null && (typeof v !== "number" || !Number.isFinite(v as number));
   if (isNonNumericCoord(lat) || isNonNumericCoord(lng)) {
     return sendError(res, 'invalid_payload', "lat and lng must be finite numbers.");
   }

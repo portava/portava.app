@@ -26,6 +26,7 @@ import { endFairExposure } from "../compass/CompassFairExposureEngine.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { checkRentBuddyAccess } from "./rentABuddyRollout.js";
 import { haversineKm } from "../lib/canonicalLocations.js";
+import { isNonNumericCoord } from "../lib/coords.js";
 import { SEED_CITIES } from "../lib/popularCities.js";
 import {
   POLICY_TEXT,
@@ -546,8 +547,6 @@ router.post("/api/rent-a-buddy/search", async (req, res) => {
   } = req.body ?? {};
 
   // Reject any non-numeric (but present) coord value — string, boolean, object, etc.
-  const isNonNumericCoord = (v: unknown) =>
-    v !== undefined && v !== null && (typeof v !== "number" || !Number.isFinite(v as number));
   if (isNonNumericCoord(lat) || isNonNumericCoord(lng)) {
     return sendError(res, "invalid_payload", "lat and lng must be finite numbers.");
   }
