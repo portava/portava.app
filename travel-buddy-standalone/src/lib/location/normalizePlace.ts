@@ -1,7 +1,7 @@
 /**
  * Normalize raw API responses (Nominatim, etc.) into the app's Place shape.
  */
-import type { Place, PlaceType } from './placeTypes';
+import type { Place, PlaceType } from './placeTypes.ts';
 
 /** Map Nominatim type/class strings to our PlaceType enum */
 function mapNominatimType(type: string, cls: string): PlaceType {

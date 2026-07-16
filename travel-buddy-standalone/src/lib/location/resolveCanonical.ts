@@ -11,8 +11,8 @@
  *  - Unauthenticated users simply get the unresolved place back.
  *  - Successful resolutions are cached per place id for the session.
  */
-import type { Place } from './placeTypes';
-import { freshToken } from '../../services/apiToken';
+import type { Place } from './placeTypes.ts';
+import { freshToken } from '../../services/apiToken.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';

@@ -5,7 +5,7 @@
  * All writes go through the API server (service-role + user JWT verification).
  * The client never writes directly to friend_requests or user_friendships.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type FriendStatus = 'none' | 'outgoing_pending' | 'incoming_pending' | 'friends' | 'self';

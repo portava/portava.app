@@ -2,7 +2,7 @@
  * Highlights service — typed fetch wrappers for all highlight API endpoints.
  * Follows the freshToken / apiFetch pattern used by posts.ts and other services.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type HighlightVisibility = 'public' | 'travelers_nearby' | 'circle_only' | 'trip_only' | 'private';

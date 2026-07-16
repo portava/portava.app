@@ -11,8 +11,8 @@
  * file stays presentation-free and portable. Level 2 (custom SVG frames per
  * city) can later extend StampMotif without touching callers.
  */
-import type { PassportStamp, StampKind, StampMotif } from '../types/models';
-import { knowledgeFor } from '../data/knowledge';
+import type { PassportStamp, StampKind, StampMotif } from '../types/models.ts';
+import { knowledgeFor } from '../data/knowledge.ts';
 
 /* City slug -> signature icon + accent. Hand-seeded, provisional. */
 const CITY_MOTIF: Record<string, { iconKey: string; accent: string; caption: string }> = {

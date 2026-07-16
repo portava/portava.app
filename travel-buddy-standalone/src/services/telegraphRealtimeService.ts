@@ -15,7 +15,7 @@
  *     once; the underlying connection is reference-counted and shared.
  */
 
-import { supabase } from '../lib/supabase';
+import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type TelegraphEventType =

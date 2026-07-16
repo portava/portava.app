@@ -25,7 +25,7 @@ import { useSession } from '../context/SessionContext';
 import { CommentsSheet } from './CommentsSheet';
 import { ShareSheet, type ShareTarget } from './ShareSheet';
 import { ReactionPicker, ReactionSummary } from './ReactionPicker';
-import { EngagementUserListSheet } from './EngagementUserListSheet';
+import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
 
 interface Props {
   postId: string;
