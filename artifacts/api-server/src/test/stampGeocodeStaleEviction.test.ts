@@ -548,6 +548,105 @@ describe("correction-sweep eviction: negative entry retries after sweep removes 
   });
 });
 
+// ── Tombstone-sweep eviction retry ───────────────────────────────────────────
+//
+// The correction sweep has a second pass that evicts entries whose DB row has
+// deleted_at set (tombstone path).  A null (negative) cache entry evicted via
+// this path must trigger a fresh geocode on the next call — not stay absent or
+// permanently null.
+
+describe("tombstone-sweep eviction: negative entry retries after sweep removes it via pass 2", () => {
+  /**
+   * Build a fake Supabase client suitable for the tombstone sweep path.
+   *
+   * awaitIdx mapping:
+   *   0 → pass-1 query (corrected_at rows — empty, so tombstone path is exercised)
+   *   1 → pass-2 query (tombstoned rows)
+   *   2 → pass-2 delete (hard-delete of tombstone rows)
+   *
+   * maybeSingle() is used by geocodeCityCountry → readDbCache after the sweep
+   * evicts the entry; it returns null so the code falls through to Nominatim.
+   */
+  function makeTombstoneSweepDbClient(
+    tombstoneRows: Array<{ city_key: string }>,
+  ): SupabaseClient {
+    let awaitIdx = 0;
+    const awaitedResponses: Array<{ data: any; error: null }> = [
+      { data: [],            error: null }, // pass-1: no corrected_at rows
+      { data: tombstoneRows, error: null }, // pass-2: tombstoned rows
+      { data: null,          error: null }, // pass-2 delete result
+    ];
+
+    return {
+      from(_table: string) {
+        const chain: any = {
+          select()  { return chain; },
+          eq()      { return chain; },
+          gte()     { return chain; },
+          not()     { return chain; },
+          in()      { return chain; },
+          delete()  { return chain; },
+          upsert()  { return Promise.resolve({ error: null }); },
+          // Used by geocodeCityCountry → readDbCache after the sweep evicts the entry.
+          // Returns null so the code falls through to Nominatim (the swapped fetch).
+          async maybeSingle() {
+            return { data: null, error: null };
+          },
+          // Thenable: consumed when the caller does `await chain` (sweep array queries).
+          then(
+            resolve: (v: any) => any,
+            reject?: (e: any) => any,
+          ): Promise<any> {
+            const idx = awaitIdx++;
+            const resp = awaitedResponses[Math.min(idx, awaitedResponses.length - 1)];
+            return Promise.resolve(resp).then(resolve, reject);
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+  }
+
+  it("retries and returns a valid result after the tombstone sweep evicts a null cache entry", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Step 1 — seed a null (negative) cache entry.
+    // _setGeocodeFetchForTests also sets _dbClientOverride = null (no DB),
+    // so readDbCache returns null and the code falls through to Nominatim.
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+
+    const first = await geocodeCityCountry("TombstoneCity");
+    assert.equal(first, null, "pre-condition: unresolved city should be cached as null");
+
+    // Step 2 — install a sweep DB client whose pass-2 result contains a
+    // tombstone row for the city key, which will cause the sweep to evict
+    // the null entry via the tombstone path.
+    const cityKey = "tombstonecity"; // normCity("TombstoneCity")
+    const tombstoneDb = makeTombstoneSweepDbClient([{ city_key: cityKey }]);
+    _setGeocodeDbClientForTests(tombstoneDb);
+
+    await _runCorrectionSweepForTests();
+
+    // Step 3 — swap fetch to return a valid geocode result.
+    // _setGeocodeFetchForTests resets _dbClientOverride to null, so readDbCache
+    // returns null and the code proceeds straight to forwardGeocodeCity.
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "br", country: "Brazil" } }],
+    }));
+
+    // Step 4 — the tombstone-sweep-evicted key must re-geocode, not stay absent/null.
+    const second = await geocodeCityCountry("TombstoneCity");
+    assert.equal(
+      second?.countryCode,
+      "BR",
+      "after tombstone-sweep eviction the null entry must be absent so the next call retries and returns a valid result",
+    );
+    assert.equal(second?.country, "Brazil");
+  });
+});
+
 describe("staleness-eviction: corrected_at probe (continued)", () => {
   it("does not probe the DB before the check interval has elapsed", async () => {
     const T0 = 1_700_000_000_000;
