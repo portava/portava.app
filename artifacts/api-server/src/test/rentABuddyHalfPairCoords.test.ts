@@ -392,6 +392,109 @@ describe("POST /api/rent-a-buddy/waitlist — half-pair coord rejection (v1)", (
   });
 });
 
+// ── Suite: POST /api/rent-a-buddy/waitlist (v1) — 201 success path ───────────
+//
+// A separate service client is needed here because all other suites use a
+// client where every feature_flags query returns the same row (rent_buddy_enabled
+// = true), which causes RENT_BUDDY_ADMIN_ONLY_MODE to also appear enabled and
+// blocks the request at 403 before a 201 can be produced.
+//
+// This client uses a flag-aware builder that captures the flag name from the
+// .eq() call so only rent_buddy_enabled resolves to true; all other flags
+// return null (false).  It also supplies a public_mvp city rollout so
+// checkRentBuddyAccess reaches the allowed:true branch.
+
+function makeFlagAwareBuilder(): any {
+  let capturedFlag: string | null = null;
+  const b: any = {
+    select: () => b,
+    insert: () => b,
+    upsert: () => b,
+    update: () => b,
+    delete: () => b,
+    eq: (_col: string, val: string) => { capturedFlag = val; return b; },
+    neq: () => b,
+    in: () => b,
+    is: () => b,
+    gte: () => b,
+    lte: () => b,
+    gt: () => b,
+    lt: () => b,
+    like: () => b,
+    ilike: () => b,
+    contains: () => b,
+    overlaps: () => b,
+    order: () => b,
+    limit: () => b,
+    range: () => b,
+    single: () => {
+      const enabled = capturedFlag === "rent_buddy_enabled";
+      return Promise.resolve({ data: enabled ? { enabled: true } : null, error: null });
+    },
+    maybeSingle: () => {
+      const enabled = capturedFlag === "rent_buddy_enabled";
+      return Promise.resolve({ data: enabled ? { enabled: true } : null, error: null });
+    },
+    then: (resolve: (r: any) => any) =>
+      Promise.resolve({ data: [], error: null }).then(resolve),
+  };
+  return b;
+}
+
+function makeWaitlist201ServiceClient() {
+  return {
+    auth: { getUser: () => Promise.resolve({ data: { user: null }, error: null }) },
+    from: (table: string) => {
+      if (table === "feature_flags") {
+        return makeFlagAwareBuilder();
+      }
+      if (table === "rent_buddy_global_controls") {
+        return makeBuilder({
+          id: 1,
+          all_bookings_paused: false,
+          applications_paused: false,
+          cash_balance_paused: false,
+          nightlife_paused: false,
+          force_full_in_app: false,
+          force_public_meetup: false,
+          force_delayed_posting: false,
+        });
+      }
+      if (table === "rent_buddy_city_rollouts") {
+        return makeBuilder({ id: "rollout-1", status: "public_mvp" });
+      }
+      return makeBuilder(null);
+    },
+  };
+}
+
+describe("POST /api/rent-a-buddy/waitlist — v1 returns 201 on success", () => {
+  before(() => {
+    _setTestServiceClient(makeWaitlist201ServiceClient() as any);
+  });
+
+  after(() => {
+    // Restore the original service client for subsequent suites.
+    _setTestServiceClient(makeServiceClient() as any);
+  });
+
+  it("returns 201 ok:true for a valid city-only entry", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/waitlist", { city: "Bangkok" });
+    assert.equal(res.status, 201, `expected 201, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.ok, true);
+  });
+
+  it("returns 201 ok:true for a valid city + coord pair", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/waitlist", {
+      city: "Bangkok",
+      lat: 13.7563,
+      lng: 100.5018,
+    });
+    assert.equal(res.status, 201, `expected 201, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.ok, true);
+  });
+});
+
 // ── Suite: POST /api/rent-a-buddy/waitlist/v2 ────────────────────────────────
 
 describe("POST /api/rent-a-buddy/waitlist/v2 — half-pair coord rejection", () => {
