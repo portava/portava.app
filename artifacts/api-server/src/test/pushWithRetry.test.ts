@@ -381,6 +381,22 @@ describe("sendPushWithRetry", () => {
       !rentUpdate,
       "transient 5xx must NOT null rent_buddy_profiles.expo_push_token",
     );
+
+    const profileUpdate = db.__updates.find(
+      (u: any) => u.table === "profiles",
+    );
+    assert.ok(
+      !profileUpdate,
+      "transient 5xx must NOT touch profiles",
+    );
+
+    const deviceDelete = db.__deletes.find(
+      (d: any) => d.table === "notification_devices",
+    );
+    assert.ok(
+      !deviceDelete,
+      "transient 5xx must NOT touch notification_devices",
+    );
   });
 
   /**
