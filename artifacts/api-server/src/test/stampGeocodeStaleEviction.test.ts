@@ -178,6 +178,63 @@ describe("staleness-eviction: corrected_at probe", () => {
       "correctionCheckedAt must be set on the fresh re-read entry — no fourth DB call within the same interval");
   });
 
+  it("deletion-eviction: does not re-probe within one interval after eviction+re-read — correctionCheckedAt is set on the fresh entry", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    silentFetch();
+
+    // Simulate a row that was soft-deleted (tombstoned) on another instance.
+    const deletedAtIso = new Date(T0 + 200).toISOString();
+
+    let dbCallCount = 0;
+    const db = makeQueuedDbClient(
+      [
+        // call 0: readDbCache — initial warm-up, returns FR (row is live)
+        { country: "France", country_code: "FR", corrected_at: null },
+        // call 1: evictIfDbCorrected — probe returns deleted_at set → evicts
+        { corrected_at: null, deleted_at: deletedAtIso },
+        // call 2: readDbCache — re-read after eviction; row revived elsewhere, returns DE
+        { country: "Germany", country_code: "DE", corrected_at: null },
+        // call 3 would be a second probe within the same interval — must not happen
+        { corrected_at: null, deleted_at: null },
+      ],
+      (idx) => { dbCallCount = idx + 1; },
+    );
+    _setGeocodeDbClientForTests(db);
+
+    // Call 1: populates the in-memory cache from the DB (DB call 0).
+    const first = await geocodeCityCountry("Lyon");
+    assert.equal(first?.countryCode, "FR", "pre-condition: initial load should return FR");
+    assert.equal(dbCallCount, 1, "exactly one DB call after initial load");
+
+    // Advance past the correction-check interval so the probe fires on the second call.
+    const T1 = T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000;
+    mockNow(T1);
+
+    // Call 2: triggers probe (DB call 1) → deletion-eviction detected, then
+    // re-reads from DB (DB call 2).  The fresh CacheEntry must be stored with
+    // correctionCheckedAt: T1 so the interval guard is honoured immediately.
+    const second = await geocodeCityCountry("Lyon");
+    assert.equal(second?.countryCode, "DE",
+      "after deletion-eviction + re-read the revived DE value should be returned");
+    assert.equal(dbCallCount, 3,
+      "exactly three DB calls after eviction+re-read: initial + deletion probe + re-read");
+
+    // Advance by LESS than one full interval from T1 — probe must NOT fire again.
+    // If correctionCheckedAt were left unset on the new entry the guard would
+    // still pass this check (writtenAt ≈ T1), but we assert the count stays at 3
+    // to document the expected behaviour explicitly.
+    mockNow(T1 + CORRECTION_CHECK_INTERVAL_MS - 1_000);
+
+    // Call 3: must return the cached DE value without triggering another DB probe.
+    const third = await geocodeCityCountry("Lyon");
+    assert.equal(third?.countryCode, "DE",
+      "third call should return the cached DE value");
+    assert.equal(dbCallCount, 3,
+      "correctionCheckedAt must be set on the fresh re-read entry — no fourth DB call within the same interval");
+  });
+
   it("keeps the cached value when corrected_at pre-dates writtenAt", async () => {
     const T0 = 1_700_000_000_000;
     mockNow(T0);
