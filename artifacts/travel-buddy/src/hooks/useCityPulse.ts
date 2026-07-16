@@ -18,7 +18,7 @@ import { mockEvents } from '../data/events';
 import { filterPulse } from '../lib/recommend';
 import { resolveStatus } from '../lib/availability';
 import { useAvailabilityStore } from '../context/AvailabilityStore';
-import { supabase } from '../lib/supabase';
+import { freshToken } from '../services/apiToken';
 export { mapApiEvent, fetchCityEvents, resolveEventsOnSuccess, resolveEventsOnError } from './cityPulseUtils';
 import { fetchCityEvents, resolveEventsOnSuccess, resolveEventsOnError } from './cityPulseUtils';
 
@@ -31,15 +31,6 @@ const DEBOUNCE_MS = 150;
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
-async function freshToken(): Promise<string | null> {
-  try {
-    const { data: refreshed } = await supabase.auth.refreshSession();
-    const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-    return session?.access_token ?? null;
-  } catch {
-    return null;
-  }
-}
 
 export function useAvailability() {
   const { availability } = useAvailabilityStore();

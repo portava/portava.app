@@ -21,7 +21,7 @@ import {
   type ListNotificationsParams,
 } from '../services/notifications';
 import { getDeviceTimezone } from '../services/pushTokenService';
-import { supabase } from '../lib/supabase';
+import { freshToken } from '../services/apiToken';
 import { showNotificationToast } from '../components/NotificationToast';
 
 const UNREAD_POLL_MS = 15_000;
@@ -173,9 +173,7 @@ export function useNotificationStream() {
     if (!activeRef.current) return;
     if (appStateRef.current !== 'active') return;
 
-    const { data: refreshed } = await supabase.auth.refreshSession();
-    const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-    const token = session?.access_token;
+    const token = await freshToken();
     const base = process.env.EXPO_PUBLIC_API_BASE_URL;
     if (!token || !base) return;
 

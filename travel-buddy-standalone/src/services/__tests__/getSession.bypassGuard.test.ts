@@ -1,13 +1,18 @@
 /**
- * Static guard: no service file may call supabase.auth.getSession() to obtain
- * an access token.
+ * Static guard: no file in the scanned source directories may call
+ * supabase.auth.getSession() to obtain an access token.
  *
  * `freshToken()` in apiToken.ts is the only place that may read getSession()
- * and then hand the resulting access_token to the API server.  Any service
+ * and then hand the resulting access_token to the API server.  Any file
  * that calls getSession() *and* extracts access_token from the result bypasses
  * the proactive-refresh logic and can silently send an expired token.
  *
- * This test reads every .ts file under src/services/ (excluding apiToken.ts,
+ * Scanned directories (all under src/):
+ *   - services/  — API helpers and data-fetching utilities
+ *   - hooks/     — React hooks (useRecentPlaces, etc.)
+ *   - lib/       — Shared library utilities (resolveCanonical, etc.)
+ *
+ * This test reads every .ts file in those directories (excluding apiToken.ts,
  * which is the helper itself) and asserts that no such file contains both
  * `getSession` and an `access_token` extraction from its result.
  *
@@ -20,7 +25,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import * as path from 'node:path';
 import { join, relative } from 'node:path';
 
@@ -41,8 +46,7 @@ function collectTs(dir: string, out: string[] = []): string[] {
 
 /**
  * Returns true when `src` contains a pattern that indicates getSession() is
- * being used to extract an access token — the only forbidden use in service
- * files.
+ * being used to extract an access token — the only forbidden use.
  *
  * Detection strategy:
  *   1. The file contains `getSession` (it calls or references the method).
@@ -57,33 +61,39 @@ function bypassesTokenHelper(src: string): boolean {
 
 // ── scan ─────────────────────────────────────────────────────────────────────
 
+// src/services/__tests__/ → src/
 const SERVICES_DIR = join(new URL('.', import.meta.url).pathname, '../');
+const SRC_DIR = join(SERVICES_DIR, '../');
 const EXEMPT_FILE = 'apiToken.ts'; // the helper itself — always allowed
 
-const serviceFiles = collectTs(SERVICES_DIR).filter(
-  (f) => !f.endsWith(EXEMPT_FILE) && !f.endsWith('.test.ts'),
-);
+// Directories covered by this guard (relative to SRC_DIR).
+// hooks/ and lib/ were added because violations were found there in practice.
+const SCANNED_DIRS = ['services', 'hooks', 'lib'].map((d) => join(SRC_DIR, d));
+
+const scannedFiles = SCANNED_DIRS.flatMap((dir) =>
+  existsSync(dir) ? collectTs(dir) : [],
+).filter((f) => !f.endsWith(EXEMPT_FILE) && !f.endsWith('.test.ts'));
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
-describe('getSession bypass guard — travel-buddy services', () => {
-  it('has at least one service file to scan (sanity check)', () => {
+describe('getSession bypass guard — travel-buddy services/hooks/lib', () => {
+  it('has at least one file to scan (sanity check)', () => {
     assert.ok(
-      serviceFiles.length > 0,
-      `No .ts service files found under ${SERVICES_DIR} — discovery is broken`,
+      scannedFiles.length > 0,
+      `No .ts files found under ${SRC_DIR}{services,hooks,lib} — discovery is broken`,
     );
   });
 
-  for (const filePath of serviceFiles) {
-    const label = relative(SERVICES_DIR, filePath);
+  for (const filePath of scannedFiles) {
+    const label = relative(SRC_DIR, filePath);
 
     it(`${label} does not use getSession() to extract an access token`, () => {
-      const src = readFileSync(path.join(SERVICES_DIR, label), 'utf8');
+      const src = readFileSync(filePath, 'utf8');
       const violates = bypassesTokenHelper(src);
       assert.ok(
         !violates,
         `${label} calls getSession() AND references access_token.\n` +
-          `Use freshToken() from ./apiToken.ts instead — it proactively\n` +
+          `Use freshToken() from services/apiToken.ts instead — it proactively\n` +
           `refreshes the session before handing the token to the API server.`,
       );
     });

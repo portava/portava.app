@@ -12,7 +12,7 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import { useSession } from '../context/SessionContext';
-import { supabase } from '../lib/supabase';
+import { freshToken } from '../services/apiToken';
 
 export type LocationMode =
   | 'off'
@@ -76,8 +76,7 @@ export function useLocationPreferences(): UseLocationPreferencesResult {
 
   const load = useCallback(async () => {
     if (!isAuthed) return;
-    const { data } = await supabase.auth.getSession();
-    const token = data?.session?.access_token;
+    const token = await freshToken();
     if (!token) return;
 
     setIsLoading(true);

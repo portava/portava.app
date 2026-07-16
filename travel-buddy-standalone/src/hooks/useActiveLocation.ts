@@ -122,13 +122,8 @@ async function apiBase(): Promise<string> {
 }
 
 async function fetchToken(): Promise<string | null> {
-  try {
-    const { supabase } = await import('../lib/supabase');
-    const { data } = await supabase.auth.getSession();
-    return data?.session?.access_token ?? null;
-  } catch {
-    return null;
-  }
+  const { freshToken } = await import('../services/apiToken');
+  return freshToken();
 }
 
 async function saveLocationToApi(patch: object): Promise<void> {
