@@ -617,6 +617,88 @@ describe("negative cache TTL expiry", () => {
     assert.equal(resultB?.country, "Japan");
   });
 
+  it("in-memory cache holds the resolved country even when the DB upsert fails during a TTL-retry", async () => {
+    // Regression guard: writeDbCache is best-effort.  A DB error after a
+    // successful TTL-retry must NOT prevent the in-memory _cache.set from
+    // persisting the positive result, because _cache.set runs BEFORE writeDbCache.
+    // The next call (within the positive TTL) must be served from memory — no
+    // second Nominatim fetch, no second DB round-trip.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Step 1: seed a negative cache entry — fetch returns empty → null geocode.
+    // _setGeocodeFetchForTests also resets _dbClientOverride to null, so there is
+    // no DB client for this first call.
+    let fetchCallCount = 0;
+    _setGeocodeFetchForTests(async () => {
+      fetchCallCount++;
+      return { ok: true, json: async () => [] };
+    });
+
+    const first = await geocodeCityCountry("PersistFailCity");
+    assert.equal(first, null, "pre-condition: city should cache as null");
+    assert.equal(fetchCallCount, 1, "pre-condition: one fetch to seed the negative entry");
+
+    // Step 2: advance past the NEGATIVE_TTL_MS window so the negative entry is stale.
+    const T1 = T0 + NEGATIVE_TTL_MS + 1_000;
+    mockNow(T1);
+
+    // Step 3: swap fetch to return a valid geocode result on the retry.
+    // _setGeocodeFetchForTests resets _dbClientOverride to null — we then install
+    // a tracking DB client (AFTER the fetch swap) so readDbCache returns null
+    // (no persisted row) and upsert returns an error.
+    _setGeocodeFetchForTests(async () => {
+      fetchCallCount++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "jp", country: "Japan" } }],
+      };
+    });
+
+    let upsertCallCount = 0;
+    const failingUpsertDb: SupabaseClient = {
+      from(_table: string) {
+        const chain: any = {
+          select()  { return chain; },
+          eq()      { return chain; },
+          // readDbCache: no persisted row — fall through to Nominatim.
+          async maybeSingle() { return { data: null, error: null }; },
+          // writeDbCache: upsert returns an error — best-effort write fails.
+          upsert(_row: Record<string, unknown>) {
+            upsertCallCount++;
+            return Promise.resolve({ error: { message: "DB_WRITE_FAILURE" } });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(failingUpsertDb);
+
+    // Step 4: the stale negative entry triggers a fresh geocode.  The resolved
+    // result must be written to the in-memory cache even though writeDbCache fails.
+    const second = await geocodeCityCountry("PersistFailCity");
+    assert.equal(second?.countryCode, "JP",
+      "TTL-retry should resolve and return the positive result despite DB upsert failure");
+    assert.equal(second?.country, "Japan");
+    assert.equal(fetchCallCount, 2,
+      "exactly one fetch for the TTL-retry (total 2 including the seed)");
+    assert.equal(upsertCallCount, 1,
+      "writeDbCache must have attempted the upsert (even though it failed)");
+
+    // Step 5: a second call within the positive TTL must be served from the
+    // in-memory cache — no new Nominatim fetch, no new DB round-trip.
+    // This is the core assertion: _cache.set runs before writeDbCache, so a
+    // failed upsert must not evict or corrupt the positive in-memory entry.
+    const third = await geocodeCityCountry("PersistFailCity");
+    assert.equal(third?.countryCode, "JP",
+      "second call within positive TTL must return the cached result from memory");
+    assert.equal(third?.country, "Japan");
+    assert.equal(fetchCallCount, 2,
+      "no second Nominatim fetch — the positive result is still in the in-memory cache");
+    assert.equal(upsertCallCount, 1,
+      "no second DB call — the positive result is served entirely from memory");
+  });
+
   it("re-cached null entry after a network error carries a fresh writtenAt — not the original T0", async () => {
     // Regression guard: the catch block in geocodeCityCountry must stamp
     // writtenAt: now (T1, the retry time) so the correction sweep — which
