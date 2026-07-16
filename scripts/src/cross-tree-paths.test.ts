@@ -158,7 +158,59 @@ function tryResolveStaticVariable(
     String.raw`\b(?:const|let|var)\s+${varName}\s*=\s*path\.(?:resolve|join)\s*\(([^)]+)\)`,
   );
   const m = resolveCallPat.exec(fileContent);
-  if (!m) return null;
+
+  // Also handle bare resolve(base, ...) / join(base, ...) when the function is
+  // imported directly from 'node:path':
+  //   import { resolve } from 'node:path'
+  //   import { join }    from 'node:path'
+  if (!m) {
+    const barePat = new RegExp(
+      String.raw`\b(?:const|let|var)\s+${varName}\s*=\s*(resolve|join)\s*\(([^)]+)\)`,
+    );
+    const bm = barePat.exec(fileContent);
+    if (bm) {
+      const fnName = bm[1]!;
+      // Only treat as path.resolve/join if that name is imported from node:path.
+      const importPat = new RegExp(
+        `import\\s*\\{[^}]*\\b${fnName}\\b[^}]*\\}\\s*from\\s*['"]node:path['"]`,
+      );
+      if (importPat.test(fileContent)) {
+        const rawArgs = bm[2]!;
+        const argParts = rawArgs.split(',').map((s) => s.trim());
+        if (argParts.length < 1) return null;
+        const [baseArgRaw, ...segArgRaws] = argParts;
+        const baseArg = baseArgRaw!.trim();
+        let basePath: string;
+        if (
+          (baseArg.startsWith("'") && baseArg.endsWith("'")) ||
+          (baseArg.startsWith('"') && baseArg.endsWith('"'))
+        ) {
+          const literal = baseArg.slice(1, -1);
+          basePath = path.isAbsolute(literal) ? literal : path.resolve(testDir, literal);
+        } else if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(baseArg)) {
+          const resolved = tryResolveStaticVariable(baseArg, fileContent, testDir, depth + 1);
+          if (resolved === null) return null;
+          basePath = resolved;
+        } else {
+          return null;
+        }
+        const segments: string[] = [];
+        for (const raw of segArgRaws) {
+          const seg = raw.trim();
+          if (
+            (seg.startsWith("'") && seg.endsWith("'")) ||
+            (seg.startsWith('"') && seg.endsWith('"'))
+          ) {
+            segments.push(seg.slice(1, -1));
+          } else {
+            return null;
+          }
+        }
+        return path.resolve(basePath, ...segments);
+      }
+    }
+    return null;
+  }
 
   const rawArgs = m[1]!;
   // Split on top-level commas (these calls never nest beyond one level here).
@@ -552,6 +604,31 @@ describe('extractCrossTreePaths — template-literal and non-literal detection',
       fs.existsSync(entry.resolved),
       false,
       `expected the resolved path "${entry.resolved}" to be missing (it is the invalid-fixture target)`,
+    );
+  });
+
+  it('traces a bare resolve() variable chain (import { resolve } from node:path) and confirms the file exists', () => {
+    const fixture = path.join(FIXTURES_DIR, 'cross-tree-path-resolve-bare-import-valid.test.ts');
+    const entries = extractCrossTreePaths(fixture);
+
+    // pkgPath is assigned via resolve(pkgRoot, 'package.json') where
+    // pkgRoot = resolve(here, '../..') and here = path.dirname(fileURLToPath(…)).
+    // resolve is imported directly from 'node:path'.
+    // The guard should trace this chain to scripts/package.json.
+    const resolvable = entries.filter((e) => !e.unresolvable);
+    assert.ok(
+      resolvable.length >= 1,
+      'expected at least one resolvable entry in the bare-import-valid fixture',
+    );
+
+    const entry = resolvable.find((e) => e.rawArg === 'pkgPath');
+    assert.ok(
+      entry,
+      `expected a resolvable entry for the identifier "pkgPath"; got: ${JSON.stringify(resolvable)}`,
+    );
+    assert.ok(
+      fs.existsSync(entry.resolved),
+      `pkgPath resolved to "${entry.resolved}" which does not exist`,
     );
   });
 
