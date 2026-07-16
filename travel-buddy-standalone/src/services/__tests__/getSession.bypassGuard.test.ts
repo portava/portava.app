@@ -162,7 +162,7 @@ const ALL_SRC_FILES = existsSync(SRC_DIR)
 
 // ── primary guard ─────────────────────────────────────────────────────────────
 
-describe('getSession bypass guard — travel-buddy-standalone services/hooks/lib', () => {
+describe('getSession bypass guard — travel-buddy services/hooks/lib', () => {
   it('has at least one file to scan (sanity check)', () => {
     assert.ok(
       scannedFiles.length > 0,
