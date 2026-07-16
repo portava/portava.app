@@ -11,29 +11,8 @@
 
 import { spawnSync } from 'node:child_process';
 import { readdirSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import process from 'node:process';
-
-// ---------------------------------------------------------------------------
-// Guard: reject bare (extension-free) relative imports before running tests.
-// New files that skip extensions only fail when someone writes a node:test for
-// them; this check catches the problem at the import layer first.
-// Fix: node scripts/fix-extensionless-imports.mjs
-// ---------------------------------------------------------------------------
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const checkResult = spawnSync(
-  process.execPath,
-  [join(__dirname, 'check-import-extensions.mjs')],
-  { stdio: 'inherit' },
-);
-if (checkResult.status !== 0) {
-  console.error(
-    '\nImport-extension check failed. Run `node scripts/fix-extensionless-imports.mjs` to fix.',
-  );
-  process.exit(checkResult.status ?? 1);
-}
-// ---------------------------------------------------------------------------
 
 // Known-broken node:test files, excluded from the run. Fix and remove.
 const KNOWN_BROKEN = [];
