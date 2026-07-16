@@ -2074,3 +2074,117 @@ describe("runGenerationCycle — unrecognized stamp_type routes to defaults", ()
     assert.ok(prompt.length > 0, "prompt must not be empty");
   });
 });
+
+// ── Null display_name guard ───────────────────────────────────────────────────
+
+describe("runGenerationCycle — null display_name in catalog row", () => {
+  it("produces a prompt with a fallback label — not the literal string 'null'", async () => {
+    // display_name is null; city is available as the fallback.
+    const nullNameCatalog = { ...CATALOG_ROW, display_name: null };
+
+    let capturedPrompt: string | undefined;
+    const capturingProvider = {
+      async generate(prompt: string, _n?: number) {
+        capturedPrompt = prompt;
+        return Array.from({ length: CANDIDATE_COUNT }, (_, i) => ({
+          url: `data:image/svg+xml,fake-${i}`,
+          metadata: { model: "fake-provider", candidate_index: i },
+        }));
+      },
+    };
+
+    const { sc } = makeFakeClient({ catalogOverride: nullNameCatalog as any });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(capturingProvider);
+
+    await runGenerationCycle();
+
+    assert.ok(
+      typeof capturedPrompt === "string",
+      "provider must be called with a prompt",
+    );
+
+    // The literal string "null" must never appear in the prompt — neither as
+    // 'Destination: null' nor as 'Typography: destination name "null"'.
+    assert.equal(
+      capturedPrompt!.includes("null"),
+      false,
+      `prompt must not contain the literal string "null"; got snippet: ${capturedPrompt!.slice(0, 400)}`,
+    );
+
+    // The fallback label (city: "Tokyo") must appear instead.
+    assert.ok(
+      capturedPrompt!.includes("Tokyo"),
+      `prompt must use the city as the fallback destination label; got snippet: ${capturedPrompt!.slice(0, 400)}`,
+    );
+  });
+
+  it("falls back to region when both display_name and city are null", async () => {
+    const nullNameAndCity = { ...CATALOG_ROW, display_name: null, city: null, region: "Kanto" };
+
+    let capturedPrompt: string | undefined;
+    const capturingProvider = {
+      async generate(prompt: string, _n?: number) {
+        capturedPrompt = prompt;
+        return Array.from({ length: CANDIDATE_COUNT }, (_, i) => ({
+          url: `data:image/svg+xml,fake-${i}`,
+          metadata: { model: "fake-provider", candidate_index: i },
+        }));
+      },
+    };
+
+    const { sc } = makeFakeClient({ catalogOverride: nullNameAndCity as any });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(capturingProvider);
+
+    await runGenerationCycle();
+
+    assert.ok(typeof capturedPrompt === "string", "provider must be called");
+    assert.equal(
+      capturedPrompt!.includes("null"),
+      false,
+      `prompt must not contain the literal string "null"; got: ${capturedPrompt!.slice(0, 400)}`,
+    );
+    assert.ok(
+      capturedPrompt!.includes("Kanto"),
+      `prompt must use the region as the fallback label; got: ${capturedPrompt!.slice(0, 400)}`,
+    );
+  });
+
+  it("falls back to 'Unknown Destination' when display_name, city, and region are all null", async () => {
+    const allNullCatalog = {
+      ...CATALOG_ROW,
+      display_name: null,
+      city: null,
+      region: null,
+    };
+
+    let capturedPrompt: string | undefined;
+    const capturingProvider = {
+      async generate(prompt: string, _n?: number) {
+        capturedPrompt = prompt;
+        return Array.from({ length: CANDIDATE_COUNT }, (_, i) => ({
+          url: `data:image/svg+xml,fake-${i}`,
+          metadata: { model: "fake-provider", candidate_index: i },
+        }));
+      },
+    };
+
+    const { sc } = makeFakeClient({ catalogOverride: allNullCatalog as any });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(capturingProvider);
+
+    await runGenerationCycle();
+
+    assert.ok(typeof capturedPrompt === "string", "provider must be called");
+    assert.equal(
+      capturedPrompt!.includes("null"),
+      false,
+      `prompt must not contain the literal string "null"; got: ${capturedPrompt!.slice(0, 400)}`,
+    );
+    assert.ok(
+      capturedPrompt!.includes("Unknown Destination"),
+      `prompt must use "Unknown Destination" as the last-resort fallback; got: ${capturedPrompt!.slice(0, 400)}`,
+    );
+  });
+});

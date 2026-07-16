@@ -30,7 +30,7 @@ export const CANDIDATE_COUNT = 3;
 
 export interface CatalogEntryForPrompt {
   id: string;
-  display_name: string;
+  display_name: string | null;
   country: string | null;
   country_code: string;
   region?: string | null;
@@ -85,7 +85,12 @@ function shapeInstruction(stampType: string): string {
 function destinationInstruction(entry: CatalogEntryForPrompt): string {
   const parts: string[] = [];
 
-  parts.push(`Destination: ${entry.display_name}`);
+  // Fallback chain: display_name → city → region → generic label.
+  // A null display_name must never produce a literal "null" in the prompt.
+  const destinationLabel =
+    entry.display_name ?? entry.city ?? entry.region ?? "Unknown Destination";
+
+  parts.push(`Destination: ${destinationLabel}`);
 
   if (entry.city) parts.push(`City: ${entry.city}`);
   if (entry.region) parts.push(`Region: ${entry.region}`);
@@ -110,7 +115,7 @@ function destinationInstruction(entry: CatalogEntryForPrompt): string {
 
   // Typography guidance
   parts.push(
-    `Typography: destination name "${entry.display_name}" prominent at center or arch-top. ` +
+    `Typography: destination name "${destinationLabel}" prominent at center or arch-top. ` +
     `Country label "${entry.country_code.toUpperCase()}" smaller below. Year optional.`
   );
 
