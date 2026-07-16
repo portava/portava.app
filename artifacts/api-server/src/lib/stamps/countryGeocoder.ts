@@ -103,8 +103,8 @@ async function runCorrectionSweep(): Promise<void> {
         }
       }
     }
-  } catch {
-    // Best-effort — transient DB errors are silently swallowed.
+  } catch (e: any) {
+    logEvent("stamp.country_geocode.sweep_pass1_error", { error: e?.message ?? String(e) });
   }
 
   // Pass 2 — tombstoned rows (soft-deleted by the admin DELETE handler).

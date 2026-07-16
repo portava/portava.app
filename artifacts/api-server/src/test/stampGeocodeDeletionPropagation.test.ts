@@ -2495,4 +2495,80 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     assert.equal(cleanupDeleteKeys.length, 2,
       "exactly two keys in the cleanup delete — one already-evicted, one just-evicted by the sweep");
   });
+
+  it("sweep logs sweep_pass1_error when Pass 1 throws — and Pass 2 still runs", async () => {
+    // Seed a cache entry so Pass 2 eviction is observable.
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "de", country: "Germany" } }],
+    }));
+    // No DB client for the warm-up — geocoder resolves via Nominatim.
+    _setGeocodeDbClientForTests(null);
+    await geocodeCityCountry("Berlin");
+
+    // Now install a client where Pass 1 throws and Pass 2 returns a tombstoned row.
+    let pass2Ran = false;
+    const tombstonedKey = "berlin";
+    let sweepQueryCount = 0;
+    const mixedClient: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          delete() { isDelete = true; return chain; },
+          in() { return chain; },
+          async maybeSingle() { return { data: null, error: null }; },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            if (isDelete) { resolve({ error: null }); return; }
+            const q = sweepQueryCount++;
+            if (q === 0) {
+              // Pass 1 — throw to simulate a DB error.
+              throw new Error("connection_timeout");
+            } else {
+              // Pass 2 — return a tombstoned row so we can confirm it ran.
+              pass2Ran = true;
+              resolve({ data: [{ city_key: tombstonedKey }], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(mixedClient);
+
+    // Capture log output.
+    const logLines: string[] = [];
+    const origLog = console.log;
+    console.log = (msg: string) => { logLines.push(msg); };
+
+    try {
+      await _runCorrectionSweepForTests();
+    } finally {
+      console.log = origLog;
+    }
+
+    // The sweep_pass1_error event must have been logged.
+    const pass1ErrorEvents = logLines
+      .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+      .filter((o) => o?.event === "stamp.country_geocode.sweep_pass1_error");
+    assert.equal(pass1ErrorEvents.length, 1, "sweep_pass1_error event logged exactly once");
+    assert.ok(
+      typeof pass1ErrorEvents[0].error === "string" && pass1ErrorEvents[0].error.length > 0,
+      "sweep_pass1_error carries an error message",
+    );
+
+    // Pass 2 must have still run despite Pass 1 throwing.
+    assert.ok(pass2Ran, "Pass 2 ran even though Pass 1 threw");
+
+    // The Berlin entry should have been evicted by Pass 2.
+    const tombstoneEvents = logLines
+      .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+      .filter((o) => o?.event === "stamp.country_geocode.sweep_tombstone_evicted");
+    assert.equal(tombstoneEvents.length, 1, "Pass 2 evicted the tombstoned entry");
+    assert.equal(tombstoneEvents[0].city_key, tombstonedKey);
+  });
 });
