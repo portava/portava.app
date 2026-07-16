@@ -25,7 +25,7 @@ import {
   fetchCompassTripBrief,
   fetchCompassRecommendations,
   postCompassCreateSuggestions,
-} from '../compass.ts';
+} from '../services/compass.ts';
 
 const FAKE_TOKEN = 'fake-test-token-compass-components';
 
