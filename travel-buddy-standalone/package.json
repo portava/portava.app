@@ -16,8 +16,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node scripts/run-node-tests.mjs",
     "test:event-rab-cta": "node --import tsx/esm --test src/services/__tests__/event.rabCta.test.ts",
-    "test:stamps": "node --import tsx --test src/test/stampGracefulDegradation.test.ts",
-    "test:invite-gone": "node --import tsx --test src/services/__tests__/tripGoneError.test.ts",
+    "test:stamps": "node --import tsx/esm --test src/test/stampGracefulDegradation.test.ts",
+    "test:invite-gone": "node --import tsx/esm --test src/lib/__tests__/inviteCardGoneHandler.test.ts",
     "test:component": "jest --forceExit"
   },
   "dependencies": {
