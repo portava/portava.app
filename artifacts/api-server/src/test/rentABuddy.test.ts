@@ -3202,6 +3202,52 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     );
   });
 
+  it("still counts the escalation and marks booking disputed when the event-row insert fails", async () => {
+    // A DB error on the buddy_booking_events insert must NOT cause the sweep to
+    // throw or un-do the already-committed status update.  noShowEscalated must
+    // still be 1 and the booking must reach 'disputed'.
+    const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+
+    state = {
+      bookings: {
+        "bk-ns-event-insert-err": {
+          id: "bk-ns-event-insert-err",
+          traveler_id: USER_ID,
+          buddy_id: BUDDY_PROF,
+          status: "no_show_pending",
+          no_show_grace_expires_at: PAST,
+        },
+      },
+      // Arm the error override so the buddy_booking_events insert returns a DB error.
+      insertErrorOverrides: {
+        buddy_booking_events: { message: "simulated DB error on event insert", code: "23505" },
+      },
+    };
+    (state as any).bookingEvents = [
+      { id: "ev-event-err-1", booking_id: "bk-ns-event-insert-err", actor_user_id: USER_ID, event: "no_show_reported" },
+    ];
+
+    const r = await reqSweep();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    // The sweep must still count the escalation — the booking was promoted before the event insert.
+    assert.equal(
+      r.body.noShowEscalated,
+      1,
+      "noShowEscalated must be 1 even when the event-row insert errors",
+    );
+
+    // The booking must have been promoted to 'disputed' before the failing event insert.
+    assert.equal(
+      state.bookings!["bk-ns-event-insert-err"].status,
+      "disputed",
+      "booking must be promoted to 'disputed' even when the event-row insert errors",
+    );
+  });
+
   it("expired-request count stays at zero when the status update DB call fails", async () => {
     // A stale requested booking whose .update({ status: 'expired' }) errors must
     // leave expired = 0 and the booking in its original status.

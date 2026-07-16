@@ -119,7 +119,7 @@ describe('SDK 54 downgrade — package version pins', () => {
   });
 
   it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-    const standalone = readPkg('../../../../travel-buddy-standalone/package.json');
+    const standalone = readPkg('../../../artifacts/travel-buddy/package.json');
     const saDeps: Record<string, string> = {
       ...standalone.dependencies,
       ...standalone.devDependencies,
@@ -157,8 +157,8 @@ describe('SDK 54 downgrade — package version pins', () => {
 //   react-native-view-shot → react-native, react
 
 describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-  // artifacts/travel-buddy/package.json is 2 levels up from src/services.
-  const tb = readPkg('../../package.json');
+  // artifacts/travel-buddy/package.json is 3 levels up from src/services in travel-buddy-standalone.
+  const tb = readPkg('../../../artifacts/travel-buddy/package.json');
   const tbAll: Record<string, string> = {
     ...tb.dependencies,
     ...tb.devDependencies,
@@ -232,8 +232,8 @@ describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and 
 // version strings so the divergence is immediately obvious.
 
 describe('SDK 54 — other explicitly pinned Expo packages sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-  // artifacts/travel-buddy/package.json is 2 levels up from src/services.
-  const tb = readPkg('../../package.json');
+  // artifacts/travel-buddy/package.json is 3 levels up from src/services in travel-buddy-standalone.
+  const tb = readPkg('../../../artifacts/travel-buddy/package.json');
   const tbAll: Record<string, string> = {
     ...tb.dependencies,
     ...tb.devDependencies,

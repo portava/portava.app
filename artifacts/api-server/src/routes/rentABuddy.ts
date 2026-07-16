@@ -5693,11 +5693,18 @@ router.post("/api/internal/buddy-requests/expire", async (req, res) => {
 
       noShowEscalatedCount++;
 
-      await serviceClient.from("buddy_booking_events").insert({
-        booking_id: bk.id, actor_user_id: reporterUserId, event: "no_show_escalated",
-        from_status: "no_show_pending", to_status: "disputed",
-        metadata: { reason: "grace_period_expired", dispute_id: disputeId },
-      });
+      try {
+        const { error: eventInsertError } = await serviceClient.from("buddy_booking_events").insert({
+          booking_id: bk.id, actor_user_id: reporterUserId, event: "no_show_escalated",
+          from_status: "no_show_pending", to_status: "disputed",
+          metadata: { reason: "grace_period_expired", dispute_id: disputeId },
+        });
+        if (eventInsertError) {
+          console.error("[sweep] failed to write no_show_escalated event for booking", bk.id, eventInsertError);
+        }
+      } catch (eventErr) {
+        console.error("[sweep] unexpected error writing no_show_escalated event for booking", bk.id, eventErr);
+      }
     }
   }
 
