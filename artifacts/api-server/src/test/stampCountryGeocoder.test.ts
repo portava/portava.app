@@ -511,4 +511,74 @@ describe("background correction sweep", () => {
     // Calling stop a second time must also be safe.
     stop();
   });
+
+  it("after sweep eviction re-resolves from the corrected DB row — zero Nominatim fetches", async () => {
+    // Step 1: populate the in-memory cache with a stale entry (CA for Banff).
+    _setGeocodeFetchForTests(fakeNominatim({
+      "banff": { country_code: "ca", country: "Canada" },
+    }));
+    await geocodeCityCountry("Banff");
+    assert.equal(fetchCalls.length, 1, "first resolve should hit Nominatim");
+
+    // Step 2: an admin has since corrected the DB row to FR (a hypothetical admin override).
+    // corrected_at is in the future relative to now so it definitely post-dates writtenAt.
+    const correctedAt = new Date(Date.now() + 1_000).toISOString();
+
+    // Build a combined fake DB client that serves:
+    //   • the sweep query  (.select("city_key, corrected_at").gte("corrected_at", since))
+    //   • the readDbCache  (.select("country, country_code, corrected_at").eq("city_key", key).maybeSingle())
+    const correctedRow = {
+      city_key: "banff",
+      country: "France",
+      country_code: "FR",
+      corrected_at: correctedAt,
+    };
+    let dbReads = 0;
+    const combinedDb = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache");
+        let _isMaybeSingle = false;
+        const chain: any = {
+          select() { return chain; },
+          eq()     { return chain; },
+          gte()    { return chain; },
+          maybeSingle() { _isMaybeSingle = true; return chain; },
+          then(resolve: (v: any) => void) {
+            dbReads += 1;
+            if (_isMaybeSingle) {
+              // readDbCache path: return the corrected row
+              resolve({ data: correctedRow, error: null });
+            } else {
+              // sweep path: return the sweep list
+              resolve({ data: [{ city_key: "banff", corrected_at: correctedAt }], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    // Step 3: run the sweep — it should evict the stale CA entry.
+    _setGeocodeDbClientForTests(combinedDb);
+    await _runCorrectionSweepForTests();
+
+    // Step 4: now disable Nominatim entirely so any forward geocode call would fail.
+    fetchCalls = [];
+    _setGeocodeFetchForTests(async (url: string) => {
+      fetchCalls.push(url);
+      throw new Error("Nominatim must not be called after sweep eviction");
+    });
+
+    // Re-inject the same combined DB client (setGeocodeFetch resets it).
+    _setGeocodeDbClientForTests(combinedDb);
+
+    // Step 5: geocodeCityCountry should re-resolve from the DB row only.
+    const r = await geocodeCityCountry("Banff");
+
+    assert.equal(fetchCalls.length, 0, "no Nominatim call should be made — DB row must be used");
+    assert.ok(r !== null, "should return a resolved result");
+    assert.equal(r!.countryCode, "FR", "should return the admin-corrected country code from the DB");
+    assert.equal(r!.country, "France", "should return the admin-corrected country name from the DB");
+    assert.ok(dbReads >= 2, "should have read the DB at least twice (sweep + readDbCache)");
+  });
 });
