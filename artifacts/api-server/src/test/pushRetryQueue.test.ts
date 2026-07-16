@@ -500,6 +500,98 @@ describe("PushRetryQueue.processQueue() — dead-token clearing on retry", () =>
     assert.ok(!requeued, "must NOT re-queue a row whose token is permanently dead");
   });
 
+  it("records DeviceNotRegistered in last_error when dead token is found on the final attempt (attempt_count=2)", async () => {
+    // attempt_count=2 means two prior failures; this run is attempt 3 — the final attempt.
+    // Expo returns DeviceNotRegistered, which is non-retryable regardless of remaining attempts.
+    // last_error on the finalised 'failed' row must name the dead-token code, not be empty.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       2,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    _setTestFetch(expoDeadTokenFetch("DeviceNotRegistered"));
+    await queue.processQueue();
+
+    // ── Dead-token cleanup must run even on the final attempt ─────────────────
+
+    // profiles.expo_push_token nulled via update().in([PUSH_TOKEN])
+    const profileUpdate = client.updateCalls.find(
+      (c) => c.table === "profiles" && c.patch.expo_push_token === null,
+    );
+    assert.ok(profileUpdate, "profiles.expo_push_token must be nulled for dead token on final attempt");
+    assert.deepEqual(
+      profileUpdate.inFilters["expo_push_token"],
+      [PUSH_TOKEN],
+      "profiles update must target the dead token",
+    );
+
+    // notification_devices row deleted via delete().in([PUSH_TOKEN])
+    const deviceDelete = client.deleteCalls.find((c) => c.table === "notification_devices");
+    assert.ok(deviceDelete, "notification_devices row must be deleted for dead token on final attempt");
+    assert.deepEqual(
+      deviceDelete.inFilters["push_token"],
+      [PUSH_TOKEN],
+      "notification_devices delete must target the dead token",
+    );
+
+    // rent_buddy_profiles.expo_push_token nulled via update().in([PUSH_TOKEN])
+    const rentUpdate = client.updateCalls.find(
+      (c) => c.table === "rent_buddy_profiles" && c.patch.expo_push_token === null,
+    );
+    assert.ok(rentUpdate, "rent_buddy_profiles.expo_push_token must be nulled for dead token on final attempt");
+    assert.deepEqual(
+      rentUpdate.inFilters["expo_push_token"],
+      [PUSH_TOKEN],
+      "rent_buddy_profiles update must target the dead token",
+    );
+
+    // ── Queue row must be finalised as 'failed' with last_error naming the code ─
+
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(failedUpdate, "push_retry_queue must be finalised as 'failed' on final attempt with dead token");
+    assert.equal(failedUpdate.filters.id, QUEUE_ROW_ID, "failed update must target the correct queue row");
+    assert.equal(failedUpdate.patch.attempt_count, 3, "attempt_count must be 3 (the final attempt)");
+
+    // last_error must be non-empty and name the dead-token error code
+    const lastError = failedUpdate.patch.last_error as string;
+    assert.ok(lastError && lastError.length > 0, "last_error must be non-empty when a dead token is found");
+    assert.ok(
+      lastError.includes("DeviceNotRegistered"),
+      `last_error must name the dead-token error code; got: ${lastError}`,
+    );
+    assert.equal(
+      lastError,
+      "DeviceNotRegistered \u00d7 1",
+      "last_error must be exactly 'DeviceNotRegistered × 1'",
+    );
+
+    // Must NOT be re-queued — token is dead and max_attempts reached
+    const requeued = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(!requeued, "must NOT re-queue when the token is dead and max_attempts is reached");
+
+    // ── Delivery attempt must also be finalised as 'failed' ───────────────────
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated on final-attempt dead token");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status, "failed",   "delivery_attempt status must be 'failed'");
+    assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+  });
+
   it("clears InvalidCredentials tokens from all three tables and finalises as 'failed'", async () => {
     const queueRow = {
       id:                  QUEUE_ROW_ID,
