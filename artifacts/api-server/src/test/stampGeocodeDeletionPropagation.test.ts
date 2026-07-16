@@ -1932,4 +1932,124 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     assert.equal(afterSweep?.countryCode, "AT",
       "Nominatim's result is returned even though the DB read errored after sweep eviction");
   });
+
+  it("sweep Pass 1 evicts a stale null entry (cached before PUT revival) — next geocode returns the revived country", async () => {
+    // Scenario: instance A handles the DELETE (tombstoning the DB row) and the
+    // subsequent PUT (reviving it, setting corrected_at = now()).  Between those
+    // two events, instance B independently calls geocodeCityCountry, finds the DB
+    // row tombstoned, Nominatim returns nothing, and caches null.
+    //
+    // Instance A's evictGeocodeCacheKey() only cleared instance A's entry.
+    // Instance B's null entry persists until the background correction sweep runs.
+    //
+    // The sweep's Pass 1 queries corrected_at >= since.  The PUT set corrected_at
+    // after the null was written, so entry.writtenAt < correctedMs → the sweep
+    // evicts instance B's stale null.  The next geocodeCityCountry call on B then
+    // reads the revived DB row and returns the correct country.
+
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // ── Step 1: seed a null in-memory entry (instance B's miss-window geocode). ──
+    // DB is effectively offline (fetch override disables it); Nominatim returns
+    // nothing → null is cached at writtenAt = T0.
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return { ok: true, json: async () => [] };
+    });
+
+    const nullResult = await geocodeCityCountry("Vienna");
+    assert.equal(nullResult, null,
+      "pre-condition: null is cached when Nominatim returns nothing (DB tombstoned)");
+    assert.equal(nominatimCalls, 1, "Nominatim called once to seed the null entry");
+
+    // ── Step 2: simulate the PUT revival on instance A. ──────────────────────────
+    // The PUT sets corrected_at to a timestamp that post-dates the null entry's
+    // writtenAt (T0), so the sweep's comparison will satisfy writtenAt < correctedMs.
+    const correctedAtMs = T0 + 100;
+    const correctedAtIso = new Date(correctedAtMs).toISOString();
+
+    // ── Step 3: build a combined sweep + readDbCache client. ─────────────────────
+    //   Pass 1 (corrected_at): reports "vienna" corrected → triggers null eviction.
+    //   Pass 2 (deleted_at):   returns empty (PUT cleared the tombstone).
+    //   maybeSingle (readDbCache after eviction): returns the live revived row.
+    //   upsert (writeDbCache for fresh geocode): no-op, counted for verification.
+    let sweepQueryCount = 0;
+    let upsertCalls = 0;
+    const sweepAndRevivalClient: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          delete() { isDelete = true; return chain; },
+          in() { return chain; },
+          async maybySingle() {
+            return {
+              data: {
+                country: "Austria",
+                country_code: "AT",
+                corrected_at: correctedAtIso,
+                deleted_at: null,
+              },
+              error: null,
+            };
+          },
+          async maybeSingle() {
+            // readDbCache call — returns the revived live row so the geocoder
+            // can serve the corrected result without calling Nominatim.
+            return {
+              data: {
+                country: "Austria",
+                country_code: "AT",
+                corrected_at: correctedAtIso,
+                deleted_at: null,
+              },
+              error: null,
+            };
+          },
+          upsert() {
+            upsertCalls++;
+            return Promise.resolve({ error: null });
+          },
+          then(resolve: (v: any) => void) {
+            if (isDelete) { resolve({ error: null }); return; }
+            const q = sweepQueryCount++;
+            if (q === 0) {
+              // Pass 1 — corrected_at: "vienna" was corrected AFTER the null was cached.
+              resolve({ data: [{ city_key: "vienna", corrected_at: correctedAtIso }], error: null });
+            } else {
+              // Pass 2 — deleted_at: empty (PUT cleared the tombstone; row is live).
+              resolve({ data: [], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    // Inject the sweep client — overrides the null _dbClientOverride set by
+    // _setGeocodeFetchForTests so the sweep can query the DB.
+    _setGeocodeDbClientForTests(sweepAndRevivalClient);
+
+    // ── Step 4: run the correction sweep. ─────────────────────────────────────────
+    await _runCorrectionSweepForTests();
+
+    // ── Step 5: assert the null entry is evicted and the revived country is served. ─
+    nominatimCalls = 0; // reset so we confirm Nominatim is NOT called post-eviction
+
+    const afterSweep = await geocodeCityCountry("Vienna");
+
+    assert.equal(afterSweep?.countryCode, "AT",
+      "sweep evicted the stale null — geocoder returns the revived country (AT) from the DB row");
+    assert.equal(afterSweep?.country, "Austria",
+      "revived DB row's country name is also propagated correctly");
+    assert.equal(nominatimCalls, 0,
+      "Nominatim must NOT be called — revived DB row is served directly by readDbCache");
+    assert.equal(upsertCalls, 0,
+      "writeDbCache must NOT be called — the DB row was already written by the PUT");
+  });
 });
