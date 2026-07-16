@@ -150,7 +150,7 @@ function LongPressActionSheet({
   async function submitReport() {
     if (!reportReason || !message) return;
     setReportSending(true);
-    const detail = reportReason === 'other' ? reportDetail.trim() : '';
+    const detail = reportDetail.trim();
     const result = await reportContent({
       target_type: 'message',
       target_id: message.id,
@@ -188,7 +188,7 @@ function LongPressActionSheet({
                 {reportReason === r.code && <Text style={las.reasonCheck}>✓</Text>}
               </Pressable>
             ))}
-            {reportReason === 'other' && (
+            {reportReason !== null && (
               <TextInput
                 style={las.detailInput}
                 value={reportDetail}
