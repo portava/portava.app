@@ -23,19 +23,15 @@ export interface PlaceFillResult {
   country: string | null;
 }
 
-/** Callbacks surfaced to the caller when the GPS permission alert fires. */
-export interface PermissionDeniedOpts {
-  /** Open the OS location-settings screen. */
-  onOpenSettings(): void;
-  /** Fall back to the manual city picker. */
-  onPickFromList(): void;
-}
-
 export interface FillHomeDeps {
   getCurrentGps(): Promise<GpsFillResult>;
   reverseGeocodeDetailed(lat: number, lng: number): Promise<PlaceFillResult>;
-  /** Called instead of Alert.alert so the caller decides how to present the denial prompt. */
-  onPermissionDenied(opts: PermissionDeniedOpts): void;
+  /**
+   * Called instead of Alert.alert so the caller decides how to present the
+   * denial prompt. Takes no arguments — the caller is responsible for wiring
+   * its own "Open Settings" and "Choose from list" handlers via closures.
+   */
+  onPermissionDenied(): void;
   /**
    * Called when GPS acquisition or reverse-geocoding throws an unexpected error
    * (not an internal loading-timeout). The caller should show an alert with a
@@ -86,10 +82,7 @@ export async function runFillHomeFromGps(
       ),
     ]);
     if (!gps.granted) {
-      deps.onPermissionDenied({
-        onOpenSettings: () => {},
-        onPickFromList: () => {},
-      });
+      deps.onPermissionDenied();
       return;
     }
     if (gps.lat == null || gps.lng == null) return;

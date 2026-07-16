@@ -21,7 +21,6 @@ import {
   type FillHomeSetters,
   type GpsFillResult,
   type PlaceFillResult,
-  type PermissionDeniedOpts,
 } from '../fillHomeFromGps.machine.ts';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -165,16 +164,12 @@ describe('runFillHomeFromGps — GPS permission denied', () => {
   it('calls onPermissionDenied and does not set homeCity or homeCountry', async () => {
     const spy = makeSetterSpy();
     let deniedCallCount = 0;
-    let capturedOpts: PermissionDeniedOpts | null = null;
 
     await runFillHomeFromGps(
       {
         getCurrentGps: deniedGps(),
         reverseGeocodeDetailed: geocode({ city: 'ShouldNotReach', country: 'ShouldNotReach' }),
-        onPermissionDenied: (opts) => {
-          deniedCallCount++;
-          capturedOpts = opts;
-        },
+        onPermissionDenied: () => { deniedCallCount++; },
       },
       spy.setters,
     );
@@ -182,46 +177,6 @@ describe('runFillHomeFromGps — GPS permission denied', () => {
     assert.equal(deniedCallCount, 1, 'onPermissionDenied must be called exactly once when GPS is denied');
     assert.equal(spy.cities.length,   0, 'setHomeCity must NOT be called on the denied path');
     assert.equal(spy.countries.length, 0, 'setHomeCountry must NOT be called on the denied path');
-  });
-
-  it('onPermissionDenied receives an onOpenSettings callback that does not throw', async () => {
-    let capturedOpts: PermissionDeniedOpts | null = null;
-
-    await runFillHomeFromGps(
-      {
-        getCurrentGps: deniedGps(),
-        reverseGeocodeDetailed: geocode({ city: null, country: null }),
-        onPermissionDenied: (opts) => { capturedOpts = opts; },
-      },
-      makeSetterSpy().setters,
-    );
-
-    assert.ok(capturedOpts !== null, 'opts must be provided to onPermissionDenied');
-    assert.equal(typeof capturedOpts!.onOpenSettings, 'function', 'onOpenSettings must be a function');
-    await assert.doesNotReject(
-      async () => capturedOpts!.onOpenSettings(),
-      'onOpenSettings callback must not throw',
-    );
-  });
-
-  it('onPermissionDenied receives an onPickFromList callback that does not throw', async () => {
-    let capturedOpts: PermissionDeniedOpts | null = null;
-
-    await runFillHomeFromGps(
-      {
-        getCurrentGps: deniedGps(),
-        reverseGeocodeDetailed: geocode({ city: null, country: null }),
-        onPermissionDenied: (opts) => { capturedOpts = opts; },
-      },
-      makeSetterSpy().setters,
-    );
-
-    assert.ok(capturedOpts !== null, 'opts must be provided to onPermissionDenied');
-    assert.equal(typeof capturedOpts!.onPickFromList, 'function', 'onPickFromList must be a function');
-    await assert.doesNotReject(
-      async () => capturedOpts!.onPickFromList(),
-      'onPickFromList callback must not throw',
-    );
   });
 
   it('sets loading to true at start and false at end (denied path)', async () => {

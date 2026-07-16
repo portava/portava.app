@@ -24,7 +24,6 @@ import {
   type FillHomeSetters,
   type GpsFillResult,
   type PlaceFillResult,
-  type PermissionDeniedOpts,
 } from '../fillHomeFromGps.machine.ts';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -158,25 +157,6 @@ describe('runFillHomeFromGps — GPS permission denied', () => {
     assert.equal(spy.countries.length, 0, 'setHomeCountry must not be called');
   });
 
-  it('opts supplied to onPermissionDenied include onOpenSettings and onPickFromList functions', async () => {
-    let capturedOpts: PermissionDeniedOpts | null = null;
-
-    await runFillHomeFromGps(
-      {
-        getCurrentGps: deniedGps(),
-        reverseGeocodeDetailed: geocode({ city: null, country: null }),
-        onPermissionDenied: (opts) => { capturedOpts = opts; },
-      },
-      makeSetterSpy().setters,
-    );
-
-    assert.ok(capturedOpts !== null);
-    assert.equal(typeof capturedOpts!.onOpenSettings, 'function');
-    assert.equal(typeof capturedOpts!.onPickFromList, 'function');
-    // Neither callback must throw (they are no-ops in the machine; caller wires them)
-    assert.doesNotThrow(() => capturedOpts!.onOpenSettings());
-    assert.doesNotThrow(() => capturedOpts!.onPickFromList());
-  });
 });
 
 // ── Suite 3: GPS error → city-picker alert path ───────────────────────────────
