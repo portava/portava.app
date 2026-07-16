@@ -29,7 +29,14 @@
  * SCOPE:
  *   Both canonical trees:
  *     artifacts/travel-buddy/src/**\/*.test.ts
+ *     artifacts/travel-buddy/src/**\/__fixtures__\/*.ts
+ *     artifacts/travel-buddy/src/**\/__mocks__\/*.ts
  *     travel-buddy-standalone/src/**\/*.test.ts
+ *     travel-buddy-standalone/src/**\/__fixtures__\/*.ts
+ *     travel-buddy-standalone/src/**\/__mocks__\/*.ts
+ *
+ *   Explicitly NOT scanned:
+ *     scripts/src/__fixtures__/  ← guard input files, not guard targets
  *
  * Pattern: node:test + fs — no external dependencies.
  * Run:
@@ -140,6 +147,43 @@ function collectTestFiles(dir: string): string[] {
         walk(full);
       } else if (entry.name.endsWith('.test.ts') || entry.name.endsWith('.test.tsx')) {
         results.push(full);
+      }
+    }
+  }
+  walk(dir);
+  return results;
+}
+
+/**
+ * Collect all `.ts` / `.tsx` helper files that live inside a `__fixtures__`
+ * or `__mocks__` directory anywhere under `dir`.
+ *
+ * These are not test files themselves, but they are imported by tests and can
+ * contain their own readFileSync cross-tree reads.  A broken path in one of
+ * them propagates silently to every test that imports it, so the guard must
+ * check them too.
+ *
+ * NOTE: scripts/src/__fixtures__/ is intentionally excluded — it lives outside
+ * TEST_ROOTS and holds guard input fixtures, not application helper code.
+ */
+function collectHelperFiles(dir: string): string[] {
+  if (!fs.existsSync(dir)) return [];
+  const results: string[] = [];
+  function walk(d: string) {
+    for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+      const full = path.join(d, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '.expo') continue;
+        walk(full);
+      } else if (
+        (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) &&
+        !entry.name.endsWith('.test.ts') &&
+        !entry.name.endsWith('.test.tsx')
+      ) {
+        const parentDir = path.basename(d);
+        if (parentDir === '__fixtures__' || parentDir === '__mocks__') {
+          results.push(full);
+        }
       }
     }
   }
@@ -259,6 +303,46 @@ describe('cross-tree path existence guard', () => {
         }
       });
     }
+
+    // ── Helper files: __fixtures__ and __mocks__ under this root ─────────────
+    const helperFiles = collectHelperFiles(root);
+
+    for (const helperFile of helperFiles) {
+      const relFile = path.relative(WORKSPACE_ROOT, helperFile);
+      const crosspaths = extractCrossTreePaths(helperFile);
+
+      if (crosspaths.length === 0) continue;
+
+      it(`all cross-tree paths in ${relFile} resolve to existing files`, () => {
+        const missing: string[] = [];
+        const unresolvable: string[] = [];
+
+        for (const cp of crosspaths) {
+          if (cp.unresolvable) {
+            unresolvable.push(
+              `  line ${cp.line}: readFileSync(${cp.rawArg}, ...)\n` +
+              `    '${cp.rawArg}' is a variable — the guard cannot verify it statically.\n` +
+              `    Replace it with a static literal or template-literal (\`\${__dir}/...\`) form.`,
+            );
+          } else if (!fs.existsSync(cp.resolved)) {
+            missing.push(
+              `  line ${cp.line}: readPkg/readFileSync('${cp.rawArg}')\n` +
+              `    resolved → ${cp.resolved}\n` +
+              `    (file does not exist)`,
+            );
+          }
+        }
+
+        const problems = [...unresolvable, ...missing];
+        if (problems.length > 0) {
+          assert.fail(
+            `${problems.length} cross-tree path issue(s) in ${relFile}:\n\n` +
+            problems.join('\n\n') +
+            '\n\nFix the path so the guard can verify it statically.',
+          );
+        }
+      });
+    }
   }
 });
 
@@ -340,5 +424,30 @@ describe('extractCrossTreePaths — template-literal and non-literal detection',
     } finally {
       fs.unlinkSync(tmpFile);
     }
+  });
+
+  it('detects a broken cross-tree path in a non-test helper fixture file', () => {
+    // cross-tree-helper-broken.ts is a plain .ts helper (not .test.ts) that
+    // lives in scripts/src/__fixtures__/.  It contains an intentionally broken
+    // readFileSync path.  This test verifies that extractCrossTreePaths works
+    // on non-test files too — exactly the same analysis the live helper-file
+    // scan applies to __fixtures__ / __mocks__ files under the tree roots.
+    const fixture = path.join(FIXTURES_DIR, 'cross-tree-helper-broken.ts');
+    const entries = extractCrossTreePaths(fixture);
+
+    const brokenEntries = entries.filter(
+      (e) => !e.unresolvable && e.rawArg.includes('this-helper-does-not-exist'),
+    );
+    assert.ok(
+      brokenEntries.length >= 1,
+      'expected at least one resolvable entry referencing "this-helper-does-not-exist" in the broken helper fixture',
+    );
+
+    const entry = brokenEntries[0]!;
+    assert.equal(
+      fs.existsSync(entry.resolved),
+      false,
+      `expected the resolved path "${entry.resolved}" to be missing (intentionally broken helper fixture)`,
+    );
   });
 });
