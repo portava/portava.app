@@ -335,6 +335,31 @@ export class NotificationRouter {
       }
     }
 
+    // ── Step 3: null out expo_push_token on rent_buddy_profiles ──────────────
+    try {
+      const { error } = await this.db
+        .from('rent_buddy_profiles')
+        .update({ expo_push_token: null })
+        .in('expo_push_token', staleTokens);
+
+      if (error) throw error;
+    } catch (err) {
+      anyFailure = true;
+      _consecutiveCleanupFailures += 1;
+      const logFields = {
+        err,
+        userId,
+        staleCount,
+        operation: 'null_rent_buddy_expo_push_token',
+        consecutiveFailures: _consecutiveCleanupFailures,
+      };
+      if (_consecutiveCleanupFailures >= CLEANUP_ERROR_THRESHOLD) {
+        logger.error(logFields, 'NotificationRouter: stale-token cleanup failed — zombie tokens may accumulate');
+      } else {
+        logger.warn(logFields, 'NotificationRouter: failed to null expo_push_token on rent_buddy_profiles');
+      }
+    }
+
     if (!anyFailure) {
       _consecutiveCleanupFailures = 0;
       logger.info(

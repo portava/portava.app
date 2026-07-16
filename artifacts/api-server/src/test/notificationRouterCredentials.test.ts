@@ -98,6 +98,8 @@ interface FakeDb {
   deletedDeviceTokens: string[][];
   /** user_id values passed to profiles UPDATE … SET expo_push_token=null. */
   profilesNulled: string[];
+  /** Token arrays passed to rent_buddy_profiles UPDATE … IN (expo_push_token, …). */
+  rentBuddyTokensNulled: string[][];
   /** Rows inserted into push_retry_queue. */
   retryQueueInserts: any[];
   /** Rows inserted into notification_delivery_attempts. */
@@ -112,6 +114,7 @@ function makeFakeDb(opts: FakeDbOpts = {}): FakeDb {
 
   const deletedDeviceTokens: string[][] = [];
   const profilesNulled: string[] = [];
+  const rentBuddyTokensNulled: string[][] = [];
   const retryQueueInserts: any[] = [];
   const deliveryAttempts: any[] = [];
 
@@ -236,13 +239,19 @@ function makeFakeDb(opts: FakeDbOpts = {}): FakeDb {
               }
               return Promise.resolve({ error: null });
             },
+            in(_col: string, vals: any[]) {
+              if (table === "rent_buddy_profiles") {
+                rentBuddyTokensNulled.push([...vals]);
+              }
+              return Promise.resolve({ error: null });
+            },
           };
         },
       };
     },
   };
 
-  return { deletedDeviceTokens, profilesNulled, retryQueueInserts, deliveryAttempts, client };
+  return { deletedDeviceTokens, profilesNulled, rentBuddyTokensNulled, retryQueueInserts, deliveryAttempts, client };
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -343,6 +352,27 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
     assert.equal(deletedDeviceTokens.length, 0, "transient failure must NOT delete tokens");
     assert.equal(profilesNulled.length, 0, "transient failure must NOT null profile token");
     assert.ok(retryQueueInserts.length > 0, "transient failure must enqueue for retry");
+  });
+
+  it("nulls expo_push_token on rent_buddy_profiles when the token goes stale", async () => {
+    _setTestFetch(invalidCredFetch);
+    const { deletedDeviceTokens, rentBuddyTokensNulled, retryQueueInserts, client } = makeFakeDb({
+      deviceToken: TOKEN,
+      legacyToken: null,
+    });
+
+    const router = new NotificationRouter(client);
+    await router.route(BASE_NOTIF);
+
+    assert.equal(deletedDeviceTokens.length, 1, "notification_devices DELETE called");
+    assert.ok(deletedDeviceTokens[0].includes(TOKEN), "stale token deleted from notification_devices");
+
+    assert.equal(rentBuddyTokensNulled.length, 1, "one IN-update call on rent_buddy_profiles");
+    assert.ok(
+      rentBuddyTokensNulled[0].includes(TOKEN),
+      `rent_buddy_profiles update should include stale token ${TOKEN}`,
+    );
+    assert.equal(retryQueueInserts.length, 0, "must NOT enqueue on push_retry_queue");
   });
 
   it("does nothing when there are no push tokens registered for the user", async () => {
