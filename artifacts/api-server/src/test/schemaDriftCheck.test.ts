@@ -8,6 +8,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   runSchemaDriftCheck,
+  CRITICAL_COLUMNS,
   type ColumnProbe,
   type FunctionProbe,
 } from "../lib/schemaDriftCheck.js";
@@ -148,5 +149,23 @@ describe("runSchemaDriftCheck", () => {
     // one transport-failure warning per column probe, no consolidated drift warning
     assert.equal(warns.length, 2);
     assert.ok(warns.every((w) => w.msg === "schema drift check: probe failed"));
+  });
+
+  it("default critical probe list targets real live column names", () => {
+    // Regression guard: a probe naming a column that doesn't exist in the live
+    // schema produces permanent false-positive drift warnings on healthy DBs.
+    // buddy_availability_exceptions uses `exception_date`, not `date`
+    // (0133/0134 rebuild shape).
+    const bae = CRITICAL_COLUMNS.filter((p) => p.table === "buddy_availability_exceptions");
+    assert.ok(bae.length >= 1);
+    for (const p of bae) assert.equal(p.column, "exception_date");
+    // No probe may use an empty or wildcard column, and (table, column) pairs
+    // must be unique so consolidated warnings stay readable.
+    const keys = CRITICAL_COLUMNS.map((p) => `${p.table}.${p.column}`);
+    assert.equal(new Set(keys).size, keys.length);
+    for (const p of CRITICAL_COLUMNS) {
+      assert.match(p.column, /^[a-z_]+$/);
+      assert.match(p.table, /^[a-z_]+$/);
+    }
   });
 });

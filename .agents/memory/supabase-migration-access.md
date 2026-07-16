@@ -20,3 +20,8 @@ Authorization: Bearer $SUPABASE_ACCESS_TOKEN
 **How to apply:**
 - POST the migration SQL to the Management API, verify with a follow-up query, then set the migration's row in `docs/migrations.md` to `applied <date>`.
 - Watch for unapplied migrations: server code often degrades silently (column probes, best-effort selects), so a "pending" row in `docs/migrations.md` is the only reliable signal.
+
+## Rebuild-chain gotchas (learned 2026-07-16)
+- Apply each migration file as its own Management API request: `ALTER TYPE ... ADD VALUE` on a pre-existing enum cannot be *used* in the same transaction — split the file at first usage of the new value (error 55P04).
+- Bare `CREATE POLICY` collides when two migrations create the same policy name (0047 vs 0107 both made `rb_admin_actions_svc`); prepend `DROP POLICY IF EXISTS`.
+- docs/migrations.md "applied" rows lie; always verify against information_schema before trusting them.

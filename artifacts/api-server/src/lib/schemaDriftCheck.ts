@@ -87,7 +87,7 @@ export const CRITICAL_COLUMNS: ColumnProbe[] = [
   },
   {
     table: "buddy_availability_exceptions",
-    column: "date",
+    column: "exception_date",
     migration: "0133_rent_buddy_availability_alignment.sql",
     impact: "bookings are not blocked on vacation/blocked dates",
   },
