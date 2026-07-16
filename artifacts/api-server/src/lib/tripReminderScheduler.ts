@@ -47,6 +47,10 @@ const MAX_RECOVERY_AGE_MS  = WINDOW_UPPER_HRS * 3_600_000; // 26 h
  *  drift between server restarts and timezone offsets in date-only start_date
  *  values. */
 const RECOVERY_DRIFT_HRS = 2;
+/** Maximum number of recovery-sweep retry attempts before a stale claim is
+ *  permanently abandoned.  Prevents indefinite retries when all push tokens
+ *  are invalid or a persistent Supabase error makes success impossible. */
+const MAX_RECOVERY_RETRIES = 3;
 
 /** In-memory dedup so we don't double-fire within a single process restart cycle. */
 const reminded = new Set<string>();
@@ -129,13 +133,16 @@ async function recoverStaleClaims(sc: ReturnType<typeof getServiceClient>): Prom
 
   const { data: stale, error } = await (sc as any)
     .from("trips")
-    .select("id, title, owner_id, start_date")
+    .select("id, title, owner_id, start_date, reminder_retry_count")
     .is("reminder_delivered_at", null)
     .lt("reminder_sent_at", staleThreshold)
     .gte("reminder_sent_at", recoveryFloor)
     .gte("start_date", windowLowerDate)
     .lte("start_date", windowUpperDate)
-    .in("status", ["upcoming", "planning"]);
+    .in("status", ["upcoming", "planning"])
+    // Exclude rows that have already exhausted the retry budget — they are
+    // permanently abandoned and must not be retried again.
+    .lt("reminder_retry_count", MAX_RECOVERY_RETRIES);
 
   if (error) {
     logger.warn({ err: error }, "TripReminderScheduler: recovery query error");
@@ -155,14 +162,39 @@ async function recoverStaleClaims(sc: ReturnType<typeof getServiceClient>): Prom
       continue;
     }
 
-    logger.info({ tripId }, "TripReminderScheduler: recovering stale claimed reminder");
+    const retryCount: number = (trip.reminder_retry_count as number) ?? 0;
+    const newCount = retryCount + 1;
+
+    // Increment the retry counter before attempting the send.  This ensures
+    // every recovery attempt is recorded even if sendReminderForTrip throws
+    // before we reach the catch block.  On success, markDelivered() below
+    // removes the row from future recovery queries via the delivered_at filter;
+    // on failure, the incremented count is the only guard against indefinite
+    // retries.
+    await (sc as any)
+      .from("trips")
+      .update({ reminder_retry_count: newCount })
+      .eq("id", tripId);
+
+    logger.info({ tripId, retryCount: newCount, maxRetries: MAX_RECOVERY_RETRIES },
+      "TripReminderScheduler: recovering stale claimed reminder");
     try {
       await sendReminderForTrip(sc, trip);
       await markDelivered(sc, tripId);
       // Ensure in-memory set is consistent so the normal sweep skips it.
       reminded.add(tripId);
     } catch (err) {
-      logger.warn({ err, tripId }, "TripReminderScheduler: recovery send failed");
+      if (newCount >= MAX_RECOVERY_RETRIES) {
+        logger.warn(
+          { err, tripId, retryCount: newCount, maxRetries: MAX_RECOVERY_RETRIES },
+          "TripReminderScheduler: reminder permanently abandoned — max recovery retries exceeded",
+        );
+      } else {
+        logger.warn(
+          { err, tripId, retryCount: newCount, maxRetries: MAX_RECOVERY_RETRIES },
+          "TripReminderScheduler: recovery send failed, will retry next poll",
+        );
+      }
     }
   }
 }

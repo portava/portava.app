@@ -30,7 +30,12 @@ interface FakeState {
   profiles?: any[];
 }
 
-function makeFakeClient(state: FakeState) {
+interface FakeClientOpts {
+  /** Simulates a hard Supabase error (throws) for any query on this table. */
+  throwOnTable?: string;
+}
+
+function makeFakeClient(state: FakeState, opts: FakeClientOpts = {}) {
   const inserted: Record<string, any[]> = {};
 
   function rowsFor(table: string): any[] {
@@ -46,6 +51,8 @@ function makeFakeClient(state: FakeState) {
     let pendingUpdate: any = null;
     const b: any = {
       select() { return b; },
+      // Intercept `.then` to throw for the configured table, simulating a hard
+      // Supabase network/query error that propagates out of sendReminderForTrip.
       insert(row: any) {
         pendingInsert = row;
         if (!inserted[table]) inserted[table] = [];
@@ -66,6 +73,10 @@ function makeFakeClient(state: FakeState) {
       },
       gte() { return b; }, lte() { return b; }, order() { return b; },
       then(onF: any, onR: any) {
+        // Simulate a hard DB error (throw) for the configured table.
+        if (opts.throwOnTable === table) {
+          return Promise.reject(new Error(`Simulated Supabase error on table: ${table}`)).then(onF, onR);
+        }
         if (pendingInsert) return Promise.resolve({ data: pendingInsert, error: null }).then(onF, onR);
         const matched = rowsFor(table).filter((r) => filters.every((f) => f(r)));
         if (pendingUpdate) {
@@ -102,7 +113,10 @@ afterEach(() => { pushCalls = []; _setTestFetch(okFetch()); });
 
 function baseState(tripId: string): FakeState {
   return {
-    trips: [{ id: tripId, title: "Lisbon Adventure", owner_id: OWNER_ID, status: "upcoming" }],
+    trips: [{
+      id: tripId, title: "Lisbon Adventure", owner_id: OWNER_ID, status: "upcoming",
+      reminder_retry_count: 0,
+    }],
     tripMembers: [{ trip_id: tripId, user_id: MEMBER_ID, role: "member" }],
     profiles: [
       { id: OWNER_ID,  expo_push_token: OWNER_TOKEN },
@@ -294,5 +308,49 @@ describe("TripReminderScheduler push", () => {
 
     assert.equal(pushCalls.length, 0,
       "recovery must not resend when start_date is outside the 22-26 h window");
+  });
+
+  it("stops retrying after MAX_RECOVERY_RETRIES failed attempts and does not retry again", async () => {
+    // Simulate persistent Supabase failure: sendReminderForTrip throws on
+    // every attempt because querying trip_members raises a network error.
+    // Note: sendPushWithRetry never throws (it enqueues failures internally),
+    // so we simulate failure via a hard Supabase error, not a push error.
+    const MAX_RECOVERY_RETRIES = 3;
+    const STALE_CLAIM_MINUTES  = 10;
+    const staleTime = new Date(Date.now() - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
+
+    const state = baseState("trip-max-retries");
+    state.trips![0].reminder_sent_at     = staleTime;
+    state.trips![0].reminder_delivered_at = null;
+    state.trips![0].reminder_retry_count  = 0;
+
+    // throwOnTable: "trip_members" makes sendReminderForTrip throw on every
+    // call while letting the recovery sweep's own trips queries work normally.
+    const svc = makeFakeClient(state, { throwOnTable: "trip_members" });
+    _setTestServiceClient(svc);
+
+    // First attempt — retry counter must be incremented to 1.
+    await runOnce();
+    assert.equal(state.trips![0].reminder_retry_count, 1,
+      "retry count is 1 after first failure");
+
+    // Second attempt — incremented to 2.
+    await runOnce();
+    assert.equal(state.trips![0].reminder_retry_count, 2,
+      "retry count is 2 after second failure");
+
+    // Third attempt — reaches MAX_RECOVERY_RETRIES; row is now abandoned.
+    await runOnce();
+    assert.equal(state.trips![0].reminder_retry_count, MAX_RECOVERY_RETRIES,
+      "retry count equals MAX_RECOVERY_RETRIES after third failure");
+    assert.equal(state.trips![0].reminder_delivered_at ?? null, null,
+      "reminder_delivered_at stays null for a permanently abandoned trip");
+
+    // Fourth call: lt("reminder_retry_count", 3) excludes the row from the
+    // recovery query — the count must stay at MAX and not increase further.
+    const countBefore = state.trips![0].reminder_retry_count as number;
+    await runOnce();
+    assert.equal(state.trips![0].reminder_retry_count, countBefore,
+      "retry count does not increase once the trip is permanently abandoned");
   });
 });
