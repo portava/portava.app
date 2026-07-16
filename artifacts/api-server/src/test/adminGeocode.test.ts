@@ -1710,7 +1710,7 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
     assert.ok(xxEntryDeleted, "XX catalog entry should still be deleted after a null earn_count pair result");
   });
 
-  it("completes the merge and still counts it when a user_stamps ownership repoint errors", async () => {
+  it("prevents a success count when a user_stamps ownership repoint errors during merge", async () => {
     const XX_ID = "cat-xx-ownership-fail";
     const SURVIVOR_ID = "cat-survivor-ownership-fail";
 
