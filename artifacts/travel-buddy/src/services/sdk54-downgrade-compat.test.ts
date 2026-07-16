@@ -635,3 +635,90 @@ describe('expo-clipboard ~8.0.8 — setStringAsync call contract (mirrors GroupC
     assert.equal(typeof received[0], 'string');
   });
 });
+
+// ── 7. Lockfile-resolved peer dep versions ────────────────────────────────────
+//
+// The semver ranges in package.json only constrain what pnpm may resolve;
+// transitive peer deps like @expo/config-plugins and expo-modules-core are not
+// declared directly in either package.json — their pinned resolved versions live
+// only in the pnpm lockfile.  If those resolved versions drift between the two
+// lockfiles, runtime breakage can occur silently even when the declared ranges
+// match.
+//
+// This section reads both lockfiles and asserts that each package resolves to
+// exactly one version and that version is identical in both trees.
+
+describe('Lockfile-resolved transitive peer dep versions — @expo/config-plugins and expo-modules-core', () => {
+  // travel-buddy-standalone/pnpm-lock.yaml is 4 levels up from src/services/ in artifacts/travel-buddy/
+  const standaloneLockText = readFileSync(pathResolve(__dir, '../../../../travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
+  // monorepo root pnpm-lock.yaml is also 4 levels up from src/services/ in artifacts/travel-buddy/
+  const monoLockText = readFileSync(pathResolve(__dir, '../../../../pnpm-lock.yaml'), 'utf8');
+
+  /**
+   * Scan a lockfile text for all resolved base versions of a given package.
+   * Matches lines like:
+   *   '  "@expo/config-plugins@54.0.4":'
+   *   "  expo-modules-core@3.0.30:"
+   *   "  expo-modules-core@3.0.30(react-native@...):"
+   * Returns a sorted, deduplicated list of version strings.
+   */
+  function resolvedVersions(lockText: string, pkgName: string): string[] {
+    // Escape special regex metacharacters in the package name.
+    const escaped = pkgName.replace(/[.*+?^${}()|[\]\\]/g, (c) => '\\' + c).replace(/\//g, (c) => '\\' + c);
+    // pnpm v9 lockfile: package entries are indented by 2 spaces at the top level
+    // of the `packages:` section.  Scoped names are wrapped in single/double
+    // quotes; unscoped names are bare.  Both forms appear here.
+    const re = new RegExp(`^  ['"]?${escaped}@([\\d][\\d.]+)`, 'gm');
+    const found = new Set<string>();
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(lockText)) !== null) {
+      found.add(m[1]!);
+    }
+    return [...found].sort();
+  }
+
+  const pkgsToCheck = ['@expo/config-plugins', 'expo-modules-core'];
+
+  for (const pkg of pkgsToCheck) {
+    it(`${pkg} — resolved to exactly one version in each lockfile`, () => {
+      const saVersions = resolvedVersions(standaloneLockText, pkg);
+      const monoVersions = resolvedVersions(monoLockText, pkg);
+
+      assert.ok(
+        saVersions.length > 0,
+        `${pkg} not found in travel-buddy-standalone/pnpm-lock.yaml — lockfile may be out of date`,
+      );
+      assert.ok(
+        monoVersions.length > 0,
+        `${pkg} not found in root pnpm-lock.yaml — lockfile may be out of date`,
+      );
+      assert.equal(
+        saVersions.length,
+        1,
+        `${pkg} resolved to multiple versions in travel-buddy-standalone/pnpm-lock.yaml: ${saVersions.join(', ')} — version conflict`,
+      );
+      assert.equal(
+        monoVersions.length,
+        1,
+        `${pkg} resolved to multiple versions in root pnpm-lock.yaml: ${monoVersions.join(', ')} — version conflict`,
+      );
+    });
+
+    it(`${pkg} — resolved version matches between travel-buddy-standalone and monorepo lockfiles`, () => {
+      const saVersions = resolvedVersions(standaloneLockText, pkg);
+      const monoVersions = resolvedVersions(monoLockText, pkg);
+
+      const saVer = saVersions[0] ?? '(not found)';
+      const monoVer = monoVersions[0] ?? '(not found)';
+
+      assert.equal(
+        saVer,
+        monoVer,
+        `${pkg} lockfile version mismatch:\n` +
+        `  travel-buddy-standalone/pnpm-lock.yaml resolved: ${saVer}\n` +
+        `  root pnpm-lock.yaml resolved:                    ${monoVer}\n` +
+        `A drift here can cause silent SDK 54 runtime breakage even when package.json ranges match.`,
+      );
+    });
+  }
+});
