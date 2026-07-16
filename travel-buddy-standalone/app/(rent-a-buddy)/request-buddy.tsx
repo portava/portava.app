@@ -131,17 +131,20 @@ function OpenRequestForm() {
   const submit = useCallback(async () => {
     if (!city.trim()) { Alert.alert('Missing city', 'Please enter the city for your request.'); return; }
     setLoading(true);
-    const result = await createRequest({
+    const basePayload = {
       city: city.trim(),
-      lat: cityCoords?.lat,
-      lng: cityCoords?.lng,
       category, durationMinutes, groupSize,
       budgetMinUsd: budget.min ?? undefined,
       budgetMaxUsd: budget.max ?? undefined,
       languageNeeded: language.trim() || undefined,
       safetyPrefs: { publicOnly },
       notes: notes.trim() || undefined,
-    });
+    };
+    const result = await createRequest(
+      cityCoords != null && cityCoords.lat != null && cityCoords.lng != null
+        ? { ...basePayload, lat: cityCoords.lat, lng: cityCoords.lng }
+        : basePayload,
+    );
     setLoading(false);
     if (!result.ok) { Alert.alert('Error', result.error); return; }
     Alert.alert(

@@ -96,10 +96,8 @@ export default function Marketplace() {
     } else {
       setLoadingMore(true);
     }
-    const res = await searchBuddies({
+    const baseSearch = {
       city: city.trim(),
-      ...(cityLat != null ? { lat: cityLat } : {}),
-      ...(cityLng != null ? { lng: cityLng } : {}),
       ...(category !== 'all' ? { category: category as BuddyCategory } : {}),
       sortBy,
       verifiedOnly: verifiedOnly || undefined,
@@ -109,7 +107,12 @@ export default function Marketplace() {
       ...(sessionMode !== 'any' ? { sessionMode } : {}),
       page: pg,
       perPage: PER_PAGE,
-    });
+    };
+    const res = await searchBuddies(
+      cityLat != null && cityLng != null
+        ? { ...baseSearch, lat: cityLat, lng: cityLng }
+        : baseSearch,
+    );
     if (pg === 1) {
       if (!silent) setLoading(false);
       setRefreshing(false);
