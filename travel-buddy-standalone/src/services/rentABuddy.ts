@@ -414,7 +414,7 @@ export async function getMyWaitlist(): Promise<ApiResult<{ waitlist: Array<{ id:
 export async function joinWaitlist(
   city: string,
   category?: string,
-  coords?: { lat?: number | null; lng?: number | null },
+  coords?: { lat: number; lng: number } | { lat?: never; lng?: never },
 ): Promise<ApiResult<{ ok: boolean }>> {
   return apiFetch('/api/rent-a-buddy/waitlist', {
     method: 'POST',
