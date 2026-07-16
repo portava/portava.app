@@ -246,4 +246,25 @@ describe("TripReminderScheduler push", () => {
 
     assert.equal(pushCalls.length, 0, "fresh claim is not retried — not yet stale");
   });
+
+  it("does not resend when the stale claim's trip window has already closed", async () => {
+    // Simulates: server crashed after claiming the reminder, but by the time
+    // recovery runs the trip has already started (start_date is in the past).
+    // Sending "trip starts tomorrow!" after the trip started is worse than
+    // not sending it at all.
+    const STALE_CLAIM_MINUTES = 10;
+    const staleTime = new Date(Date.now() - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
+
+    const state = baseState("trip-window-closed");
+    state.trips![0].reminder_sent_at    = staleTime;
+    state.trips![0].reminder_delivered_at = null;
+    state.trips![0].start_date          = "2020-01-01"; // already started — window closed
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 0,
+      "recovery must not resend when the trip window has already closed");
+  });
 });

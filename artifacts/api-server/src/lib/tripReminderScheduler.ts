@@ -111,14 +111,18 @@ async function recoverStaleClaims(sc: ReturnType<typeof getServiceClient>): Prom
   const staleThreshold = new Date(Date.now() - STALE_CLAIM_MINUTES * 60_000).toISOString();
   // Don't recover claims older than MAX_RECOVERY_AGE_MS: the reminder window has
   // passed, so there is nothing useful to deliver and retries would be indefinite.
-  const recoveryFloor   = new Date(Date.now() - MAX_RECOVERY_AGE_MS).toISOString();
+  const recoveryFloor  = new Date(Date.now() - MAX_RECOVERY_AGE_MS).toISOString();
+  // Only recover reminders for trips that haven't started yet — no point
+  // sending "trip starts tomorrow" after the trip window has already closed.
+  const todayStr = new Date().toISOString().slice(0, 10);
 
   const { data: stale, error } = await (sc as any)
     .from("trips")
-    .select("id, title, owner_id")
+    .select("id, title, owner_id, start_date")
     .is("reminder_delivered_at", null)
     .lt("reminder_sent_at", staleThreshold)
     .gte("reminder_sent_at", recoveryFloor)
+    .gte("start_date", todayStr)
     .in("status", ["upcoming", "planning"]);
 
   if (error) {
@@ -129,6 +133,15 @@ async function recoverStaleClaims(sc: ReturnType<typeof getServiceClient>): Prom
 
   for (const trip of stale as any[]) {
     const tripId = trip.id as string;
+
+    // Belt-and-suspenders: skip if the trip's start date has already passed
+    // (guards against DB engines that don't push the gte filter all the way down).
+    if (trip.start_date && trip.start_date < todayStr) {
+      logger.info({ tripId, startDate: trip.start_date },
+        "TripReminderScheduler: skipping stale recovery — trip window already closed");
+      continue;
+    }
+
     logger.info({ tripId }, "TripReminderScheduler: recovering stale claimed reminder");
     try {
       await sendReminderForTrip(sc, trip);
