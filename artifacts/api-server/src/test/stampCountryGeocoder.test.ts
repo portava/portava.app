@@ -797,4 +797,67 @@ describe("background correction sweep", () => {
     assert.equal(upsertCalls[0].country_code, "GB", "upsert must carry the correct country_code");
     assert.equal(upsertCalls[0].country, "United Kingdom", "upsert must carry the correct country name");
   });
+
+  it("bumps correctionCheckedAt after a transient DB error — second call skips the probe", async () => {
+    // Step 1: seed the in-memory cache with a valid entry.
+    _setGeocodeFetchForTests(fakeNominatim({ "reykjavik": { country_code: "is", country: "Iceland" } }));
+    await geocodeCityCountry("Reykjavik");
+    assert.equal(fetchCalls.length, 1, "initial geocode should hit Nominatim once");
+
+    // Step 2: backdate the cache entry so the next call immediately re-probes
+    // the DB for corrected_at (skips the 5-minute cooldown).
+    _backdateGeocodeCacheEntryForTests("reykjavik");
+
+    // Step 3: build a DB client that returns an error on maybeSingle() and
+    // records how many times the probe path is exercised.
+    let dbProbeCalls = 0;
+    const errorDb = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache");
+        let _isMaybeSingle = false;
+        const chain: any = {
+          select()      { return chain; },
+          eq()          { return chain; },
+          gte()         { return chain; },
+          maybeSingle() { _isMaybeSingle = true; return chain; },
+          then(resolve: (v: any) => void) {
+            if (_isMaybeSingle) {
+              dbProbeCalls += 1;
+              // Simulate a transient DB error — evictIfDbCorrected returns false.
+              resolve({ data: null, error: { message: "connection timeout" } });
+            } else {
+              resolve({ data: [], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(errorDb);
+
+    // Step 4: replace Nominatim with a stub that must never be called.
+    fetchCalls = [];
+    _setGeocodeFetchForTests(async (url: string) => {
+      fetchCalls.push(url);
+      throw new Error("Nominatim must not be called — entry is still cached");
+    });
+    // Re-inject the error DB client (setGeocodeFetch resets _dbClientOverride).
+    _setGeocodeDbClientForTests(errorDb);
+
+    // First call — the backdated timestamp triggers the probe; DB errors out.
+    const r1 = await geocodeCityCountry("Reykjavik");
+    assert.equal(dbProbeCalls, 1, "DB must be probed exactly once on the first call");
+    assert.equal(fetchCalls.length, 0, "Nominatim must not be called after a DB error");
+    assert.ok(r1 !== null, "cached result must still be returned despite the DB error");
+    assert.equal(r1!.countryCode, "IS");
+
+    // Step 5: second call without backdating — correctionCheckedAt was bumped
+    // to Date.now() by the first call, so the interval has not elapsed yet.
+    // The probe must be skipped entirely.
+    const r2 = await geocodeCityCountry("Reykjavik");
+    assert.equal(dbProbeCalls, 1, "DB must NOT be probed a second time — correctionCheckedAt was bumped");
+    assert.equal(fetchCalls.length, 0, "Nominatim must not be called on the second hit either");
+    assert.ok(r2 !== null, "cached result must still be returned on the second call");
+    assert.equal(r2!.countryCode, "IS");
+  });
 });
