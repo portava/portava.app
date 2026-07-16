@@ -3577,6 +3577,75 @@ describe("sweepStaleArtwork — skips entries with already-active jobs", () => {
   });
 });
 
+describe("sweepStaleArtwork — re-enqueues entries whose only existing jobs are terminal", () => {
+  // The active-jobs filter in sweepStaleArtwork only matches
+  // queued | generating | review_required.  Terminal statuses
+  // (permanently_failed, retryable_failed) are deliberately excluded so a
+  // catalog that failed to generate still gets a fresh attempt after a
+  // STYLE_VERSION bump.
+
+  it("inserts a new job when the catalog entry only has a permanently_failed job", async () => {
+    // Simulate: the DB active-jobs query returns nothing for cat-perm-failed
+    // because the only queue row has status=permanently_failed, which is not
+    // in the [queued, generating, review_required] filter.
+    const { sc, inserts } = makeSweepFakeClient({
+      staleVersionRows: [{ catalog_id: "cat-perm-failed" }],
+      activeJobRows:    [], // permanently_failed is not an active status
+    });
+
+    const count = await sweepStaleArtwork(sc);
+
+    assert.equal(count, 1, "must enqueue a new job even when the only existing job is permanently_failed");
+    assert.equal(inserts.length, 1, "must issue exactly one batch insert");
+    assert.equal(inserts[0].rows.length, 1);
+    const job = inserts[0].rows[0];
+    assert.equal(job.catalog_id, "cat-perm-failed");
+    assert.equal(job.status, "queued", "new job must have status=queued");
+    assert.equal(job.triggered_by_action, "style_version_sweep");
+  });
+
+  it("inserts a new job when the catalog entry only has a retryable_failed job", async () => {
+    // Simulate: the DB active-jobs query returns nothing for cat-retry-failed
+    // because the only queue row has status=retryable_failed, which is not
+    // in the [queued, generating, review_required] filter.
+    const { sc, inserts } = makeSweepFakeClient({
+      staleVersionRows: [{ catalog_id: "cat-retry-failed" }],
+      activeJobRows:    [], // retryable_failed is not an active status
+    });
+
+    const count = await sweepStaleArtwork(sc);
+
+    assert.equal(count, 1, "must enqueue a new job even when the only existing job is retryable_failed");
+    assert.equal(inserts.length, 1, "must issue exactly one batch insert");
+    assert.equal(inserts[0].rows.length, 1);
+    const job = inserts[0].rows[0];
+    assert.equal(job.catalog_id, "cat-retry-failed");
+    assert.equal(job.status, "queued", "new job must have status=queued");
+    assert.equal(job.triggered_by_action, "style_version_sweep");
+  });
+
+  it("enqueues the terminal-only entry while still skipping the entry that has an active job", async () => {
+    // Mixed scenario: cat-perm-failed has only a permanently_failed job
+    // (not in activeJobRows), cat-active has a live queued job (in activeJobRows).
+    // Only cat-perm-failed must be re-enqueued.
+    const { sc, inserts } = makeSweepFakeClient({
+      staleVersionRows: [
+        { catalog_id: "cat-perm-failed" },
+        { catalog_id: "cat-active" },
+      ],
+      activeJobRows: [{ catalog_id: "cat-active" }],
+    });
+
+    const count = await sweepStaleArtwork(sc);
+
+    assert.equal(count, 1, "must enqueue only the terminal-only entry");
+    assert.equal(inserts.length, 1);
+    assert.equal(inserts[0].rows.length, 1);
+    assert.equal(inserts[0].rows[0].catalog_id, "cat-perm-failed",
+      "permanently_failed-only entry must be enqueued; active-job entry must be skipped");
+  });
+});
+
 describe("sweepStaleArtwork — produces no jobs when all artwork is current", () => {
   it("returns 0 and issues no insert when the stale-version query returns no rows", async () => {
     // All artwork rows have the current STYLE_VERSION, so the .or() filter
