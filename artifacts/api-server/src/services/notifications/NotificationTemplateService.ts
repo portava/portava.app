@@ -13,7 +13,8 @@
 
 export type NotificationCategory =
   | 'plans' | 'trips' | 'telegraph' | 'safe_return' | 'location' | 'trip_crew'
-  | 'compass' | 'pulse' | 'passport' | 'hidden_gems' | 'trust' | 'airport' | 'admin';
+  | 'compass' | 'pulse' | 'passport' | 'hidden_gems' | 'trust' | 'airport' | 'admin'
+  | 'rent_buddy';
 
 export type NotificationPriority = 'urgent' | 'important' | 'normal' | 'low';
 

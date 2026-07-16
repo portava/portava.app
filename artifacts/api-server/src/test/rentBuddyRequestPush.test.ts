@@ -37,6 +37,8 @@ interface FakeState {
   rentBuddyProfiles?: Array<Record<string, any>>;
   profiles?: Array<Record<string, any>>;
   notificationDevices?: Array<Record<string, any>>;
+  notificationPreferences?: Array<Record<string, any>>;
+  notificationCategoryPreferences?: Array<Record<string, any>>;
   featureFlags?: Record<string, boolean>;
 }
 
@@ -48,6 +50,8 @@ function makeFakeClient(state: FakeState = {}) {
     if (table === "rent_buddy_profiles")   return state.rentBuddyProfiles ?? [];
     if (table === "profiles")              return state.profiles ?? [];
     if (table === "notification_devices")  return state.notificationDevices ?? [];
+    if (table === "notification_preferences")          return state.notificationPreferences ?? [];
+    if (table === "notification_category_preferences") return state.notificationCategoryPreferences ?? [];
     if (table === "feature_flags")
       return Object.entries(state.featureFlags ?? {}).map(([flag, enabled]) => ({ flag, enabled }));
     return [];
@@ -280,6 +284,60 @@ describe("notifyEligibleBuddies", () => {
     await notifyEligibleBuddies(svc, REQUEST);
     assert.equal(pushCalls.length, 1);
     assert.equal((svc.__inserted["push_retry_queue"] ?? []).length, 0);
+  });
+
+  it("skips buddies who disabled the rent_buddy category push toggle", async () => {
+    const svc = makeFakeClient({
+      rentBuddyProfiles: [buddyRow()],
+      profiles: [],
+      notificationCategoryPreferences: [
+        { user_id: BUDDY1_ID, category: "rent_buddy", in_app_enabled: true, push_enabled: false, email_enabled: false, digest_enabled: false },
+      ],
+    });
+    await notifyEligibleBuddies(svc, REQUEST);
+    assert.equal(pushCalls.length, 0);
+    // No buddies recorded as notified either
+    assert.equal((svc.__updatePatches["rent_buddy_requests"] ?? []).length, 0);
+  });
+
+  it("skips buddies who muted push globally", async () => {
+    const svc = makeFakeClient({
+      rentBuddyProfiles: [buddyRow()],
+      profiles: [],
+      notificationPreferences: [{ user_id: BUDDY1_ID, push_enabled: false }],
+    });
+    await notifyEligibleBuddies(svc, REQUEST);
+    assert.equal(pushCalls.length, 0);
+  });
+
+  it("still notifies buddies who disabled a different category", async () => {
+    const svc = makeFakeClient({
+      rentBuddyProfiles: [buddyRow()],
+      profiles: [],
+      notificationCategoryPreferences: [
+        { user_id: BUDDY1_ID, category: "pulse", in_app_enabled: true, push_enabled: false, email_enabled: false, digest_enabled: false },
+      ],
+    });
+    await notifyEligibleBuddies(svc, REQUEST);
+    assert.equal(pushCalls.length, 1);
+  });
+
+  it("only notifies opted-in buddies when preferences are mixed", async () => {
+    const svc = makeFakeClient({
+      rentBuddyProfiles: [
+        buddyRow(),
+        buddyRow({ id: "bp-2", user_id: BUDDY2_ID, expo_push_token: TOKEN2 }),
+      ],
+      profiles: [],
+      notificationCategoryPreferences: [
+        { user_id: BUDDY2_ID, category: "rent_buddy", in_app_enabled: true, push_enabled: false, email_enabled: false, digest_enabled: false },
+      ],
+    });
+    await notifyEligibleBuddies(svc, REQUEST);
+    assert.equal(pushCalls.length, 1);
+    assert.deepEqual(pushCalls[0].messages.map((m: any) => m.to), [TOKEN1]);
+    const reqPatches = svc.__updatePatches["rent_buddy_requests"] ?? [];
+    assert.deepEqual(reqPatches[0].patch.notified_buddy_ids, ["bp-1"]);
   });
 
   it("does not call Expo when no tokens exist anywhere", async () => {

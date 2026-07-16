@@ -103,6 +103,52 @@ export class NotificationPreferenceService {
     return rowToPrefs(userId, data as Record<string, any>);
   }
 
+  /**
+   * Batch variant of getPreferences for fan-out sends (e.g. notifying many
+   * buddies about one request). Users without a stored row get the defaults.
+   */
+  async getPreferencesForUsers(userIds: string[]): Promise<Map<string, NotificationPreferences>> {
+    const map = new Map<string, NotificationPreferences>();
+    for (const id of userIds) map.set(id, rowToPrefs(id, null));
+    if (userIds.length === 0) return map;
+    const { data } = await this.db
+      .from('notification_preferences')
+      .select('*')
+      .in('user_id', userIds);
+    for (const row of (data ?? []) as Record<string, any>[]) {
+      map.set(row.user_id, rowToPrefs(row.user_id, row));
+    }
+    return map;
+  }
+
+  /**
+   * Batch variant of getCategoryPreferences scoped to a single category.
+   * Users without a stored row are absent from the map (meaning: no
+   * category-level override — treat the category as enabled).
+   */
+  async getCategoryPreferenceForUsers(
+    userIds: string[],
+    category: NotificationCategory,
+  ): Promise<Map<string, CategoryPreferences>> {
+    const map = new Map<string, CategoryPreferences>();
+    if (userIds.length === 0) return map;
+    const { data } = await this.db
+      .from('notification_category_preferences')
+      .select('*')
+      .in('user_id', userIds)
+      .eq('category', category);
+    for (const r of (data ?? []) as Record<string, any>[]) {
+      map.set(r.user_id, {
+        category:       r.category as NotificationCategory,
+        inAppEnabled:   Boolean(r.in_app_enabled),
+        pushEnabled:    Boolean(r.push_enabled),
+        emailEnabled:   Boolean(r.email_enabled),
+        digestEnabled:  Boolean(r.digest_enabled),
+      });
+    }
+    return map;
+  }
+
   async getCategoryPreferences(userId: string): Promise<CategoryPreferences[]> {
     const { data } = await this.db
       .from('notification_category_preferences')

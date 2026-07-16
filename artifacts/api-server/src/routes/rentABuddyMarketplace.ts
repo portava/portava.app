@@ -85,6 +85,7 @@ import {
   type BuddyScoringData,
   type MatchPreferences,
 } from "../services/rentBuddy/CompatibilityScoreService.js";
+import { NotificationPreferenceService } from "../services/notifications/NotificationPreferenceService.js";
 import {
   getPricingSuggestion,
   calculateDeposit,
@@ -745,7 +746,36 @@ export async function notifyEligibleBuddies(svc: any, request: any) {
   if (!buddies) return;
 
   // Never notify the traveler about their own request.
-  const eligible = (buddies as any[]).filter((b: any) => b.user_id !== request.traveler_id);
+  const candidates = (buddies as any[]).filter((b: any) => b.user_id !== request.traveler_id);
+
+  // Respect notification preferences: skip buddies who muted push globally or
+  // turned off the rent_buddy category. Uses the shared preference system so
+  // quiet hours / global mute / category toggles all apply.
+  const prefService = new NotificationPreferenceService(svc);
+  const candidateUserIds = candidates.map((b: any) => b.user_id);
+  const [prefsByUser, catPrefsByUser] = await Promise.all([
+    prefService.getPreferencesForUsers(candidateUserIds),
+    prefService.getCategoryPreferenceForUsers(candidateUserIds, "rent_buddy"),
+  ]);
+  const eligible = candidates.filter((b: any) => {
+    const prefs = prefsByUser.get(b.user_id);
+    if (!prefs) return true;
+    const channels = prefService.filterChannels(
+      ["push"],
+      prefs,
+      catPrefsByUser.get(b.user_id),
+      "normal",
+      "rent_buddy",
+    );
+    return channels.includes("push");
+  });
+  const optedOut = candidates.length - eligible.length;
+  if (optedOut > 0) {
+    logger.info(
+      { requestId: request.id, optedOut },
+      "buddy request: buddies skipped by notification preferences",
+    );
+  }
 
   const buddyIds = eligible.map((b: any) => b.id);
   if (buddyIds.length > 0) {

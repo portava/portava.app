@@ -44,6 +44,7 @@ const router = Router();
 const NOTIFICATION_CATEGORIES = [
   'plans','trips','telegraph','safe_return','location','trip_crew',
   'compass','pulse','passport','hidden_gems','trust','airport','admin',
+  'rent_buddy',
 ] as const;
 
 // ── Internal secret guard ─────────────────────────────────────────────────────
