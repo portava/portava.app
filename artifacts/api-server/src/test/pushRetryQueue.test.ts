@@ -727,3 +727,114 @@ describe("PushRetryQueue.processQueue() — partial success on final attempt", (
     assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9 — All-dead batch: every token returns DeviceNotRegistered
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Expo returns a 200 with two error tickets, one per token — both are
+ * DeviceNotRegistered.  This exercises the all-dead path where result.sent===0
+ * and every ticket is a permanent failure.
+ */
+function expoAllDeadFetch(): typeof fetch {
+  return async () =>
+    new Response(
+      JSON.stringify({
+        data: [
+          {
+            status:  "error",
+            message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+            details: { error: "DeviceNotRegistered" },
+          },
+          {
+            status:  "error",
+            message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+            details: { error: "DeviceNotRegistered" },
+          },
+        ],
+      }),
+      { status: 200 },
+    ) as unknown as Response;
+}
+
+describe("PushRetryQueue.processQueue() — all-dead batch (every token DeviceNotRegistered)", () => {
+  it("wipes both dead tokens from all three tables and finalises the queue row as 'failed'", async () => {
+    // Queue row carries two tokens; Expo will report DeviceNotRegistered for both.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN, DEAD_TOKEN],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    _setTestFetch(expoAllDeadFetch());
+    await queue.processQueue();
+
+    // ── Both tokens must be wiped from all three tables ───────────────────────
+
+    // profiles.expo_push_token nulled via update().in([PUSH_TOKEN, DEAD_TOKEN])
+    const profileUpdate = client.updateCalls.find(
+      (c) => c.table === "profiles" && c.patch.expo_push_token === null,
+    );
+    assert.ok(profileUpdate, "profiles.expo_push_token must be nulled for dead tokens");
+    assert.deepEqual(
+      [...(profileUpdate.inFilters["expo_push_token"] as string[])].sort(),
+      [PUSH_TOKEN, DEAD_TOKEN].sort(),
+      "profiles update must target both dead tokens",
+    );
+
+    // notification_devices rows deleted via delete().in([PUSH_TOKEN, DEAD_TOKEN])
+    const deviceDelete = client.deleteCalls.find((c) => c.table === "notification_devices");
+    assert.ok(deviceDelete, "notification_devices rows must be deleted for dead tokens");
+    assert.deepEqual(
+      [...(deviceDelete.inFilters["push_token"] as string[])].sort(),
+      [PUSH_TOKEN, DEAD_TOKEN].sort(),
+      "notification_devices delete must target both dead tokens",
+    );
+
+    // rent_buddy_profiles.expo_push_token nulled via update().in([PUSH_TOKEN, DEAD_TOKEN])
+    const rentUpdate = client.updateCalls.find(
+      (c) => c.table === "rent_buddy_profiles" && c.patch.expo_push_token === null,
+    );
+    assert.ok(rentUpdate, "rent_buddy_profiles.expo_push_token must be nulled for dead tokens");
+    assert.deepEqual(
+      [...(rentUpdate.inFilters["expo_push_token"] as string[])].sort(),
+      [PUSH_TOKEN, DEAD_TOKEN].sort(),
+      "rent_buddy_profiles update must target both dead tokens",
+    );
+
+    // ── Queue row must be finalised as 'failed' — never re-queued ─────────────
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(failedUpdate, "push_retry_queue must be finalised as 'failed' when all tokens are dead");
+    assert.equal(failedUpdate.filters.id, QUEUE_ROW_ID, "failed update must target the correct queue row");
+    assert.equal(
+      failedUpdate.patch.last_error,
+      "DeviceNotRegistered \u00d7 2",
+      "last_error must name the error code and total count of dead tokens",
+    );
+
+    // Must NOT be re-queued — dead tokens are permanent, retrying is wasteful
+    const requeued = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(!requeued, "must NOT re-queue a row where every token is permanently dead");
+
+    // ── Delivery attempt must also be finalised as 'failed' ───────────────────
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status, "failed",   "delivery_attempt status must be 'failed'");
+    assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+  });
+});
