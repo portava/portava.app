@@ -42,7 +42,20 @@ export default function StampQueueScreen() {
       search: search || undefined,
     });
     if (res.ok) {
-      setEntries(res.data.entries ?? []);
+      const raw = Array.isArray(res.data.entries) ? res.data.entries : [];
+      const valid = raw.filter((e: unknown) => {
+        if (
+          e !== null &&
+          typeof e === 'object' &&
+          typeof (e as Record<string, unknown>).id === 'string' &&
+          typeof (e as Record<string, unknown>).status === 'string'
+        ) {
+          return true;
+        }
+        console.warn('[StampQueue] dropped malformed catalog entry:', e);
+        return false;
+      });
+      setEntries(valid as CatalogListEntry[]);
       setTotal(res.data.total ?? 0);
     }
     setLoading(false);
