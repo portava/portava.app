@@ -4060,4 +4060,50 @@ describe("Rent a Buddy — notifications: recipient is the other party", () => {
     assert.notEqual(note.user_id, BUDDY_USER,
       "notification must not target the buddy who raised the dispute");
   });
+
+  it("no-show by traveler: buddy (not the traveler actor) receives no_show_reported notification", async () => {
+    // Traveler (USER_ID) reports no-show → buddy (BUDDY_USER) must be notified
+    setupState({
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+          status: "in_progress",
+          updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+        },
+      },
+    });
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/no-show`, {});
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    await drain();
+    const notes: any[] = (state as any).notifications ?? [];
+    const note = notes.find((n: any) => n.event_type === "rent_buddy.no_show_reported");
+    assert.ok(note, "expected a no_show_reported notification row");
+    assert.equal(note.user_id, BUDDY_USER,
+      `notification recipient must be the buddy (${BUDDY_USER}), got: ${note.user_id}`);
+    assert.notEqual(note.user_id, USER_ID,
+      "notification must not target the traveler who reported the no-show");
+  });
+
+  it("no-show by buddy: traveler (not the buddy actor) receives no_show_reported notification", async () => {
+    // Buddy (BUDDY_USER) reports no-show → traveler (USER_ID) must be notified
+    setupState({
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+          status: "in_progress",
+          updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+        },
+      },
+    });
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/no-show`, {}, BUDDY_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    await drain();
+    const notes: any[] = (state as any).notifications ?? [];
+    const note = notes.find((n: any) => n.event_type === "rent_buddy.no_show_reported");
+    assert.ok(note, "expected a no_show_reported notification row");
+    assert.equal(note.user_id, USER_ID,
+      `notification recipient must be the traveler (${USER_ID}), got: ${note.user_id}`);
+    assert.notEqual(note.user_id, BUDDY_USER,
+      "notification must not target the buddy who reported the no-show");
+  });
 });
