@@ -145,6 +145,11 @@ interface StorageConfig {
   onUpload?: (path: string, buffer: Buffer) => void;
   /** Base URL prepended to the storage path for getPublicUrl. */
   publicUrlBase?: string;
+  /**
+   * When set, the `stamp_artwork_versions` insert returns this as an error
+   * instead of succeeding. All other inserts are unaffected.
+   */
+  insertError?: { message: string };
 }
 
 interface StorageCall {
@@ -189,6 +194,24 @@ function makeFakeClientWithStorage(opts: StorageConfig = {}) {
       };
     },
   };
+
+  // If an insertError is configured, wrap the `from` accessor so that inserts
+  // into stamp_artwork_versions return the specified error instead of succeeding.
+  if (opts.insertError) {
+    const originalFrom = base.sc.from.bind(base.sc);
+    const insertError = opts.insertError;
+    base.sc.from = function (table: string) {
+      const proxy = originalFrom(table);
+      if (table === "stamp_artwork_versions") {
+        proxy.insert = function (rows: any[]) {
+          // Still record the attempt so tests can inspect it.
+          base.inserts.push({ table, rows });
+          return Promise.resolve({ data: null, error: insertError });
+        };
+      }
+      return proxy;
+    };
+  }
 
   return { ...base, storageCalls, deleteCalls };
 }
@@ -629,5 +652,116 @@ describe("runGenerationCycle — orphan cleanup on mid-batch failure", () => {
     assert.equal(inserts.length, 0);
     assert.equal(storageCalls.length, 0, "no uploads should have succeeded");
     assert.equal(deleteCalls.length, 0, "no delete should be issued when nothing was uploaded");
+  });
+});
+
+// ── DB insert failure after all uploads succeed ───────────────────────────────
+
+describe("runGenerationCycle — DB insert failure after all uploads succeed", () => {
+  it("resets job status to queued, records last_error, and clears the lock", async () => {
+    // All uploads succeed; the version-row batch insert returns a DB error.
+    const insertErrMsg = "duplicate key value violates unique constraint \"stamp_artwork_versions_pkey\"";
+    const { sc, updates, inserts, storageCalls } = makeFakeClientWithStorage({
+      insertError: { message: insertErrMsg },
+    });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    const result = await runGenerationCycle();
+
+    // The cycle must report failure.
+    assert.equal(result.processed, false);
+
+    // All uploads still completed — storage was not involved in the failure.
+    assert.equal(
+      storageCalls.length,
+      CANDIDATE_COUNT,
+      "all candidate uploads must complete before the insert is attempted",
+    );
+
+    // The insert was attempted (the wrapped fake records it) but the error
+    // from the DB caused the catch path to fire — no review_required.
+    assert.equal(
+      updates.some((u) => u.payload.status === "review_required"),
+      false,
+      "a failed insert must never reach review_required",
+    );
+
+    // Failure update: job is reset to queued (first failure, attempts 1 < max 3),
+    // last_error carries the insert error message, and the lock is cleared.
+    const fail = updates.find(
+      (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
+    );
+    assert.ok(fail, "must record a failure update on the queue row");
+    assert.equal(
+      fail!.payload.status,
+      "queued",
+      "first insert failure (attempts < max) must go back to queued for retry",
+    );
+    assert.equal(fail!.payload.attempts, 1);
+    assert.ok(
+      typeof fail!.payload.last_error === "string" &&
+        fail!.payload.last_error.includes(insertErrMsg),
+      `last_error must contain the insert error message, got: ${fail!.payload.last_error}`,
+    );
+    assert.equal(fail!.payload.locked_until, null, "locked_until must be cleared after insert failure");
+    assert.equal(fail!.payload.locked_by, null, "locked_by must be cleared after insert failure");
+    assert.deepEqual(fail!.eqFilters, [["id", "job-1"]]);
+  });
+
+  it("reaches retryable_failed when attempts are exhausted by insert errors", async () => {
+    // Simulate a job that has already used max_attempts - 1 attempts.
+    const exhaustedJob = { ...JOB, attempts: 2, max_attempts: 3 };
+
+    // Patch the queue select to return an exhausted job.
+    const insertErrMsg = "insert failed: FK violation";
+    const { sc, updates } = makeFakeClientWithStorage({
+      insertError: { message: insertErrMsg },
+    });
+
+    // Override maybeSingle for the queue to return the exhausted job.
+    const originalFrom = sc.from.bind(sc);
+    sc.from = function (table: string) {
+      const proxy = originalFrom(table);
+      if (table === "stamp_generation_queue") {
+        const origSelect = proxy.select.bind(proxy);
+        proxy.select = function (cols: string) {
+          const b = origSelect(cols);
+          b.maybeSingle = function () {
+            return Promise.resolve({ data: { ...exhaustedJob }, error: null });
+          };
+          return b;
+        };
+      }
+      return proxy;
+    };
+
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+
+    // With attempts 2 + 1 = 3 >= max_attempts 3, status must be retryable_failed.
+    const fail = updates.find(
+      (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
+    );
+    assert.ok(fail, "must record a failure update");
+    assert.equal(
+      fail!.payload.status,
+      "retryable_failed",
+      "exhausted attempts must produce retryable_failed, not queued",
+    );
+    assert.equal(fail!.payload.attempts, 3);
+    assert.ok(
+      typeof fail!.payload.last_error === "string" &&
+        fail!.payload.last_error.includes(insertErrMsg),
+      `last_error must contain the insert error, got: ${fail!.payload.last_error}`,
+    );
+    assert.equal(fail!.payload.locked_until, null);
+    assert.equal(fail!.payload.locked_by, null);
   });
 });
