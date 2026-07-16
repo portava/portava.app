@@ -1700,6 +1700,108 @@ describe("runGenerationCycle — orphan cleanup: remove() returns error object (
       "cleanup_error_paths must list the orphaned file paths",
     );
   });
+
+  it("logs orphan_cleanup_error and preserves the original DB insert error in last_error when remove() resolves with an error after a failed insert", async () => {
+    // All CANDIDATE_COUNT uploads succeed; the stamp_artwork_versions insert
+    // returns a DB error; and then storage.remove() resolves with
+    // { data: null, error: { message: "..." } } instead of throwing.
+    // The worker must detect the returned error object and log orphan_cleanup_error
+    // (not the success event), while preserving the original insert error in last_error.
+    const originalInsertError = "insert failed: unique constraint violation on stamp_artwork_versions_pkey";
+    const removeErrorMessage = "storage remove failed: object not found";
+
+    const { sc, updates, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage({
+      insertError: { message: originalInsertError },
+      removeError: { message: removeErrorMessage },
+    });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    // Capture console output to assert which event was logged.
+    const loggedErrors: string[] = [];
+    const loggedInfos: string[] = [];
+    const origError = console.error.bind(console);
+    const origLog = console.log.bind(console);
+    console.error = (...args: any[]) => { loggedErrors.push(args.join(" ")); origError(...args); };
+    console.log   = (...args: any[]) => { loggedInfos.push(args.join(" ")); origLog(...args); };
+
+    let result: Awaited<ReturnType<typeof runGenerationCycle>>;
+    try {
+      result = await runGenerationCycle();
+    } finally {
+      console.error = origError;
+      console.log   = origLog;
+    }
+
+    // 1. All uploads completed before the insert was attempted.
+    assert.equal(
+      storageCalls.length,
+      CANDIDATE_COUNT,
+      "all candidate uploads must complete before the insert is attempted",
+    );
+
+    // 2. The insert was attempted (recorded by the fake) but failed.
+    assert.equal(inserts.length, 1, "the insert must have been attempted");
+
+    // 3. Cycle reports failure.
+    assert.equal(result!.processed, false, "processed must be false when the insert fails");
+
+    // 4. No permanently_failed or review_required.
+    assert.equal(
+      updates.some((u) => u.payload.status === "permanently_failed"),
+      false,
+      "a silent cleanup error must never cause permanently_failed",
+    );
+    assert.equal(
+      updates.some((u) => u.payload.status === "review_required"),
+      false,
+      "a failed insert must never reach review_required",
+    );
+
+    // 5. Cleanup was called — remove() resolved (did not throw), so deleteCalls is populated.
+    assert.equal(deleteCalls.length, 1, "remove() must have been called for the orphaned uploads");
+    assert.equal(
+      deleteCalls[0].paths.length,
+      CANDIDATE_COUNT,
+      "all uploaded paths must be passed to remove()",
+    );
+
+    // 6. orphan_cleanup_error must be logged — not the success event.
+    const hasCleanupError = loggedErrors.some(
+      (l) => l.includes("orphan_cleanup_error") && l.includes(removeErrorMessage),
+    );
+    const hasCleanupSuccess = loggedInfos.some((l) => l.includes('"' + 'orphan_cleanup"'));
+    assert.equal(
+      hasCleanupError,
+      true,
+      "must log orphan_cleanup_error when remove() resolves with an error object",
+    );
+    assert.equal(
+      hasCleanupSuccess,
+      false,
+      "must NOT log orphan_cleanup (success) when remove() returned an error",
+    );
+
+    // 7. Job is reset; last_error carries the original insert error — not the cleanup error.
+    const fail = updates.find(
+      (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
+    );
+    assert.ok(fail, "must record a failure update on the queue row");
+    assert.equal(fail!.payload.status, "queued", "first failure (attempts < max) must go back to queued");
+    assert.equal(fail!.payload.attempts, 1);
+    assert.ok(
+      typeof fail!.payload.last_error === "string" &&
+        fail!.payload.last_error.includes(originalInsertError),
+      `last_error must carry the original insert error, got: ${fail!.payload.last_error}`,
+    );
+    assert.ok(
+      !fail!.payload.last_error.includes(removeErrorMessage),
+      `last_error must NOT be overwritten by the cleanup error, got: ${fail!.payload.last_error}`,
+    );
+    assert.equal(fail!.payload.locked_until, null, "lock must be cleared even when cleanup returns an error");
+    assert.equal(fail!.payload.locked_by, null);
+  });
 });
 
 // ── Unrecognized country code: explicit fallback, not wrong art-direction ─────
