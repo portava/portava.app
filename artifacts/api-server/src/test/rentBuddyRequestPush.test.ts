@@ -340,6 +340,50 @@ describe("notifyEligibleBuddies", () => {
     assert.deepEqual(reqPatches[0].patch.notified_buddy_ids, ["bp-1"]);
   });
 
+  it("skips buddies whose quiet hours cover the current time", async () => {
+    // Build a window around "now" so the test is time-independent.
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const start = new Date(now.getTime() - 60 * 60 * 1000);
+    const end = new Date(now.getTime() + 60 * 60 * 1000);
+    const svc = makeFakeClient({
+      rentBuddyProfiles: [buddyRow()],
+      profiles: [],
+      notificationPreferences: [{
+        user_id: BUDDY1_ID,
+        push_enabled: true,
+        quiet_hours_enabled: true,
+        quiet_start: `${pad(start.getHours())}:${pad(start.getMinutes())}`,
+        quiet_end: `${pad(end.getHours())}:${pad(end.getMinutes())}`,
+      }],
+    });
+    await notifyEligibleBuddies(svc, REQUEST);
+    assert.equal(pushCalls.length, 0);
+    assert.equal((svc.__updatePatches["rent_buddy_requests"] ?? []).length, 0);
+  });
+
+  it("still notifies buddies whose quiet hours do not cover the current time", async () => {
+    // Window entirely outside "now": starts in 2 hours, ends in 3 hours.
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const start = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+    const end = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+    const svc = makeFakeClient({
+      rentBuddyProfiles: [buddyRow()],
+      profiles: [],
+      notificationPreferences: [{
+        user_id: BUDDY1_ID,
+        push_enabled: true,
+        quiet_hours_enabled: true,
+        quiet_start: `${pad(start.getHours())}:${pad(start.getMinutes())}`,
+        quiet_end: `${pad(end.getHours())}:${pad(end.getMinutes())}`,
+      }],
+    });
+    await notifyEligibleBuddies(svc, REQUEST);
+    assert.equal(pushCalls.length, 1);
+    assert.deepEqual(pushCalls[0].messages.map((m: any) => m.to), [TOKEN1]);
+  });
+
   it("does not call Expo when no tokens exist anywhere", async () => {
     const svc = makeFakeClient({
       rentBuddyProfiles: [buddyRow({ expo_push_token: null })],
