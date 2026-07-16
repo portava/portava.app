@@ -352,7 +352,7 @@ describe("POST /admin/venues/:id/moderate — access control", () => {
     assert.equal(body.error, "invalid_payload");
   });
 
-  it("non-UUID venue id returns 400 with invalid_payload before any DB query", async () => {
+  it("non-UUID venue id returns 404 not_found before any DB query", async () => {
     const client = makeVenueModerationClient();
     setClient(client);
 
@@ -362,8 +362,59 @@ describe("POST /admin/venues/:id/moderate — access control", () => {
       { action: "approve" },
     );
 
-    assert.equal(status, 400, `Expected 400 for non-UUID id, got ${status}: ${JSON.stringify(body)}`);
-    assert.equal(body.error, "invalid_payload");
+    assert.equal(status, 404, `Expected 404 for non-UUID id, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.error, "not_found");
+  });
+});
+
+// ── Missing / malformed venue ID segment ──────────────────────────────────────
+//
+// These tests pin the routing invariant: an empty or non-UUID :id segment must
+// never fall through to an unrelated admin endpoint or reach the DB.
+// Both cases must return 404 not_found immediately.
+
+describe("POST /admin/venues/:id/moderate — missing or malformed venue ID", () => {
+  it("returns 404 when the venue ID segment is empty (/admin/venues//moderate)", async () => {
+    // Express does not match :id for an empty path segment, so the request falls
+    // through without matching the moderation route.  The server must return 404
+    // rather than routing to a different admin handler.
+    const client = makeVenueModerationClient();
+    setClient(client);
+
+    const { status } = await req(
+      "POST",
+      "/admin/venues//moderate",
+      { action: "approve" },
+    );
+
+    assert.equal(status, 404, `Expected 404 for empty venue ID segment, got ${status}`);
+  });
+
+  it("returns 404 not_found for a non-UUID venue ID — no discovery_places query fired", async () => {
+    // The UUID guard in the route handler must short-circuit before any query
+    // against discovery_places.  requireAdmin legitimately queries profiles for
+    // the role check, so we track per-table calls rather than total calls.
+    const queriedTables: string[] = [];
+    const baseClient = makeVenueModerationClient();
+    const spyClient = {
+      ...baseClient,
+      from: (table: string) => { queriedTables.push(table); return baseClient.from(table); },
+    };
+    _setTestClient(spyClient as any, true);
+    _setTestServiceClient(spyClient as any);
+
+    const { status, body } = await req(
+      "POST",
+      "/admin/venues/not-a-uuid/moderate",
+      { action: "approve" },
+    );
+
+    assert.equal(status, 404, `Expected 404 for non-UUID venue ID, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.error, "not_found", "error code must be not_found");
+    assert.ok(
+      !queriedTables.includes("discovery_places"),
+      `discovery_places must not be queried for a non-UUID venue ID — queried: ${JSON.stringify(queriedTables)}`,
+    );
   });
 });
 
