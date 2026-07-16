@@ -3442,6 +3442,82 @@ describe("PushRetryQueue.processQueue() — clearDeadTokens throws during partia
 // 17 — clearDeadTokens throws on the retry path: warn log fires
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 18 — mid-sequence mixed-batch (dead token + 503 retryable): re-queues
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("PushRetryQueue.processQueue() — mid-sequence mixed batch (dead + retryable 503): re-queues", () => {
+  it("re-queues with attempt_count=2 and does NOT update notification_delivery_attempts when a batch has a dead token and the Expo call returns 503 at mid-sequence", async () => {
+    // Scenario: the queue row contains two tokens — PUSH_TOKEN (live) and DEAD_TOKEN
+    // (DeviceNotRegistered from a prior run).  On this attempt, Expo returns 503
+    // (retryable HTTP error), so result = { sent: 0, errors: [], retryable: true }.
+    // attempt_count=1, max_attempts=3 → mid-sequence (one retry remains after this).
+    //
+    // The presence of a dead token in the tokens list must NOT prevent re-queuing:
+    // the retryable flag drives the branch, not the token composition.
+    //
+    // Asserts:
+    //   • push_retry_queue row is re-queued (status="queued") with attempt_count=2
+    //   • notification_delivery_attempts is NOT updated (re-queue path skips finalise)
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN, DEAD_TOKEN],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    // 503 → { sent: 0, errors: [], retryable: true }
+    _setTestFetch(expo503Fetch());
+    await queue.processQueue();
+
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+
+    // ── Must re-queue — retryable=true and mid-sequence ───────────────────────
+    const requeuedUpdate = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(
+      requeuedUpdate,
+      "push_retry_queue must be re-queued (status='queued') at mid-sequence with retryable error",
+    );
+    assert.equal(
+      requeuedUpdate.patch.attempt_count,
+      2,
+      "attempt_count must increment to 2 on re-queue",
+    );
+
+    // ── Must NOT finalise as 'failed' ─────────────────────────────────────────
+    const failedUpdate = prqUpdates.find(
+      (c) => c.patch.status === "failed" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(
+      !failedUpdate,
+      "push_retry_queue must NOT be finalised as 'failed' at mid-sequence with retryable error",
+    );
+
+    // ── notification_delivery_attempts must NOT be updated ────────────────────
+    // finalise() is only called on terminal outcomes (sent/failed); the re-queue
+    // path returns early without touching notification_delivery_attempts.
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.equal(
+      ndaUpdates.length,
+      0,
+      "notification_delivery_attempts must NOT be updated on the re-queue path (only finalise() touches it)",
+    );
+  });
+});
+
+
+
 describe("PushRetryQueue.processQueue() — clearDeadTokens throws on retry: warn log fires", () => {
   it("emits a warn log with deadCount and the error when clearDeadTokens throws during a retry, and still finalises as 'sent'", async () => {
     // Scenario: attempt_count=1 (retry 2 of 3).  Expo delivers to PUSH_TOKEN
