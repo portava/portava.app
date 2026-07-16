@@ -2264,6 +2264,19 @@ describe("Rent a Buddy — rebook", () => {
     assert.equal(r.body.error, "invalid_payload");
   });
 
+  it("rebook without startTime and original has no start_time yields null start_time (201)", async () => {
+    setupRebookState("completed");
+    // Original booking has no start_time — neither client nor original provides one.
+    delete (state.bookings![ORIG_BOOKING_ID] as any).start_time;
+    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
+      bookingDate: FUTURE_DATE,
+      // startTime intentionally omitted
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.ok(r.body.bookingId, "should return new bookingId");
+    assert.equal(r.body.booking?.start_time ?? null, null, "start_time should be null when neither client nor original supplies one");
+  });
+
   it("rebook for someone else's booking returns 403", async () => {
     state = {
       featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
