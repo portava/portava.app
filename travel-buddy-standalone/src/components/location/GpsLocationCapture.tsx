@@ -19,13 +19,13 @@ import {
   View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { getCurrentGps, reverseGeocodeToPlace } from '../../services/location.ts';
-import { MapLocationPicker } from './MapLocationPicker.tsx';
-import type { Place } from '../../lib/location/placeTypes.ts';
+import { getCurrentGps, reverseGeocodeToPlace } from '../../services/location';
+import { MapLocationPicker } from './MapLocationPicker';
+import type { Place } from '../../lib/location/placeTypes';
 
 // Keep GpsCaptureResult exported for backward compat with machines/tests.
-export type { GpsCaptureResult } from './GpsLocationCapture.machine.ts';
-import { runPlaceCapture } from './GpsLocationCapture.machine.ts';
+export type { GpsCaptureResult } from './GpsLocationCapture.machine';
+import { runPlaceCapture } from './GpsLocationCapture.machine';
 
 interface Props {
   onCapture: (place: Place | null) => void;

@@ -5,8 +5,8 @@ import {
   MapPin, Moon, Utensils, Users, Gem, ShieldCheck, Plane, Lock, ChevronRight,
 } from 'lucide-react-native';
 import type { ComponentType } from 'react';
-import type { PassportStamp } from '../types/models.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import type { PassportStamp } from '../types/models';
+import { color, space, radius, type as t } from '../theme/tokens';
 
 type LucideIcon = ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
 

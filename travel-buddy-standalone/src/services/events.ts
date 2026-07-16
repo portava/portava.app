@@ -1,7 +1,7 @@
 /**
  * Events service — typed wrappers over /api/events/*.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 const BASE = (() => {

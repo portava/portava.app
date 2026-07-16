@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { ShieldCheck, Shield, Check, XCircle } from 'lucide-react-native';
-import { color, space, radius } from '../theme/tokens.ts';
+import { color, space, radius } from '../theme/tokens';
 
 export const VERIFY_TEAL = '#0D9B6F';
 export const VERIFY_TEAL_DIM = 'rgba(13,155,111,0.55)';

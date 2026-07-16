@@ -2,7 +2,7 @@
  * Pure helper functions extracted from SavedPlacesMapView so they can be
  * unit-tested without a React Native / MapLibre render environment.
  */
-import type { BookmarkedPlace } from '../services/discoveryBookmarks.ts';
+import type { BookmarkedPlace } from '../services/discoveryBookmarks';
 
 /** [west, south, east, north] — same shape as MapLibre's LngLatBounds */
 export type BoundsRect = [number, number, number, number];

@@ -1,9 +1,9 @@
 import React from 'react';
 import { Pressable, Text, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
-import { color, type as t } from '../../theme/tokens.ts';
-import { primaryIdentityText } from '../../lib/displayIdentity.ts';
+import { useBlockedIds } from '../../context/BlockedIdsContext';
+import { color, type as t } from '../../theme/tokens';
+import { primaryIdentityText } from '../../lib/displayIdentity';
 
 interface Props {
   userId: string;

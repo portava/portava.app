@@ -18,8 +18,8 @@ import { useRef, useState, useCallback, useEffect } from 'react';
 import { View } from 'react-native';
 import { captureRef } from 'react-native-view-shot';
 import NativeShare from 'react-native-share';
-import type { PassportStampNew } from '../services/passportStamps.ts';
-import { makeStampShareMessage, toFileUri } from '../services/stampShareUtils.ts';
+import type { PassportStampNew } from '../services/passportStamps';
+import { makeStampShareMessage, toFileUri } from '../services/stampShareUtils';
 
 export interface StampShareState {
   sharing: boolean;

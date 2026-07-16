@@ -20,9 +20,9 @@ import {
 import { UserPlus, X, Search, Check, Users } from 'lucide-react-native';
 import {
   getTripInvitableUsers, getTripMembers, sendTripInvite, type FriendUser,
-} from '../services/friends.ts';
-import { showNotificationToast } from './NotificationToast.tsx';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+} from '../services/friends';
+import { showNotificationToast } from './NotificationToast';
+import { color, space, radius, type as t } from '../theme/tokens';
 
 interface Props {
   tripId: string;

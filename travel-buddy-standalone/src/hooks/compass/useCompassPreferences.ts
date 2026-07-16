@@ -3,8 +3,8 @@ import {
   fetchCompassPreferences,
   patchCompassPreferences,
   type CompassPreferences,
-} from '../../services/compass.ts';
-import { useSession } from '../../context/SessionContext.tsx';
+} from '../../services/compass';
+import { useSession } from '../../context/SessionContext';
 
 interface UseCompassPreferencesResult {
   prefs:   CompassPreferences | null;

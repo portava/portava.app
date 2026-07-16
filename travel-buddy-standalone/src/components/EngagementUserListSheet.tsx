@@ -37,10 +37,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { X } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
-import { getLikers, type LikeTargetType, type LikerUser } from '../services/engagementLikers.ts';
-import { followUser, unfollowUser } from '../services/follows.ts';
-import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
+import { color, space, radius, type as t, shadow } from '../theme/tokens';
+import { getLikers, type LikeTargetType, type LikerUser } from '../services/engagementLikers';
+import { followUser, unfollowUser } from '../services/follows';
+import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity';
 
 // ── Liker row ─────────────────────────────────────────────────────────────────
 

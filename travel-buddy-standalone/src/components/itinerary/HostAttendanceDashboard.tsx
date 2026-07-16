@@ -9,11 +9,11 @@ import {
   ActivityIndicator, Alert,
 } from 'react-native';
 import { X, Users, CheckCircle2, Clock, XCircle, ChevronDown } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
 import {
   getAttendance, overrideAttendance,
   type AttendanceData, type AttendeeStatus, type AttendanceStatus,
-} from '../../services/geofence.ts';
+} from '../../services/geofence';
 
 // ── Status config ─────────────────────────────────────────────────────────────
 

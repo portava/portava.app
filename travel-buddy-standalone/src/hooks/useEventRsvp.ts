@@ -8,7 +8,7 @@ import {
   rsvpEvent, leaveEvent, joinWaitlist, leaveWaitlist,
   acceptWaitlistOffer, requestToJoinEvent, joinEventChat,
   type EventDetail, type EventRsvpStatus,
-} from '../services/events.ts';
+} from '../services/events';
 
 interface UseEventRsvpReturn {
   busy: boolean;

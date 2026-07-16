@@ -6,7 +6,7 @@
 import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { Sparkles } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t } from '../theme/tokens';
 
 export interface BestDay { date: string; count: number; }
 

@@ -30,8 +30,8 @@ import {
   type ReviewsResponse,
   type EventReviewsResponse,
   type ReviewEntityType,
-} from '../services/reviews.ts';
-import { useSession } from '../context/SessionContext.tsx';
+} from '../services/reviews';
+import { useSession } from '../context/SessionContext';
 
 // ── Star display ──────────────────────────────────────────────────────────────
 

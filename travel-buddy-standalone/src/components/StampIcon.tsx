@@ -10,8 +10,8 @@ import {
   Lock, Sparkles,
 } from 'lucide-react-native';
 import type { ComponentType } from 'react';
-import type { PassportStamp } from '../types/models.ts';
-import { resolveArtwork } from '../lib/stampArtworkResolver.ts';
+import type { PassportStamp } from '../types/models';
+import { resolveArtwork } from '../lib/stampArtworkResolver';
 
 type IconCmp = ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
 

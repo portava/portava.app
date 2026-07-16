@@ -17,10 +17,10 @@ interface CacheEntry<T> {
   ts: number;
 }
 
-const cache = new Map<string, CacheEntry<import('../location/placeTypes.ts').Place[]>>();
-const inFlight = new Map<string, Promise<import('../location/placeTypes.ts').Place[]>>();
+const cache = new Map<string, CacheEntry<import('../location/placeTypes').Place[]>>();
+const inFlight = new Map<string, Promise<import('../location/placeTypes').Place[]>>();
 
-export function getCached(key: string): import('../location/placeTypes.ts').Place[] | null {
+export function getCached(key: string): import('../location/placeTypes').Place[] | null {
   const entry = cache.get(key);
   if (!entry) return null;
   if (Date.now() - entry.ts > CACHE_TTL_MS) {
@@ -30,15 +30,15 @@ export function getCached(key: string): import('../location/placeTypes.ts').Plac
   return entry.value;
 }
 
-export function setCached(key: string, value: import('../location/placeTypes.ts').Place[]): void {
+export function setCached(key: string, value: import('../location/placeTypes').Place[]): void {
   cache.set(key, { value, ts: Date.now() });
 }
 
-export function getInFlight(key: string): Promise<import('../location/placeTypes.ts').Place[]> | null {
+export function getInFlight(key: string): Promise<import('../location/placeTypes').Place[]> | null {
   return inFlight.get(key) ?? null;
 }
 
-export function setInFlight(key: string, promise: Promise<import('../location/placeTypes.ts').Place[]>): void {
+export function setInFlight(key: string, promise: Promise<import('../location/placeTypes').Place[]>): void {
   inFlight.set(key, promise);
 }
 

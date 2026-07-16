@@ -4,9 +4,9 @@
  * Consumers pass setPostcards from usePassport so state stays in one place.
  */
 import { useState, useCallback } from 'react';
-import type { PassportPostcard } from '../types/models.ts';
-import { updatePostcard, removePostcard, type PostcardPatch } from '../services/profile.ts';
-import { deletePost } from '../services/posts.ts';
+import type { PassportPostcard } from '../types/models';
+import { updatePostcard, removePostcard, type PostcardPatch } from '../services/profile';
+import { deletePost } from '../services/posts';
 
 export interface PostcardActionsState {
   busy: string | null; // postcard id currently being mutated

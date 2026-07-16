@@ -1,5 +1,5 @@
-import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
-import type { InteractionContext } from '../services/interactionContext.ts';
+import { useBlockedIds } from '../context/BlockedIdsContext';
+import type { InteractionContext } from '../services/interactionContext';
 
 export function useCanMessageUser(userId: string, ctx?: InteractionContext | null): boolean {
   const { blockedIds } = useBlockedIds();

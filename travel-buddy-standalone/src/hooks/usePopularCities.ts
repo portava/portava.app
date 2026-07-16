@@ -8,7 +8,7 @@
  * back to their local seed list).
  */
 import { useState, useEffect } from 'react';
-import type { Place } from '../lib/location/placeTypes.ts';
+import type { Place } from '../lib/location/placeTypes';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';

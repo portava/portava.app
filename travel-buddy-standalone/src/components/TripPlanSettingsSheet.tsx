@@ -7,8 +7,8 @@ import { X, Users, Lock, UserCheck, CheckCircle2 } from 'lucide-react-native';
 import {
   fetchTripPlanPermission, updateTripPlanPermission,
   type PlanEditPermission, type TripPlanPermissionResult,
-} from '../services/tripPlan.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+} from '../services/tripPlan';
+import { color, space, radius, type as t } from '../theme/tokens';
 
 interface MemberRow {
   id: string;
@@ -79,7 +79,7 @@ export function TripPlanSettingsSheet({
     setMembersLoading(true);
     try {
       const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-      const { supabase } = await import('../lib/supabase.ts');
+      const { supabase } = await import('../lib/supabase');
       const { data: refreshed } = await supabase.auth.refreshSession();
       const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
       const token = session?.access_token;

@@ -2,7 +2,7 @@
  * Admin Geocode Cache service — typed fetch wrappers for the admin geocode-cache
  * endpoints. Uses the same auth pattern as other admin services.
  */
-import { adminGet, adminDelete, type AdminApiResult } from './adminApi.ts';
+import { adminGet, adminDelete, type AdminApiResult } from './adminApi';
 
 type ApiResult<T> = AdminApiResult<T>;
 

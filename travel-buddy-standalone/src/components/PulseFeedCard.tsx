@@ -6,25 +6,25 @@ import {
   MapPin, Heart, MessageCircle, Bookmark, MoreHorizontal, HelpCircle, Users,
   Sparkles, Gem, Route, Info, Plus, ShieldCheck, Clock, PlayCircle,
 } from 'lucide-react-native';
-import type { PulseFeedItem } from '../types/models.ts';
-import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
-import { usePlanPicker } from './PlanPickerController.tsx';
-import { RichText } from './RichText.tsx';
-import { CompassFeedbackMenu } from './compass/CompassFeedbackMenu.tsx';
-import { CompassWhySheet } from './compass/CompassWhySheet.tsx';
-import { PostEngagementBar } from './PostEngagementBar.tsx';
-import { HighlightRing } from './HighlightRing.tsx';
-import { HighlightViewer } from './HighlightViewer.tsx';
-import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
-import { useSession } from '../context/SessionContext.tsx';
-import { LocationChip } from './LocationChip.tsx';
-import type { LocationChipVariant } from './LocationChip.tsx';
-import { ReportPostSheet } from './ReportPostSheet.tsx';
-import { SaveButton } from './SaveButton.tsx';
-import { deletePost } from '../services/postEngagement.ts';
-import { hidePost } from '../services/posts.ts';
-import { primaryIdentityText } from '../lib/displayIdentity.ts';
-import { MediaStampOverlay } from './StampOverlayBadge.tsx';
+import type { PulseFeedItem } from '../types/models';
+import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
+import { usePlanPicker } from './PlanPickerController';
+import { RichText } from './RichText';
+import { CompassFeedbackMenu } from './compass/CompassFeedbackMenu';
+import { CompassWhySheet } from './compass/CompassWhySheet';
+import { PostEngagementBar } from './PostEngagementBar';
+import { HighlightRing } from './HighlightRing';
+import { HighlightViewer } from './HighlightViewer';
+import { useHighlightRingState } from '../hooks/useHighlightRingState';
+import { useSession } from '../context/SessionContext';
+import { LocationChip } from './LocationChip';
+import type { LocationChipVariant } from './LocationChip';
+import { ReportPostSheet } from './ReportPostSheet';
+import { SaveButton } from './SaveButton';
+import { deletePost } from '../services/postEngagement';
+import { hidePost } from '../services/posts';
+import { primaryIdentityText } from '../lib/displayIdentity';
+import { MediaStampOverlay } from './StampOverlayBadge';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 

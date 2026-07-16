@@ -7,7 +7,7 @@
  *
  * No React imports — safe to load in node:test environments.
  */
-import type { UpdateProfileInput } from './profile.ts';
+import type { UpdateProfileInput } from './profile';
 
 // ── Onboarding (app/(auth)/onboarding.tsx) ───────────────────────────────────
 

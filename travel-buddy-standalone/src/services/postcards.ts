@@ -312,8 +312,8 @@ export async function getStampOverlayOptions(params: {
   country?: string | null;
   q?: string;
 } = {}): Promise<ApiResult<{
-  suggested: import('../lib/stampOverlay.ts').StampOverlayOption[];
-  earned: import('../lib/stampOverlay.ts').StampOverlayOption[];
+  suggested: import('../lib/stampOverlay').StampOverlayOption[];
+  earned: import('../lib/stampOverlay').StampOverlayOption[];
 }>> {
   const qs = new URLSearchParams();
   if (params.city) qs.set('city', params.city);
