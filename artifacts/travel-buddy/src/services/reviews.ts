@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type ReviewEntityType = 'event' | 'trip' | 'rent_buddy_booking' | 'place';
 
@@ -51,8 +52,7 @@ export interface UserReviewsResponse {
 }
 
 async function freshToken(): Promise<string | null> {
-  const { data } = await supabase.auth.getSession();
-  return data.session?.access_token ?? null;
+  return freshApiToken();
 }
 
 async function authHeaders(): Promise<Record<string, string>> {

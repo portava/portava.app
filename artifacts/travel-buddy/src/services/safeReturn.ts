@@ -1,16 +1,16 @@
 /**
  * Safe Return mobile service layer.
  * All network calls go through EXPO_PUBLIC_API_BASE_URL (the API server proxy).
- * Auth token comes from supabase.auth.getSession() — same pattern as trips.ts.
+ * Auth token comes from the shared refresh-first helper — same pattern as trips.ts.
  */
 import { supabase } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
 async function authHeader(): Promise<string | null> {
   try {
-    const { data } = await supabase.auth.getSession();
-    return data.session?.access_token ?? null;
+    return freshApiToken();
   } catch {
     return null;
   }

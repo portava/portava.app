@@ -122,11 +122,8 @@ export async function savePushToken(
     token = await _testTokenProvider();
   } else {
     // Dynamic import keeps this module loadable in Node.js.
-    const { supabase } = await import('../lib/supabase');
-    const { data: refreshed } = await supabase.auth.refreshSession();
-    const session =
-      refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-    token = session?.access_token ?? null;
+    const { freshToken } = await import('./apiToken.ts');
+    token = await freshToken();
   }
 
   if (!token) return;

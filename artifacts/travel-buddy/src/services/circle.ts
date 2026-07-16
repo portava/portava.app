@@ -6,6 +6,7 @@
  * No GPS or precise location is ever sent or received.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type VisibilityMode = 'status_only' | 'approximate_area' | 'venue_checkin';
 export type ContextSharingDefault = 'off' | VisibilityMode;
@@ -92,9 +93,7 @@ const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
 async function freshToken(): Promise<string | null> {
   if (!isSupabaseConfigured) return null;
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  return session?.access_token ?? null;
+  return freshApiToken();
 }
 
 async function authedFetch(path: string, opts: RequestInit = {}): Promise<Response> {

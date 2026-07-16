@@ -10,12 +10,12 @@
  * have been removed pending proper migrations.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
 async function authToken(): Promise<string | null> {
-  const { data } = await supabase.auth.getSession();
-  return data.session?.access_token ?? null;
+  return freshApiToken();
 }
 
 /* ---------- Location privacy ------------------------------------------------ */

@@ -13,6 +13,7 @@
  * No private posts, trip data, live location, or GPS are accessible here.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type MessageVerdict = 'allowed' | 'requires_request' | 'denied';
 
@@ -167,9 +168,7 @@ function apiBase(): string {
 }
 
 async function freshToken(): Promise<string | null> {
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  return session?.access_token ?? null;
+  return freshApiToken();
 }
 
 function mapApiError<T>(status: number, body: any): MsgResult<T> {

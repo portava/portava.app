@@ -1,12 +1,11 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import type { TripPlanItem, TripPlanCategory, TripPlanItemStatus, TripPlanSourceType } from '../types/models';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
 async function freshToken(): Promise<string | null> {
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  return session?.access_token ?? null;
+  return freshApiToken();
 }
 
 async function authedFetch(url: string, opts: RequestInit = {}): Promise<Response> {

@@ -5,6 +5,7 @@
  */
 import { supabase, isSupabaseConfigured, authedClient } from '../lib/supabase';
 import type { TripStatus, TripVisibility } from '../types/models';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 /* ---------- Profiles ---------- */
 export interface ProfileRow {
@@ -240,9 +241,7 @@ export function _setTestAuthToken(t: string | null): void { _testAuthToken = t; 
 
 async function freshToken(): Promise<string | null> {
   if (_testAuthToken !== null) return _testAuthToken;
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  return session?.access_token ?? null;
+  return freshApiToken();
 }
 
 export async function getPendingTripInvites(): Promise<TripInvite[]> {

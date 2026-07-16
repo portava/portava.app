@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type AppealTargetType =
   | 'post'
@@ -26,8 +27,7 @@ export interface Appeal {
 }
 
 async function freshToken(): Promise<string | null> {
-  const { data } = await supabase.auth.getSession();
-  return data.session?.access_token ?? null;
+  return freshApiToken();
 }
 
 async function authHeaders(): Promise<Record<string, string>> {

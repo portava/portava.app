@@ -6,6 +6,7 @@
  * The client never writes directly to friend_requests or user_friendships.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type FriendStatus = 'none' | 'outgoing_pending' | 'incoming_pending' | 'friends' | 'self';
 
@@ -54,9 +55,7 @@ export interface FriendResult<T> {
 function apiBase(): string { return process.env.EXPO_PUBLIC_API_BASE_URL ?? ''; }
 
 async function freshToken(): Promise<string | null> {
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  return session?.access_token ?? null;
+  return freshApiToken();
 }
 
 function mapApiError<T>(status: number, body: any): FriendResult<T> {
