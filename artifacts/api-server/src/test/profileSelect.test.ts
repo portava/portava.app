@@ -10,6 +10,8 @@
  *   GET /api/buddies                 — admin_status, risk_hold and private contact
  *                                      fields must be absent
  *   GET /api/rent-a-buddy/buddies/:id — same assertions on buddy detail
+ *   GET /api/rent-a-buddy/buddies/:id — completedBookings reads completed_count, not completed_bookings
+ *   GET /api/rent-a-buddy/sections    — same completedBookings source-of-truth check
  *
  * Run: node --import tsx/esm --test src/test/profileSelect.test.ts
  */
@@ -22,6 +24,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import profileRouter from "../routes/profile.js";
 import rentABuddyRouter from "../routes/rentABuddy.js";
+import rentABuddyMarketplaceRouter from "../routes/rentABuddyMarketplace.js";
 import followsRouter from "../routes/follows.js";
 
 // ── Fixed identifiers ─────────────────────────────────────────────────────────
@@ -29,6 +32,7 @@ import followsRouter from "../routes/follows.js";
 const USER_ID    = "aa111111-1111-4111-a111-111111111111";
 const USER_TOKEN = "tok-profile-select-test";
 const BUDDY_ID   = "bb222222-2222-4222-a222-222222222222";
+const BUDDY_ID_DIVERGENT = "ee555555-5555-4555-a555-555555555555";
 
 // ── Raw DB rows WITH sensitive fields — these must be stripped before the response ──
 
@@ -119,6 +123,17 @@ const BUDDY_ROW_WITH_SENSITIVE = {
   exact_address: "123 Private Street",
   home_address: "456 Home Ave",
   phone_number: "+63-999-1234567",
+};
+
+/**
+ * Buddy row where completed_bookings and completed_count deliberately differ.
+ * The API must always surface completed_count (7), never completed_bookings (3).
+ */
+const BUDDY_ROW_DIVERGENT_COUNTS = {
+  ...BUDDY_ROW_WITH_SENSITIVE,
+  id: BUDDY_ID_DIVERGENT,
+  completed_bookings: 3,   // legacy column — must NOT drive the response
+  completed_count: 7,      // canonical column — MUST appear in completedBookings
 };
 
 // ── Fake client ───────────────────────────────────────────────────────────────
@@ -411,6 +426,197 @@ describe("profile data-leak prevention", () => {
       ] as const;
       for (const field of privateFields) {
         assert.ok(!(field in buddy), `${field} must not appear in buddy detail`);
+      }
+    });
+  });
+});
+
+// ── completedBookings source-of-truth: completed_count wins when counters differ ──
+//
+// Regression guard for Task #92 which consolidated completedBookings to read
+// from completed_count (canonical) instead of completed_bookings (legacy).
+// These tests use a buddy row where the two columns intentionally diverge
+// (completed_bookings=3, completed_count=7) and assert the response carries 7.
+
+describe("completedBookings counter source-of-truth", () => {
+  let srv: http.Server;
+  let base: string;
+
+  function makeDivergentClient() {
+    function builder(table: string) {
+      const filters: Array<(r: any) => boolean> = [];
+      let isMaybeSingle = false;
+
+      const allRows = (): any[] => {
+        if (table === "profiles")            return [PROFILE_ROW_WITH_SENSITIVE];
+        if (table === "feature_flags")       return [{ flag: "rent_buddy_enabled", enabled: true }];
+        if (table === "rent_buddy_profiles") return [BUDDY_ROW_DIVERGENT_COUNTS];
+        return [];
+      };
+
+      const b: any = {
+        select(_cols?: string) { return b; },
+        eq(col: string, val: any) {
+          filters.push((r) => String(r[col]) === String(val));
+          return b;
+        },
+        neq(col: string, val: any)   { filters.push((r) => r[col] !== val); return b; },
+        in(col: string, vals: any[]) { filters.push((r) => (vals as any[]).map(String).includes(String(r[col]))); return b; },
+        is(col: string, val: any)    { filters.push((r) => val === null ? r[col] == null : r[col] === val); return b; },
+        gte()      { return b; },
+        lte()      { return b; },
+        ilike()    { return b; },
+        contains() { return b; },
+        like()     { return b; },
+        or()       { return b; },
+        order()    { return b; },
+        limit()    { return b; },
+        range()    { return b; },
+        insert()   { return b; },
+        update()   { return b; },
+        upsert()   { return b; },
+        delete()   { return b; },
+        maybeSingle() { isMaybeSingle = true; return b; },
+        single()      { isMaybeSingle = true; return b; },
+        catch()    { return b; },
+
+        then(onF: (v: any) => any, onR?: (e: any) => any) {
+          const rows = allRows().filter((r) => filters.every((f) => f(r)));
+          const result: any = isMaybeSingle
+            ? { data: rows[0] ?? null, error: null }
+            : { data: rows, count: rows.length, error: null };
+          return Promise.resolve(result).then(onF, onR);
+        },
+      };
+      return b;
+    }
+
+    const client: any = {
+      auth: {
+        getUser: async (tok: string) => {
+          if (tok === USER_TOKEN) {
+            return { data: { user: { id: USER_ID, email: "test@example.com" } }, error: null };
+          }
+          return { data: { user: null }, error: { message: "invalid token" } };
+        },
+      },
+      from: (table: string) => builder(table),
+    };
+    return client;
+  }
+
+  before(async () => {
+    const client = makeDivergentClient();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", followsRouter);
+    app.use(rentABuddyRouter);
+    app.use(rentABuddyMarketplaceRouter);
+
+    srv = http.createServer(app);
+    await new Promise<void>((resolve) => srv.listen(0, resolve));
+    base = `http://127.0.0.1:${(srv.address() as any).port}`;
+  });
+
+  after(async () => {
+    _setTestClient(null as any, false);
+    _setTestServiceClient(null as any);
+    await new Promise<void>((resolve) => srv.close(() => resolve()));
+  });
+
+  function srvReq(
+    method: string,
+    path: string,
+    token?: string,
+  ): Promise<{ status: number; body: any }> {
+    return new Promise((resolve, reject) => {
+      const url = new URL(path, base);
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (token) headers.authorization = `Bearer ${token}`;
+      const r = http.request(
+        {
+          hostname: url.hostname,
+          port: Number(url.port),
+          path: url.pathname + url.search,
+          method,
+          headers,
+        },
+        (inRes) => {
+          let raw = "";
+          inRes.on("data", (c) => (raw += c));
+          inRes.on("end", () => {
+            let parsed: any;
+            try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+            resolve({ status: inRes.statusCode ?? 0, body: parsed });
+          });
+        },
+      );
+      r.on("error", reject);
+      r.end();
+    });
+  }
+
+  // ── GET /api/rent-a-buddy/buddies/:id ────────────────────────────────────────
+
+  describe("GET /api/rent-a-buddy/buddies/:id — divergent counters", () => {
+    it("returns completedBookings equal to completed_count (7), not completed_bookings (3)", async () => {
+      const { status, body } = await srvReq(
+        "GET",
+        `/api/rent-a-buddy/buddies/${BUDDY_ID_DIVERGENT}`,
+        USER_TOKEN,
+      );
+      assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+      const buddy = body.buddy ?? {};
+      assert.equal(
+        buddy.completedBookings,
+        7,
+        `completedBookings should be completed_count (7) but got ${buddy.completedBookings}`,
+      );
+    });
+
+    it("does not surface the legacy completed_bookings value (3) as completedBookings", async () => {
+      const { body } = await srvReq(
+        "GET",
+        `/api/rent-a-buddy/buddies/${BUDDY_ID_DIVERGENT}`,
+        USER_TOKEN,
+      );
+      const buddy = body.buddy ?? {};
+      assert.notEqual(
+        buddy.completedBookings,
+        3,
+        "completedBookings must not equal the legacy completed_bookings column value",
+      );
+    });
+  });
+
+  // ── GET /api/rent-a-buddy/sections ───────────────────────────────────────────
+
+  describe("GET /api/rent-a-buddy/sections — divergent counters", () => {
+    it("returns completedBookings equal to completed_count (7) in each section that includes the buddy", async () => {
+      const { status, body } = await srvReq(
+        "GET",
+        "/api/rent-a-buddy/sections",
+        USER_TOKEN,
+      );
+      assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+      const sections: Array<{ key: string; buddies: any[] }> = body.sections ?? [];
+      // At least one section must contain buddies for this test to be meaningful
+      const allBuddies = sections.flatMap((s) => s.buddies ?? []);
+      assert.ok(allBuddies.length > 0, "sections response must include at least one buddy");
+      for (const buddy of allBuddies) {
+        assert.equal(
+          buddy.completedBookings,
+          7,
+          `sections: completedBookings should be completed_count (7) but got ${buddy.completedBookings} for buddy ${buddy.id}`,
+        );
+        assert.notEqual(
+          buddy.completedBookings,
+          3,
+          "sections: completedBookings must not equal the legacy completed_bookings value (3)",
+        );
       }
     });
   });
