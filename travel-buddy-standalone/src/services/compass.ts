@@ -13,13 +13,9 @@ type AsyncStorageStub = {
 };
 const getStorage = (): AsyncStorageStub | null => {
   try {
-    // `require` is not defined under Node.js ESM (tsx/esm test runner).
-    // Return null so tests that import this file don't crash.
-    if (typeof require === 'undefined') return null;
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { Platform } = require('react-native') as { Platform: { OS: string } };
     if (Platform.OS === 'web') return null;
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     return require('@react-native-async-storage/async-storage').default as AsyncStorageStub;
   } catch {
     return null;
