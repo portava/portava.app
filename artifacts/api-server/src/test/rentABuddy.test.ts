@@ -20,6 +20,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import rentABuddyRouter, { POLICY_TEXT } from "../routes/rentABuddy.js";
+import { specAliasRewrite } from "../lib/specAliasRewrite.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
@@ -558,6 +559,9 @@ function makeClient(userId: string, role = "user") {
 before(async () => {
   const app = express();
   app.use(express.json());
+  // Same alias rewrite as production (app.ts) so tests exercise the exact URLs
+  // the mobile client calls, e.g. /api/buddy-bookings/:id/rebook.
+  app.use(specAliasRewrite);
   app.use(rentABuddyRouter);
 
   await new Promise<void>((resolve) => {

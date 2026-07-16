@@ -6091,7 +6091,9 @@ router.post("/api/admin/buddy-bookings/:bookingId/resolve-dispute", async (req, 
 });
 
 // ── Booking change-request endpoints (time / service / price / date) ──────────
-// POST /api/buddy-bookings/:bookingId/change-request
+// POST /api/rent-a-buddy/bookings/:bookingId/change-request
+// (the mobile client calls /api/buddy-bookings/:bookingId/change-request, which
+// the specAliasRewrite middleware in app.ts rewrites to this canonical path)
 // Creates a buddy_booking_change_requests row proposing a change.
 // Either party can propose. Only accepted requests mutate the booking.
 //
@@ -6099,7 +6101,7 @@ router.post("/api/admin/buddy-bookings/:bookingId/resolve-dispute", async (req, 
 //   changeField: 'date' | 'start_time' | 'duration_h' | 'service' | 'price_usd'
 //   proposedValue: JSONB (e.g. { date: "2025-09-01" } or { duration_h: 4 })
 
-router.post("/api/buddy-bookings/:bookingId/change-request", async (req, res) => {
+router.post("/api/rent-a-buddy/bookings/:bookingId/change-request", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -6201,14 +6203,15 @@ router.post("/api/buddy-bookings/:bookingId/change-request", async (req, res) =>
   return res.status(201).json({ changeRequest: changeReq });
 });
 
-// POST /api/buddy-bookings/:bookingId/respond-change-request
+// POST /api/rent-a-buddy/bookings/:bookingId/respond-change-request
+// (also reachable at /api/buddy-bookings/:bookingId/respond-change-request via alias)
 // Accepts or declines a pending change request.
 // Only the OTHER party (not the requester) can respond.
 // On accept: applies the proposed value to the booking immediately.
 //
 // Body: { changeRequestId, decision: "accept" | "decline", responseNote? }
 
-router.post("/api/buddy-bookings/:bookingId/respond-change-request", async (req, res) => {
+router.post("/api/rent-a-buddy/bookings/:bookingId/respond-change-request", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -6301,10 +6304,13 @@ router.post("/api/buddy-bookings/:bookingId/respond-change-request", async (req,
 });
 
 // ── Rebook — create a new pending booking pre-filled from a completed booking ─
+// POST /api/rent-a-buddy/bookings/:bookingId/rebook
+// (the mobile client calls /api/buddy-bookings/:bookingId/rebook, which the
+// specAliasRewrite middleware in app.ts rewrites to this canonical path)
 // Requires: bookingDate (fresh date); optional overrides: startTime, durationH, groupSize.
 // Uses current buddy pricing; keeps service category, city, and notes from original.
 
-router.post("/api/buddy-bookings/:bookingId/rebook", async (req, res) => {
+router.post("/api/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);

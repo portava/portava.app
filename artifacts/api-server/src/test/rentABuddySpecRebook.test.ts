@@ -1,20 +1,23 @@
 /**
- * Rent a Buddy Spec router — rebook blocked-date regression tests
+ * Rebook — blocked-date regression tests at the client-facing URL
  *
- * The spec router's POST /api/rent-a-buddy/bookings/:bookingId/rebook path
- * must reject dates that fall inside a buddy's blocked/vacation ranges
- * (buddy_availability_exceptions) with 409 buddy_unavailable, and still
- * allow rebooking onto free dates.
+ * The mobile client calls POST /api/buddy-bookings/:bookingId/rebook, which the
+ * specAliasRewrite middleware (src/lib/specAliasRewrite.ts) rewrites to the
+ * canonical POST /api/rent-a-buddy/bookings/:bookingId/rebook handler in
+ * rentABuddy.ts. That handler must reject dates that fall inside a buddy's
+ * blocked/vacation ranges (buddy_availability_exceptions) with
+ * 409 buddy_unavailable, and still allow rebooking onto free dates.
  *
  * Run: node --import tsx/esm --test src/test/rentABuddySpecRebook.test.ts
  */
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import http from "node:http";
+import http from "http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import rentABuddySpecRouter from "../routes/rentABuddySpec.js";
+import rentABuddyRouter from "../routes/rentABuddy.js";
+import { specAliasRewrite } from "../lib/specAliasRewrite.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
@@ -23,6 +26,7 @@ let base: string;
 
 const FAKE_TOKEN = "rbs-test-token";
 const USER_ID    = "spec-traveler-1";
+const BUDDY_USER = "spec-buddy-user-1";
 const BUDDY_PROF = "spec-buddy-profile-1";
 const BOOKING_ID = "spec-booking-1";
 
@@ -100,6 +104,27 @@ function makeClient() {
           return { data: this._maybeSingle ? row : null, error: null };
         }
 
+        if (t === "feature_flags") {
+          return { data: this._maybeSingle ? { flag: "rent_buddy_enabled", enabled: true } : [], error: null };
+        }
+
+        if (t === "rent_buddy_profiles") {
+          const profile = {
+            id: BUDDY_PROF, user_id: BUDDY_USER, status: "active", admin_status: "active",
+            hourly_rate_usd: 25, categories: ["city"],
+          };
+          const matches = this._filters.every(([op, col, val]) =>
+            op !== "eq" || (profile as any)[col] === val);
+          if (this._maybeSingle) return { data: matches ? profile : null, error: null };
+          return { data: matches ? [profile] : [], error: null };
+        }
+
+        if (t === "rent_buddy_availability") {
+          // No per-date availability rows — open availability.
+          if (this._maybeSingle) return { data: null, error: null };
+          return { data: [], error: null };
+        }
+
         if (t === "rent_buddy_bookings") {
           let rows = Object.values(state.bookings);
           for (const [op, col, val] of this._filters) {
@@ -145,7 +170,10 @@ const OTHER_DATE  = new Date(Date.now() + 86400000 * 20).toISOString().slice(0, 
 before(async () => {
   const app = express();
   app.use(express.json());
-  app.use(rentABuddySpecRouter);
+  // Same alias rewrite as production (app.ts): /api/buddy-bookings/* →
+  // /api/rent-a-buddy/bookings/* served by the canonical rentABuddy router.
+  app.use(specAliasRewrite);
+  app.use(rentABuddyRouter);
 
   await new Promise<void>((resolve) => {
     server = app.listen(0, "127.0.0.1", resolve);
@@ -166,6 +194,7 @@ beforeEach(() => {
       [BOOKING_ID]: {
         id: BOOKING_ID, traveler_id: USER_ID, buddy_id: BUDDY_PROF,
         status: "completed", city: "Seoul", category: "city", group_size: 2,
+        duration_h: 3,
       },
     },
     availabilityExceptions: [],
@@ -178,13 +207,14 @@ beforeEach(() => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("Spec router rebook — blocked-date enforcement", () => {
+describe("Rebook via /api/buddy-bookings alias — blocked-date enforcement", () => {
   it("rejects rebook onto a single blocked date with 409 buddy_unavailable", async () => {
     state.availabilityExceptions = [
       { id: "ex-1", buddy_id: BUDDY_PROF, exception_date: FUTURE_DATE, end_date: null, exception_type: "blocked" },
     ];
-    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/rebook`, {
+    const r = await req("POST", `/api/buddy-bookings/${BOOKING_ID}/rebook`, {
       bookingDate: FUTURE_DATE,
+      startTime: "10:00",
       durationH: 3,
     });
     assert.equal(r.status, 409, JSON.stringify(r.body));
@@ -198,8 +228,9 @@ describe("Spec router rebook — blocked-date enforcement", () => {
     state.availabilityExceptions = [
       { id: "ex-2", buddy_id: BUDDY_PROF, exception_date: rangeStart, end_date: rangeEnd, exception_type: "vacation" },
     ];
-    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/rebook`, {
+    const r = await req("POST", `/api/buddy-bookings/${BOOKING_ID}/rebook`, {
       bookingDate: FUTURE_DATE, // 10 days out → inside [8, 12] range
+      startTime: "10:00",
       durationH: 3,
     });
     assert.equal(r.status, 409, JSON.stringify(r.body));
@@ -212,20 +243,22 @@ describe("Spec router rebook — blocked-date enforcement", () => {
     state.availabilityExceptions = [
       { id: "ex-3", buddy_id: BUDDY_PROF, exception_date: FUTURE_DATE, end_date: null, exception_type: "blocked" },
     ];
-    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/rebook`, {
+    const r = await req("POST", `/api/buddy-bookings/${BOOKING_ID}/rebook`, {
       bookingDate: OTHER_DATE,
+      startTime: "10:00",
       durationH: 3,
     });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     assert.equal(r.body.booking?.booking_date, OTHER_DATE);
     assert.equal(r.body.booking?.status, "pending");
-    assert.equal(r.body.rebookedFromId, BOOKING_ID);
+    assert.ok(r.body.bookingId, "should return new bookingId");
     assert.equal(state.insertedBookings.length, 1);
   });
 
   it("allows rebook when the buddy has no availability exceptions at all (201)", async () => {
-    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/rebook`, {
+    const r = await req("POST", `/api/buddy-bookings/${BOOKING_ID}/rebook`, {
       bookingDate: FUTURE_DATE,
+      startTime: "14:00",
       durationH: 2,
     });
     assert.equal(r.status, 201, JSON.stringify(r.body));
