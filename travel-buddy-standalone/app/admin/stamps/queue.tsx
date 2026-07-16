@@ -14,7 +14,7 @@ import {
   View,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Search } from 'lucide-react-native';
+import { ArrowLeft, Search, TriangleAlert } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
@@ -74,6 +74,17 @@ export default function StampQueueScreen() {
       <View style={styles.rowMeta}>
         <Text style={styles.rowName} numberOfLines={1}>{item.display_name}</Text>
         <Text style={styles.rowSub}>{item.stamp_type} · {item.country_code} · {item.earn_count ?? 0} earners</Text>
+        {item.cleanup_error ? (
+          <View style={styles.cleanupBadge}>
+            <TriangleAlert size={11} color="#92400E" strokeWidth={2} />
+            <Text style={styles.cleanupBadgeTitle}>Orphaned storage files</Text>
+          </View>
+        ) : null}
+        {item.cleanup_error_paths && item.cleanup_error_paths.length > 0 ? (
+          <Text style={styles.cleanupPaths} numberOfLines={3}>
+            {item.cleanup_error_paths.join('\n')}
+          </Text>
+        ) : null}
       </View>
       <View style={styles.badgeCol}>
         {item.status === 'review_required' && typeof item.last_error === 'string' && item.last_error.startsWith('candidate_shortfall') && (
@@ -176,7 +187,10 @@ const styles = StyleSheet.create({
   badge:         { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
   degradedBadge: { backgroundColor: '#FEE2E2', borderWidth: 1, borderColor: '#FCA5A5' },
   degradedBadgeText: { color: '#B91C1C' },
-  badgeText:     { fontSize: 10, fontWeight: '700', color: '#374151' },
-  sep:           { height: 1, backgroundColor: color.haze, marginLeft: space.md },
-  empty:         { textAlign: 'center', color: color.mute, padding: space.xl },
+  badgeText:         { fontSize: 10, fontWeight: '700', color: '#374151' },
+  sep:               { height: 1, backgroundColor: color.haze, marginLeft: space.md },
+  empty:             { textAlign: 'center', color: color.mute, padding: space.xl },
+  cleanupBadge:      { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FEF3C7', borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3, marginTop: 4, alignSelf: 'flex-start' },
+  cleanupBadgeTitle: { fontSize: 10, fontWeight: '700', color: '#92400E' },
+  cleanupPaths:      { ...t.small, color: '#78350F', fontFamily: 'monospace', marginTop: 2, fontSize: 10 },
 });

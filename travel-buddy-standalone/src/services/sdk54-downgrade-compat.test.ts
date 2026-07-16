@@ -77,7 +77,7 @@ function versionContains(field: string | undefined, ver: string): boolean {
 // ── 1. Package version pins ───────────────────────────────────────────────────
 
 describe('SDK 54 downgrade — package version pins', () => {
-  const pkg = readPkg('../../../artifacts/travel-buddy/package.json');
+  const pkg = readPkg('../../package.json');
   const deps: Record<string, string> = {
     ...pkg.dependencies,
     ...pkg.devDependencies,
@@ -119,7 +119,7 @@ describe('SDK 54 downgrade — package version pins', () => {
   });
 
   it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-    const standalone = readPkg('../../package.json');
+    const standalone = readPkg('../../../../travel-buddy-standalone/package.json');
     const saDeps: Record<string, string> = {
       ...standalone.dependencies,
       ...standalone.devDependencies,
@@ -649,10 +649,10 @@ describe('expo-clipboard ~8.0.8 — setStringAsync call contract (mirrors GroupC
 // exactly one version and that version is identical in both trees.
 
 describe('Lockfile-resolved transitive peer dep versions — @expo/config-plugins and expo-modules-core', () => {
-  // travel-buddy-standalone/pnpm-lock.yaml is 2 levels up from src/services/ in travel-buddy-standalone.
-  const standaloneLockText = readFileSync(pathResolve(__dir, '../../pnpm-lock.yaml'), 'utf8');
-  // monorepo root pnpm-lock.yaml is 3 levels up from src/services/ in travel-buddy-standalone.
-  const monoLockText = readFileSync(pathResolve(__dir, '../../../pnpm-lock.yaml'), 'utf8');
+  // travel-buddy-standalone/pnpm-lock.yaml is 4 levels up from src/services/ in artifacts/travel-buddy/
+  const standaloneLockText = readFileSync(pathResolve(__dir, '../../../../travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
+  // monorepo root pnpm-lock.yaml is also 4 levels up from src/services/ in artifacts/travel-buddy/
+  const monoLockText = readFileSync(pathResolve(__dir, '../../../../pnpm-lock.yaml'), 'utf8');
 
   /**
    * Scan a lockfile text for all resolved base versions of a given package.
