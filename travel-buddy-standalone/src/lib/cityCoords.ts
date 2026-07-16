@@ -7,36 +7,7 @@
  *
  * `cityCoordSpread` enforces the both-or-null contract at the call site:
  * spread its return value directly into a JSON payload object.
- *
- * `applyCoords` merges a coord pair into a base params object only when BOTH
- * values are valid finite numbers, making it impossible to pass a half-pair.
  */
-
-/** Both lat and lng as finite numbers. */
-export type CoordPair = { lat: number; lng: number };
-
-type MaybeCoords = { lat?: number | null; lng?: number | null } | null | undefined;
-
-/**
- * Merges `{ lat, lng }` into `base` only when BOTH values are finite numbers.
- * Returns `base` unchanged when either coordinate is missing, null, or NaN.
- *
- * Usage:
- *   const params = applyCoords({ city, ...rest }, { lat: cityLat, lng: cityLng });
- *   const params = applyCoords({ city, ...rest }, cityCoords); // cityCoords: { lat, lng } | null
- */
-export function applyCoords<T extends object>(base: T, coords: MaybeCoords): T | (T & CoordPair) {
-  if (
-    coords != null &&
-    typeof coords.lat === 'number' &&
-    isFinite(coords.lat) &&
-    typeof coords.lng === 'number' &&
-    isFinite(coords.lng)
-  ) {
-    return { ...base, lat: coords.lat, lng: coords.lng };
-  }
-  return base;
-}
 
 /**
  * Returns `{ lat, lng }` only when BOTH values are finite numbers.
