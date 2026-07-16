@@ -142,3 +142,92 @@ describe("clearDeadTokens() — valid token list", () => {
       "rent_buddy_profiles .in() must receive the full token list");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Resilience: one failing step must not block the others
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Variant of makeFakeClient that returns a DB error for a specific
+ * (table, kind) pair while succeeding for all others.
+ */
+function makeFakeClientWithError(errorTable: string, errorKind: "update" | "delete") {
+  const dbCalls: DbCall[] = [];
+
+  function builder(tableName: string) {
+    let pending: DbCall | null = null;
+
+    const b: Record<string, unknown> = {
+      update(_patch: unknown) {
+        pending = { table: tableName, kind: "update", filterCol: null, filterVals: null };
+        dbCalls.push(pending);
+        return b;
+      },
+      delete() {
+        pending = { table: tableName, kind: "delete", filterCol: null, filterVals: null };
+        dbCalls.push(pending);
+        return b;
+      },
+      in(col: string, vals: unknown[]) {
+        if (pending) {
+          pending.filterCol  = col;
+          pending.filterVals = vals;
+        }
+        return b;
+      },
+      eq(_col: string, _val: unknown) { return b; },
+      then(onF: (v: unknown) => unknown, onR: (e: unknown) => unknown) {
+        const shouldFail = tableName === errorTable && pending?.kind === errorKind;
+        const result = shouldFail
+          ? { data: null, error: new Error(`simulated ${errorTable} ${errorKind} failure`) }
+          : { data: null, error: null };
+        return Promise.resolve(result).then(onF, onR);
+      },
+    };
+    return b;
+  }
+
+  return {
+    from: builder as unknown as (t: string) => ReturnType<typeof builder>,
+    get dbCalls() { return dbCalls; },
+  };
+}
+
+describe("clearDeadTokens() — resilience: first step (profiles) fails", () => {
+  it("still runs notification_devices delete and rent_buddy_profiles update", async () => {
+    const client = makeFakeClientWithError("profiles", "update");
+
+    await clearDeadTokens(client as never, ["tok-abc"]);
+
+    const tables = client.dbCalls.map((c) => c.table);
+
+    assert.ok(
+      tables.includes("notification_devices"),
+      `expected notification_devices to be called but got: ${JSON.stringify(client.dbCalls)}`,
+    );
+    assert.ok(
+      tables.includes("rent_buddy_profiles"),
+      `expected rent_buddy_profiles to be called but got: ${JSON.stringify(client.dbCalls)}`,
+    );
+  });
+});
+
+describe("clearDeadTokens() — resilience: second step (notification_devices) fails", () => {
+  it("still runs rent_buddy_profiles update after notification_devices delete error", async () => {
+    const client = makeFakeClientWithError("notification_devices", "delete");
+
+    await clearDeadTokens(client as never, ["tok-abc"]);
+
+    const tables = client.dbCalls.map((c) => c.table);
+
+    assert.ok(
+      tables.includes("rent_buddy_profiles"),
+      `expected rent_buddy_profiles to be called but got: ${JSON.stringify(client.dbCalls)}`,
+    );
+    // profiles should also have been attempted (it succeeds)
+    assert.ok(
+      tables.includes("profiles"),
+      `expected profiles to be called but got: ${JSON.stringify(client.dbCalls)}`,
+    );
+  });
+});
