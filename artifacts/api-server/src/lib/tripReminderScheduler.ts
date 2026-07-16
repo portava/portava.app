@@ -37,6 +37,11 @@ const WINDOW_UPPER_HRS    = 26;
 /** A claim older than this with no delivery confirmation is assumed to be a
  *  crash-between-claim-and-send and will be retried. */
 const STALE_CLAIM_MINUTES = 10;
+/** Stop retrying a stale claim after this long — the reminder window has
+ *  definitely passed so there is nothing useful left to deliver.
+ *  Capped at WINDOW_UPPER_HRS so recovery never fires outside the valid window
+ *  and naturally terminates after at most one window-width of hourly retries. */
+const MAX_RECOVERY_AGE_MS  = WINDOW_UPPER_HRS * 3_600_000; // 26 h
 
 /** In-memory dedup so we don't double-fire within a single process restart cycle. */
 const reminded = new Set<string>();
@@ -104,12 +109,16 @@ async function markDelivered(
  */
 async function recoverStaleClaims(sc: ReturnType<typeof getServiceClient>): Promise<void> {
   const staleThreshold = new Date(Date.now() - STALE_CLAIM_MINUTES * 60_000).toISOString();
+  // Don't recover claims older than MAX_RECOVERY_AGE_MS: the reminder window has
+  // passed, so there is nothing useful to deliver and retries would be indefinite.
+  const recoveryFloor   = new Date(Date.now() - MAX_RECOVERY_AGE_MS).toISOString();
 
   const { data: stale, error } = await (sc as any)
     .from("trips")
     .select("id, title, owner_id")
     .is("reminder_delivered_at", null)
     .lt("reminder_sent_at", staleThreshold)
+    .gte("reminder_sent_at", recoveryFloor)
     .in("status", ["upcoming", "planning"]);
 
   if (error) {

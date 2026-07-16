@@ -87,6 +87,16 @@ export function _clearCountryGeocodeCache(): void {
   _lastCallAt = 0;
 }
 
+/**
+ * Evict a single city_key from the in-memory cache.
+ * Called by the admin correction endpoint so the next geocode re-resolves
+ * using the updated DB row (or a fresh Nominatim lookup if the row was deleted).
+ */
+export function evictGeocodeCacheKey(cityKey: string): void {
+  _cache.delete(cityKey);
+  _pending.delete(cityKey);
+}
+
 // ── Persistent (DB) cache ─────────────────────────────────────────────────────
 //
 // Second-level cache in the `city_country_geocode_cache` table so positive
