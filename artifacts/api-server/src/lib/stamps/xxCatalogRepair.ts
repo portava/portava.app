@@ -131,6 +131,40 @@ function normCityKey(raw: string): string {
 }
 
 /**
+ * Count XX catalog entries whose normalised city key matches `cityKey`.
+ * Definition-scoped entries (intentionally XX/Global) are excluded.
+ * Returns 0 on any DB error so callers never throw on this non-critical path.
+ *
+ * Used by the admin DELETE route to warn when repair_catalog is not set.
+ */
+export async function countXXEntriesForCityKey(
+  sc: SupabaseClient,
+  cityKey: string,
+): Promise<number> {
+  // Fetch only the city column for all XX entries — lightweight enough for
+  // an admin-only low-frequency call; no index on the city column exists, so
+  // a full-table filter here is acceptable.
+  const { data, error } = await sc
+    .from("universal_stamp_catalog")
+    .select("city, canonical_location_key")
+    .eq("country_code", "XX");
+
+  if (error || !data) return 0;
+
+  return (data as any[]).filter((entry) => {
+    // Skip definition-scoped entries (badge stamps intentionally XX/Global).
+    if (
+      typeof entry.canonical_location_key === "string" &&
+      entry.canonical_location_key.startsWith("definition:")
+    ) {
+      return false;
+    }
+    if (typeof entry.city !== "string") return false;
+    return normCityKey(entry.city) === cityKey;
+  }).length;
+}
+
+/**
  * Scan XX catalog entries and re-key / merge every one whose country is now
  * resolvable via `resolver`. Never throws; individual failures are logged.
  *

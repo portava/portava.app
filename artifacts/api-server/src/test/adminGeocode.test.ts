@@ -633,6 +633,161 @@ describe("DELETE /admin/geocode-cache/:city_key with repair_catalog", () => {
     assert.equal((r.body.repair as RepairStats).catalogRekeyed, 0, "other-city entry should be skipped");
     assert.equal(catalogUpdates.length, 0, "no catalog update for a different city");
   });
+
+  // ── xx_entries_pending ──────────────────────────────────────────────────────
+
+  it("includes xx_entries_pending when repair_catalog is not set and matching XX entries exist", async () => {
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-pend-1",
+          canonical_location_key: "city:XX:pendville",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Pendville",
+          neighborhood: null,
+          display_name: "Pendville",
+        },
+        {
+          id: "cat-pend-2",
+          canonical_location_key: "city:XX:pendville:2",
+          stamp_type: "neighborhood",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Pendville",
+          neighborhood: "Old Quarter",
+          display_name: "Old Quarter",
+        },
+      ],
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/pendville");
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.deleted, true);
+    assert.ok(!r.body.repair, "repair field must be absent — repair did not run");
+    assert.equal(r.body.xx_entries_pending, 2,
+      "should report both matching XX catalog entries as pending");
+  });
+
+  it("includes xx_entries_pending: 0 when repair_catalog is not set and no matching XX entries exist", async () => {
+    const client = makeDeleteRepairClient({
+      xxEntries: [], // no XX entries at all
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/cleantown");
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.deleted, true);
+    assert.ok(!r.body.repair, "repair field must be absent");
+    assert.equal(r.body.xx_entries_pending, 0,
+      "xx_entries_pending must be 0 when no matching XX entries exist");
+  });
+
+  it("omits xx_entries_pending when repair_catalog=true (repair already ran)", async () => {
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-rep-1",
+          canonical_location_key: "city:XX:reptown",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Reptown",
+          neighborhood: null,
+          display_name: "Reptown",
+        },
+      ],
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Canada", "CA"));
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/reptown", undefined, "repair_catalog=true");
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.deleted, true);
+    assert.ok(r.body.repair, "repair stats must be present when repair_catalog=true");
+    assert.equal(r.body.xx_entries_pending, undefined,
+      "xx_entries_pending must be absent when repair_catalog=true — repair already ran");
+  });
+
+  it("counts only the matching city's XX entries — not other cities", async () => {
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-match",
+          canonical_location_key: "city:XX:targetcity",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Targetcity",
+          neighborhood: null,
+          display_name: "Targetcity",
+        },
+        {
+          id: "cat-other",
+          canonical_location_key: "city:XX:othercity",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Othercity",    // different city — must not be counted
+          neighborhood: null,
+          display_name: "Othercity",
+        },
+      ],
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/targetcity");
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.xx_entries_pending, 1,
+      "only the matching city's XX entry should be counted");
+  });
+
+  it("excludes definition-scoped (badge) entries from xx_entries_pending", async () => {
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-def",
+          canonical_location_key: "definition:explorer-badge",
+          stamp_type: "badge",
+          country: "Global",
+          country_code: "XX",
+          city: "Badgeville",  // city matches the key
+          neighborhood: null,
+          display_name: "Explorer",
+        },
+        {
+          id: "cat-real",
+          canonical_location_key: "city:XX:badgeville",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Badgeville",
+          neighborhood: null,
+          display_name: "Badgeville",
+        },
+      ],
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/badgeville");
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.xx_entries_pending, 1,
+      "definition-scoped entries must be excluded; only the real city entry counts");
+  });
 });
 
 describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {

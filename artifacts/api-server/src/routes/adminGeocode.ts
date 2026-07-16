@@ -17,7 +17,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { evictGeocodeCacheKey } from "../lib/stamps/countryGeocoder.js";
-import { repairXXCatalogEntries, makeGeocodingResolver } from "../lib/stamps/xxCatalogRepair.js";
+import { repairXXCatalogEntries, makeGeocodingResolver, countXXEntriesForCityKey } from "../lib/stamps/xxCatalogRepair.js";
 
 const router = Router();
 
@@ -104,6 +104,8 @@ router.delete("/admin/geocode-cache/:city_key", async (req, res) => {
   evictGeocodeCacheKey(cityKey);
 
   let repairStats: import("../lib/stamps/xxCatalogRepair.js").RepairStats | undefined;
+  let xxEntriesPending: number | undefined;
+
   if (repairCatalog) {
     // After purging the wrong row the next geocodeCityCountry call will
     // re-resolve via Nominatim and re-populate the DB cache.  Running
@@ -116,12 +118,18 @@ router.delete("/admin/geocode-cache/:city_key", async (req, res) => {
       { info: console.log, warn: console.warn },
       { cityKeyFilter: cityKey },
     );
+  } else {
+    // Repair did not run — count how many XX catalog entries are still
+    // pending for this city so the caller can decide whether to re-issue
+    // the request with repair_catalog=true.
+    xxEntriesPending = await countXXEntriesForCityKey(sc, cityKey);
   }
 
   res.json({
     deleted: true,
     city_key: cityKey,
     ...(repairStats !== undefined ? { repair: repairStats } : {}),
+    ...(xxEntriesPending !== undefined ? { xx_entries_pending: xxEntriesPending } : {}),
   });
 });
 
