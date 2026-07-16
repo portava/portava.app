@@ -101,6 +101,24 @@ interface FakeState {
 
 let state: FakeState = {};
 
+// Tables whose inserts are fire-and-forget in rentABuddy.ts — i.e. the entire
+// chain is `void serviceClient.from(table).insert(data)` with no await, so
+// _resolve() is never called and the rows are invisible to test assertions
+// unless captured eagerly inside insert() itself.
+//
+// Audit (grep "void serviceClient" in rentABuddy.ts, 2026-07-16):
+//   • buddy_booking_events — 15 direct void sites; the only table that requires
+//     eager capture.
+//
+// Other void-prefixed calls in rentABuddy.ts use async helper functions
+// (emitBookingMilestone → messages, emitBookingCard → messages,
+//  recordTrustEvent → trust_events, notifyBookingParty → notifications).
+// Those helpers internally await their DB writes so _resolve() IS reached for
+// those tables and no eager-capture is needed for them.
+const FIRE_AND_FORGET_TABLES = new Set([
+  "buddy_booking_events",
+]);
+
 function makeClient(userId: string, role = "user") {
   const inserted: any[] = [];
 
@@ -121,15 +139,17 @@ function makeClient(userId: string, role = "user") {
       select(cols?: string, opts?: any) { if (opts?.count) this._count = true; return this; },
       insert(data: any) {
         this._insertData = data;
-        // buddy_booking_events inserts are often void'd (fire-and-forget) so
-        // _resolve() is never called for them.  Capture eagerly here so tests
-        // can observe the rows even without an await chain.
-        if (table === "buddy_booking_events") {
+        // For every table in FIRE_AND_FORGET_TABLES, the production code issues
+        // `void serviceClient.from(table).insert(...)` — _resolve() is never
+        // reached, so rows must be captured right here in insert().
+        if (FIRE_AND_FORGET_TABLES.has(table)) {
           const rows = Array.isArray(data) ? data : [data];
           for (const row of rows) {
             const r = { id: `gen-${Math.random().toString(36).slice(2)}`, ...row };
-            if (!(state as any).bookingEvents) (state as any).bookingEvents = [];
-            (state as any).bookingEvents.push(r);
+            if (table === "buddy_booking_events") {
+              if (!(state as any).bookingEvents) (state as any).bookingEvents = [];
+              (state as any).bookingEvents.push(r);
+            }
           }
           this._eagerCaptured = true;
         }
