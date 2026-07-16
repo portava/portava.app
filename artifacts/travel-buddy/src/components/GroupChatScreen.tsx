@@ -23,6 +23,7 @@ import {
   Modal,
   Share,
   Switch,
+  TextInput,
   Animated,
 } from 'react-native';
 import { MentionInput, type MentionInputHandle } from './MentionInput';
@@ -107,15 +108,18 @@ function LongPressActionSheet({
 }) {
   const [showReport, setShowReport] = useState(false);
   const [reportReason, setReportReason] = useState<ReasonCode | null>(null);
+  const [reportDetail, setReportDetail] = useState('');
   const [reportSending, setReportSending] = useState(false);
 
   async function submitReport() {
     if (!reportReason || !message) return;
     setReportSending(true);
+    const detail = reportReason === 'other' ? reportDetail.trim() : '';
     const result = await reportContent({
       target_type: 'message',
       target_id: message.id,
       reason_code: reportReason,
+      ...(detail ? { reason_detail: detail } : {}),
     }).catch(() => ({ ok: false as const }));
     setReportSending(false);
     if (result.ok) {
@@ -154,6 +158,17 @@ function LongPressActionSheet({
               {reportReason === r.code && <Text style={las.reasonCheck}>✓</Text>}
             </Pressable>
           ))}
+          {reportReason === 'other' && (
+            <TextInput
+              style={las.detailInput}
+              value={reportDetail}
+              onChangeText={setReportDetail}
+              placeholder="Tell us more (optional)"
+              placeholderTextColor={color.mute}
+              multiline
+              maxLength={500}
+            />
+          )}
           <Pressable
             style={[las.reportBtn, (!reportReason || reportSending) && las.reportBtnDisabled]}
             onPress={submitReport}
@@ -259,6 +274,7 @@ const las = StyleSheet.create({
   reasonText: { ...t.body, color: color.ink },
   reasonTextSelected: { color: color.signal, fontWeight: '700' },
   reasonCheck: { fontSize: 14, color: color.signal, fontWeight: '700' },
+  detailInput: { ...t.body, color: color.ink, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingHorizontal: space.sm, paddingVertical: 10, minHeight: 64, textAlignVertical: 'top', marginTop: 2 },
   reportBtn: { marginTop: space.md, backgroundColor: '#EF4444', borderRadius: radius.md, paddingVertical: 13, alignItems: 'center' },
   reportBtnDisabled: { opacity: 0.45 },
   reportBtnLabel: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },
