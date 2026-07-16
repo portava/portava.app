@@ -65,8 +65,15 @@ export default function BuddyAvailabilityScreen() {
       const g: Record<string, Record<string, boolean>> = {};
       res.data.availability.forEach((a) => {
         DAYS.forEach((d) => { g[d] = g[d] ?? {}; });
+        // Derive the weekday from the ISO date parts in LOCAL time.
+        // `new Date('YYYY-MM-DD')` parses as UTC midnight, so in negative-UTC
+        // timezones toLocaleDateString shifted every row back one weekday and
+        // the reloaded grid didn't match what was saved.
+        const [yy, mm, dd] = a.date.slice(0, 10).split('-').map(Number);
+        const local = new Date(yy, (mm ?? 1) - 1, dd ?? 1);
+        const dayKey = DAYS[(local.getDay() + 6) % 7];
+        if (!dayKey) return;
         a.timeSlots.forEach((slot) => {
-          const dayKey = new Date(a.date).toLocaleDateString('en-US', { weekday: 'short' });
           if (!g[dayKey]) g[dayKey] = {};
           g[dayKey][slot] = a.isAvailable;
         });

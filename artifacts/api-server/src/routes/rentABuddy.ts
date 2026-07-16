@@ -3316,10 +3316,19 @@ router.post("/api/rent-a-buddy/dashboard/availability", async (req, res) => {
   if (!availRollout.allowed) return res.status(availRollout.httpStatus).json({ error: availRollout.code, message: availRollout.message });
 
   const { entries = [] } = req.body ?? {};
+  const failures: string[] = [];
   for (const e of entries as any[]) {
-    await serviceClient.from("rent_buddy_availability").upsert(
+    const { error } = await serviceClient.from("rent_buddy_availability").upsert(
       { buddy_id: (bp as any).id, date: e.date, time_slots: e.timeSlots ?? [], is_available: e.isAvailable ?? true, notes: e.notes ?? null },
       { onConflict: "buddy_id,date" },
+    );
+    if (error) failures.push(`${e.date}: ${error.message}`);
+  }
+  if (failures.length > 0) {
+    return sendError(
+      res,
+      "db_error",
+      `Failed to save ${failures.length} of ${(entries as any[]).length} availability rows. First error — ${failures[0]}`,
     );
   }
   return res.json({ ok: true });
