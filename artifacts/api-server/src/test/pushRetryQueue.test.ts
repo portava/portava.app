@@ -18,7 +18,7 @@
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { PushRetryQueue } from "../lib/pushRetryQueue.js";
+import { PushRetryQueue, _setTestClearDeadTokens } from "../lib/pushRetryQueue.js";
 import { _setTestFetch } from "../lib/push.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -185,7 +185,10 @@ function expo503Fetch(): typeof fetch {
     new Response("Service Unavailable", { status: 503 }) as unknown as Response;
 }
 
-afterEach(() => _setTestFetch(null));
+afterEach(() => {
+  _setTestFetch(null);
+  _setTestClearDeadTokens(null);
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1 & 2 — enqueue()
@@ -2256,6 +2259,84 @@ describe("PushRetryQueue.processQueue() — recovered row (next_retry_at just pa
       ndaUpdate,
       "notification_delivery_attempts must be updated to 'sent' after the recovered row succeeds",
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 14 — clearDeadTokens throws during partial success
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("PushRetryQueue.processQueue() — clearDeadTokens throws during partial success", () => {
+  it("still finalises as 'sent' — not re-queued — when clearDeadTokens throws and result.sent > 0", async () => {
+    // Scenario: Expo delivers to PUSH_TOKEN (ok) but reports DEAD_TOKEN as
+    // DeviceNotRegistered.  clearDeadTokens is mocked to throw a transient DB
+    // error.  Because result.sent > 0 the queue row must STILL finalise as
+    // 'sent' — it must NOT be re-queued or marked 'failed' just because the
+    // dead-token cleanup blew up.
+    //
+    // This guards the bug where clearDeadTokens was awaited inside the outer
+    // try/catch in processItem: a throw there previously caused the catch block
+    // to run, re-queuing an already-delivered notification.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN, DEAD_TOKEN],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    // Expo: first ticket ok (PUSH_TOKEN), second ticket DeviceNotRegistered (DEAD_TOKEN)
+    _setTestFetch(expoPartialSuccessFetch());
+
+    // clearDeadTokens mock that throws a transient DB error
+    _setTestClearDeadTokens(async (_db, _tokens) => {
+      throw new Error("transient DB error during dead-token cleanup");
+    });
+
+    await queue.processQueue();
+
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+
+    // Must be finalised as 'sent' — the successful delivery took place; the
+    // dead-token cleanup failure must not override the outcome.
+    const sentUpdate = prqUpdates.find((c) => c.patch.status === "sent");
+    assert.ok(
+      sentUpdate,
+      "push_retry_queue must be finalised as 'sent' even when clearDeadTokens throws",
+    );
+    assert.equal(sentUpdate.filters.id,      QUEUE_ROW_ID, "sent update must target the correct queue row");
+    assert.equal(sentUpdate.patch.attempt_count, 2,        "attempt_count must be 2 (the retry attempt)");
+
+    // Must NOT be re-queued — a cleanup error is not a delivery failure
+    const requeued = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(
+      !requeued,
+      "must NOT re-queue the row when clearDeadTokens throws but result.sent > 0",
+    );
+
+    // Must NOT be marked failed
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(
+      !failedUpdate,
+      "must NOT mark the row 'failed' when clearDeadTokens throws but partial delivery succeeded",
+    );
+
+    // Delivery attempt must also be marked 'sent'
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status, "sent",    "delivery_attempt status must be 'sent'");
+    assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
   });
 });
 

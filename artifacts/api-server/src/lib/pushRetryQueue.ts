@@ -18,6 +18,19 @@ import { logger as rootLogger } from "./logger.js";
 import { sendPushNotification, type PushPayload } from "./push.js";
 import { clearDeadTokens } from "./pushTokenCleanup.js";
 
+// ── Test seam ──────────────────────────────────────────────────────────────────
+// Allows unit tests to replace clearDeadTokens with a mock (e.g. one that
+// throws) without having to mock the entire module.  Production code always
+// sees null here, so the real clearDeadTokens is used.
+let _testClearDeadTokensFn: ((db: SupabaseClient, tokens: string[]) => Promise<void>) | null = null;
+
+/** @internal Only call from tests. Pass null to restore the real implementation. */
+export function _setTestClearDeadTokens(
+  fn: ((db: SupabaseClient, tokens: string[]) => Promise<void>) | null,
+): void {
+  _testClearDeadTokensFn = fn;
+}
+
 const logger = rootLogger.child({ service: "PushRetryQueue" });
 
 /** Delay in seconds before each retry (index 0 = retry 1, index 1 = retry 2). */
@@ -171,11 +184,23 @@ export class PushRetryQueue {
         .filter((e) => e.error === "DeviceNotRegistered" || e.error === "InvalidCredentials");
       const deadTokens = deadErrors.map((e) => e.token);
       if (deadTokens.length > 0) {
-        await clearDeadTokens(this.db, deadTokens);
-        logger.info(
-          { id, userId, deadCleared: deadTokens.length },
-          "push retry: cleared dead tokens found during retry",
-        );
+        // Isolated try/catch: a failure here must NOT prevent a successful partial
+        // delivery (result.sent > 0) from being finalised as 'sent'.  The outer
+        // try/catch is for the push itself — letting cleanup errors fall into it
+        // would cause re-queuing of an already-delivered notification.
+        try {
+          const clearFn = _testClearDeadTokensFn ?? clearDeadTokens;
+          await clearFn(this.db, deadTokens);
+          logger.info(
+            { id, userId, deadCleared: deadTokens.length },
+            "push retry: cleared dead tokens found during retry",
+          );
+        } catch (cleanupErr) {
+          logger.warn(
+            { err: cleanupErr, id, userId, deadCount: deadTokens.length },
+            "push retry: dead-token cleanup threw — delivery outcome unchanged",
+          );
+        }
       }
 
       if (result.sent > 0 || (!result.retryable && result.errors.length === 0)) {
