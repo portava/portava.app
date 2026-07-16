@@ -1092,6 +1092,31 @@ describe("cancel — terminal state is rejected", () => {
       "no profile update must occur when the booking is in_progress",
     );
   });
+
+  it("returns 409 when the booking is 'completed' via alias /api/buddy-bookings/:id/cancel", async () => {
+    // The traveler is a valid party member, so the isParty check passes.
+    // The status check fires next and must reject with 409 because "completed"
+    // is not in cancellableStatuses ["pending", "confirmed", "scheduled"].
+    // A completed session must never be silently cancelled after the fact.
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "completed",
+    });
+    const res = await call(
+      "POST",
+      `/api/buddy-bookings/${BOOKING_ID}/cancel`,
+      fake,
+    );
+    assert.equal(res.status, 409, `expected 409, got ${res.status}`);
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "invalid_transition", "expected error: invalid_transition");
+    // No profile counter must have been updated.
+    assert.equal(
+      fake.updates.filter((u) => u.table === "rent_buddy_profiles").length,
+      0,
+      "no profile update must occur when the booking is already completed",
+    );
+  });
 });
 
 // ── available-now display cards — completed_count precedence ─────────────────
