@@ -261,4 +261,32 @@ describe("POST /api/rent-a-buddy/bookings/:id/dispute — terminal-status guard"
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "no_show" });
     assert.equal(r.body.currentStatus, "completed", "response must echo the booking status that caused the rejection");
   });
+
+  // ── 'disputed' status guard ───────────────────────────────────────────────
+
+  it("returns 409 when booking status is 'disputed'", async () => {
+    state.bookings[BOOKING_ID].status = "disputed";
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "no_show" });
+    assert.equal(r.status, 409, `expected 409 for already-disputed booking, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.error, "invalid_transition");
+  });
+
+  it("does not insert a dispute row when the booking is already disputed", async () => {
+    state.bookings[BOOKING_ID].status = "disputed";
+    await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "no_show" });
+    assert.equal(state.disputes.length, 0, "no dispute row must be inserted for an already-disputed booking");
+  });
+
+  it("buddy party also gets 409 when booking is already disputed", async () => {
+    state.bookings[BOOKING_ID].status = "disputed";
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "no_show" }, BUDDY_TOKEN);
+    assert.equal(r.status, 409, `expected 409 for already-disputed booking (buddy), got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.error, "invalid_transition");
+  });
+
+  it("the 409 response echoes currentStatus as 'disputed' for an already-disputed booking", async () => {
+    state.bookings[BOOKING_ID].status = "disputed";
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "no_show" });
+    assert.equal(r.body.currentStatus, "disputed", "response must echo 'disputed' as the status that caused the rejection");
+  });
 });
