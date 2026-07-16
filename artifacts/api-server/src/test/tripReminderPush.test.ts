@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 
 import { _setTestFetch } from "../lib/push.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import { runOnce } from "../lib/tripReminderScheduler.js";
+import { runOnce, clearReminderDedup } from "../lib/tripReminderScheduler.js";
 
 const OWNER_ID  = "cc000000-0001-0001-0001-000000000001";
 const MEMBER_ID = "cc000000-0002-0002-0002-000000000002";
@@ -384,6 +384,124 @@ describe("TripReminderScheduler push", () => {
 
     assert.equal(pushCalls.length, 0,
       "recovery must stay silent when start_date is ~30 h away — just outside the upper drift buffer");
+  });
+
+  it("re-delivers after an admin resets a permanently-abandoned reminder", async () => {
+    // Scenario: the recovery sweep exhausted MAX_RECOVERY_RETRIES (3) because
+    // Supabase was temporarily unavailable.  The trip is permanently excluded
+    // from future recovery polls.  An admin calls POST /admin/trips/:id/reset-reminder
+    // which resets reminder_retry_count to 0 and NULLs both timestamp columns.
+    // The scheduler must then treat the trip as a fresh candidate and deliver on
+    // the next poll.
+    const MAX_RECOVERY_RETRIES = 3;
+    const STALE_CLAIM_MINUTES  = 10;
+    const staleTime = new Date(Date.now() - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
+    const tomorrowStr = new Date(Date.now() + 24 * 3_600_000).toISOString().slice(0, 10);
+
+    const state = baseState("trip-admin-reset");
+    state.trips![0].reminder_sent_at     = staleTime;   // previously claimed
+    state.trips![0].reminder_delivered_at = null;       // never confirmed
+    state.trips![0].reminder_retry_count  = MAX_RECOVERY_RETRIES; // exhausted
+    state.trips![0].start_date           = tomorrowStr; // still within window
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+
+    // First poll: the trip is permanently excluded — no push, retry count unchanged.
+    await runOnce();
+    assert.equal(pushCalls.length, 0, "abandoned trip is not retried");
+    assert.equal(state.trips![0].reminder_retry_count, MAX_RECOVERY_RETRIES,
+      "retry count must not change for a permanently abandoned trip");
+
+    // Simulate the admin reset: POST /admin/trips/:id/reset-reminder
+    // clears the outbox so the scheduler treats the trip as fresh.
+    state.trips![0].reminder_retry_count  = 0;
+    state.trips![0].reminder_sent_at      = null;
+    state.trips![0].reminder_delivered_at = null;
+
+    // Second poll: the normal sweep finds the unclaimed (sent_at IS NULL) trip
+    // and delivers the reminder as if it had never been attempted.
+    pushCalls = [];
+    const svc2 = makeFakeClient(state);
+    _setTestServiceClient(svc2);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 1,
+      "reminder is re-delivered after admin reset");
+    assert.deepEqual(
+      pushCalls[0].map((m: any) => m.to).sort(),
+      [OWNER_TOKEN, MEMBER_TOKEN].sort(),
+    );
+    assert.ok(state.trips![0].reminder_sent_at,
+      "reminder_sent_at is set after re-delivery");
+    assert.ok(state.trips![0].reminder_delivered_at,
+      "reminder_delivered_at is set after re-delivery");
+  });
+
+  it("re-delivers after admin reset even when the trip was previously claimed in this process", async () => {
+    // This test exercises the critical in-memory dedup edge case:
+    //   1. The normal sweep claims the trip in-process → adds it to the `reminded` Set.
+    //   2. The send fails every time → recovery exhausts MAX_RECOVERY_RETRIES.
+    //   3. Admin calls reset-reminder (clears DB columns + calls clearReminderDedup).
+    //   4. Next poll re-delivers because the trip is no longer in `reminded`.
+    // Without clearReminderDedup the normal sweep would skip the trip indefinitely
+    // (reminded.has(tripId) === true) even though reminder_sent_at is NULL again.
+    const MAX_RECOVERY_RETRIES = 3;
+    const STALE_CLAIM_MINUTES  = 10;
+    const tomorrowStr = new Date(Date.now() + 24 * 3_600_000).toISOString().slice(0, 10);
+
+    const tripId = "trip-admin-reset-dedup";
+    const state = baseState(tripId);
+    state.trips![0].start_date = tomorrowStr;
+
+    // Phase 1 — Normal sweep claims the trip; send fails (Supabase error on trip_members).
+    // The trip ID is added to the in-memory `reminded` set.
+    const failSvc = makeFakeClient(state, { throwOnTable: "trip_members" });
+    _setTestServiceClient(failSvc);
+    await runOnce();
+    assert.ok(state.trips![0].reminder_sent_at,
+      "normal sweep claimed the trip (reminder_sent_at set)");
+    assert.equal(state.trips![0].reminder_delivered_at ?? null, null,
+      "delivery was not confirmed (send threw)");
+
+    // Phase 2 — Age the claim so the recovery sweep picks it up, then exhaust retries.
+    const staleTime = new Date(Date.now() - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
+    state.trips![0].reminder_sent_at = staleTime;
+
+    await runOnce();
+    assert.equal(state.trips![0].reminder_retry_count, 1, "retry 1");
+    await runOnce();
+    assert.equal(state.trips![0].reminder_retry_count, 2, "retry 2");
+    await runOnce();
+    assert.equal(state.trips![0].reminder_retry_count, MAX_RECOVERY_RETRIES, "retry 3 — abandoned");
+
+    // Phase 3 — Verify the trip is permanently excluded: one more poll, no change.
+    await runOnce();
+    assert.equal(pushCalls.length, 0, "permanently abandoned — no push");
+    assert.equal(state.trips![0].reminder_retry_count, MAX_RECOVERY_RETRIES,
+      "retry count unchanged once abandoned");
+
+    // Phase 4 — Admin reset: clear DB columns AND evict from in-memory dedup set.
+    state.trips![0].reminder_retry_count  = 0;
+    state.trips![0].reminder_sent_at      = null;
+    state.trips![0].reminder_delivered_at = null;
+    clearReminderDedup(tripId); // mirrors what POST /admin/trips/:id/reset-reminder does
+
+    // Phase 5 — Next poll with a working service: normal sweep must deliver.
+    pushCalls = [];
+    _setTestServiceClient(makeFakeClient(state)); // no throwOnTable
+    await runOnce();
+
+    assert.equal(pushCalls.length, 1,
+      "reminder re-delivered after admin reset cleared both DB state and in-memory dedup");
+    assert.deepEqual(
+      pushCalls[0].map((m: any) => m.to).sort(),
+      [OWNER_TOKEN, MEMBER_TOKEN].sort(),
+    );
+    assert.ok(state.trips![0].reminder_sent_at,
+      "reminder_sent_at is set after re-delivery");
+    assert.ok(state.trips![0].reminder_delivered_at,
+      "reminder_delivered_at is set after re-delivery");
   });
 
   it("recovers a stale claim when start_date is ~27 h away — inside the upper drift buffer", async () => {

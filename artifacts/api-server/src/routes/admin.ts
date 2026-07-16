@@ -23,6 +23,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { logger } from "../lib/logger";
+import { clearReminderDedup } from "../lib/tripReminderScheduler";
 import {
   runSchemaDriftCheck,
   getCachedSchemaDriftResult,
@@ -1935,6 +1936,57 @@ router.post("/admin/trips/:tripId/report-resolve", async (req, res) => {
   if (error) { sendError(res, "db_error", error.message); return; }
 
   res.json({ tripId, resolution, resolvedCount: (updated ?? []).length });
+});
+
+/**
+ * POST /admin/trips/:tripId/reset-reminder
+ *
+ * Resets the trip-reminder outbox so the recovery sweep treats the trip as a
+ * fresh crash-recovery candidate on the next poll.  Use this when
+ * MAX_RECOVERY_RETRIES were exhausted due to a transient Supabase outage
+ * rather than a genuine push failure — ops can re-enable delivery without a
+ * code deploy.
+ *
+ * Clears:
+ *   - reminder_retry_count  → 0
+ *   - reminder_sent_at      → NULL
+ *   - reminder_delivered_at → NULL
+ */
+router.post("/admin/trips/:tripId/reset-reminder", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const sc = admin.sc;
+
+  const { tripId } = req.params;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tripId)) {
+    sendError(res, "invalid_payload", "tripId must be a valid UUID"); return;
+  }
+
+  const { data: trip } = await sc
+    .from("trips")
+    .select("id")
+    .eq("id", tripId)
+    .maybeSingle();
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+
+  const { error } = await sc
+    .from("trips")
+    .update({
+      reminder_retry_count:  0,
+      reminder_sent_at:      null,
+      reminder_delivered_at: null,
+    })
+    .eq("id", tripId);
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+
+  // Clear the in-memory dedup set so the scheduler re-considers this trip on
+  // the very next poll — not only after a process restart.
+  clearReminderDedup(tripId);
+
+  logger.info({ tripId, adminId: admin.userId },
+    "TripReminderScheduler: reminder outbox reset by admin — will re-enter normal sweep on next poll");
+  res.json({ tripId, reset: true });
 });
 
 // ── GET /admin/events ─────────────────────────────────────────────────────────

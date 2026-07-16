@@ -261,6 +261,16 @@ export async function runOnce() {
   }
 }
 
+/**
+ * Remove a trip from the in-memory deduplication set so the normal sweep will
+ * re-consider it on the next poll.  Call this after an admin reset of the
+ * reminder outbox columns so the re-trigger takes effect within the current
+ * process lifetime — not only after a server restart.
+ */
+export function clearReminderDedup(tripId: string): void {
+  reminded.delete(tripId);
+}
+
 export function startTripReminderScheduler(): void {
   logger.info({ intervalMs: POLL_INTERVAL_MS }, "TripReminderScheduler: starting");
 
