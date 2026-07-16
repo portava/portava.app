@@ -634,6 +634,126 @@ describe("DELETE /admin/geocode-cache/:city_key with repair_catalog", () => {
     assert.equal(catalogUpdates.length, 0, "no catalog update for a different city");
   });
 
+  it("re-keys the catalog entry to the freshly-resolved country B, not the deleted row's original country A", async () => {
+    // Disambiguation scenario: the geocode cache row previously mapped the city to
+    // country A (France / FR).  After the admin deletes that row, the geocoder
+    // re-resolves via Nominatim and returns country B (Germany / DE).  The repair
+    // stats must reflect country B (DE), not the stale country A (FR).
+    const catalogUpdates: Record<string, unknown>[] = [];
+
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-rekey-country-b",
+          canonical_location_key: "city:XX:borderburg",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Borderburg",
+          neighborhood: null,
+          display_name: "Borderburg",
+        },
+      ],
+      onCatalogUpdate: (f) => catalogUpdates.push(f),
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    // After DELETE the in-memory cache is evicted. The geocoder will miss the
+    // DB cache (row deleted) and fall through to Nominatim which returns DE —
+    // the new country B, different from the deleted row's country A (FR).
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "de", country: "Germany" } }],
+    }));
+    // DB cache returns nothing (the row was just deleted).
+    const emptyGeocodeDb: any = {
+      from: (table: string) => {
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
+            upsert: () => Promise.resolve({ data: null, error: null }),
+          };
+        }
+        return {};
+      },
+    };
+    _setGeocodeDbClientForTests(emptyGeocodeDb);
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/borderburg", undefined, "repair_catalog=true");
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.deleted, true);
+    assert.ok(r.body.repair, "response should include repair stats");
+    const repair = r.body.repair as RepairStats;
+    assert.equal(repair.catalogRekeyed, 1, "one catalog entry should have been re-keyed");
+    assert.equal(catalogUpdates.length, 1, "catalog update should have been called once");
+    // The re-key must use the freshly-resolved country B (DE), not the deleted row's
+    // original country A (FR).
+    assert.equal(
+      catalogUpdates[0].country_code,
+      "DE",
+      "catalog entry should be re-keyed to country B (DE), not the deleted row's original country A (FR)",
+    );
+  });
+
+  it("records unresolved cities in repair stats when the geocoder cannot re-resolve after DELETE", async () => {
+    // After the geocode row is deleted and the cache evicted, if neither the
+    // static lookup nor Nominatim can resolve the city, the entry must be left
+    // as XX and reported in unresolvedCities — it must never be silently skipped.
+    const catalogUpdates: Record<string, unknown>[] = [];
+
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-unresolved-del-1",
+          canonical_location_key: "city:XX:ghostown",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Ghostown",
+          neighborhood: null,
+          display_name: "Ghostown",
+        },
+      ],
+      onCatalogUpdate: (f) => catalogUpdates.push(f),
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    // Nominatim returns no results for this city.
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [],
+    }));
+    // DB cache also has no entry (row was just deleted).
+    const emptyGeocodeDb: any = {
+      from: (table: string) => {
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
+            upsert: () => Promise.resolve({ data: null, error: null }),
+          };
+        }
+        return {};
+      },
+    };
+    _setGeocodeDbClientForTests(emptyGeocodeDb);
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/ghostown", undefined, "repair_catalog=true");
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.deleted, true);
+    assert.ok(r.body.repair, "response should include repair stats");
+    const repair = r.body.repair as RepairStats;
+    assert.equal(repair.catalogRekeyed, 0, "unresolvable entry should not be re-keyed");
+    assert.ok(
+      repair.unresolvedCities.includes("Ghostown"),
+      `unresolvedCities should list "Ghostown", got: ${JSON.stringify(repair.unresolvedCities)}`,
+    );
+    assert.equal(catalogUpdates.length, 0, "catalog should not have been updated for an unresolvable city");
+  });
+
   // ── xx_entries_pending ──────────────────────────────────────────────────────
 
   it("includes xx_entries_pending when repair_catalog is not set and matching XX entries exist", async () => {
