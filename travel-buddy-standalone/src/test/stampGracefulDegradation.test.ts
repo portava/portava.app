@@ -20,19 +20,19 @@
  *
  * Run:
  *   cd travel-buddy-standalone
- *   pnpm test:stamps
+ *   node --import tsx --test src/test/stampGracefulDegradation.test.ts
  */
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   _setTestAuthToken,
   getMyRecentStamps,
-} from '../stamps.ts';
+} from '../services/stamps.ts';
 import {
   _setTestAuthToken as setPassportToken,
   getMyPassportStamps,
   getUserStampsByUsername,
-} from '../passportStamps.ts';
+} from '../services/passportStamps.ts';
 
 const FAKE_TOKEN = 'fake-test-token-stamp-degradation';
 
