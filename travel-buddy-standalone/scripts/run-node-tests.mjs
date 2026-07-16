@@ -1,70 +1,75 @@
 #!/usr/bin/env node
-/**
- * Discovers and runs all node:test files in this package.
- *
- * Why: the previous `test` script was a hand-maintained list of ~40 file
- * paths; any new *.test.ts file that wasn't manually appended simply never
- * ran, so the suite stayed green while coverage silently eroded. This script
- * globs for test files instead, so new tests are picked up automatically.
- *
- * Intentional exclusions (each category documented below):
- *  1. Jest component tests (`*.component.test.{ts,tsx}` and any `*.test.tsx`)
- *     — run via `pnpm test:component` (jest --forceExit, jest-expo preset).
- *  2. `src/test/**` — legacy/special-runner tests. Two have dedicated
- *     scripts (`test:stamps`, `test:invite-gone`); the rest are stale
- *     fork-era tests that were never wired to any runner.
- *  3. KNOWN_BROKEN — pre-existing broken tests that were never in the old
- *     hardcoded list. Each entry needs a reason. If one of these files is
- *     deleted or renamed, this script fails loudly so the list stays fresh.
- */
-import { globSync } from 'node:fs';
-import { existsSync } from 'node:fs';
+// Discovers and runs all node:test files so new tests can't be silently skipped.
+// Mirrors travel-buddy-standalone/scripts/run-node-tests.mjs.
+//
+// Discovery: src/**/*.test.ts and server/**/*.test.ts
+// Exclusions:
+//   - *.component.test.* files (run under jest via `pnpm test:component`)
+//   - src/test/** (special runners, e.g. `pnpm test:stamps`)
+//   - KNOWN_BROKEN below (documented failures; this script fails loudly if
+//     an entry no longer exists so the list can't go stale)
+
 import { spawnSync } from 'node:child_process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readdirSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import process from 'node:process';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// Known-broken node:test files, excluded from the run. Fix and remove.
+const KNOWN_BROKEN = [
+  // Assertion failures: removal flow never calls AsyncStorage.removeItem as expected.
+  'src/components/discovery/__tests__/SavedPlacesMapView.filterReset.integration.test.ts',
+  // Imports ./composerLogic which does not exist in this tree.
+  'src/lib/composerLogic.test.ts',
+  // Imports ./displayIdentity which does not exist in this tree.
+  'src/lib/displayIdentity.test.ts',
+];
 
-// Pre-existing broken tests, excluded intentionally. Fix + remove entries.
-const KNOWN_BROKEN = new Map([
-  ['src/lib/__tests__/compassIntent.test.ts', "orphan: requires '../compassIntent', module does not exist in this fork"],
-  ['src/lib/composerLogic.test.ts', "orphan: requires './composerLogic', module does not exist in this fork"],
-  ['src/lib/displayIdentity.test.ts', "orphan: requires './displayIdentity', module does not exist in this fork"],
-  ['src/services/sdk54-downgrade-compat.test.ts', 'stale: version-pin assertions reference paths/versions from the pre-fork monorepo layout'],
-  ['src/components/discovery/__tests__/SavedPlacesMapView.filterReset.integration.test.ts', 'pre-existing failures: 2 of 8 subtests fail (storage key not cleared on last-place removal)'],
-]);
+const ROOTS = ['src', 'server'];
 
-// Fail loudly if a KNOWN_BROKEN entry no longer exists (renamed/deleted).
-for (const rel of KNOWN_BROKEN.keys()) {
-  if (!existsSync(path.join(root, rel))) {
-    console.error(`run-node-tests: KNOWN_BROKEN entry no longer exists: ${rel}\n` +
-      'Remove or update the entry in scripts/run-node-tests.mjs.');
-    process.exit(1);
+function collect(dir, out) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (full === 'src/test') continue; // special runners
+      collect(full, out);
+    } else if (
+      entry.name.endsWith('.test.ts') &&
+      !entry.name.includes('.component.test.')
+    ) {
+      out.push(full);
+    }
   }
 }
 
-const discovered = [
-  ...globSync('src/**/*.test.ts', { cwd: root }),
-  ...globSync('server/**/*.test.ts', { cwd: root }),
-].sort();
-
-const files = discovered.filter((rel) => {
-  if (rel.includes('.component.test.')) return false; // jest (test:component)
-  if (rel.startsWith('src/test/')) return false; // special runners / legacy
-  if (KNOWN_BROKEN.has(rel)) return false;
-  return true;
-});
-
-if (files.length === 0) {
-  console.error('run-node-tests: no test files discovered — glob is broken?');
+// Fail loudly if a known-broken entry no longer exists (stale list).
+const missing = KNOWN_BROKEN.filter((f) => !existsSync(f));
+if (missing.length > 0) {
+  console.error(
+    'KNOWN_BROKEN entries no longer exist — remove them from scripts/run-node-tests.mjs:\n' +
+      missing.map((f) => `  - ${f}`).join('\n'),
+  );
   process.exit(1);
 }
 
-console.log(`run-node-tests: running ${files.length} test files (excluded: ${KNOWN_BROKEN.size} known-broken, jest component tests, src/test/** special runners)`);
+const files = [];
+for (const root of ROOTS) {
+  if (existsSync(root)) collect(root, files);
+}
+files.sort();
+
+const broken = new Set(KNOWN_BROKEN);
+const toRun = files.filter((f) => !broken.has(f));
+
+if (toRun.length === 0) {
+  console.error('No test files discovered — discovery is broken.');
+  process.exit(1);
+}
+
+console.log(`Running ${toRun.length} node:test files (${broken.size} known-broken excluded).`);
 
 const result = spawnSync(
   process.execPath,
-  ['--import', 'tsx/esm', '--test', ...files],
-  { cwd: root, stdio: 'inherit' },
+  ['--import', 'tsx/esm', '--test', ...toRun],
+  { stdio: 'inherit' },
 );
 process.exit(result.status ?? 1);
