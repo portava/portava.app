@@ -1,5 +1,5 @@
 /**
- * Edit-profile save-flow tests — standalone app
+ * Edit-profile save-flow tests — main app
  *
  * The service-level contract (profilePartialSave.test.ts) guarantees that a
  * 200 + unsavedFields response becomes ok:false / errorKind:'partial_save'.
@@ -10,7 +10,7 @@
  * success state.
  *
  * Run:
- *   cd travel-buddy-standalone
+ *   cd artifacts/travel-buddy
  *   node --import tsx --test src/services/__tests__/profileSaveFlow.partialSave.test.ts
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
