@@ -2773,6 +2773,15 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
       TRAVELER,
       "dispute raised_by must fall back to traveler_id when no_show_reported event is absent",
     );
+    const escalationEvent = ((state as any).bookingEvents ?? []).find(
+      (e: any) => e.booking_id === "bk-ns-no-event" && e.event === "no_show_escalated",
+    );
+    assert.ok(escalationEvent, "a no_show_escalated event row must be written");
+    assert.equal(
+      escalationEvent.actor_user_id,
+      TRAVELER,
+      "escalation event actor_user_id must fall back to traveler_id when no_show_reported event is absent",
+    );
   });
 
   it("leaves a no_show_pending booking whose grace window has not yet expired untouched", async () => {
