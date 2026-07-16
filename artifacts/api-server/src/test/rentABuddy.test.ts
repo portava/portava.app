@@ -2426,6 +2426,24 @@ describe("Rent a Buddy — rebook", () => {
     );
   });
 
+  it("rebook honours client-supplied groupSize of 0 — does not fall back to original (201)", async () => {
+    setupRebookState("completed");
+    // The original booking has group_size = 2.  The client explicitly sends
+    // groupSize: 0, which is non-null and should win.  A naive falsy check
+    // (`if (groupSize)`) would discard the 0 and fall back to the original's 2.
+    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
+      bookingDate: FUTURE_DATE,
+      startTime: "10:00",
+      groupSize: 0,
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(
+      r.body.booking?.group_size,
+      0,
+      "client-supplied groupSize of 0 must be used, not treated as falsy and replaced by original.group_size",
+    );
+  });
+
   it("rebook total_usd reflects buddy's current rate — not the original booking amount", async () => {
     setupRebookState("completed");
     // Original booking: duration_h=3, total_usd=75 (i.e. was priced at $25/h).
