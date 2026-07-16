@@ -1991,6 +1991,133 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     );
   });
 
+  it("sweep hard-delete is skipped when all tombstoned rows were revived before DELETE — zero rows removed, in-memory entries already evicted", async () => {
+    // Race-condition edge case: the sweep's SELECT (Pass 2) returns tombstoned rows
+    // and evicts their in-memory entries.  Before the hard-DELETE fires a concurrent
+    // admin PUT revives EVERY one of those rows (sets deleted_at = null).
+    // The DELETE's .not("deleted_at","is",null) guard then matches zero rows, so the
+    // DB store is untouched — but the in-memory eviction already happened during the
+    // SELECT pass and must not be reversed.
+    //
+    // Confirmed assertions:
+    //   1. Zero rows are removed from the stateful DB store (guard worked).
+    //   2. In-memory cache entries ARE still gone — eviction is not undone.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "gr", country: "Greece" } }],
+      };
+    });
+
+    // Stateful DB: both rows start as tombstoned; the DELETE honours the guard
+    // by checking deleted_at and only removing rows that are still tombstoned.
+    // We simulate a concurrent PUT revival by having the DELETE callback see
+    // deleted_at = null for all rows — exactly what the .not() guard protects against.
+    const revivedStore = new Map<string, { city_key: string; deleted_at: string | null }>([
+      ["athens", { city_key: "athens", deleted_at: new Date(T0 - 1_000).toISOString() }],
+      ["thessaloniki", { city_key: "thessaloniki", deleted_at: new Date(T0 - 2_000).toISOString() }],
+    ]);
+
+    // Track how many rows the hard-delete actually removes from the store.
+    const hardDeletedKeys: string[] = [];
+
+    let sweepQueryCount = 0;
+    const allRevivedClient: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        let deletedInKeys: string[] = [];
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not(_col: string, _filter: string, _val: unknown) {
+            // When this is the DELETE chain, simulate all rows having been revived
+            // by the time the guard fires — set deleted_at = null for every row.
+            if (isDelete) {
+              for (const [k, row] of revivedStore) {
+                revivedStore.set(k, { ...row, deleted_at: null });
+              }
+            }
+            return chain;
+          },
+          delete() { isDelete = true; return chain; },
+          in(_col: string, keys: string[]) {
+            deletedInKeys = keys;
+            return chain;
+          },
+          then(resolve: (v: any) => void) {
+            if (isDelete) {
+              // Honour the .not("deleted_at","is",null) guard: only remove rows
+              // whose deleted_at is still non-null at DELETE-time.  Because the PUT
+              // revival above already cleared deleted_at, zero rows qualify.
+              for (const key of deletedInKeys) {
+                const row = revivedStore.get(key);
+                if (row && row.deleted_at !== null) {
+                  revivedStore.delete(key);
+                  hardDeletedKeys.push(key);
+                }
+              }
+              resolve({ error: null });
+              return;
+            }
+            const q = sweepQueryCount++;
+            if (q === 0) {
+              // Pass 1 — corrected_at: nothing to evict from this pass.
+              resolve({ data: [], error: null });
+            } else {
+              // Pass 2 — deleted_at: both rows are still tombstoned at SELECT-time.
+              // The sweep evicts their in-memory entries here.
+              resolve({ data: Array.from(revivedStore.values()), error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    // Seed in-memory cache for both cities.
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({ country: "Greece", country_code: "GR", corrected_at: null, deleted_at: null }),
+    );
+    await geocodeCityCountry("Athens");
+    await geocodeCityCountry("Thessaloniki");
+    assert.equal(nominatimCalls, 0, "pre-condition: both cities seeded from DB, no Nominatim calls");
+
+    // Run the sweep.
+    _setGeocodeDbClientForTests(allRevivedClient);
+    await _runCorrectionSweepForTests();
+
+    // ── Assertion 1: zero rows removed from the stateful store ───────────────
+    // The guard prevented the DELETE from touching the now-revived rows.
+    assert.equal(
+      hardDeletedKeys.length,
+      0,
+      "hard-delete must touch zero rows when all tombstoned rows were revived before DELETE fires",
+    );
+    assert.equal(
+      revivedStore.size,
+      2,
+      "both rows must remain in the stateful DB store — the guard protected the revived rows",
+    );
+
+    // ── Assertion 2: in-memory entries were still evicted by the SELECT pass ──
+    // The sweep evicted entries during the SELECT pass; that eviction must not
+    // be reversed just because the DELETE was a no-op.
+    _setGeocodeDbClientForTests(makeFixedDbClient(null));
+    await geocodeCityCountry("Athens");
+    await geocodeCityCountry("Thessaloniki");
+    assert.equal(
+      nominatimCalls,
+      2,
+      "both in-memory entries were evicted by the sweep SELECT pass — Nominatim re-resolved each city despite the DELETE no-op",
+    );
+  });
+
   it("DB error in readDbCache after sweep eviction falls through to Nominatim — not returning stale null", async () => {
     // Scenario: the tombstone sweep evicts a city's in-memory entry.  The very
     // next geocodeCityCountry call hits readDbCache to re-populate from the DB,
