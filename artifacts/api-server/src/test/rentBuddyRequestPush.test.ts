@@ -45,6 +45,7 @@ interface FakeState {
 function makeFakeClient(state: FakeState = {}) {
   const updatePatches: Record<string, Array<{ patch: any; filters: any[] }>> = {};
   const inserted: Record<string, any[]> = {};
+  const deletes: Record<string, Array<{ filters: any[] }>> = {};
 
   function getRows(table: string): any[] {
     if (table === "rent_buddy_profiles")   return state.rentBuddyProfiles ?? [];
@@ -124,7 +125,11 @@ function makeFakeClient(state: FakeState = {}) {
         recordUpdate();
         return { data: getFiltered(), error: null };
       }
-      if (pendingDelete) return { data: [], error: null };
+      if (pendingDelete) {
+        if (!deletes[table]) deletes[table] = [];
+        deletes[table].push({ filters: filterLog.slice() });
+        return { data: [], error: null };
+      }
       return { data: getFiltered(), error: null };
     }
 
@@ -141,6 +146,7 @@ function makeFakeClient(state: FakeState = {}) {
     },
     __updatePatches: updatePatches,
     __inserted: inserted,
+    __deletes: deletes,
   };
   return client;
 }
@@ -235,15 +241,26 @@ describe("notifyEligibleBuddies", () => {
 
     const profiles = [{ id: BUDDY1_ID, expo_push_token: TOKEN1 }];
     const buddyProfiles = [buddyRow()];
-    const svc = makeFakeClient({ rentBuddyProfiles: buddyProfiles, profiles });
+    const notificationDevices = [{ id: "nd-1", user_id: BUDDY1_ID, push_token: TOKEN1 }];
+    const svc = makeFakeClient({ rentBuddyProfiles: buddyProfiles, profiles, notificationDevices });
     await notifyEligibleBuddies(svc, REQUEST);
 
+    // rent_buddy_profiles.expo_push_token nulled
     const rbPatches = svc.__updatePatches["rent_buddy_profiles"] ?? [];
     assert.ok(rbPatches.some((p: any) => p.patch.expo_push_token === null));
+    // profiles.expo_push_token nulled
     const pPatches = svc.__updatePatches["profiles"] ?? [];
     assert.ok(pPatches.some((p: any) => p.patch.expo_push_token === null));
     assert.equal(buddyProfiles[0].expo_push_token, null);
     assert.equal(profiles[0].expo_push_token, null);
+    // notification_devices rows for the dead token deleted
+    const ndDeletes = svc.__deletes["notification_devices"] ?? [];
+    assert.ok(
+      ndDeletes.some((d: any) =>
+        d.filters.some((f: any[]) => f[0] === "in" && f[1] === "push_token" && f[2].includes(TOKEN1)),
+      ),
+      "expected notification_devices delete filtered on the dead token",
+    );
   });
 
   it("enqueues the push on the retry queue when Expo is temporarily down", async () => {
