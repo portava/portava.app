@@ -4126,6 +4126,87 @@ describe("PUT /admin/geocode-cache/:city_key — xx_entries_pending", () => {
       "only 'Port' must be counted — 'Portland' normalises to 'portland', which does not equal 'port'",
     );
   });
+
+  it("repair_catalog failure mid-loop returns repair stats with catalogRekeyed=0 — not silent success — and a follow-up without repair_catalog reveals xx_entries_pending > 0", async () => {
+    // Scenario: repair_catalog=true is requested, the geocoder resolves the city
+    // successfully, but the catalog DB update call fails (e.g. permission error).
+    // The PUT must still return 200 with repair stats so the caller can inspect
+    // catalogRekeyed; silently returning success would hide the failure.
+    // A subsequent PUT without repair_catalog must then report xx_entries_pending > 0
+    // confirming the entries remain outstanding.
+    const xxEntry = {
+      id: "cat-put-failrepair-1",
+      canonical_location_key: "city:XX:failrepairtown",
+      stamp_type: "city",
+      country: "Unknown",
+      country_code: "XX",
+      city: "Failrepairtown",
+      neighborhood: null,
+      display_name: "Failrepairtown",
+    };
+
+    // ── Pass 1: repair_catalog=true, catalog update deliberately fails ────────
+    const clientWithError = makeRepairClient({
+      xxEntries: [xxEntry],
+      catalogUpdateError: "permission denied for table universal_stamp_catalog",
+    });
+    _setTestClient(clientWithError, true);
+    _setTestServiceClient(clientWithError);
+
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Norway", "NO"));
+
+    const r1 = await apiReq("PUT", "/admin/geocode-cache/failrepairtown", {
+      country_code: "NO",
+      country: "Norway",
+      repair_catalog: true,
+    });
+
+    assert.equal(r1.status, 200, `expected 200, got ${r1.status}: ${JSON.stringify(r1.body)}`);
+    assert.equal(r1.body.updated, true, "updated must be true — the geocode row itself was written");
+
+    // repair stats must be present — repair ran but failed.
+    assert.ok(r1.body.repair, "repair stats must be present when repair_catalog=true, even on failure");
+    const repair = r1.body.repair as RepairStats;
+
+    // catalogRekeyed must be 0 — the update errored, so no entry was actually re-keyed.
+    assert.equal(
+      repair.catalogRekeyed,
+      0,
+      "catalogRekeyed must be 0 when the catalog update call fails mid-loop",
+    );
+
+    // xx_entries_pending must be absent — repair ran (even though it failed);
+    // the handler only emits xx_entries_pending when repair_catalog is NOT set.
+    assert.equal(
+      r1.body.xx_entries_pending,
+      undefined,
+      "xx_entries_pending must be absent when repair_catalog=true, even if catalogRekeyed=0",
+    );
+
+    // ── Pass 2: follow-up without repair_catalog — entries still outstanding ──
+    // The XX catalog entry was NOT repaired (the update failed), so a subsequent
+    // GET/PUT without repair_catalog must still count it as pending.
+    const clientForCount = makeRepairClient({
+      xxEntries: [xxEntry], // same entry — still unrepaired
+    });
+    _setTestClient(clientForCount, true);
+    _setTestServiceClient(clientForCount);
+
+    const r2 = await apiReq("PUT", "/admin/geocode-cache/failrepairtown", {
+      country_code: "NO",
+      country: "Norway",
+      // repair_catalog omitted
+    });
+
+    assert.equal(r2.status, 200, `expected 200, got ${r2.status}: ${JSON.stringify(r2.body)}`);
+    assert.ok(!r2.body.repair, "repair field must be absent when repair_catalog is not set");
+    assert.equal(
+      r2.body.xx_entries_pending,
+      1,
+      "follow-up without repair_catalog must report xx_entries_pending=1 — entry is still unrepaired",
+    );
+  });
 });
 
 // ── DELETE then PUT — tombstone revival ───────────────────────────────────────
