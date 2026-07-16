@@ -546,6 +546,28 @@ function expoPartialSuccessFetch(): typeof fetch {
     ) as unknown as Response;
 }
 
+/**
+ * Expo returns a 200 with two tickets: the first token delivered ('ok'),
+ * the second is InvalidCredentials (dead).  Mirrors expoPartialSuccessFetch()
+ * but uses InvalidCredentials as the dead-token error code.
+ */
+function expoPartialSuccessICFetch(): typeof fetch {
+  return async () =>
+    new Response(
+      JSON.stringify({
+        data: [
+          { status: "ok", id: "rcpt-partial-ok-ic" },
+          {
+            status:  "error",
+            message: "The push notification service reported that the push token is invalid: InvalidCredentials",
+            details: { error: "InvalidCredentials" },
+          },
+        ],
+      }),
+      { status: 200 },
+    ) as unknown as Response;
+}
+
 describe("PushRetryQueue.processQueue() — dead-token clearing on retry", () => {
   it("clears DeviceNotRegistered tokens from all three tables and finalises the queue row as 'failed'", async () => {
     const queueRow = {
@@ -1518,6 +1540,92 @@ describe("PushRetryQueue.processQueue() — dead-token clearing on retry", () =>
     assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated on final-attempt two-token partial success");
     const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
     assert.equal(ndaUpdate.patch.status, "sent",     "delivery_attempt status must be 'sent' on final-attempt partial success");
+    assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+  });
+
+  it("finalises as 'sent' on the FINAL allowed attempt when one of two tokens delivers and the other is InvalidCredentials (attempt_count=2)", async () => {
+    // attempt_count=2 means two prior failures; this run is attempt 3 — the final attempt.
+    // Two tokens: PUSH_TOKEN delivers ok, DEAD_TOKEN_IC is InvalidCredentials.
+    //
+    // InvalidCredentials goes through the same clearDeadTokens path as DeviceNotRegistered.
+    // The critical assertion is that result.sent > 0 is checked first, so the row is
+    // finalised as 'sent' — NOT 'failed' — even though newAttemptCount === maxAttempts.
+    // Assert: DEAD_TOKEN_IC wiped from all three tables; queue row → 'sent'; NOT 'failed';
+    //         NOT re-queued; delivery_attempt → 'sent'; attempt_count === 3.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN, DEAD_TOKEN_IC],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       2,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    // ticket[0] = ok (PUSH_TOKEN), ticket[1] = InvalidCredentials (DEAD_TOKEN_IC)
+    _setTestFetch(expoPartialSuccessICFetch());
+    await queue.processQueue();
+
+    // ── DEAD_TOKEN_IC must be wiped from all three tables ─────────────────────
+
+    const profileUpdate = client.updateCalls.find(
+      (c) => c.table === "profiles" && c.patch.expo_push_token === null,
+    );
+    assert.ok(profileUpdate, "profiles.expo_push_token must be nulled for the InvalidCredentials dead token on final attempt");
+    assert.deepEqual(
+      profileUpdate.inFilters["expo_push_token"],
+      [DEAD_TOKEN_IC],
+      "profiles update must target only the dead token — not the live one",
+    );
+
+    const deviceDelete = client.deleteCalls.find((c) => c.table === "notification_devices");
+    assert.ok(deviceDelete, "notification_devices rows must be deleted for the InvalidCredentials dead token on final attempt");
+    assert.deepEqual(
+      deviceDelete.inFilters["push_token"],
+      [DEAD_TOKEN_IC],
+      "notification_devices delete must target only the dead token — not the live one",
+    );
+
+    const rentUpdate = client.updateCalls.find(
+      (c) => c.table === "rent_buddy_profiles" && c.patch.expo_push_token === null,
+    );
+    assert.ok(rentUpdate, "rent_buddy_profiles.expo_push_token must be nulled for the InvalidCredentials dead token on final attempt");
+    assert.deepEqual(
+      rentUpdate.inFilters["expo_push_token"],
+      [DEAD_TOKEN_IC],
+      "rent_buddy_profiles update must target only the dead token — not the live one",
+    );
+
+    // ── Queue row must be finalised as 'sent' — NOT 'failed', NOT re-queued ───
+
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+
+    const sentUpdate = prqUpdates.find((c) => c.patch.status === "sent");
+    assert.ok(sentUpdate, "push_retry_queue must be finalised as 'sent' when at least one token delivered (two-token InvalidCredentials, final attempt)");
+    assert.equal(sentUpdate.filters.id,          QUEUE_ROW_ID, "sent update must target the correct queue row");
+    assert.equal(sentUpdate.patch.attempt_count, 3,            "attempt_count must be 3 (the final attempt)");
+
+    // Must NOT be marked 'failed' — result.sent > 0 takes priority even on the final attempt
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(!failedUpdate, "must NOT mark the queue row 'failed' when partial delivery succeeded on the final attempt (InvalidCredentials dead token)");
+
+    // Must NOT be re-queued — newAttemptCount === maxAttempts, so re-queue guard is false
+    const requeued = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(!requeued, "must NOT re-queue the row on the final attempt when partial delivery succeeded (InvalidCredentials dead token)");
+
+    // ── Delivery attempt must also be marked 'sent' ───────────────────────────
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated on final-attempt two-token InvalidCredentials partial success");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status, "sent",     "delivery_attempt status must be 'sent' on final-attempt InvalidCredentials partial success");
     assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
   });
 });
