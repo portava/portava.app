@@ -188,6 +188,11 @@ export function _clearCountryGeocodeCache(): void {
   _lastCallAt = 0;
 }
 
+/** Test-only: read a single cache entry by city key (after normCity). */
+export function _getGeocodeCacheEntryForTests(cityKey: string): CacheEntry | undefined {
+  return _cache.get(cityKey);
+}
+
 /**
  * Test-only: set correctionCheckedAt to 0 for a given key so the next
  * geocodeCityCountry call immediately re-probes the DB for corrected_at,

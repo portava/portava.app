@@ -24,6 +24,7 @@ import {
   _setGeocodeDbClientForTests,
   _clearCountryGeocodeCache,
   _runCorrectionSweepForTests,
+  _getGeocodeCacheEntryForTests,
 } from "../lib/stamps/countryGeocoder.js";
 
 // ── Timing control ────────────────────────────────────────────────────────────
@@ -556,6 +557,76 @@ describe("negative cache TTL expiry", () => {
       "second caller should receive the same geocoded result — not a duplicate fetch");
     assert.equal(resultA?.country, "Japan");
     assert.equal(resultB?.country, "Japan");
+  });
+
+  it("re-cached null entry after a network error carries a fresh writtenAt — not the original T0", async () => {
+    // Regression guard: the catch block in geocodeCityCountry must stamp
+    // writtenAt: now (T1, the retry time) so the correction sweep — which
+    // evicts entries whose writtenAt predates corrected_at — cannot
+    // immediately evict the freshly re-cached null entry.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Seed the negative cache: first fetch returns empty → null geocode at T0.
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [],
+    }));
+
+    const first = await geocodeCityCountry("FreshWrittenAt");
+    assert.equal(first, null, "pre-condition: city should cache as null at T0");
+
+    // Confirm the seed entry carries writtenAt ≈ T0.
+    const seedEntry = _getGeocodeCacheEntryForTests("freshwrittenat");
+    assert.ok(seedEntry, "pre-condition: cache entry should exist after initial geocode");
+    assert.ok(
+      Math.abs(seedEntry.writtenAt - T0) < 50,
+      `pre-condition: seedEntry.writtenAt (${seedEntry.writtenAt}) should be ≈ T0 (${T0})`,
+    );
+
+    // Advance past the NEGATIVE_TTL_MS window so the seed entry is stale.
+    const T1 = T0 + NEGATIVE_TTL_MS + 1_000;
+    mockNow(T1);
+
+    // Swap fetch to throw a network error — the catch block must re-cache null
+    // with writtenAt: T1 (Date.now() at the time of the catch), not the stale T0.
+    _setGeocodeFetchForTests(async () => {
+      throw new Error("network_timeout");
+    });
+
+    const second = await geocodeCityCountry("FreshWrittenAt");
+    assert.equal(second, null, "network error during retry should return null");
+
+    // The re-cached entry must have writtenAt ≈ T1 and expiresAt ≈ T1 + NEGATIVE_TTL_MS.
+    const retryEntry = _getGeocodeCacheEntryForTests("freshwrittenat");
+    assert.ok(retryEntry, "cache entry must exist after network-error retry");
+
+    assert.ok(
+      Math.abs(retryEntry.writtenAt - T1) < 50,
+      `writtenAt must be ≈ T1 (${T1}) — got ${retryEntry.writtenAt}. ` +
+      "If writtenAt were T0 the correction sweep could immediately evict this entry.",
+    );
+
+    const expectedExpiresAt = T1 + NEGATIVE_TTL_MS;
+    assert.ok(
+      Math.abs(retryEntry.expiresAt - expectedExpiresAt) < 50,
+      `expiresAt must be ≈ T1 + NEGATIVE_TTL_MS (${expectedExpiresAt}) — got ${retryEntry.expiresAt}`,
+    );
+
+    // Confirm the entry is still live inside the new TTL window — proving
+    // the sweep would not evict it prematurely if corrected_at were set to T1.
+    mockNow(T1 + NEGATIVE_TTL_MS - 1_000);
+    let fetchAfterCount = 0;
+    _setGeocodeFetchForTests(async () => {
+      fetchAfterCount++;
+      return { ok: true, json: async () => [{ address: { country_code: "de", country: "Germany" } }] };
+    });
+
+    const third = await geocodeCityCountry("FreshWrittenAt");
+    assert.equal(third, null,
+      "inside the new TTL window the null must be served without a new fetch");
+    assert.equal(fetchAfterCount, 0,
+      "no fetch while the re-cached negative entry (writtenAt=T1) is still live");
   });
 });
 
