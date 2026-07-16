@@ -1,15 +1,47 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, Pressable, ScrollView, Image, StyleSheet, ActivityIndicator } from 'react-native';
+/**
+ * MapTab — Passport travel map.
+ *
+ * Renders a live MapLibre world map with country-level stamp markers.
+ * Markers are placed at country centroids — exact GPS is never shown.
+ *
+ * Requires: @maplibre/maplibre-react-native + EAS dev build.
+ * Style: MapTiler Streets when EXPO_PUBLIC_MAPTILER_KEY is set, else demo tiles.
+ */
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import {
+  View, Text, Pressable, ScrollView, Image,
+  StyleSheet, ActivityIndicator,
+} from 'react-native';
+import { Map as MapView, Camera, Marker } from '@maplibre/maplibre-react-native';
+import type { CameraRef, LngLatBounds } from '@maplibre/maplibre-react-native';
 import type { PassportPostcard } from '../types/models';
-import type { PassportMapMarker, PassportMapPayload } from '../services/passportStamps';
+import type { PassportMapPayload } from '../services/passportStamps';
 import { getPassportMap } from '../services/passportStamps';
-import { color, space, type as t } from '../theme/tokens';
+import { color, space, radius, type as t } from '../theme/tokens';
 import { HighlightRing } from './HighlightRing';
 import { HighlightViewer } from './HighlightViewer';
 import { useHighlightRingState } from '../hooks/useHighlightRingState';
 import { listNearbyUsers, type NearbyUser } from '../services/map';
+import { COUNTRY_CENTROIDS } from '../lib/countryCentroids';
 
-/** Single nearby-traveler chip: avatar with HighlightRing + name label. */
+// ── Map style ──────────────────────────────────────────────────────────────────
+
+const MAP_STYLE = process.env.EXPO_PUBLIC_MAPTILER_KEY
+  ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${process.env.EXPO_PUBLIC_MAPTILER_KEY}`
+  : 'https://demotiles.maplibre.org/style.json';
+
+// ── Country-level aggregation ─────────────────────────────────────────────────
+
+interface CountryPinData {
+  country: string;
+  lat: number;
+  lng: number;
+  stampCount: number;
+  cities: string[];
+}
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
 function NearbyUserChip({ user }: { user: NearbyUser }) {
   const ringState = useHighlightRingState(user.id);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -18,9 +50,7 @@ function NearbyUserChip({ user }: { user: NearbyUser }) {
     <>
       <Pressable
         style={mp.chip}
-        onPress={() => {
-          if (ringState?.hasActive) setViewerOpen(true);
-        }}
+        onPress={() => { if (ringState?.hasActive) setViewerOpen(true); }}
       >
         <HighlightRing
           hasActive={ringState?.hasActive ?? false}
@@ -55,6 +85,24 @@ function NearbyUserChip({ user }: { user: NearbyUser }) {
   );
 }
 
+interface CountryPinBadgeProps {
+  count: number;
+  selected: boolean;
+  onPress: () => void;
+}
+
+function CountryPinBadge({ count, selected, onPress }: CountryPinBadgeProps) {
+  return (
+    <Pressable onPress={onPress} hitSlop={12}>
+      <View style={[pin.wrap, selected && pin.selected]}>
+        <Text style={[pin.label, selected && pin.labelSelected]}>
+          {count > 99 ? '99+' : String(count)}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
 function verificationDot(level: string): string {
   if (level === 'gps') return '📍';
   if (level === 'checkin') return '✅';
@@ -63,21 +111,7 @@ function verificationDot(level: string): string {
   return '○';
 }
 
-interface StampCityChipProps {
-  marker: PassportMapMarker;
-}
-
-function StampCityChip({ marker }: StampCityChipProps) {
-  return (
-    <View style={[mp.cityChip, mp.chipVerified]}>
-      <Text style={mp.verDot}>{verificationDot(marker.verificationLevel)}</Text>
-      <Text style={mp.chipText}>{marker.city}</Text>
-      {marker.stampCount > 1 && (
-        <Text style={mp.countBadge}>×{marker.stampCount}</Text>
-      )}
-    </View>
-  );
-}
+// ── Main component ────────────────────────────────────────────────────────────
 
 interface MapTabProps {
   postcards: PassportPostcard[];
@@ -85,10 +119,12 @@ interface MapTabProps {
   currentUserId?: string | null;
 }
 
-/** Map tab — city-level stamp markers + nearby traveler strip. Exact GPS is never shown. */
+/** Passport travel map — country-level markers, nearby travellers, stamp city list. */
 export function MapTab({ postcards, currentCity, currentUserId }: MapTabProps) {
+  const cameraRef = useRef<CameraRef>(null);
   const [mapPayload, setMapPayload] = useState<PassportMapPayload | null>(null);
   const [mapLoading, setMapLoading] = useState(true);
+  const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
 
   const [nearbyUsers, setNearbyUsers] = useState<NearbyUser[]>([]);
   const [loadingNearby, setLoadingNearby] = useState(false);
@@ -97,9 +133,7 @@ export function MapTab({ postcards, currentCity, currentUserId }: MapTabProps) {
   useEffect(() => {
     setMapLoading(true);
     getPassportMap()
-      .then((res) => {
-        if (res.ok) setMapPayload(res.data);
-      })
+      .then((res) => { if (res.ok) setMapPayload(res.data); })
       .catch(() => {})
       .finally(() => setMapLoading(false));
   }, []);
@@ -114,39 +148,140 @@ export function MapTab({ postcards, currentCity, currentUserId }: MapTabProps) {
       .finally(() => setLoadingNearby(false));
   }, [currentCity, currentUserId]);
 
+  // Aggregate markers into one pin per country (with centroid lookup)
+  const countryPins = useMemo<CountryPinData[]>(() => {
+    if (!mapPayload) return [];
+    const byCountry = new Map<string, { stampCount: number; cities: Set<string> }>();
+    for (const m of mapPayload.markers) {
+      const existing = byCountry.get(m.country) ?? { stampCount: 0, cities: new Set<string>() };
+      existing.stampCount += m.stampCount;
+      existing.cities.add(m.city);
+      byCountry.set(m.country, existing);
+    }
+    const pins: CountryPinData[] = [];
+    for (const [country, data] of byCountry) {
+      const centroid = COUNTRY_CENTROIDS[country];
+      if (!centroid) continue; // no centroid for this country name — skip silently
+      pins.push({
+        country,
+        lat: centroid[0],
+        lng: centroid[1],
+        stampCount: data.stampCount,
+        cities: [...data.cities].sort(),
+      });
+    }
+    return pins;
+  }, [mapPayload]);
+
+  // Fit camera to all country pins whenever they load
+  useEffect(() => {
+    if (!cameraRef.current || countryPins.length === 0) return;
+    const lats = countryPins.map((p) => p.lat);
+    const lngs = countryPins.map((p) => p.lng);
+    const pad = 10;
+    // LngLatBounds = [west, south, east, north]
+    const bounds: LngLatBounds = [
+      Math.min(...lngs) - pad,
+      Math.min(...lats) - pad,
+      Math.max(...lngs) + pad,
+      Math.max(...lats) + pad,
+    ];
+    cameraRef.current.fitBounds(
+      bounds,
+      { padding: { top: 40, right: 20, bottom: 40, left: 20 }, duration: 600 },
+    );
+  }, [countryPins]);
+
+  const selectedPin = countryPins.find((p) => p.country === selectedCountry) ?? null;
   const showNearby = loadingNearby || nearbyUsers.length > 0;
-
-  // Fallback: cities from postcards if API has no stamps yet
-  const postcardCities = [...new Map(
-    postcards
-      .filter((c) => c.locationCity || c.locationName)
-      .map((c) => [c.locationCity ?? c.locationName, c])
-  ).entries()];
-
-  const hasStampMarkers = (mapPayload?.markers.length ?? 0) > 0;
-  const countries = mapPayload?.countries ?? [];
-  const cities = mapPayload?.cities ?? [];
+  const hasMarkers = countryPins.length > 0;
 
   return (
     <View style={mp.wrap}>
-      {/* Map placeholder — city-level only, exact GPS never shown */}
-      <View style={mp.placeholder}>
-        <Text style={mp.placeholderIcon}>🗺️</Text>
-        <Text style={mp.placeholderText}>Travel Map</Text>
-        <Text style={mp.placeholderSub}>City-level only — exact GPS is never shown</Text>
-        {!mapLoading && (countries.length > 0 || cities.length > 0) && (
-          <View style={mp.mapSummary}>
-            {countries.length > 0 && (
-              <Text style={mp.mapStat}>{countries.length} {countries.length === 1 ? 'country' : 'countries'}</Text>
-            )}
-            {cities.length > 0 && (
-              <Text style={mp.mapStat}>{cities.length} {cities.length === 1 ? 'city' : 'cities'}</Text>
-            )}
+
+      {/* ── Interactive travel map ─────────────────────────────────────────── */}
+      <View style={mp.mapWrap}>
+        {mapLoading && (
+          <View style={mp.mapLoader}>
+            <ActivityIndicator size="small" color={color.signal} />
+          </View>
+        )}
+        <MapView mapStyle={MAP_STYLE} style={mp.mapView}>
+          <Camera
+            ref={cameraRef}
+            initialViewState={{ center: [10, 20], zoom: 1.2 }}
+          />
+          {countryPins.map((pin) => (
+            <Marker
+              key={pin.country}
+              lngLat={[pin.lng, pin.lat]}
+            >
+              <CountryPinBadge
+                count={pin.stampCount}
+                selected={selectedCountry === pin.country}
+                onPress={() =>
+                  setSelectedCountry((prev) =>
+                    prev === pin.country ? null : pin.country,
+                  )
+                }
+              />
+            </Marker>
+          ))}
+        </MapView>
+
+        {/* Privacy label */}
+        <View style={mp.privacyLabel} pointerEvents="none">
+          <Text style={mp.privacyText}>City-level only · GPS never shown</Text>
+        </View>
+
+        {/* Empty-state overlay */}
+        {!mapLoading && !hasMarkers && (
+          <View style={mp.emptyOverlay} pointerEvents="none">
+            <Text style={mp.emptyIcon}>🗺️</Text>
+            <Text style={mp.emptyTitle}>No stamps yet</Text>
+            <Text style={mp.emptySub}>Earn stamps to see your travel map</Text>
           </View>
         )}
       </View>
 
-      {/* Nearby Travelers strip */}
+      {/* ── Selected country callout ───────────────────────────────────────── */}
+      {selectedPin && (
+        <View style={mp.callout}>
+          <View style={mp.calloutLeft}>
+            <Text style={mp.calloutCountry}>{selectedPin.country}</Text>
+            <Text style={mp.calloutDetail}>
+              {selectedPin.stampCount} stamp{selectedPin.stampCount !== 1 ? 's' : ''}
+              {selectedPin.cities.length > 0
+                ? ` · ${selectedPin.cities.slice(0, 3).join(', ')}${selectedPin.cities.length > 3 ? ` +${selectedPin.cities.length - 3}` : ''}`
+                : ''}
+            </Text>
+          </View>
+          <Pressable onPress={() => setSelectedCountry(null)} hitSlop={8} style={mp.calloutClose}>
+            <Text style={mp.calloutCloseText}>✕</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* ── Stats row ─────────────────────────────────────────────────────── */}
+      {!mapLoading && (mapPayload?.countries.length ?? 0) > 0 && (
+        <View style={mp.statsRow}>
+          <View style={mp.statChip}>
+            <Text style={mp.statNum}>{mapPayload!.countries.length}</Text>
+            <Text style={mp.statLabel}>
+              {mapPayload!.countries.length === 1 ? 'country' : 'countries'}
+            </Text>
+          </View>
+          <View style={mp.statDivider} />
+          <View style={mp.statChip}>
+            <Text style={mp.statNum}>{mapPayload!.cities.length}</Text>
+            <Text style={mp.statLabel}>
+              {mapPayload!.cities.length === 1 ? 'city' : 'cities'}
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {/* ── Nearby Travelers strip ─────────────────────────────────────────── */}
       {showNearby && (
         <>
           <Text style={mp.sectionLabel}>
@@ -170,50 +305,154 @@ export function MapTab({ postcards, currentCity, currentUserId }: MapTabProps) {
         </>
       )}
 
-      {/* Stamp-based city markers */}
-      {mapLoading && !hasStampMarkers ? (
-        <View style={mp.loadingRow}>
-          <ActivityIndicator size="small" color={color.signal} />
-        </View>
-      ) : hasStampMarkers ? (
+      {/* ── Stamp city list ───────────────────────────────────────────────── */}
+      {(mapPayload?.markers.length ?? 0) > 0 && (
         <>
-          <Text style={mp.citiesLabel}>Stamp cities ({mapPayload!.markers.length})</Text>
+          <Text style={mp.citiesLabel}>
+            Stamp cities ({mapPayload!.markers.length})
+          </Text>
           <View style={mp.chips}>
-            {mapPayload!.markers.map((marker) => (
-              <StampCityChip key={`${marker.country}|${marker.city}`} marker={marker} />
-            ))}
-          </View>
-        </>
-      ) : postcardCities.length > 0 ? (
-        <>
-          <Text style={mp.citiesLabel}>Postcard cities ({postcardCities.length})</Text>
-          <View style={mp.chips}>
-            {postcardCities.map(([city, card]) => (
-              <View key={city} style={[mp.cityChip, card.locationVerified && mp.chipVerified]}>
-                <Text style={mp.chipText}>{city}</Text>
-                {card.locationVerified && <Text style={mp.chipBadge}>✓</Text>}
+            {mapPayload!.markers.map((m, i) => (
+              <View
+                key={`${m.country}-${m.city}-${i}`}
+                style={[mp.cityChip, mp.chipVerified]}
+              >
+                <Text style={mp.verDot}>{verificationDot(m.verificationLevel)}</Text>
+                <Text style={mp.chipText}>{m.city}</Text>
+                {m.stampCount > 1 && (
+                  <Text style={mp.countBadge}>×{m.stampCount}</Text>
+                )}
               </View>
             ))}
           </View>
         </>
-      ) : null}
+      )}
+
     </View>
   );
 }
 
-const mp = StyleSheet.create({
-  wrap: { paddingHorizontal: space.lg, paddingTop: space.md },
-  placeholder: {
-    height: 200, backgroundColor: color.paperRaised, borderRadius: 12,
-    borderWidth: 1, borderColor: color.haze, alignItems: 'center', justifyContent: 'center', gap: 8,
-    marginBottom: space.lg,
-  },
-  placeholderIcon: { fontSize: 48 },
-  placeholderText: { ...t.bodyStrong, color: color.ink },
-  placeholderSub: { ...t.small, color: color.mute },
-  mapSummary: { flexDirection: 'row', gap: 12, marginTop: 4 },
-  mapStat: { ...t.small, color: color.signal, fontWeight: '700' },
+// ── Styles ────────────────────────────────────────────────────────────────────
 
+const pin = StyleSheet.create({
+  wrap: {
+    minWidth: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: color.signal,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.28,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  selected: {
+    backgroundColor: color.deep,
+    minWidth: 36,
+    height: 36,
+    borderRadius: 18,
+  },
+  label: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  labelSelected: {
+    fontSize: 13,
+  },
+});
+
+const mp = StyleSheet.create({
+  wrap: {
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    paddingBottom: space.xxl,
+  },
+
+  // Map
+  mapWrap: {
+    height: 280,
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: color.haze,
+    marginBottom: space.sm,
+    backgroundColor: color.paperRaised,
+  },
+  mapView: {
+    flex: 1,
+  },
+  mapLoader: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+    backgroundColor: `${color.paperRaised}CC`,
+  },
+  privacyLabel: {
+    position: 'absolute',
+    bottom: 6,
+    right: 8,
+    backgroundColor: 'rgba(0,0,0,0.42)',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  privacyText: {
+    fontSize: 9,
+    color: '#fff',
+    fontWeight: '500',
+  },
+  emptyOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.72)',
+  },
+  emptyIcon: { fontSize: 40 },
+  emptyTitle: { ...t.bodyStrong, color: color.mute },
+  emptySub: { ...t.small, color: color.faint, textAlign: 'center' },
+
+  // Selected country callout
+  callout: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: color.paperRaised,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: color.haze,
+    paddingHorizontal: space.md,
+    paddingVertical: 10,
+    marginBottom: space.md,
+    gap: space.sm,
+  },
+  calloutLeft: { flex: 1 },
+  calloutCountry: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
+  calloutDetail: { ...t.small, color: color.mute, marginTop: 1 },
+  calloutClose: { padding: 4 },
+  calloutCloseText: { fontSize: 14, color: color.faint },
+
+  // Stats row
+  statsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.lg,
+    paddingVertical: space.sm,
+    marginBottom: space.sm,
+  },
+  statChip: { alignItems: 'center' },
+  statNum: { ...t.heading, color: color.ink, fontSize: 20 },
+  statLabel: { ...t.small, color: color.mute, textTransform: 'uppercase', letterSpacing: 0.5 },
+  statDivider: { width: 1, height: 28, backgroundColor: color.haze },
+
+  // Nearby strip
   sectionLabel: { ...t.heading, color: color.ink, marginBottom: space.sm },
   loadingRow: { height: 72, justifyContent: 'center', alignItems: 'center', marginBottom: space.lg },
   nearbyStrip: { gap: space.md, paddingBottom: space.lg, paddingRight: space.md },
@@ -223,6 +462,7 @@ const mp = StyleSheet.create({
   chipAvatarInitial: { fontSize: 18, fontWeight: '600', color: color.deep },
   chipName: { ...t.small, color: color.ink, fontWeight: '600', fontSize: 10, textAlign: 'center' },
 
+  // City chips
   citiesLabel: { ...t.heading, color: color.ink, marginBottom: space.sm },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   cityChip: {
@@ -233,7 +473,6 @@ const mp = StyleSheet.create({
   },
   chipVerified: { borderColor: color.success, backgroundColor: '#E3F1EA' },
   chipText: { ...t.small, color: color.ink, fontWeight: '600' },
-  chipBadge: { fontSize: 10, color: color.success },
   verDot: { fontSize: 11 },
   countBadge: { ...t.small, color: color.mute, fontWeight: '700', fontSize: 10 },
 });
