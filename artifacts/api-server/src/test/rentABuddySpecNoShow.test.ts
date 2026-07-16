@@ -306,4 +306,18 @@ describe("POST /api/rent-a-buddy/bookings/:id/report-no-show — spec router", (
     assert.equal(travelerReport.status, 409, `traveler cross-party call should be 409, got ${travelerReport.status}: ${JSON.stringify(travelerReport.body)}`);
     assert.equal(travelerReport.body.error, "already_reported");
   });
+
+  it("returns 409 when the booking is already completed", async () => {
+    state.bookings[BOOKING_ID].status = "completed";
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`);
+    assert.equal(r.status, 409, `expected 409 for completed booking, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.error, "already_reported");
+  });
+
+  it("returns 409 when the booking is already cancelled", async () => {
+    state.bookings[BOOKING_ID].status = "cancelled";
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`);
+    assert.equal(r.status, 409, `expected 409 for cancelled booking, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.error, "already_reported");
+  });
 });

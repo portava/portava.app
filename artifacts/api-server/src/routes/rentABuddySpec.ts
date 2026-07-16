@@ -588,8 +588,14 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/report-no-show", async (req, 
   const isParty = b.traveler_id === auth.user.id || (callerBp && b.buddy_id === (callerBp as any).id);
   if (!isParty) return res.status(403).json({ error: "forbidden" });
 
-  // Reject if the booking is already in a no-show or disputed state to prevent duplicate reports.
-  if (b.status === "no_show_pending" || b.status === "disputed") {
+  // Reject if the booking is already in a terminal or no-show/disputed state.
+  // completed and cancelled are final — a no-show report would corrupt the booking's end state.
+  if (
+    b.status === "no_show_pending" ||
+    b.status === "disputed" ||
+    b.status === "completed" ||
+    b.status === "cancelled"
+  ) {
     return res.status(409).json({ error: "already_reported", status: b.status });
   }
 
