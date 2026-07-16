@@ -160,6 +160,78 @@ function makeDriftedClientWithSensitiveRow() {
   return client;
 }
 
+/**
+ * Client where the first update single() returns PGRST204 (schema drift) and
+ * the second (fallback) update single() returns a generic DB error.
+ * The updateCallCount is tracked at the client level so it persists across
+ * multiple makeBuilder() calls (each `from()` invocation creates a fresh builder).
+ */
+function makeFallbackErrorClient() {
+  let updateCallCount = 0;
+  const profileRow: any = {
+    id: ME, username: "me_user", handle: "me_user", name: "Me",
+    bio: "old bio", is_private: false, passport_visibility: "public",
+    avatar_url: null, created_at: new Date("2026-01-01").toISOString(),
+  };
+
+  function makeBuilder(table: string) {
+    let pendingUpdate: any = null;
+    const builder: any = {
+      select() { return builder; },
+      eq() { return builder; },
+      neq() { return builder; },
+      limit() { return builder; },
+      update(patch: any) { pendingUpdate = patch; return builder; },
+      insert() { return builder; },
+      maybeSingle() {
+        return Promise.resolve({ data: table === "profiles" ? { ...profileRow } : null, error: null });
+      },
+      single() {
+        if (pendingUpdate && table === "profiles") {
+          updateCallCount++;
+          if (updateCallCount === 1) {
+            // First attempt: simulate schema-drift PGRST204
+            const bad = Object.keys(pendingUpdate).find((k) => DRIFTED_COLUMNS.has(k));
+            if (bad) {
+              return Promise.resolve({
+                data: null,
+                error: {
+                  code: "PGRST204",
+                  message: `Could not find the '${bad}' column of 'profiles' in the schema cache`,
+                },
+              });
+            }
+          }
+          if (updateCallCount >= 2) {
+            // Second attempt (fallback): generic DB error — e.g. transient failure
+            return Promise.resolve({
+              data: null,
+              error: { code: "42P01", message: "relation \"profiles\" does not exist" },
+            });
+          }
+        }
+        return Promise.resolve({ data: table === "profiles" ? { ...profileRow } : null, error: null });
+      },
+      then(onF: any, onR: any) {
+        return Promise.resolve({ data: [], error: null }).then(onF, onR);
+      },
+    };
+    return builder;
+  }
+
+  const client: any = {
+    auth: {
+      getUser: async (tok: string) =>
+        tok === ME_TOK
+          ? { data: { user: { id: ME } }, error: null }
+          : { data: { user: null }, error: { message: "invalid token" } },
+    },
+    from: (table: string) => makeBuilder(table),
+    storage: { from: () => ({ remove: async () => ({ error: null }) }) },
+  };
+  return client;
+}
+
 let base: string;
 let server: ReturnType<typeof createServer>;
 
@@ -514,6 +586,29 @@ describe("PATCH /api/me/profile under schema drift (missing newer columns)", () 
     assert.ok(
       !("dobVerified" in body),
       `dobVerified must not appear in partial-save PATCH response — got keys: ${Object.keys(body).join(", ")}`,
+    );
+  });
+
+  // ── Fallback retry DB error ────────────────────────────────────────────────
+  // After the schema-drift fallback strips newer columns and retries, the
+  // retry itself can fail (e.g. a constraint violation or transient DB error).
+  // The handler must propagate that error as a 4xx/5xx — not silently 200.
+
+  it("fallback retry DB error returns a non-200 response with the error code", async () => {
+    // bio is a base column; displayName maps to display_name (drifted) + name (base).
+    // First update: PGRST204 because display_name is missing.
+    // Fallback strips display_name, retries with { bio, name } — but the second
+    // single() returns a generic DB error to simulate a transient failure.
+    const client = makeFallbackErrorClient();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await patchProfile({ bio: "new bio", displayName: "New Name" });
+    assert.notEqual(r.status, 200, "a DB error on the fallback retry must not return 200");
+    const body = await r.json() as any;
+    assert.ok(
+      body.code === "db_error" || JSON.stringify(body).includes("42P01") || JSON.stringify(body).includes("does not exist"),
+      `response body should surface the DB error — got: ${JSON.stringify(body)}`,
     );
   });
 });
