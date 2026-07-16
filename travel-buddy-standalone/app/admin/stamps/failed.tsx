@@ -98,7 +98,11 @@ export default function FailedJobsScreen() {
           {item.cleanup_error ? (
             <View style={styles.cleanupBadge}>
               <TriangleAlert size={11} color="#92400E" strokeWidth={2} />
-              <Text style={styles.cleanupBadgeTitle}>Orphaned storage files</Text>
+              <Text style={styles.cleanupBadgeTitle}>
+                {item.cleanup_error_paths && item.cleanup_error_paths.length > 0
+                  ? `${item.cleanup_error_paths.length} orphaned file${item.cleanup_error_paths.length !== 1 ? 's' : ''} need manual removal`
+                  : 'Orphaned storage files need manual removal'}
+              </Text>
             </View>
           ) : null}
           {item.cleanup_error_paths && item.cleanup_error_paths.length > 0 ? (
