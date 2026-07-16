@@ -3,7 +3,7 @@
  *
  * Uses the same authedFetch / freshToken pattern as intelligence.ts.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 type AsyncStorageStub = {
@@ -27,6 +27,9 @@ const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 let _testAuthToken: string | null = null;
 /** For tests only — override the token used by authedFetch. */
 export function _setTestAuthToken(t: string | null): void { _testAuthToken = t; }
+
+/** For tests only — exposes the storage guard so tests can assert it returns null under Node.js ESM. */
+export function _getStorageForTest(): AsyncStorageStub | null { return getStorage(); }
 
 async function freshToken(): Promise<string | null> {
   if (_testAuthToken !== null) return _testAuthToken;
