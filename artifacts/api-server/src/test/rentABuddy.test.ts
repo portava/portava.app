@@ -3785,6 +3785,116 @@ describe("Rent a Buddy — message payload: booking_id and sender_id correctness
   });
 });
 
+// ── Thread-id isolation: messages go to the correct booking's thread ──────────
+// emitBookingMilestone and emitBookingCard look up telegraph_thread_id by
+// booking id.  If the filter were broken they could pick up the wrong booking's
+// thread.  These tests put two bookings in state with *different* thread ids
+// and assert that every inserted message carries the thread of the booking
+// that was acted on — and that no message carries the other booking's thread.
+
+describe("Rent a Buddy — message thread isolation: messages land in the correct booking's thread", () => {
+  const CORRECT_THREAD  = "thread-correct-booking";
+  const DECOY_THREAD    = "thread-decoy-booking";
+  const DECOY_BOOKING   = "booking-uuid-decoy";
+
+  function futureDate() {
+    const d = new Date();
+    d.setDate(d.getDate() + 10);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function targetBooking(status: string) {
+    return {
+      id: BOOKING_ID,
+      buddy_id: BUDDY_PROF,
+      traveler_id: USER_ID,
+      booking_date: futureDate(),
+      start_time: "14:00",
+      duration_h: 2,
+      city: "Tokyo",
+      category: "city",
+      total_usd: 50,
+      deposit_usd: 50,
+      cash_balance_usd: 0,
+      safety_status: "normal",
+      route_plan: [],
+      payment_mode: "full_in_app",
+      telegraph_thread_id: CORRECT_THREAD,
+      status,
+      updated_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+  }
+
+  function decoyBooking() {
+    return {
+      id: DECOY_BOOKING,
+      buddy_id: BUDDY_PROF,
+      traveler_id: USER_ID,
+      booking_date: futureDate(),
+      start_time: "10:00",
+      duration_h: 3,
+      city: "Osaka",
+      category: "city",
+      total_usd: 75,
+      deposit_usd: 75,
+      cash_balance_usd: 0,
+      safety_status: "normal",
+      route_plan: [],
+      payment_mode: "full_in_app",
+      telegraph_thread_id: DECOY_THREAD,
+      status: "confirmed",
+      updated_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+  }
+
+  it("cancel: milestone and card carry CORRECT_THREAD — not DECOY_THREAD — when two bookings coexist", async () => {
+    setupState({
+      bookings: {
+        [BOOKING_ID]: targetBooking("confirmed"),
+        [DECOY_BOOKING]: decoyBooking(),
+      },
+    });
+
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/cancel`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    const msgs: any[] = (state as any).messages ?? [];
+
+    // ── milestone thread ─────────────────────────────────────────────────────
+    const milestone = msgs.find((m: any) => m.subtype === "rent_buddy_cancelled");
+    assert.ok(milestone, "expected rent_buddy_cancelled milestone in state.messages");
+    assert.equal(
+      milestone.thread_id, CORRECT_THREAD,
+      `cancel milestone must land in the cancelled booking's thread (${CORRECT_THREAD}), got: ${milestone.thread_id}`,
+    );
+    assert.notEqual(
+      milestone.thread_id, DECOY_THREAD,
+      "cancel milestone must NOT land in the other booking's thread",
+    );
+
+    // ── card thread ──────────────────────────────────────────────────────────
+    const card = msgs.find((m: any) => m.subtype === "booking_status_cancelled");
+    assert.ok(card, "expected booking_status_cancelled card in state.messages");
+    assert.equal(
+      card.thread_id, CORRECT_THREAD,
+      `cancel card must land in the cancelled booking's thread (${CORRECT_THREAD}), got: ${card.thread_id}`,
+    );
+    assert.notEqual(
+      card.thread_id, DECOY_THREAD,
+      "cancel card must NOT land in the other booking's thread",
+    );
+
+    // ── no message must carry the decoy thread ───────────────────────────────
+    const leaked = msgs.filter((m: any) => m.thread_id === DECOY_THREAD);
+    assert.equal(
+      leaked.length, 0,
+      `no message should reference the decoy thread — found ${leaked.length}: ${JSON.stringify(leaked.map((m: any) => m.subtype))}`,
+    );
+  });
+});
+
 // ── Notification recipient correctness ────────────────────────────────────────
 // Asserts that notifyBookingParty targets the OTHER party — not the actor —
 // for each booking status transition.
