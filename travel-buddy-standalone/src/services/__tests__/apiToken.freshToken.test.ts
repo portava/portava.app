@@ -201,4 +201,23 @@ describe('freshToken() — error handling', () => {
 
     assert.equal(token, null, 'must return null when refreshSession throws');
   });
+
+  it('returns null when the session has no expires_at and refreshSession throws', async () => {
+    // Simulates a sign-in that produces a session missing the expiry field.
+    // freshToken() should attempt a refresh, and when that also fails it must
+    // return null gracefully rather than crash or propagate the error.
+    _setTestSupabase({
+      auth: {
+        getSession: () =>
+          Promise.resolve({
+            data: { session: { access_token: 'no-expiry-token', expires_at: undefined } },
+          }),
+        refreshSession: () => Promise.reject(new Error('server outage')),
+      },
+    });
+
+    const token = await freshToken();
+
+    assert.equal(token, null, 'must return null when expires_at is missing and refreshSession throws');
+  });
 });
