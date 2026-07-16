@@ -407,6 +407,157 @@ describe("POST regenerate after a permanently_failed job", () => {
 
 });
 
+// ── Tests: both a completed and a permanently_failed row exist ────────────────
+//
+// This is the multi-row scenario: a prior successful run left a 'completed' row
+// and a subsequent run ended in 'permanently_failed' — both rows coexist. The
+// reset step updates the permanently_failed row to 'queued', then the insert
+// hits 23505 (the reset row now occupies the queued slot). The net result must
+// be exactly one queued row and the completed row untouched.
+
+function makeDbBothRows(): DB {
+  return {
+    profiles:                [{ id: ADMIN_ID, role: "admin" }],
+    universal_stamp_catalog: [makeCatalogRow()],
+    stamp_generation_queue: [
+      {
+        id:                  "qqqqqqqq-0000-4000-8000-000000000010",
+        catalog_id:          CATALOG_ID,
+        status:              "completed",
+        attempts:            3,
+        requeue_count:       1,
+        last_error:          null,
+        triggered_by_action: "worker",
+        priority:            0,
+        created_at:          "2024-01-01T00:00:00Z",
+        updated_at:          "2024-02-01T00:00:00Z",
+      },
+      {
+        id:                  "qqqqqqqq-0000-4000-8000-000000000011",
+        catalog_id:          CATALOG_ID,
+        status:              "permanently_failed",
+        attempts:            5,
+        requeue_count:       2,
+        last_error:          "generation failed permanently",
+        triggered_by_action: "worker",
+        priority:            0,
+        created_at:          "2024-03-01T00:00:00Z",
+        updated_at:          "2024-03-01T00:00:00Z",
+      },
+    ],
+    stamp_artwork_versions: [],
+    stamp_admin_audit_log:  [],
+  };
+}
+
+describe("POST regenerate when both a completed and a permanently_failed row exist", () => {
+
+  beforeEach(() => {
+    db = makeDbBothRows();
+    const client = makeClient(db);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  });
+
+  it("returns 200 with { ok: true }", async () => {
+    const res = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      res.status, 200,
+      `regenerate must return 200, got ${res.status}: ${JSON.stringify(res.body)}`,
+    );
+    assert.deepEqual(res.body, { ok: true });
+  });
+
+  it("produces exactly one queued row afterwards", async () => {
+    const res = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      res.status, 200,
+      `regenerate must return 200, got ${res.status}: ${JSON.stringify(res.body)}`,
+    );
+
+    const queuedRows = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.status === "queued",
+    );
+    assert.equal(
+      queuedRows.length,
+      1,
+      `expected exactly 1 queued row, found ${queuedRows.length}: ${JSON.stringify(db.stamp_generation_queue)}`,
+    );
+  });
+
+  it("the original completed row is untouched", async () => {
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+
+    const completedRows = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.status === "completed",
+    );
+    assert.equal(
+      completedRows.length,
+      1,
+      `expected the completed row to remain untouched, found ${completedRows.length}: ${JSON.stringify(db.stamp_generation_queue)}`,
+    );
+    assert.equal(
+      completedRows[0].id,
+      "qqqqqqqq-0000-4000-8000-000000000010",
+      "completed row id must not change",
+    );
+  });
+
+  it("no permanently_failed rows remain after regenerate", async () => {
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+
+    const failedRows = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.status === "permanently_failed",
+    );
+    assert.equal(
+      failedRows.length,
+      0,
+      `expected no permanently_failed rows to remain, found ${failedRows.length}`,
+    );
+  });
+
+  it("the queued row has attempts and requeue_count zeroed out (reset from permanently_failed)", async () => {
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+
+    const queuedRows = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.status === "queued",
+    );
+    assert.equal(queuedRows.length, 1, "expected exactly 1 queued row");
+
+    const row = queuedRows[0];
+    assert.equal(row.attempts,      0,    `expected attempts reset to 0, got ${row.attempts}`);
+    assert.equal(row.requeue_count, 0,    `expected requeue_count reset to 0, got ${row.requeue_count}`);
+    assert.equal(row.last_error,    null, `expected last_error cleared, got ${row.last_error}`);
+  });
+
+  it("total queue row count for this catalog_id is exactly two (completed + queued)", async () => {
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+
+    const allRows = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID,
+    );
+    assert.equal(
+      allRows.length,
+      2,
+      `expected 2 total rows (completed + queued), found ${allRows.length}: ${JSON.stringify(allRows)}`,
+    );
+  });
+
+  it("writes exactly one audit log entry (failed reset → state changed)", async () => {
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+
+    const auditEntries = db.stamp_admin_audit_log.filter(
+      (r) => r.catalog_id === CATALOG_ID,
+    );
+    assert.equal(
+      auditEntries.length,
+      1,
+      `expected exactly 1 audit log entry, found ${auditEntries.length}: ${JSON.stringify(auditEntries)}`,
+    );
+  });
+
+});
+
 // ── Tests: true duplicate click — queued row already exists ───────────────────
 //
 // When the first call already enqueued a job and a second rapid click arrives,
