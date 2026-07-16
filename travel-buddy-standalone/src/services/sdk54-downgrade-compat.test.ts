@@ -164,10 +164,8 @@ describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and 
     ...tb.devDependencies,
   };
 
-  // artifacts/travel-buddy/package.json is 3 levels up from src/services in
-  // the standalone tree (travel-buddy-standalone/src/services → workspace root →
-  // artifacts/travel-buddy).
-  const sa = readPkg('../../../artifacts/travel-buddy/package.json');
+  // travel-buddy-standalone/package.json is 4 levels up from src/services.
+  const sa = readPkg('../../../../travel-buddy-standalone/package.json');
   const saAll: Record<string, string> = {
     ...sa.dependencies,
     ...sa.devDependencies,
@@ -241,10 +239,10 @@ describe('SDK 54 — other explicitly pinned Expo packages sync between artifact
     ...tb.devDependencies,
   };
 
-  // artifacts/travel-buddy/package.json is 3 levels up from src/services in
-  // the standalone tree (travel-buddy-standalone/src/services → workspace root →
-  // artifacts/travel-buddy).
-  const sa = readPkg('../../../artifacts/travel-buddy/package.json');
+  // travel-buddy-standalone/package.json is 4 levels up from src/services in
+  // the artifacts tree (artifacts/travel-buddy/src/services → workspace root →
+  // travel-buddy-standalone).
+  const sa = readPkg('../../../../travel-buddy-standalone/package.json');
   const saAll: Record<string, string> = {
     ...sa.dependencies,
     ...sa.devDependencies,
