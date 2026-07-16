@@ -12,8 +12,13 @@ import {
   View, Text, Pressable, Modal, FlatList, ActivityIndicator, Alert, StyleSheet,
 } from 'react-native';
 import { router } from 'expo-router';
-import { Check, X } from 'lucide-react-native';
+import { Check, TriangleAlert, X } from 'lucide-react-native';
 import { supabase } from '../../../src/lib/supabase';
+import {
+  applyDriftLoadResult,
+  driftCount,
+  type SchemaDriftReport,
+} from '../../../src/screens/admin/schemaDrift.machine';
 import {
   SettingsScreen, SettingsSection, SettingsRow, SettingsDivider, ToggleRow,
 } from '../../../src/components/settings/SettingsUI';
@@ -56,11 +61,33 @@ function languageLabel(code: string | null): string {
   return LANGUAGE_OPTIONS.find((l) => l.code === code)?.label ?? code;
 }
 
+// ── Schema drift warning (cached check, fetched once per screen visit) ────────
+
+function apiBase() { return process.env.EXPO_PUBLIC_API_BASE_URL ?? ''; }
+
+/** Fetch the cached drift report (no ?refresh — never triggers a live probe). */
+async function fetchCachedDriftReport(): Promise<SchemaDriftReport | null> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) return null;
+    const res = await fetch(`${apiBase()}/api/admin/health/schema-drift`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const { report } = applyDriftLoadResult({ ok: true, data: await res.json() });
+    return report;
+  } catch {
+    return null;
+  }
+}
+
 export default function ConnectedFeaturesScreen() {
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
   const { preferredLanguage, updateLanguage } = useLanguagePreference();
 
   const [isAdmin, setIsAdmin] = useState(false);
+  const [driftReport, setDriftReport] = useState<SchemaDriftReport | null>(null);
 
   // Telegraph toggles — initialize to true, matching settings/index (no getter).
   const [telegraphDM, setTelegraphDM] = useState(true);
@@ -86,6 +113,17 @@ export default function ConnectedFeaturesScreen() {
       });
     });
   }, []);
+
+  // Once we know the viewer is an admin, fetch the CACHED drift status once
+  // per screen visit so the Admin section can warn proactively.
+  useEffect(() => {
+    if (!isAdmin) return;
+    let alive = true;
+    fetchCachedDriftReport().then((report) => {
+      if (alive) setDriftReport(report);
+    });
+    return () => { alive = false; };
+  }, [isAdmin]);
 
   useEffect(() => {
     let alive = true;
@@ -195,8 +233,20 @@ export default function ConnectedFeaturesScreen() {
           <SettingsDivider />
           <SettingsRow
             title="Schema Drift"
-            subtitle="Database health vs. migrations"
+            subtitle={
+              driftReport?.status === 'drift'
+                ? `Drift detected — ${driftCount(driftReport)} missing object${driftCount(driftReport) === 1 ? '' : 's'}`
+                : 'Database health vs. migrations'
+            }
             onPress={() => router.push('/admin/schema-drift' as any)}
+            right={
+              driftReport?.status === 'drift' ? (
+                <View style={styles.driftBadge} testID="schema-drift-warning">
+                  <TriangleAlert size={14} color={PP.paper} />
+                  <Text style={styles.driftBadgeText}>{driftCount(driftReport)}</Text>
+                </View>
+              ) : undefined
+            }
           />
           {rentBuddyEnabled && (
             <>
@@ -307,6 +357,13 @@ const styles = StyleSheet.create({
   radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: PP.inkLight },
   radioLabel: { ...t.body, color: PP.ink, fontWeight: '600' },
   radioDesc: { ...t.small, color: PP.inkMuted, fontSize: 12, marginTop: 1, lineHeight: 16 },
+
+  driftBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#C05621', borderRadius: radius.pill ?? 999,
+    paddingHorizontal: space.sm, paddingVertical: 3,
+  },
+  driftBadgeText: { ...t.small, color: PP.paper, fontWeight: '700', fontSize: 12 },
 
   modalRoot: { flex: 1, backgroundColor: PP.paper },
   modalHeader: {
