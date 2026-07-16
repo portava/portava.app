@@ -24,7 +24,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { awardStamp, revokeStamp, restoreStamp } from "../services/passport/StampAwardEngine.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter as NotifRouter } from "../services/notifications/NotificationRouter.js";
-import { queryStampWorkerHealth } from "../lib/stamps/generationWorker.js";
+import { queryStampWorkerHealth, evaluateCurrentWorkerHealth } from "../lib/stamps/generationWorker.js";
 
 const router = Router();
 
@@ -361,7 +361,7 @@ router.get("/admin/stamps/worker-health", async (req, res) => {
       sendError(res, "db_error", "Service client not configured");
       return;
     }
-    res.json({ health });
+    res.json({ health, warnings: evaluateCurrentWorkerHealth(health) });
   } catch (e: any) {
     sendError(res, "db_error", e?.message ?? "worker health query failed");
   }

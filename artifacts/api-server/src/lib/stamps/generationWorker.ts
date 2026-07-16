@@ -552,6 +552,17 @@ export async function runHealthMonitorTick(
   return emitted;
 }
 
+/**
+ * Evaluate warnings for a health snapshot using the monitor's last-known
+ * queued depth, WITHOUT mutating monitor state. Used by the admin
+ * worker-health endpoint so admins see the same findings the periodic
+ * monitor logs (stuck jobs always; backlog growth once the monitor has a
+ * baseline from a previous tick).
+ */
+export function evaluateCurrentWorkerHealth(health: StampWorkerHealth): HealthWarning[] {
+  return evaluateWorkerHealth(health, _prevQueuedDepth);
+}
+
 /** Reset monitor state between tests. */
 export function resetHealthMonitorState(): void {
   _prevQueuedDepth = null;

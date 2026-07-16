@@ -19,6 +19,7 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   evaluateWorkerHealth,
+  evaluateCurrentWorkerHealth,
   runHealthMonitorTick,
   resetHealthMonitorState,
   type StampWorkerHealth,
@@ -145,4 +146,28 @@ test("backlog detection across ticks: second tick with higher queued warns", asy
   );
   assert.equal(emitted.length, 1);
   assert.equal(emitted[0]!.key, "backlog_growing");
+});
+
+test("M9: evaluateCurrentWorkerHealth uses monitor baseline without mutating it", async () => {
+  const log = makeLogger();
+  // Before any tick, there is no baseline → no backlog warning.
+  let w = evaluateCurrentWorkerHealth(makeHealth({ queue_depth: { queued: 9 } }));
+  assert.equal(w.length, 0);
+
+  // One tick establishes queued=3 as the baseline.
+  await runHealthMonitorTick(log, async () => makeHealth({ queue_depth: { queued: 3 } }), () => 0);
+
+  w = evaluateCurrentWorkerHealth(makeHealth({ queue_depth: { queued: 9 } }));
+  assert.equal(w.length, 1);
+  assert.equal(w[0]!.key, "backlog_growing");
+
+  // Calling it again yields the same result — baseline was not consumed.
+  w = evaluateCurrentWorkerHealth(makeHealth({ queue_depth: { queued: 9 } }));
+  assert.equal(w.length, 1);
+
+  // Stuck jobs always warn regardless of baseline.
+  w = evaluateCurrentWorkerHealth(makeHealth({
+    stuck_jobs: [{ id: "j1", catalog_id: "c1", locked_by: null, locked_until: null, updated_at: null }],
+  }));
+  assert.equal(w[0]!.key, "stuck_jobs");
 });
