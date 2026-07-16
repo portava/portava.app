@@ -73,8 +73,8 @@ function makeFakeClient(queueRows: Record<string, unknown>[] = []) {
     let hasSelect     = false;
     const eqFilters:  Record<string, unknown>   = {};
     const inFilters:  Record<string, unknown[]>  = {};
-
-    const ltFilters: Record<string, unknown>  = {};
+    const lteFilters: Record<string, unknown>   = {};
+    const ltFilters:  Record<string, unknown>   = {};
 
     const b: Record<string, unknown> = {
       select(_cols?: string)          { hasSelect = true; return b; },
@@ -90,12 +90,27 @@ function makeFakeClient(queueRows: Record<string, unknown>[] = []) {
       eq(col: string, val: unknown)   { eqFilters[col] = val; return b; },
       in(col: string, vals: unknown[]) { inFilters[col] = vals; return b; },
       neq()                           { return b; },
-      lt(col: string, val: unknown)   { ltFilters[col] = val; return b; },
-      lte()                           { return b; },
+      lt(col: string, val: unknown)   { ltFilters[col]  = val; return b; },
+      lte(col: string, val: unknown)  { lteFilters[col] = val; return b; },
       then(onF: (v: unknown) => unknown, onR: (e: unknown) => unknown) {
         return resolve().then(onF, onR);
       },
     };
+
+    /** Apply all recorded filters (eq, lte, lt) to a row — used for SELECT and UPDATE+select. */
+    function matchesFilters(r: Record<string, unknown>): boolean {
+      for (const [k, v] of Object.entries(eqFilters)) {
+        if (r[k] !== v) return false;
+      }
+      for (const [k, v] of Object.entries(lteFilters)) {
+        // ISO timestamp strings compare correctly with JS string ordering.
+        if (!((r[k] as string) <= (v as string))) return false;
+      }
+      for (const [k, v] of Object.entries(ltFilters)) {
+        if (!((r[k] as string) < (v as string))) return false;
+      }
+      return true;
+    }
 
     async function resolve(): Promise<{ data: unknown; error: null }> {
       // INSERT
@@ -120,12 +135,11 @@ function makeFakeClient(queueRows: Record<string, unknown>[] = []) {
           ltFilters: { ...ltFilters },
         });
 
-        // The claim step: UPDATE push_retry_queue … .eq("status","queued") … .select()
-        // Returns all queueRows matching the eq filters so processItem() can work on them.
+        // The claim step: UPDATE push_retry_queue … .eq("status","queued") .lte("next_retry_at",now) … .select()
+        // Returns only queueRows that pass all filters (eq + lte + lt) so processItem() works on
+        // the correct set — rows with a future next_retry_at are excluded.
         if (tableName === "push_retry_queue" && hasSelect) {
-          const matched = queueRows.filter((r) =>
-            Object.entries(eqFilters).every(([k, v]) => r[k] === v)
-          );
+          const matched = queueRows.filter(matchesFilters);
           return { data: matched, error: null };
         }
         return { data: null, error: null };
@@ -133,9 +147,7 @@ function makeFakeClient(queueRows: Record<string, unknown>[] = []) {
 
       // SELECT (no pending mutation)
       if (tableName === "push_retry_queue") {
-        const matched = queueRows.filter((r) =>
-          Object.entries(eqFilters).every(([k, v]) => r[k] === v)
-        );
+        const matched = queueRows.filter(matchesFilters);
         return { data: matched, error: null };
       }
       return { data: [], error: null };
@@ -1774,3 +1786,98 @@ describe("PushRetryQueue.processQueue() — transient 5xx must not touch rent_bu
     assert.ok(requeuedUpdate, "row must be re-queued on transient 5xx when attempts remain");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 15 — Recovered row (next_retry_at = just past due) is claimed in the same
+//       processQueue() call; a not-yet-due row is excluded
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * recoverStaleProcessing() resets a stale 'processing' row back to 'queued'
+ * with next_retry_at = now.  The subsequent claim step inside the same
+ * processQueue() call uses .lte("next_retry_at", now).  This test confirms:
+ *
+ *   A) A row whose next_retry_at is 1 ms in the past IS claimed and processed.
+ *   B) A control row whose next_retry_at is 60 s in the future is NOT claimed.
+ *
+ * The fake client's lte() filter is now enforced during UPDATE+select matching
+ * (ISO string ordering is identical to timestamp ordering), so the test
+ * genuinely validates the filter — not just that any queued row runs.
+ *
+ * Both rows start as status='queued', simulating what recoverStaleProcessing()
+ * would produce after resetting a stale 'processing' row.
+ */
+
+const FUTURE_ROW_ID = "cc000000-ffff-ffff-ffff-000000000099";
+
+describe("PushRetryQueue.processQueue() — recovered row (next_retry_at just past due) is claimed; not-yet-due row is skipped", () => {
+  it("picks up a row 1 ms past due and leaves a row 60 s in the future untouched", async () => {
+    // Row A — simulates what recoverStaleProcessing() produces: next_retry_at = just now.
+    const pastDueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1).toISOString(), // 1 ms in the past
+    };
+
+    // Row B — control: next_retry_at is well in the future; must NOT be claimed.
+    const futureRow = {
+      id:                  FUTURE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [LIVE_TOKEN_B],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: null,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() + 60_000).toISOString(), // 60 s in the future
+    };
+
+    const client = makeFakeClient([pastDueRow, futureRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    _setTestFetch(expoOkFetch()); // Expo returns success for any token
+    await queue.processQueue();
+
+    // ── Row A must be finalised as 'sent' ────────────────────────────────────
+    const finaliseCall = client.updateCalls.find(
+      (c) =>
+        c.table === "push_retry_queue" &&
+        c.patch.status === "sent" &&
+        c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(
+      finaliseCall,
+      "past-due row must be finalised as 'sent' — lte filter must include a next_retry_at 1 ms in the past",
+    );
+
+    // ── Row B must never be touched (not claimed, not finalised) ─────────────
+    const futureRowTouched = client.updateCalls.some(
+      (c) => c.table === "push_retry_queue" && c.filters.id === FUTURE_ROW_ID,
+    );
+    assert.ok(
+      !futureRowTouched,
+      "not-yet-due row (next_retry_at 60 s in the future) must NOT be claimed or modified",
+    );
+
+    // ── Delivery attempt for Row A must also be updated to 'sent' ────────────
+    const ndaUpdate = client.updateCalls.find(
+      (c) =>
+        c.table === "notification_delivery_attempts" &&
+        c.patch.status === "sent" &&
+        c.filters.id === ATTEMPT_ID,
+    );
+    assert.ok(
+      ndaUpdate,
+      "notification_delivery_attempts must be updated to 'sent' after the recovered row succeeds",
+    );
+  });
+});
+
