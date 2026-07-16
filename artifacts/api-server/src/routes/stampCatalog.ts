@@ -628,12 +628,18 @@ router.post("/admin/stamps/catalog/:id/regenerate", async (req, res) => {
     .eq("catalog_id", id)
     .eq("status", "review_required");
 
-  // Reset failed jobs to queued (admin action also resets the auto-requeue cap)
-  await sc
+  // Reset failed jobs to queued (admin action also resets the auto-requeue cap).
+  // Chain .select() so PostgREST returns the affected rows — without it the
+  // data field is null even when rows were updated. We need the count to know
+  // whether a state change happened (used for audit-log gating below).
+  const { data: resetRows } = await sc
     .from("stamp_generation_queue")
     .update({ status: "queued", attempts: 0, requeue_count: 0, last_error: null, updated_at: new Date().toISOString() })
     .eq("catalog_id", id)
-    .in("status", ["retryable_failed", "permanently_failed"]);
+    .in("status", ["retryable_failed", "permanently_failed"])
+    .select();
+
+  const hadFailedReset = Array.isArray(resetRows) && resetRows.length > 0;
 
   // Enqueue a new job
   const { error: queueErr } = await sc
@@ -657,11 +663,13 @@ router.post("/admin/stamps/catalog/:id/regenerate", async (req, res) => {
     .eq("id", id)
     .eq("status", "rejected");
 
-  // Only write the audit log when a new job was actually enqueued.
-  // A 23505 conflict means the catalog already has a queued job (the second
-  // call in a rapid double-click); the first call already logged the action,
-  // so we skip the duplicate write.
-  if (!queueErr) {
+  // Write the audit log whenever state actually changed:
+  //   • queueErr is null  → a fresh job was inserted
+  //   • hadFailedReset    → a failed row was reset to queued by this request
+  //                         (the subsequent insert hits 23505, but state did change)
+  // A 23505 with no prior failed reset means a rapid duplicate click where the
+  // first call already logged the action — skip the duplicate write in that case.
+  if (!queueErr || hadFailedReset) {
     await writeAuditLog(sc, adminId, "regenerate", {
       catalogId: id,
       notes:     "Regeneration triggered by admin",
