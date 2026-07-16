@@ -65,4 +65,55 @@ describe("buildCityStampLabels", () => {
     const { sublabel } = buildCityStampLabels("somewhere", "  Unknown  ");
     assert.equal(sublabel, String(YEAR));
   });
+
+  // Additional sentinels that would otherwise produce fake codes like "N/" or "NO".
+  it('falls back to year-only when country is "N/A"', () => {
+    const { sublabel } = buildCityStampLabels("somewhere", "N/A");
+    assert.equal(sublabel, String(YEAR));
+  });
+
+  it('falls back to year-only when country is "n/a" (lowercase)', () => {
+    const { sublabel } = buildCityStampLabels("somewhere", "n/a");
+    assert.equal(sublabel, String(YEAR));
+  });
+
+  it('falls back to year-only when country is "  N/A  " (whitespace-padded)', () => {
+    const { sublabel } = buildCityStampLabels("somewhere", "  N/A  ");
+    assert.equal(sublabel, String(YEAR));
+  });
+
+  it('falls back to year-only when country is "None"', () => {
+    const { sublabel } = buildCityStampLabels("somewhere", "None");
+    assert.equal(sublabel, String(YEAR));
+  });
+
+  it('falls back to year-only when country is "none" (lowercase)', () => {
+    const { sublabel } = buildCityStampLabels("somewhere", "none");
+    assert.equal(sublabel, String(YEAR));
+  });
+
+  it('falls back to year-only when country is "NONE" (uppercase)', () => {
+    const { sublabel } = buildCityStampLabels("somewhere", "NONE");
+    assert.equal(sublabel, String(YEAR));
+  });
+
+  it('falls back to year-only when country is "" (empty string)', () => {
+    const { sublabel } = buildCityStampLabels("somewhere", "");
+    assert.equal(sublabel, String(YEAR));
+  });
+
+  it('falls back to year-only when country is "   " (whitespace-only)', () => {
+    const { sublabel } = buildCityStampLabels("somewhere", "   ");
+    assert.equal(sublabel, String(YEAR));
+  });
+
+  it('falls back to year-only when country is "null"', () => {
+    const { sublabel } = buildCityStampLabels("somewhere", "null");
+    assert.equal(sublabel, String(YEAR));
+  });
+
+  it('falls back to year-only when country is "undefined"', () => {
+    const { sublabel } = buildCityStampLabels("somewhere", "undefined");
+    assert.equal(sublabel, String(YEAR));
+  });
 });

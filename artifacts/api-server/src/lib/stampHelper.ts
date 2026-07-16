@@ -27,12 +27,13 @@ export function buildCityStampLabels(
   const label = city.trim().toUpperCase();
   const year = new Date().getFullYear();
   const trimmed = country?.trim() ?? null;
-  // Treat "Unknown" (any casing) the same as null — it is a sentinel value for
-  // unresolved ownership rows, not a real country name, so slicing "UN" from it
-  // would produce a meaningless ISO-looking code.
-  const isUnknown =
-    trimmed === null || trimmed.toLowerCase() === "unknown";
-  const countryCode = isUnknown ? null : trimmed.slice(0, 2).toUpperCase();
+  // Sentinel values that indicate an unresolved or missing country.  Slicing
+  // any of these would produce a meaningless ISO-looking code (e.g. "N/" from
+  // "N/A", "NO" from "None"), so treat them all the same as null.
+  const SENTINELS = new Set(["unknown", "n/a", "none", "null", "undefined", ""]);
+  const isSentinel =
+    trimmed === null || SENTINELS.has(trimmed.toLowerCase());
+  const countryCode = isSentinel ? null : trimmed!.slice(0, 2).toUpperCase();
   const sublabel = countryCode ? `${countryCode} · ${year}` : String(year);
   return { label, sublabel };
 }
