@@ -463,6 +463,8 @@ function PassportContent({
               <>
         {/* ── Identity Document Card ── */}
         <PassportIdentityCard
+        onEditPress={handleEditProfile}
+        onSavedPress={() => router.push('/saved-profiles' as any)}
           profile={profile}
           isOwner
           onMenuPress={() => setMenuOpen(true)}
