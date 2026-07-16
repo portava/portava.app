@@ -76,6 +76,7 @@ import { Router } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
+import { sendPushNotification } from "../lib/push.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import {
   calculateCompatibilityScore,
@@ -730,7 +731,8 @@ router.post("/api/rent-a-buddy/requests", async (req, res) => {
   res.status(201).json({ request: mapRequest(data) });
 });
 
-async function notifyEligibleBuddies(svc: any, request: any) {
+/** Exported for testing. */
+export async function notifyEligibleBuddies(svc: any, request: any) {
   const { data: buddies } = await svc
     .from("rent_buddy_profiles")
     .select("id, user_id, expo_push_token")
@@ -741,7 +743,10 @@ async function notifyEligibleBuddies(svc: any, request: any) {
 
   if (!buddies) return;
 
-  const buddyIds = (buddies as any[]).map((b: any) => b.id);
+  // Never notify the traveler about their own request.
+  const eligible = (buddies as any[]).filter((b: any) => b.user_id !== request.traveler_id);
+
+  const buddyIds = eligible.map((b: any) => b.id);
   if (buddyIds.length > 0) {
     await svc
       .from("rent_buddy_requests")
@@ -749,6 +754,59 @@ async function notifyEligibleBuddies(svc: any, request: any) {
       .eq("id", request.id)
       .then(() => {}).catch(() => {});
   }
+
+  // Collect push tokens. Buddies who registered their device before the
+  // rent_buddy_profiles token backfill existed only have a token on the
+  // legacy profiles.expo_push_token column — fall back to it.
+  const tokens = new Set<string>(
+    eligible.map((b: any) => b.expo_push_token).filter(Boolean),
+  );
+  const missingUserIds = eligible
+    .filter((b: any) => !b.expo_push_token)
+    .map((b: any) => b.user_id);
+  if (missingUserIds.length > 0) {
+    const { data: legacyRows } = await svc
+      .from("profiles")
+      .select("id, expo_push_token")
+      .in("id", missingUserIds);
+    for (const p of (legacyRows as any[]) ?? []) {
+      if (p.expo_push_token) tokens.add(p.expo_push_token);
+    }
+  }
+
+  if (tokens.size === 0) {
+    logger.info({ requestId: request.id, eligible: eligible.length }, "buddy request: no push tokens to notify");
+    return;
+  }
+
+  const result = await sendPushNotification([...tokens], {
+    title: `New buddy request in ${request.city}`,
+    body: `A traveler is looking for a ${request.category} buddy in ${request.city}. Open the app to send an offer.`,
+    data: {
+      type: "rent_buddy_request",
+      requestId: request.id,
+      city: request.city,
+      category: request.category,
+    },
+  });
+
+  // Clear tokens Expo reports as dead so we stop pushing to them.
+  const staleTokens = result.errors
+    .filter((e) => e.error === "DeviceNotRegistered")
+    .map((e) => e.token);
+  if (staleTokens.length > 0) {
+    await Promise.resolve(
+      await svc.from("rent_buddy_profiles").update({ expo_push_token: null }).in("expo_push_token", staleTokens),
+    ).catch(() => {});
+    await Promise.resolve(
+      await svc.from("profiles").update({ expo_push_token: null }).in("expo_push_token", staleTokens),
+    ).catch(() => {});
+  }
+
+  logger.info(
+    { requestId: request.id, eligible: eligible.length, sent: result.sent, staleCleared: staleTokens.length },
+    "buddy request: push notifications dispatched",
+  );
 }
 
 router.get("/api/rent-a-buddy/requests/:requestId", async (req, res) => {

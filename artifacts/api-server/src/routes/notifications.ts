@@ -298,6 +298,15 @@ router.post('/me/devices', async (req, res) => {
   // Backfill legacy expo_push_token on profiles (keep for SafeReturn compat)
   if (parsed.data.platform === 'expo') {
     await sc.from('profiles').update({ expo_push_token: parsed.data.pushToken }).eq('id', user.id);
+    // Also store on the buddy profile (if the user is a Buddy) so
+    // rent-a-buddy request alerts can be delivered to their device.
+    const { error: buddyTokenErr } = await sc
+      .from('rent_buddy_profiles')
+      .update({ expo_push_token: parsed.data.pushToken })
+      .eq('user_id', user.id);
+    if (buddyTokenErr) {
+      (req as any).log?.warn({ err: buddyTokenErr, userId: user.id }, 'devices: rent_buddy_profiles token backfill failed');
+    }
   }
 
   res.status(201).json({ ok: true, deviceId: (data as any).id });
