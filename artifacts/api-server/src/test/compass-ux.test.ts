@@ -627,6 +627,95 @@ describe("CompassNotificationEngine", () => {
     assert.equal(decision.outcome, "sent");
   });
 
+  // ── Quiet window from notification_preferences (shared settings) ─────────────
+
+  it("evaluateNotification: window set ONLY in notification_preferences suppresses during quiet hours", async () => {
+    const tableData: Record<string, Record<string, unknown>[]> = {
+      compass_user_preferences: [
+        { user_id: "u-np", muted_topics: [], exclude_budget_styles: [], compass_enabled: true },
+      ],
+      notification_preferences: [
+        { user_id: "u-np", quiet_hours_enabled: true, quiet_start: "22:00", quiet_end: "07:00", timezone: null },
+      ],
+      compass_notification_decisions: [],
+      feature_flags: [],
+    };
+    const { db } = makeFakeDb(tableData);
+    const decision = await evaluateNotification(db, "u-np", payload("recommendation"), { nowMinutes: 23 * 60 });
+    assert.equal(decision.outcome, "suppressed_quiet_hours");
+  });
+
+  it("evaluateNotification: notification_preferences window not active outside quiet hours", async () => {
+    const tableData: Record<string, Record<string, unknown>[]> = {
+      compass_user_preferences: [
+        { user_id: "u-np2", muted_topics: [], exclude_budget_styles: [], compass_enabled: true },
+      ],
+      notification_preferences: [
+        { user_id: "u-np2", quiet_hours_enabled: true, quiet_start: "22:00", quiet_end: "07:00", timezone: null },
+      ],
+      compass_notification_decisions: [],
+      feature_flags: [],
+    };
+    const { db } = makeFakeDb(tableData);
+    const decision = await evaluateNotification(db, "u-np2", payload("recommendation"), { nowMinutes: 12 * 60 });
+    assert.equal(decision.outcome, "sent");
+  });
+
+  it("evaluateNotification: notification_preferences window OVERRIDES legacy muted_topics entries", async () => {
+    // Legacy window says 22:00–07:00 (would suppress at 23:00), but the user's
+    // shared settings window is 01:00–05:00 — the shared window must win.
+    const tableData: Record<string, Record<string, unknown>[]> = {
+      compass_user_preferences: [
+        { user_id: "u-ovr", muted_topics: ["quiet_start:22:00", "quiet_end:07:00"],
+          exclude_budget_styles: [], compass_enabled: true },
+      ],
+      notification_preferences: [
+        { user_id: "u-ovr", quiet_hours_enabled: true, quiet_start: "01:00", quiet_end: "05:00", timezone: null },
+      ],
+      compass_notification_decisions: [],
+      feature_flags: [],
+    };
+    const { db } = makeFakeDb(tableData);
+    const decision = await evaluateNotification(db, "u-ovr", payload("message_normal"), { nowMinutes: 23 * 60 });
+    assert.equal(decision.outcome, "sent", "shared window (01:00–05:00) is not active at 23:00");
+    const decision2 = await evaluateNotification(db, "u-ovr", payload("message_normal"), { nowMinutes: 2 * 60 });
+    assert.equal(decision2.outcome, "suppressed_quiet_hours", "shared window active at 02:00");
+  });
+
+  it("evaluateNotification: quiet_hours_enabled=false disables quiet hours even with stale legacy muted_topics entries", async () => {
+    const tableData: Record<string, Record<string, unknown>[]> = {
+      compass_user_preferences: [
+        { user_id: "u-dis", muted_topics: ["quiet_start:22:00", "quiet_end:07:00"],
+          exclude_budget_styles: [], compass_enabled: true },
+      ],
+      notification_preferences: [
+        { user_id: "u-dis", quiet_hours_enabled: false, quiet_start: "22:00", quiet_end: "07:00", timezone: null },
+      ],
+      compass_notification_decisions: [],
+      feature_flags: [],
+    };
+    const { db } = makeFakeDb(tableData);
+    const decision = await evaluateNotification(db, "u-dis", payload("message_normal"), { nowMinutes: 23 * 60 });
+    assert.equal(decision.outcome, "sent",
+      "explicit opt-out in shared settings wins over stale legacy entries");
+  });
+
+  it("evaluateNotification: legacy muted_topics window applies when shared quiet setting is absent", async () => {
+    const tableData: Record<string, Record<string, unknown>[]> = {
+      compass_user_preferences: [
+        { user_id: "u-leg", muted_topics: ["quiet_start:22:00", "quiet_end:07:00"],
+          exclude_budget_styles: [], compass_enabled: true },
+      ],
+      notification_preferences: [{ user_id: "u-leg", timezone: null }],
+      compass_notification_decisions: [],
+      feature_flags: [],
+    };
+    const { db } = makeFakeDb(tableData);
+    const decision = await evaluateNotification(db, "u-leg", payload("message_normal"), { nowMinutes: 23 * 60 });
+    assert.equal(decision.outcome, "suppressed_quiet_hours",
+      "legacy fallback still works when shared setting was never configured");
+  });
+
   // ── Priority levels ───────────────────────────────────────────────────────────
 
   it("PRIORITY_LEVELS: emergency_safety is 1", () => {

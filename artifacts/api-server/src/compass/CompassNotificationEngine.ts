@@ -217,20 +217,40 @@ async function loadUserNotifPrefs(
         .maybeSingle(),
       db
         .from("notification_preferences")
-        .select("timezone")
+        .select("timezone, quiet_hours_enabled, quiet_start, quiet_end")
         .eq("user_id", userId)
         .maybeSingle(),
     ]);
 
     const row = (data as any) ?? {};
     const topics: string[] = (row.muted_topics as string[]) ?? [];
+    const notifRow = (notifPrefsRow as any) ?? null;
 
-    // Quiet hours are stored as special muted_topics entries:
-    //   "quiet_start:HH:MM" and "quiet_end:HH:MM"
-    const quietStartEntry = topics.find((t: string) => t.startsWith("quiet_start:"));
-    const quietEndEntry   = topics.find((t: string) => t.startsWith("quiet_end:"));
-    const quietStart = quietStartEntry?.replace("quiet_start:", "") ?? null;
-    const quietEnd   = quietEndEntry?.replace("quiet_end:", "") ?? null;
+    // Quiet hours source of truth is notification_preferences — the same window
+    // users configure on the notification settings screen. Legacy muted_topics
+    // entries ("quiet_start:HH:MM"/"quiet_end:HH:MM") remain as a fallback so
+    // users who only ever set the Compass window don't regress.
+    let quietStart: string | null = null;
+    let quietEnd:   string | null = null;
+    if (notifRow && notifRow.quiet_hours_enabled != null) {
+      // Shared setting exists — it is authoritative in BOTH directions:
+      // enabled=true uses its window; enabled=false means no quiet hours,
+      // even if stale legacy muted_topics entries remain.
+      if (
+        notifRow.quiet_hours_enabled === true &&
+        typeof notifRow.quiet_start === "string" &&
+        typeof notifRow.quiet_end === "string"
+      ) {
+        quietStart = notifRow.quiet_start;
+        quietEnd   = notifRow.quiet_end;
+      }
+    } else {
+      // Legacy fallback: quiet hours stored as special muted_topics entries.
+      const quietStartEntry = topics.find((t: string) => t.startsWith("quiet_start:"));
+      const quietEndEntry   = topics.find((t: string) => t.startsWith("quiet_end:"));
+      quietStart = quietStartEntry?.replace("quiet_start:", "") ?? null;
+      quietEnd   = quietEndEntry?.replace("quiet_end:", "") ?? null;
+    }
 
     // Build muted-category set from three sources:
     //   1. exclude_budget_styles — explicit lifestyle preferences (no_clubs, no_alcohol, …)
