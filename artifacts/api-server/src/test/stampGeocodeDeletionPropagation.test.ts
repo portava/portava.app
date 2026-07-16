@@ -813,4 +813,90 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "hard-delete .not() guard must check for null — only tombstoned rows should be removed",
     );
   });
+
+  it("sweep skips the tombstone cleanup delete when the deleted_at query returns a DB error", async () => {
+    // If the second sweep pass (deleted_at query) hits a transient DB error,
+    // the sweep must neither evict the in-memory entry nor issue the cleanup
+    // hard-delete.  Evicting on a DB error would be indistinguishable from a
+    // real deletion and would silently discard valid cached data.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "ch", country: "Switzerland" } }],
+      };
+    });
+
+    // Seed the in-memory cache via a DB load.
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({ country: "Switzerland", country_code: "CH", corrected_at: null, deleted_at: null }),
+    );
+    const first = await geocodeCityCountry("Zurich");
+    assert.equal(first?.countryCode, "CH", "pre-condition: cache seeded with CH");
+    assert.equal(nominatimCalls, 0, "no Nominatim call during seed");
+
+    // Build a sweep client where:
+    //   - Pass 1 (corrected_at) succeeds with no rows.
+    //   - Pass 2 (deleted_at)   returns a DB error.
+    //   - Any delete() call is tracked and should never happen.
+    let deleteCallCount = 0;
+    let sweepQueryCount = 0;
+    const errorSweepClient: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          delete() { isDelete = true; return chain; },
+          in(_col: string, _keys: string[]) {
+            // Should never be reached.
+            deleteCallCount++;
+            return chain;
+          },
+          then(resolve: (v: any) => void) {
+            if (isDelete) {
+              // Should never be reached.
+              deleteCallCount++;
+              resolve({ error: null });
+              return;
+            }
+            const q = sweepQueryCount++;
+            if (q === 0) {
+              // Pass 1 — corrected_at: nothing to evict.
+              resolve({ data: [], error: null });
+            } else {
+              // Pass 2 — deleted_at: simulate a transient DB error.
+              resolve({ data: null, error: { message: "connection refused" } });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(errorSweepClient);
+    await _runCorrectionSweepForTests();
+
+    // The sweep must have attempted both passes.
+    assert.equal(sweepQueryCount, 2, "sweep ran both passes");
+
+    // The tombstone query errored — cache entry must still be present.
+    // Switch to a null DB client so a cache miss would fall through to Nominatim.
+    _setGeocodeDbClientForTests(makeFixedDbClient(null));
+    const afterSweep = await geocodeCityCountry("Zurich");
+    assert.equal(afterSweep?.countryCode, "CH",
+      "cache entry must NOT be evicted when the deleted_at query returns a DB error");
+    assert.equal(nominatimCalls, 0,
+      "Nominatim must not be called — the stale-looking entry was preserved by the error guard");
+
+    // The hard-delete must never have been issued.
+    assert.equal(deleteCallCount, 0,
+      "cleanup hard-delete must not be called when the tombstone query returned an error");
+  });
 });
