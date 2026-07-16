@@ -18,7 +18,7 @@
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { PushRetryQueue, _setTestClearDeadTokens, _setTestNow, _setTestCleanupWarn } from "../lib/pushRetryQueue.js";
+import { PushRetryQueue, _setTestClearDeadTokens, _setTestNow, _setTestCleanupWarn, _formatDeadTokenErrors } from "../lib/pushRetryQueue.js";
 import { _setTestFetch } from "../lib/push.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -3685,5 +3685,107 @@ describe("PushRetryQueue.processQueue() — clearDeadTokens throws on retry: war
     const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
     assert.equal(ndaUpdate.patch.status, "sent",    "delivery_attempt status must be 'sent'");
     assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _formatDeadTokenErrors — direct unit tests of the lastErr string formatter
+//
+// These tests exercise the extracted formatter function in isolation so that
+// special characters in error codes (commas, backslashes, Unicode outside the
+// BMP) cannot silently corrupt or truncate the last_error DB column value.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("_formatDeadTokenErrors() — last_error string format stability", () => {
+  it("formats a single code as '<code> × <count>'", () => {
+    const result = _formatDeadTokenErrors([
+      { error: "DeviceNotRegistered" },
+    ]);
+    assert.equal(result, "DeviceNotRegistered \u00d7 1");
+  });
+
+  it("formats two entries of the same code with the correct count", () => {
+    const result = _formatDeadTokenErrors([
+      { error: "DeviceNotRegistered" },
+      { error: "DeviceNotRegistered" },
+    ]);
+    assert.equal(result, "DeviceNotRegistered \u00d7 2");
+  });
+
+  it("formats two distinct codes joined with ', '", () => {
+    const result = _formatDeadTokenErrors([
+      { error: "DeviceNotRegistered" },
+      { error: "InvalidCredentials" },
+    ]);
+    // Object.entries order follows insertion order, which matches reduce order
+    assert.equal(result, "DeviceNotRegistered \u00d7 1, InvalidCredentials \u00d7 1");
+  });
+
+  it("passes a comma inside an error code through verbatim — not split or escaped", () => {
+    // An error code that itself contains a comma must not be treated as a
+    // separator.  The output should contain the raw code unchanged.
+    const result = _formatDeadTokenErrors([
+      { error: "Token,Invalid" },
+    ]);
+    assert.equal(
+      result,
+      "Token,Invalid \u00d7 1",
+      "comma inside the error code must appear verbatim in the formatted string",
+    );
+  });
+
+  it("passes a backslash inside an error code through verbatim — not escape-processed", () => {
+    const result = _formatDeadTokenErrors([
+      { error: "Token\\Error" },
+    ]);
+    assert.equal(
+      result,
+      "Token\\Error \u00d7 1",
+      "backslash inside the error code must appear verbatim in the formatted string",
+    );
+  });
+
+  it("passes a Unicode character outside the BMP through verbatim — not truncated", () => {
+    // U+1F600 GRINNING FACE is a surrogate pair in UTF-16 (2 code units).
+    // If the DB column or string join truncates at code-unit boundaries the
+    // character would be corrupted.  The formatter must preserve it intact.
+    const highUnicode = "\u{1F600}"; // 😀
+    const result = _formatDeadTokenErrors([
+      { error: `Error${highUnicode}Code` },
+    ]);
+    assert.equal(
+      result,
+      `Error${highUnicode}Code \u00d7 1`,
+      "Unicode characters outside the BMP must survive the formatter unchanged",
+    );
+  });
+
+  it("correctly counts a mixed batch of codes containing special characters", () => {
+    // Two entries of a comma-containing code and one of a backslash code
+    const result = _formatDeadTokenErrors([
+      { error: "Token,Invalid" },
+      { error: "Token,Invalid" },
+      { error: "Token\\Error" },
+    ]);
+    assert.equal(
+      result,
+      "Token,Invalid \u00d7 2, Token\\Error \u00d7 1",
+      "counts must be accurate and codes must be verbatim even with special characters",
+    );
+  });
+
+  it("uses the × separator (U+00D7 MULTIPLICATION SIGN) — not the letter x or ASCII *", () => {
+    const result = _formatDeadTokenErrors([{ error: "DeviceNotRegistered" }]);
+    // The separator must be the specific Unicode multiplication sign used in
+    // the production formatter — a future refactor changing it to 'x' or '*'
+    // would break log readability and DB parsing expectations.
+    assert.ok(
+      result.includes("\u00d7"),
+      `expected U+00D7 (×) in "${result}"`,
+    );
+    assert.ok(
+      !result.includes(" x "),
+      "must not use the letter x as separator",
+    );
   });
 });

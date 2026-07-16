@@ -61,6 +61,32 @@ function getNow(): string {
 
 const logger = rootLogger.child({ service: "PushRetryQueue" });
 
+/**
+ * Format the last_error string for a batch of dead-token errors.
+ *
+ * Each distinct error code is counted and rendered as "<code> × <count>".
+ * Multiple codes are joined with ", ".
+ *
+ * Exported for direct unit-testing of the string format.  The output is
+ * intentionally verbatim — error codes are never escaped or truncated —
+ * so callers should treat the resulting string as opaque human-readable text,
+ * not as a parseable structured value.
+ *
+ * @internal Only call from tests or from processItem.
+ */
+export function _formatDeadTokenErrors(
+  deadErrors: Array<{ error: string }>,
+): string {
+  return Object.entries(
+    deadErrors.reduce<Record<string, number>>((acc, e) => {
+      acc[e.error] = (acc[e.error] ?? 0) + 1;
+      return acc;
+    }, {}),
+  )
+    .map(([code, count]) => `${code} \u00d7 ${count}`)
+    .join(", ");
+}
+
 /** Delay in seconds before each retry (index 0 = retry 1, index 1 = retry 2). */
 const RETRY_DELAYS_SECONDS = [5, 15] as const;
 
@@ -266,14 +292,7 @@ export class PushRetryQueue {
       const lastErr = result.retryable
         ? `failed after ${newAttemptCount} attempts`
         : deadErrors.length > 0
-          ? Object.entries(
-              deadErrors.reduce<Record<string, number>>((acc, e) => {
-                acc[e.error] = (acc[e.error] ?? 0) + 1;
-                return acc;
-              }, {}),
-            )
-              .map(([code, count]) => `${code} \u00d7 ${count}`)
-              .join(", ")
+          ? _formatDeadTokenErrors(deadErrors)
           : "non-retryable error";
 
       await this.finalise(id, "failed", deliveryAttemptId, newAttemptCount, lastErr);
