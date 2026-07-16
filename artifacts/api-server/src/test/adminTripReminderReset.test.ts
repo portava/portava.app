@@ -199,4 +199,54 @@ describe("POST /admin/trips/:tripId/reset-reminder — auth gate", () => {
     assert.equal(r.status, 404, `expected 404, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(r.body?.error, "not_found", "error code should be 'not_found'");
   });
+
+  it("returns 400 with invalid_payload for a non-UUID tripId and never reaches the DB", async () => {
+    // Build an admin client that throws if the trips table is queried — proves
+    // the UUID guard fires before any DB lookup.
+    const profileRow = { id: USER_ID, role: "admin", account_status: "active", handle: "testuser", display_name: null, username: null };
+    const fc: any = {
+      auth: {
+        getUser: async (token: string) => {
+          if (!token || token === "bad") {
+            return { data: { user: null }, error: { message: "invalid token" } };
+          }
+          return { data: { user: { id: USER_ID } }, error: null };
+        },
+      },
+      from: (table: string) => {
+        if (table === "trips") {
+          throw new Error("DB must not be reached for a malformed tripId");
+        }
+        const b: any = {
+          select:      () => b,
+          eq:          () => b,
+          neq:         () => b,
+          is:          () => b,
+          in:          () => b,
+          update:      () => b,
+          insert:      () => b,
+          upsert:      () => b,
+          delete:      () => b,
+          order:       () => b,
+          limit:       () => b,
+          maybeSingle: () => ({ data: profileRow, error: null }),
+          single:      () => ({ data: profileRow, error: null }),
+          then:        (resolve: any) => Promise.resolve({ data: [profileRow], error: null }).then(resolve),
+          get count() { return 1; },
+        };
+        return b;
+      },
+      rpc: async () => ({ data: [], error: null }),
+    };
+
+    _setTestClient(fc, true);
+    _setTestServiceClient(fc);
+
+    for (const malformed of ["not-a-uuid", "123", "abc"]) {
+      const path = `/admin/trips/${malformed}/reset-reminder`;
+      const r = await req(path, FAKE_TOKEN);
+      assert.equal(r.status, 400, `[tripId="${malformed}"] expected 400, got ${r.status}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body?.error, "invalid_payload", `[tripId="${malformed}"] expected error "invalid_payload", got "${r.body?.error}"`);
+    }
+  });
 });
