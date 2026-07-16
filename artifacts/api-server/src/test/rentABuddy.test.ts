@@ -3171,6 +3171,49 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
       "booking status must remain no_show_pending when the status update DB call errors",
     );
   });
+
+  it("expired-request count stays at zero when the status update DB call fails", async () => {
+    // A stale requested booking whose .update({ status: 'expired' }) errors must
+    // leave expired = 0 and the booking in its original status.
+    const PAST = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      bookings: {
+        "bk-expire-err": {
+          id: "bk-expire-err",
+          traveler_id: USER_ID,
+          buddy_id: BUDDY_PROF,
+          status: "requested",
+          expires_at: PAST,
+        },
+      },
+      // Arm the update error override so the expired-requests status update errors.
+      updateErrorOverrides: {
+        rent_buddy_bookings: { message: "simulated DB error on expiry update", code: "23514" },
+      },
+    };
+
+    const r = await reqSweep();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    // expired count must be 0 — the DB update failed.
+    assert.equal(
+      r.body.expired,
+      0,
+      "expired must be 0 when the status update DB call errors",
+    );
+
+    // The booking must retain its original status because the update failed.
+    assert.equal(
+      state.bookings!["bk-expire-err"].status,
+      "requested",
+      "booking status must remain 'requested' when the expiry update DB call errors",
+    );
+  });
 });
 
 // ── No-show duplicate-report guard (canonical /no-show handler) ───────────────

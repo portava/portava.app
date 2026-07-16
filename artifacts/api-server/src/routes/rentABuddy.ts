@@ -5570,19 +5570,21 @@ router.post("/api/internal/buddy-requests/expire", async (req, res) => {
   let expiredCount = 0;
   if (staleRequests && staleRequests.length > 0) {
     const ids = staleRequests.map((r: any) => r.id as string);
-    await serviceClient
+    const { error: expireErr } = await serviceClient
       .from("rent_buddy_bookings")
       .update({ status: "expired", updated_at: now })
       .in("id", ids);
 
-    for (const bk of staleRequests) {
-      void serviceClient.from("buddy_booking_events").insert({
-        booking_id: bk.id, actor_user_id: bk.traveler_id, event: "request_expired",
-        from_status: bk.status as string, to_status: "expired", metadata: {},
-      });
-      notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_expired", bk.id as string);
+    if (!expireErr) {
+      for (const bk of staleRequests) {
+        void serviceClient.from("buddy_booking_events").insert({
+          booking_id: bk.id, actor_user_id: bk.traveler_id, event: "request_expired",
+          from_status: bk.status as string, to_status: "expired", metadata: {},
+        });
+        notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_expired", bk.id as string);
+      }
+      expiredCount = staleRequests.length;
     }
-    expiredCount = staleRequests.length;
   }
 
   // 2. Auto-complete bookings whose dispute window closed without a dispute
