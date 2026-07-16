@@ -133,8 +133,7 @@ function OpenRequestForm() {
     setLoading(true);
     const result = await createRequest({
       city: city.trim(),
-      lat: cityCoords?.lat,
-      lng: cityCoords?.lng,
+      ...(cityCoords != null ? { lat: cityCoords.lat, lng: cityCoords.lng } : {}),
       category, durationMinutes, groupSize,
       budgetMinUsd: budget.min ?? undefined,
       budgetMaxUsd: budget.max ?? undefined,

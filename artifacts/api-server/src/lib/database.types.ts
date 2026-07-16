@@ -6910,6 +6910,77 @@ export type Database = {
           },
         ]
       }
+      universal_stamp_catalog: {
+        Row: {
+          active_version_id: string | null
+          canonical_location_key: string
+          city: string | null
+          country: string
+          country_code: string | null
+          created_at: string
+          earn_count: number
+          id: string
+          lat: number | null
+          lng: number | null
+          neighborhood: string | null
+          place_ids: Json
+          prompt_template_version: string
+          region: string | null
+          stamp_type: string
+          status: string
+          display_name: string
+          updated_at: string
+        }
+        Insert: {
+          active_version_id?: string | null
+          canonical_location_key: string
+          city?: string | null
+          country: string
+          country_code?: string | null
+          created_at?: string
+          earn_count?: number
+          id?: string
+          lat?: number | null
+          lng?: number | null
+          neighborhood?: string | null
+          place_ids?: Json
+          prompt_template_version?: string
+          region?: string | null
+          stamp_type: string
+          status?: string
+          display_name: string
+          updated_at?: string
+        }
+        Update: {
+          active_version_id?: string | null
+          canonical_location_key?: string
+          city?: string | null
+          country?: string
+          country_code?: string | null
+          created_at?: string
+          earn_count?: number
+          id?: string
+          lat?: number | null
+          lng?: number | null
+          neighborhood?: string | null
+          place_ids?: Json
+          prompt_template_version?: string
+          region?: string | null
+          stamp_type?: string
+          status?: string
+          display_name?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stamp_artwork_versions_catalog_id_fkey"
+            columns: ["active_version_id"]
+            isOneToOne: false
+            referencedRelation: "stamp_artwork_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_account_states: {
         Row: {
           created_at: string
