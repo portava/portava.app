@@ -1517,6 +1517,95 @@ describe("runGenerationCycle — DB insert failure after all uploads succeed", (
     assert.equal(fail!.payload.locked_until, null);
     assert.equal(fail!.payload.locked_by, null);
   });
+
+  it("cleans up only real upload paths — not placeholder paths — when a mixed-batch insert fails", async () => {
+    // Provider: 1 data-URL placeholder + 2 real http URLs = CANDIDATE_COUNT (3) total.
+    // All fetches and uploads succeed; the DB insert returns an error.
+    // Expected: deleteCalls contains exactly the 2 real upload paths (matching
+    // storageCalls); the placeholder data-URL must never produce a storage path
+    // or appear in the delete list.
+    const insertErrMsg = "insert failed: unique constraint violation on mixed batch";
+    const { sc, updates, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage({
+      insertError: { message: insertErrMsg },
+    });
+    _setTestServiceClient(sc);
+    // 1 data-URL placeholder + 2 real http URLs = CANDIDATE_COUNT (3) candidates total.
+    _setTestStampImageProvider(makeMixedProvider(1, 2));
+    installFetch(successFetch());
+
+    const result = await runGenerationCycle();
+
+    // The cycle must report failure.
+    assert.equal(result.processed, false);
+
+    // Exactly 2 storage uploads — only the real http candidates are uploaded;
+    // the data-URL placeholder is never sent to storage.
+    assert.equal(
+      storageCalls.length,
+      2,
+      "exactly 2 real http candidates must be uploaded (placeholder skipped)",
+    );
+
+    // The insert was attempted but failed.
+    assert.equal(inserts.length, 1, "the batch insert must have been attempted");
+
+    // No review_required update.
+    assert.equal(
+      updates.some((u) => u.payload.status === "review_required"),
+      false,
+      "a failed insert must never reach review_required",
+    );
+
+    // Failure update present.
+    const fail = updates.find(
+      (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
+    );
+    assert.ok(fail, "must record a failure update on the queue row");
+    assert.equal(fail!.payload.status, "queued", "first insert failure must go back to queued");
+    assert.ok(
+      typeof fail!.payload.last_error === "string" &&
+        fail!.payload.last_error.includes(insertErrMsg),
+      `last_error must carry the insert error, got: ${fail!.payload.last_error}`,
+    );
+
+    // Orphan cleanup: exactly one delete call issued.
+    assert.equal(
+      deleteCalls.length,
+      1,
+      "must issue exactly one storage delete call for orphan cleanup",
+    );
+    const { paths: deletedPaths } = deleteCalls[0];
+
+    // The delete list must contain exactly the 2 real upload paths.
+    assert.equal(
+      deletedPaths.length,
+      2,
+      "deleted paths must contain exactly 2 entries — one per real upload (placeholder excluded)",
+    );
+
+    // Every real uploaded path must appear in the delete list.
+    for (const call of storageCalls) {
+      assert.ok(
+        deletedPaths.includes(call.path),
+        `real upload path ${call.path} must appear in the orphan-cleanup delete list`,
+      );
+    }
+
+    // All deleted paths must be real catalog storage paths (not placeholder-derived).
+    for (const p of deletedPaths) {
+      assert.ok(
+        p.startsWith("catalog/cat-1/") && p.endsWith(".png"),
+        `deleted path must be a real catalog storage path, got: ${p}`,
+      );
+    }
+
+    // No placeholder-derived path (data: URI or synthetic path) must appear in the delete list.
+    assert.equal(
+      deletedPaths.some((p: string) => p.startsWith("data:") || p.startsWith("placeholder/")),
+      false,
+      "placeholder-derived paths must never appear in the orphan-cleanup delete list",
+    );
+  });
 });
 
 // ── Orphan cleanup failure: original error must survive in last_error ──────────
