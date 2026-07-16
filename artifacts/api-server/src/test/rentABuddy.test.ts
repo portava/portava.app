@@ -3560,6 +3560,46 @@ describe("Rent a Buddy — dispute: duplicate-report guard", () => {
   });
 });
 
+// ── Dispute terminal-status guard ─────────────────────────────────────────────
+// cancelled and completed are terminal — the disputableStatuses list excludes
+// them, so the handler must return 409 invalid_transition with currentStatus.
+
+describe("Rent a Buddy — dispute: terminal-status guard", () => {
+  for (const terminalStatus of ["cancelled", "completed"] as const) {
+    it(`returns 409 invalid_transition when traveler calls /dispute on a ${terminalStatus} booking`, async () => {
+      setupState({
+        bookings: {
+          [BOOKING_ID]: {
+            id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+            status: terminalStatus,
+            updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+          },
+        },
+      });
+      const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "other" });
+      assert.equal(r.status, 409, JSON.stringify(r.body));
+      assert.equal(r.body.error, "invalid_transition", JSON.stringify(r.body));
+      assert.equal(r.body.currentStatus, terminalStatus, JSON.stringify(r.body));
+    });
+
+    it(`returns 409 invalid_transition when buddy calls /dispute on a ${terminalStatus} booking`, async () => {
+      setupState({
+        bookings: {
+          [BOOKING_ID]: {
+            id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+            status: terminalStatus,
+            updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+          },
+        },
+      });
+      const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "other" }, BUDDY_TOKEN);
+      assert.equal(r.status, 409, JSON.stringify(r.body));
+      assert.equal(r.body.error, "invalid_transition", JSON.stringify(r.body));
+      assert.equal(r.body.currentStatus, terminalStatus, JSON.stringify(r.body));
+    });
+  }
+});
+
 // ── Message payload correctness: booking_id / sender_id ───────────────────────
 // Asserts that milestone and card messages inserted into state.messages carry
 // the correct sender_id (the acting user) and booking_id (in the card body
