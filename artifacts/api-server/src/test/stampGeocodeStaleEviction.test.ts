@@ -948,6 +948,98 @@ describe("tombstone-sweep eviction: negative entry retries after sweep removes i
     );
     assert.equal(second?.country, "Brazil");
   });
+
+  it("logs sweep_tombstone_evicted and invokes hard-delete even when the city has no in-memory cache entry", async () => {
+    // The beforeEach already calls _clearCountryGeocodeCache(), so the cache is empty.
+    // We deliberately do NOT seed any cache entry for this city — this simulates the
+    // scenario where the instance was restarted after the tombstone was written but
+    // before the sweep ran (so there is no warm in-memory entry to evict).
+    const cityKey = "nocachecity"; // normCity("NoCacheCity")
+
+    // Pre-condition: confirm the cache has no entry for this key.
+    assert.equal(
+      _getGeocodeCacheEntryForTests(cityKey),
+      undefined,
+      "pre-condition: cache must be empty for the city key before the sweep",
+    );
+
+    // Track which keys were passed to the hard-delete .in() call.
+    const deletedKeys: string[][] = [];
+    let awaitIdx = 0;
+    const awaitedResponses: Array<{ data: any; error: null }> = [
+      { data: [],                      error: null }, // pass-1: no corrected_at rows
+      { data: [{ city_key: cityKey }], error: null }, // pass-2: tombstoned row
+      { data: null,                    error: null }, // pass-2 delete result
+    ];
+
+    const tombstoneDb: SupabaseClient = {
+      from(_table: string) {
+        const chain: any = {
+          select()  { return chain; },
+          eq()      { return chain; },
+          gte()     { return chain; },
+          not()     { return chain; },
+          in(col: string, vals: string[]) {
+            if (col === "city_key") deletedKeys.push(vals);
+            return chain;
+          },
+          delete()  { return chain; },
+          upsert()  { return Promise.resolve({ error: null }); },
+          async maybeSingle() { return { data: null, error: null }; },
+          then(resolve: (v: any) => any, reject?: (e: any) => any): Promise<any> {
+            const idx = awaitIdx++;
+            const resp = awaitedResponses[Math.min(idx, awaitedResponses.length - 1)];
+            return Promise.resolve(resp).then(resolve, reject);
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(tombstoneDb);
+
+    // Capture console.log output during the sweep — logEvent writes JSON lines there.
+    const logLines: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: any[]) => {
+      logLines.push(args.map(String).join(" "));
+    };
+
+    try {
+      await _runCorrectionSweepForTests();
+    } finally {
+      console.log = originalLog;
+    }
+
+    // Assert that sweep_tombstone_evicted was logged for the city key.
+    const evictedEvents = logLines
+      .map((line) => { try { return JSON.parse(line); } catch { return null; } })
+      .filter((obj): obj is Record<string, unknown> =>
+        obj !== null && (obj as any).event === "stamp.country_geocode.sweep_tombstone_evicted",
+      );
+
+    assert.equal(
+      evictedEvents.length,
+      1,
+      "sweep_tombstone_evicted must fire exactly once even when the city was not in the in-memory cache",
+    );
+    assert.equal(
+      evictedEvents[0].city_key,
+      cityKey,
+      "sweep_tombstone_evicted must carry the correct city_key",
+    );
+
+    // Assert that the hard-delete chain was invoked with the tombstoned key.
+    assert.equal(
+      deletedKeys.length,
+      1,
+      "the hard-delete .in() call must be made exactly once",
+    );
+    assert.deepEqual(
+      deletedKeys[0],
+      [cityKey],
+      "the hard-delete must target the tombstoned city_key",
+    );
+  });
 });
 
 // ── Tombstone-sweep: concurrent revival between pass-2 select and delete ──────
