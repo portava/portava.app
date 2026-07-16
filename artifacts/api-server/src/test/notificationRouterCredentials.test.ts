@@ -96,6 +96,8 @@ const transient503Fetch: typeof fetch = (async () => ({
 interface FakeDbOpts {
   /** Token returned from notification_devices table (null = no device row). */
   deviceToken?: string | null;
+  /** Multiple tokens from notification_devices (overrides deviceToken when set). */
+  deviceTokens?: string[];
   /** Token returned from profiles.expo_push_token (null = no legacy token). */
   legacyToken?: string | null;
   /** When set, notification_devices DELETE returns this error instead of succeeding. */
@@ -118,7 +120,12 @@ interface FakeDb {
 }
 
 function makeFakeDb(opts: FakeDbOpts = {}): FakeDb {
-  const deviceToken = opts.deviceToken !== undefined ? opts.deviceToken : TOKEN;
+  // deviceTokens overrides deviceToken when provided
+  const resolvedTokens: string[] = opts.deviceTokens !== undefined
+    ? opts.deviceTokens
+    : (opts.deviceToken !== undefined
+        ? (opts.deviceToken ? [opts.deviceToken] : [])
+        : [TOKEN]);
   const legacyToken = opts.legacyToken !== undefined ? opts.legacyToken : null;
   const deleteDeviceError = opts.deleteDeviceError !== undefined ? opts.deleteDeviceError : null;
 
@@ -158,7 +165,7 @@ function makeFakeDb(opts: FakeDbOpts = {}): FakeDb {
             }
             if (table === "notification_devices") {
               return {
-                data: deviceToken ? [{ push_token: deviceToken }] : [],
+                data: resolvedTokens.map((t) => ({ push_token: t })),
                 error: null,
               };
             }
@@ -413,6 +420,50 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
       0,
       "MessageRateExceeded must NOT enqueue on push_retry_queue",
     );
+  });
+
+  it("mixed batch — stale token is deleted while rate-limited token is preserved", async () => {
+    const STALE_TOKEN = "ExponentPushToken[stale-device]";
+    const RATE_TOKEN  = "ExponentPushToken[rate-limited-device]";
+
+    // DeviceNotRegistered for the stale token, MessageRateExceeded for the other.
+    _setTestFetch(
+      makeTicketFetch((to) =>
+        to === STALE_TOKEN
+          ? { status: "error", message: "DeviceNotRegistered", details: { error: "DeviceNotRegistered" } }
+          : { status: "error", message: "MessageRateExceeded", details: { error: "MessageRateExceeded" } },
+      ),
+    );
+
+    // Two device rows; legacy token is the rate-limited one — must NOT be nulled.
+    const { deletedDeviceTokens, profilesNulled, retryQueueInserts, client } = makeFakeDb({
+      deviceTokens: [STALE_TOKEN, RATE_TOKEN],
+      legacyToken: RATE_TOKEN,
+    });
+
+    const router = new NotificationRouter(client);
+    await router.route(BASE_NOTIF);
+
+    // Exactly one DELETE call, containing only the stale token
+    assert.equal(deletedDeviceTokens.length, 1, "exactly one DELETE call on notification_devices");
+    assert.ok(
+      deletedDeviceTokens[0].includes(STALE_TOKEN),
+      "DELETE targets the stale (DeviceNotRegistered) token",
+    );
+    assert.ok(
+      !deletedDeviceTokens[0].includes(RATE_TOKEN),
+      "rate-limited token must NOT appear in the DELETE call",
+    );
+
+    // The legacy token on profiles is rate-limited (still valid) — must not be nulled
+    assert.equal(
+      profilesNulled.length,
+      0,
+      "profiles.expo_push_token must NOT be nulled for a rate-limited token",
+    );
+
+    // Neither token warrants a retry-queue entry
+    assert.equal(retryQueueInserts.length, 0, "must NOT enqueue on push_retry_queue");
   });
 
   it("escalates cleanup failure log from warn to error after CLEANUP_ERROR_THRESHOLD consecutive failures", async () => {
