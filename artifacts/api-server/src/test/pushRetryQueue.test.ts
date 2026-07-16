@@ -356,6 +356,12 @@ describe("PushRetryQueue.processQueue() — exhaust all attempts", () => {
       "failed after 3 attempts",
       "delivery_attempt error_message must match the queue row last_error ('failed after 3 attempts')",
     );
+    // metadata.retryAttempts must be 3 — the exhaustion path must write the same count as the partial-success path
+    assert.deepEqual(
+      ndaUpdate.patch.metadata,
+      { retryAttempts: 3 },
+      "delivery_attempt metadata must record retryAttempts: 3 when all attempts are exhausted",
+    );
   });
 
   it("delivery_attempt error_message matches last_error on queue row when retryable exhaustion ends the final attempt", async () => {
@@ -400,6 +406,12 @@ describe("PushRetryQueue.processQueue() — exhaust all attempts", () => {
     const attemptErrorMsg    = ndaUpdate.patch.error_message;
     assert.equal(queueLastError,  "failed after 3 attempts", "queue last_error must be 'failed after 3 attempts'");
     assert.equal(attemptErrorMsg, queueLastError,             "delivery_attempt error_message must match queue last_error exactly");
+    // metadata.retryAttempts must be 3 — the exhaustion path must write the same count as the partial-success path
+    assert.deepEqual(
+      ndaUpdate.patch.metadata,
+      { retryAttempts: 3 },
+      "delivery_attempt metadata must record retryAttempts: 3 when all attempts are exhausted",
+    );
   });
 
   it("sets last_error to 'failed after 3 attempts' when attempt_count=2 and Expo returns 503 (retryable)", async () => {
