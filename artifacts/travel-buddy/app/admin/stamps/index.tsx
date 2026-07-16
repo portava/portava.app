@@ -3,7 +3,7 @@
  * Shows status counts, recent activity, and links to queue + catalog.
  * Requires admin role.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -13,7 +13,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { ArrowLeft, Image as ImageIcon, Clock, CheckCircle, AlertTriangle, XCircle, Activity } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
@@ -65,6 +65,36 @@ export default function StampStudioIndex() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Tick so the relative "X ago" text stays accurate while the screen is open.
+  const [, setClockTick] = useState(0);
+
+  // Lightweight re-fetch of worker health only (no spinners).
+  const refreshHealth = useCallback(async () => {
+    const healthRes = await getStampWorkerHealth();
+    if (healthRes.ok) {
+      setHealthWarnings(healthRes.data.warnings ?? []);
+      setWorkerHealth(healthRes.data.health ?? null);
+    }
+  }, []);
+  const refreshHealthRef = useRef(refreshHealth);
+  refreshHealthRef.current = refreshHealth;
+  const firstFocusRef = useRef(true);
+
+  // Poll worker health while the screen is focused; stop when unfocused.
+  useFocusEffect(
+    useCallback(() => {
+      // Refresh right away when returning to the screen so stale data doesn't linger.
+      if (!firstFocusRef.current) refreshHealthRef.current();
+      firstFocusRef.current = false;
+      const pollId = setInterval(() => { refreshHealthRef.current(); }, 45_000);
+      const tickId = setInterval(() => { setClockTick((n) => n + 1); }, 30_000);
+      return () => {
+        clearInterval(pollId);
+        clearInterval(tickId);
+      };
+    }, []),
+  );
 
   const onRefresh = useCallback(() => { setRefreshing(true); load(); }, [load]);
 
