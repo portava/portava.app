@@ -645,10 +645,16 @@ describe('expo-clipboard ~8.0.8 — setStringAsync call contract (mirrors GroupC
 // lockfiles, runtime breakage can occur silently even when the declared ranges
 // match.
 //
+// @babel/core is also checked here: both trees pin ^7.25.2 in package.json but
+// the resolved version is only locked in each pnpm-lock.yaml.  A drift (e.g.
+// after `pnpm update` in only one tree) can silently produce different
+// JSX/TS transpilation output or cause Babel plugin-version mismatches at
+// build time.
+//
 // This section reads both lockfiles and asserts that each package resolves to
 // exactly one version and that version is identical in both trees.
 
-describe('Lockfile-resolved transitive peer dep versions — @expo/config-plugins and expo-modules-core', () => {
+describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/config-plugins and expo-modules-core', () => {
   // travel-buddy-standalone/pnpm-lock.yaml is 4 levels up from src/services/ in artifacts/travel-buddy/
   const standaloneLockText = readFileSync(pathResolve(__dir, '../../../../travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
   // monorepo root pnpm-lock.yaml is also 4 levels up from src/services/ in artifacts/travel-buddy/
@@ -677,7 +683,7 @@ describe('Lockfile-resolved transitive peer dep versions — @expo/config-plugin
     return [...found].sort();
   }
 
-  const pkgsToCheck = ['@expo/config-plugins', 'expo-modules-core'];
+  const pkgsToCheck = ['@babel/core', '@expo/config-plugins', 'expo-modules-core'];
 
   for (const pkg of pkgsToCheck) {
     it(`${pkg} — resolved to exactly one version in each lockfile`, () => {
