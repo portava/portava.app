@@ -784,6 +784,70 @@ describe("correction-sweep eviction: negative entry retries after sweep removes 
     );
     assert.equal(second?.country, "Japan");
   });
+
+  it("two simultaneous calls after a sweep-evicted null entry share one Nominatim fetch — not two", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Step 1 — seed a null (negative) cache entry.
+    // _setGeocodeFetchForTests also sets _dbClientOverride = null (no DB),
+    // so readDbCache returns null and the code falls through to Nominatim.
+    let fetchCallCount = 0;
+    _setGeocodeFetchForTests(async () => {
+      fetchCallCount++;
+      return { ok: true, json: async () => [] };
+    });
+
+    const seed = await geocodeCityCountry("SweepConcurrentCity");
+    assert.equal(seed, null, "pre-condition: unresolved city should be cached as null");
+    assert.equal(fetchCallCount, 1, "pre-condition: one fetch to seed the negative entry");
+
+    // Step 2 — run the correction sweep so the null entry is evicted.
+    // The sweep DB client has a pass-1 row with corrected_at > T0, triggering eviction.
+    const correctedAtIso = new Date(T0 + 500).toISOString();
+    const cityKey = "sweepconcurrentcity"; // normCity("SweepConcurrentCity")
+    const sweepDb = makeSweepDbClient([{ city_key: cityKey, corrected_at: correctedAtIso }]);
+    _setGeocodeDbClientForTests(sweepDb);
+
+    await _runCorrectionSweepForTests();
+
+    // Step 3 — swap fetch to return a valid geocode result on the retry.
+    // Both racing callers must share this single invocation via the _pending dedup map.
+    // _setGeocodeFetchForTests resets _dbClientOverride to null, so readDbCache
+    // returns null and the code proceeds straight to forwardGeocodeCity.
+    _setGeocodeFetchForTests(async () => {
+      fetchCallCount++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "de", country: "Germany" } }],
+      };
+    });
+
+    // Step 4 — fire two concurrent calls.  The null entry has been evicted so
+    // neither caller finds a valid cache entry; both reach the _pending check.
+    // The first caller synchronously stores its promise in _pending before any
+    // await; the second caller finds that same promise and returns it — so
+    // exactly one Nominatim fetch is made.
+    const [resultA, resultB] = await Promise.all([
+      geocodeCityCountry("SweepConcurrentCity"),
+      geocodeCityCountry("SweepConcurrentCity"),
+    ]);
+
+    // Exactly one Nominatim call across both callers (seed fetch + one retry = 2 total).
+    assert.equal(
+      fetchCallCount,
+      2,
+      "two concurrent callers after sweep eviction must share one Nominatim fetch — not issue two",
+    );
+
+    // Both callers receive the same resolved result.
+    assert.equal(resultA?.countryCode, "DE",
+      "first caller should receive the geocoded result");
+    assert.equal(resultB?.countryCode, "DE",
+      "second caller should receive the same geocoded result — not a duplicate fetch");
+    assert.equal(resultA?.country, "Germany");
+    assert.equal(resultB?.country, "Germany");
+  });
 });
 
 // ── Tombstone-sweep eviction retry ───────────────────────────────────────────
