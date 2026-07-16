@@ -292,3 +292,96 @@ describe('FailedJobsScreen — re-queue flow', () => {
     expect(errorCall[1]).toBe('DB write failed');
   });
 });
+
+// ── Orphaned-files badge ────────────────────────────────────────────────────────
+
+/**
+ * ## What's covered
+ *
+ * 1. A job with cleanup_error set renders the "Orphaned storage files" badge.
+ * 2. A job with cleanup_error: null does not render the badge.
+ * 3. After a successful requeue the job row is removed, so the badge disappears.
+ *
+ * ## Why these tests exist
+ *
+ * The badge is the only signal to admins that storage files need manual removal.
+ * If the badge rendered when it shouldn't (or didn't render when it should), ops
+ * would either waste time investigating clean jobs or miss genuine orphan files.
+ * The requeue path clears cleanup_error on the server; the UI removes the row
+ * from the list — both together guarantee the badge is gone post-requeue.
+ */
+
+const JOB_WITH_CLEANUP_ERROR = {
+  id: 'job-orphan',
+  catalog_id: 'cat-orphan',
+  status: 'retryable_failed' as const,
+  attempts: 2,
+  max_attempts: 5,
+  last_error: 'storage_upload_failed: timeout',
+  cleanup_error: 'remove() returned unexpected error: 503',
+  cleanup_error_paths: ['stamps/abc/v1.webp', 'stamps/abc/v2.webp'],
+  updated_at: new Date('2026-07-16T12:00:00Z').toISOString(),
+  universal_stamp_catalog: { display_name: 'Rome Colosseum', stamp_type: 'landmark', country_code: 'IT' },
+};
+
+const JOB_WITHOUT_CLEANUP_ERROR = {
+  id: 'job-clean',
+  catalog_id: 'cat-clean',
+  status: 'retryable_failed' as const,
+  attempts: 1,
+  max_attempts: 5,
+  last_error: 'timeout: image generation exceeded 30s',
+  cleanup_error: null,
+  cleanup_error_paths: null,
+  updated_at: new Date('2026-07-16T13:00:00Z').toISOString(),
+  universal_stamp_catalog: { display_name: 'Berlin Wall', stamp_type: 'landmark', country_code: 'DE' },
+};
+
+describe('FailedJobsScreen — orphaned-files badge', () => {
+  let alertSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    mockGetQueue.mockReset();
+    mockRequeue.mockReset();
+    alertSpy = jest.spyOn(Alert, 'alert');
+  });
+
+  afterEach(() => {
+    alertSpy.mockRestore();
+    jest.clearAllMocks();
+  });
+
+  it('renders the "Orphaned storage files" badge when cleanup_error is set', async () => {
+    mockGetQueue.mockResolvedValue(queueOk([JOB_WITH_CLEANUP_ERROR]));
+
+    render(<FailedJobsScreen />);
+    await waitFor(() => screen.getByText('Rome Colosseum'));
+
+    expect(screen.getByText('Orphaned storage files')).toBeTruthy();
+  });
+
+  it('does not render the badge when cleanup_error is null', async () => {
+    mockGetQueue.mockResolvedValue(queueOk([JOB_WITHOUT_CLEANUP_ERROR]));
+
+    render(<FailedJobsScreen />);
+    await waitFor(() => screen.getByText('Berlin Wall'));
+
+    expect(screen.queryByText('Orphaned storage files')).toBeNull();
+  });
+
+  it('badge disappears after a successful requeue removes the job row', async () => {
+    mockGetQueue.mockResolvedValue(queueOk([JOB_WITH_CLEANUP_ERROR]));
+    mockRequeue.mockResolvedValueOnce({ ok: true });
+
+    render(<FailedJobsScreen />);
+    await waitFor(() => screen.getByText('Orphaned storage files'));
+
+    // Trigger the requeue flow.
+    fireEvent.press(screen.getByText('Re-queue'));
+    await pressAlertButton(alertSpy, 'Re-queue');
+
+    // The row (and therefore the badge) must be gone after a successful requeue.
+    await waitFor(() => expect(screen.queryByText('Orphaned storage files')).toBeNull());
+    expect(screen.queryByText('Rome Colosseum')).toBeNull();
+  });
+});
