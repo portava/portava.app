@@ -40,7 +40,8 @@
  */
 
 import React from 'react';
-import { render, act, waitFor, screen } from '@testing-library/react-native';
+import { ScrollView } from 'react-native';
+import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
 import StampStudioIndex from '../../../app/admin/stamps/index';
 import { useFocusEffect } from 'expo-router';
 import {
@@ -308,5 +309,78 @@ describe('StampStudioIndex — returning focus triggers an immediate catalog re-
     await act(async () => { poll!.fn(); });
 
     expect(mockGetCatalog.mock.calls.length).toBeGreaterThan(callsAfterRefocus);
+  });
+});
+
+// ── Suite 3: pull-to-refresh ───────────────────────────────────────────────────
+
+/**
+ * Pull-to-refresh fires onRefresh → setRefreshing(true) → load() →
+ * setRefreshing(false).  A stale-closure bug or a missing setRefreshing(false)
+ * call would be invisible without a test: the spinner would hang and the count
+ * would never update.
+ *
+ * We simulate the gesture with fireEvent(scrollView, 'refresh'), which invokes
+ * the onRefresh prop exactly as the native RefreshControl does.
+ */
+describe('StampStudioIndex — pull-to-refresh picks up newly approved artwork', () => {
+  let spy: ReturnType<typeof makeIntervalSpy>;
+
+  beforeEach(() => {
+    spy = makeIntervalSpy();
+    makeUseFocusEffectMock();
+
+    // First call → initial load (approved: 5).
+    // All subsequent calls → pull-to-refresh response (approved: 77).
+    mockGetCatalog
+      .mockResolvedValueOnce(catalogOk(5))
+      .mockResolvedValue(catalogOk(77));
+
+    mockGetHealth.mockResolvedValue({ ok: false });
+  });
+
+  afterEach(() => {
+    spy.teardown();
+    jest.clearAllMocks();
+  });
+
+  it('calls load() again when the user pulls to refresh', async () => {
+    render(<StampStudioIndex />);
+    await waitFor(() => screen.getByText('5'));
+
+    const callsBefore = mockGetCatalog.mock.calls.length;
+    const scrollView = screen.UNSAFE_getByType(ScrollView);
+    await act(async () => { fireEvent(scrollView, 'refresh'); });
+
+    // load() calls getAdminStampCatalog — count must have increased.
+    expect(mockGetCatalog.mock.calls.length).toBeGreaterThan(callsBefore);
+  });
+
+  it('shows the updated approved count after pull-to-refresh completes', async () => {
+    render(<StampStudioIndex />);
+    await waitFor(() => screen.getByText('5'));
+
+    const scrollView = screen.UNSAFE_getByType(ScrollView);
+    await act(async () => { fireEvent(scrollView, 'refresh'); });
+
+    await waitFor(() => screen.getByText('77'));
+    expect(screen.getByText('77')).toBeTruthy(); // updated count visible
+    expect(screen.queryByText('5')).toBeNull();   // stale count gone
+  });
+
+  it('clears the refreshing spinner once load() resolves', async () => {
+    render(<StampStudioIndex />);
+    await waitFor(() => screen.getByText('5'));
+
+    const scrollView = screen.UNSAFE_getByType(ScrollView);
+    await act(async () => { fireEvent(scrollView, 'refresh'); });
+
+    // Wait until the updated count is present — load() has resolved and
+    // setRefreshing(false) must have been called by then.
+    await waitFor(() => screen.getByText('77'));
+
+    // The RefreshControl is passed as a prop; check its refreshing prop directly.
+    const refreshControl = scrollView.props.refreshControl;
+    expect(refreshControl.props.refreshing).toBe(false);
   });
 });
