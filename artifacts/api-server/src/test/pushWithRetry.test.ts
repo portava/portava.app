@@ -19,6 +19,7 @@ import assert from "node:assert/strict";
 
 import { _setTestFetch } from "../lib/push.js";
 import { sendPushWithRetry, _setTestClearDeadTokens } from "../lib/pushWithRetry.js";
+import { logger } from "../lib/logger.js";
 
 const USER1 = "aa000000-0001-0001-0001-000000000001";
 const USER2 = "aa000000-0002-0002-0002-000000000002";
@@ -557,6 +558,72 @@ describe("sendPushWithRetry", () => {
       (db.__inserted["push_retry_queue"] ?? []).length,
       0,
       "nothing must be enqueued for retry when clearDeadTokens throws",
+    );
+  });
+
+  /**
+   * clearDeadTokens throws on the initial send path → warn log must fire
+   *
+   * The catch block around clearDeadTokens emits a logger.warn with
+   * { err, staleCount } so DB outages are visible to operators.
+   * This test injects a throwing mock and captures the warn call to
+   * confirm neither field is silently dropped.
+   */
+  it("emits a warn log with staleCount and err fields when clearDeadTokens throws on the initial send path", async () => {
+    // TOKEN1 ok, TOKEN2 DeviceNotRegistered → staleTokens.length === 1
+    ticketFor = (to: string) =>
+      to === TOKEN2
+        ? { status: "error", message: "gone", details: { error: "DeviceNotRegistered" } }
+        : { status: "ok", id: "t" };
+
+    const throwingError = new Error("DB connection lost");
+    _setTestClearDeadTokens(async () => {
+      throw throwingError;
+    });
+
+    // Capture logger.warn calls
+    const warnCalls: Array<[Record<string, unknown>, string]> = [];
+    const originalWarn = logger.warn.bind(logger);
+    (logger as any).warn = (obj: Record<string, unknown>, msg: string) => {
+      warnCalls.push([obj, msg]);
+    };
+
+    try {
+      const db = makeFakeDb();
+      await sendPushWithRetry(
+        db,
+        [{ userId: USER1, tokens: [TOKEN1] }, { userId: USER2, tokens: [TOKEN2] }],
+        PAYLOAD,
+      );
+    } finally {
+      (logger as any).warn = originalWarn;
+    }
+
+    const clearDeadWarn = warnCalls.find(([, msg]) =>
+      msg.includes("clearDeadTokens threw on initial send path"),
+    );
+    assert.ok(
+      clearDeadWarn !== undefined,
+      "a warn log with 'clearDeadTokens threw on initial send path' must be emitted",
+    );
+    const [fields] = clearDeadWarn!;
+    assert.ok(
+      "staleCount" in fields,
+      "warn log must include staleCount field",
+    );
+    assert.equal(
+      fields.staleCount,
+      1,
+      "staleCount must equal the number of dead tokens (1)",
+    );
+    assert.ok(
+      "err" in fields,
+      "warn log must include err field",
+    );
+    assert.equal(
+      (fields.err as Error).message,
+      throwingError.message,
+      "err field must be the thrown error",
     );
   });
 });
