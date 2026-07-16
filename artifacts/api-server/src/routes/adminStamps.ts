@@ -11,6 +11,7 @@
  * POST /admin/stamps/:userStampId/revoke   — revoke a stamp (requires reason)
  * POST /admin/stamps/:userStampId/restore  — restore a revoked stamp (requires reason)
  * GET  /admin/stamps/audit                 — query stamp_award_events with filters
+ * GET  /admin/stamps/worker-health         — generation worker health (queue depth, stuck jobs)
  * GET  /admin/stamps/campaigns             — list campaigns
  * POST /admin/stamps/campaigns             — create campaign
  * PATCH /admin/stamps/campaigns/:campaignId — update campaign
@@ -23,6 +24,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { awardStamp, revokeStamp, restoreStamp } from "../services/passport/StampAwardEngine.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter as NotifRouter } from "../services/notifications/NotificationRouter.js";
+import { queryStampWorkerHealth } from "../lib/stamps/generationWorker.js";
 
 const router = Router();
 
@@ -345,6 +347,24 @@ router.get("/admin/stamps/audit", async (req, res) => {
   const { data, error, count } = await query;
   if (error) { sendError(res, "db_error", error.message); return; }
   res.json({ events: data ?? [], total: count ?? 0, page });
+});
+
+// ── GET /admin/stamps/worker-health ───────────────────────────────────────────
+
+router.get("/admin/stamps/worker-health", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+
+  try {
+    const health = await queryStampWorkerHealth();
+    if (!health) {
+      sendError(res, "db_error", "Service client not configured");
+      return;
+    }
+    res.json({ health });
+  } catch (e: any) {
+    sendError(res, "db_error", e?.message ?? "worker health query failed");
+  }
 });
 
 // ── GET /admin/stamps/campaigns ───────────────────────────────────────────────

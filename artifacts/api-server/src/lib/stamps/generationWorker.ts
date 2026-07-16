@@ -225,6 +225,76 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
   }
 }
 
+// ── Worker health ─────────────────────────────────────────────────────────────
+
+export interface StampWorkerHealth {
+  worker_enabled: boolean;
+  worker_running: boolean;
+  worker_id: string;
+  last_success_at: string | null;
+  queue_depth: Record<string, number>;
+  stuck_jobs: Array<{
+    id: string;
+    catalog_id: string;
+    locked_by: string | null;
+    locked_until: string | null;
+    updated_at: string | null;
+  }>;
+}
+
+/**
+ * Query worker health from the queue table.
+ *
+ * - last_success_at: most recent artwork version insert (persistent across restarts)
+ * - queue_depth: count of queue rows per status
+ * - stuck_jobs: rows still in `generating` whose lock has expired — a crashed
+ *   worker never released them.
+ *
+ * Returns null when the service client is not configured.
+ */
+export async function queryStampWorkerHealth(): Promise<StampWorkerHealth | null> {
+  const sc = getServiceClient();
+  if (!sc) return null;
+
+  const nowIso = new Date().toISOString();
+
+  const [statusRes, lastSuccessRes, stuckRes] = await Promise.all([
+    sc.from("stamp_generation_queue").select("status"),
+    sc
+      .from("stamp_artwork_versions")
+      .select("created_at")
+      .eq("generation_source", "ai_generated")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    sc
+      .from("stamp_generation_queue")
+      .select("id, catalog_id, locked_by, locked_until, updated_at")
+      .eq("status", "generating")
+      .lt("locked_until", nowIso)
+      .order("locked_until")
+      .limit(50),
+  ]);
+
+  if (statusRes.error) {
+    throw new Error(`worker_health_query_failed: ${statusRes.error.message}`);
+  }
+
+  const queueDepth: Record<string, number> = {};
+  for (const row of (statusRes.data ?? []) as Array<{ status: string }>) {
+    queueDepth[row.status] = (queueDepth[row.status] ?? 0) + 1;
+  }
+
+  return {
+    worker_enabled: process.env.STAMP_WORKER_ENABLED === "true",
+    worker_running: _workerInterval !== null,
+    worker_id: WORKER_ID,
+    last_success_at: (lastSuccessRes.data as any)?.created_at ?? null,
+    queue_depth: queueDepth,
+    stuck_jobs: (stuckRes.data ?? []) as StampWorkerHealth["stuck_jobs"],
+  };
+}
+
 // ── Worker loop ───────────────────────────────────────────────────────────────
 
 let _workerInterval: ReturnType<typeof setInterval> | null = null;

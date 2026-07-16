@@ -17,7 +17,7 @@ import { startInviteSlotReconciler } from "./lib/inviteSlotReconciler";
 import { startInviteSlotSweeper } from "./lib/inviteSlotSweeper";
 import { getServiceClient } from "./lib/supabase";
 import { assertRequiredEnv } from "./lib/envValidation";
-import { startWorkerLoop } from "./lib/stamps/generationWorker";
+import { startWorkerLoop, queryStampWorkerHealth } from "./lib/stamps/generationWorker";
 import { runSchemaDriftCheck } from "./lib/schemaDriftCheck";
 
 assertRequiredEnv(logger);
@@ -66,6 +66,38 @@ app.listen(port, (err) => {
     const intervalMs = Number(process.env.STAMP_WORKER_INTERVAL_MS) || 30_000;
     startWorkerLoop(intervalMs);
   }
+
+  // Startup stamp-worker health summary — log pending queue depth and any
+  // jobs stuck in `generating` past their lock (a crashed worker never
+  // released them) so operators see queue state immediately on deploy.
+  queryStampWorkerHealth().then((health) => {
+    if (!health) return; // service client not configured — skip
+    logger.info(
+      {
+        worker_enabled: health.worker_enabled,
+        last_success_at: health.last_success_at,
+        queue_depth: health.queue_depth,
+        stuck_jobs: health.stuck_jobs.length,
+      },
+      "startup: stamp generation worker health",
+    );
+    if (health.stuck_jobs.length > 0) {
+      logger.warn(
+        { stuck_jobs: health.stuck_jobs },
+        "startup: stamp generation jobs stuck in 'generating' past lock expiry — worker may have crashed",
+      );
+    }
+    const pending =
+      (health.queue_depth["queued"] ?? 0) + (health.queue_depth["generating"] ?? 0);
+    if (pending > 0 && !health.worker_enabled) {
+      logger.warn(
+        { pending },
+        "startup: stamp generation queue has pending jobs but STAMP_WORKER_ENABLED is not 'true' — artwork will not be generated",
+      );
+    }
+  }).catch((startupErr) => {
+    logger.warn({ err: startupErr }, "startup: could not query stamp worker health");
+  });
 
   // Startup schema-drift check: probes every declared critical column and
   // SQL function against the live schema and logs one consolidated warning
