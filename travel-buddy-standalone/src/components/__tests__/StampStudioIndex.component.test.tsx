@@ -593,3 +593,98 @@ describe('StampStudioIndex — 45-second health poll updates the warning strip',
     expect(mockGetCatalog.mock.calls.length).toBe(catalogCallsBefore);
   });
 });
+
+// ── Suite 5: blur clears all three intervals ───────────────────────────────────
+
+/**
+ * When the user navigates away, useFocusEffect's cleanup must call
+ * clearInterval for all three IDs — health (45 s), catalog (60 s), and
+ * clock tick (30 s).  If any one is missed, ghost setState calls keep
+ * firing on a blurred (or unmounted) screen and cause memory pressure.
+ *
+ * Strategy: after mount, `spy.captured` holds exactly three entries.
+ * Invoking `focusControl.blur()` triggers the useFocusEffect cleanup,
+ * which calls clearInterval for each ID.  Our clearInterval spy removes
+ * each entry from `captured` as it is cleared, so after blur the array
+ * must be empty.
+ */
+describe('StampStudioIndex — all three polling intervals stop when leaving the screen', () => {
+  let spy: ReturnType<typeof makeIntervalSpy>;
+  let focusControl: ReturnType<typeof makeUseFocusEffectMock>;
+
+  beforeEach(() => {
+    spy = makeIntervalSpy();
+    focusControl = makeUseFocusEffectMock();
+
+    mockGetCatalog.mockResolvedValue(catalogOk(10));
+    mockGetHealth.mockResolvedValue({ ok: false });
+  });
+
+  afterEach(() => {
+    spy.teardown();
+    jest.clearAllMocks();
+  });
+
+  it('registers exactly three long-delay intervals on mount', async () => {
+    render(<StampStudioIndex />);
+    // Wait for initial load to complete so all three intervals are registered.
+    await waitFor(() => screen.getByText('10'));
+
+    // The component registers: health (45 s), catalog (60 s), clock tick (30 s).
+    expect(spy.captured.length).toBe(3);
+  });
+
+  it('clears all three interval IDs when the screen loses focus', async () => {
+    render(<StampStudioIndex />);
+    await waitFor(() => screen.getByText('10'));
+
+    // Guard: all three must be present before we blur.
+    expect(spy.captured.length).toBe(3);
+
+    // Simulate the user navigating away — triggers useFocusEffect cleanup.
+    focusControl.blur();
+
+    // After blur, clearInterval must have been called for every captured ID,
+    // leaving the captured array empty.
+    expect(spy.captured.length).toBe(0);
+  });
+
+  it('clears the 30-second clock-tick interval on blur', async () => {
+    render(<StampStudioIndex />);
+    await waitFor(() => screen.getByText('10'));
+
+    const tickBefore = spy.captured.find((e) => e.delay === 30_000);
+    expect(tickBefore).toBeDefined();
+
+    focusControl.blur();
+
+    const tickAfter = spy.captured.find((e) => e.delay === 30_000);
+    expect(tickAfter).toBeUndefined();
+  });
+
+  it('clears the 45-second health-poll interval on blur', async () => {
+    render(<StampStudioIndex />);
+    await waitFor(() => screen.getByText('10'));
+
+    const healthBefore = spy.captured.find((e) => e.delay === 45_000);
+    expect(healthBefore).toBeDefined();
+
+    focusControl.blur();
+
+    const healthAfter = spy.captured.find((e) => e.delay === 45_000);
+    expect(healthAfter).toBeUndefined();
+  });
+
+  it('clears the 60-second catalog-poll interval on blur', async () => {
+    render(<StampStudioIndex />);
+    await waitFor(() => screen.getByText('10'));
+
+    const catalogBefore = spy.captured.find((e) => e.delay === 60_000);
+    expect(catalogBefore).toBeDefined();
+
+    focusControl.blur();
+
+    const catalogAfter = spy.captured.find((e) => e.delay === 60_000);
+    expect(catalogAfter).toBeUndefined();
+  });
+});
