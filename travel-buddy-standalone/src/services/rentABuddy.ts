@@ -146,8 +146,12 @@ export type BuddySortBy =
   | 'response_time'
   | 'newest';
 
-export type BuddySearchParams = {
+export interface BuddySearchParams {
   city: string;
+  /** Latitude of the user's current location — enables proximity-based ranking on the server. */
+  lat?: number;
+  /** Longitude of the user's current location — enables proximity-based ranking on the server. */
+  lng?: number;
   category?: BuddyCategory;
   date?: string;
   groupSize?: number;
@@ -159,11 +163,7 @@ export type BuddySearchParams = {
   sessionMode?: 'any' | 'in_person' | 'remote';
   page?: number;
   perPage?: number;
-} & (
-  /** Both lat and lng must be provided together — a half-pair is rejected at compile time. */
-  | { lat: number; lng: number }
-  | { lat?: never; lng?: never }
-);
+}
 
 export interface BuddySearchResult {
   buddies: BuddyProfile[];
@@ -958,14 +958,11 @@ export async function clearAvailableNow(): Promise<ApiResult<{ ok: boolean }>> {
 // ── Marketplace — Requests & Offers ──────────────────────────────────────────
 
 export async function createRequest(payload: {
-  city: string; category: string; desiredDate?: string; desiredTime?: string;
+  city: string; lat?: number; lng?: number; category: string; desiredDate?: string; desiredTime?: string;
   durationMinutes?: number; groupSize?: number; budgetMinUsd?: number; budgetMaxUsd?: number;
   languageNeeded?: string; energyType?: string; safetyPrefs?: Record<string, boolean>;
   paymentModePref?: string; notes?: string;
-} & (
-  | { lat: number; lng: number }
-  | { lat?: never; lng?: never }
-)): Promise<ApiResult<{ request: BuddyRequest }>> {
+}): Promise<ApiResult<{ request: BuddyRequest }>> {
   return apiFetch('/api/rent-a-buddy/requests', { method: 'POST', body: JSON.stringify(payload) });
 }
 
@@ -1083,12 +1080,9 @@ export async function bookAgain(buddyId: string, payload?: { category?: string; 
 }
 
 export async function joinWaitlistV2(payload: {
-  city: string; category?: string; language?: string; budgetMaxUsd?: number;
+  city: string; lat?: number; lng?: number; category?: string; language?: string; budgetMaxUsd?: number;
   desiredDate?: string; desiredTime?: string; notes?: string; groupSize?: number; expiryDays?: number;
-} & (
-  | { lat: number; lng: number }
-  | { lat?: never; lng?: never }
-)): Promise<ApiResult<{ entry: WaitlistEntry }>> {
+}): Promise<ApiResult<{ entry: WaitlistEntry }>> {
   return apiFetch('/api/rent-a-buddy/waitlist/v2', { method: 'POST', body: JSON.stringify(payload) });
 }
 

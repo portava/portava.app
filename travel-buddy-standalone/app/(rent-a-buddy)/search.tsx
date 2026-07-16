@@ -124,18 +124,15 @@ export default function RentABuddySearch() {
     if (!city.trim()) return;
     const nextPage = reset ? 1 : page + 1;
     if (reset) { setLoading(true); setError(null); }
-    const baseSearch = {
+    const res = await searchBuddies({
       city,
+      ...(cityLat != null ? { lat: cityLat } : {}),
+      ...(cityLng != null ? { lng: cityLng } : {}),
       category: selectedCategory,
       page: nextPage,
       perPage: 10,
       ...(bookingDate ? { date: bookingDate } : {}),
-    };
-    const res = await searchBuddies(
-      cityLat != null && cityLng != null
-        ? { ...baseSearch, lat: cityLat, lng: cityLng }
-        : baseSearch,
-    );
+    });
     setLoading(false);
     setRefreshing(false);
     if (!res.ok) { setError(res.error); return; }
