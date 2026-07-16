@@ -33,7 +33,11 @@ export function buildCityStampLabels(
   const SENTINELS = new Set(["unknown", "n/a", "none", "null", "undefined", ""]);
   const isSentinel =
     trimmed === null || SENTINELS.has(trimmed.toLowerCase());
-  const countryCode = isSentinel ? null : trimmed!.slice(0, 2).toUpperCase();
+  // Require at least 2 letters so punctuation-only ("---", "???") and
+  // digit-only ("00", "123") strings fall back to year-only instead of
+  // producing a meaningless code.
+  const isAlpha = !isSentinel && /^[A-Za-z]{2,}/.test(trimmed!);
+  const countryCode = isAlpha ? trimmed!.slice(0, 2).toUpperCase() : null;
   const sublabel = countryCode ? `${countryCode} · ${year}` : String(year);
   return { label, sublabel };
 }
