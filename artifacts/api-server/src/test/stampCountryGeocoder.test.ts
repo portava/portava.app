@@ -20,6 +20,7 @@ import {
   _setGeocodeDbClientForTests,
   _clearCountryGeocodeCache,
   _runCorrectionSweepForTests,
+  _backdateGeocodeCacheEntryForTests,
   startCorrectionSweep,
 } from "../lib/stamps/countryGeocoder.js";
 import {
@@ -510,6 +511,94 @@ describe("background correction sweep", () => {
     stop();
     // Calling stop a second time must also be safe.
     stop();
+  });
+
+  it("does not evict an in-memory entry when the DB row has corrected_at: null (sweep path)", async () => {
+    // Seed in-memory cache with a valid entry.
+    _setGeocodeFetchForTests(fakeNominatim({ "kyoto": { country_code: "jp", country: "Japan" } }));
+    await geocodeCityCountry("Kyoto");
+    assert.equal(fetchCalls.length, 1, "initial geocode should hit Nominatim once");
+
+    // DB sweep returns the row for "kyoto" but with corrected_at: null.
+    // SQL WHERE corrected_at >= since filters nulls, but if a null somehow
+    // slips through the sweep must not treat it as an eviction signal.
+    const nullCorrectedClient = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache");
+        const chain: any = {
+          select() { return chain; },
+          gte()    { return chain; },
+          then(resolve: (v: any) => void) {
+            resolve({ data: [{ city_key: "kyoto", corrected_at: null }], error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(nullCorrectedClient);
+
+    await _runCorrectionSweepForTests();
+
+    // Entry must still be cached — no Nominatim re-fetch.
+    fetchCalls = [];
+    _setGeocodeFetchForTests(async (url: string) => {
+      fetchCalls.push(url);
+      throw new Error("Nominatim must not be called — entry should still be cached");
+    });
+    _setGeocodeDbClientForTests(nullCorrectedClient);
+
+    const r = await geocodeCityCountry("Kyoto");
+    assert.equal(fetchCalls.length, 0, "null corrected_at must not evict the cache entry");
+    assert.ok(r !== null, "cached result must still be returned");
+    assert.equal(r!.countryCode, "JP");
+  });
+
+  it("does not evict an in-memory entry when the DB row has corrected_at: null (per-request probe path)", async () => {
+    // Seed in-memory cache with a valid entry.
+    _setGeocodeFetchForTests(fakeNominatim({ "oslo": { country_code: "no", country: "Norway" } }));
+    await geocodeCityCountry("Oslo");
+    assert.equal(fetchCalls.length, 1, "initial geocode should hit Nominatim once");
+
+    // Backdate the cache entry so the next geocodeCityCountry call immediately
+    // re-probes the DB for corrected_at (skips the 5-minute cooldown).
+    _backdateGeocodeCacheEntryForTests("oslo");
+
+    // DB per-request probe returns a row with corrected_at: null.
+    const nullCorrectedMaybeSingleClient = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache");
+        let _isMaybeSingle = false;
+        const chain: any = {
+          select()      { return chain; },
+          eq()          { return chain; },
+          gte()         { return chain; },
+          maybeSingle() { _isMaybeSingle = true; return chain; },
+          then(resolve: (v: any) => void) {
+            if (_isMaybeSingle) {
+              // evictIfDbCorrected path — null corrected_at must not evict.
+              resolve({ data: { corrected_at: null }, error: null });
+            } else {
+              resolve({ data: [], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(nullCorrectedMaybeSingleClient);
+
+    // Replace Nominatim with a failing stub — must never be called.
+    fetchCalls = [];
+    _setGeocodeFetchForTests(async (url: string) => {
+      fetchCalls.push(url);
+      throw new Error("Nominatim must not be called — null corrected_at is not an eviction signal");
+    });
+    _setGeocodeDbClientForTests(nullCorrectedMaybeSingleClient);
+
+    const r = await geocodeCityCountry("Oslo");
+    assert.equal(fetchCalls.length, 0, "null corrected_at must not trigger a re-geocode");
+    assert.ok(r !== null, "cached result must still be returned");
+    assert.equal(r!.countryCode, "NO");
   });
 
   it("after sweep eviction re-resolves from the corrected DB row — zero Nominatim fetches", async () => {

@@ -160,6 +160,16 @@ export function _clearCountryGeocodeCache(): void {
 }
 
 /**
+ * Test-only: set correctionCheckedAt to 0 for a given key so the next
+ * geocodeCityCountry call immediately re-probes the DB for corrected_at,
+ * without waiting for CORRECTION_CHECK_INTERVAL_MS to elapse naturally.
+ */
+export function _backdateGeocodeCacheEntryForTests(cityKey: string): void {
+  const entry = _cache.get(cityKey);
+  if (entry) _cache.set(cityKey, { ...entry, correctionCheckedAt: 0 });
+}
+
+/**
  * Evict a single city_key from the in-memory cache.
  * Called by the admin correction endpoint so the next geocode re-resolves
  * using the updated DB row (or a fresh Nominatim lookup if the row was deleted).
