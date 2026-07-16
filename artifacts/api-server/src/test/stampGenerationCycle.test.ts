@@ -72,6 +72,12 @@ interface FakeClientConfig {
    * default JOB constant.
    */
   jobOverride?: typeof JOB;
+  /**
+   * When set, the catalog `maybeSingle` returns this row instead of the
+   * default CATALOG_ROW constant. Use to exercise wrong-country-code, null-city,
+   * or other catalog-shape scenarios without manually patching sc.from.
+   */
+  catalogOverride?: typeof CATALOG_ROW;
 }
 
 /**
@@ -85,6 +91,7 @@ function makeFakeClient(config: FakeClientConfig = {}) {
   const updates: RecordedUpdate[] = [];
   const inserts: RecordedInsert[] = [];
   const queueJob = config.jobOverride ?? JOB;
+  const catalogRow = config.catalogOverride ?? CATALOG_ROW;
 
   const sc: any = {
     from(table: string) {
@@ -101,7 +108,7 @@ function makeFakeClient(config: FakeClientConfig = {}) {
                 return Promise.resolve({ data: { ...queueJob }, error: null });
               }
               if (table === "universal_stamp_catalog") {
-                return Promise.resolve({ data: { ...CATALOG_ROW }, error: null });
+                return Promise.resolve({ data: { ...catalogRow }, error: null });
               }
               return Promise.resolve({ data: null, error: null });
             },
@@ -166,6 +173,12 @@ interface StorageConfig {
    */
   jobOverride?: typeof JOB;
   /**
+   * When set, the catalog `maybeSingle` returns this row instead of the
+   * default CATALOG_ROW constant. Use to exercise wrong-country-code, null-city,
+   * or other catalog-shape scenarios without manually patching sc.from.
+   */
+  catalogOverride?: typeof CATALOG_ROW;
+  /**
    * Called when storage.remove() is invoked. Throw to simulate a cleanup
    * failure — the orphan-cleanup catch block in the worker must swallow it
    * and still write the original generation error to last_error.
@@ -190,7 +203,7 @@ interface StorageDeleteCall {
  * `https://storage.fake/<path>`. Pass `onUpload` to inject failures.
  */
 function makeFakeClientWithStorage(opts: StorageConfig = {}) {
-  const base = makeFakeClient({ jobOverride: opts.jobOverride });
+  const base = makeFakeClient({ jobOverride: opts.jobOverride, catalogOverride: opts.catalogOverride });
   const storageCalls: StorageCall[] = [];
   const deleteCalls: StorageDeleteCall[] = [];
   const publicUrlBase = opts.publicUrlBase ?? "https://storage.fake";
