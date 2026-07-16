@@ -3330,6 +3330,64 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     );
   });
 
+  it("both stale bookings retain status 'requested' when the batch expiry update errors — confirms .in() atomicity", async () => {
+    // Two stale requested bookings; the single .update().in("id", ids) call is
+    // armed to error.  Neither booking should be transitioned to 'expired' —
+    // expired count must be 0.  This confirms the implementation uses a single
+    // batch update (not a per-booking loop that could partially succeed).
+    const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      bookings: {
+        "bk-batch-err-1": {
+          id: "bk-batch-err-1",
+          traveler_id: USER_ID,
+          buddy_id: BUDDY_PROF,
+          status: "requested",
+          expires_at: PAST,
+        },
+        "bk-batch-err-2": {
+          id: "bk-batch-err-2",
+          traveler_id: USER_ID,
+          buddy_id: BUDDY_PROF,
+          status: "requested",
+          expires_at: PAST,
+        },
+      },
+      // Arm the update error override — the single .update().in("id", ids) call
+      // will fail, so neither booking may be transitioned.
+      updateErrorOverrides: {
+        rent_buddy_bookings: { message: "simulated DB error on batch expiry update", code: "23514" },
+      },
+    };
+
+    const r = await reqSweep();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    // expired count must be 0 — the batch update failed atomically.
+    assert.equal(
+      r.body.expired,
+      0,
+      "expired must be 0 when the batch .in() update errors",
+    );
+
+    // Both bookings must retain their original status — no partial commit.
+    assert.equal(
+      state.bookings!["bk-batch-err-1"].status,
+      "requested",
+      "first booking must remain 'requested' after a failed batch update",
+    );
+    assert.equal(
+      state.bookings!["bk-batch-err-2"].status,
+      "requested",
+      "second booking must remain 'requested' after a failed batch update — partial commit would indicate a per-booking loop",
+    );
+  });
+
   it("auto-complete count stays at zero when the batch status update errors — bookings remain in completed_pending_traveler_confirmation", async () => {
     // The sweep must only increment autoCompletedCount when the
     // .update({ status: 'completed' }) DB call succeeds.  If the call errors
