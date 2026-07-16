@@ -3,6 +3,8 @@
  *  - coordinates rounded to ~3 decimals (≈110 m, never exact addresses)
  *  - both-coordinates-or-both-null saves (no half-cleared pins)
  *  - PATCH payload keys are exactly meetupBaseLat / meetupBaseLng
+ *  - MEETUP_PIN_DECIMALS matches the display precision used in meetup-pin.tsx
+ *    (.toFixed(3)) — if the constant changes, the screen must change too.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -69,4 +71,17 @@ test('buildMeetupPinPatch never emits a half-set pin', () => {
     meetupBaseLat: null,
     meetupBaseLng: null,
   });
+});
+
+test('MEETUP_PIN_DECIMALS matches the .toFixed() precision used in the meetup-pin screen', () => {
+  // meetup-pin.tsx renders coords with `.toFixed(3)`. If MEETUP_PIN_DECIMALS
+  // ever changes, the screen's hardcoded 3 must change with it — this test
+  // makes that drift visible immediately.
+  const coord = roundMeetupCoord(48.8583701);
+  const displayed = coord.toFixed(MEETUP_PIN_DECIMALS);
+  // The displayed string must have exactly MEETUP_PIN_DECIMALS decimal places.
+  const decimals = displayed.split('.')[1]?.length ?? 0;
+  assert.equal(decimals, MEETUP_PIN_DECIMALS);
+  // And it must equal what the screen produces with its hardcoded .toFixed(3).
+  assert.equal(displayed, coord.toFixed(3));
 });
