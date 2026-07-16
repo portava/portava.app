@@ -15,14 +15,7 @@ import { join } from 'node:path';
 import process from 'node:process';
 
 // Known-broken node:test files, excluded from the run. Fix and remove.
-const KNOWN_BROKEN = [
-  // Assertion failures: removal flow never calls AsyncStorage.removeItem as expected.
-  'src/components/discovery/__tests__/SavedPlacesMapView.filterReset.integration.test.ts',
-  // Imports ./composerLogic which does not exist in this tree.
-  'src/lib/composerLogic.test.ts',
-  // Imports ./displayIdentity which does not exist in this tree.
-  'src/lib/displayIdentity.test.ts',
-];
+const KNOWN_BROKEN = [];
 
 const ROOTS = ['src', 'server'];
 
