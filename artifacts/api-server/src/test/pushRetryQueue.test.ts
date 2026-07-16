@@ -2556,7 +2556,94 @@ describe("PushRetryQueue.processQueue() — mixed dead-token codes on the final 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 15 — Transient 5xx during retry must not touch rent_buddy_profiles
+// 15 — Two same-code dead tokens on the FINAL attempt aggregate to × 2
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("PushRetryQueue.processQueue() — two same-code dead tokens on the final attempt (attempt_count=2)", () => {
+  it("finalises as 'failed' with last_error === 'DeviceNotRegistered × 2' — not × 1 twice", async () => {
+    // attempt_count=2, max_attempts=3 → this is the final (3rd) attempt.
+    // Both tokens return DeviceNotRegistered.  The reduce accumulator in the
+    // lastErr formatter must merge the two occurrences into a single count of 2
+    // ("DeviceNotRegistered × 2") rather than producing two separate × 1 entries.
+    //
+    // A regression here would produce "DeviceNotRegistered × 1, DeviceNotRegistered × 1"
+    // or only count the first token ("DeviceNotRegistered × 1").
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [DEAD_TOKEN, LIVE_TOKEN_B],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       2,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    // Both tokens report DeviceNotRegistered — same error code on both tickets
+    _setTestFetch(async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              status:  "error",
+              message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+              details: { error: "DeviceNotRegistered" },
+            },
+            {
+              status:  "error",
+              message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+              details: { error: "DeviceNotRegistered" },
+            },
+          ],
+        }),
+        { status: 200 },
+      ) as unknown as Response,
+    );
+
+    await queue.processQueue();
+
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+
+    // ── Must be finalised as 'failed' ────────────────────────────────────────
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(failedUpdate, "push_retry_queue must be finalised as 'failed' when all tokens are dead on the final attempt");
+    assert.equal(failedUpdate.filters.id,       QUEUE_ROW_ID, "failed update must target the correct queue row");
+    assert.equal(failedUpdate.patch.attempt_count, 3,          "attempt_count must be 3 (the final attempt)");
+
+    // ── The critical assertion: two same-code occurrences must be aggregated ─
+    assert.equal(
+      failedUpdate.patch.last_error,
+      "DeviceNotRegistered \u00d7 2",
+      "last_error must be 'DeviceNotRegistered × 2' — two tokens with the same dead-token code must be counted as × 2, not × 1 twice",
+    );
+
+    // ── Must NOT be re-queued ─────────────────────────────────────────────────
+    const requeued = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(!requeued, "must NOT re-queue the row after exhausting max_attempts");
+
+    // ── Delivery attempt must mirror the queue row's last_error ───────────────
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated on final failure");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status, "failed",   "delivery_attempt status must be 'failed'");
+    assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+    assert.equal(
+      ndaUpdate.patch.error_message,
+      "DeviceNotRegistered \u00d7 2",
+      "delivery_attempt error_message must mirror last_error ('DeviceNotRegistered × 2')",
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 16 — Transient 5xx during retry must not touch rent_buddy_profiles
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
