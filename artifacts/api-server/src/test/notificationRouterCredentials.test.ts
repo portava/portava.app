@@ -78,6 +78,12 @@ const deviceNotRegisteredFetch = makeTicketFetch(() => ({
 
 const okFetch = makeTicketFetch(() => ({ status: "ok", id: "t1" }));
 
+const messageRateExceededFetch = makeTicketFetch(() => ({
+  status: "error",
+  message: "MessageRateExceeded",
+  details: { error: "MessageRateExceeded" },
+}));
+
 const transient503Fetch: typeof fetch = (async () => ({
   ok: false,
   status: 503,
@@ -373,6 +379,33 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
       `rent_buddy_profiles update should include stale token ${TOKEN}`,
     );
     assert.equal(retryQueueInserts.length, 0, "must NOT enqueue on push_retry_queue");
+  });
+
+  it("does NOT delete tokens or enqueue when Expo returns MessageRateExceeded", async () => {
+    _setTestFetch(messageRateExceededFetch);
+    const { deletedDeviceTokens, profilesNulled, retryQueueInserts, client } = makeFakeDb({
+      deviceToken: TOKEN,
+      legacyToken: LEGACY_TOKEN,
+    });
+
+    const router = new NotificationRouter(client);
+    await router.route(BASE_NOTIF);
+
+    assert.equal(
+      deletedDeviceTokens.length,
+      0,
+      "MessageRateExceeded must NOT delete from notification_devices",
+    );
+    assert.equal(
+      profilesNulled.length,
+      0,
+      "MessageRateExceeded must NOT null profiles.expo_push_token",
+    );
+    assert.equal(
+      retryQueueInserts.length,
+      0,
+      "MessageRateExceeded must NOT enqueue on push_retry_queue",
+    );
   });
 
   it("does nothing when there are no push tokens registered for the user", async () => {
