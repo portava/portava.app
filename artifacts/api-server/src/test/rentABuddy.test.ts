@@ -2805,6 +2805,108 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     );
   });
 
+  it("does not escalate a no_show_pending booking whose grace expiry equals the sweep's now (boundary — .lt() is strict)", async () => {
+    // The sweep uses .lt("no_show_grace_expires_at", now) — strict less-than.
+    // A booking expiring at exactly the sweep's "now" must NOT be escalated
+    // (equality is not strictly less-than).
+    //
+    // To test this deterministically we pin global Date so the sweep handler
+    // always sees FIXED_NOW as its current time.  We then assert:
+    //   • expiry === FIXED_NOW  → noShowEscalated 0  (equality excluded by .lt)
+    //   • expiry === FIXED_NOW - 1 ms → noShowEscalated 1  (strictly past, included)
+    // This pair definitively documents the operator semantics and will catch
+    // any future change from .lt() to .lte().
+    const FIXED_NOW = "2025-06-01T12:00:00.000Z";
+    const FIXED_NOW_MS = new Date(FIXED_NOW).getTime();
+    const ONE_MS_BEFORE = new Date(FIXED_NOW_MS - 1).toISOString();
+
+    const OriginalDate = global.Date as any;
+    // Replace global Date so new Date() inside the sweep handler returns FIXED_NOW.
+    function FakeDate(this: any, ...args: any[]) {
+      if (args.length === 0) {
+        return new OriginalDate(FIXED_NOW);
+      }
+      return new OriginalDate(...args);
+    }
+    FakeDate.now = () => FIXED_NOW_MS;
+    FakeDate.parse = OriginalDate.parse.bind(OriginalDate);
+    FakeDate.UTC = OriginalDate.UTC.bind(OriginalDate);
+    FakeDate.prototype = OriginalDate.prototype;
+    (global as any).Date = FakeDate;
+
+    try {
+      // --- Case A: expiry === FIXED_NOW → must NOT be escalated ---
+      {
+        const client = makeClient(USER_ID);
+        _setTestClient(client as any, false);
+        _setTestServiceClient(client as any);
+
+        state = {
+          bookings: {
+            "bk-ns-eq-boundary": {
+              id: "bk-ns-eq-boundary",
+              traveler_id: USER_ID,
+              buddy_id: BUDDY_PROF,
+              status: "no_show_pending",
+              no_show_grace_expires_at: FIXED_NOW,
+            },
+          },
+        };
+        (state as any).bookingEvents = [];
+
+        const r = await reqSweep();
+        assert.equal(r.status, 200, JSON.stringify(r.body));
+        assert.equal(
+          r.body.noShowEscalated,
+          0,
+          "booking expiring at exactly now must NOT be escalated — .lt() is strict less-than, equality is excluded",
+        );
+        assert.equal(
+          state.bookings!["bk-ns-eq-boundary"].status,
+          "no_show_pending",
+          "booking at the exact expiry boundary must remain no_show_pending",
+        );
+      }
+
+      // --- Case B: expiry === FIXED_NOW - 1 ms → must be escalated ---
+      {
+        const client = makeClient(USER_ID);
+        _setTestClient(client as any, false);
+        _setTestServiceClient(client as any);
+
+        state = {
+          bookings: {
+            "bk-ns-1ms-past": {
+              id: "bk-ns-1ms-past",
+              traveler_id: USER_ID,
+              buddy_id: BUDDY_PROF,
+              status: "no_show_pending",
+              no_show_grace_expires_at: ONE_MS_BEFORE,
+            },
+          },
+        };
+        (state as any).bookingEvents = [
+          { id: "ev-1ms", booking_id: "bk-ns-1ms-past", actor_user_id: USER_ID, event: "no_show_reported" },
+        ];
+
+        const r = await reqSweep();
+        assert.equal(r.status, 200, JSON.stringify(r.body));
+        assert.equal(
+          r.body.noShowEscalated,
+          1,
+          "booking expiring 1 ms before now MUST be escalated — strictly less-than now",
+        );
+        assert.equal(
+          state.bookings!["bk-ns-1ms-past"].status,
+          "disputed",
+          "booking 1 ms past expiry must be promoted to disputed",
+        );
+      }
+    } finally {
+      (global as any).Date = OriginalDate;
+    }
+  });
+
   it("does not touch bookings with statuses other than no_show_pending", async () => {
     // Put a past-expired timestamp on several non-no_show_pending bookings;
     // the sweep must leave all of them unchanged.
