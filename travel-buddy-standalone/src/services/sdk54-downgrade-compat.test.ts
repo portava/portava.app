@@ -232,19 +232,20 @@ describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and 
 // version strings so the divergence is immediately obvious.
 
 describe('SDK 54 — other explicitly pinned Expo packages sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-  // travel-buddy-standalone/package.json is 2 levels up from src/services.
-  const sa = readPkg('../../package.json');
-  const saAll: Record<string, string> = {
-    ...sa.dependencies,
-    ...sa.devDependencies,
-  };
-
-  // artifacts/travel-buddy/package.json is 3 levels up to the workspace root,
-  // then into artifacts/travel-buddy.
-  const tb = readPkg('../../../artifacts/travel-buddy/package.json');
+  // artifacts/travel-buddy/package.json is 2 levels up from src/services.
+  const tb = readPkg('../../package.json');
   const tbAll: Record<string, string> = {
     ...tb.dependencies,
     ...tb.devDependencies,
+  };
+
+  // travel-buddy-standalone/package.json is 4 levels up from src/services in
+  // the artifacts tree (artifacts/travel-buddy/src/services → workspace root →
+  // travel-buddy-standalone).
+  const sa = readPkg('../../../../travel-buddy-standalone/package.json');
+  const saAll: Record<string, string> = {
+    ...sa.dependencies,
+    ...sa.devDependencies,
   };
 
   // All Expo-ecosystem packages that are explicitly pinned in both package trees
