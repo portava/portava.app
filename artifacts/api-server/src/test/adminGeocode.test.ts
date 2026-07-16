@@ -2347,7 +2347,7 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
       "catalogRekeyed must be 0 — merge path was taken, not re-key");
   });
 
-  it("completes the merge and counts it when a passport_stamps ownership repoint errors", async () => {
+  it("prevents a success count when a passport_stamps ownership repoint errors during merge", async () => {
     // City name must normalise (lowercase, strip diacritics, collapse whitespace) to
     // exactly match the URL slug so that the cityKeyFilter in repairXxCatalog lets
     // this XX entry through.  "Stampburg" → normCityKey → "stampburg" === URL slug.
@@ -2497,15 +2497,15 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
     assert.ok(r!.body.repair, "response should include repair stats");
     const repair = r!.body.repair as RepairStats;
 
-    // passport_stamps repoint failure is non-fatal — the merge must still be counted
-    assert.equal(repair.catalogMerged, 1,
-      "catalogMerged must be 1: a passport_stamps repoint error must not prevent the merge from being counted");
+    // passport_stamps repoint failure is fatal — the merge must not be counted
+    assert.equal(repair.catalogMerged, 0,
+      "catalogMerged must be 0: a passport_stamps repoint error must prevent the merge from being counted as successful");
     assert.equal(repair.catalogRekeyed, 0,
-      "catalogRekeyed must be 0 — a merge path was taken, not a re-key");
+      "catalogRekeyed must be 0 — a merge path was attempted, not a re-key");
 
-    // The XX entry must still be deleted even though passport_stamps repoint failed
-    assert.ok(xxEntryDeleted,
-      "the XX catalog entry must still be deleted when only the passport_stamps repoint errors");
+    // The XX entry must not be deleted when the passport_stamps repoint failed
+    assert.equal(xxEntryDeleted, false,
+      "the XX catalog entry must not be deleted when the passport_stamps repoint errors — leaving it prevents data loss");
 
     // The error was logged — not silently swallowed
     const repointWarn = warnMessages.find(

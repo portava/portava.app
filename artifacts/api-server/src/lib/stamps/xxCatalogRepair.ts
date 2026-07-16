@@ -93,7 +93,7 @@ export async function mergeCatalogEntry(
     .eq("catalog_id", xxId);
   if (passportStampsErr && !/does not exist/i.test(passportStampsErr.message)) {
     warn(`[xx-repair] repoint passport_stamps failed:`, passportStampsErr.message);
-    // non-fatal: passport_stamps is a secondary table; warn and continue
+    return false;
   }
 
   // Move artwork versions across (keeps any generated art)
