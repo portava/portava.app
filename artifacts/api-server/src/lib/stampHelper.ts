@@ -24,7 +24,8 @@ export function buildCityStampLabels(
   city: string,
   country: string | null,
 ): { label: string; sublabel: string } {
-  const label = city.trim().toUpperCase();
+  const rawLabel = city.trim().toUpperCase();
+  const label = rawLabel.length > 0 ? rawLabel : "UNKNOWN";
   const year = new Date().getFullYear();
   const trimmed = country?.trim() ?? null;
   // Sentinel values that indicate an unresolved or missing country.  Slicing

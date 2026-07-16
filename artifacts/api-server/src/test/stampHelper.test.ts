@@ -44,6 +44,17 @@ describe("buildCityStampLabels", () => {
     assert.equal(label, "HO CHI MINH");
   });
 
+  // Blank city guards — empty or whitespace-only city must not produce a blank label.
+  it('falls back to "UNKNOWN" when city is "" (empty string)', () => {
+    const { label } = buildCityStampLabels("", null);
+    assert.equal(label, "UNKNOWN");
+  });
+
+  it('falls back to "UNKNOWN" when city is "   " (whitespace-only)', () => {
+    const { label } = buildCityStampLabels("   ", null);
+    assert.equal(label, "UNKNOWN");
+  });
+
   // "Unknown" is a sentinel value for unresolved ownership rows; slicing it
   // would produce "UN · 2026" which looks like a country code but is meaningless.
   it('falls back to year-only when country is "Unknown"', () => {
