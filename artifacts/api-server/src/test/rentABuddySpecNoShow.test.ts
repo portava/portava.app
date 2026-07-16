@@ -283,4 +283,27 @@ describe("POST /api/rent-a-buddy/bookings/:id/report-no-show — spec router", (
     assert.equal(r.status, 409, `expected 409, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(r.body.error, "already_reported");
   });
+
+  it("returns 409 when the buddy files a second no-show report after the first one lands", async () => {
+    // Buddy files the first report — should succeed
+    const first = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`, { notes: "traveler never arrived" }, BUDDY_TOKEN);
+    assert.equal(first.status, 201, `first buddy call should be 201, got ${first.status}: ${JSON.stringify(first.body)}`);
+    assert.ok(first.body.gracePeriodExpiresAt, "first response must include gracePeriodExpiresAt");
+
+    // Booking is now no_show_pending — buddy's second call must be rejected
+    const second = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`, { notes: "duplicate buddy report" }, BUDDY_TOKEN);
+    assert.equal(second.status, 409, `second buddy call should be 409, got ${second.status}: ${JSON.stringify(second.body)}`);
+    assert.equal(second.body.error, "already_reported");
+  });
+
+  it("returns 409 when the traveler tries to report after the buddy already filed a no-show", async () => {
+    // Buddy files first — should succeed
+    const buddyReport = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`, { notes: "traveler never arrived" }, BUDDY_TOKEN);
+    assert.equal(buddyReport.status, 201, `buddy call should be 201, got ${buddyReport.status}: ${JSON.stringify(buddyReport.body)}`);
+
+    // Booking is now no_show_pending — traveler's subsequent call must also be rejected
+    const travelerReport = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`, { notes: "cross-party duplicate" }, TRAVELER_TOKEN);
+    assert.equal(travelerReport.status, 409, `traveler cross-party call should be 409, got ${travelerReport.status}: ${JSON.stringify(travelerReport.body)}`);
+    assert.equal(travelerReport.body.error, "already_reported");
+  });
 });
