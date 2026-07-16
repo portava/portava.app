@@ -2812,6 +2812,13 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/no-show", async (req, res) =>
   const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
   if (!party) return;
 
+  // Reject duplicates: if the booking is already in a no-show or disputed state,
+  // return a specific 409 so callers can distinguish idempotency conflicts from
+  // genuinely invalid transitions. Mirrors the same guard in rentABuddySpec.ts.
+  if ((booking as any).status === "no_show_pending" || (booking as any).status === "disputed") {
+    return res.status(409).json({ error: "already_reported", status: (booking as any).status });
+  }
+
   const noShowAllowedStatuses = ["confirmed", "scheduled", "in_progress"];
   if (!noShowAllowedStatuses.includes((booking as any).status)) {
     return res.status(409).json({
