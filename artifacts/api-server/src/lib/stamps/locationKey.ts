@@ -165,12 +165,14 @@ export function canonicalLocationKeyFromStrings(opts: {
   stampType: string;
   city?: string | null;
   country?: string | null;
+  countryCode?: string | null;
   neighborhood?: string | null;
   region?: string | null;
   displayName?: string | null;
 }): string {
   return canonicalLocationKey({
     stampType:    opts.stampType,
+    countryCode:  opts.countryCode,
     country:      opts.country,
     city:         opts.city,
     neighborhood: opts.neighborhood,

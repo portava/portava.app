@@ -14,6 +14,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import { resolveOrEnqueue, resolveOrEnqueueForDefinition } from "../../lib/stamps/StampCatalogService.js";
 import { resolveCountry } from "../../lib/stamps/countryLookup.js";
+import { resolveCountryWithGeocoding } from "../../lib/stamps/countryGeocoder.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -342,15 +343,35 @@ async function _awardStampCore(
   Promise.resolve().then(async () => {
     try {
       // Real ISO code only — never abbreviated from the country's spelling.
-      const countryCode = resolvedCountry.countryCode;
+      // When the static lookup can't resolve the city, fall back to geocoding
+      // (cached, rate-limited) so smaller cities also get a real code instead
+      // of "XX". Geocoding failures still leave "XX" — never guessed.
+      let countryCode = resolvedCountry.countryCode;
+      let catalogCountry = country;
+      if (countryCode === "XX" && (city || (lat != null && lng != null))) {
+        const geocoded = await resolveCountryWithGeocoding({
+          country: rawCountry, city, lat, lng,
+        });
+        if (geocoded.countryCode !== "XX") {
+          countryCode    = geocoded.countryCode;
+          catalogCountry = catalogCountry ?? geocoded.country ?? undefined;
+          // Backfill the stamp row's country so ownership data matches.
+          if (!country && geocoded.country) {
+            await sc
+              .from("user_stamps")
+              .update({ country: geocoded.country })
+              .eq("id", newStampId);
+          }
+        }
+      }
 
-      const displayName = city ?? country ?? definitionSlug;
+      const displayName = city ?? catalogCountry ?? definitionSlug;
       // Use the definition's actual stamp_type column — never infer from slug.
       // Fall back to "city" only if the row somehow lacks the field.
       const defType: string = (definition as any).stamp_type ?? "city";
 
       let catalogEntry;
-      if (!city && !country) {
+      if (!city && !catalogCountry) {
         // Location-less stamp (badge / social / safety / trip achievement):
         // resolve a definition-scoped catalog entry ("definition:{slug}") so
         // every award of this definition shares one entry and one artwork —
@@ -365,7 +386,7 @@ async function _awardStampCore(
           sc,
           {
             stampType:    defType,
-            country:      country ?? "Unknown",
+            country:      catalogCountry ?? "Unknown",
             country_code: countryCode,
             city:         city ?? null,
             displayName,

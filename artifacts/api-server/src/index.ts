@@ -18,6 +18,7 @@ import { startInviteSlotSweeper } from "./lib/inviteSlotSweeper";
 import { getServiceClient } from "./lib/supabase";
 import { assertRequiredEnv } from "./lib/envValidation";
 import { startWorkerLoop, queryStampWorkerHealth, startHealthMonitorLoop } from "./lib/stamps/generationWorker";
+import { startXXCatalogSweeper } from "./lib/stamps/xxCatalogRepair";
 import { runSchemaDriftCheck } from "./lib/schemaDriftCheck";
 
 assertRequiredEnv(logger);
@@ -66,6 +67,11 @@ app.listen(port, (err) => {
     const intervalMs = Number(process.env.STAMP_WORKER_INTERVAL_MS) || 30_000;
     startWorkerLoop(intervalMs);
   }
+
+  // Periodic XX-catalog sweep: re-keys/merges catalog entries whose country
+  // becomes resolvable (static lookup or geocoding for less-known cities).
+  // Disable with STAMP_COUNTRY_SWEEP_ENABLED=false.
+  startXXCatalogSweeper(() => getServiceClient());
 
   // Startup stamp-worker health summary — log pending queue depth and any
   // jobs stuck in `generating` past their lock (a crashed worker never
