@@ -2365,6 +2365,24 @@ describe("Rent a Buddy — rebook", () => {
     );
   });
 
+  it("rebook uses client groupSize when original has group_size of zero (201)", async () => {
+    setupRebookState("completed");
+    // Set group_size to 0 on the original — 0 is non-null, so a naive check
+    // could accidentally use it instead of the client-supplied override.
+    (state.bookings![ORIG_BOOKING_ID] as any).group_size = 0;
+    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
+      bookingDate: FUTURE_DATE,
+      startTime: "10:00",
+      groupSize: 3,
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(
+      r.body.booking?.group_size,
+      3,
+      "client-supplied groupSize must win even when original.group_size is 0 (non-null)",
+    );
+  });
+
   it("rebook for someone else's booking returns 403", async () => {
     state = {
       featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
