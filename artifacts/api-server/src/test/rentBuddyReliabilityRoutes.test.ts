@@ -596,6 +596,55 @@ describe("mapProfile — completed_count takes precedence over completed_booking
   });
 });
 
+// ── match display card counter precedence ────────────────────────────────────
+//
+// POST /api/rent-a-buddy/match merges mapProfile(row) with the scoring result.
+// mapProfile reads completed_count ?? completed_bookings. When the two counters
+// disagree, completed_count must win so the "sessions completed" displayed on
+// buddy cards is accurate — even if a future refactor reorders the spread.
+
+describe("match display cards — completed_count takes precedence over completed_bookings", () => {
+  it("returns completedBookings=7 (not 3) in results[0] when completed_count=7 and completed_bookings=3", async () => {
+    const buddyRow = {
+      id: BP_ID, user_id: BUDDY_USER_ID, city: "Manila",
+      status: "active", admin_status: "active",
+      display_name: "Test Buddy", tagline: null,
+      country: "Philippines",
+      categories: ["city"], languages: ["English"],
+      hourly_rate_usd: 20, half_day_rate_usd: null, full_day_rate_usd: null,
+      nightlife_rate_usd: null, arrival_rate_usd: null,
+      vibe_tags: [], safety_badges: [], energy_type: null, buddy_level: "experienced",
+      average_rating: null, review_count: 0,
+      completed_bookings: 3,  // legacy column — must be ignored
+      completed_count: 7,     // canonical counter — must win
+      response_time_h: null, cover_photo_url: null, gallery_urls: [],
+      verified: false, featured: false, city_ambassador: false,
+      available_now: true, female_only_service: false, public_meetup_only: false,
+      group_approved: true, nightlife_approved: false, arrival_approved: false,
+      category_approvals: {}, max_group_size: 4,
+      new_buddy_public_only: false, new_buddy_daytime_only: false,
+      risk_hold: false, created_at: new Date().toISOString(),
+    };
+
+    const fake = makeMatchFakeClient(buddyRow);
+    const res = await call("POST", "/api/rent-a-buddy/match", fake, { city: "Manila" });
+
+    assert.equal(res.status, 200, "match endpoint should return 200");
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.results), "response.results should be an array");
+    assert.equal(body.results.length, 1, "should return the one eligible buddy");
+
+    // This is the display-card field (mapProfile path), not the scorer.
+    // The spread { ...mapProfile(row), compatibilityScore, scoreBreakdown }
+    // must not shadow completedBookings — completed_count=7 must win.
+    assert.equal(
+      body.results[0].completedBookings,
+      7,
+      `display card must show completed_count=7, not completed_bookings=3; got ${body.results[0].completedBookings}`,
+    );
+  });
+});
+
 // ── toBuddyScoringData counter precedence ─────────────────────────────────────
 //
 // toBuddyScoringData picks completed_count ?? completed_bookings. When both
