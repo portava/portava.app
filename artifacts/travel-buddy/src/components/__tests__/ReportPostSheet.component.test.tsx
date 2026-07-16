@@ -69,6 +69,14 @@ describe('ReportPostSheet — initial render', () => {
     const { queryByTestId } = await renderSheet(true);
     expect(queryByTestId('report-post-done')).toBeNull();
   });
+
+  it('renders the X close-button icon via the lucide mock testID contract', async () => {
+    // Validates that the lucide-react-native Proxy mock correctly exposes
+    // testID="icon-<Name>" so component tests can assert specific icons are present.
+    // ReportPostSheet imports { X } from 'lucide-react-native' for its close button.
+    const { getByTestId } = await renderSheet(true);
+    expect(getByTestId('icon-X')).toBeTruthy();
+  });
 });
 
 // ── selecting a reason ─────────────────────────────────────────────────────────
