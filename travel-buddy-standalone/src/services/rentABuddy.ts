@@ -5,7 +5,7 @@
  * Pattern: same as tripCrewLocation.ts / hiddenGems.ts —
  * EXPO_PUBLIC_API_BASE_URL + Supabase Bearer token via authHeaders().
  */
-import { supabase } from '../lib/supabase';
+import { freshToken } from './adminApi';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -192,8 +192,7 @@ export interface BuddyEarnings {
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
 async function authHeaders(): Promise<Record<string, string>> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
+  const token = await freshToken();
   return {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
