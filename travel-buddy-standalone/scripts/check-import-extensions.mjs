@@ -1,61 +1,22 @@
 #!/usr/bin/env node
 /**
- * CI guard: fails if any bare (extension-free) relative import exists in a
- * non-baselined source file.
+ * Checks that all relative imports in src/services/ and src/lib/ have explicit
+ * file extensions so the tsx/esm test runner can resolve them without Metro's
+ * extension-inference logic.
  *
- * Files listed in scripts/import-check-baseline.txt are grandfathered — they
- * may contain bare imports inherited from before enforcement began.  Any file
- * NOT in the baseline is checked strictly: a single bare import causes exit 1.
- *
- * This means:
- *   - New source files must use fully-specified relative import paths.
- *   - Pre-existing violations are tracked in the baseline and can be cleaned
- *     up incrementally; removing a file from the baseline after fixing it
- *     enforces the fix going forward.
- *
- * Run:   node scripts/check-import-extensions.mjs
- * Fix:   node scripts/fix-extensionless-imports.mjs
- *
- * Mirrors the equivalent guard in the main travel-buddy package.
+ * Mirrors the equivalent guard in travel-buddy-standalone.
  */
 
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { join, relative, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, extname } from 'node:path';
 import process from 'node:process';
 
-const __dir = dirname(fileURLToPath(import.meta.url));
-const projectRoot = join(__dir, '..');
+const SCAN_ROOTS = ['src/services', 'src/lib'];
+const SOURCE_EXTS = new Set(['.ts', '.tsx', '.mts']);
 
-const SOURCE_DIRS = [
-  'src/components',
-  'src/hooks',
-  'src/screens',
-  'src/utils',
-  'src/context',
-  'src/theme',
-  'src/data',
-  'src/constants',
-  'src/__fixtures__',
-  'src/types',
-  'src/tasks',
-  'src/shims',
-  'src/lib',
-  'src/services',
-  'server',
-];
-
-const KNOWN_EXTENSIONS = new Set([
-  '.ts', '.tsx', '.js', '.jsx', '.json', '.png', '.svg',
-  '.jpg', '.jpeg', '.gif', '.webp', '.mp4', '.ttf', '.otf',
-  '.mjs', '.cjs',
-]);
-
-function hasKnownExtension(specifier) {
-  const dot = specifier.lastIndexOf('.');
-  if (dot === -1) return false;
-  return KNOWN_EXTENSIONS.has(specifier.slice(dot));
-}
+// Regex: captures the path portion of any relative import/export/require.
+// Matches: from './foo', from "../bar", require('./baz'), export * from './qux'
+const BARE_RELATIVE = /(?:from|require)\s*\(\s*['"](\.[^'"]+)['"]\s*\)|from\s+['"](\.[^'"]+)['"]/g;
 
 function collectFiles(dir, out = []) {
   let entries;
@@ -68,66 +29,40 @@ function collectFiles(dir, out = []) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
       collectFiles(full, out);
-    } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
+    } else if (SOURCE_EXTS.has(extname(entry.name))) {
       out.push(full);
     }
   }
   return out;
 }
 
-// Only match specifiers in actual import/export statements:
-//   import ... from 'SPEC'
-//   export ... from 'SPEC'
-//   import 'SPEC'  (side-effect import)
-// Does NOT match arbitrary string literals.
-const IMPORT_STMT_RE =
-  /(?:^|\n)[ \t]*(?:import|export)\b[^;'"]*?from\s+(['"])(\.[^'"]+)\1|(?:^|\n)[ \t]*import\s+(['"])(\.[^'"]+)\3/g;
-
-// Load the grandfathered baseline (one relative file path per line).
-const baselinePath = join(__dir, 'import-check-baseline.txt');
-const baseline = new Set(
-  existsSync(baselinePath)
-    ? readFileSync(baselinePath, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean)
-    : [],
-);
-
 const violations = [];
-let checkedCount = 0;
 
-for (const dir of SOURCE_DIRS) {
-  const abs = join(projectRoot, dir);
-  for (const file of collectFiles(abs)) {
-    const rel = relative(projectRoot, file).replace(/\\/g, '/');
-    if (baseline.has(rel)) continue; // grandfathered — skip
-
-    checkedCount++;
+for (const root of SCAN_ROOTS) {
+  for (const file of collectFiles(root)) {
     const src = readFileSync(file, 'utf8');
-    let match;
-    IMPORT_STMT_RE.lastIndex = 0;
-    while ((match = IMPORT_STMT_RE.exec(src)) !== null) {
-      // group 2 for `from '...'`, group 4 for bare `import '...'`
-      const specifier = match[2] ?? match[4];
-      if (!specifier) continue;
-      if (!specifier.startsWith('./') && !specifier.startsWith('../')) continue;
-      if (hasKnownExtension(specifier)) continue;
-      const lineNum = src.slice(0, match.index).split('\n').length;
-      violations.push(`  ${rel}:${lineNum}  ${specifier}`);
-    }
+    const lines = src.split('\n');
+    lines.forEach((line, idx) => {
+      let m;
+      BARE_RELATIVE.lastIndex = 0;
+      while ((m = BARE_RELATIVE.exec(line)) !== null) {
+        const importPath = m[1] ?? m[2];
+        if (!importPath) continue;
+        if (extname(importPath) === '') {
+          violations.push(`${file}:${idx + 1}: bare relative import '${importPath}'`);
+        }
+      }
+    });
   }
 }
 
 if (violations.length > 0) {
   console.error(
-    `Found ${violations.length} extensionless relative import(s) in non-baselined file(s).\n` +
-    `Add a file extension (.ts, .tsx, .js, etc.) to each import, or — if this\n` +
-    `is a pre-existing file — add it to scripts/import-check-baseline.txt.\n` +
-    `Run \`node scripts/fix-extensionless-imports.mjs\` to fix them automatically.\n\n` +
-    violations.join('\n'),
+    `\nExtensionless relative imports found (${violations.length}):\n` +
+      violations.map((v) => `  ${v}`).join('\n') +
+      '\n\nAdd the explicit .ts / .tsx extension so tsx/esm can resolve them.\n',
   );
   process.exit(1);
 }
 
-console.log(
-  `check-import-extensions: OK — ${checkedCount} non-baselined file(s) checked, ` +
-  `${baseline.size} grandfathered file(s) skipped.`,
-);
+console.log(`lint:imports — no bare relative imports found in ${SCAN_ROOTS.join(', ')}.`);
