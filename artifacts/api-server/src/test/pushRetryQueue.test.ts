@@ -352,6 +352,50 @@ describe("PushRetryQueue.processQueue() — exhaust all attempts", () => {
     );
   });
 
+  it("delivery_attempt error_message matches last_error on queue row when retryable exhaustion ends the final attempt", async () => {
+    // Focused regression guard: both the queue row (last_error) and the
+    // delivery-attempt row (error_message) must carry exactly the same string
+    // when retryable exhaustion finalises the last attempt.  A bug in finalise()
+    // could write one without the other, or write different values.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       2,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    _setTestFetch(expo503Fetch());   // Expo 5xx → retryable: true
+    await queue.processQueue();
+
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+
+    // Locate the finalise() update on the queue row
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(failedUpdate, "push_retry_queue must be finalised as 'failed'");
+
+    // Locate the finalise() update on the delivery-attempt row
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status,  "failed",  "delivery_attempt status must be 'failed'");
+    assert.equal(ndaUpdate.filters.id,    ATTEMPT_ID, "delivery_attempt update must target the correct id");
+
+    // The two error values must be identical — not just individually non-null
+    const queueLastError     = failedUpdate.patch.last_error;
+    const attemptErrorMsg    = ndaUpdate.patch.error_message;
+    assert.equal(queueLastError,  "failed after 3 attempts", "queue last_error must be 'failed after 3 attempts'");
+    assert.equal(attemptErrorMsg, queueLastError,             "delivery_attempt error_message must match queue last_error exactly");
+  });
+
   it("sets last_error to 'failed after 3 attempts' when attempt_count=2 and Expo returns 503 (retryable)", async () => {
     // attempt_count=2 means attempts 1 and 2 already failed; this run is the 3rd and final attempt.
     // Expo returns 503 (retryable: true).  Because max_attempts is exhausted, the row must be
