@@ -5,7 +5,7 @@
  * Pattern: same as tripCrewLocation.ts / hiddenGems.ts —
  * EXPO_PUBLIC_API_BASE_URL + Supabase Bearer token via authHeaders().
  */
-import { freshToken } from './adminApi';
+import { freshToken } from './adminApi.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
