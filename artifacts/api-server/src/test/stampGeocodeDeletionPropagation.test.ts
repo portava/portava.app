@@ -1507,6 +1507,102 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "Nominatim called a second time — confirms _pending was cleared, not serving a stale settled promise");
   });
 
+  it("correctionCheckedAt is bumped after a no-op probe — the probe does not re-fire until the next interval", async () => {
+    // When evictIfDbCorrected returns false (DB row present, not corrected), the
+    // geocoder must update correctionCheckedAt = Date.now() so the probe won't
+    // fire again for another CORRECTION_CHECK_INTERVAL_MS.  Without this bump a
+    // warm cache hit after the interval would probe the DB on *every* call.
+    //
+    // Timeline:
+    //   T0            — cache seeded from DB (no Nominatim call)
+    //   T0 + I + 1s   — first probe fires (no-op, correctionCheckedAt bumped to T0+I+1s)
+    //   T0 + I + 1s + (I - 1s) — second call: interval has NOT elapsed again → no probe
+    //   T0 + I + 1s + I + 1s   — third call: interval HAS elapsed again → probe fires
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "se", country: "Sweden" } }],
+      };
+    });
+
+    // DB always returns a live, non-corrected row so every probe is a no-op.
+    let probeCallCount = 0;
+    const noOpDbClient: SupabaseClient = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybySingle() {
+            probeCallCount++;
+            return {
+              data: { country: "Sweden", country_code: "SE", corrected_at: null, deleted_at: null },
+              error: null,
+            };
+          },
+          async maybeSingle() {
+            probeCallCount++;
+            return {
+              data: { country: "Sweden", country_code: "SE", corrected_at: null, deleted_at: null },
+              error: null,
+            };
+          },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            resolve({ data: [], error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(noOpDbClient);
+
+    // ── Step 1: seed the cache from the DB (counts as one probe via readDbCache) ─
+    const first = await geocodeCityCountry("Stockholm");
+    assert.equal(first?.countryCode, "SE", "pre-condition: cache seeded with SE");
+    assert.equal(nominatimCalls, 0, "no Nominatim call on DB cache seed");
+    // Reset probe count — we only want to count correction-check probes from here.
+    probeCallCount = 0;
+
+    // ── Step 2: advance past the first interval — probe fires (no-op) ────────────
+    const T1 = T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000;
+    mockNow(T1);
+
+    const afterFirstInterval = await geocodeCityCountry("Stockholm");
+    assert.equal(afterFirstInterval?.countryCode, "SE", "result is still SE after no-op probe");
+    assert.equal(probeCallCount, 1, "probe fired exactly once when the first interval elapsed");
+    assert.equal(nominatimCalls, 0, "no Nominatim call — no eviction occurred");
+
+    // ── Step 3: advance by less than one interval — probe must NOT fire again ─────
+    // correctionCheckedAt was bumped to T1; only T1 + CORRECTION_CHECK_INTERVAL_MS
+    // would trigger a second probe.  T1 + (CORRECTION_CHECK_INTERVAL_MS - 1 s) is
+    // still inside the new window.
+    mockNow(T1 + CORRECTION_CHECK_INTERVAL_MS - 1_000);
+
+    const withinSecondInterval = await geocodeCityCountry("Stockholm");
+    assert.equal(withinSecondInterval?.countryCode, "SE", "result still SE within the second interval");
+    assert.equal(probeCallCount, 1,
+      "maybeSingle must NOT be called again within the second interval — correctionCheckedAt was bumped after the first probe");
+    assert.equal(nominatimCalls, 0, "still no Nominatim call");
+
+    // ── Step 4: advance past the second interval — probe fires again ──────────────
+    mockNow(T1 + CORRECTION_CHECK_INTERVAL_MS + 1_000);
+
+    const afterSecondInterval = await geocodeCityCountry("Stockholm");
+    assert.equal(afterSecondInterval?.countryCode, "SE", "result still SE after second probe");
+    assert.equal(probeCallCount, 2,
+      "maybeSingle called a second time after the second interval elapsed — probe re-fires correctly");
+    assert.equal(nominatimCalls, 0, "no Nominatim call — second probe was also a no-op");
+  });
+
   it("Pass 1 throw does not block Pass 2 — tombstoned entry is evicted and cleanup delete fires", async () => {
     // Regression guard: each pass of runCorrectionSweep is wrapped in its own
     // try/catch.  If Pass 1 (corrected_at query) throws — not just returns an
