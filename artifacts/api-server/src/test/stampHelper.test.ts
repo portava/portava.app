@@ -156,4 +156,16 @@ describe("buildCityStampLabels", () => {
     const { sublabel } = buildCityStampLabels("somewhere", "Philippines");
     assert.equal(sublabel, `PH · ${YEAR}`);
   });
+
+  // A country string that starts with letters but contains digits after the
+  // prefix must still produce the two-letter code — the guard is prefix-only.
+  it('extracts "US" from "US1" (letters-then-digit)', () => {
+    const { sublabel } = buildCityStampLabels("new york", "US1");
+    assert.equal(sublabel, `US · ${YEAR}`);
+  });
+
+  it('extracts "TH" from "TH-ext" (letters then hyphen+letters)', () => {
+    const { sublabel } = buildCityStampLabels("bangkok", "TH-ext");
+    assert.equal(sublabel, `TH · ${YEAR}`);
+  });
 });
