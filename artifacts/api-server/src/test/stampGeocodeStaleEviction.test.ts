@@ -137,6 +137,8 @@ describe("staleness-eviction: corrected_at probe", () => {
         { country: "France", country_code: "FR", corrected_at: null },
         // call 1: evictIfDbCorrected — probe returns an old corrected_at → no eviction
         { corrected_at: oldCorrectionIso },
+        // Any further call would be a second probe — must not happen within the same interval.
+        { corrected_at: oldCorrectionIso },
       ],
       (idx) => { dbCallCount = idx + 1; },
     );
@@ -145,7 +147,9 @@ describe("staleness-eviction: corrected_at probe", () => {
     const first = await geocodeCityCountry("Lyon");
     assert.equal(first?.countryCode, "FR");
 
-    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000);
+    // Advance past the correction-check interval so the probe fires on the second call.
+    const T1 = T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000;
+    mockNow(T1);
 
     const second = await geocodeCityCountry("Lyon");
     assert.equal(second?.countryCode, "FR",
@@ -153,6 +157,16 @@ describe("staleness-eviction: corrected_at probe", () => {
     // Two DB calls: initial readDbCache + eviction probe — no third call for re-read.
     assert.equal(dbCallCount, 2,
       "should make exactly two DB calls: initial load + probe (no re-read on non-eviction)");
+
+    // Advance by LESS than one full interval from T1 — the probe must NOT fire again.
+    // This confirms correctionCheckedAt was bumped even on the "old correction" path.
+    mockNow(T1 + CORRECTION_CHECK_INTERVAL_MS - 1_000);
+
+    const third = await geocodeCityCountry("Lyon");
+    assert.equal(third?.countryCode, "FR",
+      "third call should still return the cached FR value");
+    assert.equal(dbCallCount, 2,
+      "correctionCheckedAt must have been reset after the old-correction probe — no second probe within the same interval");
   });
 
   it("keeps the cached value when the DB row has no corrected_at", async () => {
