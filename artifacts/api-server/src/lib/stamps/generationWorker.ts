@@ -431,13 +431,22 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
     // they don't become orphaned (no DB row will reference them).
     if (uploadedStoragePaths.length > 0) {
       try {
-        await sc.storage.from(STORAGE_BUCKET).remove(uploadedStoragePaths);
-        console.log(JSON.stringify({
-          event:      "stamp.generation.orphan_cleanup",
-          job_id:     jobId,
-          catalog_id: catalogId,
-          deleted:    uploadedStoragePaths.length,
-        }));
+        const { error: removeErr } = await sc.storage.from(STORAGE_BUCKET).remove(uploadedStoragePaths);
+        if (removeErr) {
+          console.error(JSON.stringify({
+            event:      "stamp.generation.orphan_cleanup_error",
+            job_id:     jobId,
+            catalog_id: catalogId,
+            error:      removeErr?.message,
+          }));
+        } else {
+          console.log(JSON.stringify({
+            event:      "stamp.generation.orphan_cleanup",
+            job_id:     jobId,
+            catalog_id: catalogId,
+            deleted:    uploadedStoragePaths.length,
+          }));
+        }
       } catch (cleanupErr: any) {
         const cleanupErrMsg = cleanupErr?.message ?? String(cleanupErr);
         console.error(JSON.stringify({
