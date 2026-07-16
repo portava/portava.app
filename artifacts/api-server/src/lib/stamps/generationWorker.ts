@@ -356,6 +356,137 @@ export async function queryStampWorkerHealth(): Promise<StampWorkerHealth | null
   };
 }
 
+// ── Periodic health monitor ───────────────────────────────────────────────────
+//
+// Re-runs the same health query on an interval so a mid-run stall (rate
+// limits, provider outage, crashed worker) surfaces in the logs without
+// waiting for the next deploy or a manual hit on the admin endpoint.
+
+export interface HealthWarning {
+  key: "stuck_jobs" | "backlog_growing";
+  message: string;
+  details: Record<string, unknown>;
+}
+
+/**
+ * Pure evaluation of a health snapshot against the previous queued depth.
+ * Exported for tests.
+ *
+ * - stuck_jobs: any job still `generating` past lock expiry.
+ * - backlog_growing: worker is enabled but the queued count grew since the
+ *   previous tick — the worker isn't keeping up (or isn't actually running).
+ */
+export function evaluateWorkerHealth(
+  health: StampWorkerHealth,
+  prevQueuedDepth: number | null,
+): HealthWarning[] {
+  const warnings: HealthWarning[] = [];
+
+  if (health.stuck_jobs.length > 0) {
+    warnings.push({
+      key: "stuck_jobs",
+      message:
+        "stamp generation jobs stuck in 'generating' past lock expiry — worker may have crashed",
+      details: {
+        stuck_count: health.stuck_jobs.length,
+        stuck_jobs: health.stuck_jobs,
+      },
+    });
+  }
+
+  const queued = health.queue_depth["queued"] ?? 0;
+  if (
+    health.worker_enabled &&
+    prevQueuedDepth !== null &&
+    queued > prevQueuedDepth
+  ) {
+    warnings.push({
+      key: "backlog_growing",
+      message:
+        "stamp generation queued backlog is growing while the worker is enabled — worker may be stalled",
+      details: {
+        queued,
+        previous_queued: prevQueuedDepth,
+        last_success_at: health.last_success_at,
+      },
+    });
+  }
+
+  return warnings;
+}
+
+const HEALTH_MONITOR_INTERVAL_MS = 15 * 60 * 1_000; // 15 min between checks
+const WARN_COOLDOWN_MS = 60 * 60 * 1_000; // at most one warning per type per hour
+
+let _monitorInterval: ReturnType<typeof setInterval> | null = null;
+let _prevQueuedDepth: number | null = null;
+const _lastWarnedAt = new Map<string, number>();
+
+type HealthLogger = {
+  warn: (obj: Record<string, unknown>, msg: string) => void;
+};
+
+/**
+ * One monitor tick: query health, evaluate, and emit rate-limited warnings.
+ * Exported for tests; `now` is injectable for deterministic cooldown checks.
+ * Returns the warnings that were actually logged (after rate limiting).
+ */
+export async function runHealthMonitorTick(
+  log: HealthLogger,
+  queryHealth: () => Promise<StampWorkerHealth | null> = queryStampWorkerHealth,
+  now: () => number = Date.now,
+): Promise<HealthWarning[]> {
+  const health = await queryHealth();
+  if (!health) return []; // service client not configured — skip
+
+  const warnings = evaluateWorkerHealth(health, _prevQueuedDepth);
+  _prevQueuedDepth = health.queue_depth["queued"] ?? 0;
+
+  const emitted: HealthWarning[] = [];
+  for (const w of warnings) {
+    const last = _lastWarnedAt.get(w.key);
+    if (last !== undefined && now() - last < WARN_COOLDOWN_MS) continue; // rate-limited
+    _lastWarnedAt.set(w.key, now());
+    log.warn(w.details, `stamp worker health: ${w.message}`);
+    emitted.push(w);
+  }
+  return emitted;
+}
+
+/** Reset monitor state between tests. */
+export function resetHealthMonitorState(): void {
+  _prevQueuedDepth = null;
+  _lastWarnedAt.clear();
+}
+
+export function startHealthMonitorLoop(
+  log: HealthLogger,
+  intervalMs = HEALTH_MONITOR_INTERVAL_MS,
+): void {
+  if (_monitorInterval) return; // Already running
+
+  console.log(JSON.stringify({
+    event:       "stamp.health_monitor.started",
+    interval_ms: intervalMs,
+  }));
+
+  _monitorInterval = setInterval(() => {
+    runHealthMonitorTick(log).catch((e) =>
+      log.warn({ err: e?.message ?? String(e) }, "stamp worker health: periodic check failed"),
+    );
+  }, intervalMs);
+  // Don't keep the process alive just for the monitor
+  (_monitorInterval as any).unref?.();
+}
+
+export function stopHealthMonitorLoop(): void {
+  if (_monitorInterval) {
+    clearInterval(_monitorInterval);
+    _monitorInterval = null;
+    console.log(JSON.stringify({ event: "stamp.health_monitor.stopped" }));
+  }
+}
+
 // ── Worker loop ───────────────────────────────────────────────────────────────
 
 let _workerInterval: ReturnType<typeof setInterval> | null = null;

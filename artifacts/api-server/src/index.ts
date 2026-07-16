@@ -17,7 +17,7 @@ import { startInviteSlotReconciler } from "./lib/inviteSlotReconciler";
 import { startInviteSlotSweeper } from "./lib/inviteSlotSweeper";
 import { getServiceClient } from "./lib/supabase";
 import { assertRequiredEnv } from "./lib/envValidation";
-import { startWorkerLoop, queryStampWorkerHealth } from "./lib/stamps/generationWorker";
+import { startWorkerLoop, queryStampWorkerHealth, startHealthMonitorLoop } from "./lib/stamps/generationWorker";
 import { runSchemaDriftCheck } from "./lib/schemaDriftCheck";
 
 assertRequiredEnv(logger);
@@ -98,6 +98,12 @@ app.listen(port, (err) => {
   }).catch((startupErr) => {
     logger.warn({ err: startupErr }, "startup: could not query stamp worker health");
   });
+
+  // Periodic stamp-worker health monitor — re-checks queue health every
+  // 15 minutes so a mid-run stall (stuck jobs, growing backlog) is warned
+  // about while the app runs, not only at startup. Warnings are rate-limited
+  // to one per type per hour inside the monitor.
+  startHealthMonitorLoop(logger);
 
   // Startup schema-drift check: probes every declared critical column and
   // SQL function against the live schema and logs one consolidated warning
