@@ -553,6 +553,73 @@ describe("background correction sweep", () => {
     assert.equal(r!.countryCode, "JP");
   });
 
+  it("mixed batch: only evicts the row with a valid corrected_at — null row stays cached", async () => {
+    // Seed both cities into the in-memory cache.
+    _setGeocodeFetchForTests(fakeNominatim({
+      "kyoto": { country_code: "jp", country: "Japan" },
+      "banff": { country_code: "ca", country: "Canada" },
+    }));
+    await geocodeCityCountry("Kyoto");
+    await geocodeCityCountry("Banff");
+    assert.equal(fetchCalls.length, 2, "both cities should have been geocoded initially");
+
+    // DB sweep returns a mixed batch:
+    //   - kyoto: corrected_at null  → must NOT be evicted
+    //   - banff: corrected_at in the future → must be evicted
+    const banffCorrectedAt = new Date(Date.now() + 1_000).toISOString();
+    const mixedBatchClient = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache");
+        let gteColumn = "";
+        const chain: any = {
+          select() { return chain; },
+          gte(col: string) { gteColumn = col; return chain; },
+          not()    { return chain; },
+          in()     { return chain; },
+          delete() { return chain; },
+          then(resolve: (v: any) => void) {
+            if (gteColumn === "corrected_at") {
+              // Pass 1: return mixed batch with one null and one valid corrected_at.
+              resolve({
+                data: [
+                  { city_key: "kyoto", corrected_at: null },
+                  { city_key: "banff", corrected_at: banffCorrectedAt },
+                ],
+                error: null,
+              });
+            } else {
+              // Pass 2 (deleted_at tombstone sweep): no tombstoned rows.
+              resolve({ data: [], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(mixedBatchClient);
+
+    await _runCorrectionSweepForTests();
+
+    // After the sweep: banff evicted, kyoto still cached.
+    fetchCalls = [];
+    _setGeocodeFetchForTests(fakeNominatim({
+      "banff": { country_code: "ca", country: "Canada" },
+    }));
+    _setGeocodeDbClientForTests(mixedBatchClient);
+
+    // kyoto must still be served from cache — no Nominatim call.
+    const kyotoResult = await geocodeCityCountry("Kyoto");
+    assert.equal(fetchCalls.length, 0, "kyoto must still be cached — null corrected_at must not evict");
+    assert.ok(kyotoResult !== null, "kyoto cached result must be returned");
+    assert.equal(kyotoResult!.countryCode, "JP");
+
+    // banff must have been evicted — the next call fires a new Nominatim fetch.
+    const banffResult = await geocodeCityCountry("Banff");
+    assert.equal(fetchCalls.length, 1, "banff must have been evicted and re-geocoded");
+    assert.ok(banffResult !== null, "banff result must be returned after re-geocode");
+    assert.equal(banffResult!.countryCode, "CA");
+  });
+
   it("does not evict an in-memory entry when the DB row has corrected_at: null (per-request probe path)", async () => {
     // Seed in-memory cache with a valid entry.
     _setGeocodeFetchForTests(fakeNominatim({ "oslo": { country_code: "no", country: "Norway" } }));
