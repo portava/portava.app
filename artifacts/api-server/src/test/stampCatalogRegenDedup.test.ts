@@ -331,3 +331,199 @@ describe("POST regenerate called twice does not queue the same stamp twice", () 
   });
 
 });
+
+// ── Catalog status reset failure ──────────────────────────────────────────────
+//
+// The regenerate handler does NOT check the result of the
+// universal_stamp_catalog status reset — the await is fire-and-forget in terms
+// of error handling. The audit log is written AFTER that update, gated only on
+// the queue insert result. This means:
+//
+//   queue insert succeeds → catalog reset fails (silently) → audit log IS written
+//
+// That is intentional: the audit entry records that the regeneration job was
+// queued, not that the catalog status was reset. Operators can observe the
+// catalog status separately. Skipping the log on catalog-reset failure would
+// make the queue action invisible to operators, which is worse.
+
+function makeClientWithCatalogUpdateError(db: DB) {
+  function chain(tableName: string) {
+    let updateValues: Record<string, any> | null = null;
+    let insertRow: Record<string, any> | null    = null;
+    const filters: Array<(r: any) => boolean>    = [];
+    let _headOnly    = false;
+    let _selectCount = false;
+
+    const b: any = {
+      select(_cols?: any, opts?: any) {
+        if (opts?.count === "exact") _selectCount = true;
+        if (opts?.head === true)     _headOnly    = true;
+        return b;
+      },
+      eq(col: string, val: any)    { filters.push((r) => r[col] === val); return b; },
+      in(col: string, vals: any[]) { filters.push((r) => (vals as any[]).includes(r[col])); return b; },
+      not()    { return b; },
+      order()  { return b; },
+      range()  { return b; },
+      limit()  { return b; },
+      update(vals: Record<string, any>) { updateValues = vals; return b; },
+      insert(row: Record<string, any>)  { insertRow   = row;   return b; },
+
+      maybeSingle() {
+        const rows = db[tableName] ?? [];
+        if (updateValues !== null) {
+          const matched = rows.filter((r) => filters.every((f) => f(r)));
+          matched.forEach((r) => Object.assign(r, updateValues));
+          return Promise.resolve({ data: matched[0] ? { ...matched[0] } : null, error: null });
+        }
+        const matched = rows.filter((r) => filters.every((f) => f(r)));
+        return Promise.resolve({ data: matched[0] ? { ...matched[0] } : null, error: null });
+      },
+
+      single() {
+        const rows    = db[tableName] ?? [];
+        const matched = rows.filter((r) => filters.every((f) => f(r)));
+        if (matched.length === 1)
+          return Promise.resolve({ data: matched[0], error: null });
+        return Promise.resolve({ data: null, error: { message: "No rows" } });
+      },
+
+      then(resolve: any, reject: any) {
+        return Promise.resolve()
+          .then(() => {
+            const rows = db[tableName] ?? [];
+
+            if (insertRow !== null) {
+              // Simulate unique constraint on (catalog_id, status='queued')
+              if (
+                tableName === "stamp_generation_queue" &&
+                insertRow.status === "queued"
+              ) {
+                const duplicate = rows.find(
+                  (r) => r.catalog_id === insertRow!.catalog_id && r.status === "queued",
+                );
+                if (duplicate) {
+                  return {
+                    data:  null,
+                    error: {
+                      code:    "23505",
+                      message: "duplicate key value violates unique constraint",
+                    },
+                  };
+                }
+              }
+              rows.push(insertRow);
+              db[tableName] = rows;
+              return { data: { ...insertRow }, error: null };
+            }
+
+            if (updateValues !== null) {
+              // Inject a network-style error for universal_stamp_catalog updates
+              // to simulate RLS or transient failures on the status reset.
+              if (tableName === "universal_stamp_catalog") {
+                return {
+                  data:  null,
+                  error: { message: "network error", code: "PGRST000" },
+                };
+              }
+
+              const matched = rows.filter((r) => filters.every((f) => f(r)));
+              matched.forEach((r) => Object.assign(r, updateValues));
+              return { data: matched.map((r) => ({ ...r })), error: null };
+            }
+
+            const matched = rows.filter((r) => filters.every((f) => f(r)));
+            if (_headOnly) return { data: null, error: null, count: matched.length };
+            return {
+              data:  matched.map((r) => ({ ...r })),
+              error: null,
+              count: _selectCount ? matched.length : undefined,
+            };
+          })
+          .then(resolve, reject);
+      },
+    };
+    return b;
+  }
+
+  return {
+    from: (tableName: string) => chain(tableName),
+    auth: {
+      getUser: () =>
+        Promise.resolve({ data: { user: { id: ADMIN_ID } }, error: null }),
+    },
+  };
+}
+
+describe("POST regenerate — catalog status reset fails after queue insert succeeds", () => {
+
+  beforeEach(() => {
+    db = makeDb();
+    // Swap in the error-injecting client
+    const client = makeClientWithCatalogUpdateError(db);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  });
+
+  it("still returns { ok: true } — catalog reset failure is silently swallowed", async () => {
+    const res = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      res.status,
+      200,
+      `expected 200 even when catalog update fails, got ${res.status}: ${JSON.stringify(res.body)}`,
+    );
+    assert.deepEqual(res.body, { ok: true });
+  });
+
+  it("queue row is still inserted when catalog reset fails", async () => {
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+
+    const queued = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.status === "queued",
+    );
+    assert.equal(
+      queued.length,
+      1,
+      `expected 1 queued row even when catalog update fails, found ${queued.length}`,
+    );
+  });
+
+  it("audit log is written exactly once — not skipped — when catalog reset fails (partial-success auditing)", async () => {
+    // The audit log records that the regeneration job was queued successfully.
+    // It does NOT depend on the catalog status reset succeeding. Skipping the
+    // log on catalog-reset failure would make the queue action invisible to
+    // operators, so partial-success auditing is intentional here.
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+
+    const auditEntries = db.stamp_admin_audit_log.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.action === "regenerate",
+    );
+
+    assert.equal(
+      auditEntries.length,
+      1,
+      `expected exactly 1 audit entry when catalog reset fails (partial-success auditing is intentional), found ${auditEntries.length}: ${JSON.stringify(auditEntries)}`,
+    );
+  });
+
+  it("audit log is not doubled when catalog reset fails and a second regenerate is called", async () => {
+    // First call: queue insert succeeds, catalog reset fails, audit log written
+    const first = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(first.status, 200, `first regenerate failed: ${JSON.stringify(first.body)}`);
+
+    // Second call: queue insert hits 23505, catalog reset still fails, audit log must NOT be written again
+    const second = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(second.status, 200, `second regenerate failed: ${JSON.stringify(second.body)}`);
+
+    const auditEntries = db.stamp_admin_audit_log.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.action === "regenerate",
+    );
+
+    assert.equal(
+      auditEntries.length,
+      1,
+      `expected exactly 1 audit entry after two calls with catalog reset failing, found ${auditEntries.length}: ${JSON.stringify(auditEntries)}`,
+    );
+  });
+
+});
