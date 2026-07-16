@@ -7,7 +7,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCityCoords } from '../cityCoords.ts';
+import { buildCityCoords, cityCoordSpread } from '../cityCoords.ts';
 
 describe('buildCityCoords — string (non-numeric) rejection', () => {
   it('returns {} when lat is a numeric string like "48.8566"', () => {
@@ -22,6 +22,18 @@ describe('buildCityCoords — string (non-numeric) rejection', () => {
 
   it('returns {} when lng is a numeric string like "2.3522"', () => {
     const result = buildCityCoords({ lat: 48.8566, lng: '2.3522' as unknown as number });
+    assert.deepEqual(result, {});
+  });
+});
+
+describe('cityCoordSpread — missing coords contract', () => {
+  it('returns exactly {} (not null or undefined) when called with undefined', () => {
+    const result = cityCoordSpread(undefined);
+    assert.deepEqual(result, {});
+  });
+
+  it('returns exactly {} (not null or undefined) when called with null', () => {
+    const result = cityCoordSpread(null);
     assert.deepEqual(result, {});
   });
 });
