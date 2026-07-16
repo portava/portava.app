@@ -396,6 +396,52 @@ describe("sendPushWithRetry", () => {
     assert.equal(db.__deletes.length, 0);
   });
 
+  /**
+   * All-ok batch: clearDeadTokens must be skipped entirely.
+   *
+   * Sends a two-recipient batch where every Expo ticket comes back "ok".
+   * Asserts that no .in() filter hits any of the three token tables
+   * (profiles, notification_devices, rent_buddy_profiles) — confirming
+   * clearDeadTokens is not called at all, not just that the filter is empty.
+   *
+   * Complements the skeleton above by exercising a multi-recipient batch
+   * and explicitly naming rent_buddy_profiles.
+   */
+  it("skips clearDeadTokens entirely — no DB writes to any token table — when all tickets are ok", async () => {
+    const db = makeFakeDb();
+    const result = await sendPushWithRetry(
+      db,
+      [{ userId: USER1, tokens: [TOKEN1] }, { userId: USER2, tokens: [TOKEN2] }],
+      PAYLOAD,
+    );
+
+    assert.equal(result.sent, 2, "both tickets must be counted as sent");
+    assert.equal(result.errors.length, 0, "no errors expected");
+
+    // No update must have hit profiles or rent_buddy_profiles
+    assert.equal(
+      db.__updates.filter((u: any) => u.table === "profiles").length,
+      0,
+      "profiles must not be updated when all tickets are ok",
+    );
+    assert.equal(
+      db.__updates.filter((u: any) => u.table === "rent_buddy_profiles").length,
+      0,
+      "rent_buddy_profiles must not be updated when all tickets are ok",
+    );
+
+    // No delete must have hit notification_devices
+    assert.equal(
+      db.__deletes.filter((d: any) => d.table === "notification_devices").length,
+      0,
+      "notification_devices must not be deleted when all tickets are ok",
+    );
+
+    // Aggregate guard: zero writes of any kind
+    assert.equal(db.__updates.length, 0, "total DB updates must be zero when all tickets are ok");
+    assert.equal(db.__deletes.length, 0, "total DB deletes must be zero when all tickets are ok");
+  });
+
   it("does not throw on DeviceNotRegistered with a null db client", async () => {
     ticketFor = () => ({ status: "error", message: "gone", details: { error: "DeviceNotRegistered" } });
     const result = await sendPushWithRetry(null, { userId: USER1, tokens: [TOKEN1] }, PAYLOAD);
