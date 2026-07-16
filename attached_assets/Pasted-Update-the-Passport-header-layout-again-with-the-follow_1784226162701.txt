@@ -1,0 +1,274 @@
+Update the Passport header layout again with the following targeted changes.
+
+Do not redesign the entire Passport page. Keep the existing edge-to-edge Passport header and customization architecture.
+
+GOAL
+
+Clean up the lower-left section of the Passport header.
+
+The lower-left area should become a dedicated personal Bio section instead of being occupied by Save/Edit controls.
+
+PASSPORT STAMP + BIO AREA
+
+Move the Passport stamp to the lower-left area of the Passport header.
+
+Use this same lower-left region as the user's personal Bio / About section.
+
+The visual structure should feel like:
+
+[ PASSPORT STAMP ]
+
+User Bio
+Short personal introduction or travel statement.
+
+The stamp and Bio should visually belong together as part of the Passport identity design.
+
+The stamp should feel like an authentic passport marking or identity detail rather than a floating social-media badge.
+
+Keep the layout clean and premium.
+
+Do not make the stamp so large that it dominates the Bio.
+
+BIO
+
+Use the user's real existing Bio/profile description from the backend.
+
+Do not create a second Bio field.
+
+Do not use placeholder text when a real Bio exists.
+
+If the user has no Bio, handle the empty state cleanly.
+
+For the Passport owner, the empty state may show a subtle prompt such as:
+
+Add a bio
+
+Public viewers should not see an edit prompt.
+
+The Bio should support reasonable text wrapping without breaking the Passport header.
+
+Add a sensible maximum display length or collapsed state if the Bio is very long.
+
+Do not let a long Bio dramatically increase the height of the header.
+
+CUSTOMIZATION
+
+The Bio section should remain compatible with the new Customize Passport system.
+
+Treat the Bio/stamp area as a supported Passport header module or grouped identity module.
+
+The user may reposition this module within compatible header zones where supported.
+
+Do not allow it to overlap other elements.
+
+SAVE / EDIT BUTTONS
+
+Remove the Save and Edit buttons from the lower-left section of the Passport header.
+
+Do not overlay action buttons on top of the Bio area.
+
+Do not let profile-management actions visually compete with the user's Passport identity.
+
+Find a cleaner location for owner-only controls.
+
+RECOMMENDED BUTTON PLACEMENT
+
+Use the top-right area of the Passport page/header for owner actions.
+
+Preferred behavior:
+
+Normal Passport View:
+
+Show one subtle owner-only Edit or Customize action near the existing menu control.
+
+For example:
+
+[ Edit ] [ ⋯ ]
+
+or use the existing menu:
+
+[ ⋯ ]
+
+with options:
+
+- Edit Profile
+- Customize Passport
+- Change Cover Photo
+- Change Display Photo
+- Settings
+
+Avoid showing multiple large buttons directly inside the Passport identity content.
+
+CUSTOMIZATION MODE
+
+When the owner enters Customize Passport mode, show editing controls in a dedicated editor toolbar.
+
+Recommended:
+
+Cancel                         Save
+
+The toolbar may be:
+
+- Fixed at the top below the safe area
+OR
+- Fixed at the bottom above the navigation bar
+
+Choose whichever fits the existing app structure best.
+
+Save and Cancel should only appear while actively customizing the Passport.
+
+Do not permanently display a Save button on the normal Passport page.
+
+PROFILE EDIT MODE
+
+If there is a separate Edit Profile flow, Save should remain inside that editing experience.
+
+Do not place the Edit Profile Save button inside the public-facing Passport header.
+
+The Passport page should display profile information.
+
+The Edit Profile screen or edit sheet should manage saving profile changes.
+
+HEADER VISUAL HIERARCHY
+
+The Passport header should now prioritize:
+
+1. Cover / Passport background
+2. Profile photo
+3. Name and verification
+4. Handle
+5. Primary identity information
+6. Trust Score
+7. Passport stamp + Bio in the lower-left identity area
+
+Owner management controls should be visually secondary.
+
+The viewer's attention should go to the Passport owner, not to Edit/Save buttons.
+
+LOWER-LEFT DESIGN
+
+The lower-left Bio section should feel intentionally designed.
+
+Suggested arrangement:
+
+------------------------------
+[ passport stamp ]
+
+Bio
+"Always chasing warm weather,
+good food, and new cities."
+------------------------------
+
+Or, if horizontal space allows:
+
+[ stamp ]   Bio text
+
+Use the layout that works best responsively.
+
+Do not hard-code coordinates.
+
+Use responsive layout containers.
+
+PASSPORT STAMP TRUTH
+
+Continue using the correct existing Passport stamp asset or verification/passport identity stamp.
+
+Do not generate a fake stamp.
+
+If this is a verification stamp, only show the verified version when the backend says the user is verified.
+
+If this is a decorative Passport brand stamp, keep it separate from actual verification status.
+
+Do not accidentally mix decorative stamps with earned travel stamps or verification.
+
+OWNER VS PUBLIC
+
+Owner Passport:
+
+- Can access Edit Profile
+- Can access Customize Passport
+- Can change photos
+- Sees Bio
+- Sees Passport stamp
+
+Public Passport:
+
+- Sees the same Bio layout
+- Sees appropriate Passport stamp
+- Does not see Edit
+- Does not see Save
+- Does not see owner customization controls
+
+Do not build separate Passport layouts.
+
+Use the same header renderer with permission-aware actions.
+
+DO NOT
+
+Do not leave Save/Edit floating over the Bio.
+
+Do not put Save/Edit back into the stats counter row.
+
+Do not put Save/Edit inside the tab bar.
+
+Do not merge profile-management buttons with Passport content tabs.
+
+Do not move Trust Score into this Bio area unless it is already part of the chosen customizable header configuration.
+
+Do not create duplicate Bio data.
+
+Do not break the edge-to-edge header.
+
+FINAL TARGET STRUCTURE
+
+The visual layout should approximately become:
+
+┌──────────────────────────────────┐
+│       EDGE-TO-EDGE COVER         │
+│                            [⋯]   │
+│                                  │
+│  PROFILE PHOTO                   │
+│  Name ✓                          │
+│  @handle                         │
+│                                  │
+│  Identity Information            │
+│  Trust Score                     │
+│                                  │
+│  [PASSPORT STAMP]                │
+│  Bio                             │
+│  User's personal introduction    │
+└──────────────────────────────────┘
+
+[ SEPARATE STATS / COUNTERS ]
+
+[ PASSPORT TABS ]
+
+Postcards | Memories | Plans | Stamps | Map
+
+In owner customization mode, show a dedicated editor toolbar for:
+
+Cancel | Save
+
+Do not place Save inside the normal Passport identity layout.
+
+VALIDATE
+
+After making these changes confirm:
+
+1. Lower-left header area is now used for Passport stamp + Bio.
+2. Bio uses the existing backend profile Bio.
+3. Stamp displays correctly.
+4. Save is removed from the normal Passport header.
+5. Edit controls no longer occupy the Bio section.
+6. Owner actions are moved to a cleaner top-right/menu location.
+7. Customize mode has its own Save/Cancel toolbar.
+8. Public users do not see owner actions.
+9. Header remains edge-to-edge.
+10. Stats remain separate from the header.
+11. Trust Score remains correctly positioned.
+12. Long Bio text does not break the layout.
+13. Passport customization system still supports the Bio/stamp module.
+14. No duplicate Bio or stamp source is created.
+15. No TypeScript or runtime errors are introduced.
+
+When complete, report which Passport header components and action controls were moved or modified.
