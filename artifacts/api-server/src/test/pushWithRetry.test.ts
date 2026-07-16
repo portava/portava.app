@@ -54,14 +54,34 @@ function fetch503(): typeof fetch {
 
 function makeFakeDb() {
   const inserted: Record<string, any[]> = {};
+  const updates: Array<{ table: string; values: any; filter: { column: string; values: any[] } }> = [];
+  const deletes: Array<{ table: string; filter: { column: string; values: any[] } }> = [];
   return {
     __inserted: inserted,
+    __updates: updates,
+    __deletes: deletes,
     from(table: string) {
       return {
         insert(row: any) {
           if (!inserted[table]) inserted[table] = [];
           inserted[table].push(row);
           return Promise.resolve({ error: null });
+        },
+        update(values: any) {
+          return {
+            in(column: string, vals: any[]) {
+              updates.push({ table, values, filter: { column, values: vals } });
+              return Promise.resolve({ error: null });
+            },
+          };
+        },
+        delete() {
+          return {
+            in(column: string, vals: any[]) {
+              deletes.push({ table, filter: { column, values: vals } });
+              return Promise.resolve({ error: null });
+            },
+          };
         },
       };
     },
@@ -129,6 +149,46 @@ describe("sendPushWithRetry", () => {
     assert.equal(result.sent, 0);
     assert.equal(result.errors.length, 1);
     assert.equal((db.__inserted["push_retry_queue"] ?? []).length, 0);
+  });
+
+  it("clears dead tokens from all three tables on DeviceNotRegistered", async () => {
+    ticketFor = (to: string) =>
+      to === TOKEN1
+        ? { status: "error", message: "gone", details: { error: "DeviceNotRegistered" } }
+        : { status: "ok", id: "t" };
+    const db = makeFakeDb();
+    await sendPushWithRetry(
+      db,
+      [{ userId: USER1, tokens: [TOKEN1] }, { userId: USER2, tokens: [TOKEN2] }],
+      PAYLOAD,
+    );
+
+    const profileUpdate = db.__updates.find((u: any) => u.table === "profiles");
+    assert.ok(profileUpdate, "profiles.expo_push_token cleared");
+    assert.deepEqual(profileUpdate.values, { expo_push_token: null });
+    assert.deepEqual(profileUpdate.filter, { column: "expo_push_token", values: [TOKEN1] });
+
+    const rentBuddyUpdate = db.__updates.find((u: any) => u.table === "rent_buddy_profiles");
+    assert.ok(rentBuddyUpdate, "rent_buddy_profiles.expo_push_token cleared");
+    assert.deepEqual(rentBuddyUpdate.filter, { column: "expo_push_token", values: [TOKEN1] });
+
+    const deviceDelete = db.__deletes.find((d: any) => d.table === "notification_devices");
+    assert.ok(deviceDelete, "notification_devices row deleted");
+    assert.deepEqual(deviceDelete.filter, { column: "push_token", values: [TOKEN1] });
+  });
+
+  it("does not touch token tables when all tickets are ok", async () => {
+    const db = makeFakeDb();
+    await sendPushWithRetry(db, { userId: USER1, tokens: [TOKEN1] }, PAYLOAD);
+    assert.equal(db.__updates.length, 0);
+    assert.equal(db.__deletes.length, 0);
+  });
+
+  it("does not throw on DeviceNotRegistered with a null db client", async () => {
+    ticketFor = () => ({ status: "error", message: "gone", details: { error: "DeviceNotRegistered" } });
+    const result = await sendPushWithRetry(null, { userId: USER1, tokens: [TOKEN1] }, PAYLOAD);
+    assert.equal(result.sent, 0);
+    assert.equal(result.errors.length, 1);
   });
 
   it("skips Expo entirely when no recipient has a valid token", async () => {
