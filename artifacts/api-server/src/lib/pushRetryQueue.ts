@@ -19,6 +19,17 @@ import { sendPushNotification, type PushPayload } from "./push.js";
 import { clearDeadTokens } from "./pushTokenCleanup.js";
 
 // ── Test seams ─────────────────────────────────────────────────────────────────
+// Allows unit tests to replace sendPushNotification with a mock (e.g. one that
+// throws an unexpected error) to exercise processItem's catch block.
+// Production code always sees null here, so the real sendPushNotification is used.
+type SendPushFn = (tokens: string[], payload: PushPayload) => ReturnType<typeof sendPushNotification>;
+let _testSendPushFn: SendPushFn | null = null;
+
+/** @internal Only call from tests. Pass null to restore the real implementation. */
+export function _setTestSendPush(fn: SendPushFn | null): void {
+  _testSendPushFn = fn;
+}
+
 // Allows unit tests to replace clearDeadTokens with a mock (e.g. one that
 // throws) without having to mock the entire module.  Production code always
 // sees null here, so the real clearDeadTokens is used.
@@ -229,7 +240,8 @@ export class PushRetryQueue {
     const newAttemptCount: number = prevAttemptCount + 1;
 
     try {
-      const result = await sendPushNotification(tokens as string[], payload as PushPayload);
+      const doSend = _testSendPushFn ?? sendPushNotification;
+      const result = await doSend(tokens as string[], payload as PushPayload);
 
       // Clear any tokens that became permanently invalid since the item was enqueued
       // (DeviceNotRegistered = device gone; InvalidCredentials = always undeliverable).

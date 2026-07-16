@@ -18,7 +18,7 @@
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { PushRetryQueue, _setTestClearDeadTokens, _setTestNow, _setTestCleanupWarn, _formatDeadTokenErrors } from "../lib/pushRetryQueue.js";
+import { PushRetryQueue, _setTestClearDeadTokens, _setTestNow, _setTestCleanupWarn, _setTestSendPush, _formatDeadTokenErrors } from "../lib/pushRetryQueue.js";
 import { _setTestFetch } from "../lib/push.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -187,6 +187,7 @@ function expo503Fetch(): typeof fetch {
 
 afterEach(() => {
   _setTestFetch(null);
+  _setTestSendPush(null);
   _setTestClearDeadTokens(null);
   _setTestCleanupWarn(null);
 });
@@ -3835,6 +3836,73 @@ describe("PushRetryQueue.processQueue() — clearDeadTokens throws on retry: war
     const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
     assert.equal(ndaUpdate.patch.status, "sent",    "delivery_attempt status must be 'sent'");
     assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// catch-block finalise() — unexpected exception on the final attempt
+//
+// When sendPushNotification throws an unexpected error (not a 503 or dead-token
+// ticket) and attempt_count has reached max_attempts, the catch block calls
+// finalise() with String(err) as the error message.  This test confirms that
+// error_message is mirrored to notification_delivery_attempts — a regression
+// that nulled it only in this path would be invisible to the existing tests.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("PushRetryQueue.processQueue() — unexpected exception on final attempt", () => {
+  it("mirrors error_message to delivery_attempt when finalise() is called from the catch block", async () => {
+    // attempt_count=2 means attempts 1+2 already failed; this run is the 3rd
+    // and final attempt.  sendPushNotification throws an unexpected error,
+    // so the catch block runs and calls finalise() with String(err).
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       2,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    const boom = new Error("unexpected network collapse");
+    _setTestSendPush(async () => { throw boom; });
+    await queue.processQueue();
+
+    // The catch block must call finalise("failed", …, String(err))
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(failedUpdate, "push_retry_queue must be finalised as 'failed' when an unexpected error exhausts all attempts");
+    assert.equal(failedUpdate.filters.id,      QUEUE_ROW_ID, "failed update must target the correct queue row");
+    assert.equal(failedUpdate.patch.attempt_count, 3,        "attempt_count must be 3 (the final attempt)");
+    assert.equal(
+      failedUpdate.patch.last_error,
+      String(boom),
+      "push_retry_queue last_error must be String(err) from the catch block",
+    );
+
+    // finalise() must also mirror the error to notification_delivery_attempts
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status,  "failed",   "delivery_attempt status must be 'failed'");
+    assert.equal(ndaUpdate.filters.id,    ATTEMPT_ID, "delivery_attempt update must target the correct id");
+    // error_message must mirror last_error — a regression in finalise() would leave it null
+    assert.equal(
+      ndaUpdate.patch.error_message,
+      String(boom),
+      "delivery_attempt error_message must match String(err) from the catch block — not null",
+    );
+    assert.deepEqual(
+      ndaUpdate.patch.metadata,
+      { retryAttempts: 3 },
+      "delivery_attempt metadata must record retryAttempts: 3 when the catch block finalises on the last attempt",
+    );
   });
 });
 
