@@ -128,6 +128,7 @@ export default function FailedJobsScreen() {
         <View style={styles.center}><ActivityIndicator color={color.ink} /></View>
       ) : (
         <FlatList
+          testID="failed-jobs-list"
           data={jobs}
           keyExtractor={(item) => item.id}
           renderItem={renderJob}

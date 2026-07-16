@@ -130,6 +130,7 @@ export default function StampQueueScreen() {
         <View style={styles.center}><ActivityIndicator color={color.ink} /></View>
       ) : (
         <FlatList
+          testID="catalog-queue-list"
           data={entries}
           keyExtractor={(item) => item.id}
           renderItem={renderEntry}
