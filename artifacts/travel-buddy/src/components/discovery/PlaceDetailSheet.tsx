@@ -231,7 +231,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: Place
       </View>
 
       <TripWishlistPicker
-        payload={place}
+        place={place}
         visible={pickerVisible}
         onClose={() => setPickerVisible(false)}
         onSaved={() => setPickerVisible(false)}

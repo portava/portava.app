@@ -81,7 +81,7 @@ function payloadToBookmark(p: AddToTripPayload): BookmarkedPlace {
 // ── Component ──────────────────────────────────────────────────────────────────
 
 interface TripWishlistPickerProps {
-  payload: AddToTripPayload | null;
+  place: AddToTripPayload | null;
   visible: boolean;
   onClose: () => void;
   /** Called after a successful save with the trip that received the place. */
@@ -89,11 +89,12 @@ interface TripWishlistPickerProps {
 }
 
 export function TripWishlistPicker({
-  payload,
+  place,
   visible,
   onClose,
   onSaved,
 }: TripWishlistPickerProps) {
+  const payload = place;
   const [trips, setTrips]         = useState<TripRow[]>([]);
   const [loading, setLoading]     = useState(false);
   const [loadError, setLoadError] = useState(false);

@@ -168,7 +168,7 @@ export function DiscoveryCardMessage({ body, mine }: Props) {
       </View>
 
       <TripWishlistPicker
-        payload={addPayload}
+        place={addPayload}
         visible={pickerVisible}
         onClose={() => setPickerVisible(false)}
       />

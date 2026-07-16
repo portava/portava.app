@@ -503,7 +503,7 @@ export default function GemDetailScreen() {
         }] : undefined}
       />
       <TripWishlistPicker
-        payload={gemPickerPayload}
+        place={gemPickerPayload}
         visible={pickerVisible && !!gem}
         onClose={() => setPickerVisible(false)}
       />

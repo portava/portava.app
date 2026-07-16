@@ -137,8 +137,9 @@ export default function StampStudioIndex() {
         </View>
       ) : (
         <ScrollView
+          testID="stamp-studio-scroll"
           contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + space.xl }]}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          refreshControl={<RefreshControl testID="stamp-studio-refresh" refreshing={refreshing} onRefresh={onRefresh} />}
         >
           {/* Worker health warnings */}
           {healthWarnings.map((w) => (

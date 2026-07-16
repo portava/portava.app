@@ -842,7 +842,7 @@ function MessageBubble({
           />
           </Pressable>
           <TripWishlistPicker
-            payload={pickerPayload}
+            place={pickerPayload}
             visible={pickerPayload !== null}
             onClose={() => setPickerPayload(null)}
           />

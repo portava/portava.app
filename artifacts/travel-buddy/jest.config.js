@@ -29,5 +29,6 @@ module.exports = {
   ],
   moduleNameMapper: {
     'lucide-react-native': '<rootDir>/src/__mocks__/lucide-react-native.tsx',
+    'expo-router': '<rootDir>/src/__mocks__/expo-router.tsx',
   },
 };

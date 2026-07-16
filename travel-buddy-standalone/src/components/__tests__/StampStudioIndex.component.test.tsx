@@ -349,8 +349,8 @@ describe('StampStudioIndex — pull-to-refresh picks up newly approved artwork',
     await waitFor(() => screen.getByText('5'));
 
     const callsBefore = mockGetCatalog.mock.calls.length;
-    const scrollView = screen.UNSAFE_getByType(ScrollView);
-    await act(async () => { fireEvent(scrollView, 'refresh'); });
+    const scrollView = screen.getByTestId('stamp-studio-scroll');
+    await act(async () => { scrollView.props.refreshControl.props.onRefresh(); });
 
     // load() calls getAdminStampCatalog — count must have increased.
     expect(mockGetCatalog.mock.calls.length).toBeGreaterThan(callsBefore);
@@ -360,8 +360,8 @@ describe('StampStudioIndex — pull-to-refresh picks up newly approved artwork',
     render(<StampStudioIndex />);
     await waitFor(() => screen.getByText('5'));
 
-    const scrollView = screen.UNSAFE_getByType(ScrollView);
-    await act(async () => { fireEvent(scrollView, 'refresh'); });
+    const scrollView = screen.getByTestId('stamp-studio-scroll');
+    await act(async () => { scrollView.props.refreshControl.props.onRefresh(); });
 
     await waitFor(() => screen.getByText('77'));
     expect(screen.getByText('77')).toBeTruthy(); // updated count visible
@@ -372,15 +372,15 @@ describe('StampStudioIndex — pull-to-refresh picks up newly approved artwork',
     render(<StampStudioIndex />);
     await waitFor(() => screen.getByText('5'));
 
-    const scrollView = screen.UNSAFE_getByType(ScrollView);
-    await act(async () => { fireEvent(scrollView, 'refresh'); });
+    const scrollView = screen.getByTestId('stamp-studio-scroll');
+    await act(async () => { scrollView.props.refreshControl.props.onRefresh(); });
 
     // Wait until the updated count is present — load() has resolved and
     // setRefreshing(false) must have been called by then.
     await waitFor(() => screen.getByText('77'));
 
-    // The RefreshControl is passed as a prop; check its refreshing prop directly.
-    const refreshControl = scrollView.props.refreshControl;
-    expect(refreshControl.props.refreshing).toBe(false);
+    // Re-query so we see the updated refreshing prop after state settles.
+    const updated = screen.getByTestId('stamp-studio-scroll');
+    expect(updated.props.refreshControl.props.refreshing).toBe(false);
   });
 });
