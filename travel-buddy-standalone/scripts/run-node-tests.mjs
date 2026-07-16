@@ -14,6 +14,29 @@ import { readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import process from 'node:process';
 
+// ── Pre-check: cross-tree path guard ─────────────────────────────────────────
+// Run before discovering or executing any test files so a path typo surfaces
+// immediately with a clear message rather than as a cryptic ENOENT mid-suite.
+console.log('── Pre-check: cross-tree path guard ──');
+const guardResult = spawnSync(
+  'pnpm',
+  ['--filter', '@workspace/scripts', 'run', 'test:cross-tree-paths'],
+  { stdio: 'inherit' },
+);
+if (guardResult.error?.code === 'ENOENT') {
+  console.error(
+    'Could not find pnpm — ensure it is installed and on PATH before running standalone tests',
+  );
+  process.exit(1);
+}
+if ((guardResult.status ?? 1) !== 0) {
+  console.error(
+    '\nCross-tree path guard failed — fix the broken path(s) above before re-running the standalone tests.',
+  );
+  process.exit(guardResult.status ?? 1);
+}
+console.log('Cross-tree path guard passed.\n');
+
 // Known-broken node:test files, excluded from the run. Fix and remove.
 const KNOWN_BROKEN = [];
 
