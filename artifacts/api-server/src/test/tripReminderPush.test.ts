@@ -353,4 +353,70 @@ describe("TripReminderScheduler push", () => {
     assert.equal(state.trips![0].reminder_retry_count, countBefore,
       "retry count does not increase once the trip is permanently abandoned");
   });
+
+  it("does not resend when the stale claim's start_date is ~30 h away — just outside the upper drift buffer", async () => {
+    // The recovery window is 22-26 h ± 2 h drift = 20-28 h. A trip that starts
+    // ~30 h from now is just outside the upper bound and must NOT trigger recovery.
+    //
+    // Because start_date is date-only, we derive the boundary the same way the
+    // scheduler does (now + (WINDOW_UPPER_HRS + RECOVERY_DRIFT_HRS) = now + 28 h),
+    // then advance by one full calendar day so the date string is unambiguously
+    // after the upper window boundary — independent of the current time of day.
+    const STALE_CLAIM_MINUTES = 10;
+    const staleTime = new Date(Date.now() - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
+
+    // Upper boundary date that the scheduler computes (now + 28 h).
+    const windowUpperDate = new Date(Date.now() + (26 + 2) * 3_600_000)
+      .toISOString().slice(0, 10);
+    // One calendar day after that boundary → always outside the recovery window.
+    const outsideWindowDate = new Date(
+      new Date(windowUpperDate + "T00:00:00Z").getTime() + 24 * 3_600_000,
+    ).toISOString().slice(0, 10);
+
+    const state = baseState("trip-30h-outside-window");
+    state.trips![0].reminder_sent_at     = staleTime;
+    state.trips![0].reminder_delivered_at = null;
+    state.trips![0].start_date           = outsideWindowDate; // ~30 h+ out: outside 20-28 h band
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 0,
+      "recovery must stay silent when start_date is ~30 h away — just outside the upper drift buffer");
+  });
+
+  it("recovers a stale claim when start_date is ~27 h away — inside the upper drift buffer", async () => {
+    // 27 h from now is within the 20-28 h recovery window (22-26 h ± 2 h drift).
+    // The scheduler should detect the orphaned claim and re-send the reminder.
+    //
+    // The date of (now + 27 h) is always <= the date of (now + 28 h) and >= the
+    // date of (now + 20 h), so it is reliably inside the window boundary
+    // regardless of the current time of day.
+    const STALE_CLAIM_MINUTES = 10;
+    const staleTime = new Date(Date.now() - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
+
+    const insideWindowDate = new Date(Date.now() + 27 * 3_600_000)
+      .toISOString().slice(0, 10);
+
+    const state = baseState("trip-27h-inside-window");
+    state.trips![0].reminder_sent_at     = staleTime;
+    state.trips![0].reminder_delivered_at = null;
+    state.trips![0].start_date           = insideWindowDate; // 27 h out: inside 20-28 h band
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 1,
+      "recovery must fire when start_date is ~27 h away — inside the upper drift buffer");
+    assert.deepEqual(
+      pushCalls[0].map((m: any) => m.to).sort(),
+      [OWNER_TOKEN, MEMBER_TOKEN].sort(),
+    );
+    assert.ok(
+      state.trips![0].reminder_delivered_at,
+      "reminder_delivered_at must be set after recovery",
+    );
+  });
 });
