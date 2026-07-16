@@ -103,8 +103,11 @@ describe('StampQueueScreen — pull-to-refresh', () => {
 
   it('renders the initial entry from the first fetch', async () => {
     render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
-    expect(screen.getByText('Paris Eiffel')).toBeTruthy();
+    // Use findByText instead of waitFor(() => getByText(...)) to avoid act()
+    // boundary mismatches that cause intermittent "render function has not been
+    // called" timeouts on slow CI runs.
+    const entry = await screen.findByText('Paris Eiffel');
+    expect(entry).toBeTruthy();
   });
 
   it('calls getAdminStampCatalog again when the user pulls to refresh', async () => {
