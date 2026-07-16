@@ -21,6 +21,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
+import * as path from 'node:path';
 import { join, relative } from 'node:path';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -77,7 +78,7 @@ describe('getSession bypass guard — travel-buddy services', () => {
     const label = relative(SERVICES_DIR, filePath);
 
     it(`${label} does not use getSession() to extract an access token`, () => {
-      const src = readFileSync(join(SERVICES_DIR, label), 'utf8');
+      const src = readFileSync(path.join(SERVICES_DIR, label), 'utf8');
       const violates = bypassesTokenHelper(src);
       assert.ok(
         !violates,

@@ -6,6 +6,7 @@
  * EXPO_PUBLIC_API_BASE_URL + Supabase Bearer token via authHeaders().
  */
 import { freshToken } from './adminApi';
+import { cityCoordSpread } from '../lib/cityCoords';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -419,8 +420,7 @@ export async function joinWaitlist(
     method: 'POST',
     body: JSON.stringify({
       city, category,
-      lat: coords?.lat ?? undefined,
-      lng: coords?.lng ?? undefined,
+      ...cityCoordSpread(coords),
     }),
   });
 }
