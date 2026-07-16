@@ -257,6 +257,14 @@ function makeClient(userId: string, role = "user") {
               if (!(state as any).trainingChecklist) (state as any).trainingChecklist = [];
               (state as any).trainingChecklist.push(r);
             }
+            if (t === "messages") {
+              if (!(state as any).messages) (state as any).messages = [];
+              (state as any).messages.push(r);
+            }
+            if (t === "notifications") {
+              if (!(state as any).notifications) (state as any).notifications = [];
+              (state as any).notifications.push(r);
+            }
           }
           if (this._maybeSingle) return { data: generatedRows.length === 1 ? generatedRows[0] : null, error: null };
           return { data: null, error: null };
