@@ -1352,4 +1352,99 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     assert.equal(afterCycle2?.countryCode, "AT",
       "geocoder re-resolved correctly via Nominatim after the sweep eviction");
   });
+
+  it("Pass 1 throw does not block Pass 2 — tombstoned entry is evicted and cleanup delete fires", async () => {
+    // Regression guard: each pass of runCorrectionSweep is wrapped in its own
+    // try/catch.  If Pass 1 (corrected_at query) throws — not just returns an
+    // error object — Pass 2 (deleted_at tombstone query) must still run.
+    // A regression that re-throws from Pass 1's catch block would silently skip
+    // tombstone eviction.
+    //
+    // This test builds a sweep client where:
+    //   - Pass 1 resolves as a rejected promise (the await throws).
+    //   - Pass 2 returns a tombstoned row for "tokyo".
+    // After the sweep the in-memory cache entry for "tokyo" must be gone
+    // and the cleanup hard-delete must have been issued.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "jp", country: "Japan" } }],
+      };
+    });
+
+    // Seed the in-memory cache via a DB load so the sweep has something to evict.
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({ country: "Japan", country_code: "JP", corrected_at: null, deleted_at: null }),
+    );
+    const seeded = await geocodeCityCountry("Tokyo");
+    assert.equal(seeded?.countryCode, "JP", "pre-condition: cache seeded with JP");
+    assert.equal(nominatimCalls, 0, "no Nominatim call during seed");
+
+    // Build the sweep client:
+    //   - Pass 1 (first .then()): throws synchronously — simulates a DB connection
+    //     error that the Supabase client surfaces as a rejected promise.
+    //   - Pass 2 (second .then()): returns "tokyo" as a tombstoned row.
+    //   - DELETE: tracked so we can confirm it fired.
+    let sweepQueryCount = 0;
+    const cleanedUpKeys: string[][] = [];
+
+    const pass1ThrowClient: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        let inKeys: string[] = [];
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          delete() { isDelete = true; return chain; },
+          in(_col: string, keys: string[]) {
+            inKeys = keys;
+            cleanedUpKeys.push([...keys]);
+            return chain;
+          },
+          then(resolve: (v: any) => void, reject: (e: any) => void) {
+            if (isDelete) {
+              resolve({ error: null });
+              return;
+            }
+            const q = sweepQueryCount++;
+            if (q === 0) {
+              // Pass 1 — corrected_at: throw to simulate a rejected DB promise.
+              reject(new Error("pass1_db_connection_refused"));
+            } else {
+              // Pass 2 — deleted_at: return "tokyo" as a tombstoned row.
+              resolve({ data: [{ city_key: "tokyo" }], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(pass1ThrowClient);
+    await _runCorrectionSweepForTests();
+
+    // Both passes must have been attempted — sweepQueryCount should be 2.
+    assert.equal(sweepQueryCount, 2, "both sweep passes were attempted despite Pass 1 throwing");
+
+    // Pass 2 found the tombstoned entry and should have evicted it from memory.
+    // Switch to a null DB client so a cache miss falls through to Nominatim.
+    _setGeocodeDbClientForTests(makeFixedDbClient(null));
+    const afterSweep = await geocodeCityCountry("Tokyo");
+
+    assert.equal(nominatimCalls, 1,
+      "Nominatim called once — Pass 2 eviction forced a fresh lookup");
+    assert.equal(afterSweep?.countryCode, "JP",
+      "fresh Nominatim lookup still returns JP");
+    assert.equal(cleanedUpKeys.length, 1,
+      "cleanup hard-delete was issued — confirming Pass 2 ran to completion");
+    assert.deepEqual(cleanedUpKeys[0], ["tokyo"],
+      "cleanup deleted the correct city_key");
+  });
 });
