@@ -14,6 +14,19 @@ import { sendPushNotification, type PushPayload, type PushResult } from "./push.
 import { PushRetryQueue } from "./pushRetryQueue.js";
 import { clearDeadTokens } from "./pushTokenCleanup.js";
 
+// ── Test seam ──────────────────────────────────────────────────────────────────
+// Allows unit tests to replace clearDeadTokens with a mock (e.g. one that
+// throws) without having to mock the entire module.  Production code always
+// sees null here, so the real clearDeadTokens is used.
+let _testClearDeadTokensFn: ((db: SupabaseClient, tokens: string[]) => Promise<void>) | null = null;
+
+/** @internal Only call from tests. Pass null to restore the real implementation. */
+export function _setTestClearDeadTokens(
+  fn: ((db: SupabaseClient, tokens: string[]) => Promise<void>) | null,
+): void {
+  _testClearDeadTokensFn = fn;
+}
+
 export interface PushRecipient {
   userId: string;
   tokens: (string | null | undefined)[];
@@ -82,11 +95,19 @@ export async function sendPushWithRetry(
     .map((e) => e.token);
   if (staleTokens.length > 0) {
     if (db) {
-      await clearDeadTokens(db, staleTokens);
-      logger.info(
-        { staleCleared: staleTokens.length },
-        "push: cleared dead tokens after DeviceNotRegistered/InvalidCredentials",
-      );
+      try {
+        const clearFn = _testClearDeadTokensFn ?? clearDeadTokens;
+        await clearFn(db, staleTokens);
+        logger.info(
+          { staleCleared: staleTokens.length },
+          "push: cleared dead tokens after DeviceNotRegistered/InvalidCredentials",
+        );
+      } catch (err) {
+        logger.warn(
+          { err, staleCount: staleTokens.length },
+          "push: clearDeadTokens threw on initial send path — delivery result preserved",
+        );
+      }
     } else {
       logger.warn(
         { staleCount: staleTokens.length },

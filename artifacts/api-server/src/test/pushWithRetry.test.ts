@@ -18,7 +18,7 @@ import { describe, it, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
 
 import { _setTestFetch } from "../lib/push.js";
-import { sendPushWithRetry } from "../lib/pushWithRetry.js";
+import { sendPushWithRetry, _setTestClearDeadTokens } from "../lib/pushWithRetry.js";
 
 const USER1 = "aa000000-0001-0001-0001-000000000001";
 const USER2 = "aa000000-0002-0002-0002-000000000002";
@@ -94,6 +94,7 @@ afterEach(() => {
   pushCalls = [];
   ticketFor = () => ({ status: "ok", id: "t" });
   _setTestFetch(okFetch());
+  _setTestClearDeadTokens(null);
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -379,6 +380,56 @@ describe("sendPushWithRetry", () => {
     assert.ok(
       !rentUpdate,
       "transient 5xx must NOT null rent_buddy_profiles.expo_push_token",
+    );
+  });
+
+  /**
+   * Initial push path: partial success + clearDeadTokens throws
+   *
+   * Expo returns a mixed batch: TOKEN1 ok, TOKEN2 DeviceNotRegistered.
+   * The injected clearDeadTokens mock throws synchronously.
+   *
+   * Requirements:
+   *   - sendPushWithRetry must not throw.
+   *   - result.sent must equal 1 (the ok ticket is preserved).
+   *   - result.errors must contain the DeviceNotRegistered entry.
+   *   - Nothing must be enqueued on push_retry_queue (dead-token errors are
+   *     non-retryable; the clearDeadTokens failure must not change that).
+   */
+  it("preserves partial-success result when clearDeadTokens throws on the initial send path", async () => {
+    // TOKEN1 ok, TOKEN2 DeviceNotRegistered
+    ticketFor = (to: string) =>
+      to === TOKEN2
+        ? { status: "error", message: "gone", details: { error: "DeviceNotRegistered" } }
+        : { status: "ok", id: "t" };
+
+    _setTestClearDeadTokens(async () => {
+      throw new Error("DB connection lost");
+    });
+
+    const db = makeFakeDb();
+    let threw = false;
+    let result: Awaited<ReturnType<typeof sendPushWithRetry>> | undefined;
+    try {
+      result = await sendPushWithRetry(
+        db,
+        [{ userId: USER1, tokens: [TOKEN1] }, { userId: USER2, tokens: [TOKEN2] }],
+        PAYLOAD,
+      );
+    } catch {
+      threw = true;
+    }
+
+    assert.ok(!threw, "sendPushWithRetry must not throw when clearDeadTokens throws");
+    assert.ok(result !== undefined, "result must be defined");
+    assert.equal(result!.sent, 1, "one ok ticket must still be recorded as sent");
+    assert.equal(result!.errors.length, 1, "one per-token error must be surfaced");
+    assert.equal(result!.errors[0].error, "DeviceNotRegistered");
+    assert.equal(result!.retryable, undefined, "result must not be marked retryable");
+    assert.equal(
+      (db.__inserted["push_retry_queue"] ?? []).length,
+      0,
+      "nothing must be enqueued for retry when clearDeadTokens throws",
     );
   });
 });
