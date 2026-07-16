@@ -476,6 +476,48 @@ describe("report-no-show — non-party receives 403", () => {
   });
 });
 
+describe("complete — non-party receives 403", () => {
+  it("returns 403 when a stranger calls POST /api/buddy-bookings/:id/complete via alias URL", async () => {
+    // The stranger is neither the traveler nor the buddy on this booking.
+    // completingUserHasBuddyProfile: false means rent_buddy_profiles lookup
+    // returns null, so isParty evaluates to false and the route must reject
+    // before touching any counters.
+    const fake = makeFakeClient({
+      userId: STRANGER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: false,
+    });
+    const res = await call(
+      "POST",
+      `/api/buddy-bookings/${BOOKING_ID}/complete`,
+      fake,
+    );
+    assert.equal(res.status, 403, "non-party must be rejected with 403");
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "forbidden");
+  });
+});
+
+describe("cancel — non-party receives 403", () => {
+  it("returns 403 when a stranger calls POST /api/buddy-bookings/:id/cancel via alias URL", async () => {
+    // Same stranger scenario — isParty is false so the cancel route must
+    // return 403 before any booking or profile mutation occurs.
+    const fake = makeFakeClient({
+      userId: STRANGER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: false,
+    });
+    const res = await call(
+      "POST",
+      `/api/buddy-bookings/${BOOKING_ID}/cancel`,
+      fake,
+    );
+    assert.equal(res.status, 403, "non-party must be rejected with 403");
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "forbidden");
+  });
+});
+
 // ── mapProfile counter precedence (display path) ──────────────────────────────
 //
 // mapProfile (rentABuddyMarketplace.ts) also reads completed_count ??
