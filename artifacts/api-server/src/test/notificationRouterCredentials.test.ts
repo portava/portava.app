@@ -1131,6 +1131,48 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
     );
   });
 
+  it("mixed batch — both ok tokens are excluded from DELETE when only one of three is stale (DeviceNotRegistered)", async () => {
+    const STALE_TOKEN = "ExponentPushToken[dead-stale-device]";
+    const LIVE_TOKEN_A = "ExponentPushToken[live-ok-device-a]";
+    const LIVE_TOKEN_B = "ExponentPushToken[live-ok-device-b]";
+
+    // STALE_TOKEN → DeviceNotRegistered, LIVE_TOKEN_A and LIVE_TOKEN_B → ok
+    _setTestFetch(
+      makeTicketFetch((to) => {
+        if (to === STALE_TOKEN) return { status: "error", message: "DeviceNotRegistered", details: { error: "DeviceNotRegistered" } };
+        return { status: "ok", id: "ticket-live" };
+      }),
+    );
+
+    const { deletedDeviceTokens, retryQueueInserts, client } = makeFakeDb({
+      deviceTokens: [STALE_TOKEN, LIVE_TOKEN_A, LIVE_TOKEN_B],
+      legacyToken: null,
+    });
+
+    const router = new NotificationRouter(client);
+    await router.route(BASE_NOTIF);
+
+    // Exactly one DELETE call containing only the stale token
+    assert.equal(deletedDeviceTokens.length, 1, "exactly one DELETE call on notification_devices");
+    assert.ok(
+      deletedDeviceTokens[0].includes(STALE_TOKEN),
+      `DELETE IN list must include the stale token (${STALE_TOKEN})`,
+    );
+
+    // Neither live token may appear in the DELETE IN list
+    assert.ok(
+      !deletedDeviceTokens[0].includes(LIVE_TOKEN_A),
+      `first live token (${LIVE_TOKEN_A}) must NOT appear in the DELETE IN list`,
+    );
+    assert.ok(
+      !deletedDeviceTokens[0].includes(LIVE_TOKEN_B),
+      `second live token (${LIVE_TOKEN_B}) must NOT appear in the DELETE IN list`,
+    );
+
+    // No retry-queue inserts
+    assert.equal(retryQueueInserts.length, 0, "must NOT enqueue on push_retry_queue");
+  });
+
   it("success log is NOT emitted when a cleanup step fails (deleteDeviceError)", async () => {
     // notification_devices DELETE fails → anyFailure is set → the success info
     // log must be suppressed, preventing operators from seeing a false "all-clear".
