@@ -77,7 +77,7 @@ function versionContains(field: string | undefined, ver: string): boolean {
 // ── 1. Package version pins ───────────────────────────────────────────────────
 
 describe('SDK 54 downgrade — package version pins', () => {
-  const pkg = readPkg('../../package.json');
+  const pkg = readPkg('../../../artifacts/travel-buddy/package.json');
   const deps: Record<string, string> = {
     ...pkg.dependencies,
     ...pkg.devDependencies,

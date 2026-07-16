@@ -41,6 +41,7 @@ interface FakeOpts {
   savedRows?: Array<Record<string, any>>;
   openDispute?: Record<string, any> | null;
   completingUserHasBuddyProfile?: boolean;
+  bookingExists?: boolean;              // default true; set false to simulate unknown booking ID
 }
 
 function makeFakeClient(opts: FakeOpts) {
@@ -68,7 +69,7 @@ function makeFakeClient(opts: FakeOpts) {
       case "profiles":
         return { role: opts.profileRole ?? "user" };
       case "rent_buddy_bookings":
-        return { ...booking };
+        return (opts.bookingExists ?? true) ? { ...booking } : null;
       case "rent_buddy_profiles":
         // Lookup by user_id (completing party's own buddy profile)
         if ("user_id" in eqs) {
@@ -538,6 +539,27 @@ describe("booking events (check-in history) — non-party receives 403", () => {
     assert.equal(res.status, 200, "buddy must receive 200");
     const body = (await res.json()) as any;
     assert.ok(Array.isArray(body.events), "response must include an events array");
+  });
+
+  it("returns 404 with { error: 'not_found' } when the booking does not exist", async () => {
+    // bookingExists: false makes the fake client return null for rent_buddy_bookings,
+    // simulating a lookup by an unknown booking ID. The route must respond with 404
+    // before reaching the isParty check, so callers cannot infer booking existence
+    // from a response-code difference between 403 and 404.
+    const UNKNOWN_BOOKING_ID = "00000000-0000-0000-0000-000000000000";
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "in_progress",
+      bookingExists: false,
+    });
+    const res = await call(
+      "GET",
+      `/api/buddy-bookings/${UNKNOWN_BOOKING_ID}/events`,
+      fake,
+    );
+    assert.equal(res.status, 404, `expected 404 for unknown booking, got ${res.status}`);
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "not_found");
   });
 });
 
