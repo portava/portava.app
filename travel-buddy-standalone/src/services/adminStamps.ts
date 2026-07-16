@@ -37,6 +37,14 @@ export interface CatalogListEntry extends Omit<CatalogEntry, 'status'> {
   last_error?: string | null;
 }
 
+/**
+ * Must stay in sync with STYLE_VERSION in
+ * artifacts/api-server/src/lib/stamps/artDirection.ts.
+ * Bump here whenever the prompt template version is bumped there so the admin
+ * review screen can flag stale candidates.
+ */
+export const CURRENT_STYLE_VERSION = "v1.0";
+
 export interface ArtworkVersion {
   id: string;
   catalog_id: string;
@@ -45,6 +53,7 @@ export interface ArtworkVersion {
   generation_source: 'ai_generated' | 'admin_upload';
   provider: string | null;
   prompt_used: string | null;
+  prompt_template_version: string | null;
   rejection_reason: string | null;
   created_at: string;
 }
