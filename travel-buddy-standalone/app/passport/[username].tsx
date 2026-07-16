@@ -19,9 +19,11 @@ import { useHighlightRingState } from '../../src/hooks/useHighlightRingState';
 import { HighlightViewer } from '../../src/components/HighlightViewer';
 import { PostcardsTab } from '../../src/components/PostcardsTab';
 import { StampsTab } from '../../src/components/StampsTab';
-import { AboutTab } from '../../src/components/AboutTab';
+import { MemoriesTab } from '../../src/components/MemoriesTab';
+import { TripsTab } from '../../src/components/TripsTab';
 import { MapTab } from '../../src/components/MapTab';
 import type { PublicProfile, PassportPostcard } from '../../src/types/models';
+import { resolveTabOrder, type PassportTabKey, TAB_LABELS } from '../../src/components/passport/passportTabs';
 import { resolveDisplayName, formatHandle } from '../../src/utils/identity';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { PP, PP_LABEL } from '../../src/theme/passportTokens';
@@ -31,13 +33,7 @@ import { PassportIdentityCard, PassportStatsRow } from '../../src/components/pas
 import { PassportDivider } from '../../src/components/passport/PassportDivider';
 import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
-type Tab = 'posts' | 'stamps' | 'map' | 'about';
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'posts',  label: 'Posts' },
-  { key: 'stamps', label: 'Stamps' },
-  { key: 'map',    label: 'Map' },
-  { key: 'about',  label: 'About' },
-];
+// Tab order is resolved from the owner's saved preference at render time.
 
 interface ScreenState {
   profile: PublicProfile | null;
@@ -115,7 +111,7 @@ export default function PassportDeepLinkScreen() {
   const follow = useFollow(profile?.id ?? null);
   const ringState = useHighlightRingState(profile?.id ?? null);
   const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
-  const [tab, setTab] = useState<Tab>('posts');
+  const [tab, setTab] = useState<PassportTabKey>('postcards');
   const insets = useSafeAreaInsets();
   const navBarScrollHandler = useNavBarScrollHandler();
 
@@ -307,27 +303,33 @@ export default function PassportDeepLinkScreen() {
           overrideStats={visitorStats}
         />
 
-        {/* ── Document-style tab bar ── */}
-        <PassportDivider />
-        <View style={vs.tabBar}>
-          {TABS.map((tb) => (
-            <Pressable key={tb.key} style={vs.tabItem} onPress={() => setTab(tb.key)}>
-              <Text style={[vs.tabText, tab === tb.key && vs.tabTextActive]}>
-                {tb.label}
-              </Text>
-              {tab === tb.key && <View style={vs.tabIndicator} />}
-            </Pressable>
-          ))}
-        </View>
-        <View style={vs.tabRule} />
-
-        {/* ── Tab content ── */}
-        <View style={{ marginTop: space.md }}>
-          {tab === 'posts'  && <PostcardsTab postcards={postcards} isOwner={false} />}
-          {tab === 'stamps' && <StampsTab stamps={[]} viewingUsername={username} viewingUserId={profile?.id} />}
-          {tab === 'map'    && <MapTab postcards={postcards} />}
-          {tab === 'about'  && <AboutTab profile={profile} isOwner={false} />}
-        </View>
+        {/* ── Document-style tab bar — order from owner's saved preference ── */}
+        {(() => {
+          const tabOrder = resolveTabOrder(profile.passportTabOrder);
+          return (
+            <>
+              <PassportDivider />
+              <View style={vs.tabBar}>
+                {tabOrder.map((key) => (
+                  <Pressable key={key} style={vs.tabItem} onPress={() => setTab(key)}>
+                    <Text style={[vs.tabText, tab === key && vs.tabTextActive]}>
+                      {TAB_LABELS[key].toUpperCase()}
+                    </Text>
+                    {tab === key && <View style={vs.tabIndicator} />}
+                  </Pressable>
+                ))}
+              </View>
+              <View style={vs.tabRule} />
+              <View style={{ marginTop: space.md }}>
+                {tab === 'postcards' && <PostcardsTab postcards={postcards} isOwner={false} />}
+                {tab === 'stamps'    && <StampsTab stamps={[]} viewingUsername={username} viewingUserId={profile?.id} />}
+                {tab === 'map'       && <MapTab postcards={postcards} />}
+                {tab === 'memories'  && <MemoriesTab memories={[]} onReload={() => {}} />}
+                {tab === 'plans'     && <TripsTab trips={[]} isOwner={false} />}
+              </View>
+            </>
+          );
+        })()}
         <NavBarFiller />
       </ScrollView>
 

@@ -10,7 +10,7 @@ import { nameVisibleFor } from "../lib/publicIdentity";
 const router = Router();
 
 const PUBLIC_PROFILE_COLUMNS =
-  "id, username, display_name, name, bio, avatar_url, cover_photo_url, home_city, home_country, travel_style, interests, verified, verification_status, verified_at, passport_visibility, created_at, is_private, spoken_languages, travel_styles, travel_pace, looking_for, account_status";
+  "id, username, display_name, name, bio, avatar_url, cover_photo_url, home_city, home_country, travel_style, interests, verified, verification_status, verified_at, passport_visibility, created_at, is_private, spoken_languages, travel_styles, travel_pace, looking_for, account_status, passport_tab_order";
 
 const PUBLIC_PROFILE_COLUMNS_FALLBACK =
   "id, username, name, bio, avatar_url, home_city, home_country, travel_style, interests, verified, verification_status, verified_at, passport_visibility, created_at";
@@ -44,6 +44,7 @@ function mapPublicProfile(r: any, allowRealName = false) {
     travelStyles: r.travel_styles ?? [],
     travelPace: r.travel_pace ?? null,
     lookingFor: r.looking_for ?? [],
+    passportTabOrder: r.passport_tab_order ?? null,
   };
 }
 

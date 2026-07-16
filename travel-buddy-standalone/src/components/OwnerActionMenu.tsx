@@ -3,7 +3,7 @@ import { View, Text, Pressable, Modal, StyleSheet, Share } from 'react-native';
 import { router } from 'expo-router';
 import {
   Edit3, Eye, Share2, MessageCircle,
-  Bookmark, Shield, Settings, Info, LayoutGrid,
+  Bookmark, Shield, Settings, Info, LayoutGrid, Columns,
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens';
 
@@ -16,6 +16,8 @@ interface Props {
   onViewAsPublic: () => void;
   /** Optional: opens the passport section reorder sheet. */
   onArrangeSections?: () => void;
+  /** Optional: opens the passport tab reorder sheet. */
+  onArrangeTabs?: () => void;
 }
 
 const ACTIONS = [
@@ -52,6 +54,13 @@ const ACTIONS = [
     bg: '#EAF6EE',
     iconColor: '#2E8B57',
     onPress: (handlers: Props) => { handlers.onClose(); handlers.onArrangeSections?.(); },
+  },
+  {
+    label: 'Tabs',
+    icon: Columns,
+    bg: '#EEF2FF',
+    iconColor: '#4F46E5',
+    onPress: (handlers: Props) => { handlers.onClose(); handlers.onArrangeTabs?.(); },
   },
   {
     label: 'Messages',
@@ -91,9 +100,9 @@ const ACTIONS = [
 ] as const;
 
 export function OwnerActionMenu({
-  visible, onClose, username, onEditProfile, onSettings, onViewAsPublic, onArrangeSections,
+  visible, onClose, username, onEditProfile, onSettings, onViewAsPublic, onArrangeSections, onArrangeTabs,
 }: Props) {
-  const handlers: Props = { visible, onClose, username, onEditProfile, onSettings, onViewAsPublic, onArrangeSections };
+  const handlers: Props = { visible, onClose, username, onEditProfile, onSettings, onViewAsPublic, onArrangeSections, onArrangeTabs };
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>

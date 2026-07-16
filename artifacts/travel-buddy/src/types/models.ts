@@ -487,6 +487,8 @@ export interface PublicProfile {
   trustScore?: number | null;
   trustLabel?: string | null;
   verificationLevel?: 'none' | 'basic_verified' | 'trusted_traveler' | 'host_verified' | 'buddy_verified' | null;
+  /** Owner's preferred passport tab order; null/absent = canonical order. */
+  passportTabOrder?: string[] | null;
 }
 
 /* ───────────────────────────────────────────────────────────────────────
@@ -543,6 +545,8 @@ export interface OwnProfile {
   buddyVerifiedAt?: ISODate | null;
   /** Owner's preferred passport section order; null/absent = canonical order. */
   passportSectionOrder?: string[] | null;
+  /** Owner's preferred passport tab order; null/absent = canonical order. */
+  passportTabOrder?: string[] | null;
 }
 
 /* ───────────────────────────────────────────────────────────────────────

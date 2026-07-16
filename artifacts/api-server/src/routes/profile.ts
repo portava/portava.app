@@ -52,7 +52,7 @@ function validateUsername(u: string): { valid: boolean; reason?: string } {
 }
 
 const PROFILE_COLUMNS =
-  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language, verification_level, id_verified_at, selfie_verified_at, home_country_verified_at, safety_flags_count, host_verified_at, buddy_verified_at, passport_section_order";
+  "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language, verification_level, id_verified_at, selfie_verified_at, home_country_verified_at, safety_flags_count, host_verified_at, buddy_verified_at, passport_section_order, passport_tab_order";
 
 /**
  * Fallback column list for older DB schemas that may not have the full set of columns
@@ -116,6 +116,7 @@ function mapProfile(r: any) {
     publicSocialLinks: r.public_social_links ?? {},
     preferredLanguage: r.preferred_language ?? null,
     passportSectionOrder: r.passport_section_order ?? null,
+    passportTabOrder: r.passport_tab_order ?? null,
     verificationLevel: r.verification_level ?? null,
     idVerifiedAt: r.id_verified_at ?? null,
     selfieVerifiedAt: r.selfie_verified_at ?? null,
@@ -336,6 +337,11 @@ const patchProfileSchema = z.object({
     .length(5)
     .nullable()
     .optional(),
+  passportTabOrder: z
+    .array(z.enum(["postcards", "memories", "plans", "stamps", "map"]))
+    .length(5)
+    .nullable()
+    .optional(),
   isPrivate: z.boolean().optional(),
 });
 
@@ -417,6 +423,16 @@ router.patch("/me/profile", async (req, res) => {
       }
     }
     row.passport_section_order = p.passportSectionOrder;
+  }
+  if (p.passportTabOrder !== undefined) {
+    if (p.passportTabOrder !== null) {
+      // Must be a permutation of all five tab keys (no duplicates).
+      if (new Set(p.passportTabOrder).size !== 5) {
+        sendError(res, "invalid_payload", "passportTabOrder must contain each tab key exactly once");
+        return;
+      }
+    }
+    row.passport_tab_order = p.passportTabOrder;
   }
   if (p.tagPermission !== undefined) row.tag_permission = p.tagPermission;
   if (p.isPrivate !== undefined) row.is_private = p.isPrivate;
@@ -516,6 +532,7 @@ router.patch("/me/profile", async (req, res) => {
       public_social_links: "publicSocialLinks",
       cover_photo_url: "coverUrl",
       passport_section_order: "passportSectionOrder",
+      passport_tab_order: "passportTabOrder",
     };
     const safeRow = { ...row };
     const stripped: string[] = [];
@@ -533,9 +550,9 @@ router.patch("/me/profile", async (req, res) => {
       .filter((col) => !(col === "display_name" && "name" in safeRow))
       .map((col) => FALLBACK_STRIPPED_COLUMNS[col]);
 
-    // passport_section_order saves must never silently no-op: if the column
-    // is missing from the live schema, surface a real error instead of
-    // returning 200 while dropping the user's layout preference.
+    // passport_section_order / passport_tab_order saves must never silently
+    // no-op: if the column is missing from the live schema, surface a real
+    // error instead of returning 200 while dropping the user's preference.
     if (stripped.includes("passport_section_order")) {
       req.log.error(
         { code: (updateError as any).code, stripped },
@@ -545,6 +562,18 @@ router.patch("/me/profile", async (req, res) => {
         res,
         "db_error",
         "Could not save passport layout: the database is missing the passport_section_order column (schema drift). Apply migration 0120_passport_section_order.sql.",
+      );
+      return;
+    }
+    if (stripped.includes("passport_tab_order")) {
+      req.log.error(
+        { code: (updateError as any).code, stripped },
+        "PATCH /api/me/profile: passport_tab_order column appears to be missing from the profiles table (schema drift) — apply migration 0143. Refusing to silently drop the tab order save.",
+      );
+      sendError(
+        res,
+        "db_error",
+        "Could not save tab order: the database is missing the passport_tab_order column (schema drift). Apply migration 0143_passport_tab_order.sql.",
       );
       return;
     }

@@ -45,25 +45,22 @@ import { PassportSafetySection } from '../../src/components/passport/PassportSaf
 import { PP, PP_LABEL } from '../../src/theme/passportTokens';
 import { PassportSectionReorderSheet } from '../../src/components/passport/PassportSectionReorderSheet';
 import { resolveSectionOrder, type PassportSectionKey } from '../../src/components/passport/passportSections';
-
-type Tab = 'posts' | 'memories' | 'plans' | 'saved';
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'posts',    label: 'Posts' },
-  { key: 'memories', label: 'Memories' },
-  { key: 'plans',    label: 'Plans' },
-  { key: 'saved',    label: 'Saved' },
-];
+import { PassportTabReorderSheet } from '../../src/components/passport/PassportTabReorderSheet';
+import { resolveTabOrder, type PassportTabKey, TAB_LABELS } from '../../src/components/passport/passportTabs';
+import { MapTab } from '../../src/components/MapTab';
 
 export default function PassportScreen() {
   const { profile, postcards, stamps, memories, suggestions, loading, error, reload } = usePassport();
   const { userId: ownUserId } = useSession();
-  const [tab, setTab] = useState<Tab>('posts');
+  const [tab, setTab] = useState<PassportTabKey>('postcards');
   const [menuOpen, setMenuOpen] = useState(false);
   const [trips, setTrips] = useState<TripRow[]>([]);
   const [tripsLoaded, setTripsLoaded] = useState(false);
   const [stampsViewOpen, setStampsViewOpen] = useState(false);
   const [reorderOpen, setReorderOpen] = useState(false);
   const [sectionOrderOverride, setSectionOrderOverride] = useState<PassportSectionKey[] | null>(null);
+  const [tabReorderOpen, setTabReorderOpen] = useState(false);
+  const [tabOrderOverride, setTabOrderOverride] = useState<PassportTabKey[] | null>(null);
   const insets = useSafeAreaInsets();
 
   // Suggestion modal — show the first pending suggestion once per session
@@ -153,7 +150,7 @@ export default function PassportScreen() {
   React.useEffect(() => { setLocalPostcards(postcards); }, [postcards]);
 
   React.useEffect(() => {
-    if (tab === 'plans' && !tripsLoaded) {
+    if ((tab === 'plans') && !tripsLoaded) {
       setTripsLoaded(true);
       listMyTrips().then(setTrips).catch(() => {});
     }
@@ -258,6 +255,8 @@ export default function PassportScreen() {
         sharing={sharing}
         sectionOrder={sectionOrderOverride ?? resolveSectionOrder(profile.passportSectionOrder)}
         onArrangeSections={() => setReorderOpen(true)}
+        tabOrder={tabOrderOverride ?? resolveTabOrder(profile.passportTabOrder)}
+        onArrangeTabs={() => setTabReorderOpen(true)}
       />
 
       {/* ── Modals ── */}
@@ -286,6 +285,12 @@ export default function PassportScreen() {
         onClose={() => setReorderOpen(false)}
         onSaved={(order) => { setSectionOrderOverride(order); reload(); }}
       />
+      <PassportTabReorderSheet
+        visible={tabReorderOpen}
+        initialOrder={tabOrderOverride ?? profile.passportTabOrder}
+        onClose={() => setTabReorderOpen(false)}
+        onSaved={(order) => { setTabOrderOverride(order); }}
+      />
       <SuggestedMemoryModal
         suggestion={activeSuggestion}
         visible={activeSuggestion !== null}
@@ -306,15 +311,15 @@ function PassportContent({
   reload, insets, hasHighlights, allHighlightsViewed, highlights,
   onHighlightRingPress, onNewHighlightPress, onHighlightBubblePress, onAddPostcard,
   stampsViewOpen, setStampsViewOpen, verificationLevels, noSafetyFlags, cardRef, share, sharing,
-  sectionOrder, onArrangeSections,
+  sectionOrder, onArrangeSections, tabOrder, onArrangeTabs,
 }: {
   profile: OwnProfile;
   postcards: PassportPostcard[];
   stamps: import('../../src/types/models').PassportStamp[];
   memories: PassportMemory[];
   trips: TripRow[];
-  tab: Tab;
-  setTab: (t: Tab) => void;
+  tab: PassportTabKey;
+  setTab: (t: PassportTabKey) => void;
   menuOpen: boolean; setMenuOpen: (v: boolean) => void;
   openSettings: (s?: 'profile' | 'passport' | 'preferences' | 'safety') => void;
   actions: ReturnType<typeof usePostcardActions>;
@@ -338,6 +343,8 @@ function PassportContent({
   sharing: boolean;
   sectionOrder: PassportSectionKey[];
   onArrangeSections: () => void;
+  tabOrder: PassportTabKey[];
+  onArrangeTabs: () => void;
 }) {
   const verifiedStamps = (stamps ?? []).filter((st) => !st.locked).length;
   const [pendingCount, setPendingCount] = useState(0);
@@ -388,23 +395,23 @@ function PassportContent({
   const renderTabsSection = () => (
     <>
       <View style={s.tabBar}>
-        {TABS.map((tb) => (
+        {tabOrder.map((key) => (
           <Pressable
-            key={tb.key}
+            key={key}
             style={s.tabItem}
-            onPress={() => setTab(tb.key)}
+            onPress={() => setTab(key)}
           >
-            <Text style={[s.tabText, tab === tb.key && s.tabTextActive]}>
-              {tb.label.toUpperCase()}
+            <Text style={[s.tabText, tab === key && s.tabTextActive]}>
+              {TAB_LABELS[key].toUpperCase()}
             </Text>
-            {tab === tb.key && <View style={s.tabIndicator} />}
+            {tab === key && <View style={s.tabIndicator} />}
           </Pressable>
         ))}
       </View>
 
       {/* ── Tab content ── */}
       <View style={s.tabContent}>
-        {tab === 'posts' && (
+        {tab === 'postcards' && (
           <PostcardsTab
             postcards={postcards}
             isOwner
@@ -418,14 +425,15 @@ function PassportContent({
         {tab === 'plans' && (
           <TripsTab trips={trips} isOwner />
         )}
-        {tab === 'saved' && (
-          <View style={s.savedEmpty}>
-            <Text style={s.savedEmptyIcon}>🔖</Text>
-            <Text style={s.savedEmptyTitle}>Saved coming soon</Text>
-            <Text style={s.savedEmptySub}>
-              Bookmarked posts and places will appear here
-            </Text>
-          </View>
+        {tab === 'stamps' && (
+          <StampsTab
+            stamps={[]}
+            viewingUsername={profile.username ?? undefined}
+            viewingUserId={profile.id}
+          />
+        )}
+        {tab === 'map' && (
+          <MapTab postcards={postcards} />
         )}
       </View>
     </>
@@ -489,7 +497,7 @@ function PassportContent({
           iconOnly={statsIconOnly}
           onStatPress={(label) => {
             if (label === 'Trips') setTab('plans');
-            else if (label === 'Stamps') setStampsViewOpen(true);
+            else if (label === 'Stamps') setTab('stamps');
           }}
         />
 
@@ -633,6 +641,7 @@ function PassportContent({
         onSettings={() => { setMenuOpen(false); router.push('/profile/edit' as any); }}
         onViewAsPublic={handleViewAsPublic}
         onArrangeSections={onArrangeSections}
+        onArrangeTabs={onArrangeTabs}
       />
     </View>
   );

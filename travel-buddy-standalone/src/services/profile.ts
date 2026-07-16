@@ -93,6 +93,8 @@ export interface UpdateProfileInput {
   dateOfBirth?: string | null;
   /** Permutation of the five passport section keys; null resets to canonical order. */
   passportSectionOrder?: string[] | null;
+  /** Permutation of the five passport tab keys; null resets to canonical order. */
+  passportTabOrder?: string[] | null;
 }
 
 export async function updateMyProfile(patch: UpdateProfileInput): Promise<ProfileResult<OwnProfile>> {
