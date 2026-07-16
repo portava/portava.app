@@ -102,6 +102,8 @@ interface FakeDbOpts {
   legacyToken?: string | null;
   /** When set, notification_devices DELETE returns this error instead of succeeding. */
   deleteDeviceError?: Error | null;
+  /** When set, profiles UPDATE (null legacy token) returns this error instead of succeeding. */
+  profilesUpdateError?: Error | null;
   /** When set, rent_buddy_profiles UPDATE returns this error instead of succeeding. */
   rentBuddyUpdateError?: Error | null;
 }
@@ -130,6 +132,7 @@ function makeFakeDb(opts: FakeDbOpts = {}): FakeDb {
         : [TOKEN]);
   const legacyToken = opts.legacyToken !== undefined ? opts.legacyToken : null;
   const deleteDeviceError = opts.deleteDeviceError !== undefined ? opts.deleteDeviceError : null;
+  const profilesUpdateError = opts.profilesUpdateError !== undefined ? opts.profilesUpdateError : null;
   const rentBuddyUpdateError = opts.rentBuddyUpdateError !== undefined ? opts.rentBuddyUpdateError : null;
 
   const deletedDeviceTokens: string[][] = [];
@@ -258,6 +261,9 @@ function makeFakeDb(opts: FakeDbOpts = {}): FakeDb {
           return {
             eq(_col: string, val: any) {
               if (table === "profiles") {
+                if (profilesUpdateError) {
+                  return Promise.resolve({ error: profilesUpdateError });
+                }
                 profilesNulled.push(String(val));
               }
               return Promise.resolve({ error: null });
@@ -553,6 +559,34 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
     assert.ok(
       _getCleanupFailureCount() >= 3,
       `cleanup failure count should reach CLEANUP_ERROR_THRESHOLD (3) via rent_buddy_profiles step, got ${_getCleanupFailureCount()}`,
+    );
+  });
+
+  it("legacy-profile null failure alone also increments the escalation counter", async () => {
+    // notification_devices DELETE succeeds (step 1 is healthy),
+    // but profiles UPDATE (step 2 — null legacy expo_push_token) always fails.
+    // Even though only step 2 is broken, the counter must still reach
+    // CLEANUP_ERROR_THRESHOLD after enough calls.
+    _setTestFetch(invalidCredFetch);
+    const PROFILES_ERROR = new Error("profiles table unavailable");
+    const { client } = makeFakeDb({
+      // Use LEGACY_TOKEN for both so step 2 is always attempted
+      deviceToken: LEGACY_TOKEN,
+      legacyToken: LEGACY_TOKEN,
+      // Step 1 (DELETE notification_devices) succeeds — no deleteDeviceError
+      profilesUpdateError: PROFILES_ERROR,
+    });
+
+    const router = new NotificationRouter(client);
+
+    // Three consecutive calls — each triggers the failing profiles UPDATE
+    await router.route(BASE_NOTIF);
+    await router.route(BASE_NOTIF);
+    await router.route(BASE_NOTIF);
+
+    assert.ok(
+      _getCleanupFailureCount() >= 3,
+      `legacy-profile null failure should drive the escalation counter to CLEANUP_ERROR_THRESHOLD (3), got ${_getCleanupFailureCount()}`,
     );
   });
 
