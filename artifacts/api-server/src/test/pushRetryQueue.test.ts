@@ -27,9 +27,10 @@ const USER_ID      = "cc000000-0001-0001-0001-000000000001";
 const QUEUE_ROW_ID = "cc000000-0002-0002-0002-000000000002";
 const NOTIF_ID     = "cc000000-0003-0003-0003-000000000003";
 const ATTEMPT_ID   = "cc000000-0004-0004-0004-000000000004";
-const PUSH_TOKEN   = "ExponentPushToken[retryQueueTest01]";
-const LIVE_TOKEN_B = "ExponentPushToken[retryQueueTest02]";
-const DEAD_TOKEN   = "ExponentPushToken[retryQueueTestDead]";
+const PUSH_TOKEN    = "ExponentPushToken[retryQueueTest01]";
+const LIVE_TOKEN_B  = "ExponentPushToken[retryQueueTest02]";
+const DEAD_TOKEN    = "ExponentPushToken[retryQueueTestDead]";
+const DEAD_TOKEN_IC = "ExponentPushToken[retryQueueTestDeadIC]";
 
 const BASE_PAYLOAD = { title: "Retry Test", body: "Push retry queue unit test" };
 
@@ -1222,5 +1223,179 @@ describe("PushRetryQueue.processQueue() — three-token batch, only the dead tok
     const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
     assert.equal(ndaUpdate.patch.status, "sent",    "delivery_attempt status must be 'sent'");
     assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 12 — Mixed four-token batch: two live, one DeviceNotRegistered, one InvalidCredentials
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Expo returns a 200 with four tickets:
+ *   PUSH_TOKEN    → ok
+ *   LIVE_TOKEN_B  → ok
+ *   DEAD_TOKEN    → DeviceNotRegistered
+ *   DEAD_TOKEN_IC → InvalidCredentials
+ *
+ * Both dead-token error codes must be collected into a single
+ * clearDeadTokens call. The two live tokens must not appear in any
+ * in-filter across profiles / notification_devices / rent_buddy_profiles.
+ */
+function expoTwoOkTwoDeadMixedFetch(): typeof fetch {
+  return async () =>
+    new Response(
+      JSON.stringify({
+        data: [
+          { status: "ok", id: "rcpt-ok-1" },
+          { status: "ok", id: "rcpt-ok-2" },
+          {
+            status:  "error",
+            message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+            details: { error: "DeviceNotRegistered" },
+          },
+          {
+            status:  "error",
+            message: "The push notification service reported that the push token is invalid: InvalidCredentials",
+            details: { error: "InvalidCredentials" },
+          },
+        ],
+      }),
+      { status: 200 },
+    ) as unknown as Response;
+}
+
+describe("PushRetryQueue.processQueue() — mixed four-token batch (two live, one DeviceNotRegistered, one InvalidCredentials)", () => {
+  it("wipes only the two dead tokens from all three tables and leaves both live tokens untouched", async () => {
+    // Four tokens: PUSH_TOKEN and LIVE_TOKEN_B are live; DEAD_TOKEN is
+    // DeviceNotRegistered, DEAD_TOKEN_IC is InvalidCredentials.
+    // Expo delivers two ok tickets and two error tickets (one each code).
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN, LIVE_TOKEN_B, DEAD_TOKEN, DEAD_TOKEN_IC],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    _setTestFetch(expoTwoOkTwoDeadMixedFetch());
+    await queue.processQueue();
+
+    // ── Dead-token cleanup must target exactly the two dead tokens ────────────
+
+    // profiles.expo_push_token nulled via update().in([DEAD_TOKEN, DEAD_TOKEN_IC])
+    const profileUpdate = client.updateCalls.find(
+      (c) => c.table === "profiles" && c.patch.expo_push_token === null,
+    );
+    assert.ok(profileUpdate, "profiles.expo_push_token must be nulled for dead tokens");
+    const profileTokens = [...(profileUpdate.inFilters["expo_push_token"] as string[])].sort();
+    assert.deepEqual(
+      profileTokens,
+      [DEAD_TOKEN, DEAD_TOKEN_IC].sort(),
+      "profiles update must target exactly the two dead tokens",
+    );
+    assert.ok(
+      !profileTokens.includes(PUSH_TOKEN),
+      "PUSH_TOKEN (live) must NOT appear in profiles dead-token cleanup",
+    );
+    assert.ok(
+      !profileTokens.includes(LIVE_TOKEN_B),
+      "LIVE_TOKEN_B (live) must NOT appear in profiles dead-token cleanup",
+    );
+
+    // notification_devices rows deleted via delete().in([DEAD_TOKEN, DEAD_TOKEN_IC])
+    const deviceDelete = client.deleteCalls.find((c) => c.table === "notification_devices");
+    assert.ok(deviceDelete, "notification_devices rows must be deleted for dead tokens");
+    const deviceTokens = [...(deviceDelete.inFilters["push_token"] as string[])].sort();
+    assert.deepEqual(
+      deviceTokens,
+      [DEAD_TOKEN, DEAD_TOKEN_IC].sort(),
+      "notification_devices delete must target exactly the two dead tokens",
+    );
+    assert.ok(
+      !deviceTokens.includes(PUSH_TOKEN),
+      "PUSH_TOKEN (live) must NOT appear in notification_devices dead-token delete",
+    );
+    assert.ok(
+      !deviceTokens.includes(LIVE_TOKEN_B),
+      "LIVE_TOKEN_B (live) must NOT appear in notification_devices dead-token delete",
+    );
+
+    // rent_buddy_profiles.expo_push_token nulled via update().in([DEAD_TOKEN, DEAD_TOKEN_IC])
+    const rentUpdate = client.updateCalls.find(
+      (c) => c.table === "rent_buddy_profiles" && c.patch.expo_push_token === null,
+    );
+    assert.ok(rentUpdate, "rent_buddy_profiles.expo_push_token must be nulled for dead tokens");
+    const rentTokens = [...(rentUpdate.inFilters["expo_push_token"] as string[])].sort();
+    assert.deepEqual(
+      rentTokens,
+      [DEAD_TOKEN, DEAD_TOKEN_IC].sort(),
+      "rent_buddy_profiles update must target exactly the two dead tokens",
+    );
+    assert.ok(
+      !rentTokens.includes(PUSH_TOKEN),
+      "PUSH_TOKEN (live) must NOT appear in rent_buddy_profiles dead-token cleanup",
+    );
+    assert.ok(
+      !rentTokens.includes(LIVE_TOKEN_B),
+      "LIVE_TOKEN_B (live) must NOT appear in rent_buddy_profiles dead-token cleanup",
+    );
+
+    // ── clearDeadTokens must have been called exactly once (one batch) ────────
+    // Verified indirectly: exactly one nulling update per table means both dead
+    // tokens were passed in a single clearDeadTokens call, not two separate ones.
+    const profileDeadUpdates = client.updateCalls.filter(
+      (c) => c.table === "profiles" && c.patch.expo_push_token === null,
+    );
+    assert.equal(
+      profileDeadUpdates.length,
+      1,
+      "clearDeadTokens must be called exactly once — both dead tokens in a single batch",
+    );
+
+    const deviceDeadDeletes = client.deleteCalls.filter((c) => c.table === "notification_devices");
+    assert.equal(
+      deviceDeadDeletes.length,
+      1,
+      "notification_devices delete must occur exactly once — both dead tokens in a single batch",
+    );
+
+    const rentDeadUpdates = client.updateCalls.filter(
+      (c) => c.table === "rent_buddy_profiles" && c.patch.expo_push_token === null,
+    );
+    assert.equal(
+      rentDeadUpdates.length,
+      1,
+      "rent_buddy_profiles update must occur exactly once — both dead tokens in a single batch",
+    );
+
+    // ── Queue row must be finalised as 'sent' (two tokens delivered) ──────────
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+    const sentUpdate = prqUpdates.find((c) => c.patch.status === "sent");
+    assert.ok(sentUpdate, "push_retry_queue must be finalised as 'sent' when two of four tokens delivered");
+    assert.equal(sentUpdate.filters.id, QUEUE_ROW_ID, "sent update must target the correct queue row");
+
+    // Must NOT be marked failed or re-queued
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(!failedUpdate, "must NOT mark the queue row 'failed' when two tokens delivered successfully");
+
+    const requeued = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(!requeued, "must NOT re-queue the row when partial delivery succeeded");
+
+    // ── Delivery attempt must also be marked 'sent' ───────────────────────────
+    const ndaUpdates2 = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates2.length > 0, "notification_delivery_attempts must be updated");
+    const ndaUpdate2 = ndaUpdates2[ndaUpdates2.length - 1];
+    assert.equal(ndaUpdate2.patch.status, "sent",    "delivery_attempt status must be 'sent'");
+    assert.equal(ndaUpdate2.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
   });
 });
