@@ -261,6 +261,71 @@ describe("staleness-eviction: corrected_at probe", () => {
       "correctionCheckedAt was bumped after the clean probe — no second probe within the same interval");
   });
 
+});
+
+// ── NEGATIVE_TTL expiry ───────────────────────────────────────────────────────
+
+// Must match the private constant in countryGeocoder.ts.
+const NEGATIVE_TTL_MS = 6 * 60 * 60 * 1_000;
+
+describe("negative cache TTL expiry", () => {
+  it("retries a fresh geocode after NEGATIVE_TTL_MS expires — not stuck null forever", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // First fetch returns empty → null geocode → negative cache entry.
+    // _setGeocodeFetchForTests also sets _dbClientOverride = null (no DB).
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+
+    const first = await geocodeCityCountry("RetryCity");
+    assert.equal(first, null, "pre-condition: unresolved city should be cached as null");
+
+    // Advance past the NEGATIVE_TTL_MS window so the entry is stale.
+    mockNow(T0 + NEGATIVE_TTL_MS + 1_000);
+
+    // Swap the fetch to return a valid geocode result on the retry.
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "jp", country: "Japan" } }],
+    }));
+
+    const second = await geocodeCityCountry("RetryCity");
+    assert.equal(
+      second?.countryCode,
+      "JP",
+      "after TTL expiry the negative entry should be considered stale and a fresh geocode attempt must succeed",
+    );
+    assert.equal(second?.country, "Japan");
+  });
+
+  it("keeps returning null while still inside the NEGATIVE_TTL_MS window", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let fetchCallCount = 0;
+    _setGeocodeFetchForTests(async () => {
+      fetchCallCount++;
+      return { ok: true, json: async () => [] };
+    });
+
+    const first = await geocodeCityCountry("StuckCity");
+    assert.equal(first, null, "pre-condition: should cache null on first call");
+    assert.equal(fetchCallCount, 1, "pre-condition: one fetch call to seed the negative entry");
+
+    // Advance time — but stay INSIDE the TTL window.
+    mockNow(T0 + NEGATIVE_TTL_MS - 1_000);
+
+    const second = await geocodeCityCountry("StuckCity");
+    assert.equal(second, null, "null should be served from cache while inside the TTL window");
+    assert.equal(
+      fetchCallCount,
+      1,
+      "no second fetch call should be made while the negative entry is still valid",
+    );
+  });
+});
+
+describe("staleness-eviction: corrected_at probe (continued)", () => {
   it("does not probe the DB before the check interval has elapsed", async () => {
     const T0 = 1_700_000_000_000;
     mockNow(T0);
