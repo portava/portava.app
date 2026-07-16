@@ -114,6 +114,93 @@ function isAssignedFromPathResolver(identifier: string, fileContent: string): bo
   return pat.test(fileContent);
 }
 
+/**
+ * Tries to statically resolve `varName` to an absolute filesystem path by
+ * tracing its assignment through the file.
+ *
+ * Handles these base cases (= the test file's own directory):
+ *   - `__dirname`  (CJS global)
+ *   - `const x = import.meta.dirname`
+ *   - `const x = path.dirname(fileURLToPath(import.meta.url))`
+ *
+ * And these recursive cases (all string-literal segments):
+ *   - `const x = path.resolve(base, 'seg1', 'seg2', ...)`
+ *   - `const x = path.join(base, 'seg1', 'seg2', ...)`
+ *
+ * Returns null when any argument is dynamic or the chain cannot be traced.
+ */
+function tryResolveStaticVariable(
+  varName: string,
+  fileContent: string,
+  testDir: string,
+  depth = 0,
+): string | null {
+  if (depth > 8) return null;
+
+  // CJS global — always equals the test file's directory.
+  if (varName === '__dirname') return testDir;
+
+  // const x = import.meta.dirname
+  const metaDirnamePat = new RegExp(
+    String.raw`\b(?:const|let|var)\s+${varName}\s*=\s*import\.meta\.dirname\b`,
+  );
+  if (metaDirnamePat.test(fileContent)) return testDir;
+
+  // const x = path.dirname(fileURLToPath(import.meta.url))  ← ESM idiom
+  const fileURLPat = new RegExp(
+    String.raw`\b(?:const|let|var)\s+${varName}\s*=\s*path\.dirname\s*\(\s*fileURLToPath\s*\(`,
+  );
+  if (fileURLPat.test(fileContent)) return testDir;
+
+  // const x = path.resolve(base, 'seg1', ...) or path.join(base, 'seg1', ...)
+  // Capture the raw argument list between the outer parens (single-line calls only).
+  const resolveCallPat = new RegExp(
+    String.raw`\b(?:const|let|var)\s+${varName}\s*=\s*path\.(?:resolve|join)\s*\(([^)]+)\)`,
+  );
+  const m = resolveCallPat.exec(fileContent);
+  if (!m) return null;
+
+  const rawArgs = m[1]!;
+  // Split on top-level commas (these calls never nest beyond one level here).
+  const argParts = rawArgs.split(',').map((s) => s.trim());
+  if (argParts.length < 1) return null;
+
+  const [baseArgRaw, ...segArgRaws] = argParts;
+  const baseArg = baseArgRaw!.trim();
+
+  // Resolve the base argument — either a string literal or another variable.
+  let basePath: string;
+  if (
+    (baseArg.startsWith("'") && baseArg.endsWith("'")) ||
+    (baseArg.startsWith('"') && baseArg.endsWith('"'))
+  ) {
+    const literal = baseArg.slice(1, -1);
+    basePath = path.isAbsolute(literal) ? literal : path.resolve(testDir, literal);
+  } else if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(baseArg)) {
+    const resolved = tryResolveStaticVariable(baseArg, fileContent, testDir, depth + 1);
+    if (resolved === null) return null;
+    basePath = resolved;
+  } else {
+    return null; // complex expression — cannot resolve statically
+  }
+
+  // All remaining arguments must be plain string literals.
+  const segments: string[] = [];
+  for (const raw of segArgRaws) {
+    const seg = raw.trim();
+    if (
+      (seg.startsWith("'") && seg.endsWith("'")) ||
+      (seg.startsWith('"') && seg.endsWith('"'))
+    ) {
+      segments.push(seg.slice(1, -1));
+    } else {
+      return null; // dynamic segment — cannot resolve
+    }
+  }
+
+  return path.resolve(basePath, ...segments);
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface ExtractedPath {
@@ -234,10 +321,26 @@ export function extractCrossTreePaths(testFile: string): ExtractedPath[] {
     let nlMatch: RegExpExecArray | null;
     while ((nlMatch = NON_LITERAL_PATTERN.exec(line)) !== null) {
       const identifier = nlMatch[1]!;
-      // Variables assigned from path.resolve / path.join / etc. hold computed
-      // paths the guard cannot inline-verify, but they are intentional code —
-      // not plain mis-typed strings.  Skip them to avoid false positives.
+
+      // Try to statically resolve the variable through its path.resolve/join
+      // assignment chain (all-literal segments).  When successful, treat it as
+      // a normal resolvable entry so the guard can existence-check it.
+      const staticResolved = tryResolveStaticVariable(identifier, content, testDir);
+      if (staticResolved !== null) {
+        found.push({
+          testFile,
+          line: lineIdx + 1,
+          rawArg: identifier,
+          resolved: staticResolved,
+        });
+        continue;
+      }
+
+      // Variables assigned from path.resolve / path.join / etc. that we could
+      // not fully trace (dynamic segments) are legitimate code — skip them to
+      // avoid false positives.
       if (isAssignedFromPathResolver(identifier, content)) continue;
+
       found.push({
         testFile,
         line: lineIdx + 1,
@@ -403,6 +506,52 @@ describe('extractCrossTreePaths — template-literal and non-literal detection',
     assert.ok(
       entry,
       `expected an unresolvable entry for the identifier "crossTreePath"; got: ${JSON.stringify(unresolvableEntries)}`,
+    );
+  });
+
+  it('traces a multi-segment path.resolve variable chain and confirms the file exists', () => {
+    const fixture = path.join(FIXTURES_DIR, 'cross-tree-path-resolve-valid.test.ts');
+    const entries = extractCrossTreePaths(fixture);
+
+    // pkgPath is assigned via path.resolve(pkgRoot, 'package.json') where
+    // pkgRoot = path.resolve(here, '../..') and here = path.dirname(fileURLToPath(…)).
+    // The guard should fully trace this chain to scripts/package.json.
+    const resolvable = entries.filter((e) => !e.unresolvable);
+    assert.ok(
+      resolvable.length >= 1,
+      'expected at least one resolvable entry in the path-resolve-valid fixture',
+    );
+
+    const entry = resolvable.find((e) => e.rawArg === 'pkgPath');
+    assert.ok(
+      entry,
+      `expected a resolvable entry for the identifier "pkgPath"; got: ${JSON.stringify(resolvable)}`,
+    );
+    assert.ok(
+      fs.existsSync(entry.resolved),
+      `pkgPath resolved to "${entry.resolved}" which does not exist`,
+    );
+  });
+
+  it('traces a multi-segment path.resolve chain to a non-existent file and marks it missing', () => {
+    const fixture = path.join(FIXTURES_DIR, 'cross-tree-path-resolve-invalid.test.ts');
+    const entries = extractCrossTreePaths(fixture);
+
+    const resolvable = entries.filter((e) => !e.unresolvable);
+    assert.ok(
+      resolvable.length >= 1,
+      'expected at least one resolvable entry in the path-resolve-invalid fixture',
+    );
+
+    const entry = resolvable.find((e) => e.rawArg === 'badPath');
+    assert.ok(
+      entry,
+      `expected a resolvable entry for the identifier "badPath"; got: ${JSON.stringify(resolvable)}`,
+    );
+    assert.equal(
+      fs.existsSync(entry.resolved),
+      false,
+      `expected the resolved path "${entry.resolved}" to be missing (it is the invalid-fixture target)`,
     );
   });
 
