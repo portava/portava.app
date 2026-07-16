@@ -18,7 +18,7 @@
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { PushRetryQueue, _setTestClearDeadTokens, _setTestNow } from "../lib/pushRetryQueue.js";
+import { PushRetryQueue, _setTestClearDeadTokens, _setTestNow, _setTestCleanupWarn } from "../lib/pushRetryQueue.js";
 import { _setTestFetch } from "../lib/push.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -188,6 +188,7 @@ function expo503Fetch(): typeof fetch {
 afterEach(() => {
   _setTestFetch(null);
   _setTestClearDeadTokens(null);
+  _setTestCleanupWarn(null);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3424,3 +3425,101 @@ describe("PushRetryQueue.processQueue() — clearDeadTokens throws during partia
   });
 });
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 17 — clearDeadTokens throws on the retry path: warn log fires
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("PushRetryQueue.processQueue() — clearDeadTokens throws on retry: warn log fires", () => {
+  it("emits a warn log with deadCount and the error when clearDeadTokens throws during a retry, and still finalises as 'sent'", async () => {
+    // Scenario: attempt_count=1 (retry 2 of 3).  Expo delivers to PUSH_TOKEN
+    // but reports DEAD_TOKEN as DeviceNotRegistered.  clearDeadTokens is mocked
+    // to throw.  The warn log in the isolated inner catch must fire with the
+    // dead-token count and the thrown error.  The delivery outcome (sent) must
+    // be unaffected by the cleanup failure.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN, DEAD_TOKEN],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    // Expo: PUSH_TOKEN ok, DEAD_TOKEN DeviceNotRegistered
+    _setTestFetch(expoPartialSuccessFetch());
+
+    // Track warn calls captured from the cleanup catch
+    const warnCalls: Array<{ obj: object; msg: string }> = [];
+    _setTestCleanupWarn((obj, msg) => {
+      warnCalls.push({ obj, msg });
+    });
+
+    const cleanupError = new Error("simulated DB timeout during dead-token cleanup on retry");
+    _setTestClearDeadTokens(async (_db, _tokens) => {
+      throw cleanupError;
+    });
+
+    await queue.processQueue();
+
+    // ── Warn must have fired exactly once ─────────────────────────────────────
+    assert.equal(warnCalls.length, 1, "warn must be called exactly once when clearDeadTokens throws");
+
+    const { obj, msg } = warnCalls[0];
+
+    // Message must be the cleanup-warn string
+    assert.equal(
+      msg,
+      "push retry: dead-token cleanup threw — delivery outcome unchanged",
+      "warn message must be 'push retry: dead-token cleanup threw — delivery outcome unchanged'",
+    );
+
+    // obj must carry the thrown error
+    assert.equal(
+      (obj as Record<string, unknown>).err,
+      cleanupError,
+      "warn obj.err must be the thrown Error instance",
+    );
+
+    // obj must carry the dead-token count (1 dead token in this scenario)
+    assert.equal(
+      (obj as Record<string, unknown>).deadCount,
+      1,
+      "warn obj.deadCount must equal the number of dead tokens (1)",
+    );
+
+    // ── Delivery outcome must be 'sent' — cleanup failure must not change it ──
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+
+    const sentUpdate = prqUpdates.find((c) => c.patch.status === "sent");
+    assert.ok(
+      sentUpdate,
+      "push_retry_queue must still be finalised as 'sent' when clearDeadTokens throws",
+    );
+    assert.equal(sentUpdate.filters.id,       QUEUE_ROW_ID, "sent update must target the correct queue row");
+    assert.equal(sentUpdate.patch.attempt_count, 2,          "attempt_count must be 2 (this retry attempt)");
+
+    // Must NOT be re-queued
+    const requeued = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(
+      !requeued,
+      "must NOT re-queue the row when clearDeadTokens throws but result.sent > 0",
+    );
+
+    // Delivery attempt must also be 'sent'
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status, "sent",    "delivery_attempt status must be 'sent'");
+    assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+  });
+});

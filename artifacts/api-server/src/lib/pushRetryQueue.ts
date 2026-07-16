@@ -31,6 +31,18 @@ export function _setTestClearDeadTokens(
   _testClearDeadTokensFn = fn;
 }
 
+// Allows unit tests to intercept the warn call that fires when clearDeadTokens
+// throws inside processItem's isolated try/catch.  Production code always sees
+// null here, so the real logger.warn is used.
+let _testCleanupWarnFn: ((obj: object, msg: string) => void) | null = null;
+
+/** @internal Only call from tests. Pass null to restore the real logger.warn. */
+export function _setTestCleanupWarn(
+  fn: ((obj: object, msg: string) => void) | null,
+): void {
+  _testCleanupWarnFn = fn;
+}
+
 // Allows unit tests to pin the "now" ISO string used by processQueue() so the
 // claim filter (lte("next_retry_at", now)) and the pre-seeded next_retry_at can
 // be made exactly equal — testing the inclusive boundary deterministically.
@@ -211,7 +223,8 @@ export class PushRetryQueue {
             "push retry: cleared dead tokens found during retry",
           );
         } catch (cleanupErr) {
-          logger.warn(
+          const warnFn = _testCleanupWarnFn ?? logger.warn.bind(logger);
+          warnFn(
             { err: cleanupErr, id, userId, deadCount: deadTokens.length },
             "push retry: dead-token cleanup threw — delivery outcome unchanged",
           );
