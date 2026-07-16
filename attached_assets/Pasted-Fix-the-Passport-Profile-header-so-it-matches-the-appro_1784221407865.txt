@@ -1,0 +1,356 @@
+Fix the Passport/Profile header so it matches the approved Portava Passport design exactly.
+
+Do not redesign the Passport page and do not change unrelated profile functionality. This is a targeted UI correction to the Passport header area.
+
+GOAL
+
+The Passport header should look like a real modern digital passport identity page, using the approved Portava visual style.
+
+The current Passport header does not match the approved design. Audit the existing Passport/Profile header implementation first, then update the existing components rather than rebuilding the entire screen.
+
+HEADER LAYOUT
+
+The Passport page should have this structure at the top:
+
+1. Cover / Passport Header Area
+2. Profile photo
+3. Name and verification
+4. Username / handle
+5. Location and basic identity information
+6. Compact Trust Score inside the Identity Information area
+7. Followers / Following / Trips or existing approved stats
+8. Passport stamps preview
+9. Existing Passport tabs/content below
+
+The overall layout must feel like a digital passport, not a generic social-media profile.
+
+COVER / TOP HEADER
+
+Keep the existing Portava color scheme.
+
+The top header/cover should stretch fully across the available screen width.
+
+Remove unnecessary gaps that make the header look detached from the screen edges.
+
+Respect the safe area at the top.
+
+The visual hierarchy should feel premium, clean, and travel-focused.
+
+Do not create excessive vertical height.
+
+The header should be compact enough that users can still see Passport content below without excessive scrolling.
+
+PROFILE PHOTO
+
+Display the user's main profile photo prominently in the Passport header.
+
+The photo should visually overlap or integrate with the cover/header section where appropriate.
+
+Maintain a clean circular avatar unless the approved existing design uses another shape.
+
+Add an owner-only edit control for changing the profile/display photo.
+
+The edit button should have at least a 44x44 usable touch target.
+
+Do not send the user directly into Highlight creation when tapping the profile photo camera/edit control.
+
+For the profile owner, tapping the camera/edit action should open a menu with appropriate choices such as:
+
+- Change display photo
+- Add or create Highlight
+
+Do not show owner-only edit controls when viewing another user's public Passport.
+
+COVER PHOTO EDITING
+
+Add a visible but subtle owner-only camera/edit button on the Passport cover image.
+
+Tapping it should allow the owner to change the cover photo.
+
+Do not show this button on public views of another user's Passport.
+
+NAME AND VERIFICATION
+
+Display the user's name prominently.
+
+The verified status/stamp should appear next to the name or in the approved Identity section.
+
+Only display the verified stamp when the backend verification status confirms the user is actually verified.
+
+Do not hard-code verification.
+
+Use the existing verification truth from the backend/database.
+
+USERNAME / HANDLE
+
+Display the user's handle directly below or near the name.
+
+The app uses the invariant:
+
+username = handle
+
+The displayed value should be normalized to lowercase.
+
+Do not introduce two separate visible username/handle identities.
+
+IDENTITY INFORMATION SECTION
+
+Create or preserve a compact Identity Information section directly below the primary profile information.
+
+This section may contain existing approved information such as:
+
+- Home city / current city
+- Country
+- Languages
+- Traveler status
+- Member information
+- Other existing profile identity fields
+
+Do not invent fake information.
+
+Only display fields that exist in the current profile/backend data.
+
+TRUST SCORE
+
+The Trust Score must NOT dominate the Passport header.
+
+Move or keep the Trust Score inside the Identity Information area.
+
+It should be visually smaller and secondary to the user's identity.
+
+Trust Score range is:
+
+0–100
+
+Display the real backend value.
+
+Do not use a fake placeholder.
+
+Do not display a 5-star rating as a replacement.
+
+Do not make the Trust Score a large standalone hero card.
+
+Example hierarchy:
+
+Identity Information
+
+Location
+Miami, Florida
+
+Languages
+English · Spanish
+
+Trust Score
+92 / 100
+
+The actual layout can be more compact than this example.
+
+STATS
+
+Keep the existing approved social/profile stats.
+
+These may include:
+
+- Followers
+- Following
+- Trips
+- Stamps
+
+Use the real backend values.
+
+The stats row should be compact and balanced.
+
+Tapping Followers or Following should continue to open the appropriate user lists.
+
+Do not break existing navigation.
+
+PASSPORT STAMPS
+
+The Passport stamp preview should visually belong to the Passport experience.
+
+Keep it directly connected to the header/profile identity area.
+
+Do not make it look like a generic badge list.
+
+Use real earned stamps from the existing Passport stamp system.
+
+Do not generate fake stamps.
+
+Do not award stamps from frontend logic.
+
+The frontend should only render stamps confirmed by the backend/database.
+
+MENU BUTTON
+
+Fix the Passport/Profile menu button.
+
+It should have a proper minimum touch target.
+
+Make the visual treatment consistent with the approved account menu design.
+
+The menu itself should visually reach the screen edges as previously requested rather than appearing as a narrow floating card with excessive margins.
+
+Keep the floating/menu surface slightly translucent or see-through where appropriate to the existing Portava design.
+
+Do not reduce readability.
+
+PUBLIC VS OWNER VIEW
+
+Audit the Passport header for correct owner/public behavior.
+
+Owner view can show:
+
+- Edit profile
+- Change profile photo
+- Change cover photo
+- Settings/menu controls
+
+Public Passport view must not show owner-only edit controls.
+
+Do not rely only on UI hiding.
+
+Ensure the existing ownership logic is correctly determined from the authenticated user ID versus the viewed profile ID.
+
+BACKEND CONNECTION AUDIT
+
+While fixing the header, verify every displayed Passport field is connected to the correct backend/database source.
+
+Audit at minimum:
+
+- Display name
+- Handle / username
+- Profile photo
+- Cover photo
+- Bio
+- Location
+- Home city/country
+- Languages
+- Verification status
+- Trust Score
+- Followers count
+- Following count
+- Trip count
+- Stamp count
+- Earned stamps
+
+Do not replace real backend data with temporary local state or mock values.
+
+If a field is currently disconnected, fix the wiring using the existing API/service/data layer.
+
+Do not create a second source of truth.
+
+PROFILE EDIT SAVE
+
+Confirm the Passport header updates correctly after the user edits and saves their profile.
+
+After save:
+
+- New profile photo should appear
+- New cover photo should appear
+- Name changes should appear
+- Handle changes should appear
+- Other identity fields should refresh
+
+Do not require an app restart.
+
+Use proper query invalidation, cache refresh, realtime update, or the existing project pattern.
+
+DESIGN REQUIREMENTS
+
+The final Passport header should feel:
+
+- Premium
+- Modern
+- Clean
+- Travel-focused
+- Similar to a digital passport
+- Consistent with Portava branding
+
+Avoid:
+
+- Generic Instagram clone appearance
+- Oversized Trust Score cards
+- Excessive white space
+- Large empty header areas
+- Duplicate identity information
+- Hard-coded profile values
+- Fake verification badges
+- Fake stamp counts
+- Owner controls appearing publicly
+
+DO NOT
+
+Do not rebuild the full Passport page.
+
+Do not change unrelated routes.
+
+Do not change authentication.
+
+Do not create a second profile screen.
+
+Do not create duplicate database fields.
+
+Do not change the username = handle invariant.
+
+Do not modify unrelated Passport stamp-generation logic.
+
+Do not break existing tabs.
+
+Do not remove working functionality.
+
+AUDIT FIRST
+
+Before editing:
+
+1. Find the current Passport/Profile screen.
+2. Find the Passport header component.
+3. Find the public profile/Passport view.
+4. Find the owner detection logic.
+5. Find the profile data service/API/query.
+6. Find the Trust Score source.
+7. Find verification status source.
+8. Find follower/following count sources.
+9. Find Passport stamp data source.
+10. Find profile and cover photo upload logic.
+
+Then make the smallest safe set of changes necessary.
+
+VALIDATION
+
+After implementation verify:
+
+- Passport header matches the approved layout.
+- Header reaches the intended screen width.
+- Profile image renders correctly.
+- Cover image renders correctly.
+- Owner can edit profile photo.
+- Owner can edit cover photo.
+- Camera action does not incorrectly force Highlight creation.
+- Public users cannot see owner controls.
+- Name comes from backend.
+- Handle comes from backend and displays lowercase.
+- username = handle remains enforced.
+- Verification stamp uses backend verification truth.
+- Trust Score uses backend value and displays 0–100.
+- Trust Score is compact inside Identity Information.
+- Follower/following counts are real.
+- Stamp data is real.
+- Profile edits immediately refresh the Passport header.
+- Existing tabs still work.
+- No TypeScript errors.
+- No new runtime warnings.
+- No dead navigation.
+- No duplicate source of truth was introduced.
+
+When finished, report:
+
+1. Files changed
+2. What was wrong with the previous Passport header
+3. Exact UI changes made
+4. Backend/database sources used for each header field
+5. Owner vs public behavior
+6. Profile photo edit flow
+7. Cover photo edit flow
+8. Trust Score wiring
+9. Verification wiring
+10. Any remaining Passport header issues
