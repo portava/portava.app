@@ -2702,7 +2702,8 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) =>
   const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
   if (!party) return;
 
-  const disputableStatuses = ["in_progress", "completed_pending_traveler_confirmation", "completed"];
+  // completed and cancelled are terminal — disputing them would corrupt the final state.
+  const disputableStatuses = ["in_progress", "completed_pending_traveler_confirmation"];
   if (!disputableStatuses.includes((booking as any).status)) {
     return res.status(409).json({
       error: "invalid_transition",
