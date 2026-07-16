@@ -280,6 +280,7 @@ router.get("/admin/stamps/queue", async (req, res) => {
     .from("stamp_generation_queue")
     .select(
       "id, catalog_id, status, priority, attempts, max_attempts, last_error, " +
+      "cleanup_error, cleanup_error_paths, " +
       "requeue_count, locked_until, triggered_by_action, created_at, updated_at, " +
       "universal_stamp_catalog(display_name, stamp_type, country_code)",
       { count: "exact" }
@@ -679,13 +680,15 @@ router.post("/admin/stamps/queue/:jobId/requeue", async (req, res) => {
   const { data, error } = await sc
     .from("stamp_generation_queue")
     .update({
-      status:        "queued",
-      attempts:      0,
-      requeue_count: 0, // Manual admin re-queue resets the auto-requeue cap
-      last_error:    null,
-      locked_until:  null,
-      locked_by:     null,
-      updated_at:    new Date().toISOString(),
+      status:              "queued",
+      attempts:            0,
+      requeue_count:       0, // Manual admin re-queue resets the auto-requeue cap
+      last_error:          null,
+      cleanup_error:       null,
+      cleanup_error_paths: null,
+      locked_until:        null,
+      locked_by:           null,
+      updated_at:          new Date().toISOString(),
     })
     .eq("id", jobId)
     .in("status", ["retryable_failed", "permanently_failed"]) // Guard: only re-queue failed jobs

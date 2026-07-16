@@ -152,13 +152,15 @@ export async function requeueStaleFailedJobs(scOverride?: any): Promise<number> 
     const { data: updated, error: updErr } = await sc
       .from("stamp_generation_queue")
       .update({
-        status:        "queued",
-        attempts:      0,
-        last_error:    null,
-        locked_until:  null,
-        locked_by:     null,
-        requeue_count: count + 1,
-        updated_at:    new Date().toISOString(),
+        status:              "queued",
+        attempts:            0,
+        last_error:          null,
+        cleanup_error:       null,
+        cleanup_error_paths: null,
+        locked_until:        null,
+        locked_by:           null,
+        requeue_count:       count + 1,
+        updated_at:          new Date().toISOString(),
       })
       .in("id", ids)
       .eq("status", "retryable_failed")
@@ -437,12 +439,33 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
           deleted:    uploadedStoragePaths.length,
         }));
       } catch (cleanupErr: any) {
+        const cleanupErrMsg = cleanupErr?.message ?? String(cleanupErr);
         console.error(JSON.stringify({
           event:      "stamp.generation.orphan_cleanup_error",
           job_id:     jobId,
           catalog_id: catalogId,
-          error:      cleanupErr?.message,
+          error:      cleanupErrMsg,
+          paths:      uploadedStoragePaths,
         }));
+        // Record cleanup failure on the queue row so it surfaces in the admin UI.
+        // We do this as a best-effort fire-and-forget; a failure here must not
+        // shadow the original generation error that caused the catch block.
+        sc.from("stamp_generation_queue")
+          .update({
+            cleanup_error:       cleanupErrMsg,
+            cleanup_error_paths: uploadedStoragePaths,
+            updated_at:          new Date().toISOString(),
+          })
+          .eq("id", jobId)
+          .then(({ error: ceErr }: { error: any }) => {
+            if (ceErr) {
+              console.error(JSON.stringify({
+                event:  "stamp.generation.cleanup_error_persist_failed",
+                job_id: jobId,
+                error:  ceErr.message,
+              }));
+            }
+          });
       }
     }
 

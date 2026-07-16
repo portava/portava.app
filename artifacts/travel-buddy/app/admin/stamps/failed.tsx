@@ -16,7 +16,7 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
-import { ArrowLeft, RefreshCw, XCircle } from 'lucide-react-native';
+import { ArrowLeft, RefreshCw, TriangleAlert, XCircle } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
@@ -95,6 +95,20 @@ export default function FailedJobsScreen() {
           {item.last_error ? (
             <Text style={styles.rowError} numberOfLines={2}>{item.last_error}</Text>
           ) : null}
+          {item.cleanup_error ? (
+            <View style={styles.cleanupBadge}>
+              <TriangleAlert size={11} color="#92400E" strokeWidth={2} />
+              <Text style={styles.cleanupBadgeTitle}>Orphaned storage files</Text>
+            </View>
+          ) : null}
+          {item.cleanup_error_paths && item.cleanup_error_paths.length > 0 ? (
+            <Text style={styles.cleanupPaths} numberOfLines={3}>
+              {item.cleanup_error_paths.join('\n')}
+            </Text>
+          ) : null}
+          {item.cleanup_error ? (
+            <Text style={styles.cleanupError} numberOfLines={2}>{item.cleanup_error}</Text>
+          ) : null}
         </View>
         <Pressable
           style={styles.requeueBtn}
@@ -162,9 +176,13 @@ const styles = StyleSheet.create({
   permBadgeText: { fontSize: 10, fontWeight: '700', color: '#B91C1C' },
   rowSub:      { ...t.small, color: color.mute },
   rowError:    { ...t.small, color: '#DC2626', marginTop: 2 },
-  requeueBtn:  { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: color.ink, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 8 },
-  requeueText: { fontSize: 12, fontWeight: '700', color: color.onInk },
-  sep:         { height: 1, backgroundColor: color.haze, marginLeft: space.md },
-  emptyWrap:   { alignItems: 'center', gap: space.xs, padding: space.xl },
-  empty:       { color: color.mute },
+  requeueBtn:       { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: color.ink, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 8 },
+  requeueText:      { fontSize: 12, fontWeight: '700', color: color.onInk },
+  sep:              { height: 1, backgroundColor: color.haze, marginLeft: space.md },
+  emptyWrap:        { alignItems: 'center', gap: space.xs, padding: space.xl },
+  empty:            { color: color.mute },
+  cleanupBadge:     { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FEF3C7', borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3, marginTop: 4, alignSelf: 'flex-start' },
+  cleanupBadgeTitle: { fontSize: 10, fontWeight: '700', color: '#92400E' },
+  cleanupPaths:     { ...t.small, color: '#78350F', fontFamily: 'monospace', marginTop: 2, fontSize: 10 },
+  cleanupError:     { ...t.small, color: '#D97706', marginTop: 1 },
 });

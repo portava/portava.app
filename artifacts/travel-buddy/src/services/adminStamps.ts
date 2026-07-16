@@ -127,6 +127,11 @@ export interface GenerationQueueJob {
   attempts: number;
   max_attempts: number;
   last_error: string | null;
+  /** Error message from the storage remove() call when orphan cleanup failed. */
+  cleanup_error: string | null;
+  /** Storage paths that were uploaded but could not be deleted when cleanup failed.
+   *  Ops can manually remove these from the stamp-artwork bucket. */
+  cleanup_error_paths: string[] | null;
   triggered_by_action: string | null;
   created_at: string;
   updated_at: string;
