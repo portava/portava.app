@@ -35,6 +35,10 @@ export interface CatalogEntry {
 export interface CatalogListEntry extends Omit<CatalogEntry, 'status'> {
   status: CatalogEntry['status'] | 'review_required';
   last_error?: string | null;
+  /** Error message from the storage remove() call when orphan cleanup failed. */
+  cleanup_error?: string | null;
+  /** Storage paths that were uploaded but could not be deleted when cleanup failed. */
+  cleanup_error_paths?: string[] | null;
 }
 
 /**
