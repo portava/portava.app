@@ -78,12 +78,22 @@ export async function mergeCatalogEntry(
   survivorId: string,
   warn: WarnLog = console.warn,
 ): Promise<boolean> {
-  for (const table of ["user_stamps", "passport_stamps"] as const) {
-    const { error } = await sc.from(table).update({ catalog_id: survivorId }).eq("catalog_id", xxId);
-    if (error && !/does not exist/i.test(error.message)) {
-      warn(`[xx-repair] repoint ${table} failed:`, error.message);
-      return false;
-    }
+  const { error: userStampsErr } = await sc
+    .from("user_stamps")
+    .update({ catalog_id: survivorId })
+    .eq("catalog_id", xxId);
+  if (userStampsErr && !/does not exist/i.test(userStampsErr.message)) {
+    warn(`[xx-repair] repoint user_stamps failed:`, userStampsErr.message);
+    return false;
+  }
+
+  const { error: passportStampsErr } = await sc
+    .from("passport_stamps")
+    .update({ catalog_id: survivorId })
+    .eq("catalog_id", xxId);
+  if (passportStampsErr && !/does not exist/i.test(passportStampsErr.message)) {
+    warn(`[xx-repair] repoint passport_stamps failed:`, passportStampsErr.message);
+    // non-fatal: passport_stamps is a secondary table; warn and continue
   }
 
   // Move artwork versions across (keeps any generated art)
