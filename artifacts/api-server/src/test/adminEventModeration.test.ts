@@ -455,6 +455,21 @@ describe("PATCH /admin/events/:eventId/moderate — event_activity_log insert fa
           `Report ${report.id} for EVENT_ID_A must still be pending after failed event_activity_log insert for '${action}'`,
         );
       }
+
+      // Pending reports for EVENT_ID_B must also remain untouched — a WHERE
+      // clause missing the event-ID filter would resolve all pending reports
+      // across all events, and checking only EVENT_A wouldn't catch it.
+      const evBReports = client._db.reports.filter(
+        (r: any) => r.target_id === EVENT_ID_B,
+      );
+      assert.equal(
+        evBReports.length, 1,
+        `EVENT_B must have exactly 1 seeded report for '${action}'`,
+      );
+      assert.equal(
+        evBReports[0].status, "pending",
+        `Report for EVENT_B must remain pending after '${action}' targets EVENT_A (scoping check)`,
+      );
     });
   }
 
