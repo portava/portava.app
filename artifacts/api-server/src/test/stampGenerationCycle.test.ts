@@ -1112,6 +1112,58 @@ describe("runGenerationCycle — placeholder data-URL candidates excluded from o
     );
   });
 
+  it("inserts the placeholder row with the data-URL in public_url and a placeholder storage_path — not a real storage URL", async () => {
+    // Provider: 1 data-URL placeholder + 2 real http URLs = CANDIDATE_COUNT (3) total.
+    // All fetches and uploads succeed.
+    // Asserts the content of each inserted version row so a regression that
+    // accidentally overwrites public_url with a storage URL, or sets storage_path
+    // on a placeholder, is caught immediately.
+    const { sc, inserts } = makeFakeClientWithStorage();
+    _setTestServiceClient(sc);
+    // Provider emits the placeholder FIRST so the loop encounters a data-URL before any http URL.
+    _setTestStampImageProvider(makeMixedProvider(1, 2));
+    installFetch(successFetch());
+
+    const result = await runGenerationCycle();
+    assert.equal(result.processed, true);
+
+    assert.equal(inserts.length, 1, "must perform exactly one batch insert");
+    const { rows } = inserts[0];
+    assert.equal(rows.length, CANDIDATE_COUNT, "must insert a row for every candidate");
+
+    // The first row corresponds to the data-URL placeholder (provider emits it first).
+    const placeholderRow = rows[0];
+    assert.ok(
+      placeholderRow.public_url.startsWith("data:"),
+      `placeholder row public_url must be the original data-URL, got: ${placeholderRow.public_url}`,
+    );
+    assert.ok(
+      !placeholderRow.public_url.startsWith("https://storage.fake"),
+      `placeholder row public_url must NOT be a storage URL, got: ${placeholderRow.public_url}`,
+    );
+    // storage_path for a placeholder is a synthetic non-catalog path — it must NOT
+    // point into the real catalog/ prefix that real uploads use.
+    assert.ok(
+      typeof placeholderRow.storage_path === "string" &&
+        !placeholderRow.storage_path.startsWith("catalog/"),
+      `placeholder row storage_path must not be a real catalog storage path, got: ${placeholderRow.storage_path}`,
+    );
+
+    // The remaining two rows correspond to the real http candidates.
+    const realRows = rows.slice(1);
+    assert.equal(realRows.length, 2, "must have exactly 2 real-http candidate rows");
+    for (const row of realRows) {
+      assert.ok(
+        row.public_url.startsWith("https://storage.fake/catalog/cat-1/"),
+        `real-http row public_url must be from storage, got: ${row.public_url}`,
+      );
+      assert.ok(
+        typeof row.storage_path === "string" && row.storage_path.startsWith("catalog/cat-1/"),
+        `real-http row storage_path must be a catalog storage path, got: ${row.storage_path}`,
+      );
+    }
+  });
+
 // ── DB insert failure after all uploads succeed ───────────────────────────────
 
 describe("runGenerationCycle — DB insert failure after all uploads succeed", () => {
