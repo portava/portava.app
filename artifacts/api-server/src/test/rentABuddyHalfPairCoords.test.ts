@@ -194,6 +194,60 @@ describe("POST /api/rent-a-buddy/search — half-pair coord rejection", () => {
   });
 });
 
+// ── Suite: POST /api/rent-a-buddy/search — non-numeric coord rejection ────────
+
+describe("POST /api/rent-a-buddy/search — non-numeric coord rejection", () => {
+  it("rejects string lat with numeric lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/search", {
+      city: "Bangkok",
+      lat: "13.7563",
+      lng: 100.5018,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects boolean lat with numeric lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/search", {
+      city: "Bangkok",
+      lat: true,
+      lng: 100.5018,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects object lat with numeric lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/search", {
+      city: "Bangkok",
+      lat: { value: 13.7563 },
+      lng: 100.5018,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects numeric lat with string lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/search", {
+      city: "Bangkok",
+      lat: 13.7563,
+      lng: "100.5018",
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects both string lat and string lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/search", {
+      city: "Bangkok",
+      lat: "13.7563",
+      lng: "100.5018",
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+});
+
 // ── Suite: POST /api/rent-a-buddy/requests ───────────────────────────────────
 
 describe("POST /api/rent-a-buddy/requests — half-pair coord rejection", () => {
@@ -243,6 +297,52 @@ describe("POST /api/rent-a-buddy/requests — half-pair coord rejection", () => 
   });
 });
 
+// ── Suite: POST /api/rent-a-buddy/requests — non-numeric coord rejection ──────
+
+describe("POST /api/rent-a-buddy/requests — non-numeric coord rejection", () => {
+  const requiredFields = { city: "Bangkok", category: "city" };
+
+  it("rejects string lat with numeric lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/requests", {
+      ...requiredFields,
+      lat: "13.7563",
+      lng: 100.5018,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects boolean lat with numeric lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/requests", {
+      ...requiredFields,
+      lat: true,
+      lng: 100.5018,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects object lat with numeric lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/requests", {
+      ...requiredFields,
+      lat: { value: 13.7563 },
+      lng: 100.5018,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects both string lat and string lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/requests", {
+      ...requiredFields,
+      lat: "13.7563",
+      lng: "100.5018",
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+});
+
 // ── Suite: POST /api/rent-a-buddy/waitlist/v2 ────────────────────────────────
 
 describe("POST /api/rent-a-buddy/waitlist/v2 — half-pair coord rejection", () => {
@@ -288,5 +388,51 @@ describe("POST /api/rent-a-buddy/waitlist/v2 — half-pair coord rejection", () 
       assert.notEqual(res.body.error, "invalid_payload",
         `coord validation incorrectly rejected missing coords: ${JSON.stringify(res.body)}`);
     }
+  });
+});
+
+// ── Suite: POST /api/rent-a-buddy/waitlist/v2 — non-numeric coord rejection ───
+
+describe("POST /api/rent-a-buddy/waitlist/v2 — non-numeric coord rejection", () => {
+  const requiredFields = { city: "Bangkok" };
+
+  it("rejects string lat with numeric lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/waitlist/v2", {
+      ...requiredFields,
+      lat: "13.7563",
+      lng: 100.5018,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects boolean lat with numeric lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/waitlist/v2", {
+      ...requiredFields,
+      lat: true,
+      lng: 100.5018,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects object lat with numeric lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/waitlist/v2", {
+      ...requiredFields,
+      lat: { value: 13.7563 },
+      lng: 100.5018,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects both string lat and string lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/waitlist/v2", {
+      ...requiredFields,
+      lat: "13.7563",
+      lng: "100.5018",
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
   });
 });

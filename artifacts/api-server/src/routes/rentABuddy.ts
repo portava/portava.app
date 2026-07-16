@@ -545,6 +545,12 @@ router.post("/api/rent-a-buddy/search", async (req, res) => {
     nightlifeAvailable, publicMeetupOnly, lat, lng, page = 1, perPage = 20,
   } = req.body ?? {};
 
+  // Reject any non-numeric (but present) coord value — string, boolean, object, etc.
+  const isNonNumericCoord = (v: unknown) =>
+    v !== undefined && v !== null && (typeof v !== "number" || !Number.isFinite(v as number));
+  if (isNonNumericCoord(lat) || isNonNumericCoord(lng)) {
+    return sendError(res, "invalid_payload", "lat and lng must be finite numbers.");
+  }
   const latPresent = typeof lat === "number" && Number.isFinite(lat);
   const lngPresent = typeof lng === "number" && Number.isFinite(lng);
   if (latPresent !== lngPresent) {

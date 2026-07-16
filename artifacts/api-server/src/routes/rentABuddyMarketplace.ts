@@ -681,6 +681,12 @@ router.post("/api/rent-a-buddy/requests", async (req, res) => {
 
   if (!city || !category) return sendError(res, 'invalid_payload', "city and category are required.");
 
+  // Reject any non-numeric (but present) coord value — string, boolean, object, etc.
+  const isNonNumericCoord = (v: unknown) =>
+    v !== undefined && v !== null && (typeof v !== "number" || !Number.isFinite(v as number));
+  if (isNonNumericCoord(lat) || isNonNumericCoord(lng)) {
+    return sendError(res, 'invalid_payload', "lat and lng must be finite numbers.");
+  }
   const latPresent = typeof lat === "number" && Number.isFinite(lat);
   const lngPresent = typeof lng === "number" && Number.isFinite(lng);
   if (latPresent !== lngPresent) {
@@ -1633,6 +1639,12 @@ router.post("/api/rent-a-buddy/waitlist/v2", async (req, res) => {
 
   if (!city) return sendError(res, 'invalid_payload', "city is required.");
 
+  // Reject any non-numeric (but present) coord value — string, boolean, object, etc.
+  const isNonNumericCoord = (v: unknown) =>
+    v !== undefined && v !== null && (typeof v !== "number" || !Number.isFinite(v as number));
+  if (isNonNumericCoord(lat) || isNonNumericCoord(lng)) {
+    return sendError(res, 'invalid_payload', "lat and lng must be finite numbers.");
+  }
   const latPresent = typeof lat === "number" && Number.isFinite(lat);
   const lngPresent = typeof lng === "number" && Number.isFinite(lng);
   if (latPresent !== lngPresent) {
