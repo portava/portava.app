@@ -119,7 +119,8 @@ describe('SDK 54 downgrade — package version pins', () => {
   });
 
   it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-    const standalone = readPkg('../../../../travel-buddy-standalone/package.json');
+    // Intentional cross-tree read: compares this tree against the main app. // fork-lint-ok
+    const standalone = readPkg('../../../artifacts/travel-buddy/package.json'); // fork-lint-ok
     const saDeps: Record<string, string> = {
       ...standalone.dependencies,
       ...standalone.devDependencies,
