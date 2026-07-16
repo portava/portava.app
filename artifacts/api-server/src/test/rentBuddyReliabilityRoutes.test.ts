@@ -797,6 +797,71 @@ describe("GET safety-events — non-party must not receive 200", () => {
 // columns exist with divergent values the canonical completed_count must win,
 // because that is the column the scorer (and the ranking tie-break) reads.
 
+// ── Terminal-state guard — complete ───────────────────────────────────────────
+//
+// POST /api/rent-a-buddy/bookings/:bookingId/complete (alias: /api/buddy-bookings/:id/complete)
+// must reject with a non-2xx response when the booking is already in a terminal
+// state (e.g. "completed"), preventing double-completion and counter inflation.
+
+describe("complete — terminal state is rejected", () => {
+  it("returns 409 when the booking is already 'completed' via alias /api/buddy-bookings/:id/complete", async () => {
+    // The traveler is a valid party member on this booking, so the isParty check
+    // passes. The status check fires next and must reject with 409.
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "completed",
+    });
+    const res = await call(
+      "POST",
+      `/api/buddy-bookings/${BOOKING_ID}/complete`,
+      fake,
+    );
+    assert.equal(res.status, 409, `expected 409, got ${res.status}`);
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "invalid_transition", "expected error: invalid_transition");
+    // No profile counter must have been updated.
+    assert.equal(
+      fake.updates.filter((u) => u.table === "rent_buddy_profiles").length,
+      0,
+      "no profile update must occur when the booking is already completed",
+    );
+  });
+});
+
+// ── Terminal-state guard — cancel ─────────────────────────────────────────────
+//
+// POST /api/rent-a-buddy/bookings/:bookingId/cancel (alias: /api/buddy-bookings/:id/cancel)
+// must reject with a non-2xx response when the booking is already in a terminal
+// state (e.g. "cancelled"), preventing double-cancellation and counter inflation.
+
+describe("cancel — terminal state is rejected", () => {
+  it("returns 409 when the booking is already 'cancelled' via alias /api/buddy-bookings/:id/cancel", async () => {
+    // The traveler is a valid party member, so the isParty check passes.
+    // The status check fires next and must reject with 409 because "cancelled"
+    // is not in cancellableStatuses ["pending", "confirmed", "scheduled"].
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "cancelled",
+    });
+    const res = await call(
+      "POST",
+      `/api/buddy-bookings/${BOOKING_ID}/cancel`,
+      fake,
+    );
+    assert.equal(res.status, 409, `expected 409, got ${res.status}`);
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "invalid_transition", "expected error: invalid_transition");
+    // No profile counter must have been updated.
+    assert.equal(
+      fake.updates.filter((u) => u.table === "rent_buddy_profiles").length,
+      0,
+      "no profile update must occur when the booking is already cancelled",
+    );
+  });
+});
+
+// ── toBuddyScoringData counter precedence ─────────────────────────────────────
+
 describe("toBuddyScoringData — completed_count takes precedence over completed_bookings", () => {
   it("uses completed_count=7 (not completed_bookings=3) when ranking via POST /api/rent-a-buddy/match", async () => {
     // Buddy row deliberately has the two counters out of sync.
