@@ -33,6 +33,7 @@ const CATEGORY_LABELS: Record<NotificationCategory, { label: string; description
   trust:       { label: 'Trust',        description: 'Reliability score changes, reports' },
   airport:     { label: 'Airport Mode', description: 'Layover tips, nearby travelers' },
   admin:       { label: 'Admin',        description: 'Account notices and moderation actions' },
+  rent_buddy:  { label: 'Buddy Requests', description: 'New traveler requests matching your buddy profile' },
 };
 
 /**
@@ -45,6 +46,7 @@ const CATEGORY_GROUPS: { title: string; categories: NotificationCategory[] }[] =
   { title: 'Telegraph & messages', categories: ['telegraph'] },
   { title: 'Trips & Events',       categories: ['trips', 'plans'] },
   { title: 'Safety alerts',        categories: ['safe_return', 'trust', 'admin'] },
+  { title: 'Buddy marketplace',    categories: ['rent_buddy'] },
   { title: 'Reminders',            categories: ['location', 'airport'] },
   { title: 'Marketing',            categories: ['compass', 'hidden_gems'] },
 ];
