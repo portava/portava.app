@@ -837,6 +837,39 @@ router.get("/api/rent-a-buddy/buddies/:buddyId/availability", async (req, res) =
   });
 });
 
+// ── Blocked dates (public) ────────────────────────────────────────────────────
+// GET /api/rent-a-buddy/buddies/:buddyId/blocked-dates
+// Returns upcoming availability exceptions (vacation/blocked ranges) for a buddy
+// so the booking date picker can disable those dates before the traveller submits.
+// Only exposes date-range + type — no reasons or private details.
+router.get("/api/rent-a-buddy/buddies/:buddyId/blocked-dates", async (req, res) => {
+  const serviceClient = sc();
+  if (!serviceClient) return res.json({ blocked: [] });
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { buddyId } = req.params;
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Upcoming exceptions: single-day rows on/after today, or ranges that end on/after today.
+  const { data, error } = await serviceClient
+    .from("buddy_availability_exceptions")
+    .select("id, exception_type, exception_date, end_date")
+    .eq("buddy_id", buddyId)
+    .or(`and(end_date.is.null,exception_date.gte.${today}),end_date.gte.${today}`)
+    .order("exception_date");
+
+  if (error) return sendError(res, "db_error", error.message);
+
+  return res.json({
+    blocked: (data ?? []).map((ex: any) => ({
+      id: ex.id,
+      type: ex.exception_type,
+      startDate: ex.exception_date,
+      endDate: ex.end_date ?? ex.exception_date,
+    })),
+  });
+});
+
 router.get("/api/rent-a-buddy/buddies/:buddyId/reviews", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ reviews: [], total: 0 });

@@ -260,6 +260,20 @@ export async function getBuddyAvailability(
   return apiFetch(`/api/rent-a-buddy/buddies/${buddyId}/availability${qs}`);
 }
 
+export type BuddyBlockedRange = {
+  id: string;
+  type: string;
+  startDate: string; // ISO YYYY-MM-DD
+  endDate: string;   // ISO YYYY-MM-DD (same as startDate for single-day blocks)
+};
+
+/** Upcoming blocked/vacation date ranges for a buddy (public). */
+export async function getBuddyBlockedDates(
+  buddyId: string,
+): Promise<ApiResult<{ blocked: BuddyBlockedRange[] }>> {
+  return apiFetch(`/api/rent-a-buddy/buddies/${buddyId}/blocked-dates`);
+}
+
 export async function getBuddyReviews(
   buddyId: string,
   page = 1,
