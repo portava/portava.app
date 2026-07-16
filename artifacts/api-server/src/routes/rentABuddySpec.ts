@@ -618,7 +618,20 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/report-no-show", async (req, 
     .single();
 
   if (error) return sendError(res, "db_error", error.message);
-  return res.status(201).json({ safetyEvent: data });
+
+  // Enter a 2-hour grace period so the other party can respond before escalation.
+  // The expiry sweeper promotes no_show_pending → disputed after the window closes.
+  const now = new Date().toISOString();
+  const graceExpiry = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
+
+  const { error: updateError } = await serviceClient
+    .from("rent_buddy_bookings")
+    .update({ status: "no_show_pending", no_show_grace_expires_at: graceExpiry, updated_at: now })
+    .eq("id", bookingId);
+
+  if (updateError) return sendError(res, "db_error", updateError.message);
+
+  return res.status(201).json({ safetyEvent: data, gracePeriodExpiresAt: graceExpiry });
 });
 
 // NOTE: change-request, respond-change-request, and rebook were removed from

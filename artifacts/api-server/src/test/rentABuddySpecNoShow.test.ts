@@ -1,0 +1,260 @@
+/**
+ * Rent a Buddy Spec router — report-no-show grace period tests
+ *
+ * The canonical POST /api/rent-a-buddy/bookings/:id/report-no-show must:
+ *   1. Create a rent_buddy_safety_events row (event_type = "no_show")
+ *   2. Update booking status to "no_show_pending"
+ *   3. Set no_show_grace_expires_at to ~2 hours from now
+ *   4. Return gracePeriodExpiresAt in the response
+ *
+ * Run: node --import tsx/esm --test src/test/rentABuddySpecNoShow.test.ts
+ */
+import { describe, it, before, after, beforeEach } from "node:test";
+import assert from "node:assert/strict";
+import http from "node:http";
+import express from "express";
+import { _setTestClient } from "../lib/http.js";
+import { _setTestServiceClient } from "../lib/supabase.js";
+import rentABuddySpecRouter from "../routes/rentABuddySpec.js";
+
+// ── Test server ───────────────────────────────────────────────────────────────
+
+let server: http.Server;
+let base: string;
+
+const TRAVELER_TOKEN = "ns-traveler-token";
+const BUDDY_TOKEN    = "ns-buddy-token";
+const OTHER_TOKEN    = "ns-other-token";
+const TRAVELER_ID    = "ns-traveler-user-1";
+const BUDDY_USER_ID  = "ns-buddy-user-1";
+const BUDDY_PROF_ID  = "ns-buddy-profile-1";
+const OTHER_USER_ID  = "ns-other-user-1";
+const BOOKING_ID     = "ns-booking-uuid-1";
+
+const TOKEN_MAP: Record<string, string> = {
+  [TRAVELER_TOKEN]: TRAVELER_ID,
+  [BUDDY_TOKEN]:    BUDDY_USER_ID,
+  [OTHER_TOKEN]:    OTHER_USER_ID,
+};
+
+function req(
+  method: string,
+  path: string,
+  body?: unknown,
+  token: string = TRAVELER_TOKEN,
+): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const url     = new URL(path, base);
+    const payload = body ? JSON.stringify(body) : undefined;
+    const headers: Record<string, string> = {
+      "content-type":  "application/json",
+      "authorization": `Bearer ${token}`,
+    };
+    const r = http.request(
+      { hostname: url.hostname, port: Number(url.port), path: url.pathname + url.search, method, headers },
+      (inRes) => {
+        let raw = "";
+        inRes.on("data", (c) => (raw += c));
+        inRes.on("end", () => {
+          let parsed: any;
+          try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+          resolve({ status: inRes.statusCode ?? 0, body: parsed });
+        });
+      },
+    );
+    r.on("error", reject);
+    if (payload) r.write(payload);
+    r.end();
+  });
+}
+
+// ── Fake client state ─────────────────────────────────────────────────────────
+
+interface NSState {
+  bookings:       Record<string, any>;
+  buddyProfiles:  Record<string, any>;
+  safetyEvents:   any[];
+}
+
+let state: NSState = { bookings: {}, buddyProfiles: {}, safetyEvents: [] };
+
+function makeClient() {
+  function fakeTable(table: string) {
+    return {
+      _table:       table,
+      _filters:     [] as Array<[string, string, any]>,
+      _insertData:  null as any,
+      _updateData:  null as any,
+      _maybeSingle: false,
+
+      select()              { return this; },
+      insert(data: any)     { this._insertData = data; return this; },
+      update(data: any)     { this._updateData = data; return this; },
+      eq(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
+      maybeSingle()         { this._maybeSingle = true; return this; },
+      single()              { this._maybeSingle = true; return this; },
+
+      async then(resolve: (v: any) => void) {
+        const result = await this._resolve();
+        resolve(result);
+        return result;
+      },
+
+      async _resolve(): Promise<any> {
+        const t = this._table;
+
+        if (this._insertData !== null) {
+          const row = { id: `gen-${Math.random().toString(36).slice(2)}`, ...this._insertData };
+          if (t === "rent_buddy_safety_events") state.safetyEvents.push(row);
+          if (this._maybeSingle) return { data: row, error: null };
+          return { data: null, error: null };
+        }
+
+        if (this._updateData !== null) {
+          if (t === "rent_buddy_bookings") {
+            for (const [, col, val] of this._filters) {
+              if (col === "id" && state.bookings[val]) {
+                Object.assign(state.bookings[val], this._updateData);
+              }
+            }
+          }
+          return { data: null, error: null };
+        }
+
+        // Selects
+        if (t === "rent_buddy_bookings") {
+          const eqId = this._filters.find(([op, col]) => op === "eq" && col === "id");
+          if (eqId && this._maybeSingle) return { data: state.bookings[eqId[2]] ?? null, error: null };
+          return { data: Object.values(state.bookings), error: null };
+        }
+
+        if (t === "rent_buddy_profiles") {
+          const eqUser = this._filters.find(([op, col]) => op === "eq" && col === "user_id");
+          const eqId   = this._filters.find(([op, col]) => op === "eq" && col === "id");
+          if (eqUser && this._maybeSingle) {
+            const match = Object.values(state.buddyProfiles).find((p: any) => p.user_id === eqUser[2]);
+            return { data: match ?? null, error: null };
+          }
+          if (eqId && this._maybeSingle) return { data: state.buddyProfiles[eqId[2]] ?? null, error: null };
+          return { data: Object.values(state.buddyProfiles), error: null };
+        }
+
+        if (this._maybeSingle) return { data: null, error: null };
+        return { data: [], error: null };
+      },
+    };
+  }
+
+  return {
+    from: (table: string) => fakeTable(table),
+    auth: {
+      getUser: async (token: string) => {
+        const id = TOKEN_MAP[token];
+        if (!id) return { data: { user: null }, error: { message: "invalid token" } };
+        return { data: { user: { id } }, error: null };
+      },
+    },
+  };
+}
+
+// ── Server setup ──────────────────────────────────────────────────────────────
+
+before(async () => {
+  const app = express();
+  app.use(express.json());
+  app.use(rentABuddySpecRouter);
+
+  await new Promise<void>((resolve) => {
+    server = app.listen(0, "127.0.0.1", resolve);
+  });
+  const addr = server.address() as { port: number };
+  base = `http://127.0.0.1:${addr.port}`;
+});
+
+after(() => {
+  server.close();
+  _setTestClient(null as any, false);
+  _setTestServiceClient(null);
+});
+
+beforeEach(() => {
+  state = {
+    bookings: {
+      [BOOKING_ID]: {
+        id:          BOOKING_ID,
+        traveler_id: TRAVELER_ID,
+        buddy_id:    BUDDY_PROF_ID,
+        status:      "confirmed",
+      },
+    },
+    buddyProfiles: {
+      [BUDDY_PROF_ID]: { id: BUDDY_PROF_ID, user_id: BUDDY_USER_ID },
+    },
+    safetyEvents: [],
+  };
+  const client = makeClient();
+  _setTestClient(client as any, true);
+  _setTestServiceClient(client as any);
+});
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+describe("POST /api/rent-a-buddy/bookings/:id/report-no-show — spec router", () => {
+  it("returns 201 and gracePeriodExpiresAt when traveler reports a no-show", async () => {
+    const before = Date.now();
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`, { notes: "buddy never arrived" });
+    const after = Date.now();
+
+    assert.equal(r.status, 201, `expected 201, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.ok(r.body.gracePeriodExpiresAt, "response must include gracePeriodExpiresAt");
+
+    const expiry = new Date(r.body.gracePeriodExpiresAt).getTime();
+    assert.ok(expiry > before + 1.9 * 3600 * 1000, "grace expiry should be ~2h from now");
+    assert.ok(expiry < after  + 2.1 * 3600 * 1000, "grace expiry should not be more than 2h+buffer from now");
+  });
+
+  it("creates a no_show safety event", async () => {
+    await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`);
+    const event = state.safetyEvents.find((e) => e.event_type === "no_show");
+    assert.ok(event, "should have inserted a no_show safety event");
+    assert.equal(event.booking_id, BOOKING_ID);
+    assert.equal(event.actor_user_id, TRAVELER_ID);
+  });
+
+  it("transitions the booking status to no_show_pending", async () => {
+    await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`);
+    assert.equal(
+      state.bookings[BOOKING_ID].status,
+      "no_show_pending",
+      "booking status should be no_show_pending",
+    );
+  });
+
+  it("sets no_show_grace_expires_at on the booking", async () => {
+    const before = Date.now();
+    await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`);
+    const expiry = state.bookings[BOOKING_ID].no_show_grace_expires_at;
+    assert.ok(expiry, "booking should have no_show_grace_expires_at");
+    assert.ok(
+      new Date(expiry).getTime() > before + 1.9 * 3600 * 1000,
+      "grace expiry should be ~2h from now",
+    );
+  });
+
+  it("also works when the buddy party reports the no-show", async () => {
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`, {}, BUDDY_TOKEN);
+    assert.equal(r.status, 201, `expected 201, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.ok(r.body.gracePeriodExpiresAt, "response must include gracePeriodExpiresAt");
+    assert.equal(state.bookings[BOOKING_ID].status, "no_show_pending");
+  });
+
+  it("returns 403 for a non-party caller", async () => {
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`, {}, OTHER_TOKEN);
+    assert.equal(r.status, 403);
+  });
+
+  it("returns 404 for an unknown booking", async () => {
+    const r = await req("POST", `/api/rent-a-buddy/bookings/unknown-booking/report-no-show`);
+    assert.equal(r.status, 404);
+  });
+});
