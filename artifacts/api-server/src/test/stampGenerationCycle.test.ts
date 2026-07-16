@@ -1343,3 +1343,129 @@ describe("runGenerationCycle — orphan cleanup: remove() returns error object (
     assert.equal(inserts.length, 0, "must not insert any version rows after a mid-batch failure");
   });
 });
+
+// ── Orphaned paths don't accumulate across retries with persistent cleanup failure ──
+
+describe("runGenerationCycle — orphaned paths do not accumulate across retries when cleanup keeps failing", () => {
+  it("logs two separate orphan_cleanup_error events and each cycle's cleanup covers only its own uploads", async () => {
+    // Setup: provider returns CANDIDATE_COUNT http URLs per cycle.
+    // The 2nd upload of each batch fails (one success then one failure per cycle),
+    // and the remove() call also throws every time.
+    //
+    // This confirms that uploadedStoragePaths is reset per cycle: if paths
+    // accumulated, cycle 2's remove call would receive paths from both cycles.
+    let uploadCallTotal = 0;
+    const removedPathsPerCall: string[][] = [];
+    const logLines: string[] = [];
+
+    const originalConsoleError = console.error;
+    console.error = (...args: unknown[]) => {
+      if (typeof args[0] === "string") logLines.push(args[0]);
+      originalConsoleError(...args);
+    };
+
+    try {
+      const { sc, storageCalls } = makeFakeClientWithStorage({
+        onUpload(_path, _buf) {
+          uploadCallTotal++;
+          // Fail the 2nd upload of every CANDIDATE_COUNT-sized batch so exactly
+          // one upload succeeds per cycle before the batch throws.
+          // (uploadCallTotal 1→ok, 2→fail | 3→ok, 4→fail | ...)
+          if (uploadCallTotal % 2 === 0) {
+            throw new Error("Storage upload failed: quota exceeded");
+          }
+        },
+        onRemove(paths) {
+          // Record which paths each cleanup attempt received, then throw to
+          // simulate storage being unreachable (triggers orphan_cleanup_error).
+          removedPathsPerCall.push([...paths]);
+          throw new Error("Storage remove failed: bucket unreachable");
+        },
+      });
+      _setTestServiceClient(sc);
+      _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+      installFetch(successFetch());
+
+      // Run two cycles on the same job.
+      const result1 = await runGenerationCycle();
+      const result2 = await runGenerationCycle();
+
+      // Both cycles fail because the batch upload never completes.
+      assert.equal(result1.processed, false, "cycle 1 must report failure");
+      assert.equal(result2.processed, false, "cycle 2 must report failure");
+
+      // Count orphan_cleanup_error log events — must be exactly two, one per cycle.
+      const cleanupErrorEvents = logLines.filter((line) => {
+        try {
+          const parsed = JSON.parse(line);
+          return parsed.event === "stamp.generation.orphan_cleanup_error";
+        } catch {
+          return false;
+        }
+      });
+      assert.equal(
+        cleanupErrorEvents.length,
+        2,
+        "must log exactly two orphan_cleanup_error events — one per cycle, not one combined call",
+      );
+
+      // Cleanup was attempted twice — once per cycle.
+      assert.equal(
+        removedPathsPerCall.length,
+        2,
+        "storage remove must have been called once per cycle",
+      );
+
+      // Each cycle's cleanup call must reference only that cycle's own upload.
+      // If uploadedStoragePaths accumulated across cycles, cycle 2's call would
+      // contain 2 paths (one from each cycle) instead of just 1.
+      assert.equal(
+        removedPathsPerCall[0].length,
+        1,
+        "cycle 1 cleanup must cover exactly 1 path (its own upload only)",
+      );
+      assert.equal(
+        removedPathsPerCall[1].length,
+        1,
+        "cycle 2 cleanup must cover exactly 1 path (its own upload only — not cycle 1's too)",
+      );
+
+      // The two cycles must have uploaded different paths (different versionIds).
+      assert.notEqual(
+        removedPathsPerCall[0][0],
+        removedPathsPerCall[1][0],
+        "each cycle's upload path must be distinct (different versionIds)",
+      );
+
+      // Both uploaded paths follow the correct storage template.
+      for (const paths of removedPathsPerCall) {
+        assert.ok(
+          paths[0].startsWith("catalog/cat-1/") && paths[0].endsWith(".png"),
+          `cleanup path must follow catalog/<catalogId>/<versionId>.png, got: ${paths[0]}`,
+        );
+      }
+
+      // Total uploads across both cycles: 1 success per cycle (the 2nd upload of
+      // each batch throws before being recorded as a successful storageCalls entry).
+      assert.equal(
+        storageCalls.length,
+        2,
+        "exactly one upload should have succeeded per cycle (2 total)",
+      );
+
+      // Each cycle's cleanup path must match that cycle's successful upload path.
+      assert.equal(
+        removedPathsPerCall[0][0],
+        storageCalls[0].path,
+        "cycle 1 cleanup path must match cycle 1's successful upload path",
+      );
+      assert.equal(
+        removedPathsPerCall[1][0],
+        storageCalls[1].path,
+        "cycle 2 cleanup path must match cycle 2's successful upload path",
+      );
+    } finally {
+      console.error = originalConsoleError;
+    }
+  });
+});
