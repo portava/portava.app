@@ -23,6 +23,11 @@ export async function clearDeadTokens(
   db: SupabaseClient,
   staleTokens: string[],
 ): Promise<void> {
+  // Guard: an empty .in() filter can match all rows on some Supabase driver
+  // versions — a catastrophic silent wipe.  Skip all DB work when the list is
+  // empty so callers don't have to remember to check before calling.
+  if (staleTokens.length === 0) return;
+
   try {
     const { error } = await db
       .from("profiles")
