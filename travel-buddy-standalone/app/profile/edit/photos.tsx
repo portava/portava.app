@@ -19,6 +19,7 @@ import {
   getMyProfile, updateMyProfile, uploadAvatar, uploadCover,
   deleteOrphanedAvatar, deleteOrphanedCover,
 } from '../../../src/services/profile';
+import { resolveProfileSaveOutcome } from '../../../src/services/profileSaveFlow';
 import type { OwnProfile } from '../../../src/types/models';
 import { PP } from '../../../src/theme/passportTokens';
 import { space } from '../../../src/theme/tokens';
@@ -156,9 +157,10 @@ export default function PhotosScreen() {
       }
 
       const res = await updateMyProfile(patch);
-      if (!res.ok) {
+      const outcome = resolveProfileSaveOutcome(res);
+      if (outcome.kind === 'error') {
         const kind = res.errorKind as string;
-        setSaveError(res.message ?? 'Failed to save profile');
+        setSaveError(outcome.message);
         setSaveState('error');
         // Clean up newly-uploaded files only when the server definitively rejected
         // the PATCH. Skip on network_unreachable because the PATCH may have succeeded.

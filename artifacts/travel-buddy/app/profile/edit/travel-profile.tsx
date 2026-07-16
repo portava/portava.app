@@ -15,6 +15,7 @@ import {
 import { PP } from '../../../src/theme/passportTokens';
 import { space } from '../../../src/theme/tokens';
 import { getMyProfile, updateMyProfile } from '../../../src/services/profile';
+import { resolveProfileSaveOutcome } from '../../../src/services/profileSaveFlow';
 import { fetchPreferences, patchPreferences } from '../../../src/services/intelligence';
 import type { OwnProfile } from '../../../src/types/models';
 
@@ -263,8 +264,12 @@ export default function TravelProfileScreen() {
       const results = await Promise.all(tasks);
       const failed = results.find((r) => !r.ok);
       if (failed) {
+        const outcome = resolveProfileSaveOutcome(
+          { ok: false, message: failed.message },
+          'Failed to save. Try again.',
+        );
         setSaveState('error');
-        setSaveError(failed.message ?? 'Failed to save. Try again.');
+        setSaveError(outcome.kind === 'error' ? outcome.message : 'Failed to save. Try again.');
         return;
       }
 

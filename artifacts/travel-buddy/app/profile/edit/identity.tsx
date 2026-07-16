@@ -12,6 +12,7 @@ import { Check, X } from 'lucide-react-native';
 import {
   getMyProfile, updateMyProfile, checkUsername,
 } from '../../../src/services/profile';
+import { classifyIdentitySaveFailure } from '../../../src/services/profileSaveFlow';
 import { getCurrentGps, reverseGeocodeToPlace } from '../../../src/services/location';
 import { ManualCityPicker } from '../../../src/components/ManualCityPicker';
 import { DatePickerField } from '../../../src/components/DatePickerField';
@@ -267,27 +268,14 @@ export default function IdentityScreen() {
 
       const res = await updateMyProfile(patch);
       if (!res.ok) {
-        const kind = res.errorKind as string;
-        const msg: string = res.message ?? '';
-        const msgLower = msg.toLowerCase();
-        const isCooldown = kind === 'rate_limited';
-        const isUsernameTaken =
-          !isCooldown &&
-          (kind === 'invalid_payload' || kind === 'conflict') &&
-          msgLower.includes('username');
-        const isDobError =
-          kind === 'invalid_payload' &&
-          (msgLower.includes('dateofbirth') || msgLower.includes('13 years') || msgLower.includes('date of birth'));
-        if (isCooldown) {
-          setUsernameStatus('cooldown');
-          setUsernameMessage(msg || 'Username cannot be changed yet');
-        } else if (isUsernameTaken) {
-          setUsernameStatus('taken');
-          setUsernameMessage(msg || 'Username not available');
-        } else if (isDobError) {
-          setDobError(msg || 'Invalid date of birth');
+        const failure = classifyIdentitySaveFailure(res);
+        if (failure.field === 'username') {
+          setUsernameStatus(failure.status);
+          setUsernameMessage(failure.message);
+        } else if (failure.field === 'dob') {
+          setDobError(failure.message);
         } else {
-          setSaveError(msg || 'Failed to save profile');
+          setSaveError(failure.message);
         }
         setSaveState('error');
         saveLockRef.current = false;

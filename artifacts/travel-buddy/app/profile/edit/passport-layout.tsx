@@ -18,6 +18,7 @@ import {
 import { PP, PP_LABEL } from '../../../src/theme/passportTokens';
 import { space, radius, type as t } from '../../../src/theme/tokens';
 import { getMyProfile, updateMyProfile } from '../../../src/services/profile';
+import { resolveProfileSaveOutcome } from '../../../src/services/profileSaveFlow';
 import {
   CANONICAL_SECTION_ORDER, SECTION_LABELS, isCanonicalOrder, resolveSectionOrder,
   type PassportSectionKey,
@@ -121,9 +122,10 @@ export default function PassportLayoutScreen() {
     setSaveError(null);
     const canonical = isCanonicalOrder(order);
     const res = await updateMyProfile({ passportSectionOrder: canonical ? null : order });
-    if (!res.ok) {
+    const outcome = resolveProfileSaveOutcome(res, 'Please try again.');
+    if (outcome.kind === 'error') {
       setSaveState('error');
-      setSaveError(res.message ?? 'Please try again.');
+      setSaveError(outcome.message);
       return;
     }
     // Reset dirty baseline; show 'saved' briefly, then auto-return to the

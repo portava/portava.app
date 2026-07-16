@@ -7,6 +7,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { getMyProfile, updateMyProfile } from '../../../src/services/profile';
+import { resolveProfileSaveOutcome } from '../../../src/services/profileSaveFlow';
 import type { OwnProfile } from '../../../src/types/models';
 import { PP } from '../../../src/theme/passportTokens';
 import { space } from '../../../src/theme/tokens';
@@ -91,8 +92,9 @@ export default function AboutScreen() {
       }
 
       const res = await updateMyProfile(patch);
-      if (!res.ok) {
-        setSaveError(res.message ?? 'Failed to save profile');
+      const outcome = resolveProfileSaveOutcome(res);
+      if (outcome.kind === 'error') {
+        setSaveError(outcome.message);
         setSaveState('error');
         saveLockRef.current = false;
         return;
