@@ -1175,6 +1175,40 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
     }
   });
 
+  it("success log is NOT emitted when only the legacy-profile null step (step 2) fails", async () => {
+    // Step 1 (notification_devices DELETE) succeeds; step 3 (rent_buddy_profiles
+    // UPDATE) succeeds; only step 2 (profiles UPDATE — null legacy expo_push_token)
+    // fails.  anyFailure must still be set to true by step 2's catch block, so the
+    // "removed stale push tokens" info log must be suppressed.  Without this, a
+    // zombie legacy profile token would be invisible to operators (false all-clear).
+    _setTestFetch(invalidCredFetch);
+    const PROFILES_ERROR = new Error("profiles table unavailable");
+    const { client } = makeFakeDb({
+      // TOKEN is both the device token and the legacy profile token so that step 2
+      // (legacyToken && staleTokens.includes(legacyToken)) is always attempted.
+      deviceToken: TOKEN,
+      legacyToken: TOKEN,
+      // Step 1 succeeds — deleteDeviceError intentionally absent
+      profilesUpdateError: PROFILES_ERROR,
+      // Step 3 succeeds — rentBuddyUpdateError intentionally absent
+    });
+
+    const infoSpy = mock.method(_notificationRouterLogger, "info", () => {});
+    try {
+      const router = new NotificationRouter(client);
+      await router.route(BASE_NOTIF);
+
+      const calls = infoSpy.mock.calls.map((c) => c.arguments[1] as string | undefined);
+      const emitted = calls.some((msg) => msg?.includes("removed stale push tokens"));
+      assert.ok(
+        !emitted,
+        "info log 'removed stale push tokens' must NOT be emitted when only the legacy-profile null step fails",
+      );
+    } finally {
+      infoSpy.mock.restore();
+    }
+  });
+
   it("profiles UPDATE failure with no rent_buddy entry increments the counter by exactly 1 — not 2", async () => {
     // Step 2 (profiles UPDATE — null legacy expo_push_token) fails.
     // Step 3 (rent_buddy_profiles UPDATE) succeeds because rentBuddyUpdateError
