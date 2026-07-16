@@ -436,6 +436,37 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
     );
   });
 
+  it("resets the cleanup failure counter to 0 after a successful cleanup", async () => {
+    // Drive _consecutiveCleanupFailures to CLEANUP_ERROR_THRESHOLD (3) by
+    // making the notification_devices DELETE fail on every call.
+    _setTestFetch(invalidCredFetch);
+    const DB_ERROR = new Error("db down");
+    const { client: errorClient } = makeFakeDb({ deviceToken: TOKEN, deleteDeviceError: DB_ERROR });
+    const errorRouter = new NotificationRouter(errorClient);
+
+    await errorRouter.route(BASE_NOTIF);
+    await errorRouter.route(BASE_NOTIF);
+    await errorRouter.route(BASE_NOTIF);
+
+    assert.ok(
+      _getCleanupFailureCount() >= 3,
+      `pre-condition: counter should be at threshold (3), got ${_getCleanupFailureCount()}`,
+    );
+
+    // Switch to a healthy DB — all cleanup steps succeed, so anyFailure stays
+    // false and the router should reset _consecutiveCleanupFailures to 0.
+    const { client: healthyClient } = makeFakeDb({ deviceToken: TOKEN });
+    const healthyRouter = new NotificationRouter(healthyClient);
+
+    await healthyRouter.route(BASE_NOTIF);
+
+    assert.equal(
+      _getCleanupFailureCount(),
+      0,
+      "cleanup failure counter must reset to 0 after a fully-successful cleanup",
+    );
+  });
+
   it("does nothing when there are no push tokens registered for the user", async () => {
     const { deletedDeviceTokens, retryQueueInserts, deliveryAttempts, client } = makeFakeDb({
       deviceToken: null,
