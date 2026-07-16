@@ -1134,4 +1134,55 @@ describe("TripReminderScheduler push", () => {
     assert.equal(pushCalls.length, 0,
       "[normal sweep, midnight clock] must not push when start_date is the current calendar day (below lower boundary)");
   });
+
+  it("[normal sweep, midnight clock] does not re-push after clearReminderDedup — reminder_sent_at gate holds", async () => {
+    // Scenario: the clock is pinned near midnight (23:00 UTC). The normal sweep
+    // fires and successfully delivers the reminder, setting reminder_sent_at.
+    // clearReminderDedup() is then called (as the admin-reset endpoint does).
+    // A second runOnce() with the same pinned clock must NOT push again — the
+    // DB-level gate (reminder_sent_at IS NULL) must prevent re-delivery even
+    // when the in-memory dedup set is cleared.
+    //
+    // This confirms the midnight date-boundary logic and the dedup-clear path
+    // compose correctly: clearing the in-memory set does not bypass the outbox.
+    const PINNED_NOW = new Date("2026-07-16T23:00:00Z").getTime();
+    _setTestNow(PINNED_NOW);
+
+    // lower boundary date: now + 22 h = "2026-07-17"
+    const lowerDate = new Date(PINNED_NOW + 22 * 3_600_000).toISOString().slice(0, 10);
+
+    const tripId = "trip-midnight-dedup-clear";
+    const state = baseState(tripId);
+    state.trips![0].reminder_sent_at  = null;
+    state.trips![0].start_date        = lowerDate; // exactly on the lower boundary date
+
+    _setTestServiceClient(makeFakeClient(state));
+
+    // Phase 1 — Normal sweep claims and delivers the reminder.
+    await runOnce();
+
+    assert.equal(pushCalls.length, 1,
+      "[midnight + dedup-clear] first runOnce must push the trip");
+    assert.deepEqual(
+      pushCalls[0].map((m: any) => m.to).sort(),
+      [OWNER_TOKEN, MEMBER_TOKEN].sort(),
+      "[midnight + dedup-clear] push must reach owner and member",
+    );
+    assert.ok(state.trips![0].reminder_sent_at,
+      "[midnight + dedup-clear] reminder_sent_at must be set after first push");
+    assert.ok(state.trips![0].reminder_delivered_at,
+      "[midnight + dedup-clear] reminder_delivered_at must be set after first push");
+
+    // Phase 2 — Clear the in-memory dedup set (as the admin reset endpoint does).
+    clearReminderDedup(tripId);
+    pushCalls = [];
+
+    // Phase 3 — Second poll with the same pinned clock. reminder_sent_at IS SET,
+    // so the DB query (which filters .is("reminder_sent_at", null)) returns no
+    // rows.  No push must occur — the outbox gate is the authoritative guard.
+    await runOnce();
+
+    assert.equal(pushCalls.length, 0,
+      "[midnight + dedup-clear] second runOnce must NOT push — reminder_sent_at IS SET blocks re-delivery");
+  });
 });
