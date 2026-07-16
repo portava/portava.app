@@ -96,6 +96,7 @@ function makeModerationClient(opts: {
   captureActivity?:          any[];
   captureModerationActions?: any[];
   modInsertError?:           boolean;
+  activityInsertError?:      boolean;
 } = {}) {
   const {
     actorUserId = ADMIN_USER_ID,
@@ -103,6 +104,7 @@ function makeModerationClient(opts: {
     captureActivity          = [],
     captureModerationActions = [],
     modInsertError           = false,
+    activityInsertError      = false,
   } = opts;
 
   const db: Record<string, any[]> = {
@@ -139,10 +141,20 @@ function makeModerationClient(opts: {
       select: () => b,
       insert: (data: any) => {
         const newRows = Array.isArray(data) ? data : [data];
-        db[tableName] = [...(db[tableName] ?? []), ...newRows];
-        if (tableName === "event_activity_log") captureActivity.push(...newRows);
-        if (tableName === "moderation_actions") {
+        if (tableName === "event_activity_log") {
+          // When activityInsertError is set, do NOT persist the rows and return an error
+          // so the route's fail-closed guard fires and aborts without mutating the event.
+          if (activityInsertError) {
+            return {
+              then: (resolve: any) =>
+                Promise.resolve({ data: null, error: { message: "event_activity_log insert failed" } }).then(resolve),
+            };
+          }
+          db[tableName] = [...(db[tableName] ?? []), ...newRows];
+          captureActivity.push(...newRows);
+        } else if (tableName === "moderation_actions") {
           captureModerationActions.push(...newRows);
+          db[tableName] = [...(db[tableName] ?? []), ...newRows];
           // When modInsertError is set, return a thenable that resolves with an error
           // so the route's `const { error: modErr } = await sc.from(...).insert(...)` path fires.
           if (modInsertError) {
@@ -151,6 +163,8 @@ function makeModerationClient(opts: {
                 Promise.resolve({ data: null, error: { message: "moderation_actions insert failed" } }).then(resolve),
             };
           }
+        } else {
+          db[tableName] = [...(db[tableName] ?? []), ...newRows];
         }
         filtered = newRows;
         return b;
@@ -359,6 +373,103 @@ describe("PATCH /admin/events/:eventId/moderate — access control", () => {
     assert.equal(status, 400);
     assert.equal(body.error, "invalid_payload");
   });
+});
+
+// ── Audit fail-closed: event_activity_log insert failure must abort the action ──
+
+describe("PATCH /admin/events/:eventId/moderate — event_activity_log insert failure aborts the action", () => {
+  const ACTIONS_WITH_MUTATION = ["hide", "cancel", "remove", "restore", "feature", "unfeature"] as const;
+  const ACTIONS_NO_MUTATION   = ["warn_host"] as const;
+
+  for (const action of ACTIONS_WITH_MUTATION) {
+    it(`'${action}': returns non-200 error, event row is NOT mutated, no moderation_actions row written`, async () => {
+      const captureActivity: any[] = [];
+      const captureModerationActions: any[] = [];
+      const client = makeModerationClient({
+        captureActivity,
+        captureModerationActions,
+        activityInsertError: true,
+      });
+      setClient(client);
+
+      // Snapshot the event state BEFORE the request
+      const eventBefore = { ...client._db.events[0] };
+
+      const { status, body } = await req(
+        "PATCH",
+        `/admin/events/${EVENT_ID_A}/moderate`,
+        { action, reason: "activity-log-fail test" },
+      );
+
+      // Must NOT be 200 — the route must abort with an error response
+      assert.notEqual(
+        status, 200,
+        `Expected a non-200 response when event_activity_log insert fails for '${action}', got 200`,
+      );
+      assert.ok(
+        body.error,
+        `Expected an error field in the response body for '${action}', got: ${JSON.stringify(body)}`,
+      );
+
+      // Event row must NOT have been mutated
+      const eventAfter = client._db.events[0];
+      assert.equal(
+        eventAfter.state, eventBefore.state,
+        `event.state must be unchanged after failed audit log for '${action}'`,
+      );
+      assert.equal(
+        eventAfter.visibility, eventBefore.visibility,
+        `event.visibility must be unchanged after failed audit log for '${action}'`,
+      );
+      assert.equal(
+        eventAfter.featured, eventBefore.featured,
+        `event.featured must be unchanged after failed audit log for '${action}'`,
+      );
+
+      // event_activity_log insert was attempted but failed — nothing persisted
+      assert.equal(
+        captureActivity.length, 0,
+        `event_activity_log must have 0 persisted rows when insert fails for '${action}'`,
+      );
+
+      // moderation_actions must NOT have been written — the abort happened first
+      assert.equal(
+        captureModerationActions.length, 0,
+        `moderation_actions must have 0 rows when event_activity_log insert fails for '${action}'`,
+      );
+    });
+  }
+
+  for (const action of ACTIONS_NO_MUTATION) {
+    it(`'${action}': returns non-200 error, no moderation_actions row written (no event mutation expected)`, async () => {
+      const captureActivity: any[] = [];
+      const captureModerationActions: any[] = [];
+      const client = makeModerationClient({
+        captureActivity,
+        captureModerationActions,
+        activityInsertError: true,
+      });
+      setClient(client);
+
+      const { status, body } = await req(
+        "PATCH",
+        `/admin/events/${EVENT_ID_A}/moderate`,
+        { action, reason: "activity-log-fail test" },
+      );
+
+      assert.notEqual(
+        status, 200,
+        `Expected a non-200 response when event_activity_log insert fails for '${action}', got 200`,
+      );
+      assert.ok(
+        body.error,
+        `Expected an error field in the response body for '${action}', got: ${JSON.stringify(body)}`,
+      );
+
+      assert.equal(captureActivity.length, 0, `event_activity_log must have 0 persisted rows for '${action}'`);
+      assert.equal(captureModerationActions.length, 0, `moderation_actions must have 0 rows for '${action}'`);
+    });
+  }
 });
 
 // ── Audit fail-open: moderation_actions insert failure must not surface as 500 ──
