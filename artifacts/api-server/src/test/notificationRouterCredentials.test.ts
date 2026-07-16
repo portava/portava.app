@@ -479,6 +479,42 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
     assert.equal(retryQueueInserts.length, 0, "must NOT enqueue on push_retry_queue");
   });
 
+  it("mixed batch — DeviceNotRegistered and InvalidCredentials both land in a single DELETE call", async () => {
+    const DNR_TOKEN  = "ExponentPushToken[device-not-registered]";
+    const CRED_TOKEN = "ExponentPushToken[invalid-credentials]";
+
+    // One token → DeviceNotRegistered, the other → InvalidCredentials.
+    _setTestFetch(
+      makeTicketFetch((to) =>
+        to === DNR_TOKEN
+          ? { status: "error", message: "DeviceNotRegistered", details: { error: "DeviceNotRegistered" } }
+          : { status: "error", message: "InvalidCredentials",  details: { error: "InvalidCredentials"  } },
+      ),
+    );
+
+    const { deletedDeviceTokens, retryQueueInserts, client } = makeFakeDb({
+      deviceTokens: [DNR_TOKEN, CRED_TOKEN],
+      legacyToken: null,
+    });
+
+    const router = new NotificationRouter(client);
+    await router.route(BASE_NOTIF);
+
+    // Both stale-error codes must land in a single DELETE call, not two.
+    assert.equal(deletedDeviceTokens.length, 1, "exactly one DELETE call on notification_devices");
+    assert.ok(
+      deletedDeviceTokens[0].includes(DNR_TOKEN),
+      `DELETE IN list must include the DeviceNotRegistered token (${DNR_TOKEN})`,
+    );
+    assert.ok(
+      deletedDeviceTokens[0].includes(CRED_TOKEN),
+      `DELETE IN list must include the InvalidCredentials token (${CRED_TOKEN})`,
+    );
+
+    // Neither stale token warrants a retry-queue entry.
+    assert.equal(retryQueueInserts.length, 0, "must NOT enqueue on push_retry_queue");
+  });
+
   it("escalates cleanup failure log from warn to error after CLEANUP_ERROR_THRESHOLD consecutive failures", async () => {
     // Use InvalidCredentials so NotificationRouter always tries to clean up
     // the stale token (calls _cleanupStaleTokens), but the DELETE returns an
