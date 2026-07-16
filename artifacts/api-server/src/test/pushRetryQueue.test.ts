@@ -325,6 +325,12 @@ describe("PushRetryQueue.processQueue() — exhaust all attempts", () => {
     const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
     assert.equal(ndaUpdate.patch.status, "failed",         "delivery_attempt status must be 'failed'");
     assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID,       "delivery_attempt update must target correct id");
+    // error_message must mirror last_error — a regression in finalise() would leave it null
+    assert.equal(
+      ndaUpdate.patch.error_message,
+      "failed after 3 attempts",
+      "delivery_attempt error_message must match the queue row last_error ('failed after 3 attempts')",
+    );
   });
 });
 
@@ -591,6 +597,12 @@ describe("PushRetryQueue.processQueue() — dead-token clearing on retry", () =>
     const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
     assert.equal(ndaUpdate.patch.status, "failed",   "delivery_attempt status must be 'failed'");
     assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+    // error_message must mirror last_error — a regression in finalise() would leave it null
+    assert.equal(
+      ndaUpdate.patch.error_message,
+      "DeviceNotRegistered \u00d7 1",
+      "delivery_attempt error_message must match last_error ('DeviceNotRegistered × 1') on dead-token final attempt",
+    );
   });
 
   it("clears InvalidCredentials tokens from all three tables and finalises as 'failed'", async () => {
