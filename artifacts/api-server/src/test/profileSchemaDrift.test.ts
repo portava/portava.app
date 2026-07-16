@@ -343,4 +343,73 @@ describe("PATCH /api/me/profile under schema drift (missing newer columns)", () 
       `dobVerified must not appear in fallback PATCH response — got keys: ${Object.keys(body).join(", ")}`,
     );
   });
+
+  // ── DOB strip on the partial-save branch ──────────────────────────────────
+  // When some fields are dropped (unsavedFields is non-empty), the route takes
+  // an early-return at lines 577-586 via mapProfile(updated).  The DB row may
+  // still contain date_of_birth / dob_verified; mapProfile must strip them
+  // before the 200 is sent from that branch too.
+
+  it("partial-save branch does not include date_of_birth (snake_case) when coverUrl is dropped", async () => {
+    // bio is a base column (persisted), coverUrl maps to cover_photo_url which
+    // is drifted → PGRST204 on first attempt, fallback drops cover_photo_url,
+    // unsavedFields = ["coverUrl"] → partial-save early return fires.
+    const client = makeDriftedClientWithSensitiveRow();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await patchProfile({ bio: "new bio", coverUrl: "https://example.com/c.jpg" });
+    assert.equal(r.status, 200, "partial-save should still return 200 for the base-column field");
+    const body = await r.json() as any;
+    assert.deepEqual(body.unsavedFields, ["coverUrl"], "partial-save branch must have fired");
+    assert.ok(
+      !("date_of_birth" in body),
+      `date_of_birth must not appear in partial-save PATCH response — got keys: ${Object.keys(body).join(", ")}`,
+    );
+  });
+
+  it("partial-save branch does not include dateOfBirth (camelCase) when coverUrl is dropped", async () => {
+    const client = makeDriftedClientWithSensitiveRow();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await patchProfile({ bio: "new bio", coverUrl: "https://example.com/c.jpg" });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.deepEqual(body.unsavedFields, ["coverUrl"], "partial-save branch must have fired");
+    assert.ok(
+      !("dateOfBirth" in body),
+      `dateOfBirth must not appear in partial-save PATCH response — got keys: ${Object.keys(body).join(", ")}`,
+    );
+  });
+
+  it("partial-save branch does not include dob_verified (snake_case) when coverUrl is dropped", async () => {
+    const client = makeDriftedClientWithSensitiveRow();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await patchProfile({ bio: "new bio", coverUrl: "https://example.com/c.jpg" });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.deepEqual(body.unsavedFields, ["coverUrl"], "partial-save branch must have fired");
+    assert.ok(
+      !("dob_verified" in body),
+      `dob_verified must not appear in partial-save PATCH response — got keys: ${Object.keys(body).join(", ")}`,
+    );
+  });
+
+  it("partial-save branch does not include dobVerified (camelCase) when coverUrl is dropped", async () => {
+    const client = makeDriftedClientWithSensitiveRow();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await patchProfile({ bio: "new bio", coverUrl: "https://example.com/c.jpg" });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.deepEqual(body.unsavedFields, ["coverUrl"], "partial-save branch must have fired");
+    assert.ok(
+      !("dobVerified" in body),
+      `dobVerified must not appear in partial-save PATCH response — got keys: ${Object.keys(body).join(", ")}`,
+    );
+  });
 });
