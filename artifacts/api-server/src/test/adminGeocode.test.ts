@@ -761,6 +761,63 @@ describe("DELETE /admin/geocode-cache/:city_key with repair_catalog", () => {
     assert.equal(catalogUpdates.length, 0, "catalog should not have been updated for an unresolvable city");
   });
 
+  it("re-keys all XX entries for the same city when the geocode resolves to a new country", async () => {
+    // Seed two XX entries for the same city — a city stamp and a neighborhood
+    // stamp.  The repair loop must iterate over both; seeding only one is not
+    // enough to prove the loop doesn't stop after the first entry.
+    const catalogUpdates: Record<string, unknown>[] = [];
+
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-multi-1",
+          canonical_location_key: "city:XX:twinburg",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Twinburg",
+          neighborhood: null,
+          display_name: "Twinburg",
+        },
+        {
+          id: "cat-multi-2",
+          canonical_location_key: "neighborhood:XX:twinburg:old-quarter",
+          stamp_type: "neighborhood",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Twinburg",
+          neighborhood: "Old Quarter",
+          display_name: "Old Quarter",
+        },
+      ],
+      onCatalogUpdate: (f) => catalogUpdates.push(f),
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Austria", "AT"));
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/twinburg", undefined, "repair_catalog=true");
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.deleted, true);
+    assert.ok(r.body.repair, "response should include repair stats");
+    const repair = r.body.repair as RepairStats;
+
+    // Both XX entries must have been re-keyed — not just the first one.
+    assert.equal(repair.catalogRekeyed, 2,
+      "all XX entries for the same city must be re-keyed, not just the first");
+
+    // Every catalog update must use the freshly-resolved country code (AT), not a stale one.
+    assert.equal(catalogUpdates.length, 2,
+      "catalog update should have been called once for each XX entry");
+    assert.ok(
+      catalogUpdates.every((u) => u.country_code === "AT"),
+      `all catalog updates must use the freshly-resolved country code AT, got: ${JSON.stringify(catalogUpdates.map((u) => u.country_code))}`,
+    );
+  });
+
   // ── xx_entries_pending ──────────────────────────────────────────────────────
 
   it("includes xx_entries_pending when repair_catalog is not set and matching XX entries exist", async () => {
