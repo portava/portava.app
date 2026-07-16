@@ -10,6 +10,21 @@
 
 export const STYLE_VERSION = "v1.0";
 
+/**
+ * Returns true when an existing artwork row was generated with a different
+ * style version than the current one, meaning the prompt has changed since
+ * the row was produced and the artwork should be regenerated.
+ *
+ * A null / missing `prompt_template_version` is always treated as stale
+ * (rows pre-dating the versioning scheme must be regenerated).
+ */
+export function isArtworkStale(
+  row: { prompt_template_version?: string | null },
+  currentVersion: string = STYLE_VERSION,
+): boolean {
+  return row.prompt_template_version !== currentVersion;
+}
+
 /** Number of candidate images generated per missing stamp. */
 export const CANDIDATE_COUNT = 3;
 

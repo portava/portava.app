@@ -32,7 +32,7 @@ const { _setTestStampImageProvider, _resetProviderCache } = await import(
   "../lib/stamps/imageProvider.js"
 );
 const { _setTestServiceClient } = await import("../lib/supabase.js");
-const { CANDIDATE_COUNT, buildStampPrompt } = await import("../lib/stamps/artDirection.js");
+const { CANDIDATE_COUNT, STYLE_VERSION, isArtworkStale, buildStampPrompt } = await import("../lib/stamps/artDirection.js");
 
 // ── Fakes ─────────────────────────────────────────────────────────────────────
 
@@ -1711,6 +1711,150 @@ describe("runGenerationCycle — catalog row with null city", () => {
       /^City:/m.test(capturedPrompt!),
       false,
       `prompt must not contain any "City:" line when city is null; got: ${capturedPrompt!.slice(0, 300)}`,
+    );
+  });
+});
+
+// ── STYLE_VERSION stamped on inserted version rows ────────────────────────────
+
+describe("runGenerationCycle — STYLE_VERSION stamped on every inserted version row", () => {
+  it("sets prompt_template_version to STYLE_VERSION on each candidate row (data-URL path)", async () => {
+    const { sc, inserts } = makeFakeClient();
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeProvider(CANDIDATE_COUNT));
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, true);
+    assert.equal(inserts.length, 1);
+    const { rows } = inserts[0];
+    assert.equal(rows.length, CANDIDATE_COUNT);
+    for (const row of rows) {
+      assert.equal(
+        row.prompt_template_version,
+        STYLE_VERSION,
+        `prompt_template_version must equal STYLE_VERSION ("${STYLE_VERSION}"), got: ${row.prompt_template_version}`,
+      );
+    }
+  });
+
+  it("sets prompt_template_version to STYLE_VERSION on each candidate row (real http path)", async () => {
+    const { sc, inserts } = makeFakeClientWithStorage();
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, true);
+    assert.equal(inserts.length, 1);
+    const { rows } = inserts[0];
+    assert.equal(rows.length, CANDIDATE_COUNT);
+    for (const row of rows) {
+      assert.equal(
+        row.prompt_template_version,
+        STYLE_VERSION,
+        `prompt_template_version must equal STYLE_VERSION ("${STYLE_VERSION}") on real-http rows, got: ${row.prompt_template_version}`,
+      );
+    }
+  });
+
+  it("sets prompt_template_version on every candidate row in a degraded (shortfall) run", async () => {
+    // STAMP_MIN_CANDIDATES=2, so 2 candidates is below CANDIDATE_COUNT but still reviewable.
+    const { sc, inserts } = makeFakeClient();
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeProvider(2));
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, true);
+    assert.equal(inserts.length, 1);
+    const { rows } = inserts[0];
+    assert.equal(rows.length, 2);
+    for (const row of rows) {
+      assert.equal(
+        row.prompt_template_version,
+        STYLE_VERSION,
+        `prompt_template_version must equal STYLE_VERSION even in a degraded run, got: ${row.prompt_template_version}`,
+      );
+    }
+  });
+});
+
+// ── isArtworkStale — stale-version detection ──────────────────────────────────
+
+describe("isArtworkStale — detects rows generated with an outdated STYLE_VERSION", () => {
+  it("returns false when prompt_template_version matches STYLE_VERSION", () => {
+    assert.equal(
+      isArtworkStale({ prompt_template_version: STYLE_VERSION }),
+      false,
+      "a row stamped with the current version is not stale",
+    );
+  });
+
+  it("returns true when prompt_template_version is an older version string", () => {
+    assert.equal(
+      isArtworkStale({ prompt_template_version: "v0.9" }),
+      true,
+      "a row with an older version string must be flagged as stale",
+    );
+  });
+
+  it("returns true when prompt_template_version is null (pre-versioning row)", () => {
+    assert.equal(
+      isArtworkStale({ prompt_template_version: null }),
+      true,
+      "a null version must be treated as stale (pre-dates versioning)",
+    );
+  });
+
+  it("returns true when prompt_template_version is absent (pre-versioning row)", () => {
+    assert.equal(
+      isArtworkStale({}),
+      true,
+      "a missing version field must be treated as stale",
+    );
+  });
+
+  it("returns true when an explicit currentVersion is supplied and the row differs", () => {
+    assert.equal(
+      isArtworkStale({ prompt_template_version: "v1.0" }, "v2.0"),
+      true,
+      "a row at v1.0 is stale relative to a bumped v2.0",
+    );
+  });
+
+  it("returns false when an explicit currentVersion is supplied and the row matches", () => {
+    assert.equal(
+      isArtworkStale({ prompt_template_version: "v2.0" }, "v2.0"),
+      false,
+      "a row matching the supplied currentVersion is not stale",
+    );
+  });
+
+  it("returns true for every row that does not carry STYLE_VERSION — simulating a version bump", () => {
+    // Simulate what a downstream check would do after bumping STYLE_VERSION:
+    // any existing row whose prompt_template_version != new version is stale.
+    const bumpedVersion = "v2.0";
+    const rows = [
+      { prompt_template_version: "v1.0" },      // old version
+      { prompt_template_version: null },          // pre-versioning
+      { prompt_template_version: bumpedVersion }, // already up-to-date
+      { prompt_template_version: undefined },     // missing field
+    ] as Array<{ prompt_template_version?: string | null }>;
+
+    const staleRows = rows.filter((r) => isArtworkStale(r, bumpedVersion));
+
+    assert.equal(
+      staleRows.length,
+      3,
+      "exactly 3 of 4 rows must be stale after a version bump (old, null, missing)",
+    );
+    // The up-to-date row must not appear in the stale list.
+    assert.equal(
+      staleRows.some((r) => r.prompt_template_version === bumpedVersion),
+      false,
+      "the row already at the new version must not be flagged as stale",
     );
   });
 });
