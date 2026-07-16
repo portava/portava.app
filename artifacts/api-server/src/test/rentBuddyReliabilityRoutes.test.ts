@@ -380,3 +380,97 @@ describe("report-no-show — alias URL reachability", () => {
     assert.equal(eventInsert.payload.target_user_id, TRAVELER_ID);
   });
 });
+
+// ── toBuddyScoringData counter precedence ─────────────────────────────────────
+//
+// toBuddyScoringData picks completed_count ?? completed_bookings. When both
+// columns exist with divergent values the canonical completed_count must win,
+// because that is the column the scorer (and the ranking tie-break) reads.
+
+function makeMatchFakeClient(buddyRow: Record<string, any>) {
+  function makeBuilder(table: string): any {
+    const b: any = {
+      select:    () => b,
+      insert:    () => b,
+      upsert:    () => b,
+      eq:        () => b,
+      neq:       () => b,
+      in:        () => b,
+      not:       () => b,
+      is:        () => b,
+      gte:       () => b,
+      lte:       () => b,
+      gt:        () => b,
+      lt:        () => b,
+      like:      () => b,
+      ilike:     () => b,
+      contains:  () => b,
+      overlaps:  () => b,
+      order:     () => b,
+      limit:     () => b,
+      range:     () => b,
+      single:      () => Promise.resolve({ data: null, error: null }),
+      maybeSingle: () => Promise.resolve({ data: null, error: null }),
+      then: (resolve: any, reject: any) => {
+        // The match endpoint fetches rent_buddy_profiles as an array and
+        // trust_profiles as an array. Everything else is a write or unused.
+        const data = table === "rent_buddy_profiles" ? [buddyRow] : [];
+        return Promise.resolve({ data, error: null }).then(resolve, reject);
+      },
+    };
+    return b;
+  }
+
+  return {
+    client: {
+      auth: { getUser: () => Promise.resolve({ data: { user: { id: TRAVELER_ID } }, error: null }) },
+      from: (table: string) => makeBuilder(table),
+    },
+  };
+}
+
+describe("toBuddyScoringData — completed_count takes precedence over completed_bookings", () => {
+  it("uses completed_count=7 (not completed_bookings=3) when ranking via POST /api/rent-a-buddy/match", async () => {
+    // Buddy row deliberately has the two counters out of sync.
+    // completed_count is the canonical value written by the completion route;
+    // completed_bookings is the legacy column. toBuddyScoringData must prefer
+    // completed_count so the scorer and tie-break logic see 7, not 3.
+    const buddyRow = {
+      id: BP_ID, user_id: BUDDY_USER_ID, city: "Manila",
+      status: "active", admin_status: "active",
+      categories: ["city"], languages: ["English"],
+      hourly_rate_usd: 20, half_day_rate_usd: null, full_day_rate_usd: null,
+      vibe_tags: [], energy_type: null, buddy_level: "experienced",
+      average_rating: null, review_count: 0,
+      completed_bookings: 3,  // legacy counter — should be ignored
+      completed_count: 7,     // canonical counter — must win
+      response_time_h: null, verified: false, featured: false,
+      city_ambassador: false, available_now: true,
+      female_only_service: false, public_meetup_only: false,
+      group_approved: true, nightlife_approved: false, arrival_approved: false,
+      category_approvals: {}, max_group_size: 4,
+      new_buddy_public_only: false, new_buddy_daytime_only: false,
+      risk_hold: false, created_at: new Date().toISOString(),
+    };
+
+    const fake = makeMatchFakeClient(buddyRow);
+    const res = await call("POST", "/api/rent-a-buddy/match", fake, { city: "Manila" });
+
+    assert.equal(res.status, 200, "match endpoint should return 200");
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.results), "response.results should be an array");
+    assert.equal(body.results.length, 1, "should return the one eligible buddy");
+
+    const breakdown = body.results[0].scoreBreakdown;
+    assert.ok(breakdown, "scoreBreakdown should be present in the result");
+
+    // CompatibilityScoreService: bkScore = Math.min(100, 30 + completedBookings * 2)
+    // With completed_count=7  → 30 + 14 = 44  ← expected
+    // With completed_bookings=3 → 30 + 6  = 36  ← would indicate a regression
+    assert.equal(
+      breakdown.completedBookings,
+      44,
+      `scorer must use completed_count=7 (bkScore=44) not completed_bookings=3 (bkScore=36); got ${breakdown.completedBookings}`,
+    );
+  });
+});
