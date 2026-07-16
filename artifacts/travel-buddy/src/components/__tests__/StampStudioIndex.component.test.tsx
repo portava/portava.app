@@ -736,3 +736,159 @@ describe('StampStudioIndex — all three polling intervals stop when leaving the
     expect(catalogAfter).toBeUndefined();
   });
 });
+
+// ── Suite 6: backlog_growing with missing queued details ───────────────────────
+
+/**
+ * warningSummary falls back to '?' when w.details?.queued or
+ * w.details?.previous_queued is absent.  These tests confirm that a
+ * backlog_growing warning with an empty details object (or with the fields
+ * missing) renders placeholder text — not a crash and not the literal string
+ * "undefined".
+ */
+describe('StampStudioIndex — backlog_growing with missing queued details shows placeholders', () => {
+  let spy: ReturnType<typeof makeIntervalSpy>;
+
+  beforeEach(() => {
+    spy = makeIntervalSpy();
+    makeUseFocusEffectMock();
+
+    mockGetCatalog.mockResolvedValue(catalogOk(10));
+  });
+
+  afterEach(() => {
+    spy.teardown();
+    jest.clearAllMocks();
+  });
+
+  it('renders "? to ?" placeholders when details is an empty object', async () => {
+    mockGetHealth.mockResolvedValue({
+      ok: true as const,
+      data: {
+        warnings: [
+          {
+            key: 'backlog_growing' as const,
+            message: 'backlog growing',
+            details: {},
+          },
+        ],
+        health: {
+          worker_enabled: true,
+          worker_running: true,
+          worker_id: 'w1',
+          last_success_at: null,
+          queue_depth: {},
+          stuck_jobs: [],
+        },
+      },
+    });
+
+    render(<StampStudioIndex />);
+    await waitFor(() =>
+      screen.getByText(/Queued backlog grew from \? to \?/),
+    );
+
+    const warningText = screen.getByText(/Queued backlog grew from \? to \?/);
+    expect(warningText).toBeTruthy();
+    // Must not contain the literal string "undefined".
+    expect(warningText.props.children).not.toMatch(/undefined/);
+  });
+
+  it('renders "? to ?" placeholders when details is undefined', async () => {
+    mockGetHealth.mockResolvedValue({
+      ok: true as const,
+      data: {
+        warnings: [
+          {
+            key: 'backlog_growing' as const,
+            message: 'backlog growing',
+            details: undefined,
+          },
+        ],
+        health: {
+          worker_enabled: true,
+          worker_running: true,
+          worker_id: 'w1',
+          last_success_at: null,
+          queue_depth: {},
+          stuck_jobs: [],
+        },
+      },
+    });
+
+    render(<StampStudioIndex />);
+    await waitFor(() =>
+      screen.getByText(/Queued backlog grew from \? to \?/),
+    );
+
+    const warningText = screen.getByText(/Queued backlog grew from \? to \?/);
+    expect(warningText).toBeTruthy();
+    expect(warningText.props.children).not.toMatch(/undefined/);
+  });
+
+  it('renders the real counts when only previous_queued is missing', async () => {
+    mockGetHealth.mockResolvedValue({
+      ok: true as const,
+      data: {
+        warnings: [
+          {
+            key: 'backlog_growing' as const,
+            message: 'backlog growing',
+            details: { queued: 20 },
+          },
+        ],
+        health: {
+          worker_enabled: true,
+          worker_running: true,
+          worker_id: 'w1',
+          last_success_at: null,
+          queue_depth: {},
+          stuck_jobs: [],
+        },
+      },
+    });
+
+    render(<StampStudioIndex />);
+    // queued is present (20) but previous_queued is absent → shows "? to 20"
+    await waitFor(() =>
+      screen.getByText(/Queued backlog grew from \? to 20/),
+    );
+
+    const warningText = screen.getByText(/Queued backlog grew from \? to 20/);
+    expect(warningText).toBeTruthy();
+    expect(warningText.props.children).not.toMatch(/undefined/);
+  });
+
+  it('renders the real counts when only queued is missing', async () => {
+    mockGetHealth.mockResolvedValue({
+      ok: true as const,
+      data: {
+        warnings: [
+          {
+            key: 'backlog_growing' as const,
+            message: 'backlog growing',
+            details: { previous_queued: 5 },
+          },
+        ],
+        health: {
+          worker_enabled: true,
+          worker_running: true,
+          worker_id: 'w1',
+          last_success_at: null,
+          queue_depth: {},
+          stuck_jobs: [],
+        },
+      },
+    });
+
+    render(<StampStudioIndex />);
+    // previous_queued is present (5) but queued is absent → shows "5 to ?"
+    await waitFor(() =>
+      screen.getByText(/Queued backlog grew from 5 to \?/),
+    );
+
+    const warningText = screen.getByText(/Queued backlog grew from 5 to \?/);
+    expect(warningText).toBeTruthy();
+    expect(warningText.props.children).not.toMatch(/undefined/);
+  });
+});
