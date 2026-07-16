@@ -256,6 +256,110 @@ describe("PATCH /api/me/profile under schema drift (missing newer columns)", () 
     assert.ok(!("cover_photo_url" in client.__updates[0].patch));
   });
 
+  it("warning lists ALL dropped fields when multiple drifted columns are stripped at once", async () => {
+    // Build a client that treats cover_photo_url AND spoken_languages as drifted,
+    // so both coverUrl and spokenLanguages are stripped in the fallback write.
+    const driftedCols = new Set([
+      "passport_section_order",
+      "cover_photo_url",
+      "display_name",
+      "spoken_languages",
+    ]);
+    const updates: UpdateRecord[] = [];
+    const profileRow: any = {
+      id: ME, username: "me_user", handle: "me_user", name: "Me",
+      bio: "old bio", is_private: false, passport_visibility: "public",
+      avatar_url: null, created_at: new Date("2026-01-01").toISOString(),
+    };
+    function makeBuilder2(table: string) {
+      let pendingUpdate: any = null;
+      const builder: any = {
+        select() { return builder; },
+        eq() { return builder; },
+        neq() { return builder; },
+        limit() { return builder; },
+        update(patch: any) { pendingUpdate = patch; return builder; },
+        insert() { return builder; },
+        maybeSingle() {
+          return Promise.resolve({ data: table === "profiles" ? { ...profileRow } : null, error: null });
+        },
+        single() {
+          if (pendingUpdate && table === "profiles") {
+            const bad = Object.keys(pendingUpdate).find((k) => driftedCols.has(k));
+            if (bad) {
+              return Promise.resolve({
+                data: null,
+                error: { code: "PGRST204", message: `Could not find the '${bad}' column of 'profiles' in the schema cache` },
+              });
+            }
+            updates.push({ table, patch: pendingUpdate });
+            return Promise.resolve({ data: { ...profileRow, ...pendingUpdate }, error: null });
+          }
+          return Promise.resolve({ data: table === "profiles" ? { ...profileRow } : null, error: null });
+        },
+        then(onF: any, onR: any) {
+          return Promise.resolve({ data: [], error: null }).then(onF, onR);
+        },
+      };
+      return builder;
+    }
+    const multiDriftClient: any = {
+      auth: {
+        getUser: async (tok: string) =>
+          tok === ME_TOK
+            ? { data: { user: { id: ME } }, error: null }
+            : { data: { user: null }, error: { message: "invalid token" } },
+      },
+      from: (table: string) => makeBuilder2(table),
+      storage: { from: () => ({ remove: async () => ({ error: null }) }) },
+      __updates: updates,
+    };
+
+    _setTestClient(multiDriftClient, true);
+    _setTestServiceClient(multiDriftClient);
+
+    // bio is a base column (kept), coverUrl → cover_photo_url (drifted),
+    // spokenLanguages → spoken_languages (drifted in this client).
+    const r = await patchProfile({
+      bio: "bio",
+      coverUrl: "https://example.com/c.jpg",
+      spokenLanguages: ["en", "es"],
+    });
+    assert.equal(r.status, 200, "base-column bio should still be saved");
+    const body = await r.json() as any;
+
+    // Both dropped field names must appear in unsavedFields (order-independent).
+    assert.ok(
+      Array.isArray(body.unsavedFields),
+      `unsavedFields must be an array, got: ${JSON.stringify(body.unsavedFields)}`,
+    );
+    assert.ok(
+      (body.unsavedFields as string[]).includes("coverUrl"),
+      `unsavedFields must contain "coverUrl" — got: ${JSON.stringify(body.unsavedFields)}`,
+    );
+    assert.ok(
+      (body.unsavedFields as string[]).includes("spokenLanguages"),
+      `unsavedFields must contain "spokenLanguages" — got: ${JSON.stringify(body.unsavedFields)}`,
+    );
+
+    // The warning string must name both dropped fields.
+    assert.ok(typeof body.warning === "string", "warning must be a string");
+    assert.ok(
+      (body.warning as string).includes("coverUrl"),
+      `warning must mention "coverUrl" — got: ${JSON.stringify(body.warning)}`,
+    );
+    assert.ok(
+      (body.warning as string).includes("spokenLanguages"),
+      `warning must mention "spokenLanguages" — got: ${JSON.stringify(body.warning)}`,
+    );
+
+    // The base column bio must have been written.
+    assert.equal(multiDriftClient.__updates.length, 1, "exactly one fallback write should occur");
+    assert.equal(multiDriftClient.__updates[0].patch.bio, "bio");
+    assert.ok(!("cover_photo_url" in multiDriftClient.__updates[0].patch), "drifted cover_photo_url must be stripped");
+    assert.ok(!("spoken_languages" in multiDriftClient.__updates[0].patch), "drifted spoken_languages must be stripped");
+  });
+
   it("displayName is NOT reported unsaved when the base name column still persists it", async () => {
     const client = makeDriftedClient();
     _setTestClient(client, true);
