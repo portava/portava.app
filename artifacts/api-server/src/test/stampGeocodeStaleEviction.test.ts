@@ -313,6 +313,60 @@ describe("negative cache TTL expiry", () => {
     assert.equal(second?.country, "Japan");
   });
 
+  it("a network error during the TTL-retry re-caches with NEGATIVE_TTL_MS — not the 30-day positive TTL", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Seed the negative cache: first fetch returns empty → null geocode.
+    let fetchCallCount = 0;
+    _setGeocodeFetchForTests(async () => {
+      fetchCallCount++;
+      return { ok: true, json: async () => [] };
+    });
+
+    const first = await geocodeCityCountry("ErrorCity");
+    assert.equal(first, null, "pre-condition: city should cache as null");
+    assert.equal(fetchCallCount, 1, "pre-condition: one fetch to seed negative entry");
+
+    // Advance past the NEGATIVE_TTL_MS window so the first negative entry is stale.
+    const T1 = T0 + NEGATIVE_TTL_MS + 1_000;
+    mockNow(T1);
+
+    // Swap fetch to throw a network error on the retry.
+    _setGeocodeFetchForTests(async () => {
+      fetchCallCount++;
+      throw new Error("network_timeout");
+    });
+
+    // The stale entry triggers a retry; the retry throws → re-cached with NEGATIVE_TTL_MS from T1.
+    const second = await geocodeCityCountry("ErrorCity");
+    assert.equal(second, null, "network error during retry should return null");
+    assert.equal(fetchCallCount, 2, "one fetch for the seed, one for the retry");
+
+    // Advance by LESS than NEGATIVE_TTL_MS from T1 — the re-cached entry must still be live.
+    mockNow(T1 + NEGATIVE_TTL_MS - 1_000);
+
+    // Swap to a succeeding fetch — but it must NOT be called yet.
+    _setGeocodeFetchForTests(async () => {
+      fetchCallCount++;
+      return { ok: true, json: async () => [{ address: { country_code: "de", country: "Germany" } }] };
+    });
+
+    const third = await geocodeCityCountry("ErrorCity");
+    assert.equal(third, null,
+      "inside the short re-cached window the null must be served without a new fetch — proving NEGATIVE_TTL was used, not the 30-day TTL");
+    assert.equal(fetchCallCount, 2,
+      "no third fetch while the re-cached negative entry is still valid");
+
+    // Now advance past the second NEGATIVE_TTL_MS window — a successful retry must proceed.
+    mockNow(T1 + NEGATIVE_TTL_MS + 1_000);
+
+    const fourth = await geocodeCityCountry("ErrorCity");
+    assert.equal(fourth?.countryCode, "DE",
+      "after the short TTL expires the retry should succeed and return the resolved country");
+    assert.equal(fetchCallCount, 3, "one fetch for the successful retry after the short TTL");
+  });
+
   it("keeps returning null while still inside the NEGATIVE_TTL_MS window", async () => {
     const T0 = 1_700_000_000_000;
     mockNow(T0);
