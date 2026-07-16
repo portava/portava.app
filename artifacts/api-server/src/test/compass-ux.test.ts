@@ -45,6 +45,8 @@ import {
   runScan,
 } from "../compass/CompassAbuseDefenseEngine.js";
 
+import { localMinutesOfDay } from "../services/notifications/NotificationPreferenceService.js";
+
 // ── Shared fake DB builder ─────────────────────────────────────────────────────
 
 interface FakeCall {
@@ -553,6 +555,76 @@ describe("CompassNotificationEngine", () => {
 
   it("isQuietHours: invalid format → false (no crash)", () => {
     assert.equal(isQuietHours("invalid", "07:00", 120), false);
+  });
+
+  // ── isQuietHours timezone awareness ──────────────────────────────────────────
+
+  /** Format minutes-since-midnight as HH:MM, wrapping around midnight. */
+  function toHHMM(mins: number): string {
+    const m = ((mins % 1440) + 1440) % 1440;
+    return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  }
+
+  it("isQuietHours: uses user's IANA timezone when nowMinutes not injected", () => {
+    // Build a ±10-minute window around the CURRENT local time in a fixed-offset
+    // timezone, so "now" in that tz is always inside the window.
+    const tz = "Etc/GMT-12"; // UTC+12 — differs from server/UTC by 12h
+    const localNow = localMinutesOfDay(new Date(), tz);
+    const start = toHHMM(localNow - 10);
+    const end   = toHHMM(localNow + 10);
+    assert.equal(isQuietHours(start, end, undefined, tz), true,
+      "window around local now in user's tz must be quiet");
+    // The same window evaluated 12h away (server-ish clock) must NOT be quiet.
+    assert.equal(isQuietHours(start, end, undefined, "Etc/GMT"), false,
+      "same window 12 hours off must not be quiet");
+  });
+
+  it("isQuietHours: invalid timezone falls back without crashing", () => {
+    const localNow = localMinutesOfDay(new Date(), null);
+    const start = toHHMM(localNow - 10);
+    const end   = toHHMM(localNow + 10);
+    assert.equal(isQuietHours(start, end, undefined, "Not/A_Zone"), true,
+      "invalid tz falls back to server-local time");
+  });
+
+  it("evaluateNotification: quiet hours evaluated in the buddy's timezone from notification_preferences", async () => {
+    // User's local window differs from UTC: window is built around their local
+    // "now" in UTC+12, so it is quiet locally but not on the UTC/server clock.
+    const tz = "Etc/GMT-12";
+    const localNow = localMinutesOfDay(new Date(), tz);
+    const start = toHHMM(localNow - 10);
+    const end   = toHHMM(localNow + 10);
+    const tableData: Record<string, Record<string, unknown>[]> = {
+      compass_user_preferences: [
+        { user_id: "u-tz", muted_topics: [`quiet_start:${start}`, `quiet_end:${end}`],
+          exclude_budget_styles: [], compass_enabled: true },
+      ],
+      notification_preferences: [{ user_id: "u-tz", timezone: tz }],
+      compass_notification_decisions: [],
+      feature_flags: [],
+    };
+    const { db } = makeFakeDb(tableData);
+    // No nowMinutes injected — engine must resolve "now" in the user's timezone.
+    const decision = await evaluateNotification(db, "u-tz", payload("message_normal"), {});
+    assert.equal(decision.outcome, "suppressed_quiet_hours");
+  });
+
+  it("evaluateNotification: no stored timezone → not quiet for a window 12h off server time", async () => {
+    const localNow = localMinutesOfDay(new Date(), null); // server-local
+    const start = toHHMM(localNow + 12 * 60 - 10);
+    const end   = toHHMM(localNow + 12 * 60 + 10);
+    const tableData: Record<string, Record<string, unknown>[]> = {
+      compass_user_preferences: [
+        { user_id: "u-notz", muted_topics: [`quiet_start:${start}`, `quiet_end:${end}`],
+          exclude_budget_styles: [], compass_enabled: true },
+      ],
+      notification_preferences: [],
+      compass_notification_decisions: [],
+      feature_flags: [],
+    };
+    const { db } = makeFakeDb(tableData);
+    const decision = await evaluateNotification(db, "u-notz", payload("message_normal"), {});
+    assert.equal(decision.outcome, "sent");
   });
 
   // ── Priority levels ───────────────────────────────────────────────────────────

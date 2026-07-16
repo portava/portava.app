@@ -28,6 +28,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile } from "./types.js";
 import { runSafetyFilter } from "./CompassSafetyFilter.js";
+import { localMinutesOfDay } from "../services/notifications/NotificationPreferenceService.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -157,16 +158,22 @@ function parseHHMM(s: string): number | null {
 }
 
 /**
- * Returns true if the current UTC time falls within quiet hours.
+ * Returns true if the current time falls within quiet hours.
+ *
+ * The current time is evaluated in the user's own IANA timezone when one is
+ * provided; otherwise it falls back to server-local time (same fallback as
+ * NotificationPreferenceService.isQuietHour).
  *
  * @param quietStart  "HH:MM" — quiet period start (e.g. "22:00")
  * @param quietEnd    "HH:MM" — quiet period end   (e.g. "07:00")
- * @param nowMinutes  Current time in minutes since midnight (UTC). Injected for testing.
+ * @param nowMinutes  Current time in minutes since midnight. Injected for testing.
+ * @param timezone    IANA timezone (e.g. "Asia/Bangkok") used when nowMinutes is not injected.
  */
 export function isQuietHours(
   quietStart:  string,
   quietEnd:    string,
   nowMinutes?: number,
+  timezone?:   string | null,
 ): boolean {
   const start = parseHHMM(quietStart);
   const end   = parseHHMM(quietEnd);
@@ -175,7 +182,7 @@ export function isQuietHours(
   const now =
     nowMinutes !== undefined
       ? nowMinutes
-      : new Date().getUTCHours() * 60 + new Date().getUTCMinutes();
+      : localMinutesOfDay(new Date(), timezone ?? null);
 
   if (start <= end) {
     // Same-day window (e.g. 08:00–20:00)
@@ -191,6 +198,8 @@ export function isQuietHours(
 interface UserNotifPrefs {
   quietStart:      string | null;
   quietEnd:        string | null;
+  /** IANA timezone quiet hours are evaluated in; null → server time. */
+  timezone:        string | null;
   mutedCategories: string[];
   compassEnabled:  boolean;
 }
@@ -200,11 +209,18 @@ async function loadUserNotifPrefs(
   userId: string,
 ): Promise<UserNotifPrefs> {
   try {
-    const { data } = await db
-      .from("compass_user_preferences")
-      .select("compass_enabled, exclude_budget_styles, muted_topics, category_weights")
-      .eq("user_id", userId)
-      .maybeSingle();
+    const [{ data }, { data: notifPrefsRow }] = await Promise.all([
+      db
+        .from("compass_user_preferences")
+        .select("compass_enabled, exclude_budget_styles, muted_topics, category_weights")
+        .eq("user_id", userId)
+        .maybeSingle(),
+      db
+        .from("notification_preferences")
+        .select("timezone")
+        .eq("user_id", userId)
+        .maybeSingle(),
+    ]);
 
     const row = (data as any) ?? {};
     const topics: string[] = (row.muted_topics as string[]) ?? [];
@@ -235,11 +251,12 @@ async function loadUserNotifPrefs(
     return {
       quietStart,
       quietEnd,
+      timezone:        ((notifPrefsRow as any)?.timezone as string | null) ?? null,
       mutedCategories: mutedCats,
       compassEnabled:  row.compass_enabled !== false,
     };
   } catch {
-    return { quietStart: null, quietEnd: null, mutedCategories: [], compassEnabled: true };
+    return { quietStart: null, quietEnd: null, timezone: null, mutedCategories: [], compassEnabled: true };
   }
 }
 
@@ -469,11 +486,11 @@ export async function evaluateNotification(
   // ── User preferences (best-effort; fail-open for higher-priority levels) ─────
   const prefs = db
     ? await loadUserNotifPrefs(db, userId)
-    : { quietStart: null, quietEnd: null, mutedCategories: [], compassEnabled: true };
+    : { quietStart: null, quietEnd: null, timezone: null, mutedCategories: [], compassEnabled: true };
 
   // ── Quiet hours check (levels 3–10) ──────────────────────────────────────────
   if (prefs.quietStart && prefs.quietEnd) {
-    if (isQuietHours(prefs.quietStart, prefs.quietEnd, opts.nowMinutes)) {
+    if (isQuietHours(prefs.quietStart, prefs.quietEnd, opts.nowMinutes, prefs.timezone)) {
       return decide("suppressed_quiet_hours", "quiet_hours_active");
     }
   }
