@@ -31,6 +31,67 @@ export function _getApiBase(): string {
   return apiBase();
 }
 
+// ── Device timezone ────────────────────────────────────────────────────────────
+
+/**
+ * Resolve the device's IANA timezone (e.g. "Europe/Paris").
+ * Returns null when the runtime can't report one.
+ */
+export function getDeviceTimezone(): string | null {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return tz && typeof tz === 'string' ? tz : null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveAccessToken(): Promise<string | null> {
+  if (_testTokenProvider) return _testTokenProvider();
+  // Dynamic import keeps this module loadable in Node.js.
+  const { supabase } = await import('../lib/supabase');
+  const { data: refreshed } = await supabase.auth.refreshSession();
+  const session =
+    refreshed?.session ?? (await supabase.auth.getSession()).data.session;
+  return session?.access_token ?? null;
+}
+
+/**
+ * Sync the device's IANA timezone to the server so quiet hours are evaluated
+ * in the user's local time without any manual setup.
+ *
+ * PUT /api/me/notification-preferences  { timezone }
+ *
+ * Best-effort, same silent no-op rules as savePushToken. Also no-ops when the
+ * device timezone can't be resolved.
+ */
+export async function saveDeviceTimezone(
+  opts?: {
+    /** Override the API base URL (for tests). */
+    baseUrl?: string;
+    /** Override the fetch implementation (for tests). */
+    fetchImpl?: typeof fetch;
+    /** Override the timezone (for tests). */
+    timezone?: string;
+  },
+): Promise<void> {
+  const base = opts?.baseUrl ?? apiBase();
+  if (!base) return;
+
+  const timezone = opts?.timezone ?? getDeviceTimezone();
+  if (!timezone) return;
+
+  const token = await resolveAccessToken();
+  if (!token) return;
+
+  const doFetch = opts?.fetchImpl ?? fetch;
+  await doFetch(`${base}/api/me/notification-preferences`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ timezone }),
+  }).catch(() => {});
+}
+
 // ── Production function ────────────────────────────────────────────────────────
 
 /**

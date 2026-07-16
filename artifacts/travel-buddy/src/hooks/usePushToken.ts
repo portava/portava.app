@@ -15,7 +15,7 @@ import { useEffect } from 'react';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { useSession } from '../context/SessionContext';
-import { savePushToken } from '../services/pushTokenService';
+import { savePushToken, saveDeviceTimezone } from '../services/pushTokenService';
 import {
   getPermissionsAsync,
   requestPermissionsAsync,
@@ -49,6 +49,9 @@ export function usePushToken(): void {
       if (!pushToken || cancelled) return;
 
       await savePushToken(pushToken);
+      // Best-effort: keep the server-side quiet-hours timezone in sync with
+      // the device so quiet hours work in local time with no manual setup.
+      await saveDeviceTimezone();
     })().catch(() => {});
 
     return () => { cancelled = true; };

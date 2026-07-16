@@ -20,6 +20,7 @@ import {
   type CategoryPreference,
   type ListNotificationsParams,
 } from '../services/notifications';
+import { getDeviceTimezone } from '../services/pushTokenService';
 import { supabase } from '../lib/supabase';
 import { showNotificationToast } from '../components/NotificationToast';
 
@@ -284,7 +285,14 @@ export function useNotificationPreferences() {
     },
   ) => {
     setSaving(true);
-    const res = await updateNotificationPreferences(patch);
+    // Always sync the device's IANA timezone alongside preference saves so
+    // quiet hours run in the user's local time without manual setup.
+    const timezone = getDeviceTimezone();
+    const body =
+      timezone && (patch as { timezone?: string | null }).timezone === undefined
+        ? { ...patch, timezone }
+        : patch;
+    const res = await updateNotificationPreferences(body);
     if (res.ok && res.data) {
       setPreferences(res.data.preferences ?? preferences);
     }

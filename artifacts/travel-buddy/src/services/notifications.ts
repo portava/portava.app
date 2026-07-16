@@ -84,6 +84,8 @@ export interface NotificationPreferences {
   quietHoursEnabled: boolean;
   quietStart: string;
   quietEnd: string;
+  /** IANA timezone used to evaluate quiet hours; null → server-time fallback. */
+  timezone?: string | null;
   messagePreviews: boolean;
   locationPreviews: boolean;
 }
