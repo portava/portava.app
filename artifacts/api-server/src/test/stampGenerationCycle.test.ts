@@ -165,6 +165,12 @@ interface StorageConfig {
    * manually patching sc.from.
    */
   jobOverride?: typeof JOB;
+  /**
+   * Called when storage.remove() is invoked. Throw to simulate a cleanup
+   * failure — the orphan-cleanup catch block in the worker must swallow it
+   * and still write the original generation error to last_error.
+   */
+  onRemove?: (paths: string[]) => void;
 }
 
 interface StorageCall {
@@ -203,6 +209,9 @@ function makeFakeClientWithStorage(opts: StorageConfig = {}) {
           return { data: { publicUrl: `${publicUrlBase}/${path}` } };
         },
         remove(paths: string[]) {
+          // Call the hook first — a thrown error propagates out of remove()
+          // so the worker's cleanup catch block must handle it.
+          if (opts.onRemove) opts.onRemove(paths);
           deleteCalls.push({ paths });
           return Promise.resolve({ error: null });
         },
@@ -837,6 +846,42 @@ describe("runGenerationCycle — DB insert failure after all uploads succeed", (
     assert.deepEqual(fail!.eqFilters, [["id", "job-1"]]);
   });
 
+  it("still deletes orphaned files when the insert failure follows all uploads", async () => {
+    // All CANDIDATE_COUNT uploads succeed; only the DB insert fails.
+    // Cleanup must delete all uploaded paths.
+    const insertErrMsg = "insert failed: FK violation";
+    const { sc, updates, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage({
+      insertError: { message: insertErrMsg },
+    });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    await runGenerationCycle();
+
+    // All uploads completed before the insert.
+    assert.equal(storageCalls.length, CANDIDATE_COUNT);
+
+    // Cleanup delete must have been issued for every uploaded path.
+    assert.equal(deleteCalls.length, 1, "must issue exactly one storage delete call for cleanup");
+    const { paths } = deleteCalls[0];
+    assert.equal(paths.length, CANDIDATE_COUNT, "all uploaded paths must be cleaned up");
+    for (const call of storageCalls) {
+      assert.ok(paths.includes(call.path), `uploaded path ${call.path} must be in the delete list`);
+    }
+
+    // last_error must carry the insert error, not a cleanup error.
+    const fail = updates.find(
+      (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
+    );
+    assert.ok(fail, "must record a failure update");
+    assert.ok(
+      typeof fail!.payload.last_error === "string" &&
+        fail!.payload.last_error.includes(insertErrMsg),
+      `last_error must carry the insert error, got: ${fail!.payload.last_error}`,
+    );
+  });
+
   it("reaches retryable_failed when attempts are exhausted by insert errors", async () => {
     // Simulate a job that has already used max_attempts - 1 attempts.
     const exhaustedJob = { ...JOB, attempts: 2, max_attempts: 3 };
@@ -870,6 +915,130 @@ describe("runGenerationCycle — DB insert failure after all uploads succeed", (
       typeof fail!.payload.last_error === "string" &&
         fail!.payload.last_error.includes(insertErrMsg),
       `last_error must contain the insert error, got: ${fail!.payload.last_error}`,
+    );
+    assert.equal(fail!.payload.locked_until, null);
+    assert.equal(fail!.payload.locked_by, null);
+  });
+});
+
+// ── Orphan cleanup failure: original error must survive in last_error ──────────
+
+describe("runGenerationCycle — orphan cleanup throws: original error preserved in last_error", () => {
+  it("preserves the original upload error in last_error when cleanup remove() also throws", async () => {
+    // Set up: second upload fails (generation error), cleanup remove() also throws.
+    let uploadCall = 0;
+    const originalUploadError = "Storage upload failed: bucket quota exceeded";
+    const cleanupError = "Storage remove failed: bucket unreachable";
+    let cleanupThrew = false;
+
+    const { sc, updates, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage({
+      onUpload(_path, _buf) {
+        uploadCall++;
+        if (uploadCall === 2) throw new Error(originalUploadError);
+      },
+      onRemove(_paths) {
+        cleanupThrew = true;
+        throw new Error(cleanupError);
+      },
+    });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    // Must not throw or produce an unhandled rejection.
+    const result = await runGenerationCycle();
+
+    // 1. Job is re-queued (not permanently_failed).
+    assert.equal(result.processed, false);
+    assert.equal(
+      updates.some((u) => u.payload.status === "permanently_failed"),
+      false,
+      "a cleanup failure must never cause permanently_failed",
+    );
+    assert.equal(
+      updates.some((u) => u.payload.status === "review_required"),
+      false,
+      "a failed run must never reach review_required",
+    );
+
+    const fail = updates.find(
+      (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
+    );
+    assert.ok(fail, "must record a failure update on the queue row");
+    assert.equal(
+      fail!.payload.status,
+      "queued",
+      "first failure (attempts < max) must go back to queued for retry",
+    );
+    assert.equal(fail!.payload.attempts, 1);
+
+    // 2. last_error reflects the original upload failure — not the cleanup error.
+    assert.ok(
+      typeof fail!.payload.last_error === "string" &&
+        fail!.payload.last_error.includes(originalUploadError),
+      `last_error must carry the original upload error, got: ${fail!.payload.last_error}`,
+    );
+    assert.ok(
+      !fail!.payload.last_error.includes(cleanupError),
+      `last_error must NOT be overwritten by the cleanup error, got: ${fail!.payload.last_error}`,
+    );
+
+    // 3. Cleanup was attempted (remove was called), confirming the cleanup path ran.
+    assert.equal(cleanupThrew, true, "onRemove must have been called and thrown");
+    // The first upload succeeded, so cleanup should have been attempted.
+    assert.equal(storageCalls.length, 1, "exactly one upload should have succeeded before the failure");
+    // deleteCalls is empty because remove() threw before the push recorded it.
+    assert.equal(deleteCalls.length, 0, "no delete recorded when remove() threw before completing");
+
+    // 4. Lock is cleared regardless of cleanup outcome.
+    assert.equal(fail!.payload.locked_until, null, "locked_until must be cleared after failure");
+    assert.equal(fail!.payload.locked_by, null, "locked_by must be cleared after failure");
+
+    // 5. No version rows inserted.
+    assert.equal(inserts.length, 0, "must not insert any version rows after a mid-batch failure");
+  });
+
+  it("preserves the original DB insert error in last_error when cleanup remove() also throws", async () => {
+    // All uploads succeed; DB insert fails; cleanup remove() also throws.
+    const originalInsertError = "insert failed: unique constraint violation";
+    const cleanupError = "Storage remove failed: permission denied";
+    let cleanupThrew = false;
+
+    const { sc, updates, storageCalls } = makeFakeClientWithStorage({
+      insertError: { message: originalInsertError },
+      onRemove(_paths) {
+        cleanupThrew = true;
+        throw new Error(cleanupError);
+      },
+    });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    // Must not throw or produce an unhandled rejection.
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+
+    // All uploads completed before the insert failure.
+    assert.equal(storageCalls.length, CANDIDATE_COUNT);
+
+    // Cleanup was attempted.
+    assert.equal(cleanupThrew, true, "onRemove must have been called and thrown");
+
+    // last_error carries the original insert error — not the cleanup error.
+    const fail = updates.find(
+      (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
+    );
+    assert.ok(fail, "must record a failure update on the queue row");
+    assert.ok(
+      typeof fail!.payload.last_error === "string" &&
+        fail!.payload.last_error.includes(originalInsertError),
+      `last_error must carry the original insert error, got: ${fail!.payload.last_error}`,
+    );
+    assert.ok(
+      !fail!.payload.last_error.includes(cleanupError),
+      `last_error must NOT be overwritten by the cleanup error, got: ${fail!.payload.last_error}`,
     );
     assert.equal(fail!.payload.locked_until, null);
     assert.equal(fail!.payload.locked_by, null);
