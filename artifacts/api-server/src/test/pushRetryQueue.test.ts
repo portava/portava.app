@@ -1518,7 +1518,140 @@ describe("PushRetryQueue.processQueue() — mixed four-token batch (two live, on
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 13 — Transient 5xx during retry must not touch rent_buddy_profiles
+// 13 — Duplicate error code: 2× DeviceNotRegistered + 1× InvalidCredentials
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Expo returns a 200 with three error tickets:
+ *   PUSH_TOKEN    → DeviceNotRegistered (dead)
+ *   DEAD_TOKEN    → DeviceNotRegistered (dead)
+ *   DEAD_TOKEN_IC → InvalidCredentials  (dead)
+ *
+ * The grouping reduce must accumulate the repeated DeviceNotRegistered code
+ * to produce "DeviceNotRegistered × 2" — not "DeviceNotRegistered × 1" twice.
+ */
+function expoDuplicateErrorCodeFetch(): typeof fetch {
+  return async () =>
+    new Response(
+      JSON.stringify({
+        data: [
+          {
+            status:  "error",
+            message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+            details: { error: "DeviceNotRegistered" },
+          },
+          {
+            status:  "error",
+            message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+            details: { error: "DeviceNotRegistered" },
+          },
+          {
+            status:  "error",
+            message: "The push notification service reported that the push token is invalid: InvalidCredentials",
+            details: { error: "InvalidCredentials" },
+          },
+        ],
+      }),
+      { status: 200 },
+    ) as unknown as Response;
+}
+
+describe("PushRetryQueue.processQueue() — duplicate error code (2× DeviceNotRegistered + 1× InvalidCredentials)", () => {
+  it("produces 'DeviceNotRegistered × 2' and 'InvalidCredentials × 1' in last_error and wipes all three tokens", async () => {
+    // Three tokens; Expo reports DeviceNotRegistered for the first two and
+    // InvalidCredentials for the third.  The reduce accumulator must count the
+    // repeated DeviceNotRegistered as 2 rather than resetting to 1 on each entry.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN, DEAD_TOKEN, DEAD_TOKEN_IC],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    _setTestFetch(expoDuplicateErrorCodeFetch());
+    await queue.processQueue();
+
+    // ── All three tokens must be wiped from all three tables ──────────────────
+
+    const profileUpdate = client.updateCalls.find(
+      (c) => c.table === "profiles" && c.patch.expo_push_token === null,
+    );
+    assert.ok(profileUpdate, "profiles.expo_push_token must be nulled for all three dead tokens");
+    assert.deepEqual(
+      [...(profileUpdate.inFilters["expo_push_token"] as string[])].sort(),
+      [PUSH_TOKEN, DEAD_TOKEN, DEAD_TOKEN_IC].sort(),
+      "profiles update must target all three dead tokens",
+    );
+
+    const deviceDelete = client.deleteCalls.find((c) => c.table === "notification_devices");
+    assert.ok(deviceDelete, "notification_devices rows must be deleted for all three dead tokens");
+    assert.deepEqual(
+      [...(deviceDelete.inFilters["push_token"] as string[])].sort(),
+      [PUSH_TOKEN, DEAD_TOKEN, DEAD_TOKEN_IC].sort(),
+      "notification_devices delete must target all three dead tokens",
+    );
+
+    const rentUpdate = client.updateCalls.find(
+      (c) => c.table === "rent_buddy_profiles" && c.patch.expo_push_token === null,
+    );
+    assert.ok(rentUpdate, "rent_buddy_profiles.expo_push_token must be nulled for all three dead tokens");
+    assert.deepEqual(
+      [...(rentUpdate.inFilters["expo_push_token"] as string[])].sort(),
+      [PUSH_TOKEN, DEAD_TOKEN, DEAD_TOKEN_IC].sort(),
+      "rent_buddy_profiles update must target all three dead tokens",
+    );
+
+    // ── Queue row must be finalised as 'failed' — never re-queued ─────────────
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(failedUpdate, "push_retry_queue must be finalised as 'failed' for all-dead batch");
+    assert.equal(failedUpdate.filters.id, QUEUE_ROW_ID, "failed update must target the correct queue row");
+
+    // last_error must reflect the accumulated counts:
+    //   DeviceNotRegistered appears twice → "DeviceNotRegistered × 2"
+    //   InvalidCredentials appears once  → "InvalidCredentials × 1"
+    const lastError = failedUpdate.patch.last_error as string;
+    assert.ok(
+      lastError.includes("DeviceNotRegistered \u00d7 2"),
+      `last_error must contain "DeviceNotRegistered × 2" to prove the accumulator counted correctly; got: ${lastError}`,
+    );
+    assert.ok(
+      lastError.includes("InvalidCredentials \u00d7 1"),
+      `last_error must contain "InvalidCredentials × 1"; got: ${lastError}`,
+    );
+    // Must NOT contain a stale "DeviceNotRegistered × 1" (which would indicate the
+    // accumulator reset instead of incrementing on the second occurrence)
+    assert.ok(
+      !lastError.includes("DeviceNotRegistered \u00d7 1"),
+      `last_error must NOT contain "DeviceNotRegistered × 1" — the count must be accumulated to 2; got: ${lastError}`,
+    );
+
+    // Must NOT be re-queued — dead tokens are permanently invalid
+    assert.ok(
+      !prqUpdates.some((c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID),
+      "must NOT re-queue a row where all tokens are permanently dead",
+    );
+
+    // ── Delivery attempt must also be finalised as 'failed' ───────────────────
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status, "failed",   "delivery_attempt status must be 'failed'");
+    assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 14 — Transient 5xx during retry must not touch rent_buddy_profiles
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
