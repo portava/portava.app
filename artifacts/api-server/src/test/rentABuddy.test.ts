@@ -3125,12 +3125,10 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     );
   });
 
-  it("still counts the escalation even when the booking status update itself errors — booking remains no_show_pending", async () => {
-    // The sweep sets noShowEscalatedCount = staleNoShows.length unconditionally,
-    // before (and regardless of) whether the .update({ status: 'disputed' }) DB
-    // call succeeds.  This test pins that observable behaviour: if the update
-    // errors the response still reports noShowEscalated: 1 while the booking is
-    // left in its original no_show_pending state.
+  it("does NOT count the escalation when the booking status update itself errors — booking remains no_show_pending", async () => {
+    // The sweep must only increment noShowEscalatedCount when the
+    // .update({ status: 'disputed' }) DB call succeeds.  If the call errors
+    // the booking is left in no_show_pending and the count must stay at 0.
     const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
     const client = makeClient(USER_ID);
     _setTestClient(client as any, false);
@@ -3159,12 +3157,11 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     const r = await reqSweep();
     assert.equal(r.status, 200, JSON.stringify(r.body));
 
-    // The sweep counts escalations from the candidate list length, not from
-    // whether the update succeeded — so noShowEscalated is still 1.
+    // The sweep must NOT count a failed update as a successful escalation.
     assert.equal(
       r.body.noShowEscalated,
-      1,
-      "noShowEscalated must be 1 even when the booking status update errors — count is set from candidate list length",
+      0,
+      "noShowEscalated must be 0 when the booking status update DB call errors",
     );
 
     // The booking must remain no_show_pending because the DB update failed.

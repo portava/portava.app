@@ -5668,10 +5668,14 @@ router.post("/api/internal/buddy-requests/expire", async (req, res) => {
         disputeId = (newDispute as any)?.id ?? null;
       }
 
-      await serviceClient
+      const { error: updateError } = await serviceClient
         .from("rent_buddy_bookings")
         .update({ status: "disputed", updated_at: now })
         .eq("id", bk.id as string);
+
+      if (updateError) continue;
+
+      noShowEscalatedCount++;
 
       await serviceClient.from("buddy_booking_events").insert({
         booking_id: bk.id, actor_user_id: reporterUserId, event: "no_show_escalated",
@@ -5679,7 +5683,6 @@ router.post("/api/internal/buddy-requests/expire", async (req, res) => {
         metadata: { reason: "grace_period_expired", dispute_id: disputeId },
       });
     }
-    noShowEscalatedCount = staleNoShows.length;
   }
 
   return res.json({ ok: true, expired: expiredCount, autoCompleted: autoCompletedCount, noShowEscalated: noShowEscalatedCount });
