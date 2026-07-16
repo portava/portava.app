@@ -5,6 +5,7 @@ import {
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Bell, MapPin, CheckCircle, Calendar, Clock } from 'lucide-react-native';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
+import { buildCityCoords } from '../../src/lib/cityCoords';
 import type { Place } from '../../src/lib/location/placeTypes';
 import { GlobalCalendarPicker } from '../../src/components/selectors/GlobalCalendarPicker';
 import { GlobalTimePicker } from '../../src/components/selectors/GlobalTimePicker';
@@ -140,7 +141,7 @@ export default function RentABuddyWaitlist() {
           onClose={() => setCityPickerOpen(false)}
           onSelect={(place: Place) => {
             setCity(place.city ?? place.name);
-            setCityCoords(place.lat != null && place.lng != null ? { lat: place.lat, lng: place.lng } : null);
+            setCityCoords(buildCityCoords(place));
           }}
           mode="city"
           title="Which city are you visiting?"
