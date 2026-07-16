@@ -447,6 +447,66 @@ describe("negative cache TTL expiry", () => {
       "no second fetch call should be made while the negative entry is still valid",
     );
   });
+
+  it("a successful TTL-retry persists the result to the DB — surviving a server restart", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Step 1: seed a negative cache entry — fetch returns empty, DB disabled.
+    // _setGeocodeFetchForTests also sets _dbClientOverride = null so readDbCache
+    // returns null and the code falls through to forwardGeocodeCity.
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+
+    const first = await geocodeCityCountry("PersistCity");
+    assert.equal(first, null, "pre-condition: city should cache as null");
+
+    // Step 2: advance past NEGATIVE_TTL_MS so the entry is stale.
+    mockNow(T0 + NEGATIVE_TTL_MS + 1_000);
+
+    // Step 3: swap fetch to return a valid geocode result on retry.
+    // _setGeocodeFetchForTests resets _dbClientOverride to null — we then
+    // install a tracking DB client before the retry runs.
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "jp", country: "Japan" } }],
+    }));
+
+    // Step 4: install a fake DB client that:
+    //   • returns null from readDbCache (maybeSingle) so no persisted row
+    //     short-circuits the Nominatim call,
+    //   • records every upsert row so we can assert writeDbCache was called.
+    const upsertedRows: Array<Record<string, unknown>> = [];
+    const trackingDb = {
+      from(_table: string) {
+        const chain: any = {
+          select()  { return chain; },
+          eq()      { return chain; },
+          async maybeSingle() { return { data: null, error: null }; },
+          upsert(row: Record<string, unknown>) {
+            upsertedRows.push(row);
+            return Promise.resolve({ error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(trackingDb);
+
+    // Step 5: the stale negative entry triggers a fresh geocode; the success
+    // must be written to the DB via writeDbCache.
+    const second = await geocodeCityCountry("PersistCity");
+    assert.equal(second?.countryCode, "JP",
+      "TTL-retry should resolve to the geocoded country");
+    assert.equal(second?.country, "Japan");
+
+    assert.equal(upsertedRows.length, 1,
+      "exactly one DB upsert should be made to persist the resolved result");
+    assert.equal(
+      (upsertedRows[0] as any).country_code,
+      "JP",
+      "the upserted row must carry the resolved country_code",
+    );
+  });
 });
 
 // ── Correction-sweep eviction retry ──────────────────────────────────────────
