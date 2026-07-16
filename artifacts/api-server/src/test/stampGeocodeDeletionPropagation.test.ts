@@ -1791,6 +1791,139 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "no DB probe on the follow-up call — positive entry is still within its 30-day TTL");
   });
 
+  it("sweep_tombstone_evicted log event fires for a concurrently-revived city — even when the hard-delete is a no-op", async () => {
+    // Race condition: the sweep queries tombstoned rows (SELECT), logs + evicts the
+    // in-memory entry, then issues the hard-delete.  Between SELECT and DELETE an
+    // admin PUT can revive the row by clearing deleted_at.  The hard-delete is then
+    // a no-op (the .not("deleted_at","is",null) guard filters out the live row).
+    //
+    // Critically: the sweep_tombstone_evicted log event is emitted BEFORE the delete
+    // step, so it must still fire even when the delete is a no-op.  Without this
+    // guarantee operators lose the ability to audit that the race occurred.
+    //
+    // This test confirms:
+    //   1. "stamp.country_geocode.sweep_tombstone_evicted" is logged for the city.
+    //   2. The hard-delete was a no-op (deleteCallCount === 0 because the guard
+    //      filters the revived row before any rows are actually removed).
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "dk", country: "Denmark" } }],
+      };
+    });
+
+    // Seed the in-memory cache via a DB load so the sweep has something to evict.
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({ country: "Denmark", country_code: "DK", corrected_at: null, deleted_at: null }),
+    );
+    const seed = await geocodeCityCountry("Copenhagen");
+    assert.equal(seed?.countryCode, "DK", "pre-condition: cache seeded with DK");
+    assert.equal(nominatimCalls, 0, "no Nominatim call during seed");
+
+    // Build a sweep client that simulates the race:
+    //   Pass 1 (corrected_at): empty — nothing to evict via correction.
+    //   Pass 2 (deleted_at):   returns "copenhagen" as tombstoned (sweep's SELECT snapshot).
+    //   DELETE:                honours the .not("deleted_at","is",null) guard — the row
+    //                          was revived by a concurrent PUT so zero rows are removed.
+    let sweepQueryCount = 0;
+    let deleteGuardFired = false; // true when .not() is called on the DELETE chain
+    let deleteExecuted = false;   // true when .then() resolves on the DELETE chain
+
+    const raceClient: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not(_col: string, _filter: string, _val: unknown) {
+            if (isDelete) deleteGuardFired = true;
+            return chain;
+          },
+          delete() { isDelete = true; return chain; },
+          in(_col: string, _keys: string[]) { return chain; },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            if (isDelete) {
+              // Simulate the guard filtering the revived row: the DELETE matches
+              // zero rows because deleted_at is now null (row was revived by PUT).
+              deleteExecuted = true;
+              resolve({ error: null });
+              return;
+            }
+            const q = sweepQueryCount++;
+            if (q === 0) {
+              // Pass 1 — corrected_at: nothing to evict.
+              resolve({ data: [], error: null });
+            } else {
+              // Pass 2 — deleted_at: sweep sees "copenhagen" as tombstoned.
+              resolve({ data: [{ city_key: "copenhagen" }], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    // Capture console.log output during the sweep.
+    const logLines: string[] = [];
+    const originalConsoleLog = console.log;
+    console.log = (...args: unknown[]) => {
+      logLines.push(args.map(String).join(" "));
+    };
+
+    try {
+      _setGeocodeDbClientForTests(raceClient);
+      await _runCorrectionSweepForTests();
+    } finally {
+      console.log = originalConsoleLog;
+    }
+
+    // ── Assertion 1: sweep_tombstone_evicted must have been logged for "copenhagen" ─
+    const evictedEvents = logLines
+      .map((line) => { try { return JSON.parse(line); } catch { return null; } })
+      .filter((obj): obj is Record<string, unknown> => obj !== null)
+      .filter((obj) => obj.event === "stamp.country_geocode.sweep_tombstone_evicted");
+
+    assert.ok(
+      evictedEvents.length > 0,
+      `Expected at least one "stamp.country_geocode.sweep_tombstone_evicted" log event but got none. ` +
+        `Captured lines: ${JSON.stringify(logLines)}`,
+    );
+
+    const cityKeyLogged = evictedEvents.some((obj) => obj.city_key === "copenhagen");
+    assert.ok(
+      cityKeyLogged,
+      `Expected sweep_tombstone_evicted event with city_key="copenhagen" but got: ${JSON.stringify(evictedEvents)}`,
+    );
+
+    // ── Assertion 2: the DELETE guard fired (confirming the race guard ran) ────────
+    assert.ok(
+      deleteGuardFired,
+      "The .not('deleted_at','is',null) guard must be reached during the DELETE phase",
+    );
+
+    // ── Assertion 3: the hard-delete was a no-op — executed but matched 0 rows ────
+    assert.ok(
+      deleteExecuted,
+      "The DELETE was issued (sweep always tries to clean up) — even when it matches zero rows",
+    );
+
+    // ── Assertion 4: the in-memory entry was evicted (sweep still clears it) ───────
+    // After eviction a fresh geocodeCityCountry call must miss the cache and hit Nominatim.
+    _setGeocodeDbClientForTests(makeFixedDbClient(null));
+    const afterSweep = await geocodeCityCountry("Copenhagen");
+    assert.equal(nominatimCalls, 1,
+      "Nominatim called once — sweep evicted the in-memory entry even though the hard-delete was a no-op");
+    assert.equal(afterSweep?.countryCode, "DK",
+      "geocoder re-resolved DK via Nominatim after sweep eviction");
+  });
+
   it("two concurrent warm-cache callers fire the correction-check DB probe at most once — not twice simultaneously", async () => {
     // Scenario: two simultaneous geocodeCityCountry() calls arrive at the same
     // warm cache entry after the CORRECTION_CHECK_INTERVAL_MS has elapsed.
