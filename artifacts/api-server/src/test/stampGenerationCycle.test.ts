@@ -1003,6 +1003,54 @@ describe("runGenerationCycle — orphan cleanup on mid-batch failure", () => {
       `deleted path must match the uploaded storage path, got: ${paths[0]} vs ${storageCalls[0].path}`,
     );
   });
+
+  it("records status=queued, attempts=1, and last_error with the upload error when the second upload fails after one upload", async () => {
+    // Focused on the failure shape — status/attempts/last_error — independent of
+    // path-format (deleteCalls) assertions.
+    const uploadErrorMessage = "Storage upload failed: bucket quota exceeded";
+    let uploadCall = 0;
+    const { sc, updates, inserts, storageCalls } = makeFakeClientWithStorage({
+      onUpload(_path, _buf) {
+        uploadCall++;
+        if (uploadCall === 2) throw new Error(uploadErrorMessage);
+      },
+    });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+
+    // First upload succeeded; second threw.
+    assert.equal(storageCalls.length, 1, "exactly one upload should have succeeded before the failure");
+
+    // No version rows — the batch never reached the insert step.
+    assert.equal(inserts.length, 0, "must not insert any version rows after an upload failure");
+
+    // No review_required update.
+    assert.equal(
+      updates.some((u) => u.payload.status === "review_required"),
+      false,
+      "a failed batch must never reach review_required",
+    );
+
+    // Failure update: back to queued (attempts 1 < max 3), last_error carries the upload error.
+    const fail = updates.find(
+      (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
+    );
+    assert.ok(fail, "must record a failure update on the queue row");
+    assert.equal(fail!.payload.status, "queued", "first upload failure (attempts < max) must go back to queued");
+    assert.equal(fail!.payload.attempts, 1);
+    assert.ok(
+      typeof fail!.payload.last_error === "string" &&
+        fail!.payload.last_error.includes(uploadErrorMessage),
+      `last_error must include the upload error message, got: ${fail!.payload.last_error}`,
+    );
+    assert.equal(fail!.payload.locked_until, null);
+    assert.equal(fail!.payload.locked_by, null);
+  });
 });
 
 /**
