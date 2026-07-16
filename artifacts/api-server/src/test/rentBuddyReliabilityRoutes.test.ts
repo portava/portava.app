@@ -476,6 +476,61 @@ describe("report-no-show — non-party receives 403", () => {
   });
 });
 
+// ── mapProfile counter precedence (display path) ──────────────────────────────
+//
+// mapProfile (rentABuddyMarketplace.ts) also reads completed_count ??
+// completed_bookings when building the profile object returned to the mobile
+// client. When the two columns disagree, completed_count must win so the
+// "sessions completed" shown on buddy cards matches the canonical counter.
+
+describe("mapProfile — completed_count takes precedence over completed_bookings", () => {
+  it("returns completedBookings=7 (not 3) when completed_count=7 and completed_bookings=3", async () => {
+    // Buddy row deliberately has the two counters out of sync.
+    const buddyRow = {
+      id: BP_ID, user_id: BUDDY_USER_ID,
+      status: "active", admin_status: "active",
+      city: "Manila", country: "Philippines",
+      display_name: "Test Buddy", tagline: null,
+      languages: ["English"], categories: ["city"],
+      hourly_rate_usd: 20, half_day_rate_usd: null,
+      full_day_rate_usd: null, nightlife_rate_usd: null, arrival_rate_usd: null,
+      average_rating: null, review_count: 0,
+      completed_bookings: 3,  // legacy counter — must be ignored
+      completed_count: 7,     // canonical counter — must win
+      response_time_h: null, cover_photo_url: null, gallery_urls: [],
+      vibe_tags: [], safety_badges: [], buddy_level: "experienced",
+      verified: false, featured: false, city_ambassador: false,
+      available_now: false, female_only_service: false, public_meetup_only: false,
+      group_approved: false, nightlife_approved: false,
+      energy_type: null, max_group_size: 4,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    };
+
+    // makeMatchFakeClient returns [buddyRow] for any rent_buddy_profiles query,
+    // which is exactly what GET /cities/:city/top needs.
+    const fake = makeMatchFakeClient(buddyRow);
+    const res = await call("GET", "/api/rent-a-buddy/cities/Manila/top", fake as any);
+
+    assert.equal(res.status, 200, "cities/top should return 200");
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.buddies), "response.buddies should be an array");
+    assert.equal(body.buddies.length, 1, "should return the one buddy");
+
+    const profile = body.buddies[0];
+    assert.equal(
+      profile.completedBookings,
+      7,
+      `mapProfile must use completed_count=7, not completed_bookings=3; got ${profile.completedBookings}`,
+    );
+  });
+});
+
+// ── toBuddyScoringData counter precedence ─────────────────────────────────────
+//
+// toBuddyScoringData picks completed_count ?? completed_bookings. When both
+// columns exist with divergent values the canonical completed_count must win,
+// because that is the column the scorer (and the ranking tie-break) reads.
+
 describe("toBuddyScoringData — completed_count takes precedence over completed_bookings", () => {
   it("uses completed_count=7 (not completed_bookings=3) when ranking via POST /api/rent-a-buddy/match", async () => {
     // Buddy row deliberately has the two counters out of sync.
