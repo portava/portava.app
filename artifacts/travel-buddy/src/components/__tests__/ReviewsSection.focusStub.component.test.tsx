@@ -113,3 +113,130 @@ describe('ReviewsSection — file-level useFocusEffect stub (no double-fetch)', 
     expect(getTripReviews).toHaveBeenCalledTimes(2);
   });
 });
+
+// ── Place entity type ─────────────────────────────────────────────────────────
+
+describe('ReviewsSection — file-level useFocusEffect stub (place entity type)', () => {
+  let getPlaceReviews: jest.Mock;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    const reviews = require('../../services/reviews');
+    getPlaceReviews = reviews.getPlaceReviews;
+  });
+
+  it('calls getPlaceReviews exactly once on a single mount', async () => {
+    getPlaceReviews.mockResolvedValueOnce(EMPTY_RESPONSE);
+
+    const { findByText, unmount } = await render(
+      <ReviewsSection entityType="place" entityId="stub-place-1" canReview={false} />,
+    );
+
+    await findByText(/No reviews yet/);
+
+    expect(getPlaceReviews).toHaveBeenCalledTimes(1);
+    expect(getPlaceReviews).toHaveBeenCalledWith('stub-place-1', 1, 5);
+
+    unmount();
+  });
+
+  it('calls getPlaceReviews exactly once per mount — no double-fetch across two mount cycles', async () => {
+    // First mount: no reviews
+    getPlaceReviews.mockResolvedValueOnce(EMPTY_RESPONSE);
+    // Second mount (re-focus): one review added in the meantime
+    getPlaceReviews.mockResolvedValueOnce(REVIEW_RESPONSE);
+
+    // ── First mount ───────────────────────────────────────────────────────────
+    const { findByText: find1, unmount } = await render(
+      <ReviewsSection entityType="place" entityId="stub-place-1" canReview={false} />,
+    );
+
+    await find1(/No reviews yet/);
+    // Exactly one call after first mount
+    expect(getPlaceReviews).toHaveBeenCalledTimes(1);
+
+    // Simulate navigating away
+    unmount();
+
+    // ── Second mount (simulates screen re-focus) ──────────────────────────────
+    const { findByText: find2 } = await render(
+      <ReviewsSection entityType="place" entityId="stub-place-1" canReview={false} />,
+    );
+
+    await find2('5.0 (1)');
+    // One additional call on re-mount — total is 2, not 3 or more
+    expect(getPlaceReviews).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── Event entity type ─────────────────────────────────────────────────────────
+
+const EVENT_EMPTY_RESPONSE = { reviews: [] };
+
+const EVENT_REVIEW_RESPONSE = {
+  reviews: [
+    {
+      id:        'rev-event-1',
+      rating:    5,
+      body:      'Great event',
+      tags:      [],
+      anonymous: false,
+      reviewer:  { id: 'u-stub', handle: 'alice', displayName: 'Alice', avatarUrl: null },
+      createdAt: '2026-04-01T00:00:00Z',
+      state:     'published',
+    },
+  ],
+};
+
+describe('ReviewsSection — file-level useFocusEffect stub (event entity type)', () => {
+  let getEventReviews: jest.Mock;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    const reviews = require('../../services/reviews');
+    getEventReviews = reviews.getEventReviews;
+  });
+
+  it('calls getEventReviews exactly once on a single mount', async () => {
+    getEventReviews.mockResolvedValueOnce(EVENT_EMPTY_RESPONSE);
+
+    const { findByText, unmount } = await render(
+      <ReviewsSection entityType="event" entityId="stub-event-1" canReview={false} />,
+    );
+
+    await findByText(/No reviews yet/);
+
+    expect(getEventReviews).toHaveBeenCalledTimes(1);
+    expect(getEventReviews).toHaveBeenCalledWith('stub-event-1', 1, 5);
+
+    unmount();
+  });
+
+  it('calls getEventReviews exactly once per mount — no double-fetch across two mount cycles', async () => {
+    // First mount: no reviews
+    getEventReviews.mockResolvedValueOnce(EVENT_EMPTY_RESPONSE);
+    // Second mount (re-focus): one review added in the meantime
+    getEventReviews.mockResolvedValueOnce(EVENT_REVIEW_RESPONSE);
+
+    // ── First mount ───────────────────────────────────────────────────────────
+    const { findByText: find1, unmount } = await render(
+      <ReviewsSection entityType="event" entityId="stub-event-1" canReview={false} />,
+    );
+
+    await find1(/No reviews yet/);
+    // Exactly one call after first mount
+    expect(getEventReviews).toHaveBeenCalledTimes(1);
+
+    // Simulate navigating away
+    unmount();
+
+    // ── Second mount (simulates screen re-focus) ──────────────────────────────
+    const { findByText: find2 } = await render(
+      <ReviewsSection entityType="event" entityId="stub-event-1" canReview={false} />,
+    );
+
+    await find2('5.0 (1)');
+    // One additional call on re-mount — total is 2, not 3 or more
+    expect(getEventReviews).toHaveBeenCalledTimes(2);
+  });
+});
