@@ -848,6 +848,31 @@ describe("complete — terminal state is rejected", () => {
       "no profile update must occur when the booking is already completed",
     );
   });
+
+  it("returns 409 when the booking is 'completed_pending_traveler_confirmation' via alias /api/buddy-bookings/:id/complete", async () => {
+    // The buddy has already marked the booking done; it is now awaiting traveler
+    // confirmation. A redundant complete call must be rejected — the status guard
+    // only allows transitions from 'in_progress', so this terminal-adjacent state
+    // must produce 409 and leave rent_buddy_profiles untouched.
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "completed_pending_traveler_confirmation",
+    });
+    const res = await call(
+      "POST",
+      `/api/buddy-bookings/${BOOKING_ID}/complete`,
+      fake,
+    );
+    assert.equal(res.status, 409, `expected 409, got ${res.status}`);
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "invalid_transition", "expected error: invalid_transition");
+    // No profile counter must have been updated — double increment must be prevented.
+    assert.equal(
+      fake.updates.filter((u) => u.table === "rent_buddy_profiles").length,
+      0,
+      "no profile update must occur when the booking is completed_pending_traveler_confirmation",
+    );
+  });
 });
 
 // ── Terminal-state guard — cancel ─────────────────────────────────────────────
