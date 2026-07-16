@@ -401,14 +401,14 @@ describe("PATCH /admin/events/:eventId/moderate — event_activity_log insert fa
         { action, reason: "activity-log-fail test" },
       );
 
-      // Must NOT be 200 — the route must abort with an error response
-      assert.notEqual(
-        status, 200,
-        `Expected a non-200 response when event_activity_log insert fails for '${action}', got 200`,
+      // Must be 500 db_error — the route must abort with the specific sendError code
+      assert.equal(
+        status, 500,
+        `Expected status 500 when event_activity_log insert fails for '${action}', got ${status}`,
       );
-      assert.ok(
-        body.error,
-        `Expected an error field in the response body for '${action}', got: ${JSON.stringify(body)}`,
+      assert.equal(
+        body.error, "db_error",
+        `Expected body.error === "db_error" for '${action}', got: ${JSON.stringify(body.error)}`,
       );
 
       // Event row must NOT have been mutated
@@ -457,13 +457,13 @@ describe("PATCH /admin/events/:eventId/moderate — event_activity_log insert fa
         { action, reason: "activity-log-fail test" },
       );
 
-      assert.notEqual(
-        status, 200,
-        `Expected a non-200 response when event_activity_log insert fails for '${action}', got 200`,
+      assert.equal(
+        status, 500,
+        `Expected status 500 when event_activity_log insert fails for '${action}', got ${status}`,
       );
-      assert.ok(
-        body.error,
-        `Expected an error field in the response body for '${action}', got: ${JSON.stringify(body)}`,
+      assert.equal(
+        body.error, "db_error",
+        `Expected body.error === "db_error" for '${action}', got: ${JSON.stringify(body.error)}`,
       );
 
       assert.equal(captureActivity.length, 0, `event_activity_log must have 0 persisted rows for '${action}'`);
