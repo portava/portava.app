@@ -577,4 +577,166 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
     assert.ok(!r.body.repair, "repair field should be absent when repair_catalog is not set");
     assert.equal(updateCalled, false, "catalog update should not have been called");
   });
+
+  it("merges ownership rows and earn_count into the surviving real-code entry when one already exists", async () => {
+    const XX_ID = "cat-xx-merge";
+    const SURVIVOR_ID = "cat-survivor-1";
+    const XX_EARN_COUNT = 3;
+    const SURVIVOR_EARN_COUNT = 7;
+
+    const ownershipUpdates: { table: string; newCatalogId: string }[] = [];
+    let earnCountUpdate: number | null = null;
+    let xxEntryDeleted = false;
+    let queueEntryDeleted = false;
+
+    const client: any = {
+      auth: {
+        getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+      },
+      from: (table: string) => {
+        if (table === "profiles") {
+          return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+        }
+
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: (_cols: string) => builder([]),
+            upsert: (_row: unknown, _o?: unknown) =>
+              Promise.resolve({ data: null, error: null }),
+          };
+        }
+
+        if (table === "universal_stamp_catalog") {
+          return {
+            select: (cols: string) => {
+              // Full XX scan
+              if (cols.includes("canonical_location_key")) {
+                return {
+                  eq: (_col: string, _val: unknown) => ({
+                    then: (resolve: (v: { data: unknown[]; error: null }) => void) =>
+                      resolve({
+                        data: [
+                          {
+                            id: XX_ID,
+                            canonical_location_key: "city:XX:fooville",
+                            stamp_type: "city",
+                            country: "Unknown",
+                            country_code: "XX",
+                            city: "Fooville",
+                            neighborhood: null,
+                            display_name: "Fooville",
+                          },
+                        ],
+                        error: null,
+                      }),
+                  }),
+                };
+              }
+              // earn_count fetch during merge: select("id, earn_count").in(...)
+              if (cols === "id, earn_count") {
+                return {
+                  in: (_col: string, _ids: string[]) =>
+                    Promise.resolve({
+                      data: [
+                        { id: XX_ID, earn_count: XX_EARN_COUNT },
+                        { id: SURVIVOR_ID, earn_count: SURVIVOR_EARN_COUNT },
+                      ],
+                      error: null,
+                    }),
+                };
+              }
+              // Survivor check: select("id").eq().eq().neq().maybeSingle()
+              const survivorChain: any = {
+                eq: () => survivorChain,
+                neq: () => survivorChain,
+                maybeSingle: async () => ({ data: { id: SURVIVOR_ID }, error: null }),
+              };
+              return survivorChain;
+            },
+            update: (fields: Record<string, unknown>) => {
+              if (typeof fields.earn_count === "number") {
+                earnCountUpdate = fields.earn_count as number;
+              }
+              return { eq: () => Promise.resolve({ data: null, error: null }) };
+            },
+            delete: () => ({
+              eq: (_col: string, val: string) => {
+                if (val === XX_ID) xxEntryDeleted = true;
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+        }
+
+        if (table === "user_stamps" || table === "passport_stamps") {
+          return {
+            update: (fields: Record<string, unknown>) => ({
+              eq: (_col: string, _val: string) => {
+                ownershipUpdates.push({ table, newCatalogId: fields.catalog_id as string });
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+        }
+
+        if (table === "stamp_artwork_versions") {
+          return {
+            update: (_fields: unknown) => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        if (table === "stamp_generation_queue") {
+          return {
+            delete: () => ({
+              eq: () => {
+                queueEntryDeleted = true;
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+        }
+
+        return builder([]);
+      },
+    };
+
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Spain", "ES"));
+
+    const r = await apiReq("PUT", "/admin/geocode-cache/fooville", {
+      country_code: "ES",
+      country: "Spain",
+      repair_catalog: true,
+    });
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.ok(r.body.repair, "response should include repair stats");
+    const repair = r.body.repair as RepairStats;
+
+    // Merge was chosen over re-key
+    assert.equal(repair.catalogMerged, 1, "one catalog entry should have been merged");
+    assert.equal(repair.catalogRekeyed, 0, "re-key count should be 0 when a merge occurred");
+
+    // Ownership rows were repointed to the survivor
+    const userUpdate = ownershipUpdates.find((u) => u.table === "user_stamps");
+    assert.ok(userUpdate, "user_stamps rows should have been repointed");
+    assert.equal(userUpdate?.newCatalogId, SURVIVOR_ID);
+
+    const passportUpdate = ownershipUpdates.find((u) => u.table === "passport_stamps");
+    assert.ok(passportUpdate, "passport_stamps rows should have been repointed");
+    assert.equal(passportUpdate?.newCatalogId, SURVIVOR_ID);
+
+    // earn_count was summed onto the survivor
+    assert.ok(earnCountUpdate !== null, "earn_count should have been updated on the survivor");
+    assert.equal(earnCountUpdate, XX_EARN_COUNT + SURVIVOR_EARN_COUNT,
+      `survivor earn_count should be ${XX_EARN_COUNT} + ${SURVIVOR_EARN_COUNT}`);
+
+    // XX entry was deleted
+    assert.ok(xxEntryDeleted, "the XX catalog entry should have been deleted after merge");
+    assert.ok(queueEntryDeleted, "stamp_generation_queue rows for the XX entry should have been deleted");
+  });
 });
