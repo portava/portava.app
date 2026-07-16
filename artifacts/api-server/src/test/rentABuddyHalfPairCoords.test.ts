@@ -485,3 +485,148 @@ describe("POST /api/rent-a-buddy/waitlist/v2 — non-numeric coord rejection", (
     assert.equal(res.body.error, "invalid_payload");
   });
 });
+
+// ── Suite: POST /api/rent-a-buddy/search — NaN / Infinity coord rejection ─────
+//
+// NaN and Infinity are typeof "number" but not Number.isFinite, so they are
+// caught by the isNonNumericCoord guard (which uses Number.isFinite).
+// JSON.stringify serialises both to null, which the server receives as an
+// absent (non-finite) coordinate.  When paired with a valid lng that IS
+// finite, the half-pair guard fires and returns 400 invalid_payload — so the
+// values are never silently stored.
+
+describe("POST /api/rent-a-buddy/search — NaN / Infinity lat rejection", () => {
+  it("rejects NaN lat with numeric lng", async () => {
+    // NaN → null over the wire; server sees null lat + finite lng → half-pair guard fires
+    const res = await req("POST", "/api/rent-a-buddy/search", {
+      city: "Bangkok",
+      lat: NaN,
+      lng: 100.5018,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects Infinity lat with numeric lng", async () => {
+    // Infinity → null over the wire; server sees null lat + finite lng → half-pair guard fires
+    const res = await req("POST", "/api/rent-a-buddy/search", {
+      city: "Bangkok",
+      lat: Infinity,
+      lng: 100.5018,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects numeric lat with NaN lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/search", {
+      city: "Bangkok",
+      lat: 13.7563,
+      lng: NaN,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects numeric lat with Infinity lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/search", {
+      city: "Bangkok",
+      lat: 13.7563,
+      lng: Infinity,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+});
+
+// ── Suite: POST /api/rent-a-buddy/requests — NaN / Infinity coord rejection ───
+
+describe("POST /api/rent-a-buddy/requests — NaN / Infinity lat rejection", () => {
+  const requiredFields = { city: "Bangkok", category: "city" };
+
+  it("rejects NaN lat with numeric lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/requests", {
+      ...requiredFields,
+      lat: NaN,
+      lng: 100.5018,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects Infinity lat with numeric lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/requests", {
+      ...requiredFields,
+      lat: Infinity,
+      lng: 100.5018,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects numeric lat with NaN lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/requests", {
+      ...requiredFields,
+      lat: 13.7563,
+      lng: NaN,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects numeric lat with Infinity lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/requests", {
+      ...requiredFields,
+      lat: 13.7563,
+      lng: Infinity,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+});
+
+// ── Suite: POST /api/rent-a-buddy/waitlist/v2 — NaN / Infinity coord rejection
+
+describe("POST /api/rent-a-buddy/waitlist/v2 — NaN / Infinity lat rejection", () => {
+  const requiredFields = { city: "Bangkok" };
+
+  it("rejects NaN lat with numeric lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/waitlist/v2", {
+      ...requiredFields,
+      lat: NaN,
+      lng: 100.5018,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects Infinity lat with numeric lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/waitlist/v2", {
+      ...requiredFields,
+      lat: Infinity,
+      lng: 100.5018,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects numeric lat with NaN lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/waitlist/v2", {
+      ...requiredFields,
+      lat: 13.7563,
+      lng: NaN,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+
+  it("rejects numeric lat with Infinity lng", async () => {
+    const res = await req("POST", "/api/rent-a-buddy/waitlist/v2", {
+      ...requiredFields,
+      lat: 13.7563,
+      lng: Infinity,
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.error, "invalid_payload");
+  });
+});
