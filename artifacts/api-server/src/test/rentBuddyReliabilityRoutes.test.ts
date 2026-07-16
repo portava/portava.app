@@ -860,6 +860,56 @@ describe("cancel — terminal state is rejected", () => {
   });
 });
 
+// ── available-now display cards — completed_count precedence ─────────────────
+//
+// GET /api/rent-a-buddy/available-now returns buddies built via mapProfile().
+// mapProfile picks completed_count ?? completed_bookings. When both columns are
+// present with divergent values the canonical completed_count must win so the
+// session count shown on these high-priority cards is always correct.
+
+describe("available-now — completed_count takes precedence over completed_bookings in display cards", () => {
+  it("returns completedBookings=5 (not 1) when completed_count=5 and completed_bookings=1", async () => {
+    // Buddy row has both counters with different values.
+    // completed_count is the canonical column written by the completion route;
+    // completed_bookings is the legacy column. mapProfile must prefer
+    // completed_count so the display card shows 5, not 1.
+    const buddyRow = {
+      id: BP_ID, user_id: BUDDY_USER_ID, city: "Bangkok",
+      status: "active", admin_status: "active",
+      categories: ["city"], languages: ["English"],
+      hourly_rate_usd: 25, half_day_rate_usd: null, full_day_rate_usd: null,
+      vibe_tags: [], energy_type: null, buddy_level: "experienced",
+      average_rating: null, review_count: 0,
+      completed_bookings: 1,  // legacy counter — should be ignored
+      completed_count: 5,     // canonical counter — must win
+      response_time_h: null, verified: false, featured: false,
+      city_ambassador: false, available_now: true,
+      female_only_service: false, public_meetup_only: false,
+      group_approved: true, nightlife_approved: false, arrival_approved: false,
+      category_approvals: {}, max_group_size: 4,
+      new_buddy_public_only: false, new_buddy_daytime_only: false,
+      risk_hold: false, created_at: new Date().toISOString(),
+    };
+
+    const fake = makeMatchFakeClient(buddyRow);
+    const res = await call("GET", "/api/rent-a-buddy/available-now", fake);
+
+    assert.equal(res.status, 200, `available-now should return 200, got ${res.status}`);
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.buddies), "response.buddies should be an array");
+    assert.equal(body.buddies.length, 1, "should return the one available buddy");
+
+    // mapProfile: completedBookings: row.completed_count ?? row.completed_bookings ?? 0
+    // With completed_count=5  → completedBookings=5  ← expected
+    // With completed_bookings=1 → completedBookings=1  ← would indicate a regression
+    assert.equal(
+      body.buddies[0].completedBookings,
+      5,
+      `display card must use completed_count=5, not completed_bookings=1; got ${body.buddies[0].completedBookings}`,
+    );
+  });
+});
+
 // ── toBuddyScoringData counter precedence ─────────────────────────────────────
 
 describe("toBuddyScoringData — completed_count takes precedence over completed_bookings", () => {
