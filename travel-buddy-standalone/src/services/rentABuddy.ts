@@ -42,8 +42,12 @@ export interface BuddyProfile {
   updatedAt: string;
   availableNow?: boolean;
   buddyLevel?: string;
-  /** Distance in km from the queried coordinates — set by search when lat/lng were sent. */
+  /** Distance in km from the queried coordinates — set by search when lat/lng were sent.
+   *  Measured to the buddy's approximate meetup base when pinned, else their city centre. */
   distanceKm?: number | null;
+  /** Approximate (neighbourhood-level) meetup-base pin, when the buddy has set one. */
+  meetupBaseLat?: number | null;
+  meetupBaseLng?: number | null;
 }
 
 export interface BuddyPackage {
