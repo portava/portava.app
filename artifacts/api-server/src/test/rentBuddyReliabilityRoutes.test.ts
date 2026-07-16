@@ -39,6 +39,8 @@ interface FakeOpts {
   profileCounters?: Record<string, number>;
   profileRole?: string;                 // profiles.role for the caller
   savedRows?: Array<Record<string, any>>;
+  checkinRows?: Array<Record<string, any>>;    // rows returned for rent_buddy_safety_checkins
+  safetyEventRows?: Array<Record<string, any>>; // rows returned for rent_buddy_safety_events
   openDispute?: Record<string, any> | null;
   completingUserHasBuddyProfile?: boolean;
   bookingExists?: boolean;              // default true; set false to simulate unknown booking ID
@@ -90,6 +92,7 @@ function makeFakeClient(opts: FakeOpts) {
     let op: "read" | "write" = "read";
     let payload: Record<string, any> = {};
     const eqs: Record<string, any> = {};
+    const orderSpecs: Array<{ col: string; ascending: boolean }> = [];
 
     const b: any = {
       select: () => b,
@@ -101,14 +104,40 @@ function makeFakeClient(opts: FakeOpts) {
       neq: () => b, in: () => b, not: () => b, is: () => b,
       gte: () => b, lte: () => b, gt: () => b, lt: () => b,
       like: () => b, ilike: () => b, contains: () => b, overlaps: () => b,
-      order: () => b, limit: () => b, range: () => b,
+      order: (col: string, orderOpts?: { ascending?: boolean }) => {
+        orderSpecs.push({ col, ascending: orderOpts?.ascending ?? true });
+        return b;
+      },
+      limit: () => b, range: () => b,
       single:      () => Promise.resolve({ data: op === "write" ? { id: "w1" } : singleRowFor(table, eqs), error: null }),
       maybeSingle: () => Promise.resolve({ data: op === "write" ? { id: "w1" } : singleRowFor(table, eqs), error: null }),
       then: (resolve: any, reject: any) => {
         let data: any;
-        if (op === "write") data = null;
-        else if (table === "rent_buddy_saved") data = opts.savedRows ?? [];
-        else { const row = singleRowFor(table, eqs); data = row == null ? [] : [row]; }
+        if (op === "write") {
+          data = null;
+        } else if (table === "rent_buddy_saved") {
+          data = opts.savedRows ?? [];
+        } else if (table === "rent_buddy_safety_checkins") {
+          data = opts.checkinRows ?? [];
+        } else if (table === "rent_buddy_safety_events") {
+          data = opts.safetyEventRows ?? [];
+        } else {
+          const row = singleRowFor(table, eqs);
+          data = row == null ? [] : [row];
+        }
+        // Apply recorded .order() specs so tests can verify sort direction.
+        if (Array.isArray(data) && orderSpecs.length > 0) {
+          data = [...data];
+          for (const spec of [...orderSpecs].reverse()) {
+            data.sort((a: any, z: any) => {
+              const av = a[spec.col] ?? "";
+              const zv = z[spec.col] ?? "";
+              if (av < zv) return spec.ascending ? -1 : 1;
+              if (av > zv) return spec.ascending ? 1 : -1;
+              return 0;
+            });
+          }
+        }
         return Promise.resolve({ data, error: null }).then(resolve, reject);
       },
     };
@@ -862,6 +891,47 @@ describe("GET safety-checkins — traveler and buddy receive 200", () => {
   });
 });
 
+// ── GET /safety-checkins — ascending created_at order ────────────────────────
+//
+// The route calls .order("created_at", { ascending: true }) so the mobile
+// client always sees oldest-first. Supplying rows out of order through the
+// fake verifies that the sort clause is present: if it were dropped, the fake
+// would return the rows in insertion order (newest-first) and the assertion
+// would fail.
+
+describe("GET safety-checkins — rows arrive in ascending created_at order", () => {
+  it("returns checkins sorted oldest-first when the traveler calls GET /api/rent-a-buddy/bookings/:id/safety-checkins", async () => {
+    // Rows supplied newest-first; the route's .order("created_at", { ascending: true })
+    // must re-sort them so the response arrives oldest-first.
+    const checkinRows = [
+      { id: "c3", booking_id: BOOKING_ID, created_at: "2026-08-01T12:00:00.000Z" },
+      { id: "c1", booking_id: BOOKING_ID, created_at: "2026-08-01T10:00:00.000Z" },
+      { id: "c2", booking_id: BOOKING_ID, created_at: "2026-08-01T11:00:00.000Z" },
+    ];
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: false,
+      checkinRows,
+    });
+    const res = await call(
+      "GET",
+      `/api/rent-a-buddy/bookings/${BOOKING_ID}/safety-checkins`,
+      fake,
+    );
+    assert.equal(res.status, 200, `traveler must receive 200 (got ${res.status})`);
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.checkins), "response must include a checkins array");
+    assert.equal(body.checkins.length, 3, "all three checkin rows must be present");
+    const timestamps: string[] = body.checkins.map((c: any) => c.created_at);
+    assert.deepEqual(
+      timestamps,
+      [...timestamps].sort(),
+      "checkins must arrive in ascending created_at order",
+    );
+  });
+});
+
 // ── GET /safety-events — authorization ───────────────────────────────────────
 //
 // GET /api/rent-a-buddy/bookings/:bookingId/safety-events
@@ -1029,6 +1099,47 @@ describe("GET safety-events — unknown booking returns 404", () => {
     assert.equal(res.status, 404, `expected 404 for unknown booking, got ${res.status}`);
     const body = (await res.json()) as any;
     assert.equal(body.error, "not_found");
+  });
+});
+
+// ── GET /safety-events — ascending created_at order ──────────────────────────
+//
+// The route calls .order("created_at", { ascending: true }) so the mobile
+// client always sees oldest-first. Supplying rows out of order through the
+// fake verifies that the sort clause is present: if it were dropped, the fake
+// would return the rows in insertion order (newest-first) and the assertion
+// would fail.
+
+describe("GET safety-events — rows arrive in ascending created_at order", () => {
+  it("returns safetyEvents sorted oldest-first when the traveler calls GET /api/rent-a-buddy/bookings/:id/safety-events", async () => {
+    // Rows supplied newest-first; the route's .order("created_at", { ascending: true })
+    // must re-sort them so the response arrives oldest-first.
+    const safetyEventRows = [
+      { id: "e3", booking_id: BOOKING_ID, created_at: "2026-08-01T12:00:00.000Z" },
+      { id: "e1", booking_id: BOOKING_ID, created_at: "2026-08-01T10:00:00.000Z" },
+      { id: "e2", booking_id: BOOKING_ID, created_at: "2026-08-01T11:00:00.000Z" },
+    ];
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: false,
+      safetyEventRows,
+    });
+    const res = await call(
+      "GET",
+      `/api/rent-a-buddy/bookings/${BOOKING_ID}/safety-events`,
+      fake,
+    );
+    assert.equal(res.status, 200, `traveler must receive 200 (got ${res.status})`);
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.safetyEvents), "response must include a safetyEvents array");
+    assert.equal(body.safetyEvents.length, 3, "all three safety event rows must be present");
+    const timestamps: string[] = body.safetyEvents.map((e: any) => e.created_at);
+    assert.deepEqual(
+      timestamps,
+      [...timestamps].sort(),
+      "safety events must arrive in ascending created_at order",
+    );
   });
 });
 
