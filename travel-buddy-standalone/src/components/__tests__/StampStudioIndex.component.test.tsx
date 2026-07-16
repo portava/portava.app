@@ -433,6 +433,55 @@ describe('StampStudioIndex — pull-to-refresh picks up newly approved artwork',
       screen.getByText(/2 jobs stuck in 'generating' past lock expiry/),
     ).toBeTruthy();
   });
+
+  it('renders the backlog_growing warning with correct queued counts after pull-to-refresh', async () => {
+    // Override the beforeEach mock: first health call returns no data so no
+    // health strip is shown on initial load; subsequent calls return a
+    // backlog_growing warning so it becomes visible after the gesture.
+    mockGetHealth.mockReset();
+    mockGetHealth
+      .mockResolvedValueOnce({ ok: false })
+      .mockResolvedValue({
+        ok: true as const,
+        data: {
+          warnings: [
+            {
+              key: 'backlog_growing' as const,
+              message: 'backlog growing',
+              details: { queued: 15, previous_queued: 8 },
+            },
+          ],
+          health: {
+            worker_enabled: true,
+            worker_running: true,
+            worker_id: 'w1',
+            last_success_at: null,
+            queue_depth: {},
+            stuck_jobs: [],
+          },
+        },
+      });
+
+    render(<StampStudioIndex />);
+    await waitFor(() => screen.getByText('5'));
+
+    // No health warnings on initial load — health returned ok: false.
+    expect(screen.queryByText(/Queued backlog grew/)).toBeNull();
+
+    const scrollView = screen.getByTestId('stamp-studio-scroll');
+    await act(async () => { scrollView.props.refreshControl.props.onRefresh(); });
+
+    // Wait for the catalog count update so load() has fully resolved.
+    await waitFor(() => screen.getByText('77'));
+
+    // The warning text produced by warningSummary for backlog_growing is visible.
+    await waitFor(() =>
+      screen.getByText(/Queued backlog grew from 8 to 15 while the worker is enabled/),
+    );
+    expect(
+      screen.getByText(/Queued backlog grew from 8 to 15 while the worker is enabled/),
+    ).toBeTruthy();
+  });
 });
 
 // ── Suite 4: 45-second health poll ────────────────────────────────────────────
