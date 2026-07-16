@@ -3229,6 +3229,51 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
       "booking status must remain 'requested' when the expiry update DB call errors",
     );
   });
+
+  it("auto-complete count stays at zero when the batch status update errors — bookings remain in completed_pending_traveler_confirmation", async () => {
+    // The sweep must only increment autoCompletedCount when the
+    // .update({ status: 'completed' }) DB call succeeds.  If the call errors
+    // the bookings are left in completed_pending_traveler_confirmation and the
+    // count must stay at 0.
+    const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+
+    state = {
+      bookings: {
+        "bk-ac-update-err": {
+          id: "bk-ac-update-err",
+          traveler_id: USER_ID,
+          buddy_id: BUDDY_PROF,
+          status: "completed_pending_traveler_confirmation",
+          dispute_window_expires_at: PAST,
+        },
+      },
+      // Arm the update error override so the rent_buddy_bookings status update
+      // returns a DB error — leaving the booking un-promoted.
+      updateErrorOverrides: {
+        rent_buddy_bookings: { message: "simulated DB error on auto-complete update", code: "23514" },
+      },
+    };
+
+    const r = await reqSweep();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    // The sweep must NOT count a failed update as a successful auto-completion.
+    assert.equal(
+      r.body.autoCompleted,
+      0,
+      "autoCompleted must be 0 when the batch status update DB call errors",
+    );
+
+    // The booking must remain in completed_pending_traveler_confirmation because the update failed.
+    assert.equal(
+      state.bookings!["bk-ac-update-err"].status,
+      "completed_pending_traveler_confirmation",
+      "booking status must remain 'completed_pending_traveler_confirmation' when the batch update DB call errors",
+    );
+  });
 });
 
 // ── No-show duplicate-report guard (canonical /no-show handler) ───────────────

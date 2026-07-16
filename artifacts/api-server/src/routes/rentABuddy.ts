@@ -5609,36 +5609,38 @@ router.post("/api/internal/buddy-requests/expire", async (req, res) => {
   let autoCompletedCount = 0;
   if (pendingConfirm && pendingConfirm.length > 0) {
     const ids2 = pendingConfirm.map((r: any) => r.id as string);
-    await serviceClient
+    const { error: autoCompleteErr } = await serviceClient
       .from("rent_buddy_bookings")
       .update({ status: "completed", updated_at: now })
       .in("id", ids2);
 
-    // Resolve buddy user IDs in one batch for completion notifications
-    const buddyProfileIds = [...new Set(pendingConfirm.map((r: any) => r.buddy_id as string))];
-    const { data: buddyProfiles } = await serviceClient
-      .from("rent_buddy_profiles")
-      .select("id, user_id")
-      .in("id", buddyProfileIds);
-    const buddyUserIdMap: Record<string, string> = {};
-    for (const bp of buddyProfiles ?? []) {
-      buddyUserIdMap[(bp as any).id] = (bp as any).user_id;
-    }
-
-    for (const bk of pendingConfirm) {
-      void serviceClient.from("buddy_booking_events").insert({
-        booking_id: bk.id, actor_user_id: bk.traveler_id, event: "auto_completed",
-        from_status: "completed_pending_traveler_confirmation", to_status: "completed",
-        metadata: { reason: "dispute_window_expired" },
-      });
-      // Notify both parties that the booking auto-completed
-      notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_completed", bk.id as string);
-      const buddyUserId = buddyUserIdMap[bk.buddy_id as string];
-      if (buddyUserId) {
-        notifyBookingParty(serviceClient, buddyUserId, "rent_buddy.booking_completed", bk.id as string);
+    if (!autoCompleteErr) {
+      // Resolve buddy user IDs in one batch for completion notifications
+      const buddyProfileIds = [...new Set(pendingConfirm.map((r: any) => r.buddy_id as string))];
+      const { data: buddyProfiles } = await serviceClient
+        .from("rent_buddy_profiles")
+        .select("id, user_id")
+        .in("id", buddyProfileIds);
+      const buddyUserIdMap: Record<string, string> = {};
+      for (const bp of buddyProfiles ?? []) {
+        buddyUserIdMap[(bp as any).id] = (bp as any).user_id;
       }
+
+      for (const bk of pendingConfirm) {
+        void serviceClient.from("buddy_booking_events").insert({
+          booking_id: bk.id, actor_user_id: bk.traveler_id, event: "auto_completed",
+          from_status: "completed_pending_traveler_confirmation", to_status: "completed",
+          metadata: { reason: "dispute_window_expired" },
+        });
+        // Notify both parties that the booking auto-completed
+        notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_completed", bk.id as string);
+        const buddyUserId = buddyUserIdMap[bk.buddy_id as string];
+        if (buddyUserId) {
+          notifyBookingParty(serviceClient, buddyUserId, "rent_buddy.booking_completed", bk.id as string);
+        }
+      }
+      autoCompletedCount = pendingConfirm.length;
     }
-    autoCompletedCount = pendingConfirm.length;
   }
 
   // 3. Escalate no_show_pending bookings past grace period → disputed
