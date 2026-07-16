@@ -832,6 +832,45 @@ describe("runGenerationCycle — placeholder data-URL candidates excluded from o
   });
 });
 
+  it("issues no storage deletes when a mixed run fully succeeds (data-URL + real http)", async () => {
+    // Provider: 1 data-URL placeholder + 2 real http URLs = CANDIDATE_COUNT (3) total.
+    // All fetches succeed, all uploads succeed, and the DB insert succeeds.
+    // Expected: processed === true, zero delete calls, version rows for all 3 candidates.
+    const { sc, updates, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage();
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeMixedProvider(1, 2));
+    installFetch(successFetch());
+
+    const result = await runGenerationCycle();
+
+    // The cycle must report success.
+    assert.equal(result.processed, true);
+    assert.equal(result.catalogId, "cat-1");
+
+    // Exactly 2 storage uploads — one per real http candidate (placeholder skipped).
+    assert.equal(storageCalls.length, 2, "must upload exactly the 2 real http candidates");
+
+    // One batch insert with all 3 candidates (placeholder + 2 real).
+    assert.equal(inserts.length, 1, "must perform exactly one batch insert");
+    const { table, rows } = inserts[0];
+    assert.equal(table, "stamp_artwork_versions");
+    assert.equal(rows.length, CANDIDATE_COUNT, "must insert a row for every candidate including the placeholder");
+
+    // Queue row marked review_required.
+    const review = updates.find((u) => u.payload.status === "review_required");
+    assert.ok(review, "must mark the job review_required on success");
+    assert.equal(review!.payload.last_error, null);
+    assert.equal(review!.payload.locked_until, null);
+    assert.equal(review!.payload.locked_by, null);
+
+    // No storage deletes must be issued on a fully-successful run.
+    assert.equal(
+      deleteCalls.length,
+      0,
+      "a fully-successful mixed run must never issue any storage delete calls",
+    );
+  });
+
 // ── DB insert failure after all uploads succeed ───────────────────────────────
 
 describe("runGenerationCycle — DB insert failure after all uploads succeed", () => {
