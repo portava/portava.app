@@ -3,7 +3,7 @@
  * Kept free of side-effectful imports (supabase, fetch) so they can be
  * unit-tested in Node directly.
  */
-import type { StampDefinition, PassportStampNew } from './passportStamps.ts';
+import type { StampDefinition, PassportStampNew } from './passportStamps';
 
 export function mapDefinition(d: any): StampDefinition | null {
   if (!d) return null;

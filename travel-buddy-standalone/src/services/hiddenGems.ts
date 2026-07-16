@@ -4,7 +4,7 @@
  * Typed fetch helpers for all Hidden Gems endpoints.
  * Pattern: same as tripCrewLocation.ts / passportStamps.ts.
  */
-import { supabase } from '../lib/supabase.ts';
+import { supabase } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
