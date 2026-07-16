@@ -557,6 +557,80 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/check-in", async (req, res) =
   return res.status(201).json({ checkin: data });
 });
 
+// GET /api/rent-a-buddy/bookings/:bookingId/safety-checkins
+// Also accessible at /api/buddy-bookings/:bookingId/safety-checkins via URL alias
+// Returns the full check-in history for a booking. Only the traveler and the
+// buddy on the booking may access this data; all other callers receive 403.
+router.get("/api/rent-a-buddy/bookings/:bookingId/safety-checkins", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+
+  const { bookingId } = req.params;
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("id, traveler_id, buddy_id")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  const b = booking as any;
+  const { data: bp } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id")
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+
+  const isParty = b.traveler_id === auth.user.id || (bp && b.buddy_id === (bp as any).id);
+  if (!isParty) return res.status(403).json({ error: "forbidden" });
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_safety_checkins")
+    .select("*")
+    .eq("booking_id", bookingId)
+    .order("created_at", { ascending: true });
+
+  if (error) return sendError(res, "db_error", error.message);
+  return res.json({ checkins: data ?? [] });
+});
+
+// GET /api/rent-a-buddy/bookings/:bookingId/safety-events
+// Also accessible at /api/buddy-bookings/:bookingId/safety-events via URL alias
+// Returns the safety event history for a booking. Only the traveler and the
+// buddy on the booking may access this data; all other callers receive 403.
+router.get("/api/rent-a-buddy/bookings/:bookingId/safety-events", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+
+  const { bookingId } = req.params;
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("id, traveler_id, buddy_id")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  const b = booking as any;
+  const { data: bp } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id")
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+
+  const isParty = b.traveler_id === auth.user.id || (bp && b.buddy_id === (bp as any).id);
+  if (!isParty) return res.status(403).json({ error: "forbidden" });
+
+  const { data, error } = await serviceClient
+    .from("rent_buddy_safety_events")
+    .select("*")
+    .eq("booking_id", bookingId)
+    .order("created_at", { ascending: true });
+
+  if (error) return sendError(res, "db_error", error.message);
+  return res.json({ safetyEvents: data ?? [] });
+});
+
 // ── report no-show ─────────────────────────────────────────────────────────────
 
 // POST /api/rent-a-buddy/bookings/:bookingId/report-no-show

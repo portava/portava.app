@@ -703,27 +703,20 @@ describe("match display cards — completed_count takes precedence over complete
   });
 });
 
-// ── Future GET /safety-checkins — non-party authorization skeleton ────────────
+// ── GET /safety-checkins — authorization ─────────────────────────────────────
 //
-// rent_buddy_safety_checkins is currently write-only from the API. If a GET
-// route is ever added to expose check-in history directly (i.e. outside the
-// buddy_booking_events view), it MUST carry the same isParty guard as the POST
-// handler. This describe block documents that contract so the guard cannot be
-// silently omitted.
+// GET /api/rent-a-buddy/bookings/:bookingId/safety-checkins
+// (alias: /api/buddy-bookings/:bookingId/safety-checkins)
 //
-// Assertion strategy: assert res.status !== 200 (not a strict 403) so the test
-// passes today when the route doesn't exist (404 → no data exposed) AND after
-// the route is added with the guard (403 → correct). A 200 response — the
-// dangerous case — will make the test fail. Tighten to assert.equal(403) once
-// the route is implemented.
+// The route enforces an isParty check identical to the POST check-in handler:
+// only the traveler and the buddy on the booking may read check-in history.
+// A stranger must receive 403; the traveler and buddy must receive 200.
 
-describe("GET safety-checkins — non-party must not receive 200", () => {
-  it("returns a non-200 status when a stranger calls GET /api/rent-a-buddy/bookings/:id/safety-checkins", async () => {
+describe("GET safety-checkins — non-party receives 403", () => {
+  it("returns 403 when a stranger calls GET /api/rent-a-buddy/bookings/:id/safety-checkins", async () => {
     // The stranger is neither the traveler nor the buddy on this booking.
     // completingUserHasBuddyProfile: false means the rent_buddy_profiles lookup
-    // returns null, so any isParty check evaluates to false.
-    // Expected: 403 once the route exists with the guard; 404 today.
-    // NOT acceptable: 200 — that would expose safety data to a stranger.
+    // returns null, so the isParty check evaluates to false.
     const fake = makeFakeClient({
       userId: STRANGER_ID,
       bookingStatus: "in_progress",
@@ -734,15 +727,12 @@ describe("GET safety-checkins — non-party must not receive 200", () => {
       `/api/rent-a-buddy/bookings/${BOOKING_ID}/safety-checkins`,
       fake,
     );
-    assert.notEqual(
-      res.status,
-      200,
-      `non-party must not receive 200 on GET safety-checkins (got ${res.status}); ` +
-        "if this route now exists, add isParty enforcement and tighten this assertion to 403",
-    );
+    assert.equal(res.status, 403, `non-party must receive 403 (got ${res.status})`);
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "forbidden");
   });
 
-  it("returns a non-200 status when a stranger calls GET /api/buddy-bookings/:id/safety-checkins via alias URL", async () => {
+  it("returns 403 when a stranger calls GET /api/buddy-bookings/:id/safety-checkins via alias URL", async () => {
     // Same contract exercised through the alias path that the mobile client uses.
     const fake = makeFakeClient({
       userId: STRANGER_ID,
@@ -754,26 +744,94 @@ describe("GET safety-checkins — non-party must not receive 200", () => {
       `/api/buddy-bookings/${BOOKING_ID}/safety-checkins`,
       fake,
     );
-    assert.notEqual(
-      res.status,
-      200,
-      `non-party must not receive 200 on GET safety-checkins via alias (got ${res.status}); ` +
-        "if this route now exists, add isParty enforcement and tighten this assertion to 403",
-    );
+    assert.equal(res.status, 403, `non-party must receive 403 via alias (got ${res.status})`);
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "forbidden");
   });
 });
 
-// ── Future GET /safety-events — non-party authorization skeleton ──────────────
-//
-// rent_buddy_safety_events is also currently write-only from the API. The same
-// isParty requirement applies: a stranger must never receive event rows for a
-// booking they are not part of. This skeleton ensures the guard is tested before
-// the route is written, not after.
+describe("GET safety-checkins — traveler and buddy receive 200", () => {
+  it("returns 200 and a checkins array when the traveler calls GET /api/rent-a-buddy/bookings/:id/safety-checkins", async () => {
+    // TRAVELER_ID matches booking.traveler_id so isParty is true without
+    // needing a rent_buddy_profiles row.
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: false,
+    });
+    const res = await call(
+      "GET",
+      `/api/rent-a-buddy/bookings/${BOOKING_ID}/safety-checkins`,
+      fake,
+    );
+    assert.equal(res.status, 200, `traveler must receive 200 (got ${res.status})`);
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.checkins), "response must include a checkins array");
+  });
 
-describe("GET safety-events — non-party must not receive 200", () => {
-  it("returns a non-200 status when a stranger calls GET /api/rent-a-buddy/bookings/:id/safety-events", async () => {
-    // Expected: 403 once the route exists with the guard; 404 today.
-    // NOT acceptable: 200 — that would expose safety event data to a stranger.
+  it("returns 200 and a checkins array when the traveler calls GET /api/buddy-bookings/:id/safety-checkins via alias URL", async () => {
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: false,
+    });
+    const res = await call(
+      "GET",
+      `/api/buddy-bookings/${BOOKING_ID}/safety-checkins`,
+      fake,
+    );
+    assert.equal(res.status, 200, `traveler must receive 200 via alias (got ${res.status})`);
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.checkins), "response must include a checkins array");
+  });
+
+  it("returns 200 and a checkins array when the buddy calls GET /api/rent-a-buddy/bookings/:id/safety-checkins", async () => {
+    // BUDDY_USER_ID's rent_buddy_profiles row has id=BP_ID which matches
+    // booking.buddy_id, so isParty evaluates to true via the buddy branch.
+    const fake = makeFakeClient({
+      userId: BUDDY_USER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: true,
+    });
+    const res = await call(
+      "GET",
+      `/api/rent-a-buddy/bookings/${BOOKING_ID}/safety-checkins`,
+      fake,
+    );
+    assert.equal(res.status, 200, `buddy must receive 200 (got ${res.status})`);
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.checkins), "response must include a checkins array");
+  });
+
+  it("returns 200 and a checkins array when the buddy calls GET /api/buddy-bookings/:id/safety-checkins via alias URL", async () => {
+    const fake = makeFakeClient({
+      userId: BUDDY_USER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: true,
+    });
+    const res = await call(
+      "GET",
+      `/api/buddy-bookings/${BOOKING_ID}/safety-checkins`,
+      fake,
+    );
+    assert.equal(res.status, 200, `buddy must receive 200 via alias (got ${res.status})`);
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.checkins), "response must include a checkins array");
+  });
+});
+
+// ── GET /safety-events — authorization ───────────────────────────────────────
+//
+// GET /api/rent-a-buddy/bookings/:bookingId/safety-events
+// (alias: /api/buddy-bookings/:bookingId/safety-events)
+//
+// The route enforces the same isParty check as the report-no-show handler:
+// only the traveler and the buddy on the booking may read safety event history.
+// A stranger must receive 403; the traveler and buddy must receive 200.
+
+describe("GET safety-events — non-party receives 403", () => {
+  it("returns 403 when a stranger calls GET /api/rent-a-buddy/bookings/:id/safety-events", async () => {
+    // The stranger is neither the traveler nor the buddy on this booking.
     const fake = makeFakeClient({
       userId: STRANGER_ID,
       bookingStatus: "in_progress",
@@ -784,16 +842,12 @@ describe("GET safety-events — non-party must not receive 200", () => {
       `/api/rent-a-buddy/bookings/${BOOKING_ID}/safety-events`,
       fake,
     );
-    assert.notEqual(
-      res.status,
-      200,
-      `non-party must not receive 200 on GET safety-events (got ${res.status}); ` +
-        "if this route now exists, add isParty enforcement and tighten this assertion to 403",
-    );
+    assert.equal(res.status, 403, `non-party must receive 403 (got ${res.status})`);
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "forbidden");
   });
 
-  it("returns a non-200 status when a stranger calls GET /api/buddy-bookings/:id/safety-events via alias URL", async () => {
-    // Same contract exercised through the alias path.
+  it("returns 403 when a stranger calls GET /api/buddy-bookings/:id/safety-events via alias URL", async () => {
     const fake = makeFakeClient({
       userId: STRANGER_ID,
       bookingStatus: "in_progress",
@@ -804,12 +858,78 @@ describe("GET safety-events — non-party must not receive 200", () => {
       `/api/buddy-bookings/${BOOKING_ID}/safety-events`,
       fake,
     );
-    assert.notEqual(
-      res.status,
-      200,
-      `non-party must not receive 200 on GET safety-events via alias (got ${res.status}); ` +
-        "if this route now exists, add isParty enforcement and tighten this assertion to 403",
+    assert.equal(res.status, 403, `non-party must receive 403 via alias (got ${res.status})`);
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "forbidden");
+  });
+});
+
+describe("GET safety-events — traveler and buddy receive 200", () => {
+  it("returns 200 and a safetyEvents array when the traveler calls GET /api/rent-a-buddy/bookings/:id/safety-events", async () => {
+    // TRAVELER_ID matches booking.traveler_id so isParty is true.
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: false,
+    });
+    const res = await call(
+      "GET",
+      `/api/rent-a-buddy/bookings/${BOOKING_ID}/safety-events`,
+      fake,
     );
+    assert.equal(res.status, 200, `traveler must receive 200 (got ${res.status})`);
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.safetyEvents), "response must include a safetyEvents array");
+  });
+
+  it("returns 200 and a safetyEvents array when the traveler calls GET /api/buddy-bookings/:id/safety-events via alias URL", async () => {
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: false,
+    });
+    const res = await call(
+      "GET",
+      `/api/buddy-bookings/${BOOKING_ID}/safety-events`,
+      fake,
+    );
+    assert.equal(res.status, 200, `traveler must receive 200 via alias (got ${res.status})`);
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.safetyEvents), "response must include a safetyEvents array");
+  });
+
+  it("returns 200 and a safetyEvents array when the buddy calls GET /api/rent-a-buddy/bookings/:id/safety-events", async () => {
+    // BUDDY_USER_ID's rent_buddy_profiles row has id=BP_ID which matches
+    // booking.buddy_id, so isParty evaluates to true via the buddy branch.
+    const fake = makeFakeClient({
+      userId: BUDDY_USER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: true,
+    });
+    const res = await call(
+      "GET",
+      `/api/rent-a-buddy/bookings/${BOOKING_ID}/safety-events`,
+      fake,
+    );
+    assert.equal(res.status, 200, `buddy must receive 200 (got ${res.status})`);
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.safetyEvents), "response must include a safetyEvents array");
+  });
+
+  it("returns 200 and a safetyEvents array when the buddy calls GET /api/buddy-bookings/:id/safety-events via alias URL", async () => {
+    const fake = makeFakeClient({
+      userId: BUDDY_USER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: true,
+    });
+    const res = await call(
+      "GET",
+      `/api/buddy-bookings/${BOOKING_ID}/safety-events`,
+      fake,
+    );
+    assert.equal(res.status, 200, `buddy must receive 200 via alias (got ${res.status})`);
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.safetyEvents), "response must include a safetyEvents array");
   });
 });
 
