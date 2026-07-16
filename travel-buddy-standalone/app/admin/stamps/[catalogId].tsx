@@ -28,6 +28,7 @@ import {
   CURRENT_STYLE_VERSION,
   type CatalogDetail,
   type ArtworkVersion,
+  type CatalogAuditEntry,
 } from '../../../src/services/adminStamps';
 
 export default function StampCatalogDetail() {
@@ -216,7 +217,7 @@ export default function StampCatalogDetail() {
         {audit.length > 0 ? (
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Audit Log</Text>
-            {audit.map((a: any) => (
+            {audit.map((a: CatalogAuditEntry) => (
               <View key={a.id} style={styles.auditRow}>
                 <Text style={styles.auditAction}>{a.action}</Text>
                 <Text style={styles.auditNotes} numberOfLines={2}>{a.notes ?? ''}</Text>

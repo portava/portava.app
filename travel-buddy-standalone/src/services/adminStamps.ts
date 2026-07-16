@@ -62,11 +62,23 @@ export interface ArtworkVersion {
   created_at: string;
 }
 
+/**
+ * A single entry in the catalog audit log as returned by the detail endpoint.
+ * Typed to catch callers that pass missing or mis-shaped fields at compile time
+ * rather than silently at runtime.
+ */
+export interface CatalogAuditEntry {
+  id: string;
+  action: string;
+  notes: string | null;
+  created_at: string;
+}
+
 export interface CatalogDetail {
   entry: CatalogEntry;
   versions: ArtworkVersion[];
   queue: GenerationQueueJob | null;
-  audit: any[];
+  audit: CatalogAuditEntry[];
   earnSample: any[];
 }
 
