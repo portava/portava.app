@@ -590,6 +590,28 @@ describe("booking events (check-in history) — non-party receives 403", () => {
     const body = (await res.json()) as any;
     assert.equal(body.error, "not_found");
   });
+
+  it("returns 404 (not 403) when a non-party caller requests an unknown booking's events", async () => {
+    // A stranger (not the traveler, not the buddy) requests events for a booking
+    // that does not exist. The null-booking guard must fire before the isParty
+    // check — if it were evaluated after, the response would be 403, leaking the
+    // information that the booking ID is unknown to a non-party caller.
+    const UNKNOWN_BOOKING_ID = "00000000-0000-0000-0000-000000000000";
+    const fake = makeFakeClient({
+      userId: STRANGER_ID,
+      bookingStatus: "in_progress",
+      bookingExists: false,
+      completingUserHasBuddyProfile: false,
+    });
+    const res = await call(
+      "GET",
+      `/api/buddy-bookings/${UNKNOWN_BOOKING_ID}/events`,
+      fake,
+    );
+    assert.equal(res.status, 404, `stranger on unknown booking must receive 404, got ${res.status}`);
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "not_found");
+  });
 });
 
 describe("complete — non-party receives 403", () => {
