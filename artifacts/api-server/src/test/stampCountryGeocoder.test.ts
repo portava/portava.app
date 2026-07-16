@@ -1018,6 +1018,68 @@ describe("background correction sweep", () => {
     assert.equal(upsertPayloads[0].country, "France", "upsert must carry the correct country name");
   });
 
+  it("Pass 2 does not evict a city whose deleted_at was cleared (revived) before the sweep's SELECT ran", async () => {
+    // Step 1: seed the in-memory cache.
+    _setGeocodeFetchForTests(fakeNominatim({
+      "oslo": { country_code: "no", country: "Norway" },
+    }));
+    await geocodeCityCountry("Oslo");
+    assert.equal(fetchCalls.length, 1, "initial geocode should hit Nominatim once");
+
+    // Step 2: build a DB client that simulates a concurrent PUT that cleared
+    // deleted_at BEFORE the sweep's Pass 2 SELECT ran.
+    //   • Pass 1 (corrected_at gte): no recently-corrected rows.
+    //   • Pass 2 (deleted_at gte + not null): returns [] — the .not("deleted_at",
+    //     "is", null) guard filters out the revived row because deleted_at is now
+    //     null, so the sweep sees zero tombstoned keys and issues no hard-delete.
+    // If delete() were somehow called it would affect 0 rows; we track any call
+    // so the assertion below can confirm it was skipped entirely.
+    let deleteCalled = false;
+    const revivedDb = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache");
+        let gteColumn = "";
+        const chain: any = {
+          select()            { return chain; },
+          gte(col: string)    { gteColumn = col; return chain; },
+          not()               { return chain; },
+          in()                { return chain; },
+          delete()            { deleteCalled = true; return chain; },
+          then(resolve: (v: any) => void) {
+            if (gteColumn === "deleted_at") {
+              // Pass 2: concurrent PUT already cleared deleted_at — no tombstones.
+              resolve({ data: [], error: null });
+            } else {
+              // Pass 1: no recently-corrected rows.
+              resolve({ data: [], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    // Step 3: run the sweep — Pass 2 should be a no-op for "oslo".
+    _setGeocodeDbClientForTests(revivedDb);
+    await _runCorrectionSweepForTests();
+
+    // Step 4: the city must still be in the in-memory cache — no eviction,
+    // no Nominatim re-fetch, no hard-delete.
+    fetchCalls = [];
+    _setGeocodeFetchForTests(async (url: string) => {
+      fetchCalls.push(url);
+      throw new Error("Nominatim must not be called — oslo should still be in-memory cache");
+    });
+    _setGeocodeDbClientForTests(revivedDb);
+
+    const r = await geocodeCityCountry("Oslo");
+    assert.equal(fetchCalls.length, 0, "no Nominatim call should occur — revived city must be served from cache");
+    assert.ok(r !== null, "revived city result must not be null");
+    assert.equal(r!.countryCode, "NO", "revived city must return the original country code");
+    assert.equal(r!.country, "Norway", "revived city must return the original country name");
+    assert.equal(deleteCalled, false, "hard-delete must not be called when no tombstoned keys are found");
+  });
+
   it("tombstone-sweep eviction: writes the fresh Nominatim result back to the DB", async () => {
     // Step 1: populate the in-memory cache with a stale entry (CA for Banff).
     _setGeocodeFetchForTests(fakeNominatim({

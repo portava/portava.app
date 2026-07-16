@@ -77,7 +77,7 @@ function versionContains(field: string | undefined, ver: string): boolean {
 // ── 1. Package version pins ───────────────────────────────────────────────────
 
 describe('SDK 54 downgrade — package version pins', () => {
-  const pkg = readPkg('../../package.json');
+  const pkg = readPkg('../../../artifacts/travel-buddy/package.json');
   const deps: Record<string, string> = {
     ...pkg.dependencies,
     ...pkg.devDependencies,
@@ -744,8 +744,8 @@ describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/
 
 describe('Lockfile-resolved metro bundler family versions — metro, metro-resolver, @expo/metro-config', () => {
   // Reuse the same lockfile texts read in section 7.
-  const standaloneLockText = readFileSync(pathResolve(__dir, '../../../../travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
-  const monoLockText = readFileSync(pathResolve(__dir, '../../../../pnpm-lock.yaml'), 'utf8');
+  const standaloneLockText = readFileSync(pathResolve(__dir, '../../pnpm-lock.yaml'), 'utf8');
+  const monoLockText = readFileSync(pathResolve(__dir, '../../../pnpm-lock.yaml'), 'utf8');
 
   function resolvedVersions(lockText: string, pkgName: string): string[] {
     const escaped = pkgName.replace(/[.*+?^${}()|[\]\\]/g, (c) => '\\' + c).replace(/\//g, (c) => '\\' + c);
