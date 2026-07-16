@@ -8,7 +8,7 @@
  *
  * UI calls these functions; it never calls fetch or supabase for posts itself.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type PostVisibility = 'public' | 'trip_only' | 'private';

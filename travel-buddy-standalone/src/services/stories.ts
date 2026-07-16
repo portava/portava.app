@@ -1,7 +1,7 @@
 /**
  * Stories service — wraps /api/stories and /api/users/me/close-friends endpoints.
  */
-import { supabase } from '../lib/supabase.ts';
+import { supabase } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 function apiBase(): string {

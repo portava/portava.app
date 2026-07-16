@@ -4,7 +4,7 @@
  * Thin fetch wrappers over /api/admin/trust/* routes.
  * All calls require an authenticated admin user.
  */
-import { supabase } from '../lib/supabase.ts';
+import { supabase } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';

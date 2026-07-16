@@ -10,8 +10,8 @@
  * The backend decides verification; this only supplies the user's real GPS.
  */
 import * as Location from 'expo-location';
-import type { Place } from '../lib/location/placeTypes.ts';
-import { reverseGeocodeToPlaceCore } from './reverseGeocodePlace.core.ts';
+import type { Place } from '../lib/location/placeTypes';
+import { reverseGeocodeToPlaceCore } from './reverseGeocodePlace.core';
 
 export interface GpsResult {
   granted: boolean;

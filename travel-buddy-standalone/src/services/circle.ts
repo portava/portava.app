@@ -5,7 +5,7 @@
  * Uses the same freshToken/authedFetch pattern as intelligence.ts.
  * No GPS or precise location is ever sent or received.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type VisibilityMode = 'status_only' | 'approximate_area' | 'venue_checkin';
