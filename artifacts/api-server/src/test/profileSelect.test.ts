@@ -516,6 +516,78 @@ describe("profile data-leak prevention", () => {
     });
   });
 
+  // ── PATCH /api/me/profile — clearing multiple fields including DOB at once ────
+  //
+  // A multi-field null-clear exercises a different branch through the
+  // update-row-building logic than a single-field clear. This block confirms
+  // that mapProfile's DOB strip is not bypassed when additional nullable
+  // fields (preferredLanguage) are also cleared in the same request.
+  // Both dateOfBirth and preferredLanguage accept null per patchProfileSchema.
+
+  describe("PATCH /api/me/profile — multi-field clear including dateOfBirth: null", () => {
+    it("returns HTTP 200 when clearing dateOfBirth and preferredLanguage in the same request", async () => {
+      const { status, body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: null, preferredLanguage: null },
+        USER_TOKEN,
+      );
+      assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    });
+
+    it("does not include date_of_birth (snake_case) after clearing multiple fields", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: null, preferredLanguage: null },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("date_of_birth" in body),
+        `date_of_birth must not appear in multi-field clear response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dateOfBirth (camelCase) after clearing multiple fields", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: null, preferredLanguage: null },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dateOfBirth" in body),
+        `dateOfBirth must not appear in multi-field clear response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dob_verified (snake_case) after clearing multiple fields", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: null, preferredLanguage: null },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dob_verified" in body),
+        `dob_verified must not appear in multi-field clear response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dobVerified (camelCase) after clearing multiple fields", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { dateOfBirth: null, preferredLanguage: null },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dobVerified" in body),
+        `dobVerified must not appear in multi-field clear response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+  });
+
   // ── GET /api/buddies — admin and private fields must be absent ────────────────
 
   describe("GET /api/buddies", () => {
