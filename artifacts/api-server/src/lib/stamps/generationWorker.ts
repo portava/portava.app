@@ -33,6 +33,14 @@ const AUTO_REQUEUE_MAX_ROUNDS = Math.max(1, Number(process.env.STAMP_FAILED_REQU
 const AUTO_REQUEUE_CHECK_INTERVAL_MS = 10 * 60 * 1_000; // sweep at most every 10 min
 let _lastAutoRequeueAt = 0;
 
+// Stale-artwork sweep: scan for outdated prompt_template_version and enqueue
+// new generation jobs.  Runs at most every 30 minutes so a busy worker doesn't
+// hammer the DB on every cycle.  Set STAMP_STALE_SWEEP_INTERVAL_MINUTES=0 to
+// disable.
+const STALE_ARTWORK_SWEEP_INTERVAL_MS =
+  Number(process.env.STAMP_STALE_SWEEP_INTERVAL_MINUTES ?? "30") * 60 * 1_000;
+let _lastStaleArtworkSweepAt = 0;
+
 // Minimum number of candidates a generation run must produce to be considered
 // reviewable. Below this the job is treated as a retryable failure instead of
 // review_required (default 1 keeps the historical "at least one image" rule).
@@ -72,6 +80,137 @@ export function evaluateCandidateShortfall(
     };
   }
   return { outcome: "full", shortfallMessage: null };
+}
+
+// ── Stale-artwork sweep (STYLE_VERSION bump) ──────────────────────────────────
+
+/**
+ * Scan `stamp_artwork_versions` for rows whose `prompt_template_version`
+ * doesn't match the current `STYLE_VERSION` (including null rows which
+ * pre-date the versioning scheme) and enqueue a new generation job for each
+ * affected catalog entry that doesn't already have an active job.
+ *
+ * "Active" means status is one of: queued, generating, review_required.
+ * Terminal statuses (retryable_failed, permanently_failed) do NOT block
+ * re-enqueuing — the sweep treats them as "needs a fresh attempt".
+ *
+ * Returns the number of new jobs inserted. Accepts an injectable client for
+ * tests.
+ */
+export async function sweepStaleArtwork(scOverride?: any): Promise<number> {
+  const sc = scOverride ?? getServiceClient();
+  if (!sc) return 0;
+
+  // Pass 1: fetch one page of catalog_ids that have at least one stale or
+  // null prompt_template_version.  The OR covers rows pre-dating the versioning
+  // scheme (null) and rows from a previous STYLE_VERSION.
+  // Capped at 500 per sweep — subsequent sweeps process the remainder so each
+  // run makes deterministic forward progress without risk of a false positive.
+  const SWEEP_PAGE_SIZE = 500;
+  const { data: staleRows, error: staleErr } = await sc
+    .from("stamp_artwork_versions")
+    .select("catalog_id")
+    .or(`prompt_template_version.is.null,prompt_template_version.neq.${STYLE_VERSION}`)
+    .limit(SWEEP_PAGE_SIZE);
+
+  if (staleErr) {
+    console.error(JSON.stringify({ event: "stamp.sweep.stale_query_error", error: staleErr.message }));
+    return 0;
+  }
+
+  const staleCatalogIds = [
+    ...new Set(
+      ((staleRows ?? []) as Array<{ catalog_id: string }>).map((r) => r.catalog_id),
+    ),
+  ];
+
+  if (staleCatalogIds.length === 0) return 0;
+
+  // Pass 2: scoped current-version check — query only within the stale batch.
+  // By scoping to staleCatalogIds, this query is always bounded (≤ page size)
+  // and cannot be truncated regardless of total catalog size.  A catalog that
+  // returns here already has a current-version row and must NOT be re-enqueued,
+  // even if it also has historical old-version rows (mixed-history catalog).
+  const { data: currentRows, error: currentErr } = await sc
+    .from("stamp_artwork_versions")
+    .select("catalog_id")
+    .eq("prompt_template_version", STYLE_VERSION)
+    .in("catalog_id", staleCatalogIds);
+
+  if (currentErr) {
+    console.error(JSON.stringify({ event: "stamp.sweep.current_query_error", error: currentErr.message }));
+    return 0;
+  }
+
+  const currentCatalogIds = new Set<string>(
+    ((currentRows ?? []) as Array<{ catalog_id: string }>).map((r) => r.catalog_id),
+  );
+
+  // A catalog is truly stale only if it has no current-version row in the batch.
+  const trulyStale = staleCatalogIds.filter((id) => !currentCatalogIds.has(id));
+  if (trulyStale.length === 0) {
+    if (staleRows && staleRows.length >= SWEEP_PAGE_SIZE) {
+      console.log(JSON.stringify({
+        event:         "stamp.sweep.page_all_current",
+        page_size:     SWEEP_PAGE_SIZE,
+        style_version: STYLE_VERSION,
+        note:          "all catalogs in this page already have current-version artwork; next sweep will process the next page",
+      }));
+    }
+    return 0;
+  }
+
+  // Check which truly-stale catalog IDs already have an active (non-terminal)
+  // job so we don't create duplicate queue entries.
+  const { data: existingJobs, error: jobsErr } = await sc
+    .from("stamp_generation_queue")
+    .select("catalog_id")
+    .in("catalog_id", trulyStale)
+    .in("status", ["queued", "generating", "review_required"]);
+
+  if (jobsErr) {
+    console.error(JSON.stringify({ event: "stamp.sweep.existing_jobs_query_error", error: jobsErr.message }));
+    return 0;
+  }
+
+  const alreadyActive = new Set<string>(
+    ((existingJobs ?? []) as Array<{ catalog_id: string }>).map((r) => r.catalog_id),
+  );
+
+  const toEnqueue = trulyStale.filter((id) => !alreadyActive.has(id));
+  if (toEnqueue.length === 0) return 0;
+
+  const nowIso = new Date().toISOString();
+  const newJobs = toEnqueue.map((catalogId) => ({
+    id:                  randomUUID(),
+    catalog_id:          catalogId,
+    status:              "queued",
+    priority:            10,
+    attempts:            0,
+    max_attempts:        3,
+    requeue_count:       0,
+    triggered_by_action: "style_version_sweep",
+    created_at:          nowIso,
+    updated_at:          nowIso,
+  }));
+
+  const { error: insertErr } = await sc
+    .from("stamp_generation_queue")
+    .insert(newJobs);
+
+  if (insertErr) {
+    console.error(JSON.stringify({ event: "stamp.sweep.enqueue_error", error: insertErr.message }));
+    return 0;
+  }
+
+  console.log(JSON.stringify({
+    event:         "stamp.sweep.stale_artwork_enqueued",
+    count:         toEnqueue.length,
+    catalog_ids:   toEnqueue,
+    style_version: STYLE_VERSION,
+  }));
+
+  return toEnqueue.length;
 }
 
 // ── Auto-requeue of stale failed jobs ─────────────────────────────────────────
@@ -254,6 +393,18 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
       await requeueStaleFailedJobs(sc);
     } catch (e: any) {
       console.error(JSON.stringify({ event: "stamp.queue.auto_requeue_error", error: e?.message }));
+    }
+  }
+
+  // Periodically sweep artwork rows with an outdated prompt_template_version
+  // and enqueue new generation jobs so STYLE_VERSION bumps are picked up
+  // automatically without manual intervention.
+  if (STALE_ARTWORK_SWEEP_INTERVAL_MS > 0 && Date.now() - _lastStaleArtworkSweepAt > STALE_ARTWORK_SWEEP_INTERVAL_MS) {
+    _lastStaleArtworkSweepAt = Date.now();
+    try {
+      await sweepStaleArtwork(sc);
+    } catch (e: any) {
+      console.error(JSON.stringify({ event: "stamp.sweep.stale_artwork_error", error: e?.message }));
     }
   }
 
@@ -694,6 +845,11 @@ export function evaluateCurrentWorkerHealth(health: StampWorkerHealth): HealthWa
 export function resetHealthMonitorState(): void {
   _prevQueuedDepth = null;
   _lastWarnedAt.clear();
+}
+
+/** Reset stale-artwork sweep timer between tests. */
+export function resetStaleArtworkSweepState(): void {
+  _lastStaleArtworkSweepAt = 0;
 }
 
 export function startHealthMonitorLoop(

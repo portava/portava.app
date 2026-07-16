@@ -25,9 +25,12 @@ import assert from "node:assert/strict";
 process.env.STAMP_MIN_CANDIDATES = "2";
 process.env.STAMP_FAILED_REQUEUE_HOURS = "0"; // disable sweep inside the cycle
 
-const { runGenerationCycle, CANDIDATE_SHORTFALL_PREFIX } = await import(
-  "../lib/stamps/generationWorker.js"
-);
+const {
+  runGenerationCycle,
+  CANDIDATE_SHORTFALL_PREFIX,
+  sweepStaleArtwork,
+  resetStaleArtworkSweepState,
+} = await import("../lib/stamps/generationWorker.js");
 const { _setTestStampImageProvider, _resetProviderCache } = await import(
   "../lib/stamps/imageProvider.js"
 );
@@ -334,6 +337,7 @@ afterEach(() => {
   _setTestStampImageProvider(null);
   _resetProviderCache();
   restoreFetch();
+  resetStaleArtworkSweepState();
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -2281,4 +2285,443 @@ describe("buildStampPrompt — every recognized stamp_type produces its own shap
       );
     });
   }
+});
+
+// ── sweepStaleArtwork ─────────────────────────────────────────────────────────
+
+/**
+ * Minimal fake client for sweepStaleArtwork. The sweep performs three
+ * operations in order:
+ *
+ *  1. stamp_artwork_versions SELECT with .or() — returns staleVersionRows
+ *  2. stamp_generation_queue  SELECT with .in() — returns activeJobRows
+ *  3. stamp_generation_queue  INSERT            — records enqueued jobs
+ *
+ * All other table names resolve to empty arrays so unrelated code paths
+ * don't interfere.
+ */
+interface SweepFakeClientConfig {
+  /** Rows returned by the stamp_artwork_versions stale-version query (Pass 2). */
+  staleVersionRows: Array<{ catalog_id: string }>;
+  /**
+   * Rows returned by the stamp_artwork_versions current-version query (Pass 1).
+   * Defaults to [] (no catalog has a current-version row).
+   */
+  currentVersionRows?: Array<{ catalog_id: string }>;
+  /** Rows returned by the stamp_generation_queue active-jobs query. */
+  activeJobRows: Array<{ catalog_id: string }>;
+  /** When true, the current-version artwork select (Pass 1) resolves with an error. */
+  currentQueryError?: boolean;
+  /** When true, the stale-version artwork select (Pass 2) resolves with an error. */
+  artworkQueryError?: boolean;
+  /** When true, the active-jobs select resolves with an error. */
+  activeJobsQueryError?: boolean;
+  /** When true, the queue insert resolves with an error. */
+  insertError?: boolean;
+}
+
+function makeSweepFakeClient(config: SweepFakeClientConfig) {
+  const inserts: Array<{ table: string; rows: any[] }> = [];
+
+  const sc: any = {
+    from(table: string) {
+      // ── stamp_artwork_versions ──────────────────────────────────────────────
+      // The sweep now issues two queries against this table in this order:
+      //   Pass 1 (stale): .select().or(filter).limit()  → staleVersionRows
+      //   Pass 2 (current scoped): .select().eq().in()  → currentVersionRows
+      //                            (no .limit(); resolved via .then())
+      // We distinguish them by whether .or() or .in() was called.
+      if (table === "stamp_artwork_versions") {
+        let usedOr = false;
+        let usedIn = false;
+        const b: any = {
+          select(_cols: string) { return b; },
+          or(_filter: string)   { usedOr = true; return b; },   // Pass 1
+          eq(_col: string, _val: string) { return b; },          // Pass 2 prefix
+          in(_col: string, _vals: any[]) { usedIn = true; return b; }, // Pass 2
+          limit(_n: number) {
+            // Pass 1: stale-version query (reached via .or().limit())
+            if (config.artworkQueryError) {
+              return Promise.resolve({ data: null, error: { message: "artwork query error" } });
+            }
+            return Promise.resolve({ data: config.staleVersionRows, error: null });
+          },
+          then(resolve: any, reject: any) {
+            // Pass 2: current-version scoped query (reached via .eq().in(), awaited directly)
+            if (usedIn) {
+              if (config.currentQueryError) {
+                return Promise.resolve({ data: null, error: { message: "current query error" } }).then(resolve, reject);
+              }
+              return Promise.resolve({ data: config.currentVersionRows ?? [], error: null }).then(resolve, reject);
+            }
+            // Fallback (should not be reached in normal sweep flow)
+            return Promise.resolve({ data: [], error: null }).then(resolve, reject);
+          },
+        };
+        return b;
+      }
+
+      // ── stamp_generation_queue ──────────────────────────────────────────────
+      if (table === "stamp_generation_queue") {
+        return {
+          select(_cols: string) {
+            const b: any = {
+              in(_col: string, _vals: any[]) { return b; },
+              // Second .in() call resolves with the active-jobs result.
+              // We chain two .in() calls in the sweep, so we need to return
+              // the data on the second one. We do it lazily: any .then()
+              // resolves with the active-jobs rows, which covers the awaited
+              // chain regardless of how many .in() calls precede it.
+              then(resolve: any, reject: any) {
+                if (config.activeJobsQueryError) {
+                  return Promise.resolve({ data: null, error: { message: "active jobs query error" } }).then(resolve, reject);
+                }
+                return Promise.resolve({ data: config.activeJobRows, error: null }).then(resolve, reject);
+              },
+            };
+            return b;
+          },
+          insert(rows: any[]) {
+            inserts.push({ table, rows });
+            if (config.insertError) {
+              return Promise.resolve({ data: null, error: { message: "insert error" } });
+            }
+            return Promise.resolve({ data: null, error: null });
+          },
+        };
+      }
+
+      // Fallback for any other table.
+      return {
+        select() {
+          return {
+            or() {
+              return {
+                limit() {
+                  return Promise.resolve({ data: [], error: null });
+                },
+              };
+            },
+          };
+        },
+        insert(rows: any[]) {
+          inserts.push({ table, rows });
+          return Promise.resolve({ data: null, error: null });
+        },
+      };
+    },
+  };
+
+  return { sc, inserts };
+}
+
+describe("sweepStaleArtwork — enqueues catalog entries with stale versions", () => {
+  it("inserts a generation job for each catalog entry with an outdated prompt_template_version", async () => {
+    const { sc, inserts } = makeSweepFakeClient({
+      currentVersionRows: [],                 // no catalog has a current-version row
+      staleVersionRows: [
+        { catalog_id: "cat-stale-1" },
+        { catalog_id: "cat-stale-2" },
+        { catalog_id: "cat-stale-3" },
+      ],
+      activeJobRows: [], // no active jobs blocking re-enqueue
+    });
+
+    const count = await sweepStaleArtwork(sc);
+
+    assert.equal(count, 3, "must return the number of jobs enqueued");
+
+    // One insert call containing all three new jobs.
+    assert.equal(inserts.length, 1, "must issue exactly one batch insert");
+    const { table, rows } = inserts[0];
+    assert.equal(table, "stamp_generation_queue");
+    assert.equal(rows.length, 3, "must insert one job per stale catalog entry");
+
+    const enqueuedIds = new Set(rows.map((r: any) => r.catalog_id));
+    assert.ok(enqueuedIds.has("cat-stale-1"), "cat-stale-1 must be enqueued");
+    assert.ok(enqueuedIds.has("cat-stale-2"), "cat-stale-2 must be enqueued");
+    assert.ok(enqueuedIds.has("cat-stale-3"), "cat-stale-3 must be enqueued");
+
+    // Every inserted job must be in the queued status and carry the sweep trigger.
+    for (const row of rows) {
+      assert.equal(row.status, "queued", `job for ${row.catalog_id} must have status=queued`);
+      assert.equal(
+        row.triggered_by_action,
+        "style_version_sweep",
+        `job for ${row.catalog_id} must record triggered_by_action=style_version_sweep`,
+      );
+    }
+  });
+
+  it("also enqueues entries that have null prompt_template_version (pre-versioning rows)", async () => {
+    // The .or() filter covers both null and neq cases; the fake client returns
+    // whatever staleVersionRows we give it, simulating PostgREST returning null
+    // rows in the same query.
+    const { sc, inserts } = makeSweepFakeClient({
+      staleVersionRows: [{ catalog_id: "cat-null-version" }],
+      activeJobRows: [],
+    });
+
+    const count = await sweepStaleArtwork(sc);
+
+    assert.equal(count, 1);
+    assert.equal(inserts.length, 1);
+    assert.equal(inserts[0].rows[0].catalog_id, "cat-null-version");
+    assert.equal(inserts[0].rows[0].status, "queued");
+  });
+
+  it("deduplicates catalog IDs when multiple stale rows share the same catalog entry", async () => {
+    // Multiple artwork rows for the same catalog entry — only one job must be enqueued.
+    const { sc, inserts } = makeSweepFakeClient({
+      staleVersionRows: [
+        { catalog_id: "cat-dup" },
+        { catalog_id: "cat-dup" },
+        { catalog_id: "cat-dup" },
+        { catalog_id: "cat-other" },
+      ],
+      activeJobRows: [],
+    });
+
+    const count = await sweepStaleArtwork(sc);
+
+    assert.equal(count, 2, "must deduplicate catalog IDs and enqueue each catalog entry once");
+    assert.equal(inserts.length, 1);
+    const { rows } = inserts[0];
+    assert.equal(rows.length, 2, "must insert exactly 2 jobs (one per unique catalog entry)");
+    const ids = rows.map((r: any) => r.catalog_id).sort();
+    assert.deepEqual(ids, ["cat-dup", "cat-other"]);
+  });
+});
+
+describe("sweepStaleArtwork — does not re-enqueue catalogs that already have a current-version row (mixed-history and scale)", () => {
+  it("skips a catalog that has both old and current rows — old rows are history, not a reason to re-generate", async () => {
+    // cat-mixed has one old-version row (shows up in staleVersionRows) AND one
+    // current-version row (shows up in currentVersionRows).  The sweep must NOT
+    // enqueue it because regeneration already produced a current candidate.
+    const { sc, inserts } = makeSweepFakeClient({
+      currentVersionRows: [{ catalog_id: "cat-mixed" }],
+      staleVersionRows:   [{ catalog_id: "cat-mixed" }, { catalog_id: "cat-new-stale" }],
+      activeJobRows:      [],
+    });
+
+    const count = await sweepStaleArtwork(sc);
+
+    assert.equal(count, 1, "must only enqueue the catalog with no current-version row");
+    assert.equal(inserts.length, 1);
+    assert.equal(inserts[0].rows.length, 1);
+    assert.equal(inserts[0].rows[0].catalog_id, "cat-new-stale",
+      "must not enqueue cat-mixed which already has a current-version row");
+  });
+
+  it("enqueues no jobs when all stale catalogs already have a current-version row", async () => {
+    const { sc, inserts } = makeSweepFakeClient({
+      currentVersionRows: [{ catalog_id: "cat-a" }, { catalog_id: "cat-b" }],
+      staleVersionRows:   [{ catalog_id: "cat-a" }, { catalog_id: "cat-b" }],
+      activeJobRows:      [],
+    });
+
+    const count = await sweepStaleArtwork(sc);
+
+    assert.equal(count, 0, "must return 0 when all stale catalogs already have current-version artwork");
+    assert.equal(inserts.length, 0, "must not insert any jobs");
+  });
+
+  it("never enqueues a mixed-history catalog even when the stale page is full (>500 rows simulated)", async () => {
+    // Simulate a large catalog: the stale query returns a full page of 500
+    // rows, some of which belong to catalogs that already have a current-version
+    // row.  The scoped current-version check (Pass 2) receives only those
+    // catalog_ids, so it can never be truncated by the page limit regardless of
+    // total catalog size.  Catalogs with current-version rows must be excluded.
+    const PAGE_SIZE = 500;
+
+    // Build 500 stale rows: 400 truly stale + 100 mixed-history (also have current rows).
+    const trulyStaleIds = Array.from({ length: 400 }, (_, i) => `cat-stale-${i}`);
+    const mixedIds      = Array.from({ length: 100 }, (_, i) => `cat-mixed-${i}`);
+    const staleVersionRows = [...trulyStaleIds, ...mixedIds].map((id) => ({ catalog_id: id }));
+
+    // The scoped current-version query returns rows for the 100 mixed catalogs.
+    const currentVersionRows = mixedIds.map((id) => ({ catalog_id: id }));
+
+    assert.equal(staleVersionRows.length, PAGE_SIZE,
+      "stale page must be exactly 500 rows to simulate a full page");
+
+    const { sc, inserts } = makeSweepFakeClient({
+      staleVersionRows,
+      currentVersionRows,
+      activeJobRows: [],
+    });
+
+    const count = await sweepStaleArtwork(sc);
+
+    assert.equal(count, 400, "must enqueue exactly the 400 truly-stale catalogs");
+    assert.equal(inserts.length, 1);
+    assert.equal(inserts[0].rows.length, 400);
+
+    const enqueuedIds = new Set(inserts[0].rows.map((r: any) => r.catalog_id));
+    for (const id of trulyStaleIds) {
+      assert.ok(enqueuedIds.has(id), `truly-stale catalog ${id} must be enqueued`);
+    }
+    for (const id of mixedIds) {
+      assert.equal(enqueuedIds.has(id), false,
+        `mixed-history catalog ${id} must NOT be enqueued — it already has a current-version row`);
+    }
+  });
+});
+
+describe("sweepStaleArtwork — skips entries with already-active jobs", () => {
+  it("does not insert a new job when a queued job already exists for the stale catalog entry", async () => {
+    const { sc, inserts } = makeSweepFakeClient({
+      staleVersionRows: [{ catalog_id: "cat-a" }, { catalog_id: "cat-b" }],
+      // cat-a already has a queued job; cat-b does not.
+      activeJobRows: [{ catalog_id: "cat-a" }],
+    });
+
+    const count = await sweepStaleArtwork(sc);
+
+    assert.equal(count, 1, "must only enqueue the catalog entry without an active job");
+    assert.equal(inserts.length, 1);
+    assert.equal(inserts[0].rows.length, 1);
+    assert.equal(inserts[0].rows[0].catalog_id, "cat-b");
+  });
+
+  it("inserts no jobs when all stale catalog entries already have active jobs", async () => {
+    const { sc, inserts } = makeSweepFakeClient({
+      staleVersionRows: [{ catalog_id: "cat-x" }, { catalog_id: "cat-y" }],
+      activeJobRows:    [{ catalog_id: "cat-x" }, { catalog_id: "cat-y" }],
+    });
+
+    const count = await sweepStaleArtwork(sc);
+
+    assert.equal(count, 0, "must return 0 when all stale entries already have active jobs");
+    assert.equal(inserts.length, 0, "must not insert any jobs");
+  });
+});
+
+describe("sweepStaleArtwork — produces no jobs when all artwork is current", () => {
+  it("returns 0 and issues no insert when the stale-version query returns no rows", async () => {
+    // All artwork rows have the current STYLE_VERSION, so the .or() filter
+    // returns an empty result set.
+    const { sc, inserts } = makeSweepFakeClient({
+      staleVersionRows: [], // nothing stale
+      activeJobRows:    [],
+    });
+
+    const count = await sweepStaleArtwork(sc);
+
+    assert.equal(count, 0, "must return 0 when no stale artwork exists");
+    assert.equal(inserts.length, 0, "must not insert any jobs when all artwork is current");
+  });
+});
+
+// ── sweepStaleArtwork wired into runGenerationCycle ────────────────────────────
+
+describe("runGenerationCycle — calls sweepStaleArtwork when the sweep interval has elapsed", () => {
+  it("enqueues stale catalog entries found during a cycle even when there is no job to process", async () => {
+    // Build a fake client that:
+    //  - returns null for the queue claim (no job to process)
+    //  - returns one stale artwork row so the sweep has work to do
+    //  - records any inserts so the test can assert on them
+    const cycleInserts: Array<{ table: string; rows: any[] }> = [];
+
+    const sc: any = {
+      from(table: string) {
+        // ── stamp_artwork_versions — two-pass sweep queries ──────────────────
+        // Pass 1 (.or().limit()): stale-version rows → one stale catalog
+        // Pass 2 (.eq().in(), awaited directly): current-version scoped check → empty
+        if (table === "stamp_artwork_versions") {
+          let usedIn = false;
+          const b: any = {
+            select() { return b; },
+            or()     { return b; },
+            eq()     { return b; },
+            in()     { usedIn = true; return b; },
+            limit()  {
+              // Pass 1: stale rows — one catalog needs regeneration
+              return Promise.resolve({
+                data: [{ catalog_id: "cat-sweep-from-cycle" }],
+                error: null,
+              });
+            },
+            then(resolve: any, reject: any) {
+              // Pass 2: current-version scoped check — no catalog is current yet
+              if (usedIn) {
+                return Promise.resolve({ data: [], error: null }).then(resolve, reject);
+              }
+              return Promise.resolve({ data: [], error: null }).then(resolve, reject);
+            },
+          };
+          return b;
+        }
+
+        // ── stamp_generation_queue ───────────────────────────────────────────
+        if (table === "stamp_generation_queue") {
+          return {
+            select(_cols: string) {
+              const b: any = {
+                // eq / or / lt / order / limit chains used for the job claim.
+                eq()    { return b; },
+                or()    { return b; },
+                lt()    { return b; },
+                order() { return b; },
+                // in() chains used by the active-jobs check inside the sweep.
+                in()    { return b; },
+                limit() {
+                  return {
+                    maybeSingle() {
+                      // No queued job — the cycle exits early after the sweep.
+                      return Promise.resolve({ data: null, error: null });
+                    },
+                  };
+                },
+                then(resolve: any, reject: any) {
+                  // Active-jobs query inside sweepStaleArtwork: no active jobs.
+                  return Promise.resolve({ data: [], error: null }).then(resolve, reject);
+                },
+              };
+              return b;
+            },
+            insert(rows: any[]) {
+              cycleInserts.push({ table, rows });
+              return Promise.resolve({ data: null, error: null });
+            },
+          };
+        }
+
+        // Fallback — should not be reached in this test.
+        return {
+          select() {
+            return {
+              eq()    { return this; },
+              order() { return this; },
+              limit() {
+                return { maybeSingle() { return Promise.resolve({ data: null, error: null }); } };
+              },
+            };
+          },
+        };
+      },
+    };
+
+    // Reset sweep timer so the interval check passes immediately.
+    resetStaleArtworkSweepState();
+    _setTestServiceClient(sc);
+
+    const result = await runGenerationCycle();
+
+    // The cycle found no queued job, so processed is false.
+    assert.equal(result.processed, false, "cycle must report no job processed");
+
+    // The sweep fired during the cycle and inserted one job for the stale
+    // catalog entry discovered in stamp_artwork_versions.
+    assert.equal(
+      cycleInserts.length,
+      1,
+      "the sweep must have inserted a generation job during the cycle",
+    );
+    assert.equal(cycleInserts[0].table, "stamp_generation_queue");
+    assert.equal(cycleInserts[0].rows.length, 1);
+    assert.equal(cycleInserts[0].rows[0].catalog_id, "cat-sweep-from-cycle");
+    assert.equal(cycleInserts[0].rows[0].status, "queued");
+    assert.equal(cycleInserts[0].rows[0].triggered_by_action, "style_version_sweep");
+  });
 });
