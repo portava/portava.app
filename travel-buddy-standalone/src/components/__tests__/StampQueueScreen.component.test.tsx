@@ -1,5 +1,5 @@
 /**
- * StampQueueScreen — pull-to-refresh component tests.
+ * StampQueueScreen — pull-to-refresh and malformed-entry-filter tests.
  *
  * Run with: pnpm test:component
  *
@@ -9,6 +9,9 @@
  * 2. Pull-to-refresh calls load() again and shows the updated data.
  * 3. The refreshing spinner clears once load() resolves (setRefreshing(false)
  *    was called — a missing call would leave the spinner spinning forever).
+ * 4. The runtime guard in load() drops entries that are missing `id` or
+ *    `status` (or have them as non-strings) and calls console.warn once per
+ *    dropped entry, without affecting valid entries in the same response.
  *
  * ## Why these tests exist
  *
@@ -16,6 +19,10 @@
  * would be invisible at runtime until an admin noticed the spinner was stuck
  * or the entry list was never updated.  These tests make both failure modes
  * explicit.
+ *
+ * The malformed-entry filter guard is similarly invisible at runtime — a
+ * future refactor could invert the predicate or silently remove the warn call.
+ * The filter suite pins both the drop behaviour and the warning contract.
  *
  * ## How pull-to-refresh is simulated
  *
@@ -158,5 +165,136 @@ describe('StampQueueScreen — pull-to-refresh', () => {
       const updated = screen.getByTestId('catalog-queue-list');
       expect(updated.props.refreshControl.props.refreshing).toBe(false);
     });
+  });
+});
+
+// ── Malformed-entry filter suite ───────────────────────────────────────────────
+
+/**
+ * Builds an ok response whose `entries` field accepts unknown[] so tests can
+ * inject null, objects without id/status, and entries whose id/status are the
+ * wrong type — all shapes the runtime guard must drop.
+ */
+function catalogOkRaw(entries: unknown[], total?: number) {
+  return {
+    ok: true as const,
+    data: {
+      entries,
+      total: total ?? entries.length,
+      page: 1,
+      statusCounts: {
+        pending_artwork: 0,
+        review_required: 0,
+        approved: 0,
+        rejected: 0,
+        archived: 0,
+        retryable_failed: 0,
+      },
+    },
+  };
+}
+
+const VALID_ENTRY = {
+  id: 'cat-v1',
+  display_name: 'Valid Entry',
+  stamp_type: 'landmark',
+  country_code: 'FR',
+  status: 'approved',
+};
+
+describe('StampQueueScreen — malformed entry filter', () => {
+  let warnSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+    jest.clearAllMocks();
+  });
+
+  it('renders only valid entries when the API response includes malformed ones', async () => {
+    mockGetCatalog.mockResolvedValue(
+      catalogOkRaw([
+        VALID_ENTRY,
+        null,                                                               // null
+        { display_name: 'No ID',     stamp_type: 'x', country_code: 'US', status: 'approved' }, // missing id
+        { id: 'cat-x', display_name: 'No Status', stamp_type: 'x', country_code: 'US' },        // missing status
+        { id: 42,      display_name: 'Numeric ID', stamp_type: 'x', country_code: 'US', status: 'approved' }, // id not string
+      ]),
+    );
+
+    render(<StampQueueScreen />);
+    await waitFor(() => screen.getByText('Valid Entry'));
+
+    expect(screen.getByText('Valid Entry')).toBeTruthy();
+    expect(screen.queryByText('No ID')).toBeNull();
+    expect(screen.queryByText('No Status')).toBeNull();
+    expect(screen.queryByText('Numeric ID')).toBeNull();
+  });
+
+  it('calls console.warn exactly once for each dropped malformed entry', async () => {
+    mockGetCatalog.mockResolvedValue(
+      catalogOkRaw([
+        VALID_ENTRY,
+        null,                                                                     // drop 1
+        { display_name: 'No ID', stamp_type: 'x', country_code: 'US', status: 'approved' }, // drop 2
+        { id: 'cat-x', display_name: 'No Status', stamp_type: 'x', country_code: 'US' },    // drop 3
+      ]),
+    );
+
+    render(<StampQueueScreen />);
+    await waitFor(() => screen.getByText('Valid Entry'));
+
+    expect(warnSpy).toHaveBeenCalledTimes(3);
+    warnSpy.mock.calls.forEach((args) => {
+      expect(args[0]).toBe('[StampQueue] dropped malformed catalog entry:');
+    });
+  });
+
+  it('does not warn at all when every entry in the response is well-formed', async () => {
+    const VALID_B = {
+      id: 'cat-v2',
+      display_name: 'Second Valid',
+      stamp_type: 'landmark',
+      country_code: 'JP',
+      status: 'pending_artwork',
+    };
+
+    mockGetCatalog.mockResolvedValue(catalogOkRaw([VALID_ENTRY, VALID_B]));
+
+    render(<StampQueueScreen />);
+    await waitFor(() => screen.getByText('Valid Entry'));
+    await waitFor(() => screen.getByText('Second Valid'));
+
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('still renders valid entries alongside dropped ones in the same response', async () => {
+    const VALID_B = {
+      id: 'cat-v2',
+      display_name: 'Also Valid',
+      stamp_type: 'landmark',
+      country_code: 'JP',
+      status: 'review_required',
+    };
+
+    mockGetCatalog.mockResolvedValue(
+      catalogOkRaw([
+        VALID_ENTRY,
+        { id: 999, display_name: 'Bad ID Type', stamp_type: 'x', country_code: 'US', status: 'approved' }, // dropped
+        VALID_B,
+      ]),
+    );
+
+    render(<StampQueueScreen />);
+    await waitFor(() => screen.getByText('Valid Entry'));
+
+    expect(screen.getByText('Valid Entry')).toBeTruthy();
+    expect(screen.getByText('Also Valid')).toBeTruthy();
+    expect(screen.queryByText('Bad ID Type')).toBeNull();
+    // Exactly one warning for the one bad entry.
+    expect(warnSpy).toHaveBeenCalledTimes(1);
   });
 });

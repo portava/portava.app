@@ -77,7 +77,7 @@ function versionContains(field: string | undefined, ver: string): boolean {
 // ── 1. Package version pins ───────────────────────────────────────────────────
 
 describe('SDK 54 downgrade — package version pins', () => {
-  const pkg = readPkg('../../package.json');
+  const pkg = readPkg('../../../artifacts/travel-buddy/package.json');
   const deps: Record<string, string> = {
     ...pkg.dependencies,
     ...pkg.devDependencies,
@@ -119,7 +119,7 @@ describe('SDK 54 downgrade — package version pins', () => {
   });
 
   it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-    const standalone = readPkg('../../../../travel-buddy-standalone/package.json');
+    const standalone = readPkg('../../package.json');
     const saDeps: Record<string, string> = {
       ...standalone.dependencies,
       ...standalone.devDependencies,
@@ -157,15 +157,15 @@ describe('SDK 54 downgrade — package version pins', () => {
 //   react-native-view-shot → react-native, react
 
 describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-  // artifacts/travel-buddy/package.json is 2 levels up from src/services.
-  const tb = readPkg('../../package.json');
+  // artifacts/travel-buddy/package.json: 3 levels up from src/services to workspace root, then into artifacts/travel-buddy.
+  const tb = readPkg('../../../artifacts/travel-buddy/package.json');
   const tbAll: Record<string, string> = {
     ...tb.dependencies,
     ...tb.devDependencies,
   };
 
-  // travel-buddy-standalone/package.json is 4 levels up from src/services.
-  const sa = readPkg('../../../../travel-buddy-standalone/package.json');
+  // travel-buddy-standalone/package.json: 2 levels up from src/services to the standalone root.
+  const sa = readPkg('../../package.json');
   const saAll: Record<string, string> = {
     ...sa.dependencies,
     ...sa.devDependencies,
