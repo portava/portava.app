@@ -562,6 +562,45 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
     );
   });
 
+  it("resets the cleanup failure counter to 0 after rent_buddy_profiles UPDATE succeeds following prior failures", async () => {
+    // Drive _consecutiveCleanupFailures up via rent_buddy_profiles UPDATE
+    // failures (Step 3) — using fewer than CLEANUP_ERROR_THRESHOLD (3) calls so
+    // the counter is elevated but the threshold hasn't been crossed yet.
+    _setTestFetch(invalidCredFetch);
+    const DB_ERROR = new Error("rent_buddy db down");
+    const { client: errorClient } = makeFakeDb({
+      deviceToken: TOKEN,
+      legacyToken: null,
+      rentBuddyUpdateError: DB_ERROR,
+    });
+    const errorRouter = new NotificationRouter(errorClient);
+
+    await errorRouter.route(BASE_NOTIF);
+    await errorRouter.route(BASE_NOTIF);
+
+    assert.ok(
+      _getCleanupFailureCount() >= 1,
+      `pre-condition: counter should be elevated after two failing routes, got ${_getCleanupFailureCount()}`,
+    );
+
+    // Now switch to a healthy DB where rent_buddy_profiles UPDATE succeeds.
+    // All three cleanup steps pass, so anyFailure stays false and the router
+    // must reset _consecutiveCleanupFailures to 0.
+    const { client: healthyClient } = makeFakeDb({
+      deviceToken: TOKEN,
+      legacyToken: null,
+    });
+    const healthyRouter = new NotificationRouter(healthyClient);
+
+    await healthyRouter.route(BASE_NOTIF);
+
+    assert.equal(
+      _getCleanupFailureCount(),
+      0,
+      "cleanup failure counter must reset to 0 after rent_buddy_profiles UPDATE succeeds",
+    );
+  });
+
   it("legacy-profile null failure alone also increments the escalation counter", async () => {
     // notification_devices DELETE succeeds (step 1 is healthy),
     // but profiles UPDATE (step 2 — null legacy expo_push_token) always fails.
