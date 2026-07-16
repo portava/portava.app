@@ -644,6 +644,31 @@ describe('extractCrossTreePaths — template-literal and non-literal detection',
     );
   });
 
+  it('traces a bare join() variable chain (import { join } from node:path) and confirms the file exists', () => {
+    const fixture = path.join(FIXTURES_DIR, 'cross-tree-path-join-bare-import-valid.test.ts');
+    const entries = extractCrossTreePaths(fixture);
+
+    // pkgPath is assigned via join(pkgRoot, 'package.json') where
+    // pkgRoot = join(here, '../..') and here = path.dirname(fileURLToPath(…)).
+    // join is imported directly from 'node:path'.
+    // The guard should trace this chain to scripts/package.json.
+    const resolvable = entries.filter((e) => !e.unresolvable);
+    assert.ok(
+      resolvable.length >= 1,
+      'expected at least one resolvable entry in the bare-join-import-valid fixture',
+    );
+
+    const entry = resolvable.find((e) => e.rawArg === 'pkgPath');
+    assert.ok(
+      entry,
+      `expected a resolvable entry for the identifier "pkgPath"; got: ${JSON.stringify(resolvable)}`,
+    );
+    assert.ok(
+      fs.existsSync(entry.resolved),
+      `pkgPath resolved to "${entry.resolved}" which does not exist`,
+    );
+  });
+
   it('does not flag readFileSync with a recognised resolver helper as unresolvable', () => {
     // Inline source with both a valid resolve() call and no plain identifiers.
     const tmpFile = path.join(FIXTURES_DIR, '__tmp-resolver-only.test.ts');
