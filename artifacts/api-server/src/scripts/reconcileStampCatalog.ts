@@ -12,7 +12,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
-import { canonicalLocationKeyFromStrings } from "../lib/stamps/locationKey.js";
+import { canonicalLocationKeyFromStrings, definitionScopedKey } from "../lib/stamps/locationKey.js";
 import { STYLE_VERSION } from "../lib/stamps/artDirection.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.EXPO_PUBLIC_SUPABASE_URL ?? "";
@@ -251,6 +251,152 @@ async function main() {
     }
 
     stats.resolved++;
+  }
+
+  // ── Location-less user_stamps (no country AND no city) ──────────────────
+  // Badges / social / safety / trip achievements have no geography. Map them
+  // to definition-scoped catalog entries ("definition:{slug}") so each
+  // definition shares one catalog entry and one piece of artwork. Rows whose
+  // definition can't be resolved are logged for admin review — never silently
+  // excluded.
+  const { data: noLocRows, error: nlErr } = await sc
+    .from("user_stamps")
+    .select("id, stamp_definition_id, stamp_definitions!stamp_definition_id(slug, name, stamp_type)")
+    .is("catalog_id", null)
+    .is("country", null)
+    .is("city", null);
+
+  if (nlErr) {
+    console.error("[reconcile] Failed to read location-less user_stamps:", nlErr.message);
+  } else if ((noLocRows ?? []).length > 0) {
+    console.log(`[reconcile] Found ${noLocRows!.length} location-less user_stamps rows`);
+
+    // Group rows by definition
+    const byDef = new Map<string, { rows: any[]; def: any }>();
+    for (const row of noLocRows as any[]) {
+      const defId = row.stamp_definition_id as string | null;
+      const def = row.stamp_definitions as any;
+      if (!defId || !def?.slug) {
+        // Unresolvable — log for admin review
+        stats.flagged++;
+        await sc.from("stamp_reconciliation_log").insert({
+          source_table:       "user_stamps",
+          source_id:          row.id,
+          raw_country:        null,
+          raw_city:           null,
+          stamp_type:         def?.stamp_type ?? null,
+          canonical_key:      null,
+          needs_admin_review: true,
+          review_reason:      defId
+            ? "location-less stamp: definition has no slug"
+            : "location-less stamp: missing stamp_definition_id",
+        });
+        continue;
+      }
+      const bucket = byDef.get(defId);
+      if (bucket) bucket.rows.push(row);
+      else byDef.set(defId, { rows: [row], def });
+    }
+
+    for (const [defId, { rows, def }] of byDef) {
+      let canonKey: string;
+      try {
+        canonKey = definitionScopedKey(def.slug);
+      } catch (e: any) {
+        console.warn("[reconcile] Failed to build definition key:", def.slug, e?.message);
+        stats.flagged++;
+        for (const row of rows) {
+          await sc.from("stamp_reconciliation_log").insert({
+            source_table:       "user_stamps",
+            source_id:          row.id,
+            raw_country:        null,
+            raw_city:           null,
+            stamp_type:         def.stamp_type ?? null,
+            canonical_key:      null,
+            needs_admin_review: true,
+            review_reason:      `location-less stamp: bad definition slug (${e?.message ?? "unknown"})`,
+          });
+        }
+        continue;
+      }
+
+      const stampType = def.stamp_type ?? "social";
+
+      // Find or create the definition-scoped catalog entry
+      const { data: existingEntry } = await sc
+        .from("universal_stamp_catalog")
+        .select("id")
+        .eq("canonical_location_key", canonKey)
+        .eq("stamp_type", stampType)
+        .maybeSingle();
+
+      let catalogId: string;
+      if (existingEntry) {
+        catalogId = (existingEntry as any).id;
+      } else {
+        const { data: newEntry, error: insertErr } = await sc
+          .from("universal_stamp_catalog")
+          .insert({
+            canonical_location_key:  canonKey,
+            stamp_type:              stampType,
+            display_name:            def.name ?? def.slug,
+            country:                 "Global",
+            country_code:            "XX",
+            city:                    null,
+            status:                  "pending_artwork",
+            prompt_template_version: STYLE_VERSION,
+          })
+          .select("id")
+          .single();
+
+        if (insertErr) {
+          if ((insertErr as any).code === "23505") {
+            const { data: retry } = await sc
+              .from("universal_stamp_catalog")
+              .select("id")
+              .eq("canonical_location_key", canonKey)
+              .eq("stamp_type", stampType)
+              .maybeSingle();
+            if (!retry) { stats.flagged++; continue; }
+            catalogId = (retry as any).id;
+          } else {
+            console.warn("[reconcile] Definition catalog insert failed:", insertErr.message, def.slug);
+            stats.flagged++;
+            for (const row of rows) {
+              await sc.from("stamp_reconciliation_log").insert({
+                source_table:       "user_stamps",
+                source_id:          row.id,
+                raw_country:        null,
+                raw_city:           null,
+                stamp_type:         stampType,
+                canonical_key:      canonKey,
+                needs_admin_review: true,
+                review_reason:      insertErr.message,
+              });
+            }
+            continue;
+          }
+        } else {
+          catalogId = (newEntry as any).id;
+          newCatalogIds.push(catalogId);
+        }
+      }
+
+      const { error: updErr } = await sc
+        .from("user_stamps")
+        .update({ catalog_id: catalogId })
+        .is("catalog_id", null)
+        .is("country", null)
+        .is("city", null)
+        .eq("stamp_definition_id", defId);
+
+      if (updErr) {
+        console.warn("[reconcile] location-less user_stamps update failed:", updErr.message);
+        stats.flagged++;
+      } else {
+        stats.resolved++;
+      }
+    }
   }
 
   // Enqueue generation jobs for all new catalog entries

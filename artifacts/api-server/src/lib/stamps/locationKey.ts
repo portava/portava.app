@@ -166,6 +166,26 @@ export function canonicalLocationKey(input: LocationKeyInput): string {
 }
 
 /**
+ * Canonical key for a location-less stamp, scoped to its stamp definition.
+ *
+ * Non-location stamps (badges, social/safety/trip achievements awarded with no
+ * country or city) can't be keyed by geography, so we key the catalog entry by
+ * the definition's slug instead:
+ *
+ *   "definition:{normalized-slug}"
+ *
+ * Every ownership row for the same definition shares one catalog entry (and
+ * therefore one piece of artwork), which is exactly the semantics of a badge.
+ */
+export function definitionScopedKey(definitionSlug: string): string {
+  const slug = normalizeSegment(definitionSlug);
+  if (!slug) {
+    throw new Error("definitionScopedKey: definition slug normalises to empty string");
+  }
+  return `definition:${slug}`;
+}
+
+/**
  * Convenience: build key from flat string fields (legacy v1 path compatibility).
  */
 export function canonicalLocationKeyFromStrings(opts: {

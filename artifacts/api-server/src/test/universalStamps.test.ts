@@ -6,7 +6,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { canonicalLocationKey, normalizeSegment } from "../lib/stamps/locationKey.js";
+import { canonicalLocationKey, normalizeSegment, definitionScopedKey } from "../lib/stamps/locationKey.js";
 import { buildStampPrompt, STYLE_VERSION, CANDIDATE_COUNT } from "../lib/stamps/artDirection.js";
 import { PlaceholderProvider } from "../lib/stamps/imageProvider.js";
 
@@ -31,6 +31,26 @@ describe("normalizeSegment", () => {
 
   it("collapses multiple hyphens", () => {
     assert.equal(normalizeSegment("A  B--C"), "a-b-c");
+  });
+});
+
+// ── definitionScopedKey — location-less stamps ────────────────────────────────
+
+describe("definitionScopedKey", () => {
+  it("builds a definition-scoped key from a slug", () => {
+    assert.equal(definitionScopedKey("first_trip_created"), "definition:first-trip-created");
+  });
+
+  it("normalises casing and accents", () => {
+    assert.equal(definitionScopedKey("Safe Réturn"), "definition:safe-return");
+  });
+
+  it("is stable across variants of the same slug", () => {
+    assert.equal(definitionScopedKey("first_trip_created"), definitionScopedKey("First Trip Created"));
+  });
+
+  it("throws on a slug that normalises to nothing", () => {
+    assert.throws(() => definitionScopedKey("***"));
   });
 });
 
