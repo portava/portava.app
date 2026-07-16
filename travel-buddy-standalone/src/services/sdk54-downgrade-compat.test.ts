@@ -745,10 +745,9 @@ describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/
 // version), so any drift between the two lockfiles fails with a clear diff.
 
 describe('Lockfile-resolved metro bundler family versions — metro, metro-resolver, @expo/metro-config', () => {
-  // travel-buddy-standalone/pnpm-lock.yaml is 2 levels up from src/services/.
-  const standaloneLockText = readFileSync(pathResolve(__dir, '../../pnpm-lock.yaml'), 'utf8');
-  // monorepo root pnpm-lock.yaml is 3 levels up from src/services/.
-  const monoLockText = readFileSync(pathResolve(__dir, '../../../pnpm-lock.yaml'), 'utf8');
+  // Reuse the same lockfile texts read in section 7.
+  const standaloneLockText = readFileSync(pathResolve(__dir, '../../../../travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
+  const monoLockText = readFileSync(pathResolve(__dir, '../../../../pnpm-lock.yaml'), 'utf8');
 
   function resolvedVersions(lockText: string, pkgName: string): string[] {
     const escaped = pkgName.replace(/[.*+?^${}()|[\]\\]/g, (c) => '\\' + c).replace(/\//g, (c) => '\\' + c);
