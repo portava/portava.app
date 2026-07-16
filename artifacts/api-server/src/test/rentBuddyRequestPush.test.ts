@@ -242,6 +242,46 @@ describe("notifyEligibleBuddies", () => {
     assert.equal(profiles[0].expo_push_token, null);
   });
 
+  it("enqueues the push on the retry queue when Expo is temporarily down", async () => {
+    // Expo returns a 5xx — sendPushNotification reports retryable: true.
+    _setTestFetch((async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({}),
+    })) as any);
+    try {
+      const svc = makeFakeClient({
+        rentBuddyProfiles: [
+          buddyRow(),
+          buddyRow({ id: "bp-2", user_id: BUDDY2_ID, expo_push_token: null }),
+        ],
+        profiles: [{ id: BUDDY2_ID, expo_push_token: TOKEN2 }],
+      });
+      await notifyEligibleBuddies(svc, REQUEST);
+
+      const rows = svc.__inserted["push_retry_queue"] ?? [];
+      assert.equal(rows.length, 2, "one retry-queue row per buddy");
+
+      const byUser = new Map(rows.map((r: any) => [r.user_id, r]));
+      assert.deepEqual(byUser.get(BUDDY1_ID)?.tokens, [TOKEN1]);
+      assert.deepEqual(byUser.get(BUDDY2_ID)?.tokens, [TOKEN2]);
+      for (const row of rows) {
+        assert.equal(row.status, "queued");
+        assert.equal(row.payload.data.type, "rent_buddy_request");
+        assert.equal(row.payload.data.requestId, "req-1");
+      }
+    } finally {
+      _setTestFetch(fakeFetch());
+    }
+  });
+
+  it("does not enqueue on the retry queue when the send succeeds", async () => {
+    const svc = makeFakeClient({ rentBuddyProfiles: [buddyRow()], profiles: [] });
+    await notifyEligibleBuddies(svc, REQUEST);
+    assert.equal(pushCalls.length, 1);
+    assert.equal((svc.__inserted["push_retry_queue"] ?? []).length, 0);
+  });
+
   it("does not call Expo when no tokens exist anywhere", async () => {
     const svc = makeFakeClient({
       rentBuddyProfiles: [buddyRow({ expo_push_token: null })],
