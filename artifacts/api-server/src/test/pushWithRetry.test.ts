@@ -284,4 +284,31 @@ describe("sendPushWithRetry", () => {
     const result = await sendPushWithRetry(null, { userId: USER1, tokens: [TOKEN1] }, PAYLOAD);
     assert.equal(result.retryable, true);
   });
+
+  // ── 7: Transient 5xx must not touch rent_buddy_profiles ───────────────────
+  /**
+   * When Expo returns a transient 5xx (retryable: true) during sendPushWithRetry,
+   * the call enqueues the job for later retry.  No token is permanently dead, so
+   * rent_buddy_profiles must NOT be updated — mirroring the guard confirmed for
+   * PushRetryQueue.processQueue() in pushRetryQueue.test.ts section 14.
+   */
+  it("does not null rent_buddy_profiles.expo_push_token on a transient 5xx", async () => {
+    _setTestFetch(fetch503());
+    const db = makeFakeDb();
+    const result = await sendPushWithRetry(
+      db,
+      [{ userId: USER1, tokens: [TOKEN1] }, { userId: USER2, tokens: [TOKEN2] }],
+      PAYLOAD,
+    );
+
+    assert.equal(result.retryable, true, "5xx must be reported as retryable");
+
+    const rentUpdate = db.__updates.find(
+      (u: any) => u.table === "rent_buddy_profiles" && u.values.expo_push_token === null,
+    );
+    assert.ok(
+      !rentUpdate,
+      "transient 5xx must NOT null rent_buddy_profiles.expo_push_token",
+    );
+  });
 });
