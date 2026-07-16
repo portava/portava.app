@@ -741,6 +741,53 @@ describe("runGenerationCycle — orphan cleanup on mid-batch failure", () => {
     assert.equal(paths[0], storageCalls[0].path, "deleted path must match the orphaned upload path");
   });
 
+  it("deletes both uploaded candidates when the third download fails after two uploads", async () => {
+    const { sc, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage();
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    // First two downloads succeed (and their uploads complete); third returns 404.
+    installFetch(failOnNthFetch(3));
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+
+    // Two candidates were downloaded and uploaded before the third download failed.
+    assert.equal(storageCalls.length, 2, "two uploads should have succeeded before the third download failed");
+
+    // No DB rows inserted — the batch is abandoned on failure.
+    assert.equal(inserts.length, 0, "must not insert any version rows after a mid-batch download failure");
+
+    // Cleanup: both uploaded paths must be deleted in a single remove() call.
+    assert.equal(deleteCalls.length, 1, "must issue exactly one storage delete call for cleanup");
+    const { paths } = deleteCalls[0];
+    assert.equal(paths.length, 2, "both previously-uploaded paths must be deleted");
+
+    // Both deleted paths must follow the exact catalog/<catalogId>/<versionId>.png template.
+    for (const p of paths) {
+      assert.ok(
+        p.startsWith("catalog/cat-1/"),
+        `deleted path must start with "catalog/cat-1/", got: ${p}`,
+      );
+      assert.ok(
+        p.endsWith(".png"),
+        `deleted path must end with ".png", got: ${p}`,
+      );
+    }
+
+    // Each deleted path must match the corresponding storageCalls entry.
+    assert.equal(
+      paths[0],
+      storageCalls[0].path,
+      `first deleted path must match the first uploaded path, got: ${paths[0]} vs ${storageCalls[0].path}`,
+    );
+    assert.equal(
+      paths[1],
+      storageCalls[1].path,
+      `second deleted path must match the second uploaded path, got: ${paths[1]} vs ${storageCalls[1].path}`,
+    );
+  });
+
   it("does not issue a delete when the first download fails before any upload", async () => {
     const { sc, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage();
     _setTestServiceClient(sc);
