@@ -58,7 +58,7 @@ async function main() {
   const { data: userStamps, error: usErr } = await sc
     .from("user_stamps")
     .select("stamp_definition_id, country, city, stamp_definitions!stamp_definition_id(stamp_type)")
-    .not("country", "is", null);
+    .or("country.not.is.null,city.not.is.null");
 
   if (usErr) { console.error("[reconcile] Failed to read user_stamps:", usErr.message); process.exit(1); }
 
@@ -85,7 +85,7 @@ async function main() {
   const { data: passportStamps, error: psErr } = await sc
     .from("passport_stamps")
     .select("stamp_type, country, city")
-    .not("country", "is", null);
+    .or("country.not.is.null,city.not.is.null");
 
   if (psErr) {
     console.warn("[reconcile] passport_stamps read failed (may not exist):", psErr.message);
