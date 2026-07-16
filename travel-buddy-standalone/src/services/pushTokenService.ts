@@ -49,11 +49,8 @@ export function getDeviceTimezone(): string | null {
 async function resolveAccessToken(): Promise<string | null> {
   if (_testTokenProvider) return _testTokenProvider();
   // Dynamic import keeps this module loadable in Node.js.
-  const { supabase } = await import('../lib/supabase');
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session =
-    refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  return session?.access_token ?? null;
+  const { freshToken } = await import('./apiToken.ts');
+  return freshToken();
 }
 
 /**

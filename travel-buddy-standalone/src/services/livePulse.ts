@@ -4,19 +4,9 @@
  * Session-scoped dismiss list is stored in module-level memory (not persisted
  * to DB for beta) so dismissed cards don't reappear within the same session.
  */
-import { supabase } from '../lib/supabase.ts';
+import { freshToken } from './apiToken.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-
-async function freshToken(): Promise<string | null> {
-  try {
-    const { data: refreshed } = await supabase.auth.refreshSession();
-    const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-    return session?.access_token ?? null;
-  } catch {
-    return null;
-  }
-}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
