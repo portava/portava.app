@@ -119,7 +119,7 @@ describe('SDK 54 downgrade — package version pins', () => {
   });
 
   it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-    const standalone = readPkg('../../package.json');
+    const standalone = readPkg('../../../../travel-buddy-standalone/package.json');
     const saDeps: Record<string, string> = {
       ...standalone.dependencies,
       ...standalone.devDependencies,
@@ -157,16 +157,15 @@ describe('SDK 54 downgrade — package version pins', () => {
 //   react-native-view-shot → react-native, react
 
 describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-  // artifacts/travel-buddy/package.json is 3 levels up from src/services/ in
-  // travel-buddy-standalone (standalone/src/services → standalone → workspace root → artifacts/travel-buddy).
-  const tb = readPkg('../../../artifacts/travel-buddy/package.json');
+  // artifacts/travel-buddy/package.json is 2 levels up from src/services.
+  const tb = readPkg('../../package.json');
   const tbAll: Record<string, string> = {
     ...tb.dependencies,
     ...tb.devDependencies,
   };
 
-  // travel-buddy-standalone/package.json is 2 levels up from src/services.
-  const sa = readPkg('../../package.json');
+  // travel-buddy-standalone/package.json is 4 levels up from src/services.
+  const sa = readPkg('../../../../travel-buddy-standalone/package.json');
   const saAll: Record<string, string> = {
     ...sa.dependencies,
     ...sa.devDependencies,
@@ -233,16 +232,17 @@ describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and 
 // version strings so the divergence is immediately obvious.
 
 describe('SDK 54 — other explicitly pinned Expo packages sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-  // artifacts/travel-buddy/package.json is 3 levels up from src/services/ in
-  // travel-buddy-standalone (standalone/src/services → standalone → workspace root → artifacts/travel-buddy).
-  const tb = readPkg('../../../artifacts/travel-buddy/package.json');
+  // artifacts/travel-buddy/package.json is 2 levels up from src/services.
+  const tb = readPkg('../../package.json');
   const tbAll: Record<string, string> = {
     ...tb.dependencies,
     ...tb.devDependencies,
   };
 
-  // travel-buddy-standalone/package.json is 2 levels up from src/services.
-  const sa = readPkg('../../package.json');
+  // travel-buddy-standalone/package.json is 4 levels up from src/services in
+  // the artifacts tree (artifacts/travel-buddy/src/services → workspace root →
+  // travel-buddy-standalone).
+  const sa = readPkg('../../../../travel-buddy-standalone/package.json');
   const saAll: Record<string, string> = {
     ...sa.dependencies,
     ...sa.devDependencies,
@@ -657,10 +657,10 @@ describe('expo-clipboard ~8.0.8 — setStringAsync call contract (mirrors GroupC
 // exactly one version and that version is identical in both trees.
 
 describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/config-plugins, expo-modules-core, and metro bundler family', () => {
-  // travel-buddy-standalone/pnpm-lock.yaml is 2 levels up from src/services/ in travel-buddy-standalone.
-  const standaloneLockText = readFileSync(pathResolve(__dir, '../../pnpm-lock.yaml'), 'utf8');
-  // monorepo root pnpm-lock.yaml is 3 levels up from src/services/ in travel-buddy-standalone.
-  const monoLockText = readFileSync(pathResolve(__dir, '../../../pnpm-lock.yaml'), 'utf8');
+  // travel-buddy-standalone/pnpm-lock.yaml is 4 levels up from src/services/ in artifacts/travel-buddy/
+  const standaloneLockText = readFileSync(pathResolve(__dir, '../../../../travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
+  // monorepo root pnpm-lock.yaml is also 4 levels up from src/services/ in artifacts/travel-buddy/
+  const monoLockText = readFileSync(pathResolve(__dir, '../../../../pnpm-lock.yaml'), 'utf8');
 
   /**
    * Scan a lockfile text for all resolved base versions of a given package.
@@ -746,8 +746,8 @@ describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/
 
 describe('Lockfile-resolved metro bundler family versions — metro, metro-resolver, @expo/metro-config', () => {
   // Reuse the same lockfile texts read in section 7.
-  const standaloneLockText = readFileSync(pathResolve(__dir, '../../pnpm-lock.yaml'), 'utf8');
-  const monoLockText = readFileSync(pathResolve(__dir, '../../../pnpm-lock.yaml'), 'utf8');
+  const standaloneLockText = readFileSync(pathResolve(__dir, '../../../../travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
+  const monoLockText = readFileSync(pathResolve(__dir, '../../../../pnpm-lock.yaml'), 'utf8');
 
   function resolvedVersions(lockText: string, pkgName: string): string[] {
     const escaped = pkgName.replace(/[.*+?^${}()|[\]\\]/g, (c) => '\\' + c).replace(/\//g, (c) => '\\' + c);
