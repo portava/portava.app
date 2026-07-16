@@ -3170,6 +3170,19 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
       "no_show_pending",
       "booking status must remain no_show_pending when the status update DB call errors",
     );
+
+    // The no_show_escalated event row must NOT be written when the booking was
+    // never actually promoted to disputed — the `continue` after updateError
+    // must skip the buddy_booking_events insert.
+    const escalationEvents = ((state as any).bookingEvents ?? []).filter(
+      (e: any) =>
+        e.booking_id === "bk-ns-update-err" && e.event === "no_show_escalated",
+    );
+    assert.equal(
+      escalationEvents.length,
+      0,
+      "no no_show_escalated event must be written when the booking status update DB call errors",
+    );
   });
 
   it("expired-request count stays at zero when the status update DB call fails", async () => {
