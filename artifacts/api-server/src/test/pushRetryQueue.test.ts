@@ -3323,5 +3323,99 @@ describe("PushRetryQueue.processQueue() — clearDeadTokens throws during partia
       "delivery_attempt error_message must mirror last_error ('DeviceNotRegistered × 1')",
     );
   });
+
+  it("final-attempt all-dead-token still marks 'failed' when clearDeadTokens throws — not re-queued or silently lost", async () => {
+    // attempt_count=2, max_attempts=3 → this run is the 3rd and final attempt.
+    // Both tokens return DeviceNotRegistered (result.sent === 0, result.retryable === false).
+    // clearDeadTokens is configured to throw to confirm the inner isolated try/catch swallows
+    // the error and the row is still finalised as 'failed' — not re-queued, not silently dropped.
+    //
+    // Expected outcome:
+    //   - push_retry_queue row → 'failed' (max_attempts exhausted; cleanup throw must not re-queue)
+    //   - attempt_count = 3 (the final attempt number)
+    //   - Must NOT be re-queued (no status='queued' update targeting QUEUE_ROW_ID)
+    //   - notification_delivery_attempts → 'failed' with error_message = "DeviceNotRegistered × 2"
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [DEAD_TOKEN, PUSH_TOKEN],   // both will produce DeviceNotRegistered
+      payload:             BASE_PAYLOAD,
+      attempt_count:       2,        // final attempt: newAttemptCount will be 3 = max_attempts
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    // Both tokens return DeviceNotRegistered → result.sent === 0, result.retryable === false
+    _setTestFetch(async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              status:  "error",
+              message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+              details: { error: "DeviceNotRegistered" },
+            },
+            {
+              status:  "error",
+              message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+              details: { error: "DeviceNotRegistered" },
+            },
+          ],
+        }),
+        { status: 200 },
+      ) as unknown as Response,
+    );
+
+    // clearDeadTokens throws — must be swallowed by the inner isolated try/catch,
+    // NOT surface into the outer catch that triggers re-queue / finalise-as-failed with String(err)
+    _setTestClearDeadTokens(async (_db, _tokens) => {
+      throw new Error("transient DB error during dead-token cleanup — final all-dead attempt");
+    });
+
+    await queue.processQueue();
+
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+
+    // Must be finalised as 'failed' — all attempts exhausted; cleanup throw must not change this
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(
+      failedUpdate,
+      "push_retry_queue must be finalised as 'failed' on the final all-dead-token attempt even when clearDeadTokens throws",
+    );
+    assert.equal(failedUpdate.filters.id, QUEUE_ROW_ID, "failed update must target the correct queue row");
+    assert.equal(failedUpdate.patch.attempt_count, 3,   "attempt_count must be 3 (the final attempt number)");
+    assert.equal(
+      failedUpdate.patch.last_error,
+      "DeviceNotRegistered \u00d7 2",
+      "last_error must name the dead-token error code and count for both tokens",
+    );
+
+    // Must NOT be re-queued — cleanup throw must stay inside the inner catch
+    const requeued = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(
+      !requeued,
+      "must NOT re-queue the row when all attempts are exhausted — even when clearDeadTokens throws",
+    );
+
+    // Delivery attempt must also be finalised as 'failed' with the dead-token error
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated on final all-dead-token failure");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status, "failed",   "delivery_attempt status must be 'failed'");
+    assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+    assert.equal(
+      ndaUpdate.patch.error_message,
+      "DeviceNotRegistered \u00d7 2",
+      "delivery_attempt error_message must mirror last_error ('DeviceNotRegistered × 2')",
+    );
+  });
 });
 
