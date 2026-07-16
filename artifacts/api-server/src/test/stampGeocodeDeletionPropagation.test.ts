@@ -898,7 +898,7 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     // DELETE sees deleted_at = null (the PUT revived it between SELECT and DELETE),
     // so the .not("deleted_at","is",null) guard matches zero rows — the delete is a no-op.
     //
-    // After the sweep, readDbCache (maybeSingle) returns the revived live row.
+    // After the sweep, readDbCache (maybySingle) returns the revived live row.
     let sweepQueryCount = 0;
     let deletedKeys: string[] = [];
     let revivedInDb = false; // set to true once the "PUT" fires during the DELETE phase
@@ -921,6 +921,18 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
           in(_col: string, keys: string[]) {
             inKeys = keys;
             return chain;
+          },
+          async maybySingle() {
+            // readDbCache call — after the sweep the row is live (deleted_at null).
+            return {
+              data: {
+                country: "Norway",
+                country_code: "NO",
+                corrected_at: null,
+                deleted_at: null, // row is live after PUT revival
+              },
+              error: null,
+            };
           },
           async maybeSingle() {
             // readDbCache call — after the sweep the row is live (deleted_at null).
@@ -977,6 +989,149 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "geocoder returns the revived country (NO) from the DB cache after sweep");
     assert.equal(nominatimCalls, 0,
       "Nominatim must NOT be called — the revived DB row is served directly by readDbCache");
+  });
+
+  it("sweep hard-deletes tombstoned rows — a post-sweep query for deleted_at rows returns empty", async () => {
+    // Happy-path confirmation: after the sweep runs against a DB that contains
+    // tombstoned rows, those rows must be absent from city_country_geocode_cache.
+    //
+    // This uses a stateful fake DB client whose in-memory row store is actually
+    // mutated by the hard-delete call.  A follow-up query for tombstoned rows then
+    // returns empty — directly proving that the rows are gone, not merely that a
+    // delete was scheduled or logged.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "no", country: "Norway" } }],
+      };
+    });
+
+    // Stateful in-memory DB: start with two tombstoned rows.
+    const tombstoneStore = new Map<string, { city_key: string; deleted_at: string }>([
+      ["bergen", { city_key: "bergen", deleted_at: new Date(T0 - 1_000).toISOString() }],
+      ["trondheim", { city_key: "trondheim", deleted_at: new Date(T0 - 2_000).toISOString() }],
+    ]);
+
+    // Track which keys were passed to the hard-delete.
+    const hardDeletedKeys: string[] = [];
+
+    let sweepQueryCount = 0;
+    const statefulSweepClient: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        let deletedInKeys: string[] = [];
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          delete() { isDelete = true; return chain; },
+          in(_col: string, keys: string[]) {
+            deletedInKeys = keys;
+            return chain;
+          },
+          then(resolve: (v: any) => void) {
+            if (isDelete) {
+              // Perform the actual stateful deletion: remove matching tombstoned rows.
+              for (const key of deletedInKeys) {
+                const row = tombstoneStore.get(key);
+                if (row && row.deleted_at !== null) {
+                  tombstoneStore.delete(key);
+                  hardDeletedKeys.push(key);
+                }
+              }
+              resolve({ error: null });
+              return;
+            }
+            const q = sweepQueryCount++;
+            if (q === 0) {
+              // Pass 1 — corrected_at: nothing to evict.
+              resolve({ data: [], error: null });
+            } else {
+              // Pass 2 — deleted_at: return the current tombstoned rows.
+              resolve({ data: Array.from(tombstoneStore.values()), error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    // Seed in-memory cache for both cities.
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({ country: "Norway", country_code: "NO", corrected_at: null, deleted_at: null }),
+    );
+    await geocodeCityCountry("Bergen");
+    await geocodeCityCountry("Trondheim");
+    assert.equal(nominatimCalls, 0, "pre-condition: both seeded from DB, no Nominatim calls");
+
+    // Run the sweep against the stateful DB.
+    _setGeocodeDbClientForTests(statefulSweepClient);
+    await _runCorrectionSweepForTests();
+
+    // ── Assertion 1: tombstoned rows are gone from the stateful DB ────────────
+    assert.equal(
+      tombstoneStore.size,
+      0,
+      "tombstone store must be empty after the sweep — both rows were hard-deleted",
+    );
+    assert.deepEqual(
+      [...hardDeletedKeys].sort(),
+      ["bergen", "trondheim"],
+      "sweep hard-deleted both tombstoned city_keys",
+    );
+
+    // ── Assertion 2: a follow-up sweep query finds no tombstoned rows ─────────
+    // Reset the sweep counter and run a second sweep against the now-empty store.
+    // The second pass must return zero rows, confirming the first sweep cleaned up.
+    sweepQueryCount = 0;
+    let secondSweepTombstoneRows: unknown[] | null = null;
+    const verificationClient: SupabaseClient = {
+      from(_table: string) {
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          then(resolve: (v: any) => void) {
+            const q = sweepQueryCount++;
+            if (q === 0) {
+              resolve({ data: [], error: null }); // pass 1
+            } else {
+              // Pass 2: return whatever the tombstoneStore now holds.
+              secondSweepTombstoneRows = Array.from(tombstoneStore.values());
+              resolve({ data: secondSweepTombstoneRows, error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(verificationClient);
+    await _runCorrectionSweepForTests();
+
+    assert.equal(
+      secondSweepTombstoneRows?.length ?? -1,
+      0,
+      "a follow-up sweep query finds zero tombstoned rows — rows are gone from the DB after the first sweep",
+    );
+
+    // ── Assertion 3: in-memory entries were also evicted ─────────────────────
+    // Switch to a null DB so any cache miss would fall through to Nominatim.
+    _setGeocodeDbClientForTests(makeFixedDbClient(null));
+    await geocodeCityCountry("Bergen");
+    await geocodeCityCountry("Trondheim");
+    assert.equal(
+      nominatimCalls,
+      2,
+      "both in-memory entries were evicted by the sweep — Nominatim re-resolved each city",
+    );
   });
 
   it("sweep skips the tombstone cleanup delete when the deleted_at query returns a DB error", async () => {
