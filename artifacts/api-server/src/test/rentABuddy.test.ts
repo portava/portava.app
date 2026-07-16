@@ -2670,6 +2670,48 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     );
   });
 
+  it("falls back to traveler_id when no no_show_reported event row exists", async () => {
+    // Grace window expired 2 hours ago, but NO no_show_reported event was seeded.
+    // The sweeper must still promote the booking to disputed and set raised_by = traveler_id.
+    const PAST = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const TRAVELER = "traveler-fallback-uid";
+    const client = makeClient(TRAVELER);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+
+    state = {
+      bookings: {
+        "bk-ns-no-event": {
+          id: "bk-ns-no-event",
+          traveler_id: TRAVELER,
+          buddy_id: BUDDY_PROF,
+          status: "no_show_pending",
+          no_show_grace_expires_at: PAST,
+        },
+      },
+    };
+    // Deliberately omit any no_show_reported event rows.
+    (state as any).bookingEvents = [];
+
+    const r = await reqSweep();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.noShowEscalated, 1, JSON.stringify(r.body));
+    assert.equal(
+      state.bookings!["bk-ns-no-event"].status,
+      "disputed",
+      "booking past grace expiry must be promoted to disputed even with no event row",
+    );
+    const dispute = (state.disputes ?? []).find(
+      (d: any) => d.booking_id === "bk-ns-no-event" && d.reason === "no_show",
+    );
+    assert.ok(dispute, "a no_show dispute row must be created");
+    assert.equal(
+      dispute.raised_by,
+      TRAVELER,
+      "dispute raised_by must fall back to traveler_id when no_show_reported event is absent",
+    );
+  });
+
   it("leaves a no_show_pending booking whose grace window has not yet expired untouched", async () => {
     // Grace window expires 1 hour from now — sweep must not touch this booking.
     const FUTURE = new Date(Date.now() + 60 * 60 * 1000).toISOString();
