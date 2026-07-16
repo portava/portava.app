@@ -620,6 +620,84 @@ describe("background correction sweep", () => {
     assert.equal(banffResult!.countryCode, "CA");
   });
 
+  it("three-city mixed batch: past correction kept, null skipped, future correction evicted", async () => {
+    // Seed all three cities into the in-memory cache.
+    _setGeocodeFetchForTests(fakeNominatim({
+      "kyoto": { country_code: "jp", country: "Japan" },
+      "paris": { country_code: "fr", country: "France" },
+      "banff": { country_code: "ca", country: "Canada" },
+    }));
+    await geocodeCityCountry("Kyoto");
+    await geocodeCityCountry("Paris");
+    await geocodeCityCountry("Banff");
+    assert.equal(fetchCalls.length, 3, "all three cities should have been geocoded initially");
+
+    // DB sweep returns a three-entry mixed batch:
+    //   - kyoto: corrected_at null          → must NOT be evicted
+    //   - paris: corrected_at well in the past (pre-dates writtenAt) → must NOT be evicted
+    //   - banff: corrected_at in the future (post-dates writtenAt)   → must be evicted
+    const pastCorrectedAt   = new Date(Date.now() - 60_000).toISOString(); // 60 s ago — before writtenAt
+    const futureCorrectedAt = new Date(Date.now() +  1_000).toISOString(); // 1 s ahead — after writtenAt
+    const threeCityClient = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache");
+        let _gteColumn = "";
+        const chain: any = {
+          select() { return chain; },
+          gte(col: string) { _gteColumn = col; return chain; },
+          not()    { return chain; },
+          in()     { return chain; },
+          delete() { return chain; },
+          then(resolve: (v: any) => void) {
+            if (_gteColumn === "corrected_at") {
+              // Pass 1: all three entries in the batch.
+              resolve({
+                data: [
+                  { city_key: "kyoto", corrected_at: null },
+                  { city_key: "paris", corrected_at: pastCorrectedAt },
+                  { city_key: "banff", corrected_at: futureCorrectedAt },
+                ],
+                error: null,
+              });
+            } else {
+              // Pass 2 (tombstone sweep): no tombstoned rows.
+              resolve({ data: [], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(threeCityClient);
+
+    await _runCorrectionSweepForTests();
+
+    // After the sweep: only banff should have been evicted.
+    fetchCalls = [];
+    _setGeocodeFetchForTests(fakeNominatim({
+      "banff": { country_code: "ca", country: "Canada" },
+    }));
+    _setGeocodeDbClientForTests(threeCityClient);
+
+    // kyoto (null corrected_at) — must still be cached, no Nominatim call.
+    const kyotoResult = await geocodeCityCountry("Kyoto");
+    assert.equal(fetchCalls.length, 0, "kyoto must still be cached — null corrected_at must not evict");
+    assert.ok(kyotoResult !== null, "kyoto cached result must be returned");
+    assert.equal(kyotoResult!.countryCode, "JP");
+
+    // paris (past corrected_at) — must still be cached, still no Nominatim call.
+    const parisResult = await geocodeCityCountry("Paris");
+    assert.equal(fetchCalls.length, 0, "paris must still be cached — past corrected_at must not evict");
+    assert.ok(parisResult !== null, "paris cached result must be returned");
+    assert.equal(parisResult!.countryCode, "FR");
+
+    // banff (future corrected_at) — must have been evicted; one new Nominatim fetch.
+    const banffResult = await geocodeCityCountry("Banff");
+    assert.equal(fetchCalls.length, 1, "banff must have been evicted and re-geocoded");
+    assert.ok(banffResult !== null, "banff result must be returned after re-geocode");
+    assert.equal(banffResult!.countryCode, "CA");
+  });
+
   it("does not evict an in-memory entry when the DB row has corrected_at: null (per-request probe path)", async () => {
     // Seed in-memory cache with a valid entry.
     _setGeocodeFetchForTests(fakeNominatim({ "oslo": { country_code: "no", country: "Norway" } }));
