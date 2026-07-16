@@ -12,6 +12,7 @@ import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import { GlobalCalendarPicker } from '../../../src/components/selectors/GlobalCalendarPicker';
 import { fromISODate, formatDisplayDate } from '../../../src/lib/dateTime/formatters';
+import { weekdayKeyFromISODate } from '../../../src/lib/weekdayFromISODate';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const WEEKS_AHEAD = 8;
@@ -69,9 +70,7 @@ export default function BuddyAvailabilityScreen() {
         // `new Date('YYYY-MM-DD')` parses as UTC midnight, so in negative-UTC
         // timezones toLocaleDateString shifted every row back one weekday and
         // the reloaded grid didn't match what was saved.
-        const [yy, mm, dd] = a.date.slice(0, 10).split('-').map(Number);
-        const local = new Date(yy, (mm ?? 1) - 1, dd ?? 1);
-        const dayKey = DAYS[(local.getDay() + 6) % 7];
+        const dayKey = weekdayKeyFromISODate(a.date);
         if (!dayKey) return;
         a.timeSlots.forEach((slot) => {
           if (!g[dayKey]) g[dayKey] = {};
