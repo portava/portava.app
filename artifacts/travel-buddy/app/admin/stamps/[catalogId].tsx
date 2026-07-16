@@ -169,6 +169,12 @@ export default function StampCatalogDetail() {
         {approved && approved.public_url ? (
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Active Artwork</Text>
+            {(approved.prompt_template_version == null ||
+              approved.prompt_template_version !== CURRENT_STYLE_VERSION) ? (
+              <View style={styles.approvedStaleBanner} testID="approved-stale-banner">
+                <Text style={styles.approvedStaleText}>⚠ Stale style — regenerate recommended</Text>
+              </View>
+            ) : null}
             <Image source={{ uri: approved.public_url }} style={styles.artworkLarge} resizeMode="contain" />
             <Text style={styles.artworkMeta}>Provider: {approved.provider ?? 'admin_upload'}</Text>
           </View>
@@ -305,6 +311,8 @@ const styles = StyleSheet.create({
   actionRegenerate:  { backgroundColor: '#6B7280' },
   actionReject:      { backgroundColor: '#EF4444' },
   actionBtnText:     { color: color.onInk, fontSize: 13, fontWeight: '700' },
+  approvedStaleBanner: { backgroundColor: '#FEF3C7', borderRadius: radius.sm, padding: space.sm, marginBottom: space.sm, borderWidth: 1, borderColor: '#FDE68A' },
+  approvedStaleText:   { ...t.small, color: '#92400E', fontWeight: '600' },
   artworkLarge:      { width: '100%', height: 200, borderRadius: radius.sm, marginBottom: space.xs },
   artworkMeta:       { ...t.small, color: color.mute },
   hint:              { ...t.small, color: color.mute, marginBottom: space.sm },
