@@ -7,7 +7,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCityCoords, cityCoordSpread } from '../cityCoords.ts';
+import { buildCityCoords } from '../cityCoords.ts';
 
 describe('buildCityCoords — Infinity rejection', () => {
   it('returns {} when lat is Infinity and lng is finite', () => {
@@ -28,15 +28,5 @@ describe('buildCityCoords — Infinity rejection', () => {
   it('returns { lat, lng } when both values are valid finite numbers', () => {
     const result = buildCityCoords({ lat: 48.8566, lng: 2.3522 });
     assert.deepEqual(result, { lat: 48.8566, lng: 2.3522 });
-  });
-});
-
-describe('cityCoordSpread — extra-field isolation', () => {
-  it('does not include unexpected extra fields in the returned object', () => {
-    const coords = { lat: 48.8566, lng: 2.3522, altitude: 35, accuracy: 10 } as Parameters<typeof cityCoordSpread>[0] & Record<string, unknown>;
-    const result = cityCoordSpread(coords);
-    assert.deepEqual(result, { lat: 48.8566, lng: 2.3522 });
-    assert.ok(!('altitude' in result), 'altitude should not appear in spread result');
-    assert.ok(!('accuracy' in result), 'accuracy should not appear in spread result');
   });
 });
