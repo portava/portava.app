@@ -3938,4 +3938,57 @@ describe("_formatDeadTokenErrors() — last_error string format stability", () =
       "must not use the letter x as separator",
     );
   });
+
+  it("formats three distinct codes correctly — reduce accumulator handles ≥3 keys", () => {
+    // This guards the three-code path through the reduce block.  The
+    // existing tests stop at two distinct codes; a bug that only fires
+    // when the accumulator holds three or more keys (e.g. a short-circuit
+    // in Object.entries ordering or an off-by-one in the join) would go
+    // undetected without this case.
+    //
+    // "MessageRateExceeded" is a plausible third dead-token error code that
+    // could be added to the filter in the future.  The formatter itself is
+    // code-agnostic — it accepts any { error: string }[] — so the test is
+    // valid regardless of whether the code is currently in the filter.
+    //
+    // This is the same formatter that produces both last_error on the
+    // push_retry_queue row and error_message on the delivery_attempt row
+    // when processItem() exhausts all attempts on the final attempt
+    // (attempt_count=2 → newAttemptCount=3 = max_attempts).
+    const result = _formatDeadTokenErrors([
+      { error: "DeviceNotRegistered" },
+      { error: "InvalidCredentials" },
+      { error: "MessageRateExceeded" },
+    ]);
+
+    // All three codes must appear in the output, each with count 1
+    assert.ok(
+      result.includes("DeviceNotRegistered \u00d7 1"),
+      `expected "DeviceNotRegistered × 1" in "${result}"`,
+    );
+    assert.ok(
+      result.includes("InvalidCredentials \u00d7 1"),
+      `expected "InvalidCredentials × 1" in "${result}"`,
+    );
+    assert.ok(
+      result.includes("MessageRateExceeded \u00d7 1"),
+      `expected "MessageRateExceeded × 1" in "${result}"`,
+    );
+
+    // The three segments must be joined with ", " (two chars: comma + space)
+    const segments = result.split(", ");
+    assert.equal(
+      segments.length,
+      3,
+      `expected 3 comma-separated segments in "${result}"`,
+    );
+
+    // Each segment must be "<code> × <count>" — no extra whitespace or chars
+    for (const seg of segments) {
+      assert.ok(
+        /^.+ \u00d7 \d+$/.test(seg),
+        `segment "${seg}" must match "<code> × <count>"`,
+      );
+    }
+  });
 });
