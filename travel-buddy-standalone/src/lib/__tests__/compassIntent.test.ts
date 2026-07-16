@@ -2,7 +2,7 @@
  * Unit tests for the compassIntent parser.
  * Uses Node.js built-in test runner (no external deps needed).
  */
-import { parseSearchIntent, intentSummary } from '../compassIntent';
+import { parseSearchIntent, intentSummary } from '../compassIntent.ts';
 
 // ── Minimal test harness (node:test-compatible assert style) ──────────────────
 
