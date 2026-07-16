@@ -374,3 +374,129 @@ describe('runFillHomeFromGps — maxLoadingMs timeout guard', () => {
     );
   });
 });
+
+// ── GPS / geocode error → city-picker alert path ──────────────────────────────
+//
+// Regression guard for task #185: when getCurrentGps() *throws* or
+// reverseGeocodeDetailed throws, the onboarding screen wires
+// onGpsOrGeocodeFailed to show an Alert with a "Choose from list" button.
+// These tests confirm the machine calls that hook on the error path and does
+// NOT call it on the internal timeout (which is a silent abort).
+
+describe('runFillHomeFromGps — getCurrentGps throws → onGpsOrGeocodeFailed', () => {
+  it('calls onGpsOrGeocodeFailed when getCurrentGps rejects', async () => {
+    const spy = makeSetterSpy();
+    let failedCount = 0;
+
+    await assert.doesNotReject(async () => {
+      await runFillHomeFromGps(
+        {
+          getCurrentGps: () => Promise.reject(new Error('gps_hardware_error')),
+          reverseGeocodeDetailed: geocode({ city: 'ShouldNotReach', country: 'ShouldNotReach' }),
+          onPermissionDenied: neverCalled(),
+          onGpsOrGeocodeFailed: () => { failedCount++; },
+        },
+        spy.setters,
+      );
+    });
+
+    assert.equal(failedCount, 1, 'onGpsOrGeocodeFailed must be called exactly once');
+    assert.equal(spy.cities.length,    0, 'setHomeCity must not be called on the error path');
+    assert.equal(spy.countries.length, 0, 'setHomeCountry must not be called on the error path');
+  });
+
+  it('clears loading after getCurrentGps throws', async () => {
+    const spy = makeSetterSpy();
+
+    await runFillHomeFromGps(
+      {
+        getCurrentGps: () => Promise.reject(new Error('gps_error')),
+        reverseGeocodeDetailed: geocode({ city: null, country: null }),
+        onPermissionDenied: neverCalled(),
+        onGpsOrGeocodeFailed: () => {},
+      },
+      spy.setters,
+    );
+
+    assert.equal(spy.loadingStates[0], true,  'first loading state must be true');
+    assert.equal(spy.loadingStates[spy.loadingStates.length - 1], false, 'last loading state must be false');
+  });
+});
+
+describe('runFillHomeFromGps — reverseGeocodeDetailed throws → onGpsOrGeocodeFailed', () => {
+  it('calls onGpsOrGeocodeFailed when reverseGeocodeDetailed rejects', async () => {
+    const spy = makeSetterSpy();
+    let failedCount = 0;
+
+    await assert.doesNotReject(async () => {
+      await runFillHomeFromGps(
+        {
+          getCurrentGps: grantedGps(),
+          reverseGeocodeDetailed: () => Promise.reject(new Error('network_error')),
+          onPermissionDenied: neverCalled(),
+          onGpsOrGeocodeFailed: () => { failedCount++; },
+        },
+        spy.setters,
+      );
+    });
+
+    assert.equal(failedCount, 1, 'onGpsOrGeocodeFailed must be called exactly once on geocode failure');
+    assert.equal(spy.cities.length,    0, 'setHomeCity must not be called when geocode fails');
+    assert.equal(spy.countries.length, 0, 'setHomeCountry must not be called when geocode fails');
+  });
+
+  it('clears loading after reverseGeocodeDetailed throws', async () => {
+    const spy = makeSetterSpy();
+
+    await runFillHomeFromGps(
+      {
+        getCurrentGps: grantedGps(),
+        reverseGeocodeDetailed: () => Promise.reject(new Error('geocode_failed')),
+        onPermissionDenied: neverCalled(),
+        onGpsOrGeocodeFailed: () => {},
+      },
+      spy.setters,
+    );
+
+    assert.equal(
+      spy.loadingStates[spy.loadingStates.length - 1],
+      false,
+      'loading must be cleared even when geocoding throws',
+    );
+  });
+
+  it('does not crash when onGpsOrGeocodeFailed is omitted (backward-compat)', async () => {
+    await assert.doesNotReject(async () => {
+      await runFillHomeFromGps(
+        {
+          getCurrentGps: grantedGps(),
+          reverseGeocodeDetailed: () => Promise.reject(new Error('geocode_failed')),
+          onPermissionDenied: () => {},
+          // onGpsOrGeocodeFailed intentionally omitted
+        },
+        makeSetterSpy().setters,
+      );
+    });
+  });
+});
+
+describe('runFillHomeFromGps — internal maxLoadingMs timeout does NOT trigger onGpsOrGeocodeFailed', () => {
+  it('does NOT call onGpsOrGeocodeFailed when the internal timeout fires', async () => {
+    let failedCount = 0;
+
+    await assert.doesNotReject(async () => {
+      await runFillHomeFromGps(
+        {
+          getCurrentGps: hangingGps(),
+          reverseGeocodeDetailed: geocode({ city: 'ShouldNotReach', country: 'ShouldNotReach' }),
+          onPermissionDenied: () => {},
+          onGpsOrGeocodeFailed: () => { failedCount++; },
+          maxLoadingMs: 50,
+        },
+        makeSetterSpy().setters,
+      );
+    });
+
+    assert.equal(failedCount, 0, 'onGpsOrGeocodeFailed must NOT be called on the internal timeout path');
+  });
+});

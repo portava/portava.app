@@ -37,6 +37,14 @@ export interface FillHomeDeps {
   /** Called instead of Alert.alert so the caller decides how to present the denial prompt. */
   onPermissionDenied(opts: PermissionDeniedOpts): void;
   /**
+   * Called when GPS acquisition or reverse-geocoding throws an unexpected error
+   * (not an internal loading-timeout). The caller should show an alert with a
+   * "Choose from list" button so the user can fall back to the city picker.
+   * Not called when the internal maxLoadingMs timeout fires — that is a silent
+   * abort, not a user-visible failure.
+   */
+  onGpsOrGeocodeFailed?(): void;
+  /**
    * Maximum milliseconds to wait for `getCurrentGps()` before aborting and
    * clearing the loading state. Prevents the spinner from staying stuck when
    * the OS permission dialog is force-closed or the component unmounts.
@@ -88,8 +96,15 @@ export async function runFillHomeFromGps(
     const place = await deps.reverseGeocodeDetailed(gps.lat, gps.lng);
     if (place.city) setters.setHomeCity(place.city);
     if (place.country) setters.setHomeCountry(place.country);
-  } catch {
-    // silent — covers GPS errors, geocode errors, and the max-loading timeout guard
+  } catch (err) {
+    // The internal maxLoadingMs timeout rejects with 'gps_timeout' — that is a
+    // silent abort (no alert, user just moves on). Every other error (permission
+    // system crash, geocode failure, network error) surfaces to the caller so it
+    // can show a "Choose from list" prompt.
+    const isInternalTimeout = err instanceof Error && err.message === 'gps_timeout';
+    if (!isInternalTimeout) {
+      deps.onGpsOrGeocodeFailed?.();
+    }
   } finally {
     setters.setGpsLoading(false);
   }
