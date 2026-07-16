@@ -87,6 +87,79 @@ function makeDriftedClient() {
   return client;
 }
 
+/**
+ * Like makeDriftedClient, but the profile row returned by the fallback update
+ * also contains date_of_birth and dob_verified — fields that mapProfile must
+ * strip before the 200 response is sent.
+ */
+function makeDriftedClientWithSensitiveRow() {
+  const updates: UpdateRecord[] = [];
+  const profileRow: any = {
+    id: ME, username: "me_user", handle: "me_user", name: "Me",
+    bio: "old bio", is_private: false, passport_visibility: "public",
+    avatar_url: null, created_at: new Date("2026-01-01").toISOString(),
+    // Sensitive fields: the DB may return these even though the API must never
+    // surface them.  The fallback branch calls mapProfile, so they should be
+    // stripped before the response is sent.
+    date_of_birth: "1990-03-15",
+    dob_verified: true,
+  };
+
+  function makeBuilder(table: string) {
+    let pendingUpdate: any = null;
+    let callCount = 0;
+    const builder: any = {
+      select() { return builder; },
+      eq() { return builder; },
+      neq() { return builder; },
+      limit() { return builder; },
+      update(patch: any) { pendingUpdate = patch; return builder; },
+      insert() { return builder; },
+      maybeSingle() {
+        return Promise.resolve({ data: table === "profiles" ? { ...profileRow } : null, error: null });
+      },
+      single() {
+        if (pendingUpdate && table === "profiles") {
+          callCount++;
+          if (callCount === 1) {
+            // First attempt: simulate schema-drift error (PGRST204) so the
+            // handler falls back to PROFILE_COLUMNS_FALLBACK.
+            const bad = Object.keys(pendingUpdate).find((k) => DRIFTED_COLUMNS.has(k));
+            if (bad) {
+              return Promise.resolve({
+                data: null,
+                error: { code: "PGRST204", message: `Could not find the '${bad}' column of 'profiles' in the schema cache` },
+              });
+            }
+          }
+          // Fallback / second attempt: succeed and return the sensitive row so
+          // we can assert it gets stripped.
+          updates.push({ table, patch: pendingUpdate });
+          return Promise.resolve({ data: { ...profileRow, ...pendingUpdate }, error: null });
+        }
+        return Promise.resolve({ data: table === "profiles" ? { ...profileRow } : null, error: null });
+      },
+      then(onF: any, onR: any) {
+        return Promise.resolve({ data: [], error: null }).then(onF, onR);
+      },
+    };
+    return builder;
+  }
+
+  const client: any = {
+    auth: {
+      getUser: async (tok: string) =>
+        tok === ME_TOK
+          ? { data: { user: { id: ME } }, error: null }
+          : { data: { user: null }, error: { message: "invalid token" } },
+    },
+    from: (table: string) => makeBuilder(table),
+    storage: { from: () => ({ remove: async () => ({ error: null }) }) },
+    __updates: updates,
+  };
+  return client;
+}
+
 let base: string;
 let server: ReturnType<typeof createServer>;
 
@@ -206,5 +279,68 @@ describe("PATCH /api/me/profile under schema drift (missing newer columns)", () 
     const body = await r.json() as any;
     assert.equal(body.unsavedFields, undefined);
     assert.equal(body.warning, undefined);
+  });
+
+  // ── DOB strip on fallback path ─────────────────────────────────────────────
+  // The fallback DB row may contain date_of_birth and dob_verified if the live
+  // schema has them.  mapProfile must strip them before the 200 is sent.
+
+  it("fallback-path 200 does not include date_of_birth (snake_case) in the response", async () => {
+    const client = makeDriftedClientWithSensitiveRow();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    // bio + displayName: display_name is drifted → first attempt fails with
+    // PGRST204, fallback retries with only bio (+ name).  The fallback row
+    // returned by the fake client contains date_of_birth and dob_verified.
+    const r = await patchProfile({ bio: "new bio", displayName: "New Name" });
+    assert.equal(r.status, 200, "fallback path should still return 200 for a base-column save");
+    const body = await r.json() as any;
+    assert.ok(
+      !("date_of_birth" in body),
+      `date_of_birth must not appear in fallback PATCH response — got keys: ${Object.keys(body).join(", ")}`,
+    );
+  });
+
+  it("fallback-path 200 does not include dateOfBirth (camelCase) in the response", async () => {
+    const client = makeDriftedClientWithSensitiveRow();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await patchProfile({ bio: "new bio", displayName: "New Name" });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.ok(
+      !("dateOfBirth" in body),
+      `dateOfBirth must not appear in fallback PATCH response — got keys: ${Object.keys(body).join(", ")}`,
+    );
+  });
+
+  it("fallback-path 200 does not include dob_verified (snake_case) in the response", async () => {
+    const client = makeDriftedClientWithSensitiveRow();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await patchProfile({ bio: "new bio", displayName: "New Name" });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.ok(
+      !("dob_verified" in body),
+      `dob_verified must not appear in fallback PATCH response — got keys: ${Object.keys(body).join(", ")}`,
+    );
+  });
+
+  it("fallback-path 200 does not include dobVerified (camelCase) in the response", async () => {
+    const client = makeDriftedClientWithSensitiveRow();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await patchProfile({ bio: "new bio", displayName: "New Name" });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    assert.ok(
+      !("dobVerified" in body),
+      `dobVerified must not appear in fallback PATCH response — got keys: ${Object.keys(body).join(", ")}`,
+    );
   });
 });
