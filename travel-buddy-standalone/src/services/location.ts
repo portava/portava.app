@@ -11,7 +11,7 @@
  */
 import * as Location from 'expo-location';
 import type { Place } from '../lib/location/placeTypes.ts';
-import { reverseGeocodeToPlaceCore } from './reverseGeocodePlace.core';
+import { reverseGeocodeToPlaceCore } from './reverseGeocodePlace.core.ts';
 
 export interface GpsResult {
   granted: boolean;
