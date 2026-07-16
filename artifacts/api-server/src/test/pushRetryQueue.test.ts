@@ -294,6 +294,11 @@ describe("PushRetryQueue.processQueue() — success on retry", () => {
     const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
     assert.equal(ndaUpdate.patch.status, "sent",        "delivery_attempt status must be 'sent'");
     assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID,    "delivery_attempt update must target correct id");
+    assert.deepEqual(
+      ndaUpdate.patch.metadata,
+      { retryAttempts: 2 },
+      "metadata.retryAttempts must be 2 for a mid-sequence success on attempt 2 (not 1 from a pre-increment bug)",
+    );
   });
 });
 
