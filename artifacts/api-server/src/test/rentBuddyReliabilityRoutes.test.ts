@@ -45,6 +45,7 @@ interface FakeOpts {
 
 function makeFakeClient(opts: FakeOpts) {
   const updates: Array<{ table: string; payload: Record<string, any> }> = [];
+  const inserts: Array<{ table: string; payload: Record<string, any> }> = [];
 
   const booking = {
     id: BOOKING_ID, buddy_id: BP_ID, traveler_id: TRAVELER_ID,
@@ -91,7 +92,7 @@ function makeFakeClient(opts: FakeOpts) {
 
     const b: any = {
       select: () => b,
-      insert: (p: any) => { op = "write"; payload = p; return b; },
+      insert: (p: any) => { op = "write"; payload = p; inserts.push({ table, payload: p }); return b; },
       update: (p: any) => { op = "write"; payload = p; updates.push({ table, payload: p }); return b; },
       upsert: (p: any) => { op = "write"; payload = p; return b; },
       delete: () => { op = "write"; return b; },
@@ -115,6 +116,7 @@ function makeFakeClient(opts: FakeOpts) {
 
   return {
     updates,
+    inserts,
     client: {
       auth: { getUser: () => Promise.resolve({ data: { user: { id: opts.userId } }, error: null }) },
       from: (table: string) => makeBuilder(table),
@@ -282,5 +284,99 @@ describe("favorites_count — save/unsave keeps the counter in sync", () => {
     const pu = profileUpdates(fake.updates).find((p) => "favorites_count" in p);
     assert.ok(pu);
     assert.equal(pu.favorites_count, 0);
+  });
+});
+
+// ── Safety check-in via alias URL ─────────────────────────────────────────────
+
+describe("check-in — alias URL reachability", () => {
+  it("creates a safety-checkin row when traveler POSTs via alias /api/buddy-bookings/:id/check-in", async () => {
+    const fake = makeFakeClient({ userId: TRAVELER_ID, bookingStatus: "in_progress" });
+    // Call through the alias URL — specAliasRewrite rewrites it to the canonical
+    // /api/rent-a-buddy/bookings/:id/check-in handler in rentABuddySpec.ts.
+    const res = await call(
+      "POST",
+      `/api/buddy-bookings/${BOOKING_ID}/check-in`,
+      fake,
+      { checkinType: "arrival" },
+    );
+    assert.equal(res.status, 201);
+
+    const checkinInsert = fake.inserts.find((i) => i.table === "rent_buddy_safety_checkins");
+    assert.ok(checkinInsert, "expected an insert into rent_buddy_safety_checkins");
+    assert.equal(checkinInsert.payload.booking_id, BOOKING_ID);
+    assert.equal(checkinInsert.payload.user_id, TRAVELER_ID);
+    assert.equal(checkinInsert.payload.checkin_type, "arrival");
+  });
+
+  it("creates a safety-checkin row when buddy POSTs via alias /api/buddy-bookings/:id/check-in", async () => {
+    const fake = makeFakeClient({ userId: BUDDY_USER_ID, bookingStatus: "in_progress" });
+    const res = await call(
+      "POST",
+      `/api/buddy-bookings/${BOOKING_ID}/check-in`,
+      fake,
+      { checkinType: "comfort_30min", response: "all good" },
+    );
+    assert.equal(res.status, 201);
+
+    const checkinInsert = fake.inserts.find((i) => i.table === "rent_buddy_safety_checkins");
+    assert.ok(checkinInsert, "expected an insert into rent_buddy_safety_checkins");
+    assert.equal(checkinInsert.payload.checkin_type, "comfort_30min");
+    assert.equal(checkinInsert.payload.response, "all good");
+  });
+
+  it("returns 400 for an invalid checkinType via alias URL", async () => {
+    const fake = makeFakeClient({ userId: TRAVELER_ID, bookingStatus: "in_progress" });
+    const res = await call(
+      "POST",
+      `/api/buddy-bookings/${BOOKING_ID}/check-in`,
+      fake,
+      { checkinType: "not_a_real_type" },
+    );
+    assert.equal(res.status, 400);
+    assert.equal(fake.inserts.filter((i) => i.table === "rent_buddy_safety_checkins").length, 0);
+  });
+});
+
+// ── Report no-show via alias URL ──────────────────────────────────────────────
+
+describe("report-no-show — alias URL reachability", () => {
+  it("creates a safety event when traveler POSTs via alias /api/buddy-bookings/:id/report-no-show", async () => {
+    const fake = makeFakeClient({ userId: TRAVELER_ID, bookingStatus: "in_progress" });
+    // specAliasRewrite rewrites /api/buddy-bookings/* →
+    // /api/rent-a-buddy/bookings/* before the canonical handler runs.
+    const res = await call(
+      "POST",
+      `/api/buddy-bookings/${BOOKING_ID}/report-no-show`,
+      fake,
+      { notes: "buddy never showed up" },
+    );
+    assert.equal(res.status, 201);
+
+    const eventInsert = fake.inserts.find((i) => i.table === "rent_buddy_safety_events");
+    assert.ok(eventInsert, "expected an insert into rent_buddy_safety_events");
+    assert.equal(eventInsert.payload.booking_id, BOOKING_ID);
+    assert.equal(eventInsert.payload.actor_user_id, TRAVELER_ID);
+    assert.equal(eventInsert.payload.event_type, "no_show");
+    assert.equal(eventInsert.payload.event_status, "open");
+    // traveler reports → target is the buddy's user_id (resolved via rent_buddy_profiles)
+    assert.equal(eventInsert.payload.target_user_id, BUDDY_USER_ID);
+  });
+
+  it("creates a safety event when buddy POSTs via alias /api/buddy-bookings/:id/report-no-show", async () => {
+    const fake = makeFakeClient({ userId: BUDDY_USER_ID, bookingStatus: "in_progress" });
+    const res = await call(
+      "POST",
+      `/api/buddy-bookings/${BOOKING_ID}/report-no-show`,
+      fake,
+      { notes: "traveler was a no-show" },
+    );
+    assert.equal(res.status, 201);
+
+    const eventInsert = fake.inserts.find((i) => i.table === "rent_buddy_safety_events");
+    assert.ok(eventInsert, "expected an insert into rent_buddy_safety_events");
+    assert.equal(eventInsert.payload.actor_user_id, BUDDY_USER_ID);
+    // buddy reports → target is traveler_id directly
+    assert.equal(eventInsert.payload.target_user_id, TRAVELER_ID);
   });
 });
