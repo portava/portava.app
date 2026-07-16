@@ -312,6 +312,7 @@ describe("POST /api/rent-a-buddy/bookings/:id/report-no-show — spec router", (
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`);
     assert.equal(r.status, 409, `expected 409 for completed booking, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(r.body.error, "already_reported");
+    assert.equal(state.safetyEvents.length, 0, "no safety event should be inserted for a completed booking");
   });
 
   it("returns 409 when the booking is already cancelled", async () => {
@@ -319,5 +320,6 @@ describe("POST /api/rent-a-buddy/bookings/:id/report-no-show — spec router", (
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/report-no-show`);
     assert.equal(r.status, 409, `expected 409 for cancelled booking, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(r.body.error, "already_reported");
+    assert.equal(state.safetyEvents.length, 0, "no safety event should be inserted for a cancelled booking");
   });
 });
