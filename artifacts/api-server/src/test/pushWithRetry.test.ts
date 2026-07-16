@@ -151,6 +151,15 @@ describe("sendPushWithRetry", () => {
     assert.equal((db.__inserted["push_retry_queue"] ?? []).length, 0);
   });
 
+  it("does not enqueue on per-token errors (InvalidCredentials)", async () => {
+    ticketFor = () => ({ status: "error", message: "creds bad", details: { error: "InvalidCredentials" } });
+    const db = makeFakeDb();
+    const result = await sendPushWithRetry(db, { userId: USER1, tokens: [TOKEN1] }, PAYLOAD);
+    assert.equal(result.sent, 0);
+    assert.equal(result.errors.length, 1);
+    assert.equal((db.__inserted["push_retry_queue"] ?? []).length, 0);
+  });
+
   it("clears dead tokens from all three tables on DeviceNotRegistered", async () => {
     ticketFor = (to: string) =>
       to === TOKEN1
@@ -175,6 +184,73 @@ describe("sendPushWithRetry", () => {
     const deviceDelete = db.__deletes.find((d: any) => d.table === "notification_devices");
     assert.ok(deviceDelete, "notification_devices row deleted");
     assert.deepEqual(deviceDelete.filter, { column: "push_token", values: [TOKEN1] });
+  });
+
+  it("clears dead tokens from all three tables on InvalidCredentials", async () => {
+    ticketFor = (to: string) =>
+      to === TOKEN1
+        ? { status: "error", message: "creds bad", details: { error: "InvalidCredentials" } }
+        : { status: "ok", id: "t" };
+    const db = makeFakeDb();
+    await sendPushWithRetry(
+      db,
+      [{ userId: USER1, tokens: [TOKEN1] }, { userId: USER2, tokens: [TOKEN2] }],
+      PAYLOAD,
+    );
+
+    const profileUpdate = db.__updates.find((u: any) => u.table === "profiles");
+    assert.ok(profileUpdate, "profiles.expo_push_token cleared");
+    assert.deepEqual(profileUpdate.values, { expo_push_token: null });
+    assert.deepEqual(profileUpdate.filter, { column: "expo_push_token", values: [TOKEN1] });
+
+    const rentBuddyUpdate = db.__updates.find((u: any) => u.table === "rent_buddy_profiles");
+    assert.ok(rentBuddyUpdate, "rent_buddy_profiles.expo_push_token cleared");
+    assert.deepEqual(rentBuddyUpdate.filter, { column: "expo_push_token", values: [TOKEN1] });
+
+    const deviceDelete = db.__deletes.find((d: any) => d.table === "notification_devices");
+    assert.ok(deviceDelete, "notification_devices row deleted");
+    assert.deepEqual(deviceDelete.filter, { column: "push_token", values: [TOKEN1] });
+  });
+
+  it("clears both DeviceNotRegistered and InvalidCredentials tokens in one pass", async () => {
+    const TOKEN3 = "ExponentPushToken[user3]";
+    ticketFor = (to: string) => {
+      if (to === TOKEN1) return { status: "error", message: "gone", details: { error: "DeviceNotRegistered" } };
+      if (to === TOKEN3) return { status: "error", message: "creds bad", details: { error: "InvalidCredentials" } };
+      return { status: "ok", id: "t" };
+    };
+    const USER3 = "aa000000-0003-0003-0003-000000000003";
+    const db = makeFakeDb();
+    await sendPushWithRetry(
+      db,
+      [
+        { userId: USER1, tokens: [TOKEN1] },
+        { userId: USER2, tokens: [TOKEN2] },
+        { userId: USER3, tokens: [TOKEN3] },
+      ],
+      PAYLOAD,
+    );
+
+    const profileUpdate = db.__updates.find((u: any) => u.table === "profiles");
+    assert.ok(profileUpdate, "profiles.expo_push_token cleared for both bad tokens");
+    assert.deepEqual(
+      [...profileUpdate.filter.values].sort(),
+      [TOKEN1, TOKEN3].sort(),
+    );
+
+    const deviceDelete = db.__deletes.find((d: any) => d.table === "notification_devices");
+    assert.ok(deviceDelete, "notification_devices rows deleted for both bad tokens");
+    assert.deepEqual(
+      [...deviceDelete.filter.values].sort(),
+      [TOKEN1, TOKEN3].sort(),
+    );
+  });
+
+  it("does not throw on InvalidCredentials with a null db client", async () => {
+    ticketFor = () => ({ status: "error", message: "creds bad", details: { error: "InvalidCredentials" } });
+    const result = await sendPushWithRetry(null, { userId: USER1, tokens: [TOKEN1] }, PAYLOAD);
+    assert.equal(result.sent, 0);
+    assert.equal(result.errors.length, 1);
   });
 
   it("does not touch token tables when all tickets are ok", async () => {

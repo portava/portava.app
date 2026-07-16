@@ -108,17 +108,24 @@ export async function sendPushWithRetry(
   }
 
   // Clear tokens Expo reports as permanently dead so we stop pushing to them.
+  // DeviceNotRegistered  — device is permanently gone.
+  // InvalidCredentials   — push credentials are wrong for this token (always
+  //                        undeliverable); treat the same as DeviceNotRegistered
+  //                        so the token doesn't accumulate as a zombie.
   const staleTokens = result.errors
-    .filter((e) => e.error === "DeviceNotRegistered")
+    .filter((e) => e.error === "DeviceNotRegistered" || e.error === "InvalidCredentials")
     .map((e) => e.token);
   if (staleTokens.length > 0) {
     if (db) {
       await clearDeadTokens(db, staleTokens);
-      logger.info({ staleCleared: staleTokens.length }, "push: cleared dead tokens after DeviceNotRegistered");
+      logger.info(
+        { staleCleared: staleTokens.length },
+        "push: cleared dead tokens after DeviceNotRegistered/InvalidCredentials",
+      );
     } else {
       logger.warn(
         { staleCount: staleTokens.length },
-        "push: DeviceNotRegistered but no db client — dead tokens not cleared",
+        "push: DeviceNotRegistered/InvalidCredentials but no db client — dead tokens not cleared",
       );
     }
   }
