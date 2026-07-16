@@ -105,10 +105,9 @@ export class PushRetryQueue {
    * 'processing' forever (the worker only selects 'queued' rows).
    */
   async recoverStaleProcessing(): Promise<void> {
-    const staleThreshold = new Date(
-      Date.now() - STALE_PROCESSING_THRESHOLD_MS,
-    ).toISOString();
-    const now = new Date().toISOString();
+    const nowMs = Date.now();
+    const staleThreshold = new Date(nowMs - STALE_PROCESSING_THRESHOLD_MS).toISOString();
+    const now = new Date(nowMs).toISOString();
 
     const { data: recovered, error } = await this.db
       .from("push_retry_queue")

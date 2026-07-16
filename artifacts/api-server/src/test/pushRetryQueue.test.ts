@@ -1957,6 +1957,58 @@ describe("PushRetryQueue.recoverStaleProcessing() — next_retry_at is not in th
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 10d — Stale 'processing' recovery: both timestamps derived from the same clock
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("PushRetryQueue.recoverStaleProcessing() — clock consistency", () => {
+  it("derives both the staleThreshold cutoff and next_retry_at from a single Date.now() value", async () => {
+    // Freeze Date.now() to a fixed value so any drift between two separate
+    // Date.now() calls inside recoverStaleProcessing() would be visible.
+    const FIXED_NOW_MS   = 1_700_000_000_000; // arbitrary fixed epoch ms
+    const THRESHOLD_MS   = 2 * 60 * 1_000;   // must match STALE_PROCESSING_THRESHOLD_MS
+    const originalDateNow = Date.now;
+    Date.now = () => FIXED_NOW_MS;
+
+    try {
+      const client = makeFakeClient([]);
+      const queue  = new PushRetryQueue(client as never);
+
+      await queue.processQueue();
+
+      const recoveryUpdate = client.updateCalls.find(
+        (c) => c.table === "push_retry_queue" && c.filters["status"] === "processing",
+      );
+      assert.ok(
+        recoveryUpdate,
+        "recoverStaleProcessing must issue an UPDATE on push_retry_queue with eq('status','processing')",
+      );
+
+      // staleThreshold must be exactly fixedNow − THRESHOLD_MS
+      const cutoffRaw = recoveryUpdate.ltFilters["updated_at"];
+      assert.ok(cutoffRaw !== undefined, "lt('updated_at', ...) filter must be present");
+      const cutoffMs = new Date(cutoffRaw as string).getTime();
+      assert.equal(
+        cutoffMs,
+        FIXED_NOW_MS - THRESHOLD_MS,
+        `lt cutoff must be exactly fixedNow − THRESHOLD_MS (${FIXED_NOW_MS - THRESHOLD_MS}), got ${cutoffMs}`,
+      );
+
+      // next_retry_at must be exactly fixedNow (same clock read, no drift)
+      const nextRetryRaw = recoveryUpdate.patch.next_retry_at;
+      assert.ok(nextRetryRaw !== undefined, "patch must include next_retry_at");
+      const nextRetryMs = new Date(nextRetryRaw as string).getTime();
+      assert.equal(
+        nextRetryMs,
+        FIXED_NOW_MS,
+        `next_retry_at must be exactly fixedNow (${FIXED_NOW_MS}), got ${nextRetryMs}`,
+      );
+    } finally {
+      Date.now = originalDateNow;
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 11 — Surgical precision: three-token batch, only one dead
 // ─────────────────────────────────────────────────────────────────────────────
 
