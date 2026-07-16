@@ -291,6 +291,27 @@ describe('FailedJobsScreen — re-queue flow', () => {
     expect(errorCall[0]).toBe('Error');
     expect(errorCall[1]).toBe('DB write failed');
   });
+
+  it('decreases the header count badge from 2 to 1 after a successful re-queue', async () => {
+    mockRequeue.mockResolvedValueOnce({ ok: true });
+
+    render(<FailedJobsScreen />);
+    await waitFor(() => screen.getByText('Paris Eiffel'));
+
+    // Both jobs are loaded — the count badge should show 2.
+    expect(screen.getByText('2')).toBeTruthy();
+
+    // Re-queue JOB_A (first Re-queue button = first job row).
+    const buttons = screen.getAllByText('Re-queue');
+    fireEvent.press(buttons[0]);
+    await pressAlertButton(alertSpy, 'Re-queue');
+
+    // JOB_A is removed from state; count badge must now read 1.
+    await waitFor(() => expect(screen.queryByText('Paris Eiffel')).toBeNull());
+    expect(screen.getByText('1')).toBeTruthy();
+    // Sanity-check: "2" must no longer appear as the badge value.
+    expect(screen.queryByText('2')).toBeNull();
+  });
 });
 
 // ── Orphaned-files badge ────────────────────────────────────────────────────────
