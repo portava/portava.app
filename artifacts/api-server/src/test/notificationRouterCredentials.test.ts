@@ -937,6 +937,49 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
     }
   });
 
+  it("mixed batch — live token is absent from DELETE when DeviceNotRegistered and InvalidCredentials share a batch with an ok token", async () => {
+    const DNR_TOKEN  = "ExponentPushToken[dead-device-not-registered]";
+    const CRED_TOKEN = "ExponentPushToken[dead-invalid-credentials]";
+    const LIVE_TOKEN = "ExponentPushToken[live-ok-device]";
+
+    // DNR_TOKEN → DeviceNotRegistered, CRED_TOKEN → InvalidCredentials, LIVE_TOKEN → ok
+    _setTestFetch(
+      makeTicketFetch((to) => {
+        if (to === DNR_TOKEN)  return { status: "error", message: "DeviceNotRegistered", details: { error: "DeviceNotRegistered" } };
+        if (to === CRED_TOKEN) return { status: "error", message: "InvalidCredentials",  details: { error: "InvalidCredentials"  } };
+        return { status: "ok", id: "ticket-live" };
+      }),
+    );
+
+    const { deletedDeviceTokens, retryQueueInserts, client } = makeFakeDb({
+      deviceTokens: [DNR_TOKEN, CRED_TOKEN, LIVE_TOKEN],
+      legacyToken: null,
+    });
+
+    const router = new NotificationRouter(client);
+    await router.route(BASE_NOTIF);
+
+    // Exactly one DELETE call containing both stale tokens
+    assert.equal(deletedDeviceTokens.length, 1, "exactly one DELETE call on notification_devices");
+    assert.ok(
+      deletedDeviceTokens[0].includes(DNR_TOKEN),
+      `DELETE IN list must include the DeviceNotRegistered token (${DNR_TOKEN})`,
+    );
+    assert.ok(
+      deletedDeviceTokens[0].includes(CRED_TOKEN),
+      `DELETE IN list must include the InvalidCredentials token (${CRED_TOKEN})`,
+    );
+
+    // The live (ok) token must NOT appear in the DELETE IN list
+    assert.ok(
+      !deletedDeviceTokens[0].includes(LIVE_TOKEN),
+      `live token (${LIVE_TOKEN}) must NOT appear in the DELETE IN list`,
+    );
+
+    // No retry-queue inserts for either stale error code
+    assert.equal(retryQueueInserts.length, 0, "must NOT enqueue on push_retry_queue");
+  });
+
   it("success log is NOT emitted when a cleanup step fails (deleteDeviceError)", async () => {
     // notification_devices DELETE fails → anyFailure is set → the success info
     // log must be suppressed, preventing operators from seeing a false "all-clear".
