@@ -1012,4 +1012,27 @@ describe("TripReminderScheduler push", () => {
     assert.equal(pushCalls.length, 0,
       "[normal sweep, midnight clock] must not push when start_date is one day after the upper boundary");
   });
+
+  it("[normal sweep, midnight clock] does not push when start_date is the current calendar day", async () => {
+    // With the clock at 23:00 UTC on 2026-07-16:
+    //   lower = new Date(PINNED_NOW + 22 h).toISOString().slice(0,10) = "2026-07-17"
+    // A trip whose start_date is today ("2026-07-16") is strictly below the
+    // lower boundary and must not receive a normal-sweep reminder.
+    const PINNED_NOW = new Date("2026-07-16T23:00:00Z").getTime();
+    _setTestNow(PINNED_NOW);
+
+    // The current calendar day as seen by the server clock.
+    const todayDate = new Date(PINNED_NOW).toISOString().slice(0, 10); // "2026-07-16"
+
+    const state = baseState("trip-normal-midnight-today");
+    state.trips![0].reminder_sent_at  = null;
+    state.trips![0].start_date        = todayDate; // current calendar day — below lower boundary
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 0,
+      "[normal sweep, midnight clock] must not push when start_date is the current calendar day (below lower boundary)");
+  });
 });
