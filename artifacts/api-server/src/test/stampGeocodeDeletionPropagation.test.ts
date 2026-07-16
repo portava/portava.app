@@ -1789,6 +1789,99 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "cleanup deleted the correct city_key");
   });
 
+  it("Pass 1 DB error object does not block Pass 2 — tombstoned entry is evicted and cleanup delete fires", async () => {
+    // Companion to the "Pass 1 throw" test above.  The Supabase client can also
+    // surface a failure by resolving with { data: null, error: { message: "..." } }
+    // (an error object, not a rejected promise).  In that path the outer catch
+    // block never fires — the `if (!error && data)` guard silently skips the
+    // eviction loop.  Pass 2 must still run regardless.
+    //
+    // This test builds a sweep client where:
+    //   - Pass 1 resolves with { data: null, error: { message: "db_error" } }.
+    //   - Pass 2 returns a tombstoned row for "kyoto".
+    // After the sweep the in-memory cache entry for "kyoto" must be gone
+    // and the cleanup hard-delete must have been issued.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "jp", country: "Japan" } }],
+      };
+    });
+
+    // Seed the in-memory cache via a DB load so the sweep has something to evict.
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({ country: "Japan", country_code: "JP", corrected_at: null, deleted_at: null }),
+    );
+    const seeded = await geocodeCityCountry("Kyoto");
+    assert.equal(seeded?.countryCode, "JP", "pre-condition: cache seeded with JP");
+    assert.equal(nominatimCalls, 0, "no Nominatim call during seed");
+
+    // Build the sweep client:
+    //   - Pass 1 (first .then()): resolves with an error object — simulates a DB
+    //     error returned by the Supabase client without throwing.
+    //   - Pass 2 (second .then()): returns "kyoto" as a tombstoned row.
+    //   - DELETE: tracked so we can confirm it fired.
+    let sweepQueryCount = 0;
+    const cleanedUpKeys: string[][] = [];
+
+    const pass1ErrorObjectClient: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          delete() { isDelete = true; return chain; },
+          in(_col: string, keys: string[]) {
+            cleanedUpKeys.push([...keys]);
+            return chain;
+          },
+          then(resolve: (v: any) => void) {
+            if (isDelete) {
+              resolve({ error: null });
+              return;
+            }
+            const q = sweepQueryCount++;
+            if (q === 0) {
+              // Pass 1 — corrected_at: resolve with an error object (not a throw).
+              resolve({ data: null, error: { message: "db_error" } });
+            } else {
+              // Pass 2 — deleted_at: return "kyoto" as a tombstoned row.
+              resolve({ data: [{ city_key: "kyoto" }], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(pass1ErrorObjectClient);
+    await _runCorrectionSweepForTests();
+
+    // Both passes must have been attempted — sweepQueryCount should be 2.
+    assert.equal(sweepQueryCount, 2, "both sweep passes were attempted despite Pass 1 returning an error object");
+
+    // Pass 2 found the tombstoned entry and should have evicted it from memory.
+    // Switch to a null DB client so a cache miss falls through to Nominatim.
+    _setGeocodeDbClientForTests(makeFixedDbClient(null));
+    const afterSweep = await geocodeCityCountry("Kyoto");
+
+    assert.equal(nominatimCalls, 1,
+      "Nominatim called once — Pass 2 eviction forced a fresh lookup");
+    assert.equal(afterSweep?.countryCode, "JP",
+      "fresh Nominatim lookup still returns JP");
+    assert.equal(cleanedUpKeys.length, 1,
+      "cleanup hard-delete was issued — confirming Pass 2 ran to completion");
+    assert.deepEqual(cleanedUpKeys[0], ["kyoto"],
+      "cleanup deleted the correct city_key");
+  });
+
   it("negative-cache entry whose TTL expires retries Nominatim and re-caches a positive result — no correction-check probe fires", async () => {
     // This test isolates the pure TTL-expiry retry path:
     //   1. Nominatim returns nothing → null cached for 6 hours (no DB row written — negatives are never persisted).
