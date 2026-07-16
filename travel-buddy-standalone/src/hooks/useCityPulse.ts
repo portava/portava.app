@@ -13,14 +13,14 @@
  *     events stay fresh without the user pulling to refresh.
  */
 import { useMemo, useState, useEffect } from 'react';
-import type { CityEvent, PulseBuckets, Interest } from '../types/models.ts';
-import { mockEvents } from '../data/events.ts';
-import { filterPulse } from '../lib/recommend.ts';
-import { resolveStatus } from '../lib/availability.ts';
-import { useAvailabilityStore } from '../context/AvailabilityStore.tsx';
-import { freshToken } from '../services/apiToken.ts';
-export { mapApiEvent, fetchCityEvents, resolveEventsOnSuccess, resolveEventsOnError } from './cityPulseUtils.ts';
-import { fetchCityEvents, resolveEventsOnSuccess, resolveEventsOnError } from './cityPulseUtils.ts';
+import type { CityEvent, PulseBuckets, Interest } from '../types/models';
+import { mockEvents } from '../data/events';
+import { filterPulse } from '../lib/recommend';
+import { resolveStatus } from '../lib/availability';
+import { useAvailabilityStore } from '../context/AvailabilityStore';
+import { freshToken } from '../services/apiToken';
+export { mapApiEvent, fetchCityEvents, resolveEventsOnSuccess, resolveEventsOnError } from './cityPulseUtils';
+import { fetchCityEvents, resolveEventsOnSuccess, resolveEventsOnError } from './cityPulseUtils';
 
 /** How long fetched events are considered fresh before a background re-fetch fires. */
 const TTL_MS = 5 * 60 * 1000; // 5 minutes

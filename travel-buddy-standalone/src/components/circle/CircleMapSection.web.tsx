@@ -6,7 +6,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { MapPin } from 'lucide-react-native';
-import { color, radius, type as t } from '../../theme/tokens.ts';
+import { color, radius, type as t } from '../../theme/tokens';
 
 export interface MapMember {
   userId: string;

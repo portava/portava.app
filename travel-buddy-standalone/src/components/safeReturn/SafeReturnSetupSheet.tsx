@@ -10,7 +10,7 @@ import {
   TextInput, StyleSheet, ActivityIndicator, Alert,
 } from 'react-native';
 import { X, Shield, ChevronDown, ChevronUp, Info } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
 import {
   createSession,
   startSession,
@@ -18,14 +18,14 @@ import {
   getTrustedContacts,
   type TrustedContact,
   type SafeReturnContactInput,
-} from '../../services/safeReturn.ts';
-import { startCheckedOpenEffect } from './SafeReturnSetupSheet.openEffect.ts';
-import { runHandleStart } from './SafeReturnSetupSheet.handleStart.ts';
-import { runContactLoad } from './SafeReturnSetupSheet.contactLoad.ts';
+} from '../../services/safeReturn';
+import { startCheckedOpenEffect } from './SafeReturnSetupSheet.openEffect';
+import { runHandleStart } from './SafeReturnSetupSheet.handleStart';
+import { runContactLoad } from './SafeReturnSetupSheet.contactLoad';
 import {
   listEmergencyContacts,
   type EmergencyContact,
-} from '../../services/emergencyContacts.ts';
+} from '../../services/emergencyContacts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

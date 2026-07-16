@@ -17,25 +17,25 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
-import { getMediaFilter, buildCssFilter } from '../lib/media/filters.ts';
+import { getMediaFilter, buildCssFilter } from '../lib/media/filters';
 import { X, Heart, MessageCircle, Flag, Eye, Share2, Plus, Trash2, Volume2, VolumeX } from 'lucide-react-native';
-import { SaveButton } from './SaveButton.tsx';
+import { SaveButton } from './SaveButton';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Sharing from 'expo-sharing';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
-import type { Highlight } from '../services/highlights.ts';
+import { color, space, radius, type as t } from '../theme/tokens';
+import type { Highlight } from '../services/highlights';
 import {
   markHighlightViewed,
   toggleHighlightLike,
   replyToHighlight,
   reportHighlight,
   deleteHighlight,
-} from '../services/highlights.ts';
-import { markHighlightsViewed } from '../services/messaging.ts';
-import { markViewed, invalidateHighlightCache } from '../hooks/useHighlightRingState.ts';
-import { HighlightViewersSheet } from './HighlightViewersSheet.tsx';
-import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
+} from '../services/highlights';
+import { markHighlightsViewed } from '../services/messaging';
+import { markViewed, invalidateHighlightCache } from '../hooks/useHighlightRingState';
+import { HighlightViewersSheet } from './HighlightViewersSheet';
+import { EngagementUserListSheet } from './EngagementUserListSheet';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const ITEM_DURATION_MS = 5000;

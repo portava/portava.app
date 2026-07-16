@@ -17,7 +17,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import { getMapTravelers, type MapTraveler } from '../services/mapTravelers.ts';
+import { getMapTravelers, type MapTraveler } from '../services/mapTravelers';
 
 const POLL_MS = 45_000;
 

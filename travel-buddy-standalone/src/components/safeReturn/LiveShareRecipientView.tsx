@@ -8,7 +8,7 @@ import {
   View, Text, Pressable, StyleSheet, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { MapPin, Clock, MessageCircle } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
 
 interface RecipientShareData {
   shareId: string;
@@ -44,7 +44,7 @@ function formatCountdown(secs: number): string {
 
 async function fetchRecipientView(shareId: string): Promise<RecipientShareData | null> {
   try {
-    const { supabase } = await import('../../lib/supabase.ts');
+    const { supabase } = await import('../../lib/supabase');
     const { data: sessionData } = await supabase.auth.getSession();
     const token = sessionData.session?.access_token ?? '';
     const base = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');

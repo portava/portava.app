@@ -8,8 +8,8 @@ import {
   View, Text, ScrollView, Pressable, StyleSheet, Image,
 } from 'react-native';
 import { Compass } from 'lucide-react-native';
-import type { PassportStamp } from '../../types/models.ts';
-import { PP, PP_LABEL, PP_VALUE, fmtMonthYear } from '../../theme/passportTokens.ts';
+import type { PassportStamp } from '../../types/models';
+import { PP, PP_LABEL, PP_VALUE, fmtMonthYear } from '../../theme/passportTokens';
 
 type StampFilter = 'all' | 'cities' | 'special';
 

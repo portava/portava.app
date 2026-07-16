@@ -16,9 +16,9 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { Award, X } from 'lucide-react-native';
-import { getMyRecentStamps } from '../../services/stamps.ts';
-import type { PassportStampNew } from '../../services/passportStamps.ts';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { getMyRecentStamps } from '../../services/stamps';
+import type { PassportStampNew } from '../../services/passportStamps';
+import { color, space, radius, type as t } from '../../theme/tokens';
 
 const SEEN_KEY = 'stamp_earned_seen_ids';
 /** Only surface stamps earned within this window of the triggering action. */

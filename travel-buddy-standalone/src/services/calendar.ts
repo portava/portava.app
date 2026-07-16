@@ -14,7 +14,7 @@
  * module imported directly by unit tests; this file uses the same rules inline
  * so the integration tests cover them end-to-end via addMeetupToCalendar.
  */
-import type { MeetupDetail } from './meetups.ts';
+import type { MeetupDetail } from './meetups';
 
 export type CalendarResult =
   | { ok: true; eventId: string }

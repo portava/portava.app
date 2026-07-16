@@ -9,12 +9,12 @@ import {
   KeyboardAvoidingView, Platform, Alert, StyleSheet, TextInput,
 } from 'react-native';
 import { X, MapPin, Clock, Users, Eye, Shield } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { GpsLocationCapture } from '../location/GpsLocationCapture.tsx';
+import { color, space, radius, type as t } from '../../theme/tokens';
+import { GpsLocationCapture } from '../location/GpsLocationCapture';
 import {
   setGeofence, revealExactLocation,
   type PublicPreviewLevel, type ExactVisibility, type GeofenceData,
-} from '../../services/geofence.ts';
+} from '../../services/geofence';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

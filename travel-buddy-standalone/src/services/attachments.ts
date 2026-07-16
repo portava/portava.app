@@ -8,7 +8,7 @@
  * TO MIGRATE TO BACKEND: implement this same interface against your API
  * (POST/GET/DELETE /attachments) and swap the provider. Callers don't change.
  */
-import type { Attachment, AttachSource, AttachTarget } from '../types/models.ts';
+import type { Attachment, AttachSource, AttachTarget } from '../types/models';
 
 export interface AttachmentService {
   /** Attach a source item to a target. Returns the created attachment, or the

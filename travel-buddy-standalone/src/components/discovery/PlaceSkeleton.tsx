@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Animated, StyleSheet } from 'react-native';
-import { color, space, radius } from '../../theme/tokens.ts';
+import { color, space, radius } from '../../theme/tokens';
 
 function SkeletonBox({ width, height, style }: { width: number | string; height: number; style?: object }) {
   const opacity = useRef(new Animated.Value(0.4)).current;

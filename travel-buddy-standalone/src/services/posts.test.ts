@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 // global the service can read in test. To keep the service untouched, we mock
 // fetch + a global token provider that the test sets.
 
-// The service imports { supabase, isSupabaseConfigured } from '../lib/supabase.ts'.
+// The service imports { supabase, isSupabaseConfigured } from '../lib/supabase'.
 // For these tests we validate the PURE shaping via a thin re-implementation
 // contract check: we assert the service's request/././ against the live module
 // only where safe. To avoid ESM-mock complexity, these tests focus on the

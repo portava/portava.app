@@ -4,12 +4,12 @@ import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Search, SlidersHorizontal, MapPin, Pencil, MessageCircle, CircleUserRound } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
-import { pv } from '../theme/pulseTheme.ts';
-import { useUnreadCounts } from '../hooks/useMessaging.ts';
-import { NotificationBell } from './NotificationBell.tsx';
-import { navBarProgress } from '../hooks/useNavBarCollapse.ts';
-import { getMyProfile } from '../services/profile.ts';
+import { color, space, radius, type as t } from '../theme/tokens';
+import { pv } from '../theme/pulseTheme';
+import { useUnreadCounts } from '../hooks/useMessaging';
+import { NotificationBell } from './NotificationBell';
+import { navBarProgress } from '../hooks/useNavBarCollapse';
+import { getMyProfile } from '../services/profile';
 
 /**
  * Portava Pulse top bar — approved dark-navy concept.

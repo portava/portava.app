@@ -2,10 +2,10 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { Clock, Users, ChevronDown, ChevronUp, CalendarClock } from 'lucide-react-native';
-import type { CityEvent } from '../types/models.ts';
-import { Stamp, Avatar } from './ui.tsx';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
-import { SaveButton } from './SaveButton.tsx';
+import type { CityEvent } from '../types/models';
+import { Stamp, Avatar } from './ui';
+import { color, space, radius, type as t } from '../theme/tokens';
+import { SaveButton } from './SaveButton';
 
 function timeLabel(iso: string) {
   const d = new Date(iso);

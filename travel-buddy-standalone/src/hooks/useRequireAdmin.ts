@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { router } from 'expo-router';
-import { useSession } from '../context/SessionContext.tsx';
-import { resolveAdminGate } from '../screens/admin/featureFlags.machine.ts';
+import { useSession } from '../context/SessionContext';
+import { resolveAdminGate } from '../screens/admin/featureFlags.machine';
 
 /**
  * Redirects unauthenticated users to the sign-in screen and

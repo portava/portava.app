@@ -10,12 +10,12 @@ import {
 import {
   ArrowDown, ArrowUp, ListChecks, Plane, Plus, Trash2, X,
 } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { fmtClock, fmtDur } from './layoverFormat.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
+import { fmtClock, fmtDur } from './layoverFormat';
 import {
   addPlanStop, deletePlanStop, reorderPlanStops,
   type PlanFit, type PlanStop, type StopsResponse,
-} from '../../services/layover.ts';
+} from '../../services/layover';
 
 interface Props {
   sessionId: string;

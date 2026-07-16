@@ -2,7 +2,7 @@
  * Discovery service — fetches place data from /api/discovery.
  * Destination-scoped, category-filtered, no auth required.
  */
-import { supabase } from '../lib/supabase.ts';
+import { supabase } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';

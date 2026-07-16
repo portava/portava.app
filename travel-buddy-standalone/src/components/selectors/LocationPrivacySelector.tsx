@@ -7,8 +7,8 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Eye, EyeOff, MapPin, Navigation } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import type { LocationPrivacy } from '../../lib/location/placeTypes.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
+import type { LocationPrivacy } from '../../lib/location/placeTypes';
 
 interface Option {
   value: LocationPrivacy;

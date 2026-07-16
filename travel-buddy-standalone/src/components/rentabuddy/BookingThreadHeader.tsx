@@ -8,8 +8,8 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { Shield, ExternalLink, Clock, MapPin, Plus, Languages } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { getBooking, type BuddyBooking } from '../../services/rentABuddy.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
+import { getBooking, type BuddyBooking } from '../../services/rentABuddy';
 
 // Ordered lifecycle stages used by the status progress bar
 const STAGES: Array<{ key: string; label: string }> = [

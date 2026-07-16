@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { useSession } from './SessionContext.tsx';
-import { getMyLanguageSettings, updateMyLanguageSettings } from '../services/messaging.ts';
+import { useSession } from './SessionContext';
+import { getMyLanguageSettings, updateMyLanguageSettings } from '../services/messaging';
 
 interface LanguagePreferenceContextValue {
   preferredLanguage: string | null;

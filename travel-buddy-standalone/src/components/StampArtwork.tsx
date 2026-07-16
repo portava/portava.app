@@ -11,10 +11,10 @@
  */
 import React, { useState } from 'react';
 import { Pressable, Image, View, StyleSheet } from 'react-native';
-import type { PassportStamp } from '../types/models.ts';
-import { StampIcon } from './StampIcon.tsx';
-import { StampCard } from './StampCard.tsx';
-import { StampDetailArtwork } from './StampDetailArtwork.tsx';
+import type { PassportStamp } from '../types/models';
+import { StampIcon } from './StampIcon';
+import { StampCard } from './StampCard';
+import { StampDetailArtwork } from './StampDetailArtwork';
 
 export interface StampArtworkProps {
   stamp: PassportStamp;
@@ -88,8 +88,8 @@ const artStyles = StyleSheet.create({
 });
 
 // Re-export sub-components and types for convenience
-export { StampIcon } from './StampIcon.tsx';
-export { StampCard } from './StampCard.tsx';
-export { StampDetailArtwork } from './StampDetailArtwork.tsx';
-export { StampShareCard } from './StampShareCard.tsx';
-export type { StampShareVisibility } from './StampShareCard.tsx';
+export { StampIcon } from './StampIcon';
+export { StampCard } from './StampCard';
+export { StampDetailArtwork } from './StampDetailArtwork';
+export { StampShareCard } from './StampShareCard';
+export type { StampShareVisibility } from './StampShareCard';

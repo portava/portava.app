@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import { Calendar, X } from 'lucide-react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t } from '../theme/tokens';
 
 export interface DatePickerFieldProps {
   value: string;

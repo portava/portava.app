@@ -10,11 +10,11 @@ import {
   MapPin, Users, Gem, ShieldCheck, Crown, Ticket, Lock, Sparkles, Star,
 } from 'lucide-react-native';
 import type { ComponentType } from 'react';
-import type { PassportStamp } from '../types/models.ts';
-import { resolveArtwork } from '../lib/stampArtworkResolver.ts';
-import { STAMP_RARITY_LABELS, STAMP_RARITY_COLORS } from '../types/stampArtwork.ts';
-import { StampSvgFrame } from './StampSvgFrame.tsx';
-import { color, space, type as t } from '../theme/tokens.ts';
+import type { PassportStamp } from '../types/models';
+import { resolveArtwork } from '../lib/stampArtworkResolver';
+import { STAMP_RARITY_LABELS, STAMP_RARITY_COLORS } from '../types/stampArtwork';
+import { StampSvgFrame } from './StampSvgFrame';
+import { color, space, type as t } from '../theme/tokens';
 
 type IconCmp = ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
 

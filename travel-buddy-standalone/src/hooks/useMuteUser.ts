@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { muteUser, unmuteUser } from '../services/mutes.ts';
+import { muteUser, unmuteUser } from '../services/mutes';
 
 export function useMuteUser() {
   const [loading, setLoading] = useState(false);

@@ -3,7 +3,7 @@
  * Calls the API server endpoints for the new stamp/memory/map system.
  * Uses the same fetch + freshToken pattern as other mobile services.
  */
-import { supabase } from '../lib/supabase.ts';
+import { supabase } from '../lib/supabase';
 
 export type StampVisibility = 'public' | 'circle_only' | 'friends_only' | 'trip_crew' | 'private';
 export type MemoryVisibility = 'public' | 'circle_only' | 'trip_crew' | 'private';
@@ -173,8 +173,8 @@ async function apiPatch<T>(path: string, body: unknown): Promise<ApiResult<T>> {
   }
 }
 
-export { mapStamp, mapDefinition } from './passportStampMappers.ts';
-import { mapStamp } from './passportStampMappers.ts';
+export { mapStamp, mapDefinition } from './passportStampMappers';
+import { mapStamp } from './passportStampMappers';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 function mapMemory(r: any): PassportMemory {

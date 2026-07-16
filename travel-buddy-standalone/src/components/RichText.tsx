@@ -33,16 +33,16 @@
 import React, { useState } from 'react';
 import { Text, StyleSheet, Alert, type TextStyle, type StyleProp } from 'react-native';
 import { router } from 'expo-router';
-import { color } from '../theme/tokens.ts';
-import { TagPreviewSheet, type PreviewEntityType } from './TagPreviewSheet.tsx';
-import { removeSelfTag } from '../services/tagging.ts';
+import { color } from '../theme/tokens';
+import { TagPreviewSheet, type PreviewEntityType } from './TagPreviewSheet';
+import { removeSelfTag } from '../services/tagging';
 import {
   buildSegments,
   type RichTextEntityType,
   type RichTextTag,
   type RichTextHashtag,
   type Segment,
-} from './richTextSegments.ts';
+} from './richTextSegments';
 
 // Re-export public types so consumers can import from 'RichText' as before.
 export type { RichTextEntityType, RichTextTag, RichTextHashtag };

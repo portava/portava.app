@@ -31,7 +31,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { color, space, radius, type as t } from '../theme/tokens';
 
 interface Props {
   visible: boolean;

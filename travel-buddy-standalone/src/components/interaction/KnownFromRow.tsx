@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Users, PlaneTakeoff } from 'lucide-react-native';
-import type { SharedContext } from '../../services/interactionContext.ts';
-import { color } from '../../theme/tokens.ts';
+import type { SharedContext } from '../../services/interactionContext';
+import { color } from '../../theme/tokens';
 
 interface Props {
   context: SharedContext;

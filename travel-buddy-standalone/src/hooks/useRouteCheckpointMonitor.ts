@@ -10,7 +10,7 @@
  *   2. Foreground polling fallback — if background permission is denied, polls GPS
  *      every GPS_POLL_MS while AppState === 'active', same as useGeofenceMonitor.
  *
- * Prerequisite: import '../../src/tasks/checkpointArrivalTask.ts' in app/_layout.tsx
+ * Prerequisite: import '../../src/tasks/checkpointArrivalTask' in app/_layout.tsx
  * so TaskManager.defineTask is registered before any startGeofencingAsync call.
  */
 import { useEffect, useRef } from 'react';
@@ -20,7 +20,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   CHECKPOINT_ARRIVAL_TASK,
   PENDING_ARRIVALS_STORE_KEY,
-} from '../tasks/checkpointArrivalTask.ts';
+} from '../tasks/checkpointArrivalTask';
 
 const GPS_POLL_MS      = 30_000;  // foreground fallback: GPS check interval
 const DEFAULT_RADIUS_M = 80;      // metres — matches plan_geofences default

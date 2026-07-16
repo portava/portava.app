@@ -17,10 +17,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Search, Stamp } from 'lucide-react-native';
-import { getStampOverlayOptions } from '../services/postcards.ts';
-import type { StampOverlayOption } from '../lib/stampOverlay.ts';
-import { ProceduralStamp } from './StampOverlayBadge.tsx';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { getStampOverlayOptions } from '../services/postcards';
+import type { StampOverlayOption } from '../lib/stampOverlay';
+import { ProceduralStamp } from './StampOverlayBadge';
+import { color, space, radius, type as t } from '../theme/tokens';
 
 interface Props {
   visible: boolean;

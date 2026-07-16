@@ -2,10 +2,10 @@ import React, { createContext, useContext, useState, useCallback, useRef } from 
 import { View, Text, Pressable, Modal, ScrollView, ActivityIndicator, StyleSheet, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Check, Plus, Search, MapPin } from 'lucide-react-native';
-import type { AttachSource, AttachTarget, AttachTargetType } from '../types/models.ts';
-import { useAttachments } from '../context/AttachmentStore.tsx';
-import { attachTripTargets, attachPlanTargets, TRIP_GROUP_LABEL, PLAN_GROUP_LABEL } from '../data/attachTargets.ts';
-import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
+import type { AttachSource, AttachTarget, AttachTargetType } from '../types/models';
+import { useAttachments } from '../context/AttachmentStore';
+import { attachTripTargets, attachPlanTargets, TRIP_GROUP_LABEL, PLAN_GROUP_LABEL } from '../data/attachTargets';
+import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
 
 /**
  * Attach controller. Wrap the app once; any card calls useAttach().open(source, kind)

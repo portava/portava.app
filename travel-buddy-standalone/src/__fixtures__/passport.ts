@@ -2,8 +2,8 @@
  * MOCK Passport data — TEMPORARY local fallback. Replace with usePassport()
  * backed by the API. Shapes match src/types/models.ts exactly.
  */
-import type { PassportData, PassportStamp, Plan, Perk } from '../types/models.ts';
-import { me, users, cebu, trips } from './cebu.ts';
+import type { PassportData, PassportStamp, Plan, Perk } from '../types/models';
+import { me, users, cebu, trips } from './cebu';
 
 const dRef = { id: cebu.id, city: cebu.city, country: cebu.country, slug: cebu.slug };
 
