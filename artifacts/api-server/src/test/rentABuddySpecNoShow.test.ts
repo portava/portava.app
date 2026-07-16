@@ -324,3 +324,219 @@ describe("POST /api/rent-a-buddy/bookings/:id/report-no-show — spec router", (
     assert.equal(state.safetyEvents.length, 0, "no safety event should be inserted for a cancelled booking");
   });
 });
+
+// ── no_show_count increment guard tests ───────────────────────────────────────
+
+const RD_ADMIN_TOKEN   = "rd-admin-token";
+const RD_ADMIN_ID      = "rd-admin-user-1";
+const RD_TRAVELER_ID   = "rd-traveler-user-1";
+const RD_BUDDY_PROF_ID = "rd-buddy-prof-1";
+const RD_BUDDY_USER_ID = "rd-buddy-user-1";
+const RD_BOOKING_ID    = "rd-booking-uuid-2";
+const RD_DISPUTE_ID    = "rd-dispute-uuid-1";
+
+interface RdState {
+  booking:       any;
+  dispute:       any;
+  buddyProfile:  any;
+}
+
+let rdState: RdState = { booking: null, dispute: null, buddyProfile: null };
+
+function makeBaseDispute(overrides: Partial<{ reason: string; raised_by: string }> = {}) {
+  return {
+    id:          RD_DISPUTE_ID,
+    booking_id:  RD_BOOKING_ID,
+    status:      "open",
+    reason:      overrides.reason  ?? "no_show",
+    raised_by:   overrides.raised_by ?? RD_TRAVELER_ID,
+  };
+}
+
+function makeResolveClient() {
+  function fakeTable(table: string) {
+    return {
+      _table:       table,
+      _filters:     [] as Array<[string, string, any]>,
+      _insertData:  null as any,
+      _updateData:  null as any,
+      _isSingle:    false,
+      _isMaybe:     false,
+      _doSelect:    false,
+
+      select()                  { this._doSelect = true; return this; },
+      insert(data: any)         { this._insertData = data; return this; },
+      update(data: any)         { this._updateData = data; return this; },
+      eq(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
+      in(col: string, vals: any[]) { this._filters.push(["in", col, vals]); return this; },
+      maybeSingle()             { this._isMaybe  = true; return this; },
+      single()                  { this._isSingle = true; return this; },
+
+      async then(resolve: (v: any) => void) {
+        const result = await this._resolve();
+        resolve(result);
+        return result;
+      },
+
+      async _resolve(): Promise<any> {
+        const t = this._table;
+
+        // ── INSERT ──────────────────────────────────────────────────────────
+        if (this._insertData !== null) {
+          const row = { id: `gen-${Date.now()}`, ...this._insertData };
+          return { data: row, error: null };
+        }
+
+        // ── UPDATE ──────────────────────────────────────────────────────────
+        if (this._updateData !== null) {
+          if (t === "rent_buddy_bookings") {
+            Object.assign(rdState.booking, this._updateData);
+            return { data: rdState.booking, error: null };
+          }
+          if (t === "rent_buddy_disputes") {
+            // Only update if the status filter matches
+            const inF = this._filters.find(([op, col]) => op === "in" && col === "status");
+            const statusOk = !inF || (inF[2] as string[]).includes(rdState.dispute?.status);
+            if (!statusOk || !rdState.dispute) {
+              return { data: null, error: { message: "no matching dispute" } };
+            }
+            Object.assign(rdState.dispute, this._updateData);
+            const row = { ...rdState.dispute };
+            return { data: row, error: null };
+          }
+          if (t === "rent_buddy_profiles") {
+            Object.assign(rdState.buddyProfile, this._updateData);
+            return { data: rdState.buddyProfile, error: null };
+          }
+          return { data: null, error: null };
+        }
+
+        // ── SELECT ──────────────────────────────────────────────────────────
+        if (t === "profiles") {
+          const eqId = this._filters.find(([op, col]) => op === "eq" && col === "id");
+          if (eqId?.[2] === RD_ADMIN_ID) return { data: { role: "admin" }, error: null };
+          return { data: null, error: null };
+        }
+
+        if (t === "rent_buddy_bookings") {
+          const eqId = this._filters.find(([op, col]) => op === "eq" && col === "id");
+          if (eqId?.[2] === rdState.booking?.id) return { data: rdState.booking, error: null };
+          return { data: null, error: null };
+        }
+
+        if (t === "rent_buddy_disputes") {
+          const eqBooking = this._filters.find(([op, col]) => op === "eq" && col === "booking_id");
+          const inStatus  = this._filters.find(([op, col]) => op === "in" && col === "status");
+          if (eqBooking?.[2] === rdState.dispute?.booking_id) {
+            const statusOk = !inStatus || (inStatus[2] as string[]).includes(rdState.dispute.status);
+            if (statusOk) return { data: rdState.dispute, error: null };
+          }
+          return { data: null, error: null };
+        }
+
+        if (t === "rent_buddy_profiles") {
+          const eqId = this._filters.find(([op, col]) => op === "eq" && col === "id");
+          if (eqId?.[2] === rdState.buddyProfile?.id) return { data: rdState.buddyProfile, error: null };
+          return { data: null, error: null };
+        }
+
+        if (this._isSingle || this._isMaybe) return { data: null, error: null };
+        return { data: [], error: null };
+      },
+    };
+  }
+
+  return {
+    from: (table: string) => fakeTable(table),
+    auth: {
+      getUser: async (token: string) => {
+        if (token === RD_ADMIN_TOKEN) return { data: { user: { id: RD_ADMIN_ID } }, error: null };
+        return { data: { user: null }, error: { message: "invalid token" } };
+      },
+    },
+  };
+}
+
+describe("POST resolve-dispute — no_show_count increment guard", () => {
+  beforeEach(() => {
+    rdState = {
+      booking: {
+        id:          RD_BOOKING_ID,
+        traveler_id: RD_TRAVELER_ID,
+        buddy_id:    RD_BUDDY_PROF_ID,
+        status:      "disputed",
+      },
+      dispute: makeBaseDispute(),
+      buddyProfile: {
+        id:           RD_BUDDY_PROF_ID,
+        user_id:      RD_BUDDY_USER_ID,
+        no_show_count: 0,
+      },
+    };
+    const client = makeResolveClient();
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  });
+
+  it("increments no_show_count when reason is no_show, raised by traveler, resolved as cancelled", async () => {
+    const r = await req(
+      "POST",
+      `/api/rent-a-buddy/admin/bookings/${RD_BOOKING_ID}/resolve-dispute`,
+      { resolution: "confirmed_no_show", favorTraveler: true },
+      RD_ADMIN_TOKEN,
+    );
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(
+      rdState.buddyProfile.no_show_count,
+      1,
+      "no_show_count should increment when all conditions are met",
+    );
+  });
+
+  it("does NOT increment no_show_count when reason is not no_show (e.g. quality)", async () => {
+    rdState.dispute = makeBaseDispute({ reason: "quality" });
+    const r = await req(
+      "POST",
+      `/api/rent-a-buddy/admin/bookings/${RD_BOOKING_ID}/resolve-dispute`,
+      { resolution: "quality_issue", favorTraveler: true },
+      RD_ADMIN_TOKEN,
+    );
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(
+      rdState.buddyProfile.no_show_count,
+      0,
+      "no_show_count must not increment when dispute reason is not no_show",
+    );
+  });
+
+  it("does NOT increment no_show_count when the dispute was raised by the buddy (not the traveler)", async () => {
+    rdState.dispute = makeBaseDispute({ raised_by: RD_BUDDY_USER_ID });
+    const r = await req(
+      "POST",
+      `/api/rent-a-buddy/admin/bookings/${RD_BOOKING_ID}/resolve-dispute`,
+      { resolution: "confirmed_no_show", favorTraveler: true },
+      RD_ADMIN_TOKEN,
+    );
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(
+      rdState.buddyProfile.no_show_count,
+      0,
+      "no_show_count must not increment when dispute was raised by the buddy",
+    );
+  });
+
+  it("does NOT increment no_show_count when resolved as completed (favorTraveler=false)", async () => {
+    const r = await req(
+      "POST",
+      `/api/rent-a-buddy/admin/bookings/${RD_BOOKING_ID}/resolve-dispute`,
+      { resolution: "session_completed", favorTraveler: false },
+      RD_ADMIN_TOKEN,
+    );
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(
+      rdState.buddyProfile.no_show_count,
+      0,
+      "no_show_count must not increment when booking is resolved as completed",
+    );
+  });
+});
