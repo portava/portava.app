@@ -313,9 +313,10 @@ describe("admin — venue moderation", () => {
 
   it("POST /admin/venues/:id/moderate approve sets status=verified", async () => {
     const captured: any[] = [];
+    const dpId = "dddddddd-0000-0000-0001-000000000001";
     const client = makeFakeClient({
       role: "admin",
-      discoveryPlaces: [{ id: "dp1", name: "Abaca", status: "provisional" }],
+      discoveryPlaces: [{ id: dpId, name: "Abaca", status: "provisional" }],
     });
     const origFrom = client.from.bind(client);
     client.from = (table: string) => {
@@ -329,7 +330,7 @@ describe("admin — venue moderation", () => {
     _setTestClient(client, true);
     _setTestServiceClient(client);
 
-    const { status } = await req("POST", "/admin/venues/dp1/moderate", { action: "approve" });
+    const { status } = await req("POST", `/admin/venues/${dpId}/moderate`, { action: "approve" });
     assert.equal(status, 200);
     assert.equal(captured[0]?.status, "verified",
       "approve must set status=verified (valid place_profiles enum)");
@@ -337,9 +338,10 @@ describe("admin — venue moderation", () => {
 
   it("POST /admin/venues/:id/moderate reject sets status=blocked", async () => {
     const captured: any[] = [];
+    const dpId = "dddddddd-0000-0000-0001-000000000001";
     const client = makeFakeClient({
       role: "admin",
-      discoveryPlaces: [{ id: "dp1", name: "Bad Spot", status: "provisional" }],
+      discoveryPlaces: [{ id: dpId, name: "Bad Spot", status: "provisional" }],
     });
     const origFrom = client.from.bind(client);
     client.from = (table: string) => {
@@ -353,15 +355,16 @@ describe("admin — venue moderation", () => {
     _setTestClient(client, true);
     _setTestServiceClient(client);
 
-    const { status } = await req("POST", "/admin/venues/dp1/moderate", { action: "reject" });
+    const { status } = await req("POST", `/admin/venues/${dpId}/moderate`, { action: "reject" });
     assert.equal(status, 200);
     assert.equal(captured[0]?.status, "blocked",
       "reject must set status=blocked (not rejected — not a valid enum value)");
   });
 
   it("POST /admin/venues/:id/moderate rejects invalid action", async () => {
-    setClients({ role: "admin", discoveryPlaces: [{ id: "dp1" }] });
-    const { status, body } = await req("POST", "/admin/venues/dp1/moderate", { action: "delete" });
+    const dpId = "dddddddd-0000-0000-0001-000000000001";
+    setClients({ role: "admin", discoveryPlaces: [{ id: dpId }] });
+    const { status, body } = await req("POST", `/admin/venues/${dpId}/moderate`, { action: "delete" });
     assert.equal(status, 400);
     assert.equal(body.error, "invalid_payload");
   });

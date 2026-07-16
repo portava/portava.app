@@ -351,6 +351,20 @@ describe("POST /admin/venues/:id/moderate — access control", () => {
     assert.equal(status, 400);
     assert.equal(body.error, "invalid_payload");
   });
+
+  it("non-UUID venue id returns 400 with invalid_payload before any DB query", async () => {
+    const client = makeVenueModerationClient();
+    setClient(client);
+
+    const { status, body } = await req(
+      "POST",
+      "/admin/venues/not-a-uuid/moderate",
+      { action: "approve" },
+    );
+
+    assert.equal(status, 400, `Expected 400 for non-UUID id, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.error, "invalid_payload");
+  });
 });
 
 // ── Fail-open: hypothetical audit insert failure ───────────────────────────────
