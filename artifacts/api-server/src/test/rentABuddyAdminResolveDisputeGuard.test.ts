@@ -385,6 +385,122 @@ describe("POST /api/rent-a-buddy/admin/bookings/:id/resolve-dispute — non-disp
     );
   });
 
+  // ── Non-terminal statuses: pending, confirmed, in_progress ───────────────────
+
+  it("returns 409 when booking status is 'pending'", async () => {
+    state.bookings[BOOKING_ID].status = "pending";
+    const r = await req(
+      "POST",
+      `/api/rent-a-buddy/admin/bookings/${BOOKING_ID}/resolve-dispute`,
+      RESOLVE_BODY,
+    );
+    assert.equal(
+      r.status, 409,
+      `expected 409 for pending booking, got ${r.status}: ${JSON.stringify(r.body)}`,
+    );
+    assert.equal(r.body.error, "invalid_transition");
+  });
+
+  it("returns 409 when booking status is 'confirmed'", async () => {
+    state.bookings[BOOKING_ID].status = "confirmed";
+    const r = await req(
+      "POST",
+      `/api/rent-a-buddy/admin/bookings/${BOOKING_ID}/resolve-dispute`,
+      RESOLVE_BODY,
+    );
+    assert.equal(
+      r.status, 409,
+      `expected 409 for confirmed booking, got ${r.status}: ${JSON.stringify(r.body)}`,
+    );
+    assert.equal(r.body.error, "invalid_transition");
+  });
+
+  it("returns 409 when booking status is 'in_progress'", async () => {
+    state.bookings[BOOKING_ID].status = "in_progress";
+    const r = await req(
+      "POST",
+      `/api/rent-a-buddy/admin/bookings/${BOOKING_ID}/resolve-dispute`,
+      RESOLVE_BODY,
+    );
+    assert.equal(
+      r.status, 409,
+      `expected 409 for in_progress booking, got ${r.status}: ${JSON.stringify(r.body)}`,
+    );
+    assert.equal(r.body.error, "invalid_transition");
+  });
+
+  it("does not update dispute or booking when status is 'pending'", async () => {
+    state.bookings[BOOKING_ID].status = "pending";
+    await req(
+      "POST",
+      `/api/rent-a-buddy/admin/bookings/${BOOKING_ID}/resolve-dispute`,
+      RESOLVE_BODY,
+    );
+    assert.equal(state.disputeUpdates.length, 0, "no dispute row must be updated when booking is pending");
+    assert.equal(state.disputes[DISPUTE_ID].status, "open", "dispute must remain open when guard fires");
+    const statusUpdates = state.bookingUpdates.filter((u: any) => "status" in u);
+    assert.equal(statusUpdates.length, 0, "booking status must not be written when guard fires on a pending booking");
+    assert.equal(state.bookings[BOOKING_ID].status, "pending", "booking must remain 'pending'");
+  });
+
+  it("does not update dispute or booking when status is 'confirmed'", async () => {
+    state.bookings[BOOKING_ID].status = "confirmed";
+    await req(
+      "POST",
+      `/api/rent-a-buddy/admin/bookings/${BOOKING_ID}/resolve-dispute`,
+      RESOLVE_BODY,
+    );
+    assert.equal(state.disputeUpdates.length, 0, "no dispute row must be updated when booking is confirmed");
+    assert.equal(state.disputes[DISPUTE_ID].status, "open", "dispute must remain open when guard fires");
+    const statusUpdates = state.bookingUpdates.filter((u: any) => "status" in u);
+    assert.equal(statusUpdates.length, 0, "booking status must not be written when guard fires on a confirmed booking");
+    assert.equal(state.bookings[BOOKING_ID].status, "confirmed", "booking must remain 'confirmed'");
+  });
+
+  it("does not update dispute or booking when status is 'in_progress'", async () => {
+    state.bookings[BOOKING_ID].status = "in_progress";
+    await req(
+      "POST",
+      `/api/rent-a-buddy/admin/bookings/${BOOKING_ID}/resolve-dispute`,
+      RESOLVE_BODY,
+    );
+    assert.equal(state.disputeUpdates.length, 0, "no dispute row must be updated when booking is in_progress");
+    assert.equal(state.disputes[DISPUTE_ID].status, "open", "dispute must remain open when guard fires");
+    const statusUpdates = state.bookingUpdates.filter((u: any) => "status" in u);
+    assert.equal(statusUpdates.length, 0, "booking status must not be written when guard fires on an in_progress booking");
+    assert.equal(state.bookings[BOOKING_ID].status, "in_progress", "booking must remain 'in_progress'");
+  });
+
+  it("does not insert an admin_action record when booking is 'pending'", async () => {
+    state.bookings[BOOKING_ID].status = "pending";
+    await req(
+      "POST",
+      `/api/rent-a-buddy/admin/bookings/${BOOKING_ID}/resolve-dispute`,
+      RESOLVE_BODY,
+    );
+    assert.equal(state.adminActions.length, 0, "no admin_action must be recorded when guard rejects a pending booking");
+  });
+
+  it("does not insert an admin_action record when booking is 'confirmed'", async () => {
+    state.bookings[BOOKING_ID].status = "confirmed";
+    await req(
+      "POST",
+      `/api/rent-a-buddy/admin/bookings/${BOOKING_ID}/resolve-dispute`,
+      RESOLVE_BODY,
+    );
+    assert.equal(state.adminActions.length, 0, "no admin_action must be recorded when guard rejects a confirmed booking");
+  });
+
+  it("does not insert an admin_action record when booking is 'in_progress'", async () => {
+    state.bookings[BOOKING_ID].status = "in_progress";
+    await req(
+      "POST",
+      `/api/rent-a-buddy/admin/bookings/${BOOKING_ID}/resolve-dispute`,
+      RESOLVE_BODY,
+    );
+    assert.equal(state.adminActions.length, 0, "no admin_action must be recorded when guard rejects an in_progress booking");
+  });
+
   it("returns 404 when the booking does not exist", async () => {
     const r = await req(
       "POST",
