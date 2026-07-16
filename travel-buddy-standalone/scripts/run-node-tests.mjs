@@ -22,10 +22,6 @@ const KNOWN_BROKEN = [
   'src/lib/composerLogic.test.ts',
   // Imports ./displayIdentity which does not exist in this tree.
   'src/lib/displayIdentity.test.ts',
-  // Imports ../compassIntent which does not exist in this tree.
-  'src/lib/__tests__/compassIntent.test.ts',
-  // Stale: version-pin assertions reference paths from the pre-fork monorepo layout.
-  'src/services/sdk54-downgrade-compat.test.ts',
 ];
 
 const ROOTS = ['src', 'server'];
