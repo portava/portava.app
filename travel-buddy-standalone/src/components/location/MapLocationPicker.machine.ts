@@ -97,3 +97,30 @@ export async function resolveMapPickerResult(opts: {
   // Stage 3: static fallback.
   return { lat, lng, label: label ?? 'Selected location' };
 }
+
+// ── Place-based confirm flow (universal location system) ──────────────────────
+
+import type { Place } from '../../lib/location/placeTypes';
+
+/**
+ * Pure async flow behind MapLocationPicker's handleConfirm.
+ *
+ * Accepts the MapLibre [lng, lat] map-center, swaps to (lat, lng), reverse
+ * geocodes to a canonical Place, and invokes onConfirm(place). Throws if the
+ * geocode function throws (the component surfaces this as geocodeError) —
+ * onConfirm is never called with a partial/undefined place.
+ *
+ * Tested in src/components/location/__tests__/locationCaptureFlow.test.ts.
+ */
+export async function confirmMapCenterAsPlace(opts: {
+  /** Map-center in MapLibre [lng, lat] order as stored in centerRef.current. */
+  center: [number, number];
+  reverseGeocodeToPlace: (lat: number, lng: number) => Promise<Place>;
+  onConfirm: (place: Place) => void;
+}): Promise<Place> {
+  // MapLibre stores coordinates as [lng, lat]; swap to { lat, lng }.
+  const [lng, lat] = opts.center;
+  const place = await opts.reverseGeocodeToPlace(lat, lng);
+  opts.onConfirm(place);
+  return place;
+}
