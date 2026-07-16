@@ -20,6 +20,7 @@ import { _setTestFetch } from "../lib/push.js";
 import {
   NotificationRouter,
   _resetCleanupFailureCount,
+  _getCleanupFailureCount,
 } from "../services/notifications/NotificationRouter.js";
 import type { NotificationRow } from "../services/notifications/NotificationService.js";
 
@@ -97,6 +98,8 @@ interface FakeDbOpts {
   deviceToken?: string | null;
   /** Token returned from profiles.expo_push_token (null = no legacy token). */
   legacyToken?: string | null;
+  /** When set, notification_devices DELETE returns this error instead of succeeding. */
+  deleteDeviceError?: Error | null;
 }
 
 interface FakeDb {
@@ -117,6 +120,7 @@ interface FakeDb {
 function makeFakeDb(opts: FakeDbOpts = {}): FakeDb {
   const deviceToken = opts.deviceToken !== undefined ? opts.deviceToken : TOKEN;
   const legacyToken = opts.legacyToken !== undefined ? opts.legacyToken : null;
+  const deleteDeviceError = opts.deleteDeviceError !== undefined ? opts.deleteDeviceError : null;
 
   const deletedDeviceTokens: string[][] = [];
   const profilesNulled: string[] = [];
@@ -227,6 +231,9 @@ function makeFakeDb(opts: FakeDbOpts = {}): FakeDb {
               return {
                 in(_col2: string, vals: any[]) {
                   if (table === "notification_devices") {
+                    if (deleteDeviceError) {
+                      return Promise.resolve({ error: deleteDeviceError });
+                    }
                     deletedDeviceTokens.push([...vals]);
                   }
                   return Promise.resolve({ error: null });
@@ -405,6 +412,27 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
       retryQueueInserts.length,
       0,
       "MessageRateExceeded must NOT enqueue on push_retry_queue",
+    );
+  });
+
+  it("escalates cleanup failure log from warn to error after CLEANUP_ERROR_THRESHOLD consecutive failures", async () => {
+    // Use InvalidCredentials so NotificationRouter always tries to clean up
+    // the stale token (calls _cleanupStaleTokens), but the DELETE returns an
+    // error each time — simulating a persistently unavailable DB.
+    _setTestFetch(invalidCredFetch);
+    const DB_ERROR = new Error("db down");
+    const { client } = makeFakeDb({ deviceToken: TOKEN, deleteDeviceError: DB_ERROR });
+
+    const router = new NotificationRouter(client);
+
+    // Three consecutive failures should reach CLEANUP_ERROR_THRESHOLD (3)
+    await router.route(BASE_NOTIF);
+    await router.route(BASE_NOTIF);
+    await router.route(BASE_NOTIF);
+
+    assert.ok(
+      _getCleanupFailureCount() >= 3,
+      `cleanup failure count should reach CLEANUP_ERROR_THRESHOLD (3), got ${_getCleanupFailureCount()}`,
     );
   });
 
