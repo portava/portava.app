@@ -1116,4 +1116,53 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
       infoSpy.mock.restore();
     }
   });
+
+  it("profiles UPDATE failure with no rent_buddy entry increments the counter by exactly 1 — not 2", async () => {
+    // Step 2 (profiles UPDATE — null legacy expo_push_token) fails.
+    // Step 3 (rent_buddy_profiles UPDATE) succeeds because rentBuddyUpdateError
+    // is absent, so only one increment should occur per route() call.
+    // This guards against double-counting: if the router mistakenly also
+    // counted a Step 3 path for this token, the counter would reach 2 instead
+    // of 1 on the first call.
+    _setTestFetch(invalidCredFetch);
+    const PROFILES_ERROR = new Error("profiles table unavailable");
+    const { client: errorClient } = makeFakeDb({
+      // LEGACY_TOKEN as the device token so Step 2 (profiles UPDATE) is attempted
+      deviceToken: LEGACY_TOKEN,
+      legacyToken: LEGACY_TOKEN,
+      // Step 2 fails; Step 3 succeeds (rentBuddyUpdateError is absent)
+      profilesUpdateError: PROFILES_ERROR,
+    });
+    const errorRouter = new NotificationRouter(errorClient);
+
+    // First call — only Step 2 fails, so the counter must be exactly 1
+    await errorRouter.route(BASE_NOTIF);
+    assert.equal(
+      _getCleanupFailureCount(),
+      1,
+      `profiles UPDATE failure with no rent_buddy error must increment the counter by exactly 1 (got ${_getCleanupFailureCount()})`,
+    );
+
+    // Second call — another lone Step 2 failure, counter must be exactly 2
+    await errorRouter.route(BASE_NOTIF);
+    assert.equal(
+      _getCleanupFailureCount(),
+      2,
+      `second profiles UPDATE failure must increment the counter to exactly 2 — not 4 (got ${_getCleanupFailureCount()})`,
+    );
+
+    // Healthy call — all steps pass, so the counter must reset to 0
+    const { client: healthyClient } = makeFakeDb({
+      deviceToken: LEGACY_TOKEN,
+      legacyToken: LEGACY_TOKEN,
+    });
+    const healthyRouter = new NotificationRouter(healthyClient);
+
+    await healthyRouter.route(BASE_NOTIF);
+    assert.equal(
+      _getCleanupFailureCount(),
+      0,
+      "cleanup failure counter must reset to 0 after a healthy call following lone Step 2 failures",
+    );
+  });
 });
