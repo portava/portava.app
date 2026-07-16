@@ -193,6 +193,8 @@ CREATE TABLE IF NOT EXISTS rent_buddy_requests (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   traveler_id         UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   city                TEXT NOT NULL,
+  lat                 DOUBLE PRECISION,
+  lng                 DOUBLE PRECISION,
   category            TEXT NOT NULL,
   desired_date        DATE,
   desired_time        TIME,

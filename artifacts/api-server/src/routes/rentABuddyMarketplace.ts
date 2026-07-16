@@ -204,6 +204,8 @@ function mapRequest(row: any) {
     id: row.id,
     travelerId: row.traveler_id,
     city: row.city,
+    lat: row.lat ?? null,
+    lng: row.lng ?? null,
     category: row.category,
     desiredDate: row.desired_date,
     desiredTime: row.desired_time,
@@ -669,7 +671,7 @@ router.post("/api/rent-a-buddy/requests", async (req, res) => {
   const svc = sc() ?? auth.client;
 
   const {
-    city, category, desiredDate, desiredTime,
+    city, lat, lng, category, desiredDate, desiredTime,
     durationMinutes, groupSize, budgetMinUsd, budgetMaxUsd,
     languageNeeded, energyType, safetyPrefs, paymentModePref, notes,
   } = req.body ?? {};
@@ -697,6 +699,8 @@ router.post("/api/rent-a-buddy/requests", async (req, res) => {
     .insert({
       traveler_id: user.id,
       city,
+      lat: typeof lat === "number" && Number.isFinite(lat) ? lat : null,
+      lng: typeof lng === "number" && Number.isFinite(lng) ? lng : null,
       category,
       desired_date: desiredDate ?? null,
       desired_time: desiredTime ?? null,
@@ -1528,7 +1532,7 @@ router.post("/api/rent-a-buddy/waitlist/v2", async (req, res) => {
   const svc = sc() ?? auth.client;
 
   const {
-    city, category, language, budgetMaxUsd,
+    city, lat, lng, category, language, budgetMaxUsd,
     desiredDate, desiredTime, notes, groupSize, expiryDays,
   } = req.body ?? {};
 
@@ -1543,6 +1547,8 @@ router.post("/api/rent-a-buddy/waitlist/v2", async (req, res) => {
     .upsert({
       user_id: auth.user.id,
       city,
+      lat: typeof lat === "number" && Number.isFinite(lat) ? lat : null,
+      lng: typeof lng === "number" && Number.isFinite(lng) ? lng : null,
       category: category ?? null,
       language: language ?? null,
       budget_max_usd: budgetMaxUsd ?? null,

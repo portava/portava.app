@@ -3093,11 +3093,15 @@ router.post("/api/rent-a-buddy/waitlist", async (req, res) => {
     return res.status(waitlistRollout.httpStatus).json({ error: waitlistRollout.code, message: waitlistRollout.message });
   }
 
-  const { city, category } = req.body ?? {};
+  const { city, category, lat, lng } = req.body ?? {};
   if (!city) return res.status(400).json({ error: "invalid_payload", message: "city required." });
 
   await serviceClient.from("rent_buddy_waitlist").upsert(
-    { user_id: auth.user.id, city, category: category ?? null },
+    {
+      user_id: auth.user.id, city, category: category ?? null,
+      lat: typeof lat === "number" && Number.isFinite(lat) ? lat : null,
+      lng: typeof lng === "number" && Number.isFinite(lng) ? lng : null,
+    },
     { onConflict: "user_id,city" },
   );
 
