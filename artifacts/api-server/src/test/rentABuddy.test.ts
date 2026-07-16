@@ -118,6 +118,8 @@ function makeClient(userId: string, role = "user") {
       delete() { this._updateData = "__delete__"; return this; },
       eq(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
       in(col: string, vals: any[]) { this._filters.push(["in", col, vals]); return this; },
+      gt(col: string, val: any) { this._filters.push(["gt", col, val]); return this; },
+      lt(col: string, val: any) { this._filters.push(["lt", col, val]); return this; },
       gte(col: string, val: any) { this._filters.push(["gte", col, val]); return this; },
       lte(col: string, val: any) { this._filters.push(["lte", col, val]); return this; },
       like(col: string, val: any) { this._filters.push(["like", col, val]); return this; },
@@ -325,6 +327,10 @@ function makeClient(userId: string, role = "user") {
           for (const [op, col, val] of this._filters) {
             if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
             if (op === "in") rows = rows.filter((r: any) => (val as any[]).includes(r[col]));
+            if (op === "lt") rows = rows.filter((r: any) => r[col] < val);
+            if (op === "gt") rows = rows.filter((r: any) => r[col] > val);
+            if (op === "lte") rows = rows.filter((r: any) => r[col] <= val);
+            if (op === "gte") rows = rows.filter((r: any) => r[col] >= val);
           }
           const cnt = rows.length;
           if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
@@ -2530,5 +2536,136 @@ describe("Rent a Buddy — dashboard availability settings & blocked dates", () 
     assert.equal(r.body.error, "buddy_unavailable");
     // Booking date must be unchanged
     assert.equal((state as any).bookings["bk-suggest-1"].booking_date, TODAY);
+  });
+});
+
+// ── Grace-period sweep ────────────────────────────────────────────────────────
+describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", () => {
+  const INTERNAL_KEY = "test-sweep-secret-179";
+
+  function reqSweep(): Promise<{ status: number; body: any }> {
+    return new Promise((resolve, reject) => {
+      const url = new URL("/api/internal/buddy-requests/expire", base);
+      const r = http.request(
+        {
+          hostname: url.hostname,
+          port: Number(url.port),
+          path: url.pathname,
+          method: "POST",
+          headers: { "content-type": "application/json", "x-internal-key": INTERNAL_KEY },
+        },
+        (inRes) => {
+          let raw = "";
+          inRes.on("data", (c) => (raw += c));
+          inRes.on("end", () => {
+            let parsed: any;
+            try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+            resolve({ status: inRes.statusCode ?? 0, body: parsed });
+          });
+        },
+      );
+      r.on("error", reject);
+      r.end();
+    });
+  }
+
+  before(() => {
+    process.env.SESSION_SECRET = INTERNAL_KEY;
+  });
+
+  after(() => {
+    delete process.env.SESSION_SECRET;
+  });
+
+  it("escalates a no_show_pending booking past its grace expiry to disputed", async () => {
+    // Grace window expired 3 hours ago — sweep must promote to disputed.
+    const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+
+    state = {
+      bookings: {
+        "bk-ns-expired": {
+          id: "bk-ns-expired",
+          traveler_id: USER_ID,
+          buddy_id: BUDDY_PROF,
+          status: "no_show_pending",
+          no_show_grace_expires_at: PAST,
+        },
+      },
+    };
+    // Seed the no_show_reported event so the sweeper can identify the original reporter.
+    (state as any).bookingEvents = [
+      { id: "ev-ns-1", booking_id: "bk-ns-expired", actor_user_id: USER_ID, event: "no_show_reported" },
+    ];
+
+    const r = await reqSweep();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.noShowEscalated, 1, JSON.stringify(r.body));
+    assert.equal(
+      state.bookings!["bk-ns-expired"].status,
+      "disputed",
+      "booking past grace expiry must be promoted to disputed",
+    );
+    assert.ok(
+      (state.disputes ?? []).some((d: any) => d.booking_id === "bk-ns-expired" && d.reason === "no_show"),
+      "a no_show dispute row must be created",
+    );
+  });
+
+  it("leaves a no_show_pending booking whose grace window has not yet expired untouched", async () => {
+    // Grace window expires 1 hour from now — sweep must not touch this booking.
+    const FUTURE = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+
+    state = {
+      bookings: {
+        "bk-ns-live": {
+          id: "bk-ns-live",
+          traveler_id: USER_ID,
+          buddy_id: BUDDY_PROF,
+          status: "no_show_pending",
+          no_show_grace_expires_at: FUTURE,
+        },
+      },
+    };
+    (state as any).bookingEvents = [];
+
+    const r = await reqSweep();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.noShowEscalated, 0, JSON.stringify(r.body));
+    assert.equal(
+      state.bookings!["bk-ns-live"].status,
+      "no_show_pending",
+      "booking within grace window must remain no_show_pending",
+    );
+  });
+
+  it("does not touch bookings with statuses other than no_show_pending", async () => {
+    // Put a past-expired timestamp on several non-no_show_pending bookings;
+    // the sweep must leave all of them unchanged.
+    const PAST = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+
+    state = {
+      bookings: {
+        "bk-sched": { id: "bk-sched", traveler_id: USER_ID, buddy_id: BUDDY_PROF, status: "scheduled",  no_show_grace_expires_at: PAST },
+        "bk-disp":  { id: "bk-disp",  traveler_id: USER_ID, buddy_id: BUDDY_PROF, status: "disputed",   no_show_grace_expires_at: PAST },
+        "bk-comp":  { id: "bk-comp",  traveler_id: USER_ID, buddy_id: BUDDY_PROF, status: "completed",  no_show_grace_expires_at: PAST },
+      },
+    };
+    (state as any).bookingEvents = [];
+
+    const r = await reqSweep();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.noShowEscalated, 0, JSON.stringify(r.body));
+    assert.equal(state.bookings!["bk-sched"].status, "scheduled",  "scheduled booking must not be touched");
+    assert.equal(state.bookings!["bk-disp"].status,  "disputed",   "disputed booking must not be touched");
+    assert.equal(state.bookings!["bk-comp"].status,  "completed",  "completed booking must not be touched");
   });
 });
