@@ -656,7 +656,11 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           const mine = m.senderId === userId;
           // System-event messages render as centred pill labels
           if (m.msgType === 'system') {
-            return <TelegraphSystemNotice text={m.body ?? ''} />;
+            return (
+              <MessageEntrance animate={shouldAnimateMessage(m.clientId ?? m.id, m.createdAt)}>
+                <TelegraphSystemNotice text={m.body ?? ''} />
+              </MessageEntrance>
+            );
           }
           return (
             <MessageEntrance

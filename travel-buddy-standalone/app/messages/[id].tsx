@@ -1602,11 +1602,19 @@ export default function TelegraphThread() {
           const mine = m.senderId === userId;
           // Rent a Buddy milestone banners
           if (m.msgType === 'system' && m.subtype?.startsWith('rent_buddy_')) {
-            return <BookingMilestoneMessage subtype={m.subtype} body={m.body ?? undefined} />;
+            return (
+              <MessageEntrance animate={shouldAnimateMessage(m.clientId ?? m.id, m.createdAt)}>
+                <BookingMilestoneMessage subtype={m.subtype} body={m.body ?? undefined} />
+              </MessageEntrance>
+            );
           }
           // System event messages (non-meetup, non-rich-card) render as centred pill labels
           if (m.msgType === 'system' && m.subtype !== 'discovery_card' && m.subtype !== 'compass_card' && !parseMeetupCard(m.body ?? '', m)) {
-            return <TelegraphSystemNotice text={m.body ?? ''} />;
+            return (
+              <MessageEntrance animate={shouldAnimateMessage(m.clientId ?? m.id, m.createdAt)}>
+                <TelegraphSystemNotice text={m.body ?? ''} />
+              </MessageEntrance>
+            );
           }
           return (
             <MessageEntrance
