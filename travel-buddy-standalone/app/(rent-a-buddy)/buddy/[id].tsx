@@ -17,6 +17,7 @@ import {
   type BuddyBlockedRange,
 } from '../../../src/services/rentABuddy';
 import { reportContent } from '../../../src/services/reports';
+import { formatAwayRange, upcomingAwayRanges } from '../../../src/utils/awayDates';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { UserOverflowMenu } from '../../../src/components/interaction/UserOverflowMenu';
 
@@ -74,18 +75,6 @@ function ReviewSection({ buddyId, initialReviews, total, avgRating }: {
       )}
     </View>
   );
-}
-
-/** Format a blocked range like "Aug 1–5" or "Jul 30 – Aug 2". */
-function formatAwayRange(range: BuddyBlockedRange): string {
-  const start = new Date(`${range.startDate}T00:00:00`);
-  const end = new Date(`${range.endDate}T00:00:00`);
-  const fmt = (d: Date) => d.toLocaleDateString('en', { month: 'short', day: 'numeric' });
-  if (range.startDate === range.endDate) return fmt(start);
-  if (start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear()) {
-    return `${fmt(start)}–${end.getDate()}`;
-  }
-  return `${fmt(start)} – ${fmt(end)}`;
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -183,10 +172,7 @@ export default function BuddyProfileScreen() {
 
   const buddy = data.buddy;
   const avgRating = buddy.averageRating ?? 0;
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const upcomingAway = blockedRanges
-    .filter(r => r.endDate >= todayIso)
-    .sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const upcomingAway = upcomingAwayRanges(blockedRanges);
 
   return (
     <View style={styles.page}>
