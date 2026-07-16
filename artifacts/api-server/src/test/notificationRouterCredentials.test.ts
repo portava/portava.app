@@ -361,7 +361,7 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
 
   it("enqueues on a transient failure and does NOT delete tokens", async () => {
     _setTestFetch(transient503Fetch);
-    const { deletedDeviceTokens, profilesNulled, retryQueueInserts, client } = makeFakeDb({
+    const { deletedDeviceTokens, profilesNulled, rentBuddyTokensNulled, retryQueueInserts, client } = makeFakeDb({
       deviceToken: TOKEN,
       legacyToken: null,
     });
@@ -371,6 +371,7 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
 
     assert.equal(deletedDeviceTokens.length, 0, "transient failure must NOT delete tokens");
     assert.equal(profilesNulled.length, 0, "transient failure must NOT null profile token");
+    assert.equal(rentBuddyTokensNulled.length, 0, "transient failure must NOT null rent_buddy_profiles token");
     assert.ok(retryQueueInserts.length > 0, "transient failure must enqueue for retry");
   });
 
