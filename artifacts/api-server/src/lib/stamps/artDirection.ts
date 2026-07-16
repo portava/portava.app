@@ -31,7 +31,7 @@ export const CANDIDATE_COUNT = 3;
 export interface CatalogEntryForPrompt {
   id: string;
   display_name: string;
-  country: string;
+  country: string | null;
   country_code: string;
   region?: string | null;
   city?: string | null;
@@ -89,7 +89,11 @@ function destinationInstruction(entry: CatalogEntryForPrompt): string {
 
   if (entry.city) parts.push(`City: ${entry.city}`);
   if (entry.region) parts.push(`Region: ${entry.region}`);
-  parts.push(`Country: ${entry.country} (${entry.country_code.toUpperCase()})`);
+  if (entry.country) {
+    parts.push(`Country: ${entry.country} (${entry.country_code.toUpperCase()})`);
+  } else {
+    parts.push(`Country: ${entry.country_code.toUpperCase()}`);
+  }
 
   const typeHints: Record<string, string> = {
     city:          "Include iconic city skyline or landmark silhouette, local cultural symbol, and destination name in bold uppercase serif font prominently at center.",

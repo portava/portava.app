@@ -1858,3 +1858,40 @@ describe("isArtworkStale — detects rows generated with an outdated STYLE_VERSI
     );
   });
 });
+
+// ── Null country guard ────────────────────────────────────────────────────────
+
+describe("buildStampPrompt — null country guard", () => {
+  it("does not produce the literal string 'null' in the prompt when country is null", async () => {
+    const catalogWithNullCountry = { ...CATALOG_ROW, country: null } as any;
+    const { sc } = makeFakeClient({ catalogOverride: catalogWithNullCountry });
+
+    let capturedPrompt: string | undefined;
+    const capturingProvider = {
+      async generate(prompt: string, _n?: number) {
+        capturedPrompt = prompt;
+        return Array.from({ length: CANDIDATE_COUNT }, (_, i) => ({
+          url: `data:image/svg+xml,fake-${i}`,
+          metadata: { model: "fake-provider", candidate_index: i },
+        }));
+      },
+    };
+
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(capturingProvider);
+
+    await runGenerationCycle();
+
+    assert.ok(
+      typeof capturedPrompt === "string",
+      "provider must be called",
+    );
+    // A null country must not produce the literal string "null" anywhere in the
+    // Country line — e.g. "Country: null (JP)" is garbled and must be guarded.
+    assert.equal(
+      capturedPrompt!.includes("null"),
+      false,
+      `prompt must not contain literal "null" when country is null; got:\n${capturedPrompt!.slice(0, 400)}`,
+    );
+  });
+});
