@@ -3972,6 +3972,218 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
     );
   });
 
+  it("continues the repair loop after a merge failure — the second entry that takes the re-key path is still processed and counted", async () => {
+    // Two XX catalog entries for the same city ("Mergethenrekey").
+    // Entry 1 has a survivor in the catalog → takes the merge path; the
+    // user_stamps repoint deliberately fails so mergeCatalogEntry returns false.
+    // Entry 2 has no survivor → takes the re-key path; the update succeeds.
+    // The loop must not abort after the first entry's merge fails:
+    //   catalogRekeyed must be 1 (the second entry succeeded)
+    //   catalogMerged  must be 0 (the first entry's merge did not complete)
+    const XX_ID_MERGE = "cat-cross-xx-merge";
+    const XX_ID_REKEY = "cat-cross-xx-rekey";
+    const SURVIVOR_ID  = "cat-cross-survivor";
+
+    const deletedIds: string[]   = [];
+    const rekeyUpdates: unknown[] = [];
+    const warnMessages: string[] = [];
+
+    const client: any = {
+      auth: {
+        getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+      },
+      from: (table: string) => {
+        if (table === "profiles") {
+          return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+        }
+
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: (_cols: string) => builder([]),
+            upsert: (_row: unknown, _o?: unknown) =>
+              Promise.resolve({ data: null, error: null }),
+          };
+        }
+
+        if (table === "universal_stamp_catalog") {
+          return {
+            select: (cols: string) => {
+              // Full XX scan — returns both entries.
+              if (cols.includes("canonical_location_key")) {
+                return {
+                  eq: (_col: string, _val: unknown) => ({
+                    then: (resolve: (v: { data: unknown[]; error: null }) => void) =>
+                      resolve({
+                        data: [
+                          {
+                            id: XX_ID_MERGE,
+                            canonical_location_key: "city:XX:mergethenrekey",
+                            stamp_type: "city",
+                            country: "Unknown",
+                            country_code: "XX",
+                            city: "Mergethenrekey",
+                            neighborhood: null,
+                            display_name: "Mergethenrekey",
+                          },
+                          {
+                            id: XX_ID_REKEY,
+                            canonical_location_key: "neighborhood:XX:mergethenrekey:old-quarter",
+                            stamp_type: "neighborhood",
+                            country: "Unknown",
+                            country_code: "XX",
+                            city: "Mergethenrekey",
+                            neighborhood: "Old Quarter",
+                            display_name: "Old Quarter",
+                          },
+                        ],
+                        error: null,
+                      }),
+                  }),
+                };
+              }
+              // earn_count fetch during merge
+              if (cols === "id, earn_count") {
+                return {
+                  in: (_col: string, ids: string[]) =>
+                    Promise.resolve({
+                      data: ids.map((id) => ({ id, earn_count: 0 })),
+                      error: null,
+                    }),
+                };
+              }
+              // Survivor lookup: survivor exists for the city entry (XX_ID_MERGE),
+              // but NOT for the neighborhood entry (XX_ID_REKEY).
+              const chain: any = {
+                _targetId: null as string | null,
+                eq: function (col: string, val: unknown) {
+                  if (col === "stamp_type" && val === "city") {
+                    this._targetId = SURVIVOR_ID;
+                  }
+                  if (col === "stamp_type" && val === "neighborhood") {
+                    this._targetId = null;
+                  }
+                  return this;
+                },
+                neq: function () { return this; },
+                maybeSingle: async function () {
+                  return {
+                    data: this._targetId ? { id: this._targetId } : null,
+                    error: null,
+                  };
+                },
+              };
+              return chain;
+            },
+            // Re-key update for the neighborhood entry (entry 2).
+            update: (fields: Record<string, unknown>) => ({
+              eq: () => {
+                rekeyUpdates.push(fields);
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+            delete: () => ({
+              eq: (_col: string, val: string) => {
+                deletedIds.push(val);
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+        }
+
+        if (table === "user_stamps") {
+          return {
+            // Fail for the XX_ID_MERGE entry so mergeCatalogEntry returns false.
+            update: (_fields: Record<string, unknown>) => ({
+              eq: (_col: string, val: string) => {
+                if (val === XX_ID_MERGE) {
+                  return Promise.resolve({
+                    data: null,
+                    error: { message: "deadlock on user_stamps" },
+                  });
+                }
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+        }
+
+        if (table === "passport_stamps") {
+          return {
+            update: (_fields: Record<string, unknown>) => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        if (table === "stamp_artwork_versions") {
+          return {
+            update: (_fields: unknown) => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        if (table === "stamp_generation_queue") {
+          return {
+            delete: () => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        return builder([]);
+      },
+    };
+
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Germany", "DE"));
+
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnMessages.push(args.map(String).join(" "));
+    };
+
+    let r: { status: number; body: any };
+    try {
+      r = await apiReq("PUT", "/admin/geocode-cache/mergethenrekey", {
+        country_code: "DE",
+        country: "Germany",
+        repair_catalog: true,
+      });
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.equal(r!.status, 200, `expected 200, got ${r!.status}: ${JSON.stringify(r!.body)}`);
+    assert.ok(r!.body.repair, "response should include repair stats");
+    const repair = r!.body.repair as RepairStats;
+
+    // The first entry's merge failed — must not be counted.
+    assert.equal(repair.catalogMerged, 0,
+      "catalogMerged must be 0: the first entry's merge failed due to a user_stamps error");
+
+    // The second entry was re-keyed successfully — must be counted.
+    assert.equal(repair.catalogRekeyed, 1,
+      "catalogRekeyed must be 1: the loop must continue past the failed merge and re-key the second entry");
+
+    // The first XX entry must NOT be deleted (its merge returned false).
+    assert.equal(deletedIds.includes(XX_ID_MERGE), false,
+      "the first XX entry must not be deleted when its merge failed");
+
+    // The re-key update for the second entry must have been attempted.
+    assert.ok(rekeyUpdates.length >= 1,
+      "the re-key update for the second entry must have been called — the loop must not abort after the merge failure");
+
+    // A warn must have been emitted for the failed merge.
+    const mergeWarn = warnMessages.find(
+      (m) => m.includes("user_stamps") && m.includes("repoint"),
+    );
+    assert.ok(mergeWarn,
+      "a warn must be emitted for the failed user_stamps repoint so the error is not silently swallowed");
+  });
+
   it("does not abort the loop when the first catalog re-key fails — the second entry for the same city is still processed", async () => {
     // Seed two XX entries for the same city.  The first catalog update call
     // deliberately returns a DB error; the second must still be attempted and
