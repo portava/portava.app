@@ -112,7 +112,9 @@ const NON_LITERAL_PATTERN =
  * accidental dynamic strings, so they should not trigger an unresolvable
  * warning.
  */
-function isAssignedFromPathResolver(identifier: string, fileContent: string): boolean {
+function isAssignedFromPathResolver(identifier: string, fileContent: string, depth = 0): boolean {
+  if (depth > 8) return false;
+
   // Match:  const/let/var <identifier> = <resolver>(
   // path.resolve, path.join, pathResolve, and fileURLToPath are unambiguous —
   // they are always path-computing calls regardless of imports.
@@ -146,6 +148,17 @@ function isAssignedFromPathResolver(identifier: string, fileContent: string): bo
           // is broken; do NOT suppress the UNRESOLVABLE warning.
           return false;
         }
+      }
+      // Also recurse: if firstArg is itself positively assigned from an
+      // unambiguous path call (path.resolve, path.join, etc.), verify that
+      // deeper chain is not broken (catches three-hop non-path chains).
+      // Only recurse when the assignment is positively found — unknown origins
+      // (e.g. path.dirname, import.meta.dirname) are not considered broken.
+      const unambiguousBaseRe = new RegExp(
+        `\\b(?:const|let|var)\\s+${firstArg}\\s*=\\s*(?:path\\.resolve|path\\.join|pathResolve|fileURLToPath)\\s*\\(`,
+      );
+      if (unambiguousBaseRe.test(fileContent) && !isAssignedFromPathResolver(firstArg, fileContent, depth + 1)) {
+        return false;
       }
     }
     return true;
@@ -852,6 +865,33 @@ describe('extractCrossTreePaths — template-literal and non-literal detection',
     assert.ok(
       entry,
       `expected an unresolvable entry for the identifier "pkg"; got: ${JSON.stringify(unresolvableEntries)}`,
+    );
+  });
+
+  it('flags pkg as unresolvable in a three-hop non-path chain (resolve → path.resolve → path.resolve)', () => {
+    // cross-tree-non-path-resolve-3hop-chain.test.ts has:
+    //   const root = resolve('../../../')          ← resolve from 'some-promise-lib'
+    //   const mid  = path.resolve(root, 'sub')
+    //   const pkg  = path.resolve(mid, 'package.json')
+    //   fs.readFileSync(pkg, 'utf8')
+    //
+    // The non-path origin sits two hops before readFileSync.  The guard must
+    // recurse into path.resolve base variables and flag `pkg` as UNRESOLVABLE —
+    // not silently skip it because the intermediate variable looks like a
+    // legitimate path.resolve call.
+    const fixture = path.join(FIXTURES_DIR, 'cross-tree-non-path-resolve-3hop-chain.test.ts');
+    const entries = extractCrossTreePaths(fixture);
+
+    const unresolvableEntries = entries.filter((e) => e.unresolvable === true);
+    assert.ok(
+      unresolvableEntries.length >= 1,
+      `expected at least one UNRESOLVABLE entry in the three-hop chain; got: ${JSON.stringify(entries)}`,
+    );
+
+    const entry = unresolvableEntries.find((e) => e.rawArg === 'pkg');
+    assert.ok(
+      entry,
+      `expected an unresolvable entry for "pkg" in the three-hop chain; got: ${JSON.stringify(unresolvableEntries)}`,
     );
   });
 
