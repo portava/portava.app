@@ -113,9 +113,7 @@ export function _setTestAuthToken(t: string | null): void { _testAuthToken = t; 
 
 async function freshToken(): Promise<string | null> {
   if (_testAuthToken !== null) return _testAuthToken;
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  return session?.access_token ?? null;
+  return freshApiToken();
 }
 
 async function apiGet<T>(path: string): Promise<ApiResult<T>> {
@@ -177,6 +175,7 @@ async function apiPatch<T>(path: string, body: unknown): Promise<ApiResult<T>> {
 
 export { mapStamp, mapDefinition } from './passportStampMappers';
 import { mapStamp } from './passportStampMappers';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 function mapMemory(r: any): PassportMemory {
   return {

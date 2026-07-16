@@ -4,6 +4,7 @@
  * PRIVACY: No lat/lng on meetups. Location is text-only (location_name).
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type MeetupStatus    = 'draft' | 'active' | 'confirmed' | 'cancelled';
 export type MeetupVisibility = 'invitees' | 'trip' | 'circle' | 'friends';
@@ -117,9 +118,7 @@ export interface MeetupResult<T = null> {
 function apiBase(): string { return process.env.EXPO_PUBLIC_API_BASE_URL ?? ''; }
 
 async function freshToken(): Promise<string | null> {
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  return session?.access_token ?? null;
+  return freshApiToken();
 }
 
 async function apiCall<T>(

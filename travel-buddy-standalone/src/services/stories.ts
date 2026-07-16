@@ -2,6 +2,7 @@
  * Stories service — wraps /api/stories and /api/users/me/close-friends endpoints.
  */
 import { supabase } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -74,8 +75,7 @@ export interface CloseFriend {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function authHeader(): Promise<Record<string, string>> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
+  const token = await freshApiToken();
   if (!token) return {};
   return { Authorization: `Bearer ${token}` };
 }

@@ -7,6 +7,7 @@
  */
 import { Platform } from 'react-native';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 // AsyncStorage v2.x uses TurboModules (codegenNativeComponent) — not available on web.
 // We lazy-require it only on native so the web bundle doesn't crash.
@@ -22,9 +23,7 @@ const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 const weatherKey = (tripId: string) => `weather_summary:${tripId}`;
 
 async function freshToken(): Promise<string | null> {
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  return session?.access_token ?? null;
+  return freshApiToken();
 }
 
 async function authedFetch(path: string, opts: RequestInit = {}): Promise<Response> {

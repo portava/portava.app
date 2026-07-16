@@ -6,6 +6,7 @@
  * No GPS fields, no service-role leakage.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type TimeBlock = 'morning' | 'afternoon' | 'evening' | 'late';
 export type Weekday   = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
@@ -40,9 +41,7 @@ export interface AvailabilityResult<T = null> {
 function apiBase(): string { return process.env.EXPO_PUBLIC_API_BASE_URL ?? ''; }
 
 async function freshToken(): Promise<string | null> {
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  return session?.access_token ?? null;
+  return freshApiToken();
 }
 
 async function apiGet<T>(path: string): Promise<AvailabilityResult<T>> {

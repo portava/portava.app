@@ -116,11 +116,11 @@ async function getAuthToken(): Promise<string | null> {
 
   try {
     // Dynamic import keeps native Expo/RN modules out of the test bundle
-    const { supabase, isSupabaseConfigured } = await import('../lib/supabase.ts');
+    const { isSupabaseConfigured } = await import('../lib/supabase.ts');
     if (!isSupabaseConfigured) return null;
-    const { data: refreshed } = await supabase.auth.refreshSession();
-    const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-    return session?.access_token ?? null;
+    // Shared refresh-first token helper (also dynamically imported — it pulls in supabase).
+    const { freshToken } = await import('./apiToken.ts');
+    return freshToken();
   } catch {
     return null;
   }

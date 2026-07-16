@@ -20,6 +20,7 @@ export type NewStampVisibility = 'public' | 'friends_only' | 'private';
 
 import { supabase } from '../lib/supabase';
 import type { PassportStampNew, StampDefinition } from './passportStamps';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 type ApiResult<T> = { ok: true; data: T } | { ok: false; message: string };
 
@@ -33,9 +34,7 @@ export function _setTestAuthToken(t: string | null): void { _testAuthToken = t; 
 
 async function freshToken(): Promise<string | null> {
   if (_testAuthToken !== null) return _testAuthToken;
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  return session?.access_token ?? null;
+  return freshApiToken();
 }
 
 async function apiGet<T>(path: string): Promise<ApiResult<T>> {

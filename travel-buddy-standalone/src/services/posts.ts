@@ -9,6 +9,7 @@
  * UI calls these functions; it never calls fetch or supabase for posts itself.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type PostVisibility = 'public' | 'trip_only' | 'private';
 export type PostStatus = 'active' | 'hidden' | 'reported' | 'deleted';
@@ -196,9 +197,7 @@ function apiBase(): string {
 
 /** Fresh token, mirroring createTrip(): refresh then fall back to current session. */
 async function freshToken(): Promise<string | null> {
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  return session?.access_token ?? null;
+  return freshApiToken();
 }
 
 /** Map an API error envelope { error, message } to our typed result. */

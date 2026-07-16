@@ -9,6 +9,7 @@
  *   5. deleteMedia()         — DELETE /api/postcards/:id/media/:mediaId (owner removal)
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type PostcardVisibility = 'public' | 'private' | 'trip_only';
 
@@ -135,9 +136,7 @@ function apiBase(): string {
 }
 
 async function freshToken(): Promise<string | null> {
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  return session?.access_token ?? null;
+  return freshApiToken();
 }
 
 async function apiPost<T>(path: string, body: unknown): Promise<ApiResult<T>> {

@@ -2,6 +2,7 @@
  * Circle age settings service — typed wrappers over /api/circle-age-settings.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 export interface CircleAgeSettings {
   ageLimitEnabled: boolean;
@@ -24,9 +25,7 @@ function apiBase(): string {
 
 async function authHeaders(): Promise<Record<string, string>> {
   if (!isSupabaseConfigured) return {};
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  const token = session?.access_token;
+  const token = await freshApiToken();
   if (!token) return {};
   return { Authorization: `Bearer ${token}` };
 }

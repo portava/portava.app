@@ -3,6 +3,7 @@
  * Follows the freshToken / apiFetch pattern used by posts.ts and other services.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type HighlightVisibility = 'public' | 'travelers_nearby' | 'circle_only' | 'trip_only' | 'private';
 
@@ -68,9 +69,7 @@ function apiBase(): string {
 }
 
 async function freshToken(): Promise<string | null> {
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  return session?.access_token ?? null;
+  return freshApiToken();
 }
 
 function mapApiError<T>(status: number, body: any): HighlightResult<T> {

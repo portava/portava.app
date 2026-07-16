@@ -3,13 +3,13 @@
  * Profile-level contacts managed from Settings → Emergency Contacts.
  */
 import { supabase } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
 async function authHeader(): Promise<string | null> {
   try {
-    const { data } = await supabase.auth.getSession();
-    return data.session?.access_token ?? null;
+    return freshApiToken();
   } catch {
     return null;
   }

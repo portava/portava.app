@@ -2,6 +2,7 @@
  * Events service — typed wrappers over /api/events/*.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 const BASE = (() => {
   const domain = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -114,8 +115,7 @@ export interface ApiResult<T> {
 async function freshToken(): Promise<string | null> {
   if (!isSupabaseConfigured) return null;
   try {
-    const { data } = await supabase.auth.getSession();
-    return data.session?.access_token ?? null;
+    return freshApiToken();
   } catch {
     return null;
   }

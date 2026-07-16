@@ -12,6 +12,7 @@
  * trip / post creation.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 // ---------------------------------------------------------------------------
 // Test-only injection slots — let unit tests bypass supabase at the boundary.
@@ -128,9 +129,7 @@ export async function uploadMedia(media: PickedMedia): Promise<MediaUploadResult
   if (_testTokenProvider) {
     token = await _testTokenProvider();
   } else {
-    const { data: refreshed } = await supabase.auth.refreshSession();
-    const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-    token = session?.access_token ?? null;
+    token = await freshApiToken();
   }
   if (!token) {
     return { ok: false, url: null, mediaType: null, errorKind: 'unauthenticated', message: 'Please sign in to upload media' };

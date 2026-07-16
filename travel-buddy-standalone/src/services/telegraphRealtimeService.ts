@@ -16,6 +16,7 @@
  */
 
 import { supabase } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type TelegraphEventType =
   | 'thread.updated'
@@ -122,8 +123,7 @@ class TelegraphRealtime {
     const base = apiBase();
     if (!base) { this.setStatus('polling'); return; }
 
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
+    const token = await freshApiToken();
     if (!token) {
       // Not signed in yet; retry later without escalating to a hard failure.
       this.scheduleReconnect();

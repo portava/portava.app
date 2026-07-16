@@ -3,6 +3,7 @@
  * supabase.auth directly, so the implementation can be swapped or mocked.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 /** Test seam — set to a fake token to bypass supabase.auth.getSession in ensureProfile. */
 let _testSessionToken: string | null = null;
@@ -74,8 +75,7 @@ export async function ensureProfile(userId: string, email: string, meta?: { name
   if (_testSessionToken) {
     token = _testSessionToken;
   } else {
-    const { data: sessionData } = await supabase.auth.getSession();
-    token = sessionData.session?.access_token;
+    token = (await freshApiToken()) ?? undefined;
   }
   if (!token) {
     throw new Error('ensureProfile: no session token available');

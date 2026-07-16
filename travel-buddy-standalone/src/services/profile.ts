@@ -6,6 +6,7 @@
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import type { OwnProfile, PublicProfile, PassportPostcard, PassportStamp, PostcardMediaItem } from '../types/models';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -17,9 +18,7 @@ export function _setTestAuthToken(t: string | null): void { _testAuthToken = t; 
 
 async function freshToken(): Promise<string | null> {
   if (_testAuthToken !== null) return _testAuthToken;
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-  return session?.access_token ?? null;
+  return freshApiToken();
 }
 
 function isNetworkError(e: unknown): boolean {

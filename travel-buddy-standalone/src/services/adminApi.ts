@@ -8,7 +8,9 @@
  * module is the single source of truth for that pattern so auth/token changes
  * only need to happen once.
  */
-import { supabase } from '../lib/supabase';
+import { freshToken } from './apiToken.ts';
+
+export { freshToken };
 
 export type AdminApiResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -19,15 +21,6 @@ export interface AdminRequestOptions {
 
 export function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-}
-
-/** Refresh the session (best effort) and return a current access token. */
-export async function freshToken(): Promise<string | null> {
-  try {
-    const { data: refreshed } = await supabase.auth.refreshSession();
-    const s = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-    return s?.access_token ?? null;
-  } catch { return null; }
 }
 
 async function request<T>(

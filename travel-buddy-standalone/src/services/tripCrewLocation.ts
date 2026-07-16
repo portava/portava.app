@@ -5,6 +5,7 @@
  * Pattern: same as safeReturn.ts / trips.ts — EXPO_PUBLIC_API_BASE_URL + supabase Bearer token.
  */
 import { supabase } from '../lib/supabase';
+import { freshToken as freshApiToken } from './apiToken.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -62,8 +63,7 @@ export type ShareDuration = '15m' | '30m' | '1h' | 'plan_end';
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
 async function authHeaders(): Promise<Record<string, string>> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
+  const token = await freshApiToken();
   return {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
