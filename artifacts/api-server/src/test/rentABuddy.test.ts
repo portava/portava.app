@@ -2391,6 +2391,23 @@ describe("Rent a Buddy — rebook", () => {
     );
   });
 
+  it("rebook returns total_usd of 0 — not NaN — when buddy has no hourly_rate_usd set", async () => {
+    setupRebookState("completed");
+    // Simulate a newly approved buddy who hasn't filled in their rate yet.
+    (state.buddyProfiles![BUDDY_PROF] as any).hourly_rate_usd = null;
+    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
+      bookingDate: FUTURE_DATE,
+      startTime: "10:00",
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const totalUsd = r.body.booking?.total_usd;
+    assert.ok(
+      typeof totalUsd === "number" && isFinite(totalUsd),
+      `total_usd must be a finite number; got ${totalUsd}`,
+    );
+    assert.equal(totalUsd, 0, `total_usd should be 0 when hourly_rate_usd is null; got ${totalUsd}`);
+  });
+
   it("rebook uses client groupSize when original has group_size of zero (201)", async () => {
     setupRebookState("completed");
     // Set group_size to 0 on the original — 0 is non-null, so a naive check
