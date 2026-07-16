@@ -1035,6 +1035,32 @@ describe("complete — terminal state is rejected", () => {
       "no profile update must occur when the booking is completed_pending_traveler_confirmation",
     );
   });
+
+  it("returns 409 when the booking is 'disputed' via alias /api/buddy-bookings/:id/complete", async () => {
+    // A disputed booking is a terminal-adjacent state where a dispute has been
+    // raised by one of the parties. The status guard only allows completion from
+    // 'in_progress', so calling complete on a disputed booking must be rejected
+    // with 409 — preventing the buddy's counter from being incorrectly incremented.
+    const fake = makeFakeClient({
+      userId: TRAVELER_ID,
+      bookingStatus: "disputed",
+    });
+    const res = await call(
+      "POST",
+      `/api/buddy-bookings/${BOOKING_ID}/complete`,
+      fake,
+    );
+    assert.equal(res.status, 409, `expected 409, got ${res.status}`);
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "invalid_transition", "expected error: invalid_transition");
+    // No profile counter must have been updated — completing a disputed booking
+    // must not inflate the buddy's earned or completion metrics.
+    assert.equal(
+      fake.updates.filter((u) => u.table === "rent_buddy_profiles").length,
+      0,
+      "no profile update must occur when the booking is disputed",
+    );
+  });
 });
 
 // ── Terminal-state guard — cancel ─────────────────────────────────────────────
