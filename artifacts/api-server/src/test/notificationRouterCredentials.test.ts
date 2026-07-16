@@ -1086,4 +1086,34 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
       errorSpy.mock.restore();
     }
   });
+
+  it("success log is NOT emitted when only the rent_buddy_profiles UPDATE step fails", async () => {
+    // Step 1 (notification_devices DELETE) succeeds and step 2 (profiles UPDATE)
+    // is skipped (no legacyToken), but step 3 (rent_buddy_profiles UPDATE) fails.
+    // anyFailure is set to true via the step-3 catch block, so the success info
+    // log must be suppressed — preventing a false "all-clear" while zombie
+    // rent_buddy tokens remain.
+    _setTestFetch(invalidCredFetch);
+    const RENT_BUDDY_ERROR = new Error("rent_buddy_profiles unavailable");
+    const { client } = makeFakeDb({
+      deviceToken: TOKEN,
+      legacyToken: null,            // step 2 skipped — not the source of the failure
+      rentBuddyUpdateError: RENT_BUDDY_ERROR,
+    });
+
+    const infoSpy = mock.method(_notificationRouterLogger, "info", () => {});
+    try {
+      const router = new NotificationRouter(client);
+      await router.route(BASE_NOTIF);
+
+      const calls = infoSpy.mock.calls.map((c) => c.arguments[1] as string | undefined);
+      const emitted = calls.some((msg) => msg?.includes("removed stale push tokens"));
+      assert.ok(
+        !emitted,
+        "info log 'removed stale push tokens' must NOT be emitted when only the rent_buddy_profiles UPDATE step fails",
+      );
+    } finally {
+      infoSpy.mock.restore();
+    }
+  });
 });
