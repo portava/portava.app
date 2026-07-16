@@ -753,6 +753,26 @@ describe('extractCrossTreePaths — template-literal and non-literal detection',
     );
   });
 
+  it('flags an identifier assigned from join() imported outside node:path as unresolvable', () => {
+    // cross-tree-non-path-join.test.ts imports `join` from 'some-array-lib',
+    // not from 'node:path'.  The guard must NOT treat this as a path-computing
+    // call and must emit an UNRESOLVABLE entry for `crossTreePath`.
+    const fixture = path.join(FIXTURES_DIR, 'cross-tree-non-path-join.test.ts');
+    const entries = extractCrossTreePaths(fixture);
+
+    const unresolvableEntries = entries.filter((e) => e.unresolvable === true);
+    assert.ok(
+      unresolvableEntries.length >= 1,
+      `expected at least one UNRESOLVABLE entry when join() comes from a non-path package; got: ${JSON.stringify(entries)}`,
+    );
+
+    const entry = unresolvableEntries.find((e) => e.rawArg === 'crossTreePath');
+    assert.ok(
+      entry,
+      `expected an unresolvable entry for "crossTreePath"; got: ${JSON.stringify(unresolvableEntries)}`,
+    );
+  });
+
   it('detects a broken cross-tree path in a __helpers__-style non-test file', () => {
     // cross-tree-helpers-style-broken.ts simulates the kind of helper that
     // would live inside a __helpers__, __testUtils__, or __support__ directory.
