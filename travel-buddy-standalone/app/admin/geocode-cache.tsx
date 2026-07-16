@@ -31,14 +31,13 @@ import {
   deleteGeocodeCacheRow,
   type GeocodeCacheRow,
 } from '../../src/services/adminGeocode';
-
-// ── Types ──────────────────────────────────────────────────────────────────────
-
-interface PendingWarning {
-  cityKey: string;
-  count: number;
-  repairing: boolean;
-}
+import {
+  warningsAfterDelete,
+  warningsAfterRepairStart,
+  warningsAfterRepairSuccess,
+  warningsAfterRepairFailure,
+  type PendingWarning,
+} from '../../src/lib/geocodeCacheWarnings';
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
@@ -116,39 +115,25 @@ export default function AdminGeocodeCacheScreen() {
     setRows((prev) => prev.filter((r) => r.city_key !== cityKey));
 
     const pending = res.data.xx_entries_pending ?? 0;
-    if (pending > 0) {
-      // Surface the warning — admin needs to repair catalog or wait for the sweep.
-      setWarnings((prev) => {
-        const without = prev.filter((w) => w.cityKey !== cityKey);
-        return [{ cityKey, count: pending, repairing: false }, ...without];
-      });
-    } else {
-      // No pending entries (or repair ran and cleared them) — dismiss any existing warning.
-      setWarnings((prev) => prev.filter((w) => w.cityKey !== cityKey));
-    }
+    setWarnings((prev) => warningsAfterDelete(prev, cityKey, pending));
   }
 
   async function handleRepairNow(cityKey: string) {
     // Mark as repairing in place so the button shows a spinner.
-    setWarnings((prev) =>
-      prev.map((w) => w.cityKey === cityKey ? { ...w, repairing: true } : w),
-    );
+    setWarnings((prev) => warningsAfterRepairStart(prev, cityKey));
 
     const res = await deleteGeocodeCacheRow(cityKey, true);
 
     if (!res.ok) {
-      setWarnings((prev) =>
-        prev.map((w) => w.cityKey === cityKey ? { ...w, repairing: false } : w),
-      );
+      setWarnings((prev) => warningsAfterRepairFailure(prev, cityKey));
       Alert.alert('Repair failed', res.error ?? 'Please try again.');
       return;
     }
 
     // Repair succeeded — dismiss the warning regardless of residual count.
-    setWarnings((prev) => prev.filter((w) => w.cityKey !== cityKey));
-
     // The row was already removed when we deleted it without repair. Nothing to
     // remove from the list again — the row may not even exist any more.
+    setWarnings((prev) => warningsAfterRepairSuccess(prev, cityKey));
   }
 
   // ── Rendering ─────────────────────────────────────────────────────────────────
