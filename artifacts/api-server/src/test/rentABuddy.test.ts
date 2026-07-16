@@ -2329,6 +2329,32 @@ describe("Rent a Buddy — rebook", () => {
     assert.equal(totalUsd, 0, "total_usd should be 0 when duration is unknown");
   });
 
+  it("rebook explicit durationH/groupSize override wins when original has no duration or group size (201)", async () => {
+    setupRebookState("completed");
+    // Strip the optional numeric fields from the original so it cannot
+    // contribute values — only the client-supplied overrides should win.
+    delete (state.bookings![ORIG_BOOKING_ID] as any).duration_h;
+    delete (state.bookings![ORIG_BOOKING_ID] as any).group_size;
+    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
+      bookingDate: FUTURE_DATE,
+      startTime: "11:00",
+      durationH: 2,
+      groupSize: 3,
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.ok(r.body.bookingId, "should return new bookingId");
+    assert.equal(
+      r.body.booking?.duration_h,
+      2,
+      "duration_h should be the client-supplied value, not null",
+    );
+    assert.equal(
+      r.body.booking?.group_size,
+      3,
+      "group_size should be the client-supplied value, not null",
+    );
+  });
+
   it("rebook for someone else's booking returns 403", async () => {
     state = {
       featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
