@@ -482,7 +482,6 @@ const s = StyleSheet.create({
   columns: {
     flexDirection: 'row',
     gap: 8,
-    paddingRight: 42, // clearance for the absolute menu button
   },
 
   /* Left column — avatar only */
@@ -535,11 +534,12 @@ const s = StyleSheet.create({
     borderColor: CREAM,
   },
 
-  /* Right column */
+  /* Right column — paddingRight clears the absolute ⋯ menu button */
   rightCol: {
     flex: 1,
     gap: 4,
     paddingTop: 2,
+    paddingRight: 44,
   },
   travelerLabel: {
     fontSize: 10,
