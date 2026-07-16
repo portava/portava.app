@@ -13,11 +13,12 @@
     "eas-build-pre-install": "corepack enable",
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && node scripts/check-import-extensions.mjs",
     "test": "node scripts/run-node-tests.mjs",
     "test:event-rab-cta": "node --import tsx/esm --test src/services/__tests__/event.rabCta.test.ts",
     "test:stamps": "node --import tsx --test src/test/stampGracefulDegradation.test.ts",
-    "test:component": "jest --forceExit"
+    "test:component": "jest --forceExit",
+    "lint:imports": "node scripts/check-import-extensions.mjs"
   },
   "dependencies": {
     "@maplibre/maplibre-react-native": "11.3.6",

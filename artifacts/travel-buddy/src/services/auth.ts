@@ -2,7 +2,7 @@
  * Auth service — thin wrapper over supabase-js auth. UI calls these, never
  * supabase.auth directly, so the implementation can be swapped or mocked.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 /** Test seam — set to a fake token to bypass supabase.auth.getSession in ensureProfile. */

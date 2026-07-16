@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 function apiBase(): string {

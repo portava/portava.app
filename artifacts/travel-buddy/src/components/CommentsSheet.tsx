@@ -60,7 +60,7 @@ import { useSession } from '../context/SessionContext';
 import { computeOptimisticLike } from '../lib/commentLikeLogic';
 import { createSubmitGuard } from '../lib/commentSubmitGuard';
 import { createLikeToggleGuard } from '../lib/likeToggleGuard';
-import { EngagementUserListSheet } from './EngagementUserListSheet';
+import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
 import { primaryIdentityText } from '../lib/displayIdentity';
 
 // ── Shared contexts ───────────────────────────────────────────────────────────

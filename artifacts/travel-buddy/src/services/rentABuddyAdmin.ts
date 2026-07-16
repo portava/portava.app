@@ -9,7 +9,7 @@ import {
   adminPost as sharedAdminPost,
   adminPatch as sharedAdminPatch,
   type AdminApiResult,
-} from './adminApi';
+} from './adminApi.ts';
 
 // Rent a Buddy admin endpoints signal missing admin role with HTTP 403, which
 // callers detect via the 'forbidden' sentinel error.
