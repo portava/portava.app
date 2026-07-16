@@ -3239,6 +3239,20 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
       0,
       "no no_show_escalated event must be written when the booking status update DB call errors",
     );
+
+    // ORPHAN CHECK — the booking-status update is attempted BEFORE the dispute
+    // row is inserted (fixed ordering in rentABuddy.ts).  When the update errors
+    // the loop `continue`s before reaching the dispute insert, so no dispute row
+    // is ever written against the still-no_show_pending booking.
+    const orphanedDisputes = (state.disputes ?? []).filter(
+      (d: any) => d.booking_id === "bk-ns-update-err" && d.reason === "no_show",
+    );
+    assert.equal(
+      orphanedDisputes.length,
+      0,
+      "no dispute row must be persisted when the booking-status update errors — " +
+        "the sweep inserts the dispute only after a successful booking update",
+    );
   });
 
   it("still counts the escalation and marks booking disputed when the event-row insert fails", async () => {

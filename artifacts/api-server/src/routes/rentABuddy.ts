@@ -5665,6 +5665,17 @@ router.post("/api/internal/buddy-requests/expire", async (req, res) => {
       // Fall back to traveler_id only if the event row is missing (data inconsistency)
       const reporterUserId: string = (noShowEvent as any)?.actor_user_id ?? (bk.traveler_id as string);
 
+      // Promote the booking to disputed FIRST.  Only insert the dispute row
+      // after the booking update succeeds so a failed update cannot leave an
+      // orphaned dispute row against a booking still in no_show_pending.
+      const { error: updateError } = await serviceClient
+        .from("rent_buddy_bookings")
+        .update({ status: "disputed", updated_at: now })
+        .eq("id", bk.id as string);
+
+      if (updateError) continue;
+
+      // Booking is now disputed — resolve or create the dispute row.
       const { data: existingDispute } = await serviceClient
         .from("rent_buddy_disputes")
         .select("id")
@@ -5682,13 +5693,6 @@ router.post("/api/internal/buddy-requests/expire", async (req, res) => {
           .maybeSingle();
         disputeId = (newDispute as any)?.id ?? null;
       }
-
-      const { error: updateError } = await serviceClient
-        .from("rent_buddy_bookings")
-        .update({ status: "disputed", updated_at: now })
-        .eq("id", bk.id as string);
-
-      if (updateError) continue;
 
       noShowEscalatedCount++;
 
