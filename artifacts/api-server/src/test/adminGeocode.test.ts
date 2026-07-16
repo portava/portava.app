@@ -383,6 +383,7 @@ describe("PUT /admin/geocode-cache/:city_key", () => {
 function makeCatalogFake(
   xxEntries: Record<string, unknown>[],
   onUpdate?: (fields: Record<string, unknown>) => void,
+  catalogUpdateError?: string,
 ) {
   return {
     select: (cols: string) => {
@@ -405,7 +406,12 @@ function makeCatalogFake(
     },
     update: (fields: Record<string, unknown>) => {
       onUpdate?.(fields);
-      return { eq: () => Promise.resolve({ data: null, error: null }) };
+      return {
+        eq: () => Promise.resolve({
+          data: null,
+          error: catalogUpdateError ? { message: catalogUpdateError } : null,
+        }),
+      };
     },
   };
 }
@@ -473,8 +479,9 @@ function makeDeleteRepairClient(opts: {
   xxEntries?: Record<string, unknown>[];
   onCatalogUpdate?: (fields: Record<string, unknown>) => void;
   deleteError?: string;
+  catalogUpdateError?: string;
 }) {
-  const { xxEntries = [], onCatalogUpdate, deleteError } = opts;
+  const { xxEntries = [], onCatalogUpdate, deleteError, catalogUpdateError } = opts;
   const client: any = {
     auth: {
       getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
@@ -493,7 +500,7 @@ function makeDeleteRepairClient(opts: {
         };
       }
       if (table === "universal_stamp_catalog") {
-        return makeCatalogFake(xxEntries, onCatalogUpdate);
+        return makeCatalogFake(xxEntries, onCatalogUpdate, catalogUpdateError);
       }
       return builder([]);
     },
@@ -907,6 +914,57 @@ describe("DELETE /admin/geocode-cache/:city_key with repair_catalog", () => {
     assert.equal(r.status, 200);
     assert.equal(r.body.xx_entries_pending, 1,
       "definition-scoped entries must be excluded; only the real city entry counts");
+  });
+
+  it("does not count a catalog re-key as successful when the DB update call fails", async () => {
+    // The city resolves successfully (unresolvedCities must be empty), but the
+    // DB write that re-keys the catalog entry returns an error.  The repair stats
+    // must reflect the failure — catalogRekeyed must stay at 0.
+    const catalogUpdates: Record<string, unknown>[] = [];
+
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-del-update-fail",
+          canonical_location_key: "city:XX:failburg",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Failburg",
+          neighborhood: null,
+          display_name: "Failburg",
+        },
+      ],
+      onCatalogUpdate: (f) => catalogUpdates.push(f),
+      catalogUpdateError: "permission denied for table universal_stamp_catalog",
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    // Geocoder resolves successfully to Austria (AT) — so the city is NOT unresolved.
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Austria", "AT"));
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/failburg", undefined, "repair_catalog=true");
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.deleted, true);
+    assert.ok(r.body.repair, "response should include repair stats");
+    const repair = r.body.repair as RepairStats;
+
+    // The DB update was attempted but returned an error — must NOT count as a success.
+    assert.equal(
+      repair.catalogRekeyed,
+      0,
+      "catalogRekeyed must be 0 when the catalog update call returns an error",
+    );
+
+    // The city geocoded successfully, so it must NOT appear in unresolvedCities.
+    assert.equal(
+      repair.unresolvedCities.length,
+      0,
+      `unresolvedCities must be empty when the city resolved — got: ${JSON.stringify(repair.unresolvedCities)}`,
+    );
   });
 });
 
