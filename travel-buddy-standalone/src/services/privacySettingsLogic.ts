@@ -1,4 +1,4 @@
-import type { PrivacySettings, ProfileResult } from './profile';
+import type { PrivacySettings, ProfileResult } from './profile.ts';
 
 export interface PrivacyChangeCallbacks {
   setPrivacy(next: PrivacySettings | null): void;

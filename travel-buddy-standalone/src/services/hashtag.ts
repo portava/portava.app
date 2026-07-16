@@ -1,7 +1,7 @@
 /**
  * Hashtag mobile service — fetch metadata, follow/unfollow, feed, and user preview.
  */
-import { supabase } from '../lib/supabase';
+import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 function apiBase(): string {

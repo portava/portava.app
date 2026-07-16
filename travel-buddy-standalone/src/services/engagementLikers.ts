@@ -4,7 +4,7 @@
  * Backed by GET /api/engagement/likes.
  * Supports cursor-based pagination for large like counts.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────

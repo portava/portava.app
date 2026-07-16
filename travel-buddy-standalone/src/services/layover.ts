@@ -3,7 +3,7 @@
  *
  * All calls go through the API server (no direct Supabase from client for layover data).
  */
-import { supabase } from '../lib/supabase';
+import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
