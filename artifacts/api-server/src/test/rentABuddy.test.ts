@@ -2309,6 +2309,26 @@ describe("Rent a Buddy — rebook", () => {
     );
   });
 
+  it("rebook total_usd is 0 — not NaN or a crash — when duration is unknown (201)", async () => {
+    setupRebookState("completed");
+    // Remove duration_h and group_size from the original booking so neither
+    // the original nor the client supplies them.
+    delete (state.bookings![ORIG_BOOKING_ID] as any).duration_h;
+    delete (state.bookings![ORIG_BOOKING_ID] as any).group_size;
+    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
+      bookingDate: FUTURE_DATE,
+      startTime: "11:00",
+      // durationH and groupSize intentionally omitted
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const totalUsd = r.body.booking?.total_usd;
+    assert.ok(
+      typeof totalUsd === "number" && !Number.isNaN(totalUsd),
+      `total_usd must be a number, got ${JSON.stringify(totalUsd)}`,
+    );
+    assert.equal(totalUsd, 0, "total_usd should be 0 when duration is unknown");
+  });
+
   it("rebook for someone else's booking returns 403", async () => {
     state = {
       featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
