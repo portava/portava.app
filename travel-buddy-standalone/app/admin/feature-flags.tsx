@@ -23,7 +23,7 @@ import {
 import { router } from 'expo-router';
 import { ArrowLeft, ChevronRight, Clock, Search, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { supabase } from '../../src/lib/supabase';
+import { adminGet, adminPatch } from '../../src/services/adminApi';
 import { useSession } from '../../src/context/SessionContext';
 import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
@@ -36,50 +36,6 @@ import {
 } from '../../src/screens/admin/featureFlags.machine';
 import { KILL_SWITCH_LABELS } from '../../src/constants/killSwitches';
 import type { FeatureFlag, FlagHistoryEntry } from '../../src/screens/admin/featureFlags.machine';
-
-// ── API helpers ───────────────────────────────────────────────────────────────
-
-function apiBase() { return process.env.EXPO_PUBLIC_API_BASE_URL ?? ''; }
-
-async function freshToken(): Promise<string | null> {
-  try {
-    const { data: refreshed } = await supabase.auth.refreshSession();
-    const s = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
-    return s?.access_token ?? null;
-  } catch { return null; }
-}
-
-async function adminGet<T>(path: string): Promise<{ ok: boolean; data?: T; error?: string }> {
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) {
-      const b = await res.json().catch(() => ({}));
-      return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
-    }
-    return { ok: true, data: await res.json() as T };
-  } catch (e: any) { return { ok: false, error: e?.message ?? 'Network error' }; }
-}
-
-async function adminPatch<T>(path: string, body: unknown): Promise<{ ok: boolean; data?: T; error?: string }> {
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      method: 'PATCH',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const b = await res.json().catch(() => ({}));
-      return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
-    }
-    return { ok: true, data: await res.json() as T };
-  } catch (e: any) { return { ok: false, error: e?.message ?? 'Network error' }; }
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

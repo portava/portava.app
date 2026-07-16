@@ -14,6 +14,7 @@ import {
 import { router } from 'expo-router';
 import { Check, TriangleAlert, X } from 'lucide-react-native';
 import { supabase } from '../../../src/lib/supabase';
+import { adminGet } from '../../../src/services/adminApi';
 import {
   applyDriftLoadResult,
   driftCount,
@@ -63,23 +64,12 @@ function languageLabel(code: string | null): string {
 
 // ── Schema drift warning (cached check, fetched once per screen visit) ────────
 
-function apiBase() { return process.env.EXPO_PUBLIC_API_BASE_URL ?? ''; }
-
 /** Fetch the cached drift report (no ?refresh — never triggers a live probe). */
 async function fetchCachedDriftReport(): Promise<SchemaDriftReport | null> {
-  try {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    if (!token) return null;
-    const res = await fetch(`${apiBase()}/api/admin/health/schema-drift`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return null;
-    const { report } = applyDriftLoadResult({ ok: true, data: await res.json() });
-    return report;
-  } catch {
-    return null;
-  }
+  const res = await adminGet<unknown>('/api/admin/health/schema-drift');
+  if (!res.ok) return null;
+  const { report } = applyDriftLoadResult({ ok: true, data: res.data });
+  return report;
 }
 
 export default function ConnectedFeaturesScreen() {
