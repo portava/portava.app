@@ -23,6 +23,7 @@ import {
 import { getDeviceTimezone } from '../services/pushTokenService';
 import { freshToken } from '../services/apiToken';
 import { showNotificationToast } from '../components/NotificationToast';
+import { _connectOnce } from './notificationStreamUtils';
 
 const UNREAD_POLL_MS = 15_000;
 const NOTIF_POLL_MS  = 30_000;
@@ -161,6 +162,7 @@ export function useRecentNotifications() {
 // Connects to the SSE notification stream endpoint and fires in-app toast banners
 // for every `notification.created` event received while the app is in the foreground.
 // Uses XMLHttpRequest (React Native compatible; EventSource is not available).
+// See notificationStreamUtils.ts for the testable _connectOnce helper.
 
 export function useNotificationStream() {
   const xhrRef = useRef<XMLHttpRequest | null>(null);
@@ -174,19 +176,14 @@ export function useNotificationStream() {
     if (appStateRef.current !== 'active') return;
 
     const token = await freshToken();
-    const base = process.env.EXPO_PUBLIC_API_BASE_URL;
-    if (!token || !base) return;
+    const base = process.env.EXPO_PUBLIC_API_BASE_URL ?? null;
 
     xhrRef.current?.abort();
     parsedIdxRef.current = 0;
 
-    const xhr = new XMLHttpRequest();
+    const xhr = _connectOnce(token, base);
+    if (!xhr) return;
     xhrRef.current = xhr;
-
-    xhr.open('GET', `${base}/api/me/notifications/stream`, true);
-    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-    xhr.setRequestHeader('Accept', 'text/event-stream');
-    xhr.setRequestHeader('Cache-Control', 'no-cache');
 
     xhr.onprogress = () => {
       const text = xhr.responseText;
