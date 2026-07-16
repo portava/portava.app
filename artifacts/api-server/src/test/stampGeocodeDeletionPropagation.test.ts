@@ -1447,4 +1447,97 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     assert.deepEqual(cleanedUpKeys[0], ["tokyo"],
       "cleanup deleted the correct city_key");
   });
+
+  it("negative-cache entry whose TTL expires retries Nominatim and re-caches a positive result — no correction-check probe fires", async () => {
+    // This test isolates the pure TTL-expiry retry path:
+    //   1. Nominatim returns nothing → null cached for 6 hours (no DB row written — negatives are never persisted).
+    //   2. Within the TTL the null is served from cache with ZERO DB probes.
+    //   3. After the 6-hour NEGATIVE_TTL_MS the entry expires → geocoder falls through to
+    //      re-resolve, calls readDbCache (no row), then calls Nominatim (now up) → ES.
+    //   4. The correction-check probe (evictIfDbCorrected / maybeSingle) must NOT fire
+    //      during the TTL-expiry re-resolve — that probe is only for warm, non-expired POSITIVE entries.
+    //   5. The new positive result is re-cached so a follow-up call does not re-hit Nominatim.
+    const T0 = 1_700_000_000_000;
+    const NEGATIVE_TTL_MS = 6 * 60 * 60 * 1_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    let nominatimShouldSucceed = false;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      if (nominatimShouldSucceed) {
+        return {
+          ok: true,
+          json: async () => [{ address: { country_code: "es", country: "Spain" } }],
+        };
+      }
+      // Nominatim returns an empty result set — city not found, no geocode available.
+      return { ok: true, json: async () => [] };
+    });
+
+    // Track every maybeSingle call so we can confirm no correction-check probe fires.
+    // Negative cache entries are never written to the DB, so readDbCache returns null
+    // and the correction-check probe (evictIfDbCorrected) is never triggered for null entries.
+    let maybeSingleCalls = 0;
+    _setGeocodeDbClientForTests({
+      from(_table: string) {
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() {
+            maybeSingleCalls++;
+            return { data: null, error: null }; // no row — negatives are never persisted
+          },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            resolve({ data: [], error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient);
+
+    // ── Phase 1: first call — Nominatim returns nothing → 6-hour negative cache ──
+    const first = await geocodeCityCountry("Valencia");
+    assert.equal(first, null, "first call returns null — Nominatim found nothing");
+    assert.equal(nominatimCalls, 1, "Nominatim called once on the initial cache miss");
+    // readDbCache was called once as part of the initial resolve (checking DB before Nominatim).
+    // Reset the counter so subsequent assertions only measure post-seed probes.
+    maybeSingleCalls = 0;
+
+    // ── Phase 2: within the 6-hour TTL — null served from cache, zero DB probes ──
+    // The correction-check probe must NOT fire for null entries (no DB row to inspect).
+    mockNow(T0 + NEGATIVE_TTL_MS - 1_000);
+    const withinTtl = await geocodeCityCountry("Valencia");
+    assert.equal(withinTtl, null, "null is served from the negative cache within the TTL");
+    assert.equal(nominatimCalls, 1, "Nominatim not called again within the negative TTL");
+    assert.equal(maybeSingleCalls, 0,
+      "no DB probe (maybeSingle) during the warm null-cache period — correction-check probe does not fire for null entries");
+
+    // ── Phase 3: past the 6-hour TTL — entry expires, Nominatim is back up ───────
+    nominatimShouldSucceed = true;
+    mockNow(T0 + NEGATIVE_TTL_MS + 1_000);
+
+    const afterTtl = await geocodeCityCountry("Valencia");
+    assert.equal(afterTtl?.countryCode, "ES",
+      "geocoder retries Nominatim after the 6-hour negative TTL expires and returns the successful result");
+    assert.equal(nominatimCalls, 2, "Nominatim called a second time after the TTL expired");
+    // readDbCache fires once as part of the normal re-resolve flow (check DB before Nominatim).
+    // The correction-check probe (evictIfDbCorrected) must NOT have fired — it is only
+    // triggered for warm, non-expired positive cache entries.
+    assert.ok(maybeSingleCalls <= 1,
+      "maybeSingle called at most once during TTL-expiry re-resolve (readDbCache only — no correction-check probe)");
+
+    // ── Phase 4: positive result re-cached — follow-up call does not re-hit Nominatim ──
+    maybeSingleCalls = 0;
+    const followUp = await geocodeCityCountry("Valencia");
+    assert.equal(followUp?.countryCode, "ES",
+      "follow-up call returns the re-cached positive result (ES)");
+    assert.equal(nominatimCalls, 2,
+      "Nominatim not called again — the successful result is now cached as a positive entry");
+    assert.equal(maybeSingleCalls, 0,
+      "no DB probe on the follow-up call — positive entry is still within its 30-day TTL");
+  });
 });
