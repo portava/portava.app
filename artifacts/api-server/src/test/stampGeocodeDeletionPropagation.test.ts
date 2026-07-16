@@ -1064,4 +1064,137 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     assert.equal(deleteCallCount, 0,
       "cleanup hard-delete must not be called when the tombstone query returned an error");
   });
+
+  it("sweep evicts and cleans up on the second cycle after the deleted_at query recovers from an error", async () => {
+    // Task 404 confirms that a transient DB error on Pass 2 prevents spurious eviction.
+    // This test confirms the complementary path: once the DB recovers in a subsequent
+    // sweep cycle, the entry IS evicted and the cleanup hard-delete IS issued.
+    //
+    // Cycle 1: Pass 2 (deleted_at query) returns a DB error → entry preserved.
+    // Cycle 2: Pass 2 succeeds and returns the tombstoned row → entry evicted + delete called.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "at", country: "Austria" } }],
+      };
+    });
+
+    // Seed the in-memory cache via a DB load.
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({ country: "Austria", country_code: "AT", corrected_at: null, deleted_at: null }),
+    );
+    const first = await geocodeCityCountry("Vienna");
+    assert.equal(first?.countryCode, "AT", "pre-condition: cache seeded with AT");
+    assert.equal(nominatimCalls, 0, "no Nominatim call during seed");
+
+    // ── Cycle 1: Pass 2 returns a DB error ───────────────────────────────────────
+    let cycle1QueryCount = 0;
+    let cycle1DeleteCount = 0;
+    const errorSweepClient: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          delete() { isDelete = true; return chain; },
+          in(_col: string, _keys: string[]) {
+            cycle1DeleteCount++;
+            return chain;
+          },
+          then(resolve: (v: any) => void) {
+            if (isDelete) {
+              cycle1DeleteCount++;
+              resolve({ error: null });
+              return;
+            }
+            const q = cycle1QueryCount++;
+            if (q === 0) {
+              // Pass 1 — corrected_at: nothing to evict.
+              resolve({ data: [], error: null });
+            } else {
+              // Pass 2 — deleted_at: transient DB error.
+              resolve({ data: null, error: { message: "connection refused" } });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(errorSweepClient);
+    await _runCorrectionSweepForTests();
+
+    assert.equal(cycle1QueryCount, 2, "cycle 1: both sweep passes ran");
+    assert.equal(cycle1DeleteCount, 0, "cycle 1: no cleanup delete issued on error");
+
+    // Entry must still be in memory after the failed sweep.
+    _setGeocodeDbClientForTests(makeFixedDbClient(null));
+    const afterCycle1 = await geocodeCityCountry("Vienna");
+    assert.equal(afterCycle1?.countryCode, "AT",
+      "entry still present after cycle 1 — error prevented eviction");
+    assert.equal(nominatimCalls, 0,
+      "Nominatim not called after cycle 1 — stale entry preserved by error guard");
+
+    // Re-seed the cache for cycle 2 (the previous geocodeCityCountry served from
+    // in-memory without touching the cache, so the entry is still present).
+
+    // ── Cycle 2: DB has recovered — Pass 2 returns the tombstoned row ────────────
+    const cycle2CleanedKeys: string[][] = [];
+    let cycle2QueryCount = 0;
+    const recoverySweepClient: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          delete() { isDelete = true; return chain; },
+          in(_col: string, keys: string[]) {
+            cycle2CleanedKeys.push(keys);
+            return chain;
+          },
+          then(resolve: (v: any) => void) {
+            if (isDelete) {
+              resolve({ error: null });
+              return;
+            }
+            const q = cycle2QueryCount++;
+            if (q === 0) {
+              // Pass 1 — corrected_at: nothing to evict.
+              resolve({ data: [], error: null });
+            } else {
+              // Pass 2 — deleted_at: DB recovered and returns the tombstoned row.
+              resolve({ data: [{ city_key: "vienna" }], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(recoverySweepClient);
+    await _runCorrectionSweepForTests();
+
+    assert.equal(cycle2QueryCount, 2, "cycle 2: both sweep passes ran");
+    assert.equal(cycle2CleanedKeys.length, 1,
+      "cycle 2: cleanup hard-delete was issued exactly once");
+    assert.deepEqual(cycle2CleanedKeys[0], ["vienna"],
+      "cycle 2: correct city_key was passed to the cleanup delete");
+
+    // The entry must now be evicted — a subsequent geocode call must fall through to Nominatim.
+    _setGeocodeDbClientForTests(makeFixedDbClient(null));
+    const afterCycle2 = await geocodeCityCountry("Vienna");
+    assert.equal(nominatimCalls, 1,
+      "Nominatim called once after cycle 2 eviction — entry was correctly removed from cache");
+    assert.equal(afterCycle2?.countryCode, "AT",
+      "geocoder re-resolved correctly via Nominatim after the sweep eviction");
+  });
 });
