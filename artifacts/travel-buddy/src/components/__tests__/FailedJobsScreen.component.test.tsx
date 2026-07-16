@@ -25,7 +25,7 @@
  */
 
 import React from 'react';
-import { Alert } from 'react-native';
+import { Alert, Pressable } from 'react-native';
 import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
 import FailedJobsScreen from '../../../app/admin/stamps/failed';
 import { getAdminStampQueue, requeueFailedJob } from '../../services/adminStamps';
@@ -311,6 +311,87 @@ describe('FailedJobsScreen — re-queue flow', () => {
     expect(screen.getByText('1')).toBeTruthy();
     // Sanity-check: "2" must no longer appear as the badge value.
     expect(screen.queryByText('2')).toBeNull();
+  });
+
+  /**
+   * In-flight disabled state
+   *
+   * The screen sets `busyId` to the job id before awaiting `requeueFailedJob`,
+   * then clears it afterwards.  The Pressable receives `disabled={busyId === item.id}`.
+   * A deferred promise keeps the API call suspended so we can assert the disabled
+   * state before the call resolves.
+   *
+   * Two assertions cover the spec:
+   *  1. While in flight — the Pressable for JOB_A has `disabled={true}` and its
+   *     "Re-queue" label is replaced by an ActivityIndicator (only JOB_B's label
+   *     remains visible).
+   *  2. After resolution — the row is removed from the list (successful re-queue),
+   *     so the button is gone entirely and JOB_B's Pressable is not disabled.
+   */
+  it('disables the Re-queue button for the in-flight job while requeueFailedJob is pending', async () => {
+    // Deferred promise — keeps the API call suspended until we explicitly resolve it.
+    let resolveRequeue!: (value: { ok: true }) => void;
+    const requeuePromise = new Promise<{ ok: true }>((resolve) => {
+      resolveRequeue = resolve;
+    });
+    mockRequeue.mockReturnValueOnce(requeuePromise);
+
+    render(<FailedJobsScreen />);
+    await waitFor(() => screen.getByText('Paris Eiffel'));
+
+    // Both jobs are visible and both Re-queue buttons are enabled before any action.
+    expect(screen.getAllByText('Re-queue')).toHaveLength(2);
+
+    // Open the confirmation Alert for JOB_A (first button).
+    fireEvent.press(screen.getAllByText('Re-queue')[0]);
+
+    // Retrieve the Alert confirmation button and start its onPress without awaiting the
+    // inner API promise — this puts the component into the "in-flight" state.
+    const alertCalls = alertSpy.mock.calls;
+    const alertButtons: Array<{ text: string; onPress?: () => void | Promise<void> }> =
+      alertCalls[alertCalls.length - 1][2];
+    const confirmBtn = alertButtons.find((b) => b.text === 'Re-queue')!;
+
+    // Non-async act: setBusyId(job.id) fires synchronously before the first await
+    // inside onPress, so the component re-renders with busyId set immediately.
+    act(() => { confirmBtn.onPress?.(); });
+
+    // ── In-flight assertion ────────────────────────────────────────────────────
+    // JOB_A's Pressable now has disabled={true}.  The label is replaced by an
+    // ActivityIndicator, so only JOB_B's "Re-queue" text remains in the tree.
+    // We also verify the disabled prop directly via UNSAFE_getAllByType.
+    await waitFor(() => {
+      expect(screen.getAllByText('Re-queue')).toHaveLength(1);
+    });
+
+    const pressables = screen.UNSAFE_getAllByType(Pressable);
+    // Find the re-queue Pressable that is currently disabled (busyId matches JOB_A).
+    const disabledRequeueBtn = pressables.find((p) => p.props.disabled === true);
+    expect(disabledRequeueBtn).toBeTruthy();
+
+    // JOB_B's re-queue Pressable must NOT be disabled.
+    const jobBRequeueBtn = pressables.find(
+      (p) => p.props.disabled === false && p.props.onPress !== undefined,
+    );
+    expect(jobBRequeueBtn).toBeTruthy();
+
+    // ── Post-resolution assertion ──────────────────────────────────────────────
+    // Resolve the API — JOB_A is successfully re-queued and removed from the list.
+    await act(async () => {
+      resolveRequeue({ ok: true });
+      await requeuePromise;
+    });
+
+    // JOB_A's row (and its now-resolved button) must be gone.
+    await waitFor(() => expect(screen.queryByText('Paris Eiffel')).toBeNull());
+
+    // JOB_B's Re-queue button must still be present and enabled (busyId was cleared).
+    expect(screen.getAllByText('Re-queue')).toHaveLength(1);
+    const remainingPressables = screen.UNSAFE_getAllByType(Pressable);
+    const remainingRequeueBtn = remainingPressables.find(
+      (p) => p.props.disabled === false && p.props.onPress !== undefined,
+    );
+    expect(remainingRequeueBtn).toBeTruthy();
   });
 });
 
