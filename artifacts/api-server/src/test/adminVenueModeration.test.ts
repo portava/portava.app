@@ -218,6 +218,13 @@ describe("POST /admin/venues/:id/moderate — approve", () => {
     const dbRow = client._db.discovery_places.find((r: any) => r.id === VENUE_ID);
     assert.equal(dbRow?.status, "verified", "discovery_places row must be updated to verified");
 
+    // The response must reflect the post-update DB row — not a stale pre-update snapshot.
+    assert.equal(
+      body.venue.status,
+      dbRow?.status,
+      "body.venue.status must match the DB row status — response must not be a stale pre-update snapshot",
+    );
+
     // The other (non-provisional) venue must be untouched.
     const otherRow = client._db.discovery_places.find((r: any) => r.id === OTHER_VENUE_ID);
     assert.equal(otherRow?.status, "verified", "other venue status must be unchanged");
@@ -248,6 +255,13 @@ describe("POST /admin/venues/:id/moderate — reject", () => {
     // DB row must reflect the change.
     const dbRow = client._db.discovery_places.find((r: any) => r.id === VENUE_ID);
     assert.equal(dbRow?.status, "blocked", "discovery_places row must be updated to blocked");
+
+    // The response must reflect the post-update DB row — not a stale pre-update snapshot.
+    assert.equal(
+      body.venue.status,
+      dbRow?.status,
+      "body.venue.status must match the DB row status — response must not be a stale pre-update snapshot",
+    );
   });
 });
 
