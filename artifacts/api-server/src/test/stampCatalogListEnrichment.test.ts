@@ -10,6 +10,8 @@
  *  2. Non-review entries (approved, pending_artwork …) do NOT get last_error
  *  3. When the queue row has no last_error the field is absent on non-review entries
  *     and null on the review entry (queue row exists but last_error is null)
+ *  4. review_required entry with NO matching queue row at all does NOT get a
+ *     last_error key — the enrichment block only sets it when a queue row exists
  *
  * Run: node --import tsx/esm --test src/test/stampCatalogListEnrichment.test.ts
  */
@@ -28,6 +30,7 @@ const ADMIN_ID       = "aaaaaaaa-0000-4000-8000-000000000001";
 const REVIEW_ID      = "cccccccc-0000-4000-8000-000000000001"; // review_required
 const APPROVED_ID    = "cccccccc-0000-4000-8000-000000000002"; // approved
 const NULL_ERROR_ID  = "cccccccc-0000-4000-8000-000000000003"; // review_required, last_error null
+const NO_QUEUE_ID    = "cccccccc-0000-4000-8000-000000000004"; // review_required, no queue row
 
 // ── HTTP test server ──────────────────────────────────────────────────────────
 
@@ -180,6 +183,19 @@ function makeRows() {
       created_at:            "2024-01-03T00:00:00Z",
       updated_at:            "2024-01-03T00:00:00Z",
     },
+    {
+      id:                    NO_QUEUE_ID,
+      canonical_location_key: "city:rome:italy",
+      stamp_type:            "location",
+      display_name:          "Rome",
+      country:               "Italy",
+      country_code:          "IT",
+      status:                "review_required",
+      active_version_id:     null,
+      earn_count:            0,
+      created_at:            "2024-01-04T00:00:00Z",
+      updated_at:            "2024-01-04T00:00:00Z",
+    },
   ];
 }
 
@@ -253,5 +269,19 @@ describe("GET /admin/stamps/catalog — last_error enrichment", () => {
       "review_required entry matched in queue must always have the last_error key set",
     );
     assert.equal(nullErrorEntry.last_error, null);
+  });
+
+  it("review_required entry with no matching queue row does NOT get a last_error key", async () => {
+    const { status, body } = await get("/admin/stamps/catalog");
+
+    assert.equal(status, 200, `expected 200, got ${status}: ${JSON.stringify(body)}`);
+
+    const noQueueEntry = body.entries.find((e: any) => e.id === NO_QUEUE_ID);
+    assert.ok(noQueueEntry, "review_required entry without a queue row must be present in the response");
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(noQueueEntry, "last_error"),
+      false,
+      "review_required entry with no matching queue row must not have a last_error key — the degraded badge must not appear",
+    );
   });
 });
