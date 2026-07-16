@@ -719,6 +719,66 @@ describe("PushRetryQueue.processQueue() — dead-token clearing on retry", () =>
     );
   });
 
+  it("records InvalidCredentials in last_error when dead token is found on the final attempt (attempt_count=2)", async () => {
+    // attempt_count=2 means two prior failures; this run is attempt 3 — the final attempt.
+    // Expo returns InvalidCredentials, which is non-retryable regardless of remaining attempts.
+    // last_error on the finalised 'failed' row must name the dead-token code ("InvalidCredentials × 1"),
+    // not be empty or swallowed.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [DEAD_TOKEN_IC],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       2,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    _setTestFetch(expoDeadTokenFetch("InvalidCredentials"));
+    await queue.processQueue();
+
+    // ── Queue row must be finalised as 'failed' with last_error naming the code ─
+
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(failedUpdate, "push_retry_queue must be finalised as 'failed' on final attempt with InvalidCredentials");
+    assert.equal(failedUpdate.filters.id,      QUEUE_ROW_ID, "failed update must target the correct queue row");
+    assert.equal(failedUpdate.patch.attempt_count, 3,        "attempt_count must be 3 (the final attempt)");
+
+    // last_error must be exactly "InvalidCredentials × 1" — not empty, not swallowed
+    assert.equal(
+      failedUpdate.patch.last_error,
+      "InvalidCredentials \u00d7 1",
+      "last_error must be 'InvalidCredentials × 1' when InvalidCredentials token is found on the final attempt",
+    );
+
+    // Must NOT be re-queued — token is permanently dead and max_attempts reached
+    const requeued = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(!requeued, "must NOT re-queue when the token is InvalidCredentials and max_attempts is reached");
+
+    // ── Delivery attempt must also be finalised as 'failed' ───────────────────
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated on final-attempt InvalidCredentials");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status, "failed",   "delivery_attempt status must be 'failed'");
+    assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+    // error_message must mirror last_error — a regression in finalise() would leave it null
+    assert.equal(
+      ndaUpdate.patch.error_message,
+      "InvalidCredentials \u00d7 1",
+      "delivery_attempt error_message must match last_error ('InvalidCredentials × 1') on dead-token final attempt",
+    );
+  });
+
   /**
    * Expo returns a 200 with two error tickets: the first token is
    * DeviceNotRegistered and the second is InvalidCredentials.  This exercises
