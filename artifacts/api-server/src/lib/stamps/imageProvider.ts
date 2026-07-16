@@ -148,3 +148,11 @@ export function getStampImageProvider(): StampImageProvider {
 export function _resetProviderCache(): void {
   _cachedProvider = null;
 }
+
+/**
+ * Test-only hook — inject a fake provider so the generation worker can be
+ * driven end-to-end without real image APIs. Pass null to restore the factory.
+ */
+export function _setTestStampImageProvider(provider: StampImageProvider | null): void {
+  _cachedProvider = provider;
+}
