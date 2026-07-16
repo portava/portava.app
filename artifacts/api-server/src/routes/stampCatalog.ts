@@ -657,10 +657,16 @@ router.post("/admin/stamps/catalog/:id/regenerate", async (req, res) => {
     .eq("id", id)
     .eq("status", "rejected");
 
-  await writeAuditLog(sc, adminId, "regenerate", {
-    catalogId: id,
-    notes:     "Regeneration triggered by admin",
-  });
+  // Only write the audit log when a new job was actually enqueued.
+  // A 23505 conflict means the catalog already has a queued job (the second
+  // call in a rapid double-click); the first call already logged the action,
+  // so we skip the duplicate write.
+  if (!queueErr) {
+    await writeAuditLog(sc, adminId, "regenerate", {
+      catalogId: id,
+      notes:     "Regeneration triggered by admin",
+    });
+  }
 
   res.json({ ok: true });
 });

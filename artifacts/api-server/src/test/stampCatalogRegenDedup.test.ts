@@ -285,4 +285,49 @@ describe("POST regenerate called twice does not queue the same stamp twice", () 
     );
   });
 
+  it("audit log has exactly one entry for this catalog_id after two regenerate calls", async () => {
+    // First call — successfully enqueues; audit log should be written
+    const first = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(first.status, 200, `first regenerate failed: ${JSON.stringify(first.body)}`);
+
+    // Second call — hits the 23505 guard; audit log must NOT be written again
+    const second = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(second.status, 200, `second regenerate failed: ${JSON.stringify(second.body)}`);
+
+    const auditEntries = db.stamp_admin_audit_log.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.action === "regenerate",
+    );
+
+    assert.equal(
+      auditEntries.length,
+      1,
+      `expected exactly 1 audit log entry after two regenerate calls, found ${auditEntries.length}: ${JSON.stringify(auditEntries)}`,
+    );
+  });
+
+  it("first regenerate writes the audit log entry; second call (23505) writes none", async () => {
+    // Before any call — log must be empty
+    assert.equal(
+      db.stamp_admin_audit_log.length,
+      0,
+      "audit log must start empty",
+    );
+
+    // After first call — exactly one entry
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      db.stamp_admin_audit_log.length,
+      1,
+      `expected 1 audit entry after first regenerate, found ${db.stamp_admin_audit_log.length}`,
+    );
+
+    // After second call — still exactly one entry (no duplicate)
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      db.stamp_admin_audit_log.length,
+      1,
+      `expected 1 audit entry after second regenerate (23505 guard), found ${db.stamp_admin_audit_log.length}`,
+    );
+  });
+
 });
