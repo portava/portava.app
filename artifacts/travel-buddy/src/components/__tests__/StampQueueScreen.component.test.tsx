@@ -32,7 +32,7 @@
  */
 
 import React from 'react';
-import { render, act, waitFor, screen } from '@testing-library/react-native';
+import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
 import StampQueueScreen from '../../../app/admin/stamps/queue';
 import { getAdminStampCatalog } from '../../services/adminStamps';
 
@@ -296,5 +296,111 @@ describe('StampQueueScreen — malformed entry filter', () => {
     expect(screen.queryByText('Bad ID Type')).toBeNull();
     // Exactly one warning for the one bad entry.
     expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Search-filter suite ────────────────────────────────────────────────────────
+
+/**
+ * Verifies that typing into the search field re-calls getAdminStampCatalog
+ * with the typed search value and that the UI reflects the filtered result.
+ *
+ * ## Why these tests exist
+ *
+ * The search term is threaded from the TextInput through setSearch → the
+ * `load` useCallback (which captures `search` in its deps) → useEffect.
+ * A stale closure, a missing dep, or a dropped onChangeText wire could mean
+ * the filter silently does nothing. These tests make the re-call and the
+ * resulting UI update explicit.
+ */
+
+describe('StampQueueScreen — search filter', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('re-calls getAdminStampCatalog with the typed search value', async () => {
+    // Initial load returns ENTRY_A; the search-filtered load returns ENTRY_B.
+    mockGetCatalog
+      .mockResolvedValueOnce(catalogOk([ENTRY_A]))
+      .mockResolvedValue(catalogOk([ENTRY_B]));
+
+    render(<StampQueueScreen />);
+    await waitFor(() => screen.getByText('Paris Eiffel'));
+
+    const input = screen.getByPlaceholderText('Search by name…');
+    await act(async () => {
+      fireEvent.changeText(input, 'Tokyo');
+    });
+
+    // The second call (and any subsequent) must include search: 'Tokyo'.
+    await waitFor(() => {
+      const calls = mockGetCatalog.mock.calls;
+      const searchCall = calls.find((args) => args[0]?.search === 'Tokyo');
+      expect(searchCall).toBeDefined();
+    });
+  });
+
+  it('shows only the matching entry after typing a search term', async () => {
+    // Initial load returns both entries; filtered load returns only ENTRY_B.
+    mockGetCatalog
+      .mockResolvedValueOnce(catalogOk([ENTRY_A, ENTRY_B]))
+      .mockResolvedValue(catalogOk([ENTRY_B]));
+
+    render(<StampQueueScreen />);
+    await waitFor(() => screen.getByText('Paris Eiffel'));
+
+    const input = screen.getByPlaceholderText('Search by name…');
+    await act(async () => {
+      fireEvent.changeText(input, 'Tokyo');
+    });
+
+    await waitFor(() => screen.getByText('Tokyo Tower'));
+    expect(screen.getByText('Tokyo Tower')).toBeTruthy();
+    expect(screen.queryByText('Paris Eiffel')).toBeNull();
+  });
+
+  it('shows the empty state when the search returns no matches', async () => {
+    // Initial load returns ENTRY_A; filtered load returns nothing.
+    mockGetCatalog
+      .mockResolvedValueOnce(catalogOk([ENTRY_A]))
+      .mockResolvedValue(catalogOk([]));
+
+    render(<StampQueueScreen />);
+    await waitFor(() => screen.getByText('Paris Eiffel'));
+
+    const input = screen.getByPlaceholderText('Search by name…');
+    await act(async () => {
+      fireEvent.changeText(input, 'zzznomatch');
+    });
+
+    await waitFor(() => screen.getByText('No entries found'));
+    expect(screen.getByText('No entries found')).toBeTruthy();
+  });
+
+  it('passes search: undefined (not an empty string) when the field is cleared', async () => {
+    // First load (initial), second load (after typing), third load (after clearing).
+    mockGetCatalog
+      .mockResolvedValueOnce(catalogOk([ENTRY_A]))
+      .mockResolvedValueOnce(catalogOk([ENTRY_B]))
+      .mockResolvedValue(catalogOk([ENTRY_A, ENTRY_B]));
+
+    render(<StampQueueScreen />);
+    await waitFor(() => screen.getByText('Paris Eiffel'));
+
+    const input = screen.getByPlaceholderText('Search by name…');
+
+    // Type a search term.
+    await act(async () => { fireEvent.changeText(input, 'Tokyo'); });
+    await waitFor(() => screen.getByText('Tokyo Tower'));
+
+    // Clear the field.
+    await act(async () => { fireEvent.changeText(input, ''); });
+    await waitFor(() => screen.getByText('Paris Eiffel'));
+
+    // The call made after clearing must NOT pass search (or pass undefined).
+    const calls = mockGetCatalog.mock.calls;
+    const clearCall = calls[calls.length - 1][0];
+    expect(clearCall.search).toBeUndefined();
   });
 });
