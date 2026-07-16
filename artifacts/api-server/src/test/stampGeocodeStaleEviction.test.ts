@@ -686,6 +686,174 @@ describe("negative cache TTL expiry", () => {
     assert.equal(fetchAfterCount, 0,
       "no fetch while the re-cached negative entry (writtenAt=T1) is still live");
   });
+
+  it("DB write failure during TTL-retry is logged as persist_failed — not silently dropped (upsert returns error)", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Step 1: seed a negative cache entry.
+    // _setGeocodeFetchForTests also sets _dbClientOverride = null (no DB).
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+
+    const first = await geocodeCityCountry("PersistFailCity");
+    assert.equal(first, null, "pre-condition: city should cache as null");
+
+    // Step 2: advance past NEGATIVE_TTL_MS so the entry is stale.
+    mockNow(T0 + NEGATIVE_TTL_MS + 1_000);
+
+    // Step 3: swap fetch to return a valid geocode result on the retry.
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "it", country: "Italy" } }],
+    }));
+
+    // Step 4: install a DB client where readDbCache (maybySingle) returns null
+    // (so the retry proceeds to Nominatim) and upsert returns an error object
+    // (simulating a DB write failure on the persist step).
+    const DB_WRITE_ERROR = "connection refused";
+    const failingWriteDb = {
+      from(_table: string) {
+        const chain: any = {
+          select()  { return chain; },
+          eq()      { return chain; },
+          async maybeSingle() { return { data: null, error: null }; },
+          upsert(_row: unknown) {
+            return Promise.resolve({ error: { message: DB_WRITE_ERROR } });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(failingWriteDb);
+
+    // Step 5: capture log output so we can assert on the persist_failed event.
+    const loggedEvents: Array<Record<string, unknown>> = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => {
+      try {
+        const parsed = JSON.parse(String(args[0]));
+        loggedEvents.push(parsed);
+      } catch {
+        origLog(...args);
+      }
+    };
+
+    let result: Awaited<ReturnType<typeof geocodeCityCountry>>;
+    try {
+      result = await geocodeCityCountry("PersistFailCity");
+    } finally {
+      console.log = origLog;
+    }
+
+    // Step 6: the resolved result must be returned — DB error must NOT be propagated.
+    assert.equal(result?.countryCode, "IT",
+      "TTL-retry should resolve and return the geocoded result even when the DB write fails");
+    assert.equal(result?.country, "Italy");
+
+    // Step 7: a persist_failed event must have been emitted.
+    // normCity("PersistFailCity") → "persistfailcity"
+    const persistFailedEvents = loggedEvents.filter(
+      (e) => e.event === "stamp.country_geocode.persist_failed",
+    );
+    assert.equal(
+      persistFailedEvents.length,
+      1,
+      "exactly one persist_failed log event must be emitted when the DB write returns an error",
+    );
+    assert.equal(
+      persistFailedEvents[0].city_key,
+      "persistfailcity",
+      "persist_failed must carry the normalised city_key",
+    );
+    assert.equal(
+      persistFailedEvents[0].error,
+      DB_WRITE_ERROR,
+      "persist_failed must carry the DB error message",
+    );
+  });
+
+  it("DB write failure during TTL-retry is logged as persist_failed — not silently dropped (upsert throws)", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Step 1: seed a negative cache entry (no DB).
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+
+    const first = await geocodeCityCountry("PersistThrowCity");
+    assert.equal(first, null, "pre-condition: city should cache as null");
+
+    // Step 2: advance past NEGATIVE_TTL_MS so the entry is stale.
+    mockNow(T0 + NEGATIVE_TTL_MS + 1_000);
+
+    // Step 3: swap fetch to return a valid geocode result.
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "es", country: "Spain" } }],
+    }));
+
+    // Step 4: install a DB client where upsert throws (exercises the catch branch
+    // of writeDbCache rather than the `if (error)` branch).
+    const THROW_ERROR_MSG = "unexpected db exception";
+    const throwingWriteDb = {
+      from(_table: string) {
+        const chain: any = {
+          select()  { return chain; },
+          eq()      { return chain; },
+          async maybeSingle() { return { data: null, error: null }; },
+          upsert(_row: unknown): Promise<{ error: null }> {
+            throw new Error(THROW_ERROR_MSG);
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(throwingWriteDb);
+
+    // Step 5: capture log output.
+    const loggedEvents: Array<Record<string, unknown>> = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => {
+      try {
+        const parsed = JSON.parse(String(args[0]));
+        loggedEvents.push(parsed);
+      } catch {
+        origLog(...args);
+      }
+    };
+
+    let result: Awaited<ReturnType<typeof geocodeCityCountry>>;
+    try {
+      result = await geocodeCityCountry("PersistThrowCity");
+    } finally {
+      console.log = origLog;
+    }
+
+    // Step 6: resolved result must be returned despite the thrown DB error.
+    assert.equal(result?.countryCode, "ES",
+      "TTL-retry should resolve and return the geocoded result even when writeDbCache throws");
+    assert.equal(result?.country, "Spain");
+
+    // Step 7: a persist_failed event must have been emitted via the catch branch.
+    // normCity("PersistThrowCity") → "persistthrowcity"
+    const persistFailedEvents = loggedEvents.filter(
+      (e) => e.event === "stamp.country_geocode.persist_failed",
+    );
+    assert.equal(
+      persistFailedEvents.length,
+      1,
+      "exactly one persist_failed log event must be emitted when writeDbCache throws",
+    );
+    assert.equal(
+      persistFailedEvents[0].city_key,
+      "persistthrowcity",
+      "persist_failed must carry the normalised city_key",
+    );
+    assert.equal(
+      persistFailedEvents[0].error,
+      THROW_ERROR_MSG,
+      "persist_failed must carry the thrown error message",
+    );
+  });
 });
 
 // ── Correction-sweep eviction retry ──────────────────────────────────────────
