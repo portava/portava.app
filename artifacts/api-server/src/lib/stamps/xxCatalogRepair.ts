@@ -37,6 +37,12 @@ export interface RepairStats {
   unresolvedCities: string[];
 }
 
+export interface OwnershipBackfillStats {
+  userStampsBackfilled: number;
+  passportStampsBackfilled: number;
+  unresolvedCities: string[];
+}
+
 export type CountryResolver = (entry: {
   country: string | null;
   city: string | null;
@@ -217,6 +223,123 @@ export async function repairXXCatalogEntries(
   return stats;
 }
 
+const OWNERSHIP_PAGE_SIZE = 1_000;
+
+/**
+ * Backfill country on ownership rows (user_stamps / passport_stamps) that
+ * have a city but no country. Shared by the manual backfill script and the
+ * periodic sweep.
+ *
+ * Scans ALL candidate rows via keyset pagination (ordered by id) so rows with
+ * unresolvable cities can never starve later resolvable rows out of a run.
+ * `maxBackfillsPerTable` bounds only the number of rows *updated* per table
+ * per run — scanning unresolved rows is cheap because each distinct city is
+ * resolved at most once per run (memoised), and network cost is capped by the
+ * resolver's own geocode budget.
+ *
+ * Unresolvable cities are left untouched and reported in the returned stats.
+ * Idempotent — safe to re-run.
+ */
+export async function backfillOwnershipCountries(
+  sc: SupabaseClient,
+  resolver: CountryResolver = makeGeocodingResolver(),
+  opts: { maxBackfillsPerTable?: number; pageSize?: number } = {},
+  log: { info: WarnLog; warn: WarnLog } = { info: console.log, warn: console.warn },
+): Promise<OwnershipBackfillStats> {
+  const stats: OwnershipBackfillStats = {
+    userStampsBackfilled: 0,
+    passportStampsBackfilled: 0,
+    unresolvedCities: [],
+  };
+
+  const maxBackfills = opts.maxBackfillsPerTable && opts.maxBackfillsPerTable > 0
+    ? opts.maxBackfillsPerTable
+    : Infinity;
+  const pageSize = opts.pageSize && opts.pageSize > 0 ? opts.pageSize : OWNERSHIP_PAGE_SIZE;
+
+  // city → country name (or null if unresolvable), memoised across both tables
+  const cityCountry = new Map<string, string | null>();
+
+  for (const table of ["user_stamps", "passport_stamps"] as const) {
+    let backfilled = 0;
+    let lastId: unknown = null;
+
+    paging: while (backfilled < maxBackfills) {
+      let query = sc
+        .from(table)
+        .select("id, city")
+        .is("country", null)
+        .not("city", "is", null)
+        .order("id", { ascending: true })
+        .limit(pageSize);
+      if (lastId !== null) query = query.gt("id", lastId);
+      const { data: rows, error } = await query;
+
+      if (error) {
+        // passport_stamps may not exist in some environments
+        log.warn(`[xx-repair] ${table} read failed:`, error.message);
+        break;
+      }
+      if (!rows || rows.length === 0) break;
+      lastId = (rows[rows.length - 1] as any).id;
+
+      // Group this page's rows by resolved country so we update in batches
+      const byCountry = new Map<string, string[]>(); // country name → row ids
+      let pending = 0;
+
+      for (const row of rows as any[]) {
+        if (backfilled + pending >= maxBackfills) break;
+        const cityKey = String(row.city).toLowerCase().trim();
+        let country = cityCountry.get(cityKey);
+        if (country === undefined) {
+          try {
+            const resolved = await resolver({ country: null, city: row.city });
+            country = resolved.countryCode === "XX" ? null : resolved.country;
+          } catch (e: any) {
+            log.warn(`[xx-repair] resolver failed for "${row.city}":`, e?.message ?? String(e));
+            country = null;
+          }
+          cityCountry.set(cityKey, country);
+        }
+        if (!country) {
+          if (row.city && !stats.unresolvedCities.includes(row.city)) {
+            stats.unresolvedCities.push(row.city);
+          }
+          continue;
+        }
+        const ids = byCountry.get(country) ?? [];
+        ids.push(row.id);
+        byCountry.set(country, ids);
+        pending += 1;
+      }
+
+      for (const [country, ids] of byCountry) {
+        const { error: updErr } = await sc.from(table).update({ country }).in("id", ids);
+        if (updErr) {
+          log.warn(`[xx-repair] ${table} update failed for ${country}:`, updErr.message);
+        } else {
+          backfilled += ids.length;
+          if (table === "user_stamps") {
+            stats.userStampsBackfilled += ids.length;
+          } else {
+            stats.passportStampsBackfilled += ids.length;
+          }
+        }
+      }
+
+      if (rows.length < pageSize) break paging; // last page
+    }
+  }
+
+  if (stats.unresolvedCities.length > 0) {
+    log.info(
+      `[xx-repair] ownership backfill left ${stats.unresolvedCities.length} unresolved cit(y/ies): ${stats.unresolvedCities.join(", ")}`,
+    );
+  }
+
+  return stats;
+}
+
 // ── Periodic sweeper ──────────────────────────────────────────────────────────
 
 const SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1_000; // every 6 hours
@@ -228,14 +351,19 @@ let _sweepTimeout: ReturnType<typeof setTimeout> | null = null;
 async function runSweep(getClient: () => SupabaseClient | null): Promise<void> {
   const sc = getClient();
   if (!sc) return;
-  const stats = await repairXXCatalogEntries(sc, makeGeocodingResolver({ maxGeocodes: 25 }));
+  // One geocode budget shared across the ownership backfill and catalog repair.
+  const resolver = makeGeocodingResolver({ maxGeocodes: 25 });
+  const ownership = await backfillOwnershipCountries(sc, resolver, { maxBackfillsPerTable: 500 });
+  const stats = await repairXXCatalogEntries(sc, resolver);
   console.log(JSON.stringify({
     event: "stamp.xx_catalog_sweep.completed",
     scanned:          stats.scanned,
     rekeyed:          stats.catalogRekeyed,
     merged:           stats.catalogMerged,
     geocode_resolved: stats.geocodeResolved,
-    unresolved:       stats.unresolvedCities,
+    user_stamps_backfilled:     ownership.userStampsBackfilled,
+    passport_stamps_backfilled: ownership.passportStampsBackfilled,
+    unresolved: [...new Set([...ownership.unresolvedCities, ...stats.unresolvedCities])],
   }));
 }
 
