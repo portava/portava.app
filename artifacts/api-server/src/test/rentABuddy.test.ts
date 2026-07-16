@@ -252,8 +252,10 @@ function makeClient(userId: string, role = "user") {
           }
           if (t === "rent_buddy_profiles") {
             for (const [, col, val] of this._filters) {
-              if (col === "user_id" && state.buddyProfiles?.[val]) {
-                Object.assign(state.buddyProfiles[val], this._updateData);
+              if (col === "user_id") {
+                for (const p of Object.values(state.buddyProfiles ?? {})) {
+                  if ((p as any).user_id === val) Object.assign(p as any, this._updateData);
+                }
               }
               if (col === "id" && state.buddyProfiles?.[val]) {
                 Object.assign(state.buddyProfiles[val], this._updateData);
@@ -648,6 +650,65 @@ describe("search proximity", () => {
     for (const b of r.body.buddies) {
       assert.equal(b.distanceKm, null);
     }
+  });
+
+  it("uses the buddy's meetup-base pin instead of the city centre when set", async () => {
+    setupState();
+    // Second Tokyo buddy pinned in Shibuya (~ the queried origin), while the
+    // default buddy falls back to Tokyo's city-centre seed coordinates.
+    state.buddyProfiles["buddy-prof-pinned"] = {
+      ...state.buddyProfiles[BUDDY_PROF],
+      id: "buddy-prof-pinned", user_id: "buddy-user-pinned",
+      meetup_base_lat: 35.6595, meetup_base_lng: 139.7005,
+    };
+    const r = await req("POST", "/api/rent-a-buddy/search", { city: "Tokyo", lat: 35.6595, lng: 139.7005 });
+    assert.equal(r.status, 200);
+    const pinned = r.body.buddies.find((b: any) => b.id === "buddy-prof-pinned");
+    const unpinned = r.body.buddies.find((b: any) => b.id === BUDDY_PROF);
+    assert.ok(pinned && unpinned, "expected both buddies in results");
+    assert.equal(pinned.distanceKm, 0, "pinned buddy is measured from their meetup base");
+    assert.ok(unpinned.distanceKm > pinned.distanceKm, "unpinned buddy falls back to city centre");
+    // Nearest buddy sorts first.
+    assert.equal(r.body.buddies[0].id, "buddy-prof-pinned");
+  });
+});
+
+// ── Meetup-base pin on own profile ────────────────────────────────────────────
+
+describe("meetup base pin", () => {
+  it("saves a valid pin via PATCH /me/profile", async () => {
+    setupState();
+    const r = await req("PATCH", "/api/rent-a-buddy/me/profile",
+      { meetupBaseLat: 35.66, meetupBaseLng: 139.7 }, BUDDY_TOKEN);
+    assert.equal(r.status, 200);
+    assert.equal(state.buddyProfiles[BUDDY_PROF].meetup_base_lat, 35.66);
+    assert.equal(state.buddyProfiles[BUDDY_PROF].meetup_base_lng, 139.7);
+  });
+
+  it("clears the pin when both coordinates are null", async () => {
+    setupState();
+    state.buddyProfiles[BUDDY_PROF].meetup_base_lat = 35.66;
+    state.buddyProfiles[BUDDY_PROF].meetup_base_lng = 139.7;
+    const r = await req("PATCH", "/api/rent-a-buddy/me/profile",
+      { meetupBaseLat: null, meetupBaseLng: null }, BUDDY_TOKEN);
+    assert.equal(r.status, 200);
+    assert.equal(state.buddyProfiles[BUDDY_PROF].meetup_base_lat, null);
+    assert.equal(state.buddyProfiles[BUDDY_PROF].meetup_base_lng, null);
+  });
+
+  it("rejects out-of-range or partial coordinates", async () => {
+    setupState();
+    for (const body of [
+      { meetupBaseLat: 135.0, meetupBaseLng: 139.7 },   // lat out of range
+      { meetupBaseLat: 35.66, meetupBaseLng: 200 },     // lng out of range
+      { meetupBaseLat: 35.66 },                          // partial
+      { meetupBaseLat: "35.66", meetupBaseLng: 139.7 }, // wrong type
+    ]) {
+      const r = await req("PATCH", "/api/rent-a-buddy/me/profile", body, BUDDY_TOKEN);
+      assert.equal(r.status, 400, `expected 400 for ${JSON.stringify(body)}`);
+      assert.equal(r.body.error, "invalid_meetup_base");
+    }
+    assert.equal(state.buddyProfiles[BUDDY_PROF].meetup_base_lat ?? null, null);
   });
 });
 

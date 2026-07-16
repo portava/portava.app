@@ -86,6 +86,12 @@ export const CRITICAL_COLUMNS: ColumnProbe[] = [
     impact: "buddy availability settings fail to save",
   },
   {
+    table: "rent_buddy_profiles",
+    column: "meetup_base_lat",
+    migration: "0135_rent_buddy_meetup_base_coords.sql",
+    impact: "buddy search fails entirely (column is in the public select list)",
+  },
+  {
     table: "buddy_availability_exceptions",
     column: "exception_date",
     migration: "0133_rent_buddy_availability_alignment.sql",

@@ -214,7 +214,7 @@ const BUDDY_PUBLIC_COLUMNS =
   "average_rating, review_count, completed_bookings, completed_count, response_time_h, " +
   "cover_photo_url, gallery_urls, vibe_tags, safety_badges, buddy_level, category_approvals, " +
   "new_buddy_public_only, new_buddy_daytime_only, new_buddy_max_hours, max_group_size, " +
-  "preferred_meetup_zones, featured, available_now, cancel_count, no_show_count, " +
+  "preferred_meetup_zones, meetup_base_lat, meetup_base_lng, featured, available_now, cancel_count, no_show_count, " +
   "favorites_count, created_at, updated_at";
 
 function mapProfile(row: any) {
@@ -249,6 +249,8 @@ function mapProfile(row: any) {
     newBuddyMaxHours: row.new_buddy_max_hours,
     maxGroupSize: row.max_group_size,
     preferredMeetupZones: row.preferred_meetup_zones ?? [],
+    meetupBaseLat: typeof row.meetup_base_lat === "number" ? row.meetup_base_lat : null,
+    meetupBaseLng: typeof row.meetup_base_lng === "number" ? row.meetup_base_lng : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -484,6 +486,12 @@ async function geocodeBuddyCity(city: string, country: string | null): Promise<{
   return coords;
 }
 
+/** True when a buddy row carries a usable approximate meetup-base pin. */
+function hasMeetupBase(r: Record<string, unknown>): boolean {
+  return typeof r.meetup_base_lat === "number" && Number.isFinite(r.meetup_base_lat)
+    && typeof r.meetup_base_lng === "number" && Number.isFinite(r.meetup_base_lng);
+}
+
 router.post("/api/rent-a-buddy/search", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ buddies: [], total: 0, page: 1, perPage: 20 });
@@ -527,11 +535,13 @@ router.post("/api/rent-a-buddy/search", async (req, res) => {
   const distanceById = new Map<string, number | null>();
 
   if (origin) {
-    // Resolve coordinates for each distinct buddy city (cached), then rank by
-    // distance from the queried point. Unresolvable cities sort last, keeping
-    // their review-count order.
+    // Resolve a coordinate for each buddy: the buddy's own approximate
+    // meetup-base pin when set (neighbourhood-level precision), otherwise the
+    // buddy's city centre (cached geocode). Unresolvable buddies sort last,
+    // keeping their review-count order.
     const distinctCities = new Map<string, { city: string; country: string | null }>();
     for (const r of rows) {
+      if (hasMeetupBase(r)) continue; // no city geocode needed for pinned buddies
       const c = String(r.city ?? "").trim();
       if (!c) continue;
       const k = `${c.toLowerCase()}|${String(r.country ?? "").trim().toLowerCase()}`;
@@ -543,9 +553,14 @@ router.post("/api/rent-a-buddy/search", async (req, res) => {
     }));
 
     for (const r of rows) {
-      const c = String(r.city ?? "").trim();
-      const k = `${c.toLowerCase()}|${String(r.country ?? "").trim().toLowerCase()}`;
-      const coords = c ? coordsByKey.get(k) ?? null : null;
+      let coords: { lat: number; lng: number } | null = null;
+      if (hasMeetupBase(r)) {
+        coords = { lat: r.meetup_base_lat as number, lng: r.meetup_base_lng as number };
+      } else {
+        const c = String(r.city ?? "").trim();
+        const k = `${c.toLowerCase()}|${String(r.country ?? "").trim().toLowerCase()}`;
+        coords = c ? coordsByKey.get(k) ?? null : null;
+      }
       distanceById.set(
         String(r.id),
         coords ? Math.round(haversineKm(origin.lat, origin.lng, coords.lat, coords.lng) * 10) / 10 : null,
@@ -2998,6 +3013,28 @@ router.patch("/api/rent-a-buddy/me/profile", async (req, res) => {
   if (body.vibeTags !== undefined)      patch.vibe_tags      = body.vibeTags;
   if (body.maxGroupSize !== undefined)  patch.max_group_size = body.maxGroupSize;
   if (body.preferredMeetupZones !== undefined) patch.preferred_meetup_zones = body.preferredMeetupZones;
+
+  // Approximate meetup-base pin (privacy-safe, neighbourhood-level — never a
+  // home address). Both coordinates must be set together; null clears the pin.
+  if (body.meetupBaseLat !== undefined || body.meetupBaseLng !== undefined) {
+    const latRaw = body.meetupBaseLat;
+    const lngRaw = body.meetupBaseLng;
+    if (latRaw === null && lngRaw === null) {
+      patch.meetup_base_lat = null;
+      patch.meetup_base_lng = null;
+    } else if (
+      typeof latRaw === "number" && Number.isFinite(latRaw) && latRaw >= -90 && latRaw <= 90 &&
+      typeof lngRaw === "number" && Number.isFinite(lngRaw) && lngRaw >= -180 && lngRaw <= 180
+    ) {
+      patch.meetup_base_lat = latRaw;
+      patch.meetup_base_lng = lngRaw;
+    } else {
+      return res.status(400).json({
+        error: "invalid_meetup_base",
+        message: "meetupBaseLat and meetupBaseLng must both be valid coordinates, or both null to clear.",
+      });
+    }
+  }
 
   if (body.bio) {
     const matches = await scanForPolicyViolations({
