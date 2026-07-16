@@ -429,6 +429,53 @@ function makeMatchFakeClient(buddyRow: Record<string, any>) {
   };
 }
 
+// ── Non-party authorization — check-in and report-no-show ─────────────────────
+
+const STRANGER_ID = "eeeeeeee-0000-0000-0000-000000000099";
+
+describe("safety check-in — non-party receives 403", () => {
+  it("returns 403 when a stranger calls POST /api/buddy-bookings/:id/check-in via alias URL", async () => {
+    // The stranger is neither the traveler nor the buddy on this booking.
+    // completingUserHasBuddyProfile is false (default) so rent_buddy_profiles
+    // lookup returns null, making isParty false.
+    const fake = makeFakeClient({
+      userId: STRANGER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: false,
+    });
+    const res = await call(
+      "POST",
+      `/api/buddy-bookings/${BOOKING_ID}/check-in`,
+      fake,
+      { checkinType: "arrival" },
+    );
+    assert.equal(res.status, 403, "non-party must be rejected with 403");
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "forbidden");
+  });
+});
+
+describe("report-no-show — non-party receives 403", () => {
+  it("returns 403 when a stranger calls POST /api/buddy-bookings/:id/report-no-show via alias URL", async () => {
+    // Same stranger — not the traveler and has no buddy profile linked to this
+    // booking, so isParty evaluates to false.
+    const fake = makeFakeClient({
+      userId: STRANGER_ID,
+      bookingStatus: "in_progress",
+      completingUserHasBuddyProfile: false,
+    });
+    const res = await call(
+      "POST",
+      `/api/buddy-bookings/${BOOKING_ID}/report-no-show`,
+      fake,
+      { notes: "they never showed" },
+    );
+    assert.equal(res.status, 403, "non-party must be rejected with 403");
+    const body = (await res.json()) as any;
+    assert.equal(body.error, "forbidden");
+  });
+});
+
 describe("toBuddyScoringData — completed_count takes precedence over completed_bookings", () => {
   it("uses completed_count=7 (not completed_bookings=3) when ranking via POST /api/rent-a-buddy/match", async () => {
     // Buddy row deliberately has the two counters out of sync.
