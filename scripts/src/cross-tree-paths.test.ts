@@ -330,7 +330,7 @@ function collectTestFiles(dir: string): string[] {
  * NOTE: scripts/src/__fixtures__/ is intentionally excluded — it lives outside
  * TEST_ROOTS and holds guard input fixtures, not application helper code.
  */
-function collectHelperFiles(dir: string): string[] {
+export function collectHelperFiles(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
   const results: string[] = [];
   function walk(d: string) {
@@ -776,6 +776,137 @@ describe('extractCrossTreePaths — template-literal and non-literal detection',
       fs.existsSync(entry.resolved),
       false,
       `expected the resolved path "${entry.resolved}" to be missing (intentionally broken __helpers__-style fixture)`,
+    );
+  });
+});
+
+// ── Tests: collectHelperFiles directory-name matching ─────────────────────────
+
+describe('collectHelperFiles — directory-name matching for __testUtils__ and __support__', () => {
+  /**
+   * These tests confirm that collectHelperFiles picks up .ts files placed inside
+   * __testUtils__ and __support__ directories, not just __fixtures__ and __mocks__.
+   * They use temporary directories so no permanent files need to live in the
+   * source tree solely to exercise the guard.
+   */
+
+  function withTempTree(
+    structure: Record<string, string>,
+    fn: (tmpRoot: string) => void,
+  ): void {
+    const tmpRoot = fs.mkdtempSync(path.join(import.meta.dirname, '__tmp-'));
+    try {
+      for (const [rel, content] of Object.entries(structure)) {
+        const full = path.join(tmpRoot, rel);
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, content, 'utf8');
+      }
+      fn(tmpRoot);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  }
+
+  it('collects .ts files from a __testUtils__ directory', () => {
+    withTempTree(
+      {
+        'src/__testUtils__/testHelper.ts': '// test utility\nexport const foo = 1;\n',
+        'src/__testUtils__/anotherHelper.ts': '// another utility\nexport const bar = 2;\n',
+      },
+      (tmpRoot) => {
+        const srcDir = path.join(tmpRoot, 'src');
+        const found = collectHelperFiles(srcDir);
+        assert.ok(
+          found.some((f) => f.endsWith('testHelper.ts')),
+          `expected "testHelper.ts" to be collected; got: ${JSON.stringify(found)}`,
+        );
+        assert.ok(
+          found.some((f) => f.endsWith('anotherHelper.ts')),
+          `expected "anotherHelper.ts" to be collected; got: ${JSON.stringify(found)}`,
+        );
+      },
+    );
+  });
+
+  it('collects .ts files from a __support__ directory', () => {
+    withTempTree(
+      {
+        'src/__support__/supportUtil.ts': '// support utility\nexport const baz = 3;\n',
+      },
+      (tmpRoot) => {
+        const srcDir = path.join(tmpRoot, 'src');
+        const found = collectHelperFiles(srcDir);
+        assert.ok(
+          found.some((f) => f.endsWith('supportUtil.ts')),
+          `expected "supportUtil.ts" to be collected; got: ${JSON.stringify(found)}`,
+        );
+      },
+    );
+  });
+
+  it('collects .ts files from __testUtils__, __support__, and __helpers__ in one tree', () => {
+    withTempTree(
+      {
+        'src/__testUtils__/a.ts': 'export const a = 1;\n',
+        'src/__support__/b.ts': 'export const b = 2;\n',
+        'src/__helpers__/c.ts': 'export const c = 3;\n',
+        // These should NOT be collected (wrong directory name).
+        'src/utils/d.ts': 'export const d = 4;\n',
+        'src/e.ts': 'export const e = 5;\n',
+      },
+      (tmpRoot) => {
+        const srcDir = path.join(tmpRoot, 'src');
+        const found = collectHelperFiles(srcDir);
+        assert.ok(
+          found.some((f) => f.endsWith('a.ts')),
+          `expected __testUtils__/a.ts to be collected; got: ${JSON.stringify(found)}`,
+        );
+        assert.ok(
+          found.some((f) => f.endsWith('b.ts')),
+          `expected __support__/b.ts to be collected; got: ${JSON.stringify(found)}`,
+        );
+        assert.ok(
+          found.some((f) => f.endsWith('c.ts')),
+          `expected __helpers__/c.ts to be collected; got: ${JSON.stringify(found)}`,
+        );
+        assert.equal(
+          found.filter((f) => f.endsWith('d.ts') || f.endsWith('e.ts')).length,
+          0,
+          `utils/ and src-root .ts files must not be collected; got: ${JSON.stringify(found)}`,
+        );
+      },
+    );
+  });
+
+  it('does not collect .test.ts files inside __testUtils__ or __support__', () => {
+    withTempTree(
+      {
+        'src/__testUtils__/helper.ts': 'export const h = 1;\n',
+        'src/__testUtils__/helper.test.ts': 'import assert from "node:assert/strict";\n',
+        'src/__support__/stub.ts': 'export const s = 2;\n',
+        'src/__support__/stub.test.ts': 'import assert from "node:assert/strict";\n',
+      },
+      (tmpRoot) => {
+        const srcDir = path.join(tmpRoot, 'src');
+        const found = collectHelperFiles(srcDir);
+        const testFilesInFound = found.filter(
+          (f) => f.endsWith('.test.ts') || f.endsWith('.test.tsx'),
+        );
+        assert.equal(
+          testFilesInFound.length,
+          0,
+          `.test.ts files must not be returned by collectHelperFiles; got: ${JSON.stringify(testFilesInFound)}`,
+        );
+        // But the plain .ts helpers must be present.
+        assert.ok(
+          found.some((f) => f.endsWith('helper.ts') && !f.endsWith('.test.ts')),
+          `expected __testUtils__/helper.ts to be collected; got: ${JSON.stringify(found)}`,
+        );
+        assert.ok(
+          found.some((f) => f.endsWith('stub.ts') && !f.endsWith('.test.ts')),
+          `expected __support__/stub.ts to be collected; got: ${JSON.stringify(found)}`,
+        );
+      },
     );
   });
 });
