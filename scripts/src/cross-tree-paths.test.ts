@@ -829,6 +829,32 @@ describe('extractCrossTreePaths — template-literal and non-literal detection',
     );
   });
 
+  it('flags pkg as unresolvable when an intermediate variable uses a non-path join() in a chain', () => {
+    // cross-tree-non-path-join-chain.test.ts has:
+    //   const root = join('../../../')             ← join from 'some-array-lib'
+    //   const pkg  = path.resolve(root, 'package.json')
+    //   fs.readFileSync(pkg, 'utf8')
+    //
+    // Because `root` is produced by a non-path join(), tryResolveStaticVariable
+    // cannot trace the chain to a static path and returns null.  The guard must
+    // then NOT suppress the UNRESOLVABLE warning via isAssignedFromPathResolver —
+    // it must flag `pkg` as unresolvable so the broken chain is visible.
+    const fixture = path.join(FIXTURES_DIR, 'cross-tree-non-path-join-chain.test.ts');
+    const entries = extractCrossTreePaths(fixture);
+
+    const unresolvableEntries = entries.filter((e) => e.unresolvable === true);
+    assert.ok(
+      unresolvableEntries.length >= 1,
+      `expected at least one UNRESOLVABLE entry when path.resolve() chains through a non-path join(); got: ${JSON.stringify(entries)}`,
+    );
+
+    const entry = unresolvableEntries.find((e) => e.rawArg === 'pkg');
+    assert.ok(
+      entry,
+      `expected an unresolvable entry for the identifier "pkg"; got: ${JSON.stringify(unresolvableEntries)}`,
+    );
+  });
+
   it('detects a broken cross-tree path in a __helpers__-style non-test file', () => {
     // cross-tree-helpers-style-broken.ts simulates the kind of helper that
     // would live inside a __helpers__, __testUtils__, or __support__ directory.
