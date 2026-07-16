@@ -486,6 +486,11 @@ describe("PushRetryQueue.processQueue() — dead-token clearing on retry", () =>
     const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
     assert.ok(failedUpdate, "push_retry_queue must be finalised as 'failed'");
     assert.equal(failedUpdate.filters.id, QUEUE_ROW_ID, "failed update must target the correct row");
+    assert.equal(
+      failedUpdate.patch.last_error,
+      "DeviceNotRegistered \u00d7 1",
+      "last_error must name the specific dead-token error code and count",
+    );
 
     // Must NOT re-queue — token is dead, retrying would be wasteful
     const requeued = prqUpdates.find(
@@ -530,9 +535,15 @@ describe("PushRetryQueue.processQueue() — dead-token clearing on retry", () =>
 
     // Row must be finalised as failed, never re-queued
     const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+    const failedUpdateIC = prqUpdates.find((c) => c.patch.status === "failed");
     assert.ok(
-      prqUpdates.some((c) => c.patch.status === "failed"),
+      failedUpdateIC,
       "push_retry_queue must be finalised as 'failed' for InvalidCredentials",
+    );
+    assert.equal(
+      failedUpdateIC.patch.last_error,
+      "InvalidCredentials \u00d7 1",
+      "last_error must name the specific dead-token error code and count",
     );
     assert.ok(
       !prqUpdates.some((c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID),

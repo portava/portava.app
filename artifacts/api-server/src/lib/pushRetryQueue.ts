@@ -167,9 +167,9 @@ export class PushRetryQueue {
 
       // Clear any tokens that became permanently invalid since the item was enqueued
       // (DeviceNotRegistered = device gone; InvalidCredentials = always undeliverable).
-      const deadTokens = result.errors
-        .filter((e) => e.error === "DeviceNotRegistered" || e.error === "InvalidCredentials")
-        .map((e) => e.token);
+      const deadErrors = result.errors
+        .filter((e) => e.error === "DeviceNotRegistered" || e.error === "InvalidCredentials");
+      const deadTokens = deadErrors.map((e) => e.token);
       if (deadTokens.length > 0) {
         await clearDeadTokens(this.db, deadTokens);
         logger.info(
@@ -212,7 +212,16 @@ export class PushRetryQueue {
       // Exhausted all attempts
       const lastErr = result.retryable
         ? `failed after ${newAttemptCount} attempts`
-        : "non-retryable error";
+        : deadErrors.length > 0
+          ? Object.entries(
+              deadErrors.reduce<Record<string, number>>((acc, e) => {
+                acc[e.error] = (acc[e.error] ?? 0) + 1;
+                return acc;
+              }, {}),
+            )
+              .map(([code, count]) => `${code} \u00d7 ${count}`)
+              .join(", ")
+          : "non-retryable error";
 
       await this.finalise(id, "failed", deliveryAttemptId, newAttemptCount, lastErr);
       logger.warn(
