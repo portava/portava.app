@@ -42,6 +42,8 @@ export interface BuddyProfile {
   updatedAt: string;
   availableNow?: boolean;
   buddyLevel?: string;
+  /** Distance in km from the queried coordinates — set by search when lat/lng were sent. */
+  distanceKm?: number | null;
 }
 
 export interface BuddyPackage {
