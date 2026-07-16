@@ -469,6 +469,10 @@ router.post("/api/rent-a-buddy/buddies/:buddyId/request", async (req, res) => {
     return res.status(422).json({ error: "category_not_offered", message: `This buddy does not offer the '${category}' category.` });
   }
 
+  // Blocked/vacation date enforcement
+  const blocking = await findBlockingAvailabilityException(serviceClient, buddyId, bookingDate);
+  if (blocking) return sendBuddyUnavailable(res, blocking.exception_type);
+
   const now = new Date().toISOString();
   const { data, error } = await serviceClient
     .from("rent_buddy_bookings")
