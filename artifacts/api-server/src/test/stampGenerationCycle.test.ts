@@ -3080,6 +3080,59 @@ describe("buildStampPrompt — every recognized stamp_type produces its own shap
   }
 });
 
+// ── landmarkHint suppressed for every non-country stamp_type ─────────────────
+
+describe("buildStampPrompt — landmarkHint is suppressed for every non-country stamp_type", () => {
+  // "JP" maps to "Mount Fuji silhouette and cherry blossom" in COUNTRY_LANDMARK_HINTS.
+  // A well-known, unique substring that must be absent from any non-country prompt.
+  const LANDMARK_FRAGMENT = "Mount Fuji";
+
+  const BASE_ENTRY = {
+    id: "cat-jp",
+    display_name: "Tokyo",
+    country: "Japan",
+    country_code: "JP",
+    region: "Kanto",
+    city: "Tokyo",
+    neighborhood: null,
+    canonical_location_key: "jp/tokyo",
+  };
+
+  const NON_COUNTRY_TYPES = [
+    "city",
+    "region",
+    "neighborhood",
+    "landmark",
+    "hidden_gem",
+    "check_in",
+    "special_event",
+  ] as const;
+
+  for (const stampType of NON_COUNTRY_TYPES) {
+    it(`stamp_type "${stampType}" does NOT include landmark hint text ("${LANDMARK_FRAGMENT}")`, () => {
+      const prompt = buildStampPrompt({ ...BASE_ENTRY, stamp_type: stampType });
+
+      assert.equal(
+        prompt.includes(LANDMARK_FRAGMENT),
+        false,
+        `buildStampPrompt for stamp_type "${stampType}" must NOT include the landmark hint ` +
+          `"${LANDMARK_FRAGMENT}" — landmarkHint() must return "" for non-country stamps; ` +
+          `got prompt snippet: ${prompt.slice(0, 400)}`,
+      );
+    });
+  }
+
+  it('stamp_type "country" with country_code "JP" DOES include the landmark hint text', () => {
+    const prompt = buildStampPrompt({ ...BASE_ENTRY, stamp_type: "country" });
+
+    assert.ok(
+      prompt.includes(LANDMARK_FRAGMENT),
+      `buildStampPrompt for stamp_type "country" with country_code "JP" must include ` +
+        `"${LANDMARK_FRAGMENT}"; got prompt snippet: ${prompt.slice(0, 400)}`,
+    );
+  });
+});
+
 // ── sweepStaleArtwork ─────────────────────────────────────────────────────────
 
 /**
