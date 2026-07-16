@@ -77,6 +77,16 @@ describe('cityCoordSpread — both-or-null contract', () => {
     const result = cityCoordSpread({ lat: 35.6762, lng: -Infinity });
     assert.deepEqual(result, {});
   });
+
+  it('strips extra fields — only lat and lng are returned', () => {
+    const result = cityCoordSpread({ lat: 1, lng: 2, altitude: 100 } as Parameters<typeof cityCoordSpread>[0]);
+    assert.deepEqual(result, { lat: 1, lng: 2 });
+  });
+
+  it('strips extra fields and returns {} when coords are invalid', () => {
+    const result = cityCoordSpread({ lat: null, lng: 2, altitude: 100 } as Parameters<typeof cityCoordSpread>[0]);
+    assert.deepEqual(result, {});
+  });
 });
 
 // ── Waitlist payload contract ─────────────────────────────────────────────────
