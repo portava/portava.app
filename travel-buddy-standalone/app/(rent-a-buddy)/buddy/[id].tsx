@@ -11,9 +11,10 @@ import { color, space, radius, type as t, shadow, layout } from '../../../src/th
 import { TravelLoadingState, TravelErrorState, TravelCard } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
 import {
-  getBuddyProfile, saveBuddy, unsaveBuddy, getBuddyReviews,
+  getBuddyProfile, saveBuddy, unsaveBuddy, getBuddyReviews, getBuddyBlockedDates,
   type BuddyProfile as BuddyProfileType,
   type BuddyPackage, type BuddyAddon, type BuddyReview, type BuddyAvailability,
+  type BuddyBlockedRange,
 } from '../../../src/services/rentABuddy';
 import { reportContent } from '../../../src/services/reports';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -75,6 +76,18 @@ function ReviewSection({ buddyId, initialReviews, total, avgRating }: {
   );
 }
 
+/** Format a blocked range like "Aug 1–5" or "Jul 30 – Aug 2". */
+function formatAwayRange(range: BuddyBlockedRange): string {
+  const start = new Date(`${range.startDate}T00:00:00`);
+  const end = new Date(`${range.endDate}T00:00:00`);
+  const fmt = (d: Date) => d.toLocaleDateString('en', { month: 'short', day: 'numeric' });
+  if (range.startDate === range.endDate) return fmt(start);
+  if (start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear()) {
+    return `${fmt(start)}–${end.getDate()}`;
+  }
+  return `${fmt(start)} – ${fmt(end)}`;
+}
+
 const CATEGORY_LABELS: Record<string, string> = {
   city: 'City', nightlife: 'Nightlife', language: 'Language', shopping: 'Shopping',
   arrival: 'Arrival', content: 'Content', adventure: 'Group Adventures', culture: 'Culture',
@@ -132,14 +145,20 @@ export default function BuddyProfileScreen() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [savingToggle, setSavingToggle] = useState(false);
+  const [blockedRanges, setBlockedRanges] = useState<BuddyBlockedRange[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    const res = await getBuddyProfile(id);
+    const [res, blockedRes] = await Promise.all([
+      getBuddyProfile(id),
+      getBuddyBlockedDates(id),
+    ]);
     setLoading(false);
     if (!res.ok) { setError(res.error); return; }
     setData(res.data);
     setSaved(res.data.savedByMe);
+    // Blocked dates are supplementary — a failure here shouldn't block the profile.
+    setBlockedRanges(blockedRes.ok ? blockedRes.data.blocked : []);
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
@@ -164,6 +183,10 @@ export default function BuddyProfileScreen() {
 
   const buddy = data.buddy;
   const avgRating = buddy.averageRating ?? 0;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const upcomingAway = blockedRanges
+    .filter(r => r.endDate >= todayIso)
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
 
   return (
     <View style={styles.page}>
@@ -287,12 +310,21 @@ export default function BuddyProfileScreen() {
         )}
 
         {/* Availability calendar */}
-        {data.availability.length > 0 && (
+        {(data.availability.length > 0 || upcomingAway.length > 0) && (
           <View style={styles.section}>
             <View style={styles.sectionRow}>
               <Clock size={16} color={color.deep} />
               <Text style={styles.sectionTitle}>Availability</Text>
             </View>
+            {upcomingAway.length > 0 && (
+              <View style={styles.awayWrap}>
+                {upcomingAway.map(r => (
+                  <View key={r.id} style={styles.awayChip}>
+                    <Text style={styles.awayChipText}>Away {formatAwayRange(r)}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
             <View style={styles.availGrid}>
               {data.availability.slice(0, 14).map(av => {
                 const d = new Date(av.date);
@@ -455,6 +487,13 @@ const styles = StyleSheet.create({
   tagWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   langTag: { backgroundColor: '#EAF2F5', borderRadius: radius.pill, paddingHorizontal: space.md, paddingVertical: 4 },
   langTagText: { ...t.small, fontWeight: '600', color: color.deep },
+  awayWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginBottom: space.sm },
+  awayChip: {
+    backgroundColor: '#F4EFE9', borderRadius: radius.pill,
+    paddingHorizontal: space.md, paddingVertical: 4,
+    borderWidth: 1, borderColor: color.haze,
+  },
+  awayChipText: { ...t.small, fontWeight: '600', color: color.mute },
   safetyBanner: {
     flexDirection: 'row', alignItems: 'flex-start', gap: space.sm,
     backgroundColor: '#EEF8F3', borderRadius: radius.md, padding: space.md,
