@@ -890,6 +890,36 @@ describe("profile data-leak prevention", () => {
       }
     });
   });
+
+  // ── PATCH /api/me/profile — clearing homeCountry and currentCity to null ──
+  //
+  // homeCountry and currentCity were previously declared .optional() in
+  // patchProfileSchema, which means a PATCH with null would be rejected (400).
+  // They are now .nullish() so callers can clear them just like homeCity.
+
+  describe("PATCH /api/me/profile — clearing homeCountry to null", () => {
+    it("returns HTTP 200 when homeCountry is null", async () => {
+      const { status, body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { homeCountry: null },
+        USER_TOKEN,
+      );
+      assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    });
+  });
+
+  describe("PATCH /api/me/profile — clearing currentCity to null", () => {
+    it("returns HTTP 200 when currentCity is null", async () => {
+      const { status, body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { currentCity: null },
+        USER_TOKEN,
+      );
+      assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    });
+  });
 });
 
 // ── completedBookings source-of-truth: completed_count wins when counters differ ──
