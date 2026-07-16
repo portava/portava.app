@@ -221,6 +221,82 @@ describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and 
   }
 });
 
+// ── 1c. Other explicitly pinned Expo SDK 54 packages — cross-tree sync ────────
+//
+// Several Expo packages beyond the five intentionally downgraded ones are
+// pinned to exact or narrow versions in both package trees.  A drift in any of
+// them causes the standalone and monorepo builds to behave differently in ways
+// that are only caught at runtime.  Each test below compares the version string
+// in artifacts/travel-buddy/package.json against the version string in
+// travel-buddy-standalone/package.json and fails with the package name and both
+// version strings so the divergence is immediately obvious.
+
+describe('SDK 54 — other explicitly pinned Expo packages sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
+  // artifacts/travel-buddy/package.json is 2 levels up from src/services.
+  const tb = readPkg('../../package.json');
+  const tbAll: Record<string, string> = {
+    ...tb.dependencies,
+    ...tb.devDependencies,
+  };
+
+  // travel-buddy-standalone/package.json is 4 levels up from src/services in
+  // the artifacts tree (artifacts/travel-buddy/src/services → workspace root →
+  // travel-buddy-standalone).
+  const sa = readPkg('../../../../travel-buddy-standalone/package.json');
+  const saAll: Record<string, string> = {
+    ...sa.dependencies,
+    ...sa.devDependencies,
+  };
+
+  // All Expo-ecosystem packages that are explicitly pinned in both package trees
+  // but not already covered by the five-downgrade or peer-dep sync tests above.
+  const pinnedPackages: string[] = [
+    '@expo/cli',
+    'expo',
+    'expo-av',
+    'expo-blur',
+    'expo-constants',
+    'expo-font',
+    'expo-glass-effect',
+    'expo-haptics',
+    'expo-image',
+    'expo-image-manipulator',
+    'expo-image-picker',
+    'expo-linear-gradient',
+    'expo-linking',
+    'expo-location',
+    'expo-router',
+    'expo-sharing',
+    'expo-splash-screen',
+    'expo-status-bar',
+    'expo-symbols',
+    'expo-system-ui',
+    'expo-task-manager',
+    'expo-web-browser',
+  ];
+
+  for (const name of pinnedPackages) {
+    it(`${name} version is in sync between artifacts/travel-buddy and travel-buddy-standalone`, () => {
+      const tbVer = tbAll[name];
+      const saVer = saAll[name];
+
+      assert.ok(
+        tbVer !== undefined,
+        `${name} is missing from artifacts/travel-buddy/package.json — add it or remove the pin from travel-buddy-standalone`,
+      );
+      assert.ok(
+        saVer !== undefined,
+        `${name} is missing from travel-buddy-standalone/package.json — add it or remove the pin from artifacts/travel-buddy`,
+      );
+      assert.equal(
+        tbVer,
+        saVer,
+        `${name} version mismatch: artifacts/travel-buddy="${tbVer}" travel-buddy-standalone="${saVer}" — a drift here can cause silent SDK 54 build or runtime breakage`,
+      );
+    });
+  }
+});
+
 // ── 2. expo-calendar ~15.0.8 — addMeetupToCalendar integration ───────────────
 //
 // Calls the REAL addMeetupToCalendar() from calendar.ts with a mock
