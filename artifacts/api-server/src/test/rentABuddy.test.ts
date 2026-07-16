@@ -72,25 +72,28 @@ function req(
 // ── Fake client state ─────────────────────────────────────────────────────────
 
 interface FakeState {
-  featureFlags?:   Record<string, { flag: string; enabled: boolean }>;
-  profiles?:       Record<string, any>;
-  buddyProfiles?:  Record<string, any>;
-  applications?:   Record<string, any>;
-  bookings?:       Record<string, any>;
-  reviews?:        Record<string, any>[];
-  policyFlags?:    Record<string, any>[];
-  safetyEvents?:   any[];
-  safetyCheckins?: any[];
-  disputes?:       any[];
-  userLimits?:     Record<string, any>;
-  adminActions?:   any[];
-  trustEvents?:    any[];
-  packages?:       Record<string, any>[];
-  addons?:         Record<string, any>[];
-  availability?:   Record<string, any>[];
-  launchControls?: any[];
-  globalControls?: any;
-  cityRollouts?:   any[];
+  featureFlags?:       Record<string, { flag: string; enabled: boolean }>;
+  profiles?:           Record<string, any>;
+  buddyProfiles?:      Record<string, any>;
+  applications?:       Record<string, any>;
+  bookings?:           Record<string, any>;
+  reviews?:            Record<string, any>[];
+  policyFlags?:        Record<string, any>[];
+  safetyEvents?:       any[];
+  safetyCheckins?:     any[];
+  disputes?:           any[];
+  userLimits?:         Record<string, any>;
+  adminActions?:       any[];
+  trustEvents?:        any[];
+  packages?:           Record<string, any>[];
+  addons?:             Record<string, any>[];
+  availability?:       Record<string, any>[];
+  launchControls?:     any[];
+  globalControls?:     any;
+  cityRollouts?:       any[];
+  /** Map of table name → error object. When set the fake client returns this
+   *  error (and no data) for the next insert on that table, then clears it. */
+  insertErrorOverrides?: Record<string, any>;
 }
 
 let state: FakeState = {};
@@ -110,9 +113,25 @@ function makeClient(userId: string, role = "user") {
       _order: null as any,
       _count: false,
       _maybeSingle: false,
+      _eagerCaptured: false,
 
       select(cols?: string, opts?: any) { if (opts?.count) this._count = true; return this; },
-      insert(data: any) { this._insertData = data; return this; },
+      insert(data: any) {
+        this._insertData = data;
+        // buddy_booking_events inserts are often void'd (fire-and-forget) so
+        // _resolve() is never called for them.  Capture eagerly here so tests
+        // can observe the rows even without an await chain.
+        if (table === "buddy_booking_events") {
+          const rows = Array.isArray(data) ? data : [data];
+          for (const row of rows) {
+            const r = { id: `gen-${Math.random().toString(36).slice(2)}`, ...row };
+            if (!(state as any).bookingEvents) (state as any).bookingEvents = [];
+            (state as any).bookingEvents.push(r);
+          }
+          this._eagerCaptured = true;
+        }
+        return this;
+      },
       update(data: any) { this._updateData = data; return this; },
       upsert(data: any, opts?: any) { this._upsertData = data; return this; },
       delete() { this._updateData = "__delete__"; return this; },
@@ -144,6 +163,13 @@ function makeClient(userId: string, role = "user") {
 
         // Handle inserts
         if (this._insertData !== null) {
+          // If a per-table error override is armed, return the error and disarm it.
+          if (state.insertErrorOverrides?.[t]) {
+            const err = state.insertErrorOverrides[t];
+            delete state.insertErrorOverrides[t];
+            return { data: null, error: err };
+          }
+
           const data = Array.isArray(this._insertData) ? this._insertData : [this._insertData];
           const generatedRows: any[] = [];
           for (const row of data) {
@@ -178,7 +204,7 @@ function makeClient(userId: string, role = "user") {
               if (!state.reviews) state.reviews = [];
               state.reviews.push(r);
             }
-            if (t === "buddy_booking_events") {
+            if (t === "buddy_booking_events" && !this._eagerCaptured) {
               if (!(state as any).bookingEvents) (state as any).bookingEvents = [];
               (state as any).bookingEvents.push(r);
             }
@@ -2850,6 +2876,69 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
       noShowDisputes.length,
       1,
       `expected exactly 1 no_show dispute row but found ${noShowDisputes.length}`,
+    );
+  });
+
+  it("still promotes booking to disputed and writes the event with dispute_id: null when the dispute insert fails", async () => {
+    // Grace window expired 3 hours ago.
+    const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+
+    state = {
+      bookings: {
+        "bk-ns-dispute-err": {
+          id: "bk-ns-dispute-err",
+          traveler_id: USER_ID,
+          buddy_id: BUDDY_PROF,
+          status: "no_show_pending",
+          no_show_grace_expires_at: PAST,
+        },
+      },
+      // Arm the error override so the rent_buddy_disputes insert returns a DB error.
+      insertErrorOverrides: {
+        rent_buddy_disputes: { message: "simulated DB error on disputes insert", code: "23505" },
+      },
+    };
+    (state as any).bookingEvents = [
+      { id: "ev-ns-err-1", booking_id: "bk-ns-dispute-err", actor_user_id: USER_ID, event: "no_show_reported" },
+    ];
+
+    const r = await reqSweep();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.noShowEscalated, 1, JSON.stringify(r.body));
+
+    // Booking must still be promoted to disputed even though the dispute insert failed.
+    assert.equal(
+      state.bookings!["bk-ns-dispute-err"].status,
+      "disputed",
+      "booking must be promoted to disputed even when the dispute-row insert fails",
+    );
+
+    // No dispute row must have been persisted (the insert errored out).
+    const storedDisputes = (state.disputes ?? []).filter(
+      (d: any) => d.booking_id === "bk-ns-dispute-err",
+    );
+    assert.equal(
+      storedDisputes.length,
+      0,
+      "no dispute row should be stored when the insert returns an error",
+    );
+
+    // The buddy_booking_events row must still be written, with dispute_id: null.
+    const escalationEvents = ((state as any).bookingEvents ?? []).filter(
+      (e: any) => e.booking_id === "bk-ns-dispute-err" && e.event === "no_show_escalated",
+    );
+    assert.equal(
+      escalationEvents.length,
+      1,
+      "a no_show_escalated event must be recorded even when dispute insert fails",
+    );
+    assert.equal(
+      escalationEvents[0].metadata?.dispute_id,
+      null,
+      "event metadata.dispute_id must be null when the dispute-row insert failed",
     );
   });
 });
