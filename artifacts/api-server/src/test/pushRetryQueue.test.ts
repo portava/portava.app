@@ -2207,7 +2207,106 @@ describe("PushRetryQueue.processQueue() — duplicate error code (2× DeviceNotR
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 14 — Transient 5xx during retry must not touch rent_buddy_profiles
+// 14 — Mixed dead-token codes on the FINAL attempt produce two distinct entries
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Two tokens with different dead-token codes on the FINAL attempt
+ * (attempt_count=2, max_attempts=3).
+ *
+ * The reduce block that builds last_error must accumulate each code separately:
+ *   DEAD_TOKEN    → DeviceNotRegistered × 1
+ *   DEAD_TOKEN_IC → InvalidCredentials  × 1
+ *
+ * A regression that resets the accumulator between tokens on the last attempt
+ * would collapse both into a single entry or drop one code entirely.
+ */
+function expoTwoDeadTokensMixedFinalFetch(): typeof fetch {
+  return async () =>
+    new Response(
+      JSON.stringify({
+        data: [
+          {
+            status:  "error",
+            message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+            details: { error: "DeviceNotRegistered" },
+          },
+          {
+            status:  "error",
+            message: "The push notification service reported that the push token is invalid: InvalidCredentials",
+            details: { error: "InvalidCredentials" },
+          },
+        ],
+      }),
+      { status: 200 },
+    ) as unknown as Response;
+}
+
+describe("PushRetryQueue.processQueue() — mixed dead-token codes on the final attempt (attempt_count=2)", () => {
+  it("produces 'DeviceNotRegistered × 1, InvalidCredentials × 1' in last_error — not merged or dropped", async () => {
+    // attempt_count=2, max_attempts=3 → this is the final (3rd) attempt.
+    // Two tokens: DEAD_TOKEN → DeviceNotRegistered, DEAD_TOKEN_IC → InvalidCredentials.
+    // The reduce accumulator must produce two distinct entries with count 1 each.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [DEAD_TOKEN, DEAD_TOKEN_IC],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       2,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    _setTestFetch(expoTwoDeadTokensMixedFinalFetch());
+    await queue.processQueue();
+
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+
+    // Must be finalised as 'failed' — final attempt, both tokens permanently dead
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(failedUpdate, "push_retry_queue must be finalised as 'failed' on the final attempt");
+    assert.equal(failedUpdate.filters.id,       QUEUE_ROW_ID, "failed update must target the correct queue row");
+    assert.equal(failedUpdate.patch.attempt_count, 3,          "attempt_count must be 3 (the final attempt)");
+
+    // last_error must contain one entry per error code — each with count 1
+    const lastError = failedUpdate.patch.last_error as string;
+    assert.ok(
+      lastError.includes("DeviceNotRegistered \u00d7 1"),
+      `last_error must contain "DeviceNotRegistered × 1"; got: ${lastError}`,
+    );
+    assert.ok(
+      lastError.includes("InvalidCredentials \u00d7 1"),
+      `last_error must contain "InvalidCredentials × 1"; got: ${lastError}`,
+    );
+
+    // Must NOT be re-queued on the final attempt
+    assert.ok(
+      !prqUpdates.some((c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID),
+      "must NOT re-queue after the final attempt",
+    );
+
+    // Delivery attempt must also be finalised as 'failed' with the same last_error
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated on final failure");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status, "failed",   "delivery_attempt status must be 'failed'");
+    assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+    assert.equal(
+      ndaUpdate.patch.error_message,
+      lastError,
+      "delivery_attempt error_message must mirror push_retry_queue last_error",
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 15 — Transient 5xx during retry must not touch rent_buddy_profiles
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
