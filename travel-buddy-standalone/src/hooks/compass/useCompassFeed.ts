@@ -4,8 +4,8 @@ import {
   getCachedFeed,
   setCachedFeed,
   type CompassFeedResponse,
-} from '../../services/compass.ts';
-import { useSession } from '../../context/SessionContext.tsx';
+} from '../../services/compass';
+import { useSession } from '../../context/SessionContext';
 
 interface UseCompassFeedOptions {
   section?: string;

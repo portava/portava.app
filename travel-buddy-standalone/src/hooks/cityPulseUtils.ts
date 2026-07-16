@@ -7,7 +7,7 @@
  * Exported by useCityPulse.ts for convenience — import directly from here in
  * tests.
  */
-import type { CityEvent, Interest } from '../types/models.ts';
+import type { CityEvent, Interest } from '../types/models';
 
 /** Local copy — avoids a relative import that fails in the tsx CJS resolution path. */
 function blockOf(iso: string): CityEvent['block'] {

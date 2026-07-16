@@ -5,9 +5,9 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable, Switch, Image, ScrollView } from 'react-native';
 import { Users, Star, BadgeCheck } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import type { LayoverBuddy, PresenceTraveler } from '../../services/layover.ts';
-import { primaryIdentityText } from '../../lib/displayIdentity.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
+import type { LayoverBuddy, PresenceTraveler } from '../../services/layover';
+import { primaryIdentityText } from '../../lib/displayIdentity';
 
 interface Props {
   city: string | null;

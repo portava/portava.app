@@ -9,12 +9,12 @@
  * first loaded and no location has been captured yet.
  */
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { useActiveLocation } from '../hooks/useActiveLocation.ts';
-import type { ActiveLocationState, UseActiveLocationResult } from '../hooks/useActiveLocation.ts';
-import { useLocationPreferences } from '../hooks/useLocationPreferences.ts';
-import type { LocationPreferences } from '../hooks/useLocationPreferences.ts';
-import { useSession } from './SessionContext.tsx';
-import type { Place } from '../lib/location/placeTypes.ts';
+import { useActiveLocation } from '../hooks/useActiveLocation';
+import type { ActiveLocationState, UseActiveLocationResult } from '../hooks/useActiveLocation';
+import { useLocationPreferences } from '../hooks/useLocationPreferences';
+import type { LocationPreferences } from '../hooks/useLocationPreferences';
+import { useSession } from './SessionContext';
+import type { Place } from '../lib/location/placeTypes';
 
 // ── Context shape ─────────────────────────────────────────────────────────────
 

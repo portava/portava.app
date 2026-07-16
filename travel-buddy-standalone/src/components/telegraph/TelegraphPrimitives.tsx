@@ -6,8 +6,8 @@
 import React from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { Users, Globe } from 'lucide-react-native';
-import { color, space, type as t } from '../../theme/tokens.ts';
-import { TG, TG_AVATAR, TG_SPACING } from '../../theme/telegraphTokens.ts';
+import { color, space, type as t } from '../../theme/tokens';
+import { TG, TG_AVATAR, TG_SPACING } from '../../theme/telegraphTokens';
 
 // ── TelegraphAvatar ───────────────────────────────────────────────────────────
 

@@ -8,7 +8,7 @@ import {
   View, Text, Pressable, StyleSheet, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { MapPin, Clock, MessageCircle } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
 
 interface RecipientShareData {
   shareId: string;
@@ -44,7 +44,7 @@ function formatCountdown(secs: number): string {
 
 async function fetchRecipientView(shareId: string): Promise<RecipientShareData | null> {
   try {
-    const { freshToken } = await import('../../services/apiToken.ts');
+    const { freshToken } = await import('../../services/apiToken');
     const token = (await freshToken()) ?? '';
     const base = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
     const res = await fetch(`${base}/api/safe-return/live-share/${shareId}`, {

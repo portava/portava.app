@@ -25,8 +25,8 @@
 import React from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated';
-import { color, space } from '../theme/tokens.ts';
-import { navBarProgress } from '../hooks/useNavBarCollapse.ts';
+import { color, space } from '../theme/tokens';
+import { navBarProgress } from '../hooks/useNavBarCollapse';
 
 export interface PulseFilterRailProps {
   /** Ordered list of filter values. These are also matched by string equality for active state. */

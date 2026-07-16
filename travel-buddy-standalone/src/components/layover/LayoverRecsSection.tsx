@@ -5,9 +5,9 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { Compass, Plus, Check } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { fmtDur, REC_EMOJI, safetyColors } from './layoverFormat.ts';
-import type { LayoverRecommendation } from '../../services/layover.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
+import { fmtDur, REC_EMOJI, safetyColors } from './layoverFormat';
+import type { LayoverRecommendation } from '../../services/layover';
 
 interface Props {
   recs: LayoverRecommendation[];

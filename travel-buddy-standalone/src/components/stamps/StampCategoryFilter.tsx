@@ -4,7 +4,7 @@
  */
 import React from 'react';
 import { ScrollView, Pressable, Text, StyleSheet, View } from 'react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
 
 export type StampCategory =
   | ''

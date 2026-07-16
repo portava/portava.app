@@ -38,8 +38,8 @@ import {
   type AnyMentionSuggestion,
   type TagSpan,
   type MentionSurface,
-} from '../services/tagging.ts';
-import { color, space, type as t } from '../theme/tokens.ts';
+} from '../services/tagging';
+import { color, space, type as t } from '../theme/tokens';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 

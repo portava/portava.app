@@ -15,13 +15,13 @@ import {
 import {
   Navigation, EyeOff, RefreshCw, Users, Info, MapPin,
 } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
-import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
-import { CrewMemberCard } from './CrewMemberCard.tsx';
-import { LiveShareSheet } from './LiveShareSheet.tsx';
-import { useTripCrewMap } from '../../hooks/useTripCrewMap.ts';
-import { enableGhostMode, disableGhostMode, updateCrewPreferences } from '../../services/tripCrewLocation.ts';
-import type { CrewMemberCard as CrewMemberCardType } from '../../services/tripCrewLocation.ts';
+import { color, space, radius, type as t, shadow } from '../../theme/tokens';
+import { useBlockedIds } from '../../context/BlockedIdsContext';
+import { CrewMemberCard } from './CrewMemberCard';
+import { LiveShareSheet } from './LiveShareSheet';
+import { useTripCrewMap } from '../../hooks/useTripCrewMap';
+import { enableGhostMode, disableGhostMode, updateCrewPreferences } from '../../services/tripCrewLocation';
+import type { CrewMemberCard as CrewMemberCardType } from '../../services/tripCrewLocation';
 
 interface Props {
   tripId: string;

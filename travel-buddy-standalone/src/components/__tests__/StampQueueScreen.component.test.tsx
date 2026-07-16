@@ -33,8 +33,8 @@
 
 import React from 'react';
 import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
-import StampQueueScreen from '../../../app/admin/stamps/queue.tsx';
-import { getAdminStampCatalog } from '../../services/adminStamps.ts';
+import StampQueueScreen from '../../../app/admin/stamps/queue';
+import { getAdminStampCatalog } from '../../services/adminStamps';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
@@ -47,11 +47,11 @@ jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-jest.mock('../../hooks/useRequireAdmin.ts', () => ({
+jest.mock('../../hooks/useRequireAdmin', () => ({
   useRequireAdmin: jest.fn(),
 }));
 
-jest.mock('../../services/adminStamps.ts', () => ({
+jest.mock('../../services/adminStamps', () => ({
   getAdminStampCatalog: jest.fn(),
 }));
 

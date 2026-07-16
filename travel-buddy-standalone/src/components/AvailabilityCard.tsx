@@ -2,9 +2,9 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { CalendarClock, ChevronRight } from 'lucide-react-native';
-import type { AvailabilityStatus } from '../types/models.ts';
-import { STATUS_LABEL } from '../lib/availability.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import type { AvailabilityStatus } from '../types/models';
+import { STATUS_LABEL } from '../lib/availability';
+import { color, space, radius, type as t } from '../theme/tokens';
 
 /**
  * Compact availability status card. Display-only this pass.

@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import {
   postCompassFeedback,
   type CompassFeedbackAction,
-} from '../../services/compass.ts';
+} from '../../services/compass';
 
 interface FeedbackOptions {
   recommendationId: string;

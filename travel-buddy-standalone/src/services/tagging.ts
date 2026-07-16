@@ -4,7 +4,7 @@
  * /api/me/tag-permission, and /api/tags/:id (self-removal) endpoints.
  */
 
-import { supabase } from '../lib/supabase.ts';
+import { supabase } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 function apiBase(): string {

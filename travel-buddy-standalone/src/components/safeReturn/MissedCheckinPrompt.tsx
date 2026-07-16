@@ -12,9 +12,9 @@
 import React, { useState } from 'react';
 import { View, Text, Modal, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { Shield, Clock, AlertCircle } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { confirmSafe, extendTimer, type SafeReturnSession } from '../../services/safeReturn.ts';
-import { EmergencyHelpSheet } from './EmergencyHelpSheet.tsx';
+import { color, space, radius, type as t } from '../../theme/tokens';
+import { confirmSafe, extendTimer, type SafeReturnSession } from '../../services/safeReturn';
+import { EmergencyHelpSheet } from './EmergencyHelpSheet';
 
 interface Props {
   visible: boolean;

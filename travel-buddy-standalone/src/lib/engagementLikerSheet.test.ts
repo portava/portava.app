@@ -411,10 +411,7 @@ describe('PostEngagementBar — source-level JSX wiring', () => {
   before(() => { src = fs.readFileSync(path.join(COMPONENTS, 'PostEngagementBar.tsx'), 'utf8'); });
 
   it('imports EngagementUserListSheet', () => {
-    assert.ok(
-      src.includes("from './EngagementUserListSheet.tsx'") || src.includes("from './EngagementUserListSheet'"),
-      'PostEngagementBar must import EngagementUserListSheet'
-    );
+    assert.ok(src.includes("from './EngagementUserListSheet'"), 'PostEngagementBar must import EngagementUserListSheet');
   });
 
   it('like-count Pressable onPress calls setLikerSheet({})', () => {
@@ -461,10 +458,7 @@ describe('CommentsSheet — source-level JSX wiring', () => {
   before(() => { src = fs.readFileSync(path.join(COMPONENTS, 'CommentsSheet.tsx'), 'utf8'); });
 
   it('imports EngagementUserListSheet', () => {
-    assert.ok(
-      src.includes("from './EngagementUserListSheet.tsx'") || src.includes("from './EngagementUserListSheet'"),
-      'CommentsSheet must import EngagementUserListSheet'
-    );
+    assert.ok(src.includes("from './EngagementUserListSheet'"), 'CommentsSheet must import EngagementUserListSheet');
   });
 
   it('comment like-count Pressable onPress sets likerCommentId', () => {

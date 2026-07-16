@@ -1,17 +1,17 @@
 import React, { useState } from 'react';
 import { View, Text, Pressable, Modal, StyleSheet } from 'react-native';
 import { MoreVertical } from 'lucide-react-native';
-import { useBlockUser } from '../../hooks/useBlockUser.ts';
-import { useMuteUser } from '../../hooks/useMuteUser.ts';
-import { useRestrictUser } from '../../hooks/useRestrictUser.ts';
-import { useReportUser } from '../../hooks/useReportUser.ts';
-import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
-import { BlockUserConfirmSheet } from './BlockUserConfirmSheet.tsx';
-import { MuteUserSheet } from './MuteUserSheet.tsx';
-import { RestrictUserSheet } from './RestrictUserSheet.tsx';
-import { ReportUserSheet } from './ReportUserSheet.tsx';
-import type { ReportReason } from '../../services/reports.ts';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { useBlockUser } from '../../hooks/useBlockUser';
+import { useMuteUser } from '../../hooks/useMuteUser';
+import { useRestrictUser } from '../../hooks/useRestrictUser';
+import { useReportUser } from '../../hooks/useReportUser';
+import { useBlockedIds } from '../../context/BlockedIdsContext';
+import { BlockUserConfirmSheet } from './BlockUserConfirmSheet';
+import { MuteUserSheet } from './MuteUserSheet';
+import { RestrictUserSheet } from './RestrictUserSheet';
+import { ReportUserSheet } from './ReportUserSheet';
+import type { ReportReason } from '../../services/reports';
+import { color, space, radius, type as t } from '../../theme/tokens';
 
 export interface UserOverflowMenuProps {
   userId: string;

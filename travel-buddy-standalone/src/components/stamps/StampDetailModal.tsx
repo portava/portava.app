@@ -9,14 +9,14 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { X, Share2, Link } from 'lucide-react-native';
-import { StampArtwork } from '../StampArtwork.tsx';
-import { StampShareCard } from '../StampShareCard.tsx';
-import { useStampShare } from '../../hooks/useStampShare.ts';
-import { updateStampVisibility, toggleDisplayOnPassport } from '../../services/stamps.ts';
-import { stampToLegacy, makeStampShareLinks } from '../../services/stampShareUtils.ts';
-import type { NewStampVisibility } from '../../services/stamps.ts';
-import type { PassportStampNew } from '../../services/passportStamps.ts';
-import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import { StampArtwork } from '../StampArtwork';
+import { StampShareCard } from '../StampShareCard';
+import { useStampShare } from '../../hooks/useStampShare';
+import { updateStampVisibility, toggleDisplayOnPassport } from '../../services/stamps';
+import { stampToLegacy, makeStampShareLinks } from '../../services/stampShareUtils';
+import type { NewStampVisibility } from '../../services/stamps';
+import type { PassportStampNew } from '../../services/passportStamps';
+import { color, space, radius, type as t, shadow } from '../../theme/tokens';
 
 const RARITY_COLORS: Record<string, string> = {
   common:    '#6B7280',

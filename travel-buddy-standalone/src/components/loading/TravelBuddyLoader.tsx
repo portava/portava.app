@@ -14,11 +14,11 @@
  */
 import React, { useMemo } from 'react';
 import type { ViewStyle } from 'react-native';
-import { PassportStampLoader } from './PassportStampLoader.tsx';
-import { PulsePinLoader } from './PulsePinLoader.tsx';
-import { CompassLockLoader } from './CompassLockLoader.tsx';
-import { RoutePathLoader } from './RoutePathLoader.tsx';
-import { TelegraphLoader } from './TelegraphLoader.tsx';
+import { PassportStampLoader } from './PassportStampLoader';
+import { PulsePinLoader } from './PulsePinLoader';
+import { CompassLockLoader } from './CompassLockLoader';
+import { RoutePathLoader } from './RoutePathLoader';
+import { TelegraphLoader } from './TelegraphLoader';
 
 /**
  * Loading context. Pick the one that matches what's actually loading.

@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, Pressable, ScrollView, Image, StyleSheet, ActivityIndicator } from 'react-native';
-import type { PassportPostcard } from '../types/models.ts';
-import type { PassportMapMarker, PassportMapPayload } from '../services/passportStamps.ts';
-import { getPassportMap } from '../services/passportStamps.ts';
-import { color, space, type as t } from '../theme/tokens.ts';
-import { HighlightRing } from './HighlightRing.tsx';
-import { HighlightViewer } from './HighlightViewer.tsx';
-import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
-import { listNearbyUsers, type NearbyUser } from '../services/map.ts';
+import type { PassportPostcard } from '../types/models';
+import type { PassportMapMarker, PassportMapPayload } from '../services/passportStamps';
+import { getPassportMap } from '../services/passportStamps';
+import { color, space, type as t } from '../theme/tokens';
+import { HighlightRing } from './HighlightRing';
+import { HighlightViewer } from './HighlightViewer';
+import { useHighlightRingState } from '../hooks/useHighlightRingState';
+import { listNearbyUsers, type NearbyUser } from '../services/map';
 
 /** Single nearby-traveler chip: avatar with HighlightRing + name label. */
 function NearbyUserChip({ user }: { user: NearbyUser }) {

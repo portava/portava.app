@@ -5,7 +5,7 @@
  */
 import { useEffect, useState, useCallback } from 'react';
 import { AppState } from 'react-native';
-import { getMyRequests, getRequestCount, type InboxItem } from '../services/requests.ts';
+import { getMyRequests, getRequestCount, type InboxItem } from '../services/requests';
 
 export function useRequests() {
   const [incoming, setIncoming] = useState<InboxItem[]>([]);

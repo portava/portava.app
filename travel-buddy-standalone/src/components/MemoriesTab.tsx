@@ -4,13 +4,13 @@ import {
   ActivityIndicator, Modal, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { MapPin, Lock, Globe, Users, Eye, EyeOff, Plus, X } from 'lucide-react-native';
-import type { PassportMemory, MemoryVisibility } from '../services/passportStamps.ts';
+import type { PassportMemory, MemoryVisibility } from '../services/passportStamps';
 import {
   createPassportMemory,
   updatePassportMemory,
-} from '../services/passportStamps.ts';
-import { SaveButton } from './SaveButton.tsx';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+} from '../services/passportStamps';
+import { SaveButton } from './SaveButton';
+import { color, space, radius, type as t } from '../theme/tokens';
 
 const CATEGORIES = [
   { key: 'city', label: '🏙 City' },

@@ -23,10 +23,10 @@ import { CalendarClock, ChevronDown, ChevronUp, Zap, X } from 'lucide-react-nati
 import {
   getTripAvailability, patchTripOpenDays,
   type MemberAvailability, type TimeBlock,
-} from '../services/availability.ts';
-import { AvailabilityGrid, type CellStatus } from './AvailabilityGrid.tsx';
-import { BestDaysBanner } from './BestDaysBanner.tsx';
-import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+} from '../services/availability';
+import { AvailabilityGrid, type CellStatus } from './AvailabilityGrid';
+import { BestDaysBanner } from './BestDaysBanner';
+import { color, space, radius, type as t, shadow } from '../theme/tokens';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

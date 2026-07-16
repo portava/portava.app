@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase.ts';
+import { supabase } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type AppealTargetType =

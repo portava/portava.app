@@ -7,8 +7,8 @@
 import React from 'react';
 import { View, Text, Modal, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { MapPin, X } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
-import type { RouteStop, RouteLeg } from '../services/routePlan.ts';
+import { color, space, radius, type as t } from '../theme/tokens';
+import type { RouteStop, RouteLeg } from '../services/routePlan';
 
 export interface RouteFullMapModalProps {
   visible: boolean;

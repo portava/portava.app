@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { View, Text, StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
-import { color, type as t } from '../theme/tokens.ts';
+import { color, type as t } from '../theme/tokens';
 
 const GOING_COLOR   = color.success; // green
 const MAYBE_COLOR   = '#E0A417';     // amber

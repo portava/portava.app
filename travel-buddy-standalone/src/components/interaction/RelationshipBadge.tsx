@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import type { RelationshipLabel } from '../../hooks/useRelationshipLabel.ts';
-import { color, radius } from '../../theme/tokens.ts';
+import type { RelationshipLabel } from '../../hooks/useRelationshipLabel';
+import { color, radius } from '../../theme/tokens';
 
 const CONFIG: Record<RelationshipLabel, { label: string; bg: string; text: string } | null> = {
   blocked_by_you: { label: 'Blocked', bg: '#FEE2E2', text: '#DC2626' },

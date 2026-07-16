@@ -4,9 +4,9 @@ import {
   fetchCompassActiveReward,
   postCompassFrontloadEvent,
   type CompassFrontloadData,
-} from '../../services/compass.ts';
-import { useSession } from '../../context/SessionContext.tsx';
-import { useCompassContext } from '../../context/CompassContext.tsx';
+} from '../../services/compass';
+import { useSession } from '../../context/SessionContext';
+import { useCompassContext } from '../../context/CompassContext';
 
 interface UseCompassFrontloadResult {
   frontload:       CompassFrontloadData | null;

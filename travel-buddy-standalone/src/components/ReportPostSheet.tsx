@@ -4,14 +4,14 @@ import {
   Modal, Alert, ActivityIndicator, ScrollView, TextInput,
 } from 'react-native';
 import { X } from 'lucide-react-native';
-import { reportContent, type ReasonCode } from '../services/reports.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { reportContent, type ReasonCode } from '../services/reports';
+import { color, space, radius, type as t } from '../theme/tokens';
 import {
   INITIAL_REPORT_SHEET_STATE,
   canSubmitReport,
   resetReportSheet,
   REPORT_POST_REASONS,
-} from './ReportPostSheet.state.ts';
+} from './ReportPostSheet.state';
 
 export { REPORT_POST_REASONS };
 
