@@ -666,6 +666,47 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
     );
   });
 
+  it("resets the cleanup failure counter to 0 after profiles UPDATE (legacy token) succeeds following prior failures", async () => {
+    // Drive _consecutiveCleanupFailures up via profiles UPDATE failures (Step 2)
+    // — using fewer than CLEANUP_ERROR_THRESHOLD (3) calls so the counter is
+    // elevated but the threshold hasn't been crossed yet.
+    // LEGACY_TOKEN is set as both deviceToken and legacyToken so that Step 2 is
+    // always attempted; Step 1 (DELETE) and Step 3 (rent_buddy) both succeed.
+    _setTestFetch(invalidCredFetch);
+    const PROFILES_ERROR = new Error("profiles table unavailable");
+    const { client: errorClient } = makeFakeDb({
+      deviceToken: LEGACY_TOKEN,
+      legacyToken: LEGACY_TOKEN,
+      profilesUpdateError: PROFILES_ERROR,
+    });
+    const errorRouter = new NotificationRouter(errorClient);
+
+    await errorRouter.route(BASE_NOTIF);
+    await errorRouter.route(BASE_NOTIF);
+
+    assert.ok(
+      _getCleanupFailureCount() >= 1,
+      `pre-condition: counter should be elevated after two failing routes, got ${_getCleanupFailureCount()}`,
+    );
+
+    // Switch to a healthy DB where profiles UPDATE succeeds.  All three cleanup
+    // steps pass, so anyFailure stays false and the router must reset
+    // _consecutiveCleanupFailures to 0.
+    const { client: healthyClient } = makeFakeDb({
+      deviceToken: LEGACY_TOKEN,
+      legacyToken: LEGACY_TOKEN,
+    });
+    const healthyRouter = new NotificationRouter(healthyClient);
+
+    await healthyRouter.route(BASE_NOTIF);
+
+    assert.equal(
+      _getCleanupFailureCount(),
+      0,
+      "cleanup failure counter must reset to 0 after profiles UPDATE (legacy token) succeeds",
+    );
+  });
+
   it("counter increments twice per call when both step 1 and step 2 fail in the same cleanup", async () => {
     // Use LEGACY_TOKEN as both the device token and the legacy profile token so
     // that step 2 (profiles UPDATE) is always attempted alongside step 1 (DELETE).
