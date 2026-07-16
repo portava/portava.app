@@ -936,6 +936,16 @@ describe("PushRetryQueue.processQueue() — dead-token clearing on retry", () =>
     const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
     assert.equal(ndaUpdate.patch.status, "failed",   "delivery_attempt status must be 'failed'");
     assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+    // error_message must carry both dead-token codes — a regression in finalise() that
+    // truncates or drops error_message would pass the last_error assertions above but fail here.
+    assert.ok(
+      (ndaUpdate.patch.error_message as string).includes("DeviceNotRegistered \u00d7 1"),
+      `delivery_attempt error_message must include "DeviceNotRegistered × 1"; got: ${ndaUpdate.patch.error_message}`,
+    );
+    assert.ok(
+      (ndaUpdate.patch.error_message as string).includes("InvalidCredentials \u00d7 1"),
+      `delivery_attempt error_message must include "InvalidCredentials × 1"; got: ${ndaUpdate.patch.error_message}`,
+    );
   });
 
   it("mirrors both dead-token codes in delivery_attempt error_message on a non-final attempt (attempt_count=1)", async () => {
