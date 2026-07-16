@@ -18,6 +18,7 @@ import { startInviteSlotSweeper } from "./lib/inviteSlotSweeper";
 import { getServiceClient } from "./lib/supabase";
 import { assertRequiredEnv } from "./lib/envValidation";
 import { startWorkerLoop } from "./lib/stamps/generationWorker";
+import { runSchemaDriftCheck } from "./lib/schemaDriftCheck";
 
 assertRequiredEnv(logger);
 
@@ -66,50 +67,16 @@ app.listen(port, (err) => {
     startWorkerLoop(intervalMs);
   }
 
-  // Startup check: verify the toggle_feature_flag_with_audit SQL function
-  // exists (introduced by migration 0119).  If it is missing the PATCH
-  // /admin/feature-flags/:flag route will return a db_error with no clear
-  // explanation.  We probe by calling the function with a sentinel flag that
-  // will never exist; a P0002 (no_data_found) response confirms the function
-  // is present.  A 42883 (undefined_function) response means the migration
-  // has not been applied to this database.
+  // Startup schema-drift check: probes every declared critical column and
+  // SQL function against the live schema and logs one consolidated warning
+  // naming everything that is missing plus the migration to apply.  See
+  // src/lib/schemaDriftCheck.ts for the declared list.
   (async () => {
     const sc = getServiceClient();
     if (!sc) return; // service client not configured — skip
-    const { error } = await sc.rpc("toggle_feature_flag_with_audit", {
-      p_flag:          "__startup_probe__",
-      p_new_enabled:   false,
-      p_changed_by_id: "00000000-0000-0000-0000-000000000000",
-    });
-    if (error?.code === "42883") {
-      logger.warn(
-        "startup: toggle_feature_flag_with_audit SQL function is missing — " +
-        "apply migration 0119 to the database or PATCH /admin/feature-flags/:flag will return 503",
-      );
-    }
+    await runSchemaDriftCheck(sc, logger);
   })().catch((e) =>
-    logger.warn({ err: e }, "startup: could not probe toggle_feature_flag_with_audit"),
-  );
-
-  // Startup check: verify profiles.passport_section_order exists (migration
-  // 0120).  If it is missing, PATCH /api/me/profile layout saves would hit
-  // schema drift; the route now returns an explicit error in that case, but
-  // this probe surfaces the drift immediately at boot instead of on first save.
-  (async () => {
-    const sc = getServiceClient();
-    if (!sc) return; // service client not configured — skip
-    const { error } = await sc
-      .from("profiles")
-      .select("passport_section_order")
-      .limit(1);
-    if (error && (error.code === "42703" || error.code === "PGRST204" || error.code === "PGRST100")) {
-      logger.warn(
-        { code: error.code },
-        "startup: profiles.passport_section_order column is missing — apply migration 0120_passport_section_order.sql or passport layout saves will fail",
-      );
-    }
-  })().catch((e) =>
-    logger.warn({ err: e }, "startup: could not probe profiles.passport_section_order"),
+    logger.warn({ err: e }, "startup: schema drift check failed to run"),
   );
 
   // Startup health check — warn if the cleanup job hasn't run recently.
