@@ -137,11 +137,10 @@ export interface CreateTripInput {
 export async function createTrip(input: CreateTripInput): Promise<TripRow | null> {
   if (!isSupabaseConfigured) return null;
 
-  // Get a fresh session token.
-  const { data: refreshed } = await supabase.auth.refreshSession();
-  const session = refreshed?.session ?? (await supabase.auth.getSession()).data.session;
+  // Get a fresh session token (refreshes only when near expiry).
+  const token = await freshToken();
 
-  if (!session?.user?.id) {
+  if (!token) {
     throw new Error('Auth error: No authenticated session');
   }
 
@@ -154,7 +153,7 @@ export async function createTrip(input: CreateTripInput): Promise<TripRow | null
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${session.access_token}`,
+      Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({
       title: input.title,
