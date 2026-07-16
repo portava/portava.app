@@ -1504,6 +1504,92 @@ describe("runGenerationCycle — orphan cleanup throws: original error preserved
     assert.equal(inserts.length, 0, "must not insert any version rows after a mid-batch failure");
   });
 
+  it("logs orphan_cleanup_error with job_id, catalog_id, and paths so ops can reconstruct the full cleanup scope", async () => {
+    // One upload succeeds; the second upload fails (generation error path fires);
+    // cleanup remove() throws. The orphan_cleanup_error log event must be parseable
+    // JSON and must carry job_id, catalog_id, AND paths — so ops know exactly
+    // which files need manual removal without bucket access.
+    let uploadCall = 0;
+    const originalUploadError = "Storage upload failed: bucket quota exceeded";
+    const cleanupErrorMsg = "Storage remove failed: network timeout";
+
+    const { sc, storageCalls } = makeFakeClientWithStorage({
+      onUpload(_path, _buf) {
+        uploadCall++;
+        if (uploadCall === 2) throw new Error(originalUploadError);
+      },
+      onRemove(_paths) {
+        throw new Error(cleanupErrorMsg);
+      },
+    });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    // Capture console.error lines so we can inspect the logged JSON payload.
+    const loggedErrors: string[] = [];
+    const origError = console.error.bind(console);
+    console.error = (...args: any[]) => { loggedErrors.push(args.join(" ")); origError(...args); };
+
+    try {
+      await runGenerationCycle();
+    } finally {
+      console.error = origError;
+    }
+
+    // The first upload should have succeeded before the second failed.
+    assert.equal(storageCalls.length, 1, "exactly one upload should have succeeded before the second failed");
+
+    // Find the orphan_cleanup_error log line.
+    const cleanupErrorLine = loggedErrors.find((l) => l.includes("orphan_cleanup_error"));
+    assert.ok(
+      cleanupErrorLine,
+      "must log at least one line containing 'orphan_cleanup_error' when remove() throws",
+    );
+
+    // The line must be parseable as JSON (not a raw Error string).
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(cleanupErrorLine!);
+    } catch {
+      assert.fail(`orphan_cleanup_error log line must be parseable JSON, got: ${cleanupErrorLine}`);
+    }
+
+    // Must carry job_id so ops can correlate with the generation job.
+    assert.ok(
+      "job_id" in parsed && typeof parsed.job_id === "string" && parsed.job_id.length > 0,
+      `orphan_cleanup_error must include a non-empty job_id, got: ${JSON.stringify(parsed)}`,
+    );
+
+    // Must carry catalog_id so ops can identify which catalog entry is affected.
+    assert.ok(
+      "catalog_id" in parsed && typeof parsed.catalog_id === "string" && parsed.catalog_id.length > 0,
+      `orphan_cleanup_error must include a non-empty catalog_id, got: ${JSON.stringify(parsed)}`,
+    );
+
+    // Must carry paths so ops can enumerate every file that needs manual removal
+    // without needing bucket access. This is the key ops-visibility assertion:
+    // the log alone must be sufficient to reconstruct the full cleanup scope.
+    assert.ok(
+      "paths" in parsed && Array.isArray(parsed.paths),
+      `orphan_cleanup_error must include a paths array, got: ${JSON.stringify(parsed)}`,
+    );
+
+    const paths = parsed.paths as unknown[];
+    assert.ok(
+      paths.length > 0,
+      `paths array must be non-empty when at least one upload preceded the failure, got: ${JSON.stringify(parsed)}`,
+    );
+
+    // Each entry in paths must be the exact storage path that was uploaded,
+    // so ops can issue targeted deletes.
+    assert.equal(
+      paths[0],
+      storageCalls[0].path,
+      `paths[0] must match the uploaded storage path; got paths[0]=${paths[0]}, uploaded=${storageCalls[0].path}`,
+    );
+  });
+
   it("preserves the original DB insert error in last_error when cleanup remove() also throws", async () => {
     // All uploads succeed; DB insert fails; cleanup remove() also throws.
     const originalInsertError = "insert failed: unique constraint violation";
