@@ -756,6 +756,123 @@ describe("PushRetryQueue.processQueue() — dead-token clearing on retry", () =>
     assert.equal(ndaUpdate.patch.status, "failed",   "delivery_attempt status must be 'failed'");
     assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
   });
+
+  /**
+   * Expo returns a 200 with three tickets: the first token delivers ('ok'),
+   * the second is DeviceNotRegistered, and the third is InvalidCredentials.
+   * result.sent > 0, so the queue row must finalise as 'sent' — not 'failed'.
+   * Both dead tokens must still be wiped from all three storage tables.
+   */
+  function expoMixedPartialSuccessFetch(): typeof fetch {
+    return async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            { status: "ok", id: "rcpt-mixed-partial-ok" },
+            {
+              status:  "error",
+              message: "The push notification service reported that the push token is invalid: DeviceNotRegistered",
+              details: { error: "DeviceNotRegistered" },
+            },
+            {
+              status:  "error",
+              message: "The push notification service reported that the push token is invalid: InvalidCredentials",
+              details: { error: "InvalidCredentials" },
+            },
+          ],
+        }),
+        { status: 200 },
+      ) as unknown as Response;
+  }
+
+  it("finalises as 'sent' — not 'failed' — when one token delivers and two others are dead (DeviceNotRegistered + InvalidCredentials)", async () => {
+    // Three tokens in the batch:
+    //   PUSH_TOKEN    → "ok" (delivered)
+    //   DEAD_TOKEN    → DeviceNotRegistered (permanently dead)
+    //   DEAD_TOKEN_IC → InvalidCredentials  (permanently dead)
+    //
+    // Because result.sent > 0 the queue row must finalise as 'sent'.
+    // The dead-token clearing path must still wipe both dead tokens from
+    // all three storage tables before the 'sent' finalisation.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN, DEAD_TOKEN, DEAD_TOKEN_IC],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    _setTestFetch(expoMixedPartialSuccessFetch());
+    await queue.processQueue();
+
+    // ── Both dead tokens must be wiped from all three tables ──────────────────
+
+    // profiles.expo_push_token nulled via update().in([DEAD_TOKEN, DEAD_TOKEN_IC])
+    const profileUpdate = client.updateCalls.find(
+      (c) => c.table === "profiles" && c.patch.expo_push_token === null,
+    );
+    assert.ok(profileUpdate, "profiles.expo_push_token must be nulled for both dead tokens");
+    assert.deepEqual(
+      [...(profileUpdate.inFilters["expo_push_token"] as string[])].sort(),
+      [DEAD_TOKEN, DEAD_TOKEN_IC].sort(),
+      "profiles update must target both dead tokens — not the live one",
+    );
+
+    // notification_devices rows deleted via delete().in([DEAD_TOKEN, DEAD_TOKEN_IC])
+    const deviceDelete = client.deleteCalls.find((c) => c.table === "notification_devices");
+    assert.ok(deviceDelete, "notification_devices rows must be deleted for both dead tokens");
+    assert.deepEqual(
+      [...(deviceDelete.inFilters["push_token"] as string[])].sort(),
+      [DEAD_TOKEN, DEAD_TOKEN_IC].sort(),
+      "notification_devices delete must target both dead tokens — not the live one",
+    );
+
+    // rent_buddy_profiles.expo_push_token nulled via update().in([DEAD_TOKEN, DEAD_TOKEN_IC])
+    const rentUpdate = client.updateCalls.find(
+      (c) => c.table === "rent_buddy_profiles" && c.patch.expo_push_token === null,
+    );
+    assert.ok(rentUpdate, "rent_buddy_profiles.expo_push_token must be nulled for both dead tokens");
+    assert.deepEqual(
+      [...(rentUpdate.inFilters["expo_push_token"] as string[])].sort(),
+      [DEAD_TOKEN, DEAD_TOKEN_IC].sort(),
+      "rent_buddy_profiles update must target both dead tokens — not the live one",
+    );
+
+    // ── Queue row must be finalised as 'sent', not 'failed' ───────────────────
+    // sent > 0 (PUSH_TOKEN delivered ok) takes priority over the dead-token errors.
+
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+
+    const sentUpdate = prqUpdates.find((c) => c.patch.status === "sent");
+    assert.ok(sentUpdate, "push_retry_queue must be finalised as 'sent' when at least one token delivered");
+    assert.equal(sentUpdate.filters.id, QUEUE_ROW_ID, "sent update must target the correct queue row");
+    assert.equal(sentUpdate.patch.attempt_count, 2, "attempt_count must be 2 (the retry attempt)");
+
+    // Must NOT be marked 'failed' — dead-token grouping logic must not override 'sent'
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(!failedUpdate, "must NOT mark the queue row 'failed' when partial delivery succeeded");
+
+    // Must NOT be re-queued — partial success is a terminal outcome
+    const requeued = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(!requeued, "must NOT re-queue the row when partial delivery succeeded");
+
+    // ── Delivery attempt must also be marked 'sent' ───────────────────────────
+    const ndaUpdates = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates.length > 0, "notification_delivery_attempts must be updated");
+    const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
+    assert.equal(ndaUpdate.patch.status, "sent",    "delivery_attempt status must be 'sent'");
+    assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
