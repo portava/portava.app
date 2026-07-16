@@ -693,6 +693,50 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
     );
   });
 
+  it("resets the cleanup failure counter to 0 after a healthy call that follows a dual-step failure run", async () => {
+    // Drive _consecutiveCleanupFailures above CLEANUP_ERROR_THRESHOLD (3) by
+    // running two calls where both step 1 (notification_devices DELETE) and
+    // step 2 (profiles UPDATE) fail in the same cleanup.  Using LEGACY_TOKEN as
+    // both the device token and the legacy profile token ensures step 2 is
+    // always attempted.  Each call contributes 2 increments, so after two calls
+    // the counter is ≥ 4 — safely above the threshold.
+    _setTestFetch(invalidCredFetch);
+    const STEP1_ERROR = new Error("notification_devices unavailable");
+    const STEP2_ERROR = new Error("profiles table unavailable");
+    const { client: errorClient } = makeFakeDb({
+      deviceToken: LEGACY_TOKEN,
+      legacyToken: LEGACY_TOKEN,
+      deleteDeviceError: STEP1_ERROR,
+      profilesUpdateError: STEP2_ERROR,
+    });
+    const errorRouter = new NotificationRouter(errorClient);
+
+    await errorRouter.route(BASE_NOTIF);
+    await errorRouter.route(BASE_NOTIF);
+
+    assert.ok(
+      _getCleanupFailureCount() >= 3,
+      `pre-condition: counter should be above CLEANUP_ERROR_THRESHOLD (3) after two dual-failure calls, got ${_getCleanupFailureCount()}`,
+    );
+
+    // Third call: healthy DB where both steps succeed.  legacyToken === deviceToken
+    // so step 2 is exercised alongside step 1 and step 3.  anyFailure stays false,
+    // so the router must reset _consecutiveCleanupFailures to 0.
+    const { client: healthyClient } = makeFakeDb({
+      deviceToken: LEGACY_TOKEN,
+      legacyToken: LEGACY_TOKEN,
+    });
+    const healthyRouter = new NotificationRouter(healthyClient);
+
+    await healthyRouter.route(BASE_NOTIF);
+
+    assert.equal(
+      _getCleanupFailureCount(),
+      0,
+      "cleanup failure counter must reset to 0 after a fully-successful cleanup following a dual-step failure run",
+    );
+  });
+
   it("profiles and rent_buddy_profiles cleanup still run when notification_devices DELETE fails", async () => {
     // Step 1 (notification_devices DELETE) throws a DB error.
     // Steps 2 and 3 must still execute despite that failure —
