@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type ReviewEntityType = 'event' | 'trip' | 'rent_buddy_booking' | 'place';

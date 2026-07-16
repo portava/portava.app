@@ -3,8 +3,8 @@
  * Fetches AI activity recommendations from POST /api/telegraph/recommend.
  * Falls back to built-in mock recommendations when backend is unavailable.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import type { TelegraphActivityRecommendation, Interest } from '../types/models';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
+import type { TelegraphActivityRecommendation, Interest } from '../types/models.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 function apiBase(): string {

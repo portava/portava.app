@@ -28,11 +28,11 @@
 
 import {
   resolveMapPickerResult,
-} from '../../components/location/MapLocationPicker.machine';
+} from '../../components/location/MapLocationPicker.machine.ts';
 import {
   mapCaptureToFormCoords,
   type GpsCaptureResult,
-} from '../../components/location/GpsLocationCapture.machine';
+} from '../../components/location/GpsLocationCapture.machine.ts';
 
 // ── Fake fetch helpers ─────────────────────────────────────────────────────────
 

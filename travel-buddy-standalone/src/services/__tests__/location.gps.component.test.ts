@@ -35,7 +35,7 @@
  * GpsLocationCapture.machine.ts has zero native imports and is imported directly.
  */
 
-import { getCurrentGps } from '../location';
+import { getCurrentGps } from '../location.ts';
 
 // ── expo-location mock ────────────────────────────────────────────────────────
 
@@ -169,7 +169,7 @@ import {
   runGpsCapture,
   mapCaptureToFormCoords,
   type GpsCaptureResult,
-} from '../../components/location/GpsLocationCapture.machine';
+} from '../../components/location/GpsLocationCapture.machine.ts';
 
 // ── Shared fake deps ───────────────────────────────────────────────────────────
 

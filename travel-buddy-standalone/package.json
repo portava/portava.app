@@ -18,7 +18,8 @@
     "test:event-rab-cta": "node --import tsx/esm --test src/services/__tests__/event.rabCta.test.ts",
     "test:stamps": "node --import tsx --test src/test/stampGracefulDegradation.test.ts",
     "test:invite-gone": "node --import tsx/esm --test src/lib/__tests__/inviteCardGoneHandler.test.ts",
-    "test:component": "jest --forceExit"
+    "test:component": "jest --forceExit",
+    "lint:imports": "node scripts/check-import-extensions.mjs"
   },
   "dependencies": {
     "@maplibre/maplibre-react-native": "11.3.6",
