@@ -313,3 +313,87 @@ describe('shortfall derivation — candidates present, queue null', () => {
     assert.equal(result, 'Only 2 of 4 candidates were generated.');
   });
 });
+
+// ── Suite 4: shortfallFromMeta extraction logic ───────────────────────────────
+// Mirrors [catalogId].tsx lines 116-122 exactly.
+// candidates[0]?.generation_metadata is used as the source; if either numeric
+// field is absent or the counts are not a true shortfall, the result is null.
+
+function extractShortfallFromMeta(candidates: unknown[]): string | null {
+  const meta = (candidates[0] as any)?.generation_metadata ?? {};
+  return typeof meta.candidates_expected === 'number' &&
+    typeof meta.candidates_produced === 'number' &&
+    meta.candidates_produced < meta.candidates_expected
+    ? `Only ${meta.candidates_produced} of ${meta.candidates_expected} candidates were generated.`
+    : null;
+}
+
+describe('shortfallFromMeta — generation_metadata absent or incomplete clears the signal', () => {
+  it('returns null when candidates array is empty', () => {
+    assert.equal(extractShortfallFromMeta([]), null);
+  });
+
+  it('returns null when candidates[0] has no generation_metadata field', () => {
+    assert.equal(extractShortfallFromMeta([{ id: 'v1', status: 'candidate' }]), null);
+  });
+
+  it('returns null when generation_metadata is an empty object', () => {
+    assert.equal(extractShortfallFromMeta([{ generation_metadata: {} }]), null);
+  });
+
+  it('returns null when only candidates_expected is present (candidates_produced missing)', () => {
+    assert.equal(
+      extractShortfallFromMeta([{ generation_metadata: { candidates_expected: 4 } }]),
+      null,
+    );
+  });
+
+  it('returns null when only candidates_produced is present (candidates_expected missing)', () => {
+    assert.equal(
+      extractShortfallFromMeta([{ generation_metadata: { candidates_produced: 2 } }]),
+      null,
+    );
+  });
+
+  it('returns null when candidates_produced equals candidates_expected (no shortfall)', () => {
+    assert.equal(
+      extractShortfallFromMeta([{ generation_metadata: { candidates_expected: 4, candidates_produced: 4 } }]),
+      null,
+    );
+  });
+
+  it('returns null when candidates_produced exceeds candidates_expected', () => {
+    assert.equal(
+      extractShortfallFromMeta([{ generation_metadata: { candidates_expected: 4, candidates_produced: 5 } }]),
+      null,
+    );
+  });
+
+  it('returns the shortfall message when produced is less than expected', () => {
+    assert.equal(
+      extractShortfallFromMeta([{ generation_metadata: { candidates_expected: 4, candidates_produced: 2 } }]),
+      'Only 2 of 4 candidates were generated.',
+    );
+  });
+
+  it('returns null when candidates_expected is a string, not a number', () => {
+    assert.equal(
+      extractShortfallFromMeta([{ generation_metadata: { candidates_expected: '4', candidates_produced: 2 } }]),
+      null,
+    );
+  });
+
+  it('returns null when candidates_produced is null', () => {
+    assert.equal(
+      extractShortfallFromMeta([{ generation_metadata: { candidates_expected: 4, candidates_produced: null } }]),
+      null,
+    );
+  });
+
+  it('does not throw when generation_metadata is null (falls back to empty object)', () => {
+    assert.doesNotThrow(() => {
+      const result = extractShortfallFromMeta([{ generation_metadata: null }]);
+      assert.equal(result, null);
+    });
+  });
+});
