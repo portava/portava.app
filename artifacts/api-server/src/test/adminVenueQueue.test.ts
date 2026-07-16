@@ -171,6 +171,27 @@ describe("GET /admin/venues/pending — limit cap at 100", () => {
   });
 });
 
+// ── Test 3: no limit param defaults to 50 ────────────────────────────────────
+
+describe("GET /admin/venues/pending — default limit of 50", () => {
+  it("returns exactly 50 rows when no limit param is supplied and 150 venues exist", async () => {
+    const client = makeQueueClient({ venueCount: 150 });
+    setClient(client);
+
+    const { status, body } = await req("GET", "/admin/venues/pending");
+
+    assert.equal(
+      status, 200,
+      `Expected 200, got ${status}: ${JSON.stringify(body)}`,
+    );
+    assert.ok(Array.isArray(body.venues), "response must include a venues array");
+    assert.equal(
+      body.venues.length, 50,
+      `With 150 provisional venues and no limit param, the default must produce exactly 50 rows (got ${body.venues.length})`,
+    );
+  });
+});
+
 // ── Test 2: limit=10 returns exactly 10 rows when more exist ──────────────────
 
 describe("GET /admin/venues/pending — exact limit when below cap", () => {
