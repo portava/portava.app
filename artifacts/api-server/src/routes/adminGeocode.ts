@@ -88,6 +88,12 @@ router.delete("/admin/geocode-cache/:city_key", async (req, res) => {
     return sendError(res, "invalid_payload", "city_key is required");
   }
 
+  // repair_catalog may be passed as a JSON body field or as a query-string flag.
+  const repairCatalog =
+    req.body?.repair_catalog === true ||
+    req.query.repair_catalog === "true" ||
+    req.query.repair_catalog === "1";
+
   const { error } = await sc
     .from(DB_CACHE_TABLE)
     .delete()
@@ -97,7 +103,26 @@ router.delete("/admin/geocode-cache/:city_key", async (req, res) => {
 
   evictGeocodeCacheKey(cityKey);
 
-  res.json({ deleted: true, city_key: cityKey });
+  let repairStats: import("../lib/stamps/xxCatalogRepair.js").RepairStats | undefined;
+  if (repairCatalog) {
+    // After purging the wrong row the next geocodeCityCountry call will
+    // re-resolve via Nominatim and re-populate the DB cache.  Running
+    // repairXXCatalogEntries now triggers that re-resolution immediately
+    // so affected catalog entries are re-keyed without waiting for the
+    // periodic sweep.
+    repairStats = await repairXXCatalogEntries(
+      sc,
+      makeGeocodingResolver(),
+      { info: console.log, warn: console.warn },
+      { cityKeyFilter: cityKey },
+    );
+  }
+
+  res.json({
+    deleted: true,
+    city_key: cityKey,
+    ...(repairStats !== undefined ? { repair: repairStats } : {}),
+  });
 });
 
 // ── PUT /admin/geocode-cache/:city_key ────────────────────────────────────────

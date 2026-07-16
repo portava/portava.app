@@ -466,6 +466,175 @@ function makeGeocodeDbClient(country: string, countryCode: string): any {
   };
 }
 
+// ── DELETE /admin/geocode-cache/:city_key with repair_catalog ─────────────────
+
+/** Fake client for delete-with-repair: handles profiles, geocode cache delete, and catalog. */
+function makeDeleteRepairClient(opts: {
+  xxEntries?: Record<string, unknown>[];
+  onCatalogUpdate?: (fields: Record<string, unknown>) => void;
+  deleteError?: string;
+}) {
+  const { xxEntries = [], onCatalogUpdate, deleteError } = opts;
+  const client: any = {
+    auth: {
+      getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+    },
+    from: (table: string) => {
+      if (table === "profiles") {
+        return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+      }
+      if (table === "city_country_geocode_cache") {
+        return {
+          select: (_cols: string) => builder([]),
+          delete: () => ({
+            eq: (_col: string, _key: string) =>
+              Promise.resolve({ data: null, error: deleteError ? { message: deleteError } : null }),
+          }),
+        };
+      }
+      if (table === "universal_stamp_catalog") {
+        return makeCatalogFake(xxEntries, onCatalogUpdate);
+      }
+      return builder([]);
+    },
+  };
+  return client;
+}
+
+describe("DELETE /admin/geocode-cache/:city_key with repair_catalog", () => {
+  it("triggers catalog repair and returns repair stats when repair_catalog=true (query param)", async () => {
+    const catalogUpdates: Record<string, unknown>[] = [];
+
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-del-1",
+          canonical_location_key: "city:XX:bazburg",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Bazburg",
+          neighborhood: null,
+          display_name: "Bazburg",
+        },
+      ],
+      onCatalogUpdate: (f) => catalogUpdates.push(f),
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    // After DELETE the in-memory cache is evicted; geocoder will re-resolve via DB.
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Germany", "DE"));
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/bazburg", undefined, "repair_catalog=true");
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.deleted, true);
+    assert.equal(r.body.city_key, "bazburg");
+    assert.ok(r.body.repair, "response should include repair stats");
+    const repair = r.body.repair as RepairStats;
+    assert.equal(repair.catalogRekeyed, 1, "one catalog entry should have been re-keyed");
+    assert.equal(repair.catalogMerged, 0);
+    assert.ok(catalogUpdates.length >= 1, "catalog update should have been called");
+    assert.equal(catalogUpdates[0].country_code, "DE");
+  });
+
+  it("triggers catalog repair when repair_catalog is passed as a query param", async () => {
+    const catalogUpdates: Record<string, unknown>[] = [];
+
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-del-2",
+          canonical_location_key: "city:XX:quxton",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Quxton",
+          neighborhood: null,
+          display_name: "Quxton",
+        },
+      ],
+      onCatalogUpdate: (f) => catalogUpdates.push(f),
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Portugal", "PT"));
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/quxton", undefined, "repair_catalog=true");
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.deleted, true);
+    assert.ok(r.body.repair, "response should include repair stats when passed as query param");
+    assert.equal((r.body.repair as RepairStats).catalogRekeyed, 1);
+    assert.ok(catalogUpdates.length >= 1);
+    assert.equal(catalogUpdates[0].country_code, "PT");
+  });
+
+  it("skips repair and returns no repair field when repair_catalog is not set", async () => {
+    let updateCalled = false;
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-del-3",
+          canonical_location_key: "city:XX:nopeville",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Nopeville",
+          neighborhood: null,
+          display_name: "Nopeville",
+        },
+      ],
+      onCatalogUpdate: () => { updateCalled = true; },
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/nopeville");
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.deleted, true);
+    assert.ok(!r.body.repair, "repair field should be absent when repair_catalog is not set");
+    assert.equal(updateCalled, false, "catalog update should not have been called");
+  });
+
+  it("skips entries for other cities even when repair_catalog is true", async () => {
+    const catalogUpdates: Record<string, unknown>[] = [];
+
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-del-other",
+          canonical_location_key: "city:XX:otherville",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Otherville",  // different city from deleted "mytown"
+          neighborhood: null,
+          display_name: "Otherville",
+        },
+      ],
+      onCatalogUpdate: (f) => catalogUpdates.push(f),
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Italy", "IT"));
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/mytown", undefined, "repair_catalog=true");
+
+    assert.equal(r.status, 200);
+    assert.ok(r.body.repair, "repair stats should still be returned");
+    assert.equal((r.body.repair as RepairStats).catalogRekeyed, 0, "other-city entry should be skipped");
+    assert.equal(catalogUpdates.length, 0, "no catalog update for a different city");
+  });
+});
+
 describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
   it("re-keys a matching XX catalog entry and returns repair stats", async () => {
     const catalogUpdates: Record<string, unknown>[] = [];
