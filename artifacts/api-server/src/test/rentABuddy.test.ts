@@ -1995,6 +1995,27 @@ describe("Rent a Buddy — booking: launch control and age enforcement", () => {
     // Should reach booking creation (201) or a different business error — NOT age_requirement
     assert.notEqual(r.body.error, "age_requirement", JSON.stringify(r.body));
   });
+
+  it("fresh booking returns total_usd of 0 — not NaN — when buddy has no hourly_rate_usd set", async () => {
+    setupBookingEnforcement(
+      {
+        id: "lc-global-null-rate", country_code: null, city: null, category: null,
+        enabled: true, waitlist_only: false,
+        min_age: 18, nightlife_min_age: 21,
+        require_id_verification: false, require_phone_verification: false, full_payment_required: false,
+      },
+      { id: "bp-traveler", user_id: USER_ID, date_of_birth: "1990-01-01", id_verified: true, phone_verified: true },
+    );
+    (state.buddyProfiles![BUDDY_PROF] as any).hourly_rate_usd = null;
+    const r = await req("POST", "/api/rent-a-buddy/bookings", BASE_BOOKING_BODY);
+    assert.equal(r.status, 201, `expected 201 but got ${r.status}: ${JSON.stringify(r.body)}`);
+    const totalUsd = r.body.booking?.totalUsd ?? r.body.totalUsd;
+    assert.ok(
+      typeof totalUsd === "number" && Number.isFinite(totalUsd),
+      `total_usd should be a finite number; got ${totalUsd}`,
+    );
+    assert.equal(totalUsd, 0, `total_usd should be 0 when hourly_rate_usd is null; got ${totalUsd}`);
+  });
 });
 
 // ── Category risk enforcement ──────────────────────────────────────────────────
