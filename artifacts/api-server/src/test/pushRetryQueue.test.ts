@@ -348,6 +348,52 @@ describe("PushRetryQueue.processQueue() — exhaust all attempts", () => {
       "delivery_attempt error_message must match the queue row last_error ('failed after 3 attempts')",
     );
   });
+
+  it("sets last_error to 'failed after 3 attempts' when attempt_count=2 and Expo returns 503 (retryable)", async () => {
+    // attempt_count=2 means attempts 1 and 2 already failed; this run is the 3rd and final attempt.
+    // Expo returns 503 (retryable: true).  Because max_attempts is exhausted, the row must be
+    // finalised as 'failed' with last_error === "failed after 3 attempts" — not empty, not the
+    // generic "non-retryable error" message, and not left as the prior re-queue error.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       2,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    _setTestFetch(expo503Fetch());   // Expo 5xx → retryable: true
+    await queue.processQueue();
+
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+
+    // The finalise() call must mark the row 'failed'
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(failedUpdate, "push_retry_queue must be finalised as 'failed' when retryable error exhausts all attempts");
+    assert.equal(failedUpdate.filters.id,      QUEUE_ROW_ID, "failed update must target the correct queue row");
+    assert.equal(failedUpdate.patch.attempt_count, 3,        "attempt_count must be 3 (the final attempt number)");
+
+    // last_error must be exactly the retryable-exhaustion message
+    assert.equal(
+      failedUpdate.patch.last_error,
+      "failed after 3 attempts",
+      "last_error must be 'failed after 3 attempts' when a retryable error exhausts all retries",
+    );
+
+    // Must NOT re-queue — max_attempts reached
+    const requeued = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(!requeued, "must NOT re-queue the row after all attempts are exhausted");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
