@@ -65,6 +65,11 @@ export function adminPatch<T>(path: string, body: unknown, opts?: AdminRequestOp
   return request<T>(path, { method: 'PATCH', body }, opts);
 }
 
+/** Authenticated PUT with a JSON body against the API server. */
+export function adminPut<T>(path: string, body: unknown, opts?: AdminRequestOptions): Promise<AdminApiResult<T>> {
+  return request<T>(path, { method: 'PUT', body }, opts);
+}
+
 /** Authenticated DELETE against the API server. */
 export function adminDelete<T>(path: string, opts?: AdminRequestOptions): Promise<AdminApiResult<T>> {
   return request<T>(path, { method: 'DELETE' }, opts);

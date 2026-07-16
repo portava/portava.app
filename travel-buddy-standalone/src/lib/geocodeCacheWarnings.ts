@@ -37,10 +37,30 @@ export interface DeleteGeocodeCacheResult {
   };
 }
 
+export interface PutGeocodeCacheResult {
+  updated: true;
+  city_key: string;
+  country_code: string;
+  country: string;
+  /** Present when repair_catalog was NOT sent. */
+  xx_entries_pending?: number;
+  /** Present when repair_catalog=true was sent. */
+  repair?: {
+    updated: number;
+    errors: number;
+    skipped: number;
+  };
+}
+
 type DeleteFn = (
   cityKey: string,
   repairCatalog: boolean,
 ) => Promise<AdminApiResult<DeleteGeocodeCacheResult>>;
+
+type PutFn = (
+  cityKey: string,
+  fields: { country_code: string; country: string; repair_catalog?: boolean },
+) => Promise<AdminApiResult<PutGeocodeCacheResult>>;
 
 // ── Pure state reducers ────────────────────────────────────────────────────────
 // These are exported so they can be tested directly.
@@ -90,6 +110,15 @@ export interface GeocodeCacheWarningMachine {
     cityKey: string,
     repairCatalog?: boolean,
   ): Promise<AdminApiResult<DeleteGeocodeCacheResult>>;
+  /**
+   * Run a PUT overwrite, then update warning state based on xx_entries_pending.
+   * The PUT endpoint returns xx_entries_pending when repair_catalog is omitted,
+   * just like the DELETE endpoint — so the same banner logic applies.
+   */
+  performPut(
+    cityKey: string,
+    fields: { country_code: string; country: string; repair_catalog?: boolean },
+  ): Promise<AdminApiResult<PutGeocodeCacheResult>>;
   /** Initiate a repair-catalog delete, clearing the warning on success. */
   handleRepairNow(cityKey: string): Promise<AdminApiResult<DeleteGeocodeCacheResult>>;
   /** Read-only snapshot of current warnings. */
@@ -108,6 +137,7 @@ export interface GeocodeCacheWarningMachine {
  */
 export function createGeocodeCacheWarningMachine(
   deleteFn: DeleteFn,
+  putFn?: PutFn,
 ): GeocodeCacheWarningMachine {
   let warnings: PendingWarning[] = [];
 
@@ -118,6 +148,21 @@ export function createGeocodeCacheWarningMachine(
     const res = await deleteFn(cityKey, repairCatalog);
     if (!res.ok) return res;
 
+    const pending = res.data.xx_entries_pending ?? 0;
+    warnings = warningsAfterDelete(warnings, cityKey, pending);
+    return res;
+  }
+
+  async function performPut(
+    cityKey: string,
+    fields: { country_code: string; country: string; repair_catalog?: boolean },
+  ): Promise<AdminApiResult<PutGeocodeCacheResult>> {
+    if (!putFn) return { ok: false, error: 'No PUT function configured' };
+    const res = await putFn(cityKey, fields);
+    if (!res.ok) return res;
+
+    // The PUT endpoint returns xx_entries_pending when repair_catalog is
+    // omitted — same field, same banner logic as the DELETE path.
     const pending = res.data.xx_entries_pending ?? 0;
     warnings = warningsAfterDelete(warnings, cityKey, pending);
     return res;
@@ -141,6 +186,7 @@ export function createGeocodeCacheWarningMachine(
 
   return {
     performDelete,
+    performPut,
     handleRepairNow,
     getWarnings: () => warnings,
     hasWarning: (cityKey) => warnings.some((w) => w.cityKey === cityKey),

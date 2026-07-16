@@ -22,13 +22,14 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
-import { AlertTriangle, ArrowLeft, Search, Trash2, Wrench } from 'lucide-react-native';
+import { AlertTriangle, ArrowLeft, Pencil, Search, Trash2, Wrench } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import {
   getGeocodeCacheRows,
   deleteGeocodeCacheRow,
+  putGeocodeCacheRow,
   type GeocodeCacheRow,
 } from '../../src/services/adminGeocode';
 import {
@@ -52,8 +53,16 @@ export default function AdminGeocodeCacheScreen() {
   const [search, setSearch] = useState('');
   const [deletingKeys, setDeletingKeys] = useState<Set<string>>(new Set());
 
-  // Inline warnings for city keys whose deletion left xx_entries_pending > 0.
+  // Inline warnings for city keys whose deletion/correction left xx_entries_pending > 0.
   const [warnings, setWarnings] = useState<PendingWarning[]>([]);
+
+  // Inline country-code correction state.
+  const [correcting, setCorrecting] = useState<{
+    cityKey: string;
+    countryCode: string;
+    country: string;
+  } | null>(null);
+  const [correctingBusy, setCorrectingBusy] = useState(false);
 
   // ── Data loading ─────────────────────────────────────────────────────────────
 
@@ -118,6 +127,33 @@ export default function AdminGeocodeCacheScreen() {
     setWarnings((prev) => warningsAfterDelete(prev, cityKey, pending));
   }
 
+  async function handleCorrect() {
+    if (!correcting) return;
+    const { cityKey, countryCode, country } = correcting;
+    setCorrectingBusy(true);
+    const res = await putGeocodeCacheRow(cityKey, { country_code: countryCode, country });
+    setCorrectingBusy(false);
+
+    if (!res.ok) {
+      Alert.alert('Correction failed', res.error ?? 'Please try again.');
+      return;
+    }
+
+    // Update the row in the list with the corrected country data.
+    setRows((prev) =>
+      prev.map((r) =>
+        r.city_key === cityKey
+          ? { ...r, country_code: res.data.country_code, country: res.data.country }
+          : r,
+      ),
+    );
+
+    // Show warning banner when xx_entries_pending > 0 (repair_catalog was not sent).
+    const pending = res.data.xx_entries_pending ?? 0;
+    setWarnings((prev) => warningsAfterDelete(prev, cityKey, pending));
+    setCorrecting(null);
+  }
+
   async function handleRepairNow(cityKey: string) {
     // Mark as repairing in place so the button shows a spinner.
     setWarnings((prev) => warningsAfterRepairStart(prev, cityKey));
@@ -150,6 +186,18 @@ export default function AdminGeocodeCacheScreen() {
           </Text>
         </View>
         <Pressable
+          style={s.editBtn}
+          onPress={() => setCorrecting({
+            cityKey: item.city_key,
+            countryCode: item.country_code,
+            country: item.country,
+          })}
+          hitSlop={8}
+          testID={`correct-btn-${item.city_key}`}
+        >
+          <Pencil size={16} color={color.mute} strokeWidth={2} />
+        </Pressable>
+        <Pressable
           style={[s.deleteBtn, deleting && s.deleteBtnBusy]}
           onPress={() => confirmDelete(item)}
           disabled={deleting}
@@ -166,6 +214,60 @@ export default function AdminGeocodeCacheScreen() {
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
+      {/* Country correction overlay */}
+      {correcting !== null && (
+        <Pressable
+          style={[StyleSheet.absoluteFill, s.modalOverlay]}
+          onPress={() => setCorrecting(null)}
+          testID="correct-modal"
+        >
+          <Pressable style={s.modalCard} onPress={() => {/* prevent overlay dismiss */}}>
+            <Text style={s.modalTitle}>
+              Correct "{correcting.cityKey}"
+            </Text>
+            <TextInput
+              style={s.modalInput}
+              value={correcting.countryCode}
+              onChangeText={(v) =>
+                setCorrecting((p) => p ? { ...p, countryCode: v.toUpperCase() } : p)
+              }
+              placeholder="Country code (e.g. FR)"
+              autoCapitalize="characters"
+              maxLength={2}
+              testID="correct-country-code-input"
+            />
+            <TextInput
+              style={s.modalInput}
+              value={correcting.country}
+              onChangeText={(v) =>
+                setCorrecting((p) => p ? { ...p, country: v } : p)
+              }
+              placeholder="Country name (e.g. France)"
+              testID="correct-country-input"
+            />
+            <View style={s.modalBtns}>
+              <Pressable
+                style={s.modalCancel}
+                onPress={() => setCorrecting(null)}
+                testID="correct-cancel-btn"
+              >
+                <Text style={s.modalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[s.modalSave, correctingBusy && s.modalSaveBusy]}
+                onPress={handleCorrect}
+                disabled={correctingBusy}
+                testID="correct-save-btn"
+              >
+                {correctingBusy
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Text style={s.modalSaveText}>Save</Text>}
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      )}
+
       {/* Header */}
       <View style={s.header}>
         <Pressable style={s.backBtn} onPress={() => router.back()} hitSlop={8}>
@@ -336,6 +438,15 @@ const s = StyleSheet.create({
   rowLeft:  { flex: 1, gap: 2 },
   rowKey:   { ...t.bodyStrong, color: color.ink },
   rowMeta:  { fontSize: 11, color: color.mute },
+  editBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.sm,
+    backgroundColor: color.haze,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: space.xs,
+  },
   deleteBtn: {
     width: 36,
     height: 36,
@@ -353,4 +464,48 @@ const s = StyleSheet.create({
   errorText: { ...t.body, color: '#EF4444', textAlign: 'center', marginBottom: space.md },
   retryBtn:  { paddingHorizontal: space.lg, paddingVertical: space.sm },
   retryText: { ...t.bodyStrong, color: color.signal },
+
+  // Correction modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: space.lg,
+  },
+  modalCard: {
+    width: '100%',
+    backgroundColor: color.paper,
+    borderRadius: radius.lg,
+    padding: space.lg,
+    gap: space.sm,
+  },
+  modalTitle:      { ...t.bodyStrong, color: color.ink, marginBottom: space.xs },
+  modalInput: {
+    ...t.body,
+    color: color.ink,
+    borderWidth: 1,
+    borderColor: color.haze,
+    borderRadius: radius.sm,
+    paddingHorizontal: space.sm,
+    paddingVertical: 8,
+  },
+  modalBtns:       { flexDirection: 'row', gap: space.sm, marginTop: space.xs },
+  modalCancel: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: radius.sm,
+    backgroundColor: color.haze,
+  },
+  modalCancelText: { ...t.bodyStrong, color: color.ink },
+  modalSave: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: radius.sm,
+    backgroundColor: color.signal,
+  },
+  modalSaveBusy:   { opacity: 0.6 },
+  modalSaveText:   { ...t.bodyStrong, color: '#fff' },
 });

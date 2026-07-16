@@ -2,7 +2,7 @@
  * Admin Geocode Cache service — typed fetch wrappers for the admin geocode-cache
  * endpoints. Uses the same auth pattern as other admin services.
  */
-import { adminGet, adminDelete, type AdminApiResult } from './adminApi.ts';
+import { adminGet, adminDelete, adminPut, type AdminApiResult } from './adminApi.ts';
 
 type ApiResult<T> = AdminApiResult<T>;
 
@@ -20,6 +20,22 @@ export interface DeleteGeocodeCacheResult {
   deleted: true;
   city_key: string;
   /** Present when repair_catalog was NOT requested. Number of catalog entries
+   *  still carrying the XX country code for this city. */
+  xx_entries_pending?: number;
+  /** Present when repair_catalog=true was sent. */
+  repair?: {
+    updated: number;
+    errors: number;
+    skipped: number;
+  };
+}
+
+export interface PutGeocodeCacheResult {
+  updated: true;
+  city_key: string;
+  country_code: string;
+  country: string;
+  /** Present when repair_catalog was NOT sent. Number of catalog entries
    *  still carrying the XX country code for this city. */
   xx_entries_pending?: number;
   /** Present when repair_catalog=true was sent. */
@@ -51,4 +67,18 @@ export async function deleteGeocodeCacheRow(
 ): Promise<ApiResult<DeleteGeocodeCacheResult>> {
   const qs = repairCatalog ? '?repair_catalog=true' : '';
   return adminDelete(`/api/admin/geocode-cache/${encodeURIComponent(cityKey)}${qs}`);
+}
+
+/**
+ * Overwrite a geocode cache row with corrected country data.
+ *
+ * When repairCatalog is false (default) the response includes xx_entries_pending
+ * so the caller can warn the admin. Pass repairCatalog=true to immediately
+ * re-key XX catalog entries for this city.
+ */
+export async function putGeocodeCacheRow(
+  cityKey: string,
+  fields: { country_code: string; country: string; repair_catalog?: boolean },
+): Promise<ApiResult<PutGeocodeCacheResult>> {
+  return adminPut(`/api/admin/geocode-cache/${encodeURIComponent(cityKey)}`, fields);
 }
