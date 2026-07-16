@@ -25,14 +25,24 @@ const STORAGE_BUCKET = "stamp-artwork";
 // Auto-requeue: retryable_failed jobs older than N hours get reset to queued.
 // Set STAMP_FAILED_REQUEUE_HOURS=0 to disable.
 const AUTO_REQUEUE_AFTER_HOURS = Number(process.env.STAMP_FAILED_REQUEUE_HOURS ?? "6");
+// Cap on automatic re-queue rounds: after this many auto-requeues a job is
+// moved to the terminal `permanently_failed` status instead of being retried
+// again (stops paying for image-provider calls on permanently broken jobs).
+// Manual admin re-queue resets the counter. Minimum 1.
+const AUTO_REQUEUE_MAX_ROUNDS = Math.max(1, Number(process.env.STAMP_FAILED_REQUEUE_MAX_ROUNDS ?? "3") || 3);
 const AUTO_REQUEUE_CHECK_INTERVAL_MS = 10 * 60 * 1_000; // sweep at most every 10 min
 let _lastAutoRequeueAt = 0;
 
 // ── Auto-requeue of stale failed jobs ─────────────────────────────────────────
 
 /**
- * Reset retryable_failed jobs whose last update is older than the configured
- * threshold back to queued (attempts → 0) so the worker picks them up again.
+ * Sweep retryable_failed jobs whose last update is older than the configured
+ * threshold:
+ *   - Jobs still under the auto-requeue cap are reset to queued (attempts → 0)
+ *     with requeue_count incremented, so the worker picks them up again.
+ *   - Jobs that already used all AUTO_REQUEUE_MAX_ROUNDS rounds are moved to
+ *     the terminal `permanently_failed` status (still visible on the admin
+ *     Failed Generation Jobs screen, where a manual re-queue resets the cap).
  * Returns the number of jobs re-queued. Accepts an injectable client for tests.
  */
 export async function requeueStaleFailedJobs(scOverride?: any): Promise<number> {
@@ -43,31 +53,89 @@ export async function requeueStaleFailedJobs(scOverride?: any): Promise<number> 
 
   const cutoff = new Date(Date.now() - AUTO_REQUEUE_AFTER_HOURS * 3_600_000).toISOString();
 
-  const { data, error } = await sc
+  const { data: stale, error } = await sc
     .from("stamp_generation_queue")
-    .update({
-      status:       "queued",
-      attempts:     0,
-      last_error:   null,
-      locked_until: null,
-      locked_by:    null,
-      updated_at:   new Date().toISOString(),
-    })
+    .select("id, requeue_count")
     .eq("status", "retryable_failed")
     .lt("updated_at", cutoff)
-    .select("id");
+    .limit(200);
 
   if (error) {
     console.error(JSON.stringify({ event: "stamp.queue.auto_requeue_error", error: error.message }));
     return 0;
   }
 
-  const requeued = ((data ?? []) as any[]).length;
+  const rows = (stale ?? []) as Array<{ id: string; requeue_count: number | null }>;
+  if (rows.length === 0) return 0;
+
+  const exhausted = rows.filter((r) => (r.requeue_count ?? 0) >= AUTO_REQUEUE_MAX_ROUNDS);
+  const requeueable = rows.filter((r) => (r.requeue_count ?? 0) < AUTO_REQUEUE_MAX_ROUNDS);
+
+  // Jobs that used up all auto-requeue rounds → terminal permanently_failed.
+  if (exhausted.length > 0) {
+    const { error: permErr } = await sc
+      .from("stamp_generation_queue")
+      .update({
+        status:       "permanently_failed",
+        locked_until: null,
+        locked_by:    null,
+        updated_at:   new Date().toISOString(),
+      })
+      .in("id", exhausted.map((r) => r.id))
+      .eq("status", "retryable_failed");
+
+    if (permErr) {
+      console.error(JSON.stringify({ event: "stamp.queue.permanent_fail_error", error: permErr.message }));
+    } else {
+      console.error(JSON.stringify({
+        event:      "stamp.queue.permanently_failed",
+        count:      exhausted.length,
+        max_rounds: AUTO_REQUEUE_MAX_ROUNDS,
+        job_ids:    exhausted.map((r) => r.id),
+      }));
+    }
+  }
+
+  // Remaining jobs → back to queued, incrementing requeue_count.
+  // Group by current requeue_count so each batch is a single UPDATE.
+  let requeued = 0;
+  const byCount = new Map<number, string[]>();
+  for (const r of requeueable) {
+    const n = r.requeue_count ?? 0;
+    const ids = byCount.get(n) ?? [];
+    ids.push(r.id);
+    byCount.set(n, ids);
+  }
+
+  for (const [count, ids] of byCount) {
+    const { data: updated, error: updErr } = await sc
+      .from("stamp_generation_queue")
+      .update({
+        status:        "queued",
+        attempts:      0,
+        last_error:    null,
+        locked_until:  null,
+        locked_by:     null,
+        requeue_count: count + 1,
+        updated_at:    new Date().toISOString(),
+      })
+      .in("id", ids)
+      .eq("status", "retryable_failed")
+      .select("id");
+
+    if (updErr) {
+      console.error(JSON.stringify({ event: "stamp.queue.auto_requeue_error", error: updErr.message }));
+      continue;
+    }
+    requeued += ((updated ?? []) as any[]).length;
+  }
+
   if (requeued > 0) {
     console.log(JSON.stringify({
       event:        "stamp.queue.auto_requeued",
       count:        requeued,
       older_than_h: AUTO_REQUEUE_AFTER_HOURS,
+      max_rounds:   AUTO_REQUEUE_MAX_ROUNDS,
     }));
   }
   return requeued;

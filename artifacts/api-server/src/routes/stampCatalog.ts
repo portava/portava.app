@@ -225,11 +225,11 @@ router.get("/admin/stamps/catalog", async (req, res) => {
 
   statusCounts.review_required = reviewCount ?? 0;
 
-  // Queue retryable_failed count (jobs that exhausted retries)
+  // Queue failed count (jobs that exhausted retries, incl. permanently failed)
   const { count: failedCount } = await sc
     .from("stamp_generation_queue")
     .select("id", { count: "exact", head: true })
-    .eq("status", "retryable_failed");
+    .in("status", ["retryable_failed", "permanently_failed"]);
 
   statusCounts.retryable_failed = failedCount ?? 0;
 
@@ -262,7 +262,7 @@ router.get("/admin/stamps/queue", async (req, res) => {
     .from("stamp_generation_queue")
     .select(
       "id, catalog_id, status, priority, attempts, max_attempts, last_error, " +
-      "locked_until, triggered_by_action, created_at, updated_at, " +
+      "requeue_count, locked_until, triggered_by_action, created_at, updated_at, " +
       "universal_stamp_catalog(display_name, stamp_type, country_code)",
       { count: "exact" }
     )
@@ -270,7 +270,11 @@ router.get("/admin/stamps/queue", async (req, res) => {
     .order("created_at")
     .range((page - 1) * limit, page * limit - 1);
 
-  if (status) q = (q as any).eq("status", status);
+  // `status` accepts a comma-separated list, e.g. "retryable_failed,permanently_failed"
+  if (status) {
+    const statuses = status.split(",").map((s) => s.trim()).filter(Boolean);
+    q = statuses.length > 1 ? (q as any).in("status", statuses) : (q as any).eq("status", statuses[0]);
+  }
 
   const { data, error, count } = await q;
   if (error) { sendError(res, "db_error", error.message); return; }
@@ -605,12 +609,12 @@ router.post("/admin/stamps/catalog/:id/regenerate", async (req, res) => {
     .eq("catalog_id", id)
     .eq("status", "review_required");
 
-  // Reset failed jobs to queued
+  // Reset failed jobs to queued (admin action also resets the auto-requeue cap)
   await sc
     .from("stamp_generation_queue")
-    .update({ status: "queued", attempts: 0, last_error: null, updated_at: new Date().toISOString() })
+    .update({ status: "queued", attempts: 0, requeue_count: 0, last_error: null, updated_at: new Date().toISOString() })
     .eq("catalog_id", id)
-    .eq("status", "retryable_failed");
+    .in("status", ["retryable_failed", "permanently_failed"]);
 
   // Enqueue a new job
   const { error: queueErr } = await sc
@@ -643,7 +647,8 @@ router.post("/admin/stamps/catalog/:id/regenerate", async (req, res) => {
 });
 
 // ── POST /admin/stamps/queue/:jobId/requeue ───────────────────────────────────
-// Re-queue a generation job stuck in retryable_failed (resets attempts to 0).
+// Re-queue a generation job stuck in retryable_failed or permanently_failed
+// (resets attempts and the auto-requeue round counter to 0).
 
 router.post("/admin/stamps/queue/:jobId/requeue", async (req, res) => {
   const { jobId } = req.params;
@@ -656,21 +661,22 @@ router.post("/admin/stamps/queue/:jobId/requeue", async (req, res) => {
   const { data, error } = await sc
     .from("stamp_generation_queue")
     .update({
-      status:       "queued",
-      attempts:     0,
-      last_error:   null,
-      locked_until: null,
-      locked_by:    null,
-      updated_at:   new Date().toISOString(),
+      status:        "queued",
+      attempts:      0,
+      requeue_count: 0, // Manual admin re-queue resets the auto-requeue cap
+      last_error:    null,
+      locked_until:  null,
+      locked_by:     null,
+      updated_at:    new Date().toISOString(),
     })
     .eq("id", jobId)
-    .eq("status", "retryable_failed") // Guard: only re-queue failed jobs
+    .in("status", ["retryable_failed", "permanently_failed"]) // Guard: only re-queue failed jobs
     .select("id, catalog_id, status, attempts")
     .maybeSingle();
 
   if (error) { sendError(res, "db_error", error.message); return; }
   if (!data) {
-    sendError(res, "not_found", "Job not found or not in retryable_failed status");
+    sendError(res, "not_found", "Job not found or not in a failed status");
     return;
   }
 

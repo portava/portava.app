@@ -1,7 +1,8 @@
 /**
  * Admin — Stamp Studio failed generation jobs.
- * Lists queue jobs stuck in retryable_failed and lets an admin re-queue them
- * (resets status → queued, attempts → 0).
+ * Lists queue jobs stuck in retryable_failed or permanently_failed (jobs that
+ * exhausted their auto-requeue rounds) and lets an admin re-queue them
+ * (resets status → queued, attempts → 0, auto-requeue counter → 0).
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -35,7 +36,7 @@ export default function FailedJobsScreen() {
   const [busyId, setBusyId]         = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const res = await getAdminStampQueue({ status: 'retryable_failed', limit: 100 });
+    const res = await getAdminStampQueue({ status: 'retryable_failed,permanently_failed', limit: 100 });
     if (res.ok) setJobs(res.data.jobs ?? []);
     setLoading(false);
     setRefreshing(false);
@@ -71,12 +72,20 @@ export default function FailedJobsScreen() {
 
   const renderJob = ({ item }: { item: GenerationQueueJob }) => {
     const cat = item.universal_stamp_catalog;
+    const isPermanent = item.status === 'permanently_failed';
     return (
       <View style={styles.row}>
         <View style={styles.rowMeta}>
-          <Text style={styles.rowName} numberOfLines={1}>
-            {cat?.display_name ?? item.catalog_id}
-          </Text>
+          <View style={styles.rowNameLine}>
+            <Text style={styles.rowName} numberOfLines={1}>
+              {cat?.display_name ?? item.catalog_id}
+            </Text>
+            {isPermanent ? (
+              <View style={styles.permBadge}>
+                <Text style={styles.permBadgeText}>Permanently failed</Text>
+              </View>
+            ) : null}
+          </View>
           {cat ? (
             <Text style={styles.rowSub}>{cat.stamp_type} · {cat.country_code}</Text>
           ) : null}
@@ -146,7 +155,10 @@ const styles = StyleSheet.create({
   center:      { flex: 1, justifyContent: 'center', alignItems: 'center' },
   row:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.md, paddingVertical: space.md, gap: space.sm },
   rowMeta:     { flex: 1 },
-  rowName:     { ...t.body, color: color.ink, fontWeight: '600' },
+  rowNameLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  rowName:     { ...t.body, color: color.ink, fontWeight: '600', flexShrink: 1 },
+  permBadge:   { backgroundColor: '#FEE2E2', borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2 },
+  permBadgeText: { fontSize: 10, fontWeight: '700', color: '#B91C1C' },
   rowSub:      { ...t.small, color: color.mute },
   rowError:    { ...t.small, color: '#DC2626', marginTop: 2 },
   requeueBtn:  { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: color.ink, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 8 },
