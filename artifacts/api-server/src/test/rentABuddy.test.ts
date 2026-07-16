@@ -3740,6 +3740,28 @@ describe("Rent a Buddy — message payload: booking_id and sender_id correctness
     assert.equal(cardBody.status, "completed");
   });
 
+  it("complete (buddy path): milestone and card carry buddy sender_id and pending-confirmation subtypes", async () => {
+    setupState({ bookings: { [BOOKING_ID]: baseBooking("in_progress") } });
+    // Buddy (BUDDY_USER) completes — buddy_id on the booking matches their profile → isBuddyCompleting = true
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/complete`, undefined, BUDDY_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    const msgs: any[] = (state as any).messages ?? [];
+
+    const milestone = msgs.find((m: any) => m.subtype === "rent_buddy_pending_confirmation");
+    assert.ok(milestone, "expected rent_buddy_pending_confirmation milestone in state.messages — not rent_buddy_completed");
+    assert.equal(milestone.sender_id, BUDDY_USER, "pending-confirmation milestone sender_id must be the buddy (actor), not blank or swapped");
+    assert.equal(milestone.msg_type, "system");
+
+    const card = msgs.find((m: any) => m.subtype === "booking_status_completed_pending_traveler_confirmation");
+    assert.ok(card, "expected booking_status_completed_pending_traveler_confirmation card in state.messages — not booking_status_completed");
+    assert.equal(card.sender_id, BUDDY_USER, "pending-confirmation card sender_id must be the buddy (actor)");
+    assert.equal(card.msg_type, "booking_card");
+    const cardBody = JSON.parse(card.body);
+    assert.equal(cardBody.booking_id, BOOKING_ID, "card body booking_id must match the booking");
+    assert.equal(cardBody.status, "completed_pending_traveler_confirmation", "card body status must be completed_pending_traveler_confirmation — not completed");
+  });
+
   it("dispute: milestone and card carry traveler sender_id and correct booking_id", async () => {
     setupState({ bookings: { [BOOKING_ID]: baseBooking("in_progress") } });
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "other" });
