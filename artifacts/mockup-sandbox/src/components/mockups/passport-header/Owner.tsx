@@ -1,3 +1,4 @@
+import React from "react";
 import { Bookmark, UserCircle2, Globe, MapPin, ShieldCheck, Camera, CheckCircle2 } from "lucide-react";
 import "./passport.css";
 
@@ -218,3 +219,5 @@ export function Owner() {
     </div>
   );
 }
+
+export default Owner;

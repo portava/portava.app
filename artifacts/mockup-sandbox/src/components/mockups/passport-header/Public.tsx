@@ -1,3 +1,4 @@
+import React from "react";
 import { Globe, MapPin, ShieldCheck, CheckCircle2, UserPlus, Send } from "lucide-react";
 import "./passport.css";
 
@@ -190,3 +191,5 @@ export function Public() {
     </div>
   );
 }
+
+export default Public;
