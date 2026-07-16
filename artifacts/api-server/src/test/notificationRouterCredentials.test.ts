@@ -693,6 +693,46 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
     );
   });
 
+  it("profiles and rent_buddy_profiles cleanup still run when notification_devices DELETE fails", async () => {
+    // Step 1 (notification_devices DELETE) throws a DB error.
+    // Steps 2 and 3 must still execute despite that failure —
+    // confirming anyFailure does NOT short-circuit remaining cleanup.
+    _setTestFetch(invalidCredFetch);
+    const DB_ERROR = new Error("notification_devices table unavailable");
+
+    // TOKEN is both the device token and the legacy token on profiles,
+    // so both step 2 (profiles UPDATE) and step 3 (rent_buddy_profiles UPDATE)
+    // are exercised in this call.
+    const { profilesNulled, rentBuddyTokensNulled, deletedDeviceTokens, client } = makeFakeDb({
+      deviceToken: TOKEN,
+      legacyToken: TOKEN,          // causes step 2 to be attempted
+      deleteDeviceError: DB_ERROR, // step 1 fails
+    });
+
+    const router = new NotificationRouter(client);
+    await router.route(BASE_NOTIF);
+
+    // Step 1 must have errored — nothing should have been recorded
+    assert.equal(
+      deletedDeviceTokens.length,
+      0,
+      "notification_devices DELETE failed — no tokens recorded as deleted",
+    );
+
+    // Step 2 must still have run and nulled the profile
+    assert.ok(
+      profilesNulled.includes(USER_ID),
+      `profiles.expo_push_token must be nulled for user ${USER_ID} even when step 1 fails`,
+    );
+
+    // Step 3 must still have run and nulled the rent_buddy row
+    assert.equal(rentBuddyTokensNulled.length, 1, "rent_buddy_profiles UPDATE must still be called");
+    assert.ok(
+      rentBuddyTokensNulled[0].includes(TOKEN),
+      `rent_buddy_profiles must include stale token ${TOKEN} even when step 1 fails`,
+    );
+  });
+
   it("does nothing when there are no push tokens registered for the user", async () => {
     const { deletedDeviceTokens, retryQueueInserts, deliveryAttempts, client } = makeFakeDb({
       deviceToken: null,
