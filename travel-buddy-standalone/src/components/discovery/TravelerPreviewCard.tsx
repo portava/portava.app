@@ -10,10 +10,10 @@ import React from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { BadgeCheck, MapPin, X, ArrowRight, HandMetal } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow } from '../../theme/tokens';
-import type { MapTraveler } from '../../services/mapTravelers';
-import { travelerInitials } from './TravelerMapLayer';
-import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity';
+import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
+import type { MapTraveler } from '../../services/mapTravelers.ts';
+import { travelerInitials } from './TravelerMapLayer.tsx';
+import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity.ts';
 
 export function TravelerPreviewCard({ traveler, onClose }: {
   traveler: MapTraveler;

@@ -6,7 +6,7 @@
  * imports these types and helpers instead of inlining the logic.
  */
 
-import type { ReasonCode, ReportContentPayload, ReportResult } from '../services/reports';
+import type { ReasonCode, ReportContentPayload, ReportResult } from '../services/reports.ts';
 
 export const REPORT_POST_REASONS: { code: ReasonCode; label: string }[] = [
   { code: 'spam',           label: 'Spam or misleading' },

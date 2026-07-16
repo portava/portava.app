@@ -17,8 +17,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Map, Camera, Marker } from '@maplibre/maplibre-react-native';
 import type { CameraRef, LngLatBounds } from '@maplibre/maplibre-react-native';
 import { MapPin, Route, X } from 'lucide-react-native';
-import type { BookmarkedPlace } from '../services/discoveryBookmarks';
-import { color, space, radius, type as t } from '../theme/tokens';
+import type { BookmarkedPlace } from '../services/discoveryBookmarks.ts';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 import {
   UNCATEGORIZED,
   filterMappable,
@@ -29,12 +29,12 @@ import {
   filterVisible,
   shouldShowNoPinsOverlay,
   computeBounds,
-} from './savedPlacesMapHelpers';
+} from './savedPlacesMapHelpers.ts';
 import {
   categoryStorageKey,
   readRawCategoryFilter,
   saveCategoryFilter,
-} from './savedPlacesMapFilterStorage';
+} from './savedPlacesMapFilterStorage.ts';
 
 // ── Map style ─────────────────────────────────────────────────────────────────
 

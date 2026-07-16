@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { submitReport, type SubmitReportPayload } from '../services/reports';
+import { submitReport, type SubmitReportPayload } from '../services/reports.ts';
 
 export function useReportUser() {
   const [loading, setLoading] = useState(false);

@@ -7,9 +7,9 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronRight, Plane } from 'lucide-react-native';
-import { color, space, type as t } from '../../theme/tokens';
-import { getActiveLayoverSession, type LayoverSession, type PublicAirport } from '../../services/layover';
-import { fmtClock } from './layoverFormat';
+import { color, space, type as t } from '../../theme/tokens.ts';
+import { getActiveLayoverSession, type LayoverSession, type PublicAirport } from '../../services/layover.ts';
+import { fmtClock } from './layoverFormat.ts';
 
 export function ActiveLayoverPill() {
   const router = useRouter();

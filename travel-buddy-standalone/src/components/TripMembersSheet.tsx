@@ -16,14 +16,14 @@ import {
   TextInput, ScrollView,
 } from 'react-native';
 import { UserPlus, X, Search, Check, Crown } from 'lucide-react-native';
-import { useSession } from '../context/SessionContext';
+import { useSession } from '../context/SessionContext.tsx';
 import {
   getTripMembers, getCircleMembers, getTripInvitableUsers, sendTripInvite,
   type FriendUser,
-} from '../services/friends';
-import { getTrip } from '../services/trips';
-import { color, space, radius, type as t } from '../theme/tokens';
-import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity';
+} from '../services/friends.ts';
+import { getTrip } from '../services/trips.ts';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
 
 interface Props {
   type: 'trip' | 'circle';

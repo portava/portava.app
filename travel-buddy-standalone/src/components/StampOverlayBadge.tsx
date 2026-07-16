@@ -19,8 +19,8 @@ import {
   parseStampOverlay,
   type StampOverlayData,
   type StampOverlayStyle,
-} from '../lib/stampOverlay';
-import { color, font } from '../theme/tokens';
+} from '../lib/stampOverlay.ts';
+import { color, font } from '../theme/tokens.ts';
 
 const INK_WHITE = '#FFFFFF';
 

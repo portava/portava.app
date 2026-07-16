@@ -8,7 +8,7 @@
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { AppState } from 'react-native';
-import { getCrewMap, type CrewMemberCard } from '../services/tripCrewLocation';
+import { getCrewMap, type CrewMemberCard } from '../services/tripCrewLocation.ts';
 
 export interface UseTripCrewMapResult {
   members: CrewMemberCard[];

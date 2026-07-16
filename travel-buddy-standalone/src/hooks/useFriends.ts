@@ -15,7 +15,7 @@ import {
   type FriendRequest,
   type FriendRow,
   type FriendResult,
-} from '../services/friends';
+} from '../services/friends.ts';
 
 /** Friend status for a single user (e.g., on their profile page). */
 export function useFriendStatus(userId: string | null | undefined) {

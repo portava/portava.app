@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { ShieldCheck, Lock, ChevronRight } from 'lucide-react-native';
-import type { TrustValue, TravelStats, Plan, Perk, User } from '../types/models';
-import { Stamp } from './ui';
-import { color, space, radius, type as t } from '../theme/tokens';
+import type { TrustValue, TravelStats, Plan, Perk, User } from '../types/models.ts';
+import { Stamp } from './ui.tsx';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 const TIER_LABEL: Record<TrustValue['tier'], string> = {
   new: 'New Traveler', rising: 'Rising', trusted: 'Trusted', pillar: 'Community Pillar',
@@ -89,7 +89,7 @@ function PostcardMediaImage({ url }: { url: string }) {
 }
 
 /* Postcards/Posts tab — user's posted content with media, caption, location, date. */
-export function PostcardList({ posts }: { posts: import('../types/models').Post[] }) {
+export function PostcardList({ posts }: { posts: import('../types/models.ts').Post[] }) {
   if (posts.length === 0) {
     return (
       <View style={styles.pcEmpty}>

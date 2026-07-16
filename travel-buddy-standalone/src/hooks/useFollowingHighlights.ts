@@ -6,8 +6,8 @@
  * the next server round-trip, and a markSessionViewed callback.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { fetchFollowingHighlightsFeed, type HighlightFeedUser } from '../services/highlights';
-import { viewedHighlightIds, markViewed } from './useHighlightRingState';
+import { fetchFollowingHighlightsFeed, type HighlightFeedUser } from '../services/highlights.ts';
+import { viewedHighlightIds, markViewed } from './useHighlightRingState.ts';
 
 export interface FollowingHighlightsState {
   users: HighlightFeedUser[];

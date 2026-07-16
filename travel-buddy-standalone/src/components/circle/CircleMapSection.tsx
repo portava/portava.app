@@ -15,7 +15,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Map, Camera, GeoJSONSource, Layer, Marker } from '@maplibre/maplibre-react-native';
 import { MapPin } from 'lucide-react-native';
-import { color, radius, type as t } from '../../theme/tokens';
+import { color, radius, type as t } from '../../theme/tokens.ts';
 
 const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '';
 const MAP_STYLE = MAPTILER_KEY

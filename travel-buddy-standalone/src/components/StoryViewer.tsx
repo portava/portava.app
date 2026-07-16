@@ -15,12 +15,12 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Eye, Users } from 'lucide-react-native';
-import { color, radius, space, type as t } from '../theme/tokens';
-import type { Story, StoryFeedUser } from '../services/stories';
-import { getViewers, type StoryViewer } from '../services/stories';
-import { useSession } from '../context/SessionContext';
-import { formatRelativeTime as formatRelative } from '../lib/dateTime/formatters';
-import { primaryIdentityText } from '../lib/displayIdentity';
+import { color, radius, space, type as t } from '../theme/tokens.ts';
+import type { Story, StoryFeedUser } from '../services/stories.ts';
+import { getViewers, type StoryViewer } from '../services/stories.ts';
+import { useSession } from '../context/SessionContext.tsx';
+import { formatRelativeTime as formatRelative } from '../lib/dateTime/formatters.ts';
+import { primaryIdentityText } from '../lib/displayIdentity.ts';
 
 const STORY_DURATION_MS = 5000;
 

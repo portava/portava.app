@@ -15,20 +15,20 @@
 
 import React from 'react';
 import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
-import { TripWishlistPicker } from '../TripWishlistPicker';
+import { TripWishlistPicker } from '../TripWishlistPicker.tsx';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
-jest.mock('../../../services/trips', () => ({
+jest.mock('../../../services/trips.ts', () => ({
   listMyTrips: jest.fn(),
 }));
 
-jest.mock('../../../services/discoveryBookmarks', () => ({
+jest.mock('../../../services/discoveryBookmarks.ts', () => ({
   toggleSave:      jest.fn(),
   getSavedListIds: jest.fn(),
 }));
 
-jest.mock('../../../theme/tokens', () => ({
+jest.mock('../../../theme/tokens.ts', () => ({
   color: {
     deep:        '#2A7F8F',
     ink:         '#1A1A2E',
@@ -47,8 +47,8 @@ jest.mock('../../../theme/tokens', () => ({
 
 // ── Typed references to mocked modules ─────────────────────────────────────────
 
-import { listMyTrips } from '../../../services/trips';
-import { toggleSave, getSavedListIds } from '../../../services/discoveryBookmarks';
+import { listMyTrips } from '../../../services/trips.ts';
+import { toggleSave, getSavedListIds } from '../../../services/discoveryBookmarks.ts';
 
 const mockListMyTrips    = listMyTrips    as jest.MockedFunction<typeof listMyTrips>;
 const mockToggleSave     = toggleSave     as jest.MockedFunction<typeof toggleSave>;

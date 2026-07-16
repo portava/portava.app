@@ -13,7 +13,7 @@ import {
   Pressable,
   StyleSheet,
 } from 'react-native';
-import { color, space, radius, shadow } from '../theme/tokens';
+import { color, space, radius, shadow } from '../theme/tokens.ts';
 
 export const REACTION_EMOJIS = ['❤️', '😂', '😮', '😢', '😡', '👍', '🔥', '✈️'] as const;
 export type ReactionEmoji = typeof REACTION_EMOJIS[number];

@@ -6,7 +6,7 @@
  * _layout.tsx so every screen can call useCompassContext() to get the tier.
  */
 import React, { createContext, useContext, useState } from 'react';
-import type { CompassActiveReward, CompassFrontloadData } from '../services/compass';
+import type { CompassActiveReward, CompassFrontloadData } from '../services/compass.ts';
 
 interface CompassContextValue {
   reward:        CompassActiveReward | null;

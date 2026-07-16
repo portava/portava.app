@@ -4,7 +4,7 @@
  * on mount and provides an optimistic toggle.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { followUser, unfollowUser, getFollowStatus } from '../services/follows';
+import { followUser, unfollowUser, getFollowStatus } from '../services/follows.ts';
 
 export interface FollowState {
   isFollowing: boolean;

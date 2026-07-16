@@ -33,7 +33,7 @@ import Animated, {
   Easing,
   cancelAnimation,
 } from 'react-native-reanimated';
-import { color, space, radius, type as t, font, shadow } from '../../theme/tokens';
+import { color, space, radius, type as t, font, shadow } from '../../theme/tokens.ts';
 
 export interface RouteStop {
   label: string;

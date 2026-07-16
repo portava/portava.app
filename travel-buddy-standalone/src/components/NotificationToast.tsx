@@ -15,8 +15,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { X } from 'lucide-react-native';
-import { color, space, type as t, radius, shadow } from '../theme/tokens';
-import type { AppNotification } from '../services/notifications';
+import { color, space, type as t, radius, shadow } from '../theme/tokens.ts';
+import type { AppNotification } from '../services/notifications.ts';
 
 const DISPLAY_DURATIONS: Record<string, number> = {
   urgent:    8000,

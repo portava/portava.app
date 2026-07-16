@@ -5,10 +5,10 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { MapPin, Pin, MoreHorizontal, ShieldCheck, X, Plus, PlayCircle, Clock, AlertCircle } from 'lucide-react-native';
-import type { PassportPostcard } from '../types/models';
-import { MediaStampOverlay } from './StampOverlayBadge';
-import type { usePostcardActions } from '../hooks/usePostcardActions';
-import { color, space, radius, type as t, shadow } from '../theme/tokens';
+import type { PassportPostcard } from '../types/models.ts';
+import { MediaStampOverlay } from './StampOverlayBadge.tsx';
+import type { usePostcardActions } from '../hooks/usePostcardActions.ts';
+import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
 
 const INTEREST_LABEL: Record<string, string> = {
   nightlife: 'Nightlife', food: 'Food', beach: 'Beach', luxury: 'Luxury',
