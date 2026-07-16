@@ -437,6 +437,24 @@ describe("PATCH /admin/events/:eventId/moderate — event_activity_log insert fa
         captureModerationActions.length, 0,
         `moderation_actions must have 0 rows when event_activity_log insert fails for '${action}'`,
       );
+
+      // Pending reports for EVENT_ID_A must remain unresolved — particularly
+      // important for hide/cancel/remove, which resolve reports on success.
+      // If the route ever moves report-resolution before the audit write, this
+      // catches the regression.
+      const evAReports = client._db.reports.filter(
+        (r: any) => r.target_id === EVENT_ID_A,
+      );
+      assert.ok(
+        evAReports.length > 0,
+        `Expected seeded pending reports for EVENT_ID_A to be present for '${action}'`,
+      );
+      for (const report of evAReports) {
+        assert.equal(
+          report.status, "pending",
+          `Report ${report.id} for EVENT_ID_A must still be pending after failed event_activity_log insert for '${action}'`,
+        );
+      }
     });
   }
 
