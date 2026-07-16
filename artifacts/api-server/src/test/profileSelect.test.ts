@@ -728,6 +728,85 @@ describe("profile data-leak prevention", () => {
     });
   });
 
+  // ── PATCH /api/me/profile — all nullable fields cleared simultaneously ────────
+  //
+  // Exercises the maximum-width null-clear path through the row builder:
+  // dateOfBirth, homeCity, preferredLanguage, and bio are all sent as null in
+  // one request. Confirms that mapProfile's DOB strip holds even when every
+  // nullable column is cleared at once — no combination of null assignments
+  // must cause the strip to be skipped.
+
+  describe("PATCH /api/me/profile — all nullable fields cleared at once", () => {
+    const ALL_NULL_PAYLOAD = {
+      dateOfBirth: null,
+      homeCity: null,
+      preferredLanguage: null,
+      defaultLanguage: null,
+    };
+
+    it("returns HTTP 200 when all nullable fields are cleared simultaneously", async () => {
+      const { status, body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        ALL_NULL_PAYLOAD,
+        USER_TOKEN,
+      );
+      assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    });
+
+    it("does not include date_of_birth (snake_case) when all nullable fields are cleared", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        ALL_NULL_PAYLOAD,
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("date_of_birth" in body),
+        `date_of_birth must not appear in all-null-clear response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dateOfBirth (camelCase) when all nullable fields are cleared", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        ALL_NULL_PAYLOAD,
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dateOfBirth" in body),
+        `dateOfBirth must not appear in all-null-clear response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dob_verified (snake_case) when all nullable fields are cleared", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        ALL_NULL_PAYLOAD,
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dob_verified" in body),
+        `dob_verified must not appear in all-null-clear response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dobVerified (camelCase) when all nullable fields are cleared", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        ALL_NULL_PAYLOAD,
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dobVerified" in body),
+        `dobVerified must not appear in all-null-clear response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+  });
+
   // ── GET /api/buddies — admin and private fields must be absent ────────────────
 
   describe("GET /api/buddies", () => {
