@@ -25,6 +25,7 @@ import {
   activateStampVersion,
   rejectCatalogEntry,
   regenerateCatalogEntry,
+  CURRENT_STYLE_VERSION,
   type CatalogDetail,
   type ArtworkVersion,
 } from '../../../src/services/adminStamps';
@@ -234,6 +235,10 @@ function CandidateCard({ version, onActivate, disabled }: {
   onActivate: () => void;
   disabled: boolean;
 }) {
+  const isStale =
+    version.prompt_template_version == null ||
+    version.prompt_template_version !== CURRENT_STYLE_VERSION;
+
   return (
     <View style={styles.candidateCard}>
       {version.public_url ? (
@@ -243,6 +248,11 @@ function CandidateCard({ version, onActivate, disabled }: {
           <Text style={{ color: color.mute, fontSize: 10 }}>No image</Text>
         </View>
       )}
+      {isStale ? (
+        <View style={styles.staleVersionBadge} testID="stale-version-badge">
+          <Text style={styles.staleVersionText}>⚠ Stale style</Text>
+        </View>
+      ) : null}
       <Text style={styles.candidateMeta}>{version.provider ?? 'ai'}</Text>
       <Pressable
         style={[styles.activateBtn, disabled && styles.activateBtnDisabled]}
@@ -300,9 +310,11 @@ const styles = StyleSheet.create({
   shortfallBanner:   { backgroundColor: '#FEF3C7', borderRadius: radius.sm, padding: space.sm, marginBottom: space.sm, borderWidth: 1, borderColor: '#FDE68A' },
   shortfallText:     { ...t.small, color: '#92400E', fontWeight: '600' },
   candidatesRow:     { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
-  candidateCard:     { width: '30%', alignItems: 'center', gap: 4 },
-  candidateImg:      { width: '100%', aspectRatio: 1, borderRadius: radius.sm, backgroundColor: '#F9FAFB' },
-  candidateMeta:     { fontSize: 9, color: color.faint },
+  candidateCard:        { width: '30%', alignItems: 'center', gap: 4 },
+  candidateImg:         { width: '100%', aspectRatio: 1, borderRadius: radius.sm, backgroundColor: '#F9FAFB' },
+  staleVersionBadge:    { backgroundColor: '#FEF3C7', borderRadius: radius.pill, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: '#FDE68A' },
+  staleVersionText:     { fontSize: 9, fontWeight: '700', color: '#92400E' },
+  candidateMeta:        { fontSize: 9, color: color.faint },
   activateBtn:       { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: color.success, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.pill },
   activateBtnDisabled: { opacity: 0.5 },
   activateBtnText:   { color: color.onInk, fontSize: 10, fontWeight: '700' },
