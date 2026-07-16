@@ -976,6 +976,74 @@ describe("DELETE /admin/geocode-cache/:city_key with repair_catalog", () => {
       "definition-scoped entries must be excluded; only the real city entry counts");
   });
 
+  it("counts a catalog entry as pending when the stored city has accent characters (São Paulo → sao paulo)", async () => {
+    // normCityKey strips diacritics via NFD decomposition.  "São Paulo"
+    // normalises to "sao paulo", so DELETE /admin/geocode-cache/sao paulo must
+    // report xx_entries_pending: 1 even though the raw city value in the DB
+    // contains accented characters.
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-accent-1",
+          canonical_location_key: "city:XX:sao paulo",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "São Paulo",   // stored with accent
+          neighborhood: null,
+          display_name: "São Paulo",
+        },
+      ],
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/sao paulo");
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.deleted, true);
+    assert.ok(!r.body.repair, "repair field must be absent — repair_catalog was not passed");
+    assert.equal(
+      r.body.xx_entries_pending,
+      1,
+      "accent-normalised city 'São Paulo' must match the key 'sao paulo' and be counted as pending",
+    );
+  });
+
+  it("counts a catalog entry as pending when the stored city is mixed-case with umlauts (MÜNCHEN → munchen)", async () => {
+    // normCityKey lowercases and strips diacritics.  "MÜNCHEN" normalises to
+    // "munchen", so DELETE /admin/geocode-cache/munchen must report
+    // xx_entries_pending: 1 even though the raw city value is uppercased and
+    // contains an umlaut.
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-umlaut-1",
+          canonical_location_key: "city:XX:munchen",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "MÜNCHEN",   // stored uppercased with umlaut
+          neighborhood: null,
+          display_name: "MÜNCHEN",
+        },
+      ],
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/munchen");
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.deleted, true);
+    assert.ok(!r.body.repair, "repair field must be absent — repair_catalog was not passed");
+    assert.equal(
+      r.body.xx_entries_pending,
+      1,
+      "umlaut+uppercase city 'MÜNCHEN' must match the key 'munchen' and be counted as pending",
+    );
+  });
+
   it("does not count a catalog re-key as successful when the DB update call fails", async () => {
     // The city resolves successfully (unresolvedCities must be empty), but the
     // DB write that re-keys the catalog entry returns an error.  The repair stats
