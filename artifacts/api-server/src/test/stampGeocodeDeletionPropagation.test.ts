@@ -32,10 +32,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   geocodeCityCountry,
+  evictGeocodeCacheKey,
   _setGeocodeFetchForTests,
   _setGeocodeDbClientForTests,
   _clearCountryGeocodeCache,
   _runCorrectionSweepForTests,
+  _getGeocodeCacheEntryForTests,
 } from "../lib/stamps/countryGeocoder.js";
 
 // ── Timing control ────────────────────────────────────────────────────────────
@@ -2311,5 +2313,97 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "Nominatim must NOT be called — revived DB row is served directly by readDbCache");
     assert.equal(upsertCalls, 0,
       "writeDbCache must NOT be called — the DB row was already written by the PUT");
+  });
+
+  it("sweep handles a mix of already-evicted and still-warm entries — evicts the warm entry and issues the cleanup delete without crashing", async () => {
+    // Scenario: two cities are tombstoned in the DB.  Before the sweep runs,
+    // one of them ("tokyo") was already evicted from in-memory by the
+    // on-request probe (evictIfDbCorrected).  The sweep must:
+    //   - evict the still-warm entry ("osaka") without crashing on the absent "tokyo" key
+    //   - issue one cleanup delete covering both tombstoned keys (DB-side cleanup
+    //     is independent of whether the key was in the in-memory cache)
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Step 1: seed both cities in-memory via DB cache hits — no Nominatim needed.
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [],
+    }));
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({ country: "Japan", country_code: "JP", corrected_at: null, deleted_at: null }),
+    );
+    const tokyo = await geocodeCityCountry("Tokyo");
+    const osaka = await geocodeCityCountry("Osaka");
+    assert.equal(tokyo?.countryCode, "JP", "pre-condition: tokyo seeded in cache");
+    assert.equal(osaka?.countryCode, "JP", "pre-condition: osaka seeded in cache");
+    assert.notEqual(_getGeocodeCacheEntryForTests("tokyo"), undefined, "tokyo is in cache before probe");
+    assert.notEqual(_getGeocodeCacheEntryForTests("osaka"), undefined, "osaka is in cache before sweep");
+
+    // Step 2: simulate the on-request probe evicting "tokyo" — the same operation
+    // evictIfDbCorrected performs when it finds deleted_at set on the DB row.
+    evictGeocodeCacheKey("tokyo");
+    assert.equal(_getGeocodeCacheEntryForTests("tokyo"), undefined,
+      "tokyo has been evicted from cache by the on-request probe");
+    assert.notEqual(_getGeocodeCacheEntryForTests("osaka"), undefined,
+      "osaka is still warm in cache — the sweep must evict it");
+
+    // Step 3: run a sweep cycle where both cities appear as tombstoned.
+    // The sweep must not crash when it tries to _cache.delete("tokyo") — a no-op
+    // for a key that is already absent — and must still evict "osaka" and issue
+    // the cleanup delete for both keys.
+    const cleanupDeleteKeys: string[] = [];
+    let sweepQueryCount = 0;
+    const mixedSweepClient: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          delete() { isDelete = true; return chain; },
+          in(_col: string, keys: string[]) {
+            cleanupDeleteKeys.push(...keys);
+            return chain;
+          },
+          then(resolve: (v: any) => void) {
+            if (isDelete) {
+              resolve({ error: null });
+              return;
+            }
+            const q = sweepQueryCount++;
+            if (q === 0) {
+              // Pass 1 — corrected_at: nothing corrected in this cycle.
+              resolve({ data: [], error: null });
+            } else {
+              // Pass 2 — deleted_at: both cities appear as tombstoned.
+              resolve({ data: [{ city_key: "tokyo" }, { city_key: "osaka" }], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(mixedSweepClient);
+
+    // Must not throw even though "tokyo" is already absent from the in-memory cache.
+    await _runCorrectionSweepForTests();
+
+    // Step 4: verify post-sweep state.
+    assert.equal(_getGeocodeCacheEntryForTests("osaka"), undefined,
+      "osaka was still warm before the sweep and must be evicted by it");
+    assert.equal(_getGeocodeCacheEntryForTests("tokyo"), undefined,
+      "tokyo was already evicted — it remains absent with no crash");
+
+    // The cleanup delete must cover both keys so tombstone rows are removed from
+    // the DB regardless of whether the in-memory entry was already gone.
+    assert.equal(cleanupDeleteKeys.includes("tokyo"), true,
+      "cleanup delete includes the already-evicted key — DB tombstone still needs removal");
+    assert.equal(cleanupDeleteKeys.includes("osaka"), true,
+      "cleanup delete includes the just-evicted key");
+    assert.equal(cleanupDeleteKeys.length, 2,
+      "exactly two keys in the cleanup delete — one already-evicted, one just-evicted by the sweep");
   });
 });
