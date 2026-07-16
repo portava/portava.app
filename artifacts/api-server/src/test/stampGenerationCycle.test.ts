@@ -2188,7 +2188,7 @@ describe("runGenerationCycle — null display_name in catalog row", () => {
     );
   });
 
-  it("completes without throwing when country_code is null", async () => {
+  it("completes without throwing and Typography line avoids 'null' when country_code is null", async () => {
     const nullCountryCodeCatalog = {
       ...CATALOG_ROW,
       country_code: null,
@@ -2217,7 +2217,7 @@ describe("runGenerationCycle — null display_name in catalog row", () => {
     assert.equal(
       capturedPrompt!.includes("null"),
       false,
-      `prompt must not contain the literal string "null"; got: ${capturedPrompt!.slice(0, 400)}`,
+      `prompt must not contain the literal string "null" when country_code is null; got: ${capturedPrompt!.slice(0, 500)}`,
     );
   });
 });

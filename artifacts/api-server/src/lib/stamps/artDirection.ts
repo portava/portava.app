@@ -155,8 +155,9 @@ const COUNTRY_LANDMARK_HINTS: Record<string, string> = {
 
 function landmarkHint(entry: CatalogEntryForPrompt): string {
   if (entry.stamp_type !== "country") return "";
-  if (!entry.country_code) return "Use a generalized destination motif representing the country's most iconic natural or cultural feature.";
-  const hint = COUNTRY_LANDMARK_HINTS[entry.country_code.toUpperCase()];
+  const code = entry.country_code?.toUpperCase() ?? null;
+  if (!code) return "Use a generalized destination motif representing the country's most iconic natural or cultural feature.";
+  const hint = COUNTRY_LANDMARK_HINTS[code];
   if (!hint) return "Use a generalized destination motif representing the country's most iconic natural or cultural feature.";
   return `Suggested landmark / motif: ${hint}.`;
 }
