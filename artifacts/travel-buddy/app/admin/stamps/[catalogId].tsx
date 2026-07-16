@@ -108,6 +108,22 @@ export default function StampCatalogDetail() {
   const candidates = versions.filter((v) => v.status === 'candidate');
   const approved   = versions.find((v) => v.status === 'approved');
 
+  // Degraded generation: worker records a shortfall on the queue row when
+  // fewer candidates than expected were produced; candidate metadata carries
+  // the same counts as a fallback.
+  const meta = (candidates[0] as any)?.generation_metadata ?? {};
+  const shortfallFromMeta =
+    typeof meta.candidates_expected === 'number' &&
+    typeof meta.candidates_produced === 'number' &&
+    meta.candidates_produced < meta.candidates_expected
+      ? `Only ${meta.candidates_produced} of ${meta.candidates_expected} candidates were generated.`
+      : null;
+  const shortfallFromQueue =
+    typeof queue?.last_error === 'string' && queue.last_error.startsWith('candidate_shortfall')
+      ? queue.last_error.replace(/^candidate_shortfall:\s*/, '')
+      : null;
+  const shortfall = shortfallFromMeta ?? shortfallFromQueue;
+
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.header}>
@@ -160,6 +176,11 @@ export default function StampCatalogDetail() {
         {candidates.length > 0 ? (
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Candidate Artworks ({candidates.length})</Text>
+            {shortfall ? (
+              <View style={styles.shortfallBanner}>
+                <Text style={styles.shortfallText}>⚠️ Degraded generation: {shortfall} Consider regenerating for a full set.</Text>
+              </View>
+            ) : null}
             <Text style={styles.hint}>Tap "Set as Active" to approve and publish to all users.</Text>
             <View style={styles.candidatesRow}>
               {candidates.map((v) => (
@@ -276,6 +297,8 @@ const styles = StyleSheet.create({
   artworkLarge:      { width: '100%', height: 200, borderRadius: radius.sm, marginBottom: space.xs },
   artworkMeta:       { ...t.small, color: color.mute },
   hint:              { ...t.small, color: color.mute, marginBottom: space.sm },
+  shortfallBanner:   { backgroundColor: '#FEF3C7', borderRadius: radius.sm, padding: space.sm, marginBottom: space.sm, borderWidth: 1, borderColor: '#FDE68A' },
+  shortfallText:     { ...t.small, color: '#92400E', fontWeight: '600' },
   candidatesRow:     { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   candidateCard:     { width: '30%', alignItems: 'center', gap: 4 },
   candidateImg:      { width: '100%', aspectRatio: 1, borderRadius: radius.sm, backgroundColor: '#F9FAFB' },

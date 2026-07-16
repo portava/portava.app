@@ -33,6 +33,47 @@ const AUTO_REQUEUE_MAX_ROUNDS = Math.max(1, Number(process.env.STAMP_FAILED_REQU
 const AUTO_REQUEUE_CHECK_INTERVAL_MS = 10 * 60 * 1_000; // sweep at most every 10 min
 let _lastAutoRequeueAt = 0;
 
+// Minimum number of candidates a generation run must produce to be considered
+// reviewable. Below this the job is treated as a retryable failure instead of
+// review_required (default 1 keeps the historical "at least one image" rule).
+const MIN_CANDIDATES = Math.max(
+  1,
+  Math.min(CANDIDATE_COUNT, Number(process.env.STAMP_MIN_CANDIDATES ?? "1") || 1)
+);
+
+// Prefix used in last_error to flag a degraded-but-reviewable run so the admin
+// review screen can surface the shortfall. Exported for tests/routes.
+export const CANDIDATE_SHORTFALL_PREFIX = "candidate_shortfall";
+
+/**
+ * Classify a generation run by how many candidates it produced.
+ * Pure; exported for tests.
+ *
+ * - "failed":    produced < minimum → treat as retryable failure.
+ * - "degraded":  produced < expected but ≥ minimum → review_required, with the
+ *                shortfall recorded on the queue row.
+ * - "full":      produced === expected.
+ */
+export function evaluateCandidateShortfall(
+  produced: number,
+  expected: number = CANDIDATE_COUNT,
+  minimum: number = MIN_CANDIDATES,
+): { outcome: "failed" | "degraded" | "full"; shortfallMessage: string | null } {
+  if (produced < Math.max(1, minimum)) {
+    return {
+      outcome: "failed",
+      shortfallMessage: `${CANDIDATE_SHORTFALL_PREFIX}: produced ${produced} of ${expected} candidates (minimum ${Math.max(1, minimum)})`,
+    };
+  }
+  if (produced < expected) {
+    return {
+      outcome: "degraded",
+      shortfallMessage: `${CANDIDATE_SHORTFALL_PREFIX}: produced ${produced} of ${expected} candidates`,
+    };
+  }
+  return { outcome: "full", shortfallMessage: null };
+}
+
 // ── Auto-requeue of stale failed jobs ─────────────────────────────────────────
 
 /**
@@ -281,6 +322,23 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
       throw new Error("No images generated — all provider calls failed");
     }
 
+    // Shortfall handling: below the configured minimum the run is treated as a
+    // retryable failure; a degraded-but-reviewable run records the shortfall on
+    // the queue row (last_error) so admins see generation was degraded.
+    const shortfall = evaluateCandidateShortfall(images.length, CANDIDATE_COUNT);
+    if (shortfall.outcome === "failed") {
+      throw new Error(shortfall.shortfallMessage!);
+    }
+    if (shortfall.outcome === "degraded") {
+      console.warn(JSON.stringify({
+        event:      "stamp.generation.candidate_shortfall",
+        job_id:     jobId,
+        catalog_id: catalogId,
+        produced:   images.length,
+        expected:   CANDIDATE_COUNT,
+      }));
+    }
+
     // Upload each candidate and insert artwork version rows
     const versionInserts: any[] = [];
 
@@ -312,7 +370,11 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
         model_version:           "dall-e-3",
         prompt_used:             prompt,
         prompt_template_version: STYLE_VERSION,
-        generation_metadata:     img.metadata,
+        generation_metadata:     {
+          ...img.metadata,
+          candidates_expected: CANDIDATE_COUNT,
+          candidates_produced: images.length,
+        },
       });
     }
 
@@ -322,11 +384,14 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
 
     if (insertErr) throw new Error(`version_insert_failed: ${insertErr.message}`);
 
-    // Mark queue job as review_required
+    // Mark queue job as review_required. A degraded run records the shortfall
+    // in last_error so the admin review screen can surface it; a full run
+    // clears any stale error from a previous attempt.
     await sc
       .from("stamp_generation_queue")
       .update({
         status:       "review_required",
+        last_error:   shortfall.shortfallMessage,
         locked_until: null,
         locked_by:    null,
         updated_at:   new Date().toISOString(),

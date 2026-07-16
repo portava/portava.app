@@ -8,7 +8,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { requeueStaleFailedJobs, isPermanentGenerationError } from "../lib/stamps/generationWorker.js";
+import {
+  requeueStaleFailedJobs,
+  isPermanentGenerationError,
+  evaluateCandidateShortfall,
+  CANDIDATE_SHORTFALL_PREFIX,
+} from "../lib/stamps/generationWorker.js";
 import { isNonRetryableProviderError, PROVIDER_REJECTED_PREFIX } from "../lib/stamps/imageProvider.js";
 
 /**
@@ -180,5 +185,40 @@ describe("isNonRetryableProviderError", () => {
   it("treats network errors (no status, no code) as retryable", () => {
     assert.equal(isNonRetryableProviderError(new Error("fetch failed")), false);
     assert.equal(isNonRetryableProviderError({ code: "ECONNRESET" }), false);
+  });
+});
+
+// ── evaluateCandidateShortfall ────────────────────────────────────────────────
+
+describe("evaluateCandidateShortfall", () => {
+  it("full set → full outcome, no shortfall message", () => {
+    const r = evaluateCandidateShortfall(3, 3, 1);
+    assert.equal(r.outcome, "full");
+    assert.equal(r.shortfallMessage, null);
+  });
+
+  it("partial set at/above minimum → degraded with a recorded shortfall", () => {
+    const r = evaluateCandidateShortfall(2, 3, 1);
+    assert.equal(r.outcome, "degraded");
+    assert.ok(r.shortfallMessage?.startsWith(CANDIDATE_SHORTFALL_PREFIX));
+    assert.ok(r.shortfallMessage?.includes("2 of 3"));
+  });
+
+  it("below configured minimum → failed (retryable), message includes minimum", () => {
+    const r = evaluateCandidateShortfall(1, 3, 2);
+    assert.equal(r.outcome, "failed");
+    assert.ok(r.shortfallMessage?.startsWith(CANDIDATE_SHORTFALL_PREFIX));
+    assert.ok(r.shortfallMessage?.includes("minimum 2"));
+  });
+
+  it("shortfall failures are retryable, not permanent", () => {
+    const r = evaluateCandidateShortfall(0, 3, 1);
+    assert.equal(r.outcome, "failed");
+    assert.equal(isPermanentGenerationError(r.shortfallMessage!), false);
+  });
+
+  it("minimum is clamped to at least 1", () => {
+    assert.equal(evaluateCandidateShortfall(1, 3, 0).outcome, "degraded");
+    assert.equal(evaluateCandidateShortfall(0, 3, 0).outcome, "failed");
   });
 });
