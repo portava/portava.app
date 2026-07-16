@@ -21,6 +21,7 @@ import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import {
   getMyBuddyProfile, updateMyBuddyProfile,
 } from '../../../src/services/rentABuddy';
+import { roundMeetupPin, buildMeetupPinPatch } from '../../../src/lib/meetupPin.ts';
 
 export default function BuddyMeetupPin() {
   const insets = useSafeAreaInsets();
@@ -66,21 +67,19 @@ export default function BuddyMeetupPin() {
 
   const handlePicked = useCallback((place: Place) => {
     setPickerOpen(false);
-    if (place.lat == null || place.lng == null) return;
     // Round to ~3 decimal places (≈110 m) so the stored pin is genuinely
     // approximate — neighbourhood-level, never an exact address.
-    setDraftLat(Math.round(place.lat * 1000) / 1000);
-    setDraftLng(Math.round(place.lng * 1000) / 1000);
+    const rounded = roundMeetupPin(place.lat, place.lng);
+    if (!rounded) return;
+    setDraftLat(rounded.lat);
+    setDraftLng(rounded.lng);
     setDraftLabel(place.displayName ?? place.name ?? null);
   }, []);
 
   async function save() {
     if (saving) return;
     setSaving(true);
-    const res = await updateMyBuddyProfile({
-      meetupBaseLat: draftLat,
-      meetupBaseLng: draftLng,
-    });
+    const res = await updateMyBuddyProfile(buildMeetupPinPatch(draftLat, draftLng));
     setSaving(false);
     if (!res.ok) {
       Alert.alert('Could not save', res.error ?? 'Please try again.');
