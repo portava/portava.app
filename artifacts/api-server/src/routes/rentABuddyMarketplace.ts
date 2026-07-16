@@ -76,8 +76,7 @@ import { Router } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
-import { sendPushNotification } from "../lib/push.js";
-import { PushRetryQueue } from "../lib/pushRetryQueue.js";
+import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import {
   calculateCompatibilityScore,
@@ -792,10 +791,8 @@ export async function notifyEligibleBuddies(svc: any, request: any) {
   // legacy profiles.expo_push_token column — fall back to it.
   // Track which user each token belongs to so retry-queue rows can be
   // attributed to the right buddy.
-  const tokens = new Set<string>();
   const tokensByUser = new Map<string, string[]>();
   function addToken(userId: string, token: string) {
-    tokens.add(token);
     const list = tokensByUser.get(userId) ?? [];
     list.push(token);
     tokensByUser.set(userId, list);
@@ -816,7 +813,7 @@ export async function notifyEligibleBuddies(svc: any, request: any) {
     }
   }
 
-  if (tokens.size === 0) {
+  if (tokensByUser.size === 0) {
     logger.info({ requestId: request.id, eligible: eligible.length }, "buddy request: no push tokens to notify");
     return;
   }
@@ -831,45 +828,12 @@ export async function notifyEligibleBuddies(svc: any, request: any) {
       category: request.category,
     },
   };
-  const result = await sendPushNotification([...tokens], payload);
 
-  // Transient failure (network error / Expo 5xx): enqueue on the retry queue
-  // instead of dropping the alert. One row per buddy so retries are attributed
-  // to the right recipient.
-  if (result.retryable) {
-    const queue = new PushRetryQueue(svc);
-    for (const [userId, userTokens] of tokensByUser) {
-      await queue.enqueue({
-        notificationId: null,
-        userId,
-        tokens: userTokens,
-        payload,
-        deliveryAttemptId: null,
-        lastError: "transient failure on initial attempt",
-      });
-    }
-    logger.info(
-      { requestId: request.id, users: tokensByUser.size },
-      "buddy request: push queued for retry after transient failure",
-    );
-    return;
-  }
-
-  // Clear tokens Expo reports as dead so we stop pushing to them.
-  const staleTokens = result.errors
-    .filter((e) => e.error === "DeviceNotRegistered")
-    .map((e) => e.token);
-  if (staleTokens.length > 0) {
-    await Promise.resolve(
-      await svc.from("rent_buddy_profiles").update({ expo_push_token: null }).in("expo_push_token", staleTokens),
-    ).catch(() => {});
-    await Promise.resolve(
-      await svc.from("profiles").update({ expo_push_token: null }).in("expo_push_token", staleTokens),
-    ).catch(() => {});
-  }
+  const recipients = [...tokensByUser.entries()].map(([userId, tokens]) => ({ userId, tokens }));
+  const result = await sendPushWithRetry(svc, recipients, payload);
 
   logger.info(
-    { requestId: request.id, eligible: eligible.length, sent: result.sent, staleCleared: staleTokens.length },
+    { requestId: request.id, eligible: eligible.length, sent: result.sent },
     "buddy request: push notifications dispatched",
   );
 }
