@@ -94,6 +94,9 @@ interface FakeState {
   /** Map of table name → error object. When set the fake client returns this
    *  error (and no data) for the next insert on that table, then clears it. */
   insertErrorOverrides?: Record<string, any>;
+  /** Map of table name → error object. When set the fake client returns this
+   *  error (and no data) for the next update on that table, then clears it. */
+  updateErrorOverrides?: Record<string, any>;
 }
 
 let state: FakeState = {};
@@ -257,6 +260,12 @@ function makeClient(userId: string, role = "user") {
 
         // Handle updates / deletes
         if (this._updateData !== null) {
+          // If a per-table error override is armed for updates, return the error and disarm it.
+          if (state.updateErrorOverrides?.[t]) {
+            const err = state.updateErrorOverrides[t];
+            delete state.updateErrorOverrides[t];
+            return { data: null, error: err };
+          }
           if (t === "buddy_availability_exceptions" && this._updateData === "__delete__") {
             let rows = (state as any).availabilityExceptions ?? [];
             for (const [op, col, val] of this._filters) {
@@ -3085,6 +3094,56 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
       escalationEvents[0].metadata?.dispute_id,
       null,
       "event metadata.dispute_id must be null when the dispute-row insert failed",
+    );
+  });
+
+  it("still counts the escalation even when the booking status update itself errors — booking remains no_show_pending", async () => {
+    // The sweep sets noShowEscalatedCount = staleNoShows.length unconditionally,
+    // before (and regardless of) whether the .update({ status: 'disputed' }) DB
+    // call succeeds.  This test pins that observable behaviour: if the update
+    // errors the response still reports noShowEscalated: 1 while the booking is
+    // left in its original no_show_pending state.
+    const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+
+    state = {
+      bookings: {
+        "bk-ns-update-err": {
+          id: "bk-ns-update-err",
+          traveler_id: USER_ID,
+          buddy_id: BUDDY_PROF,
+          status: "no_show_pending",
+          no_show_grace_expires_at: PAST,
+        },
+      },
+      // Arm the update error override so the rent_buddy_bookings status update
+      // returns a DB error — leaving the booking un-promoted.
+      updateErrorOverrides: {
+        rent_buddy_bookings: { message: "simulated DB error on bookings update", code: "23514" },
+      },
+    };
+    (state as any).bookingEvents = [
+      { id: "ev-ns-upd-err-1", booking_id: "bk-ns-update-err", actor_user_id: USER_ID, event: "no_show_reported" },
+    ];
+
+    const r = await reqSweep();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    // The sweep counts escalations from the candidate list length, not from
+    // whether the update succeeded — so noShowEscalated is still 1.
+    assert.equal(
+      r.body.noShowEscalated,
+      1,
+      "noShowEscalated must be 1 even when the booking status update errors — count is set from candidate list length",
+    );
+
+    // The booking must remain no_show_pending because the DB update failed.
+    assert.equal(
+      state.bookings!["bk-ns-update-err"].status,
+      "no_show_pending",
+      "booking status must remain no_show_pending when the status update DB call errors",
     );
   });
 });
