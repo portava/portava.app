@@ -384,6 +384,68 @@ describe("notifyEligibleBuddies", () => {
     assert.deepEqual(pushCalls[0].messages.map((m: any) => m.to), [TOKEN1]);
   });
 
+  it("evaluates quiet hours in the buddy's own timezone, not server time", async () => {
+    // Pick a timezone whose current wall clock differs from the server's by
+    // several hours, then build a quiet window around the buddy's LOCAL now.
+    // Under server-clock evaluation this window would NOT cover the moment.
+    const now = new Date();
+    const serverMins = now.getHours() * 60 + now.getMinutes();
+    const candidates = ["Pacific/Kiritimati", "Pacific/Honolulu", "Asia/Tokyo", "Europe/Lisbon", "America/Anchorage"];
+    let tz = "";
+    let localMins = 0;
+    for (const c of candidates) {
+      const parts = new Intl.DateTimeFormat("en-GB", { timeZone: c, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now);
+      const h = Number(parts.find((p) => p.type === "hour")!.value);
+      const m = Number(parts.find((p) => p.type === "minute")!.value);
+      const mins = h * 60 + m;
+      const diff = Math.min(Math.abs(mins - serverMins), 1440 - Math.abs(mins - serverMins));
+      if (diff >= 180) { tz = c; localMins = mins; break; }
+    }
+    assert.ok(tz, "expected a candidate timezone ≥3h from server time");
+
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const fmt = (mins: number) => {
+      const m = ((mins % 1440) + 1440) % 1440;
+      return `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+    };
+    const quietStart = fmt(localMins - 60);
+    const quietEnd = fmt(localMins + 60);
+
+    // 1. Window covers the buddy's local now → suppressed (would NOT be
+    //    suppressed under server-clock evaluation).
+    const svc = makeFakeClient({
+      rentBuddyProfiles: [buddyRow()],
+      profiles: [],
+      notificationPreferences: [{
+        user_id: BUDDY1_ID,
+        push_enabled: true,
+        quiet_hours_enabled: true,
+        quiet_start: quietStart,
+        quiet_end: quietEnd,
+        timezone: tz,
+      }],
+    });
+    await notifyEligibleBuddies(svc, REQUEST);
+    assert.equal(pushCalls.length, 0, `expected suppression in ${tz}`);
+
+    // 2. Same window but no timezone stored → falls back to server time,
+    //    where the window does not cover now → push goes out.
+    const svc2 = makeFakeClient({
+      rentBuddyProfiles: [buddyRow()],
+      profiles: [],
+      notificationPreferences: [{
+        user_id: BUDDY1_ID,
+        push_enabled: true,
+        quiet_hours_enabled: true,
+        quiet_start: quietStart,
+        quiet_end: quietEnd,
+        timezone: null,
+      }],
+    });
+    await notifyEligibleBuddies(svc2, REQUEST);
+    assert.equal(pushCalls.length, 1, "expected server-time fallback to deliver");
+  });
+
   it("does not call Expo when no tokens exist anywhere", async () => {
     const svc = makeFakeClient({
       rentBuddyProfiles: [buddyRow({ expo_push_token: null })],

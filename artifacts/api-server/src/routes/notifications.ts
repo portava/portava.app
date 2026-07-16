@@ -32,7 +32,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
-import { NotificationPreferenceService } from "../services/notifications/NotificationPreferenceService.js";
+import { NotificationPreferenceService, isValidTimezone } from "../services/notifications/NotificationPreferenceService.js";
 import { NotificationRouter as NotifRouter } from "../services/notifications/NotificationRouter.js";
 import { NotificationDigestService } from "../services/notifications/NotificationDigestService.js";
 import { RealtimeActivityService } from "../services/notifications/RealtimeActivityService.js";
@@ -205,6 +205,8 @@ const UpdatePrefsSchema = z.object({
   quietHoursEnabled: z.boolean().optional(),
   quietStart:        z.string().regex(/^\d{2}:\d{2}$/).optional(),
   quietEnd:          z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  timezone:          z.string().max(64).nullable().optional()
+                       .refine((tz) => tz == null || isValidTimezone(tz), 'Invalid IANA timezone'),
   messagePreviews:   z.boolean().optional(),
   locationPreviews:  z.boolean().optional(),
   categoryPreferences: z.array(z.object({

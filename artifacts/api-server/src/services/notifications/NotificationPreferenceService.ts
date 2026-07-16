@@ -20,6 +20,8 @@ export interface NotificationPreferences {
   quietHoursEnabled: boolean;
   quietStart: string;   // "HH:MM"
   quietEnd: string;     // "HH:MM"
+  /** IANA timezone (e.g. "Europe/Lisbon") quiet hours are evaluated in; null → server time. */
+  timezone: string | null;
   messagePreviews: boolean;
   locationPreviews: boolean;
 }
@@ -41,6 +43,7 @@ const DEFAULTS: Omit<NotificationPreferences, 'userId'> = {
   quietHoursEnabled: false,
   quietStart: '22:00',
   quietEnd: '08:00',
+  timezone: null,
   messagePreviews: true,
   locationPreviews: false,
 };
@@ -57,6 +60,7 @@ function rowToPrefs(userId: string, row: Record<string, any> | null): Notificati
     quietHoursEnabled: Boolean(row.quiet_hours_enabled ?? DEFAULTS.quietHoursEnabled),
     quietStart:        (row.quiet_start as string) ?? DEFAULTS.quietStart,
     quietEnd:          (row.quiet_end as string) ?? DEFAULTS.quietEnd,
+    timezone:          (row.timezone as string | null) ?? null,
     messagePreviews:   Boolean(row.message_previews ?? DEFAULTS.messagePreviews),
     locationPreviews:  Boolean(row.location_previews ?? DEFAULTS.locationPreviews),
   };
@@ -72,9 +76,43 @@ function prefsToRow(p: Partial<Omit<NotificationPreferences, 'userId'>>) {
   if (p.quietHoursEnabled !== undefined) patch.quiet_hours_enabled = p.quietHoursEnabled;
   if (p.quietStart        !== undefined) patch.quiet_start         = p.quietStart;
   if (p.quietEnd          !== undefined) patch.quiet_end           = p.quietEnd;
+  if (p.timezone          !== undefined) patch.timezone            = p.timezone;
   if (p.messagePreviews   !== undefined) patch.message_previews    = p.messagePreviews;
   if (p.locationPreviews  !== undefined) patch.location_previews   = p.locationPreviews;
   return patch;
+}
+
+/** Returns true if `tz` is a valid IANA timezone name usable by Intl. */
+export function isValidTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Minutes since midnight for `now` in the given IANA timezone.
+ * Falls back to server-local time when tz is null/empty/invalid.
+ */
+export function localMinutesOfDay(now: Date, tz: string | null): number {
+  if (tz) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: tz,
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+      }).formatToParts(now);
+      const h = Number(parts.find((p) => p.type === 'hour')?.value);
+      const m = Number(parts.find((p) => p.type === 'minute')?.value);
+      if (Number.isFinite(h) && Number.isFinite(m)) return h * 60 + m;
+    } catch {
+      // Invalid timezone name — fall through to server-local time.
+    }
+  }
+  return now.getHours() * 60 + now.getMinutes();
 }
 
 export class NotificationPreferenceService {
@@ -224,13 +262,18 @@ export class NotificationPreferenceService {
     });
   }
 
-  /** Returns true if the current time is inside the quiet window. */
-  isQuietHour(prefs: NotificationPreferences): boolean {
+  /**
+   * Returns true if the current time is inside the quiet window.
+   *
+   * The window is evaluated in the user's own timezone (prefs.timezone, IANA
+   * name). When the timezone is unset or invalid we fall back to server-local
+   * time, matching the previous behaviour.
+   */
+  isQuietHour(prefs: NotificationPreferences, now: Date = new Date()): boolean {
     if (!prefs.quietHoursEnabled) return false;
-    const now = new Date();
     const [sh, sm] = prefs.quietStart.split(':').map(Number);
     const [eh, em] = prefs.quietEnd.split(':').map(Number);
-    const nowMins = now.getHours() * 60 + now.getMinutes();
+    const nowMins = localMinutesOfDay(now, prefs.timezone);
     const startMins = sh * 60 + sm;
     const endMins   = eh * 60 + em;
     if (startMins < endMins) {
