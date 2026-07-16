@@ -14,7 +14,7 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
-import { ArrowLeft, Image as ImageIcon, Clock, CheckCircle, AlertTriangle, XCircle } from 'lucide-react-native';
+import { ArrowLeft, Image as ImageIcon, Clock, CheckCircle, AlertTriangle, XCircle, Activity } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
@@ -22,6 +22,7 @@ import {
   getAdminStampCatalog,
   getStampWorkerHealth,
   type WorkerHealthWarning,
+  type StampWorkerHealth,
 } from '../../../src/services/adminStamps';
 
 type StatusCounts = {
@@ -42,6 +43,7 @@ export default function StampStudioIndex() {
   });
   const [recentEntries, setRecentEntries] = useState<any[]>([]);
   const [healthWarnings, setHealthWarnings] = useState<WorkerHealthWarning[]>([]);
+  const [workerHealth, setWorkerHealth] = useState<StampWorkerHealth | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -54,7 +56,10 @@ export default function StampStudioIndex() {
       setStatusCounts((res.data as any).statusCounts ?? {});
       setRecentEntries((res.data as any).entries ?? []);
     }
-    if (healthRes.ok) setHealthWarnings(healthRes.data.warnings ?? []);
+    if (healthRes.ok) {
+      setHealthWarnings(healthRes.data.warnings ?? []);
+      setWorkerHealth(healthRes.data.health ?? null);
+    }
     setLoading(false);
     setRefreshing(false);
   }, []);
@@ -100,6 +105,39 @@ export default function StampStudioIndex() {
               </View>
             </View>
           ))}
+
+          {/* Worker health strip */}
+          {workerHealth && (
+            <View style={styles.healthStrip}>
+              <View style={styles.healthItem}>
+                <View
+                  style={[
+                    styles.healthDot,
+                    { backgroundColor: workerHealth.worker_running && workerHealth.worker_enabled ? '#10B981' : '#EF4444' },
+                  ]}
+                />
+                <Text style={styles.healthText}>
+                  {workerHealth.worker_running && workerHealth.worker_enabled
+                    ? 'Worker running'
+                    : workerHealth.worker_enabled
+                      ? 'Worker stopped'
+                      : 'Worker disabled'}
+                </Text>
+              </View>
+              <View style={styles.healthItem}>
+                <Clock size={14} color={color.mute} strokeWidth={2} />
+                <Text style={styles.healthText}>
+                  {workerHealth.last_success_at
+                    ? `Last artwork ${timeAgo(workerHealth.last_success_at)}`
+                    : 'No artwork generated yet'}
+                </Text>
+              </View>
+              <View style={styles.healthItem}>
+                <Activity size={14} color={color.mute} strokeWidth={2} />
+                <Text style={styles.healthText}>Queued {workerHealth.queue_depth?.queued ?? 0}</Text>
+              </View>
+            </View>
+          )}
 
           {/* Status tiles */}
           <Text style={styles.sectionTitle}>Catalog Status</Text>
@@ -167,6 +205,18 @@ function warningSummary(w: WorkerHealthWarning): string {
   return `Queued backlog grew from ${prev ?? '?'} to ${queued ?? '?'} while the worker is enabled — it may be stalled.`;
 }
 
+function timeAgo(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(diffMs) || diffMs < 0) return 'just now';
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 function statusBg(status: string) {
   switch (status) {
     case 'approved':        return '#D1FAE5';
@@ -184,6 +234,10 @@ const styles = StyleSheet.create({
   center:       { flex: 1, justifyContent: 'center', alignItems: 'center' },
   content:      { padding: space.md, gap: space.sm },
   sectionTitle: { ...t.small, color: color.mute, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: space.md, marginBottom: space.xs },
+  healthStrip:  { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.md, backgroundColor: color.paperRaised, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.sm, borderWidth: 1, borderColor: color.haze },
+  healthItem:   { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  healthDot:    { width: 8, height: 8, borderRadius: 4 },
+  healthText:   { ...t.small, color: color.ink },
   warnBanner:   { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm, backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#FCD34D', borderRadius: radius.md, padding: space.md },
   warnBody:     { flex: 1, gap: 2 },
   warnTitle:    { ...t.body, color: '#92400E', fontWeight: '700' },
