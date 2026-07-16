@@ -149,6 +149,9 @@ export async function requeueStaleFailedJobs(scOverride?: any): Promise<number> 
 // still works and resets attempts/requeue_count).
 const PERMANENT_ERROR_PREFIXES = [
   "catalog_not_found",
+  // Image provider rejected the request in a way retries can't fix
+  // (content-policy refusal or invalid-request 4xx). See imageProvider.ts.
+  "provider_rejected",
 ] as const;
 
 /**

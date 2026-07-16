@@ -9,6 +9,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { requeueStaleFailedJobs, isPermanentGenerationError } from "../lib/stamps/generationWorker.js";
+import { isNonRetryableProviderError, PROVIDER_REJECTED_PREFIX } from "../lib/stamps/imageProvider.js";
 
 /**
  * Fake Supabase client:
@@ -147,5 +148,37 @@ describe("isPermanentGenerationError", () => {
 
   it("only matches as a prefix, not mid-string", () => {
     assert.equal(isPermanentGenerationError("wrapped: catalog_not_found: abc"), false);
+    assert.equal(isPermanentGenerationError("wrapped: provider_rejected: x"), false);
+  });
+
+  it("classifies provider_rejected errors as permanent", () => {
+    assert.equal(
+      isPermanentGenerationError(`${PROVIDER_REJECTED_PREFIX}: 400 content policy violation`),
+      true,
+    );
+  });
+});
+
+describe("isNonRetryableProviderError", () => {
+  it("treats 4xx (except 429) as non-retryable", () => {
+    assert.equal(isNonRetryableProviderError({ status: 400, message: "bad request" }), true);
+    assert.equal(isNonRetryableProviderError({ status: 403, message: "forbidden" }), true);
+    assert.equal(isNonRetryableProviderError({ response: { status: 422 } }), true);
+  });
+
+  it("keeps 429 and 5xx retryable", () => {
+    assert.equal(isNonRetryableProviderError({ status: 429, message: "rate limited" }), false);
+    assert.equal(isNonRetryableProviderError({ status: 500, message: "server error" }), false);
+    assert.equal(isNonRetryableProviderError({ status: 503 }), false);
+  });
+
+  it("recognizes content-policy / invalid-request codes without a status", () => {
+    assert.equal(isNonRetryableProviderError({ code: "content_policy_violation" }), true);
+    assert.equal(isNonRetryableProviderError({ error: { code: "invalid_request_error" } }), true);
+  });
+
+  it("treats network errors (no status, no code) as retryable", () => {
+    assert.equal(isNonRetryableProviderError(new Error("fetch failed")), false);
+    assert.equal(isNonRetryableProviderError({ code: "ECONNRESET" }), false);
   });
 });
