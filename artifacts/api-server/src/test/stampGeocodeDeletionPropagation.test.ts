@@ -1854,7 +1854,82 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     // Without the optimistic correctionCheckedAt bump this would be 2.
     assert.ok(
       probeCallCount <= 1,
-      `DB probe (maybeSingle) called ${probeCallCount} time(s) — expected at most 1 across two concurrent warm-cache callers`,
+      `DB probe (maybySingle) called ${probeCallCount} time(s) — expected at most 1 across two concurrent warm-cache callers`,
     );
+  });
+
+  it("DB error in readDbCache after sweep eviction falls through to Nominatim — not returning stale null", async () => {
+    // Scenario: the tombstone sweep evicts a city's in-memory entry.  The very
+    // next geocodeCityCountry call hits readDbCache to re-populate from the DB,
+    // but readDbCache itself returns a transient DB error.  The geocoder must fall
+    // through to Nominatim and return its result — NOT silently return null as if
+    // the city doesn't exist.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "at", country: "Austria" } }],
+      };
+    });
+
+    // Phase 1: seed the in-memory cache via a DB load (no Nominatim call).
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({ country: "Austria", country_code: "AT", corrected_at: null, deleted_at: null }),
+    );
+    const seeded = await geocodeCityCountry("Vienna");
+    assert.equal(seeded?.countryCode, "AT", "pre-condition: cache seeded with AT from DB");
+    assert.equal(nominatimCalls, 0, "no Nominatim call during seed phase");
+
+    // Phase 2: run the tombstone sweep with "vienna" reported as tombstoned.
+    // The sweep evicts the in-memory entry so the next call re-resolves from scratch.
+    const sweepClient = makeTombstoneSweepClient([{ city_key: "vienna" }]);
+    _setGeocodeDbClientForTests(sweepClient);
+    await _runCorrectionSweepForTests();
+
+    // Phase 3: switch to a client that returns a transient DB error from
+    // maybeSingle() — simulating a brief outage on the readDbCache call that
+    // follows the sweep eviction.
+    let readDbCalls = 0;
+    _setGeocodeDbClientForTests({
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() {
+            readDbCalls++;
+            // Transient error — readDbCache should return null and let the
+            // geocoder fall through to Nominatim rather than propagating null
+            // as a definitive "city not found" response.
+            return { data: null, error: { message: "connection refused" } };
+          },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            // Sweep queries (corrected_at / deleted_at passes) return empty.
+            resolve({ data: [], error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient);
+
+    // Phase 4: the next call after sweep eviction must fall through to Nominatim
+    // when readDbCache hits a DB error — not silently return null.
+    const afterSweep = await geocodeCityCountry("Vienna");
+
+    assert.equal(readDbCalls, 1,
+      "readDbCache was attempted exactly once after the sweep eviction");
+    assert.equal(nominatimCalls, 1,
+      "Nominatim called once — DB error in readDbCache fell through to Nominatim, not null");
+    assert.notEqual(afterSweep, null,
+      "result must not be null — Nominatim fallback must fire when the DB read errors out");
+    assert.equal(afterSweep?.countryCode, "AT",
+      "Nominatim's result is returned even though the DB read errored after sweep eviction");
   });
 });
