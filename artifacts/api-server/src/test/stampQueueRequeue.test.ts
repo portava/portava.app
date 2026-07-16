@@ -8,7 +8,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { requeueStaleFailedJobs } from "../lib/stamps/generationWorker.js";
+import { requeueStaleFailedJobs, isPermanentGenerationError } from "../lib/stamps/generationWorker.js";
 
 /**
  * Fake Supabase client:
@@ -129,5 +129,23 @@ describe("requeueStaleFailedJobs", () => {
   it("returns 0 and does not throw on DB error", async () => {
     const { sc } = makeFakeClient({ data: null, error: { message: "boom" } });
     assert.equal(await requeueStaleFailedJobs(sc), 0);
+  });
+});
+
+describe("isPermanentGenerationError", () => {
+  it("classifies catalog_not_found as permanent", () => {
+    assert.equal(isPermanentGenerationError("catalog_not_found: abc-123"), true);
+  });
+
+  it("treats transient errors as retryable", () => {
+    assert.equal(isPermanentGenerationError("Image download failed: 503 https://x"), false);
+    assert.equal(isPermanentGenerationError("No images generated — all provider calls failed"), false);
+    assert.equal(isPermanentGenerationError("fetch failed"), false);
+    assert.equal(isPermanentGenerationError("Storage upload failed: timeout"), false);
+    assert.equal(isPermanentGenerationError("version_insert_failed: conflict"), false);
+  });
+
+  it("only matches as a prefix, not mid-string", () => {
+    assert.equal(isPermanentGenerationError("wrapped: catalog_not_found: abc"), false);
   });
 });

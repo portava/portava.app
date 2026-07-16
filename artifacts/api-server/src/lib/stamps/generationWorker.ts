@@ -141,6 +141,24 @@ export async function requeueStaleFailedJobs(scOverride?: any): Promise<number> 
   return requeued;
 }
 
+// ── Permanent-error classification ────────────────────────────────────────────
+
+// Error-message prefixes that can never succeed on retry — retrying only burns
+// image-provider spend. Jobs failing with one of these go straight to the
+// terminal `permanently_failed` status on first failure (admin manual re-queue
+// still works and resets attempts/requeue_count).
+const PERMANENT_ERROR_PREFIXES = [
+  "catalog_not_found",
+] as const;
+
+/**
+ * True when an error message identifies a failure that cannot be fixed by
+ * retrying (e.g. the catalog entry was deleted). Exported for tests.
+ */
+export function isPermanentGenerationError(errorMsg: string): boolean {
+  return PERMANENT_ERROR_PREFIXES.some((p) => errorMsg.startsWith(p));
+}
+
 // ── Image download + upload ───────────────────────────────────────────────────
 
 async function downloadImageBuffer(url: string): Promise<Buffer> {
@@ -333,10 +351,23 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
       error:      errorMsg,
     }));
 
-    // Increment attempts; fall back to retryable_failed if max reached
+    // Increment attempts. Known-permanent errors (e.g. deleted catalog entry)
+    // skip retries entirely and go straight to terminal permanently_failed;
+    // transient errors keep the retry + capped auto-requeue behaviour.
     const newAttempts = ((job as any).attempts ?? 0) + 1;
     const maxAttempts = ((job as any).max_attempts ?? 3);
-    const newStatus   = newAttempts >= maxAttempts ? "retryable_failed" : "queued";
+    let newStatus: string;
+    if (isPermanentGenerationError(errorMsg)) {
+      newStatus = "permanently_failed";
+      console.error(JSON.stringify({
+        event:      "stamp.generation.permanent_error",
+        job_id:     jobId,
+        catalog_id: catalogId,
+        error:      errorMsg,
+      }));
+    } else {
+      newStatus = newAttempts >= maxAttempts ? "retryable_failed" : "queued";
+    }
 
     await sc
       .from("stamp_generation_queue")
