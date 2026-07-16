@@ -13,7 +13,8 @@ import {
   TravelErrorState, TravelEmptyState,
 } from '../../../src/components/primitives';
 import { DatePickerField } from '../../../src/components/DateTimePickerField';
-import { DatePickerField as DateStringPickerField } from '../../../src/components/DatePickerField';
+import { GlobalCalendarPicker } from '../../../src/components/selectors/GlobalCalendarPicker';
+import { toISODate, fromISODate } from '../../../src/lib/dateTime/formatters';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyBooking } from '../../../src/services/rentABuddy';
@@ -109,8 +110,37 @@ function SuggestSheet({
   const [duration, setDuration] = useState(String(booking.durationH));
   const [location, setLocation] = useState(booking.city);
   const [locationPickerOpen, setLocationPickerOpen] = useState(false);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [message, setMessage] = useState('');
+  const [blockedDates, setBlockedDates] = useState<string[]>([]);
   const insets = useSafeAreaInsets();
+
+  // Grey out the buddy's own blocked/vacation dates so a suggested
+  // reschedule can't land on them.
+  useEffect(() => {
+    let alive = true;
+    rentABuddy.getBuddyBlockedDates(booking.buddyId).then((res) => {
+      if (!alive || !res.ok) return;
+      const out: string[] = [];
+      for (const r of res.data.blocked ?? []) {
+        const start = fromISODate(r.startDate);
+        const end = fromISODate(r.endDate) ?? start;
+        if (!start || !end) continue;
+        const d = new Date(start);
+        for (let i = 0; i <= 366 && d <= end; i++) {
+          out.push(toISODate(d));
+          d.setDate(d.getDate() + 1);
+        }
+      }
+      setBlockedDates(out);
+    });
+    return () => { alive = false; };
+  }, [booking.buddyId]);
+
+  const dateLabel = (() => {
+    const d = fromISODate(date);
+    return d ? d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : date;
+  })();
 
   function canSend() {
     return date.trim().length > 0;
@@ -129,11 +159,21 @@ function SuggestSheet({
           <Text style={modal.sub}>Propose alternative details. The traveller can accept or decline your suggestion.</Text>
 
           <Text style={modal.fieldLabel}>Proposed date</Text>
-          <DateStringPickerField
-            value={date}
-            onChange={setDate}
-            placeholder="Select date"
-            style={{ marginBottom: space.lg }}
+          <Pressable onPress={() => setDatePickerOpen(true)}>
+            <Text style={[modal.input, { marginBottom: space.lg }, !date && { color: color.haze }]} numberOfLines={1}>
+              {date ? dateLabel : 'Select date'}
+            </Text>
+          </Pressable>
+          <GlobalCalendarPicker
+            visible={datePickerOpen}
+            mode="single"
+            value={date || null}
+            minDate={toISODate(new Date())}
+            title="Proposed date"
+            disabledDates={blockedDates}
+            disabledDatesNote="Crossed-out dates are blocked in your availability."
+            onConfirm={(v) => { setDate(v ?? ''); setDatePickerOpen(false); }}
+            onCancel={() => setDatePickerOpen(false)}
           />
 
           <View style={{ flexDirection: 'row', gap: space.sm, marginBottom: space.lg }}>

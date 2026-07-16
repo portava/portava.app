@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { findBlockingAvailabilityException, sendBuddyUnavailable } from "./rentABuddy.js";
 
 const router = Router();
 
@@ -757,6 +758,11 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => 
   if (!original) return res.status(404).json({ error: "not_found" });
 
   const o = original as any;
+
+  // A rebook must not land on the buddy's blocked/vacation dates
+  const blocking = await findBlockingAvailabilityException(serviceClient, o.buddy_id, bookingDate);
+  if (blocking) return sendBuddyUnavailable(res, blocking.exception_type);
+
   const now = new Date().toISOString();
   const { data, error } = await serviceClient
     .from("rent_buddy_bookings")

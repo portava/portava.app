@@ -147,6 +147,48 @@ async function getUserLimits(client: any, userId: string): Promise<any | null> {
   return data ?? null;
 }
 
+// ── Buddy blocked-dates (availability exceptions) helper ─────────────────────
+
+/**
+ * Returns the availability exception (vacation/blocked range) covering
+ * `isoDate` for the given buddy profile, or null when the date is free.
+ * An exception blocks the date if:
+ *   exception_date <= isoDate AND (end_date IS NULL → exception_date == isoDate,
+ *   OR end_date >= isoDate).
+ * Used by booking creation, reschedule/suggest-changes, and rebook so a
+ * booking can never land on a Buddy's blocked dates.
+ */
+export async function findBlockingAvailabilityException(
+  serviceClient: any,
+  buddyProfileId: string,
+  isoDate: string,
+): Promise<{ id: string; exception_type: string } | null> {
+  const { data: availExceptions } = await serviceClient
+    .from("buddy_availability_exceptions")
+    .select("id, exception_type, exception_date, end_date")
+    .eq("buddy_id", buddyProfileId)
+    .lte("exception_date", isoDate)
+    .or(`end_date.is.null,end_date.gte.${isoDate}`);
+
+  return (
+    (availExceptions ?? []).find((ex: any) => {
+      if (ex.end_date == null) return ex.exception_date === isoDate;
+      return ex.end_date >= isoDate;
+    }) ?? null
+  );
+}
+
+/** Standard 409 payload when a date falls inside a buddy's blocked range. */
+export function sendBuddyUnavailable(res: any, exceptionType: string | null | undefined): void {
+  const isVacation = exceptionType === "vacation";
+  res.status(409).json({
+    error: "buddy_unavailable",
+    message: isVacation
+      ? "This Buddy is on vacation and not accepting bookings on that date."
+      : "This Buddy is not available on the requested date.",
+  });
+}
+
 // ── Booking-party auth check ──────────────────────────────────────────────────
 
 /**
@@ -1217,30 +1259,9 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
   const cashBalanceUsd = paymentMode === "deposit_plus_cash" ? Math.round((totalUsd - depositUsd) * 100) / 100 : 0;
 
   // Availability exception / vacation-mode block — check before insert
-  // An exception blocks the booking date if: exception_date <= bookingDate AND (end_date IS NULL → single day, OR end_date >= bookingDate)
-  const { data: availExceptions } = await serviceClient
-    .from("buddy_availability_exceptions")
-    .select("id, exception_type, exception_date, end_date")
-    .eq("buddy_id", buddyId)
-    .lte("exception_date", bookingDate)
-    .or(`end_date.is.null,end_date.gte.${bookingDate}`);
-
-  // Single-day exceptions: filter to those that actually include bookingDate (when end_date is null, exception_date must equal bookingDate)
-  // Because .lte("exception_date", bookingDate) is correct but we need exception_date == bookingDate when end_date is null
-  // We do this client-side to avoid complex OR filters.
-  const blockingException = (availExceptions ?? []).find((ex: any) => {
-    if (ex.end_date == null) return ex.exception_date === bookingDate;
-    return true; // lte/gte already covers multi-day ranges
-  });
-
+  const blockingException = await findBlockingAvailabilityException(serviceClient, buddyId, bookingDate);
   if (blockingException) {
-    const isVacation = (blockingException as any).exception_type === "vacation";
-    return res.status(409).json({
-      error: "buddy_unavailable",
-      message: isVacation
-        ? "This Buddy is on vacation and not accepting bookings on that date."
-        : "This Buddy is not available on the requested date.",
-    });
+    return sendBuddyUnavailable(res, blockingException.exception_type);
   }
 
   const { data: booking, error } = await serviceClient
@@ -1622,6 +1643,94 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/decline", async (req, res) =>
   }
 
   return res.json({ ok: true });
+});
+
+// ── Suggest changes (reschedule) ──────────────────────────────────────────────
+// POST /api/rent-a-buddy/bookings/:bookingId/suggest
+// Buddy (or traveler) proposes alternative details for a requested booking.
+// Creates buddy_booking_change_requests rows (one per changed field) that the
+// other party accepts/declines via respond-change-request.
+// A proposed date must not fall inside the buddy's blocked/vacation ranges.
+router.post("/api/rent-a-buddy/bookings/:bookingId/suggest", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { bookingId } = req.params;
+  const { proposedDate, proposedTime, proposedDurationH, proposedLocation, message } = req.body ?? {};
+
+  if (!proposedDate && !proposedTime && proposedDurationH === undefined && !proposedLocation) {
+    return res.status(400).json({ error: "invalid_payload", message: "At least one proposed change is required." });
+  }
+
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("id, traveler_id, buddy_id, status, booking_date, start_time, duration_h")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return res.status(404).json({ error: "not_found" });
+
+  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
+  if (!party) return;
+
+  const suggestAllowedStatuses = ["pending", "requested", "confirmed", "scheduled"];
+  if (!suggestAllowedStatuses.includes((booking as any).status)) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "Changes can only be suggested before the session starts.",
+      currentStatus: (booking as any).status,
+    });
+  }
+
+  // A proposed date must not land on the buddy's blocked/vacation dates
+  if (proposedDate !== undefined) {
+    if (typeof proposedDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(proposedDate)) {
+      return res.status(400).json({ error: "invalid_payload", message: "proposedDate must be an ISO date (YYYY-MM-DD)." });
+    }
+    const blocking = await findBlockingAvailabilityException(serviceClient, (booking as any).buddy_id, proposedDate);
+    if (blocking) return sendBuddyUnavailable(res, blocking.exception_type);
+  }
+
+  const changes: Array<{ field: string; current: Record<string, unknown>; proposed: Record<string, unknown> }> = [];
+  if (proposedDate) changes.push({ field: "date", current: { date: (booking as any).booking_date }, proposed: { date: proposedDate } });
+  if (proposedTime) changes.push({ field: "start_time", current: { start_time: (booking as any).start_time }, proposed: { start_time: proposedTime } });
+  if (proposedDurationH !== undefined && Number.isFinite(Number(proposedDurationH))) {
+    changes.push({ field: "duration_h", current: { duration_h: (booking as any).duration_h }, proposed: { duration_h: Number(proposedDurationH) } });
+  }
+
+  for (const ch of changes) {
+    const { error: crErr } = await serviceClient
+      .from("buddy_booking_change_requests")
+      .insert({
+        booking_id: bookingId,
+        requested_by: auth.user.id,
+        change_field: ch.field,
+        current_value: ch.current,
+        proposed_value: ch.proposed,
+        reason: message ?? null,
+      });
+    if (crErr) return sendError(res, "db_error", crErr.message);
+  }
+
+  void serviceClient.from("buddy_booking_events").insert({
+    booking_id: bookingId, actor_user_id: auth.user.id, event: "changes_suggested",
+    from_status: (booking as any).status, to_status: (booking as any).status,
+    metadata: {
+      proposed_date: proposedDate ?? null,
+      proposed_time: proposedTime ?? null,
+      proposed_duration_h: proposedDurationH ?? null,
+      proposed_location: proposedLocation ?? null,
+      message: message ?? null,
+    },
+  });
+
+  const notifyTargetId = party.isTraveler ? party.buddyUserId : (booking as any).traveler_id as string;
+  if (notifyTargetId) {
+    notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.change_request_raised", bookingId);
+  }
+
+  return res.status(201).json({ ok: true });
 });
 
 router.post("/api/rent-a-buddy/bookings/:bookingId/start", async (req, res) => {
@@ -6000,6 +6109,16 @@ router.post("/api/buddy-bookings/:bookingId/change-request", async (req, res) =>
     });
   }
 
+  // A proposed date change must not land on the buddy's blocked/vacation dates
+  if (changeField === "date") {
+    const proposedDate = (proposedValue as any)?.date;
+    if (typeof proposedDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(proposedDate)) {
+      return res.status(400).json({ error: "invalid_payload", message: "proposedValue.date must be an ISO date (YYYY-MM-DD)." });
+    }
+    const blocking = await findBlockingAvailabilityException(serviceClient, (booking as any).buddy_id, proposedDate);
+    if (blocking) return sendBuddyUnavailable(res, blocking.exception_type);
+  }
+
   // Check for an already-open pending change request on the same field
   const { data: existingOpen } = await serviceClient
     .from("buddy_booking_change_requests")
@@ -6101,6 +6220,16 @@ router.post("/api/buddy-bookings/:bookingId/respond-change-request", async (req,
   const newStatus = decision === "accept" ? "approved" : "declined";
   const now = new Date().toISOString();
 
+  // Re-check blocked dates at accept time — the buddy may have blocked the
+  // range after the change request was raised.
+  if (decision === "accept" && (changeReq as any).change_field === "date") {
+    const proposedDate = ((changeReq as any).proposed_value ?? {}).date;
+    if (typeof proposedDate === "string") {
+      const blocking = await findBlockingAvailabilityException(serviceClient, (booking as any).buddy_id, proposedDate);
+      if (blocking) return sendBuddyUnavailable(res, blocking.exception_type);
+    }
+  }
+
   await serviceClient
     .from("buddy_booking_change_requests")
     .update({ status: newStatus, responded_by: auth.user.id, response_note: responseNote ?? null, responded_at: now })
@@ -6196,6 +6325,10 @@ router.post("/api/buddy-bookings/:bookingId/rebook", async (req, res) => {
   if (avRow && !(avRow as any).is_available) {
     return res.status(409).json({ error: "buddy_not_available", message: "This Buddy is not available on the requested date." });
   }
+
+  // Blocked/vacation date ranges also make the buddy unavailable
+  const rebookBlocking = await findBlockingAvailabilityException(serviceClient, buddyProfileId, bookingDate);
+  if (rebookBlocking) return sendBuddyUnavailable(res, rebookBlocking.exception_type);
 
   // Compute price with current buddy rates
   const newDurationH = Number(durationH ?? (original as any).duration_h ?? 2);

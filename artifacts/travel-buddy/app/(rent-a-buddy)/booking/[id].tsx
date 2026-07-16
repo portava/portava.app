@@ -12,10 +12,10 @@ import {
 import { color, space, radius, type as t, shadow, layout } from '../../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState, TravelCard } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
-import { getBooking, cancelBooking, getOrCreateBookingThread, addExtraTime, optInStayConnected, reportBooking, rebookBooking, type BuddyBooking } from '../../../src/services/rentABuddy';
+import { getBooking, cancelBooking, getOrCreateBookingThread, addExtraTime, optInStayConnected, reportBooking, rebookBooking, getBuddyBlockedDates, type BuddyBooking, type BuddyBlockedRange } from '../../../src/services/rentABuddy';
 import { GlobalCalendarPicker } from '../../../src/components/selectors/GlobalCalendarPicker';
 import { GlobalTimePicker } from '../../../src/components/selectors/GlobalTimePicker';
-import { formatDisplayDate, fromISODate, fromHHmm, formatDisplayTime } from '../../../src/lib/dateTime/formatters';
+import { formatDisplayDate, fromISODate, fromHHmm, formatDisplayTime, toISODate } from '../../../src/lib/dateTime/formatters';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type BookingStatus = BuddyBooking['status'];
@@ -175,7 +175,23 @@ function AddTimeModal({ visible, onClose, onAdd }: { visible: boolean; onClose: 
   );
 }
 
-function RebookModal({ visible, onClose, onRebook }: { visible: boolean; onClose: () => void; onRebook: (date: string, time: string) => void }) {
+/** Expand blocked ranges into individual ISO dates (capped at 366 days per range). */
+function expandBlockedRanges(ranges: BuddyBlockedRange[]): string[] {
+  const out: string[] = [];
+  for (const r of ranges) {
+    const start = fromISODate(r.startDate);
+    const end = fromISODate(r.endDate) ?? start;
+    if (!start || !end) continue;
+    const d = new Date(start);
+    for (let i = 0; i <= 366 && d <= end; i++) {
+      out.push(toISODate(d));
+      d.setDate(d.getDate() + 1);
+    }
+  }
+  return out;
+}
+
+function RebookModal({ visible, onClose, onRebook, disabledDates }: { visible: boolean; onClose: () => void; onRebook: (date: string, time: string) => void; disabledDates?: string[] }) {
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -213,6 +229,8 @@ function RebookModal({ visible, onClose, onRebook }: { visible: boolean; onClose
             value={date || null}
             minDate={today}
             title="New booking date"
+            disabledDates={disabledDates}
+            disabledDatesNote="Crossed-out dates are unavailable — this Buddy is away or fully blocked."
             onConfirm={(v) => { setDate(v ?? ''); setShowDatePicker(false); }}
             onCancel={() => setShowDatePicker(false)}
           />
@@ -283,6 +301,7 @@ export default function BookingDetail() {
   const [addTimeVisible, setAddTimeVisible] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [rebookVisible, setRebookVisible] = useState(false);
+  const [blockedRanges, setBlockedRanges] = useState<BuddyBlockedRange[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -293,6 +312,19 @@ export default function BookingDetail() {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Load the buddy's blocked/vacation dates so reschedule pickers grey them out.
+  useEffect(() => {
+    const buddyId = booking?.buddyId;
+    if (!buddyId) return;
+    let alive = true;
+    getBuddyBlockedDates(buddyId).then((res) => {
+      if (alive && res.ok) setBlockedRanges(res.data.blocked ?? []);
+    });
+    return () => { alive = false; };
+  }, [booking?.buddyId]);
+
+  const blockedDates = React.useMemo(() => expandBlockedRanges(blockedRanges), [blockedRanges]);
 
   const handleCancel = async (reason: string) => {
     if (!booking) return;
@@ -557,6 +589,7 @@ export default function BookingDetail() {
 
       <RebookModal
         visible={rebookVisible}
+        disabledDates={blockedDates}
         onClose={() => setRebookVisible(false)}
         onRebook={async (date, time) => {
           const res = await rebookBooking(id as string, { bookingDate: date, startTime: time });

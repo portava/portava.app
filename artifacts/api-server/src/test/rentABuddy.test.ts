@@ -183,6 +183,12 @@ function makeClient(userId: string, role = "user") {
               if (!(state as any).routeChangeRequests) (state as any).routeChangeRequests = [];
               (state as any).routeChangeRequests.push(r);
             }
+            if (t === "buddy_booking_change_requests") {
+              if (!(state as any).bookingChangeRequests) (state as any).bookingChangeRequests = [];
+              if (r.id === undefined) r.id = `bcr-${Math.random().toString(36).slice(2)}`;
+              if (r.status === undefined) r.status = "pending";
+              (state as any).bookingChangeRequests.push(r);
+            }
             if (t === "rent_buddy_tag_consents") {
               if (!(state as any).tagConsents) (state as any).tagConsents = [];
               (state as any).tagConsents.push(r);
@@ -375,6 +381,31 @@ function makeClient(userId: string, role = "user") {
           }
           if (eqId && this._maybeSingle) return { data: rcReqs.find((r: any) => r.id === eqId[2]) ?? null, error: null };
           return { data: rcReqs, error: null };
+        }
+
+        if (t === "buddy_booking_change_requests") {
+          if (!(state as any).bookingChangeRequests) (state as any).bookingChangeRequests = [];
+          const bcReqs = (state as any).bookingChangeRequests;
+          if (this._insertData !== null) {
+            const newReq = { id: `bcr-${Math.random().toString(36).slice(2)}`, status: "pending", ...this._insertData };
+            bcReqs.push(newReq);
+            if (this._maybeSingle) return { data: newReq, error: null };
+            return { data: null, error: null };
+          }
+          if (this._updateData !== null) {
+            let rows = [...bcReqs];
+            for (const [op, col, val] of this._filters) {
+              if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
+            }
+            for (const r of rows) Object.assign(r, this._updateData);
+            return { data: null, error: null };
+          }
+          let rows = [...bcReqs];
+          for (const [op, col, val] of this._filters) {
+            if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
+          }
+          if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
+          return { data: rows, count: rows.length, error: null };
         }
 
         if (t === "rent_buddy_user_limits") {
@@ -2374,5 +2405,83 @@ describe("Rent a Buddy — dashboard availability settings & blocked dates", () 
       city: "Tokyo", countryCode: "JP", category: "city",
     });
     assert.notEqual(r.body.error, "buddy_unavailable", JSON.stringify(r.body));
+  });
+
+  function seedRequestedBooking() {
+    (state as any).bookings = {
+      "bk-suggest-1": {
+        id: "bk-suggest-1", traveler_id: USER_ID, buddy_id: BUDDY_PROF,
+        status: "requested", booking_date: TODAY, start_time: "10:00", duration_h: 2,
+      },
+    };
+  }
+
+  it("suggest-changes onto a blocked date is rejected with buddy_unavailable", async () => {
+    setupBuddy();
+    seedRequestedBooking();
+    (state as any).availabilityExceptions = [{
+      id: "ex-1", buddy_id: BUDDY_PROF, exception_type: "vacation",
+      exception_date: IN_5, end_date: IN_10,
+    }];
+    const r = await req("POST", "/api/rent-a-buddy/bookings/bk-suggest-1/suggest", {
+      proposedDate: IN_7, message: "How about later?",
+    }, BUDDY_TOKEN);
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(r.body.error, "buddy_unavailable");
+  });
+
+  it("suggest-changes onto a free date succeeds", async () => {
+    setupBuddy();
+    seedRequestedBooking();
+    (state as any).availabilityExceptions = [{
+      id: "ex-1", buddy_id: BUDDY_PROF, exception_type: "vacation",
+      exception_date: IN_5, end_date: IN_7,
+    }];
+    const r = await req("POST", "/api/rent-a-buddy/bookings/bk-suggest-1/suggest", {
+      proposedDate: IN_10, proposedTime: "14:00",
+    }, BUDDY_TOKEN);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const crs = (state as any).bookingChangeRequests ?? [];
+    assert.ok(crs.some((c: any) => c.change_field === "date" && c.proposed_value?.date === IN_10));
+  });
+
+  it("date change-request onto a blocked date is rejected with buddy_unavailable", async () => {
+    setupBuddy();
+    seedRequestedBooking();
+    (state as any).bookings["bk-suggest-1"].status = "scheduled";
+    (state as any).availabilityExceptions = [{
+      id: "ex-1", buddy_id: BUDDY_PROF, exception_type: "blocked",
+      exception_date: IN_5, end_date: IN_10,
+    }];
+    const r = await req("POST", "/api/buddy-bookings/bk-suggest-1/change-request", {
+      changeField: "date", proposedValue: { date: IN_7 },
+    }, BUDDY_TOKEN);
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(r.body.error, "buddy_unavailable");
+  });
+
+  it("accepting a date change-request re-checks blocked dates at apply time", async () => {
+    setupBuddy();
+    seedRequestedBooking();
+    (state as any).bookings["bk-suggest-1"].status = "scheduled";
+    // Raise the change request while the date is still free
+    const raise = await req("POST", "/api/buddy-bookings/bk-suggest-1/change-request", {
+      changeField: "date", proposedValue: { date: IN_7 },
+    }, BUDDY_TOKEN);
+    assert.equal(raise.status, 201, JSON.stringify(raise.body));
+    const crId = raise.body.changeRequest?.id;
+    assert.ok(crId, JSON.stringify(raise.body));
+    // Buddy then blocks the range; traveler tries to accept
+    (state as any).availabilityExceptions = [{
+      id: "ex-late", buddy_id: BUDDY_PROF, exception_type: "vacation",
+      exception_date: IN_5, end_date: IN_10,
+    }];
+    const r = await req("POST", "/api/buddy-bookings/bk-suggest-1/respond-change-request", {
+      changeRequestId: crId, decision: "accept",
+    }, FAKE_TOKEN);
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(r.body.error, "buddy_unavailable");
+    // Booking date must be unchanged
+    assert.equal((state as any).bookings["bk-suggest-1"].booking_date, TODAY);
   });
 });
