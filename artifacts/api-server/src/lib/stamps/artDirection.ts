@@ -32,7 +32,7 @@ export interface CatalogEntryForPrompt {
   id: string;
   display_name: string | null;
   country: string | null;
-  country_code: string;
+  country_code: string | null;
   region?: string | null;
   city?: string | null;
   neighborhood?: string | null;
@@ -94,10 +94,13 @@ function destinationInstruction(entry: CatalogEntryForPrompt): string {
 
   if (entry.city) parts.push(`City: ${entry.city}`);
   if (entry.region) parts.push(`Region: ${entry.region}`);
+  const countryCodeUpper = entry.country_code?.toUpperCase() ?? null;
+
   if (entry.country) {
-    parts.push(`Country: ${entry.country} (${entry.country_code.toUpperCase()})`);
-  } else {
-    parts.push(`Country: ${entry.country_code.toUpperCase()}`);
+    const codeLabel = countryCodeUpper ? ` (${countryCodeUpper})` : "";
+    parts.push(`Country: ${entry.country}${codeLabel}`);
+  } else if (countryCodeUpper) {
+    parts.push(`Country: ${countryCodeUpper}`);
   }
 
   const typeHints: Record<string, string> = {
@@ -114,9 +117,10 @@ function destinationInstruction(entry: CatalogEntryForPrompt): string {
   parts.push(hint);
 
   // Typography guidance
+  const countryLabel = countryCodeUpper ? `Country label "${countryCodeUpper}" smaller below. ` : "";
   parts.push(
     `Typography: destination name "${destinationLabel}" prominent at center or arch-top. ` +
-    `Country label "${entry.country_code.toUpperCase()}" smaller below. Year optional.`
+    `${countryLabel}Year optional.`
   );
 
   return parts.join("\n");
@@ -151,6 +155,7 @@ const COUNTRY_LANDMARK_HINTS: Record<string, string> = {
 
 function landmarkHint(entry: CatalogEntryForPrompt): string {
   if (entry.stamp_type !== "country") return "";
+  if (!entry.country_code) return "Use a generalized destination motif representing the country's most iconic natural or cultural feature.";
   const hint = COUNTRY_LANDMARK_HINTS[entry.country_code.toUpperCase()];
   if (!hint) return "Use a generalized destination motif representing the country's most iconic natural or cultural feature.";
   return `Suggested landmark / motif: ${hint}.`;

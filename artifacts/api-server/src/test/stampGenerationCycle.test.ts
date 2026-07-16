@@ -2187,4 +2187,37 @@ describe("runGenerationCycle — null display_name in catalog row", () => {
       `prompt must use "Unknown Destination" as the last-resort fallback; got: ${capturedPrompt!.slice(0, 400)}`,
     );
   });
+
+  it("completes without throwing when country_code is null", async () => {
+    const nullCountryCodeCatalog = {
+      ...CATALOG_ROW,
+      country_code: null,
+    };
+
+    let capturedPrompt: string | undefined;
+    const capturingProvider = {
+      async generate(prompt: string, _n?: number) {
+        capturedPrompt = prompt;
+        return Array.from({ length: CANDIDATE_COUNT }, (_, i) => ({
+          url: `data:image/svg+xml,fake-${i}`,
+          metadata: { model: "fake-provider", candidate_index: i },
+        }));
+      },
+    };
+
+    const { sc } = makeFakeClient({ catalogOverride: nullCountryCodeCatalog as any });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(capturingProvider);
+
+    // Must not throw a TypeError from country_code.toUpperCase().
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, true, "cycle must complete successfully with a null country_code");
+    assert.ok(typeof capturedPrompt === "string", "provider must be called");
+    assert.equal(
+      capturedPrompt!.includes("null"),
+      false,
+      `prompt must not contain the literal string "null"; got: ${capturedPrompt!.slice(0, 400)}`,
+    );
+  });
 });
