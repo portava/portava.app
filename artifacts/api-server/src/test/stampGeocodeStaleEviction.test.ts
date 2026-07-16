@@ -507,6 +507,56 @@ describe("negative cache TTL expiry", () => {
       "the upserted row must carry the resolved country_code",
     );
   });
+
+  it("two callers racing at negative-TTL expiry share one Nominatim retry — not two parallel calls", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Seed a negative cache entry: first fetch returns empty → null geocode.
+    let fetchCallCount = 0;
+    _setGeocodeFetchForTests(async () => {
+      fetchCallCount++;
+      return { ok: true, json: async () => [] };
+    });
+
+    const seed = await geocodeCityCountry("RaceCity");
+    assert.equal(seed, null, "pre-condition: city should be cached as null");
+    assert.equal(fetchCallCount, 1, "pre-condition: one fetch to seed the negative entry");
+
+    // Advance past the NEGATIVE_TTL_MS window so the entry is stale.
+    mockNow(T0 + NEGATIVE_TTL_MS + 1_000);
+
+    // Swap fetch to return a valid result on the retry.
+    // Both racing callers must share this single invocation via _pending dedup.
+    _setGeocodeFetchForTests(async () => {
+      fetchCallCount++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "jp", country: "Japan" } }],
+      };
+    });
+
+    // Fire two concurrent calls — neither finds a valid cache entry (TTL expired),
+    // so they both reach the _pending check.  The first caller creates the promise
+    // and stores it in _pending synchronously (before any await); the second
+    // caller finds that same promise and returns it, guaranteeing a single fetch.
+    const [resultA, resultB] = await Promise.all([
+      geocodeCityCountry("RaceCity"),
+      geocodeCityCountry("RaceCity"),
+    ]);
+
+    // Exactly one Nominatim call across both callers (seed + one retry = 2 total).
+    assert.equal(fetchCallCount, 2,
+      "two concurrent callers at TTL expiry must share one Nominatim retry — not issue two calls");
+
+    // Both callers receive the same resolved result.
+    assert.equal(resultA?.countryCode, "JP",
+      "first caller should receive the geocoded result");
+    assert.equal(resultB?.countryCode, "JP",
+      "second caller should receive the same geocoded result — not a duplicate fetch");
+    assert.equal(resultA?.country, "Japan");
+    assert.equal(resultB?.country, "Japan");
+  });
 });
 
 // ── Correction-sweep eviction retry ──────────────────────────────────────────
