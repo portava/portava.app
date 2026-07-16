@@ -1594,6 +1594,99 @@ describe("DELETE /admin/geocode-cache/:city_key with repair_catalog", () => {
     assert.equal(deleteCallCount, 2, "geocode delete must have been called exactly twice");
     assert.equal(upsertCallCount, 1, "geocode upsert must have been called exactly once (the PUT)");
   });
+
+  it("repair loop re-keys a catalog entry whose city is accented (São Paulo → sao paulo)", async () => {
+    // normCityKey in repairXXCatalogEntries must strip diacritics so an entry
+    // stored with city "São Paulo" is matched by the cityKeyFilter "sao paulo"
+    // and actually re-keyed.  catalogRekeyed must be 1 — not 0.
+    const catalogUpdates: Record<string, unknown>[] = [];
+
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-accent-repair-1",
+          canonical_location_key: "city:XX:sao paulo",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "São Paulo",   // stored with diacritic
+          neighborhood: null,
+          display_name: "São Paulo",
+        },
+      ],
+      onCatalogUpdate: (f) => catalogUpdates.push(f),
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Brazil", "BR"));
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/sao paulo", undefined, "repair_catalog=true");
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.deleted, true);
+    assert.ok(r.body.repair, "response must include repair stats when repair_catalog=true");
+    const repair = r.body.repair as RepairStats;
+    assert.equal(
+      repair.catalogRekeyed,
+      1,
+      "repair loop must re-key the accented-city entry — normCityKey must strip diacritics in the filter",
+    );
+    assert.equal(repair.catalogMerged, 0);
+    assert.ok(catalogUpdates.length >= 1, "catalog update must have been called");
+    assert.equal(
+      catalogUpdates[0].country_code,
+      "BR",
+      "re-keyed entry must carry the resolved country_code",
+    );
+  });
+
+  it("repair loop re-keys a catalog entry whose city is uppercased with umlauts (MÜNCHEN → munchen)", async () => {
+    // normCityKey must lowercase and strip combining diacritics so "MÜNCHEN"
+    // matches the cityKeyFilter "munchen".  catalogRekeyed must be 1 — not 0.
+    const catalogUpdates: Record<string, unknown>[] = [];
+
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-umlaut-repair-1",
+          canonical_location_key: "city:XX:munchen",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "MÜNCHEN",   // uppercased with umlaut
+          neighborhood: null,
+          display_name: "MÜNCHEN",
+        },
+      ],
+      onCatalogUpdate: (f) => catalogUpdates.push(f),
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Germany", "DE"));
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/munchen", undefined, "repair_catalog=true");
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.deleted, true);
+    assert.ok(r.body.repair, "response must include repair stats when repair_catalog=true");
+    const repair = r.body.repair as RepairStats;
+    assert.equal(
+      repair.catalogRekeyed,
+      1,
+      "repair loop must re-key the umlaut+uppercase entry — normCityKey must lowercase and strip umlauts in the filter",
+    );
+    assert.equal(repair.catalogMerged, 0);
+    assert.ok(catalogUpdates.length >= 1, "catalog update must have been called");
+    assert.equal(
+      catalogUpdates[0].country_code,
+      "DE",
+      "re-keyed entry must carry the resolved country_code",
+    );
+  });
 });
 
 describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
