@@ -391,6 +391,52 @@ describe("TripReminderScheduler push", () => {
       "recovery must stay silent when start_date is ~30 h away — just outside the upper drift buffer");
   });
 
+  it("recovers a stale claim whose start_date equals the exact upper boundary date", async () => {
+    // Fence-post test for the upper boundary of the recovery window.
+    // The scheduler filters with .lte("start_date", windowUpperDate), so a trip
+    // whose start_date string is exactly equal to windowUpperDate MUST be included
+    // and recovery must fire.
+    //
+    // windowUpperDate = (now + (WINDOW_UPPER_HRS + RECOVERY_DRIFT_HRS) h).toISOString().slice(0,10)
+    //                 = (now + 28 h) as a date string.
+    //
+    // To make the boundary deterministic we pin the scheduler clock to a fixed
+    // time in the middle of a UTC day so "now + 28 h" reliably falls on a
+    // different calendar date than today (avoiding the rare edge where now+28h
+    // still lands on the same date as now+24h).
+    const STALE_CLAIM_MINUTES = 10;
+
+    // Pin clock to 12:00 UTC so now+28h = next-day+04:00, i.e. a distinct date.
+    const pinnedNow = new Date("2026-07-16T12:00:00.000Z").getTime();
+    _setTestNow(pinnedNow);
+
+    const staleTime = new Date(pinnedNow - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
+
+    // Reproduce the exact windowUpperDate the scheduler computes.
+    const windowUpperDate = new Date(pinnedNow + (26 + 2) * 3_600_000)
+      .toISOString().slice(0, 10); // "2026-07-17"
+
+    const state = baseState("trip-upper-boundary-exact");
+    state.trips![0].reminder_sent_at     = staleTime;
+    state.trips![0].reminder_delivered_at = null;
+    state.trips![0].start_date           = windowUpperDate; // exactly on the upper boundary
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 1,
+      "recovery must fire when start_date equals the exact upper boundary date");
+    assert.deepEqual(
+      pushCalls[0].map((m: any) => m.to).sort(),
+      [OWNER_TOKEN, MEMBER_TOKEN].sort(),
+    );
+    assert.ok(
+      state.trips![0].reminder_delivered_at,
+      "reminder_delivered_at is set after recovery on the exact upper boundary",
+    );
+  });
+
   it("re-delivers after an admin resets a permanently-abandoned reminder", async () => {
     // Scenario: the recovery sweep exhausted MAX_RECOVERY_RETRIES (3) because
     // Supabase was temporarily unavailable.  The trip is permanently excluded
