@@ -681,6 +681,12 @@ router.post("/api/rent-a-buddy/requests", async (req, res) => {
 
   if (!city || !category) return sendError(res, 'invalid_payload', "city and category are required.");
 
+  const latPresent = typeof lat === "number" && Number.isFinite(lat);
+  const lngPresent = typeof lng === "number" && Number.isFinite(lng);
+  if (latPresent !== lngPresent) {
+    return sendError(res, 'invalid_payload', "lat and lng must both be provided together.");
+  }
+
   // Policy scan on notes
   let policyFlag = false;
   let policyFlagReason: string | null = null;
@@ -1626,6 +1632,12 @@ router.post("/api/rent-a-buddy/waitlist/v2", async (req, res) => {
   } = req.body ?? {};
 
   if (!city) return sendError(res, 'invalid_payload', "city is required.");
+
+  const latPresent = typeof lat === "number" && Number.isFinite(lat);
+  const lngPresent = typeof lng === "number" && Number.isFinite(lng);
+  if (latPresent !== lngPresent) {
+    return sendError(res, 'invalid_payload', "lat and lng must both be provided together.");
+  }
 
   const expires = expiryDays
     ? new Date(Date.now() + Number(expiryDays) * 24 * 60 * 60 * 1000).toISOString()

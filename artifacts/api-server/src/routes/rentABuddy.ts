@@ -545,10 +545,13 @@ router.post("/api/rent-a-buddy/search", async (req, res) => {
     nightlifeAvailable, publicMeetupOnly, lat, lng, page = 1, perPage = 20,
   } = req.body ?? {};
 
-  const origin = typeof lat === "number" && Number.isFinite(lat)
-    && typeof lng === "number" && Number.isFinite(lng)
-    ? { lat, lng }
-    : null;
+  const latPresent = typeof lat === "number" && Number.isFinite(lat);
+  const lngPresent = typeof lng === "number" && Number.isFinite(lng);
+  if (latPresent !== lngPresent) {
+    return sendError(res, "invalid_payload", "lat and lng must both be provided together.");
+  }
+
+  const origin = latPresent && lngPresent ? { lat: lat as number, lng: lng as number } : null;
 
   let query = serviceClient
     .from("rent_buddy_profiles")
