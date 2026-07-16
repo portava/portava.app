@@ -1087,6 +1087,50 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
     );
   });
 
+  it("mixed batch — live token is absent from rent_buddy_profiles IN-update when DeviceNotRegistered and InvalidCredentials share a batch with an ok token", async () => {
+    const DNR_TOKEN  = "ExponentPushToken[rbp-dead-device-not-registered]";
+    const CRED_TOKEN = "ExponentPushToken[rbp-dead-invalid-credentials]";
+    const LIVE_TOKEN = "ExponentPushToken[rbp-live-ok-device]";
+
+    // DNR_TOKEN → DeviceNotRegistered, CRED_TOKEN → InvalidCredentials, LIVE_TOKEN → ok
+    _setTestFetch(
+      makeTicketFetch((to) => {
+        if (to === DNR_TOKEN)  return { status: "error", message: "DeviceNotRegistered", details: { error: "DeviceNotRegistered" } };
+        if (to === CRED_TOKEN) return { status: "error", message: "InvalidCredentials",  details: { error: "InvalidCredentials"  } };
+        return { status: "ok", id: "ticket-live-rbp" };
+      }),
+    );
+
+    const { rentBuddyTokensNulled, client } = makeFakeDb({
+      deviceTokens: [DNR_TOKEN, CRED_TOKEN, LIVE_TOKEN],
+      legacyToken: null,
+    });
+
+    const router = new NotificationRouter(client);
+    await router.route(BASE_NOTIF);
+
+    // Exactly one UPDATE call on rent_buddy_profiles
+    assert.equal(rentBuddyTokensNulled.length, 1, "exactly one UPDATE call on rent_buddy_profiles");
+
+    const nulledList = rentBuddyTokensNulled[0];
+
+    // Both stale tokens must be in the IN list
+    assert.ok(
+      nulledList.includes(DNR_TOKEN),
+      `rent_buddy_profiles IN-update must include the DeviceNotRegistered token (${DNR_TOKEN})`,
+    );
+    assert.ok(
+      nulledList.includes(CRED_TOKEN),
+      `rent_buddy_profiles IN-update must include the InvalidCredentials token (${CRED_TOKEN})`,
+    );
+
+    // The live (ok) token must NOT appear in the IN list
+    assert.ok(
+      !nulledList.includes(LIVE_TOKEN),
+      `live token (${LIVE_TOKEN}) must NOT appear in the rent_buddy_profiles IN-update list`,
+    );
+  });
+
   it("success log is NOT emitted when a cleanup step fails (deleteDeviceError)", async () => {
     // notification_devices DELETE fails → anyFailure is set → the success info
     // log must be suppressed, preventing operators from seeing a false "all-clear".
