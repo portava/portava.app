@@ -1457,6 +1457,11 @@ describe("PushRetryQueue.processQueue() — partial success on final attempt", (
     const ndaUpdate = ndaUpdates[ndaUpdates.length - 1];
     assert.equal(ndaUpdate.patch.status, "sent",    "delivery_attempt status must be 'sent'");
     assert.equal(ndaUpdate.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+    assert.deepEqual(
+      ndaUpdate.patch.metadata,
+      { retryAttempts: 3 },
+      "delivery_attempt metadata.retryAttempts must be 3 (the post-increment attempt count) — not the pre-increment value 2",
+    );
   });
 });
 
