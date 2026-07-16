@@ -1,20 +1,18 @@
 /**
  * PassportIdentityCard — Passport document header.
  * Premium cream/ivory document card with vertical spine, gold-ring avatar,
- * Trust Score, decorative stamps, and boarding-pass stats strip.
- * All data wiring and handlers preserved exactly from the previous version.
+ * Trust Score, decorative stamps, and boarding-pass stats strip with icons.
+ * All data wiring and handlers preserved exactly.
  */
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, Image, Pressable, StyleSheet, ActivityIndicator,
 } from 'react-native';
-import Svg, {
-  Circle, Path, Rect, G,
-  Text as SvgText,
-} from 'react-native-svg';
+import Svg, { Circle, Path, Rect, Text as SvgText } from 'react-native-svg';
 import {
   ShieldCheck, Globe, MapPin, Camera,
   Bookmark, UserCircle2, UserPlus, UserCheck, CheckCircle2,
+  Briefcase, Users, Stamp,
 } from 'lucide-react-native';
 import type { OwnProfile, PublicProfile } from '../../types/models';
 import { resolveAvatarUrl, fallbackInitials } from '../../utils/identity';
@@ -50,12 +48,24 @@ interface Props {
   onStatPress?: (label: string) => void;
 }
 
-const AVATAR_SIZE = 76;
-const GOLD       = '#B8974E';
-const INK        = '#1C1C1A';
-const MUTED      = '#8A7E6E';
-const CREAM      = '#F5F0E8';
-const GREEN_STAMP = '#2D6A4F';
+const AVATAR_SIZE  = 76;
+const GOLD         = '#B8974E';
+const INK          = '#1C1C1A';
+const MUTED        = '#8A7E6E';
+const CREAM        = '#F5F0E8';
+const GREEN_STAMP  = '#2D6A4F';
+
+// ─── Stat accent config ───────────────────────────────────────────────────────
+
+type StatConfig = { color: string; bg: string; Icon: React.ComponentType<any> };
+const STAT_CFG: Record<string, StatConfig> = {
+  Trips:     { color: '#7C3AED', bg: '#EDE9FE', Icon: Briefcase   },
+  Followers: { color: '#DB2777', bg: '#FCE7F3', Icon: Users        },
+  Following: { color: '#059669', bg: '#D1FAE5', Icon: UserPlus     },
+  Countries: { color: '#2563EB', bg: '#DBEAFE', Icon: Globe        },
+  Stamps:    { color: '#D97706', bg: '#FEF3C7', Icon: Stamp        },
+};
+const STAT_FALLBACK: StatConfig = { color: MUTED, bg: '#F3F4F6', Icon: Globe };
 
 // ─── Decorative SVG stamps ────────────────────────────────────────────────────
 
@@ -66,6 +76,7 @@ function AdventureStamp() {
       <Circle cx={45} cy={45} r={36} stroke="#3B82F6" strokeWidth={1.2} fill="none" />
       <SvgText x="45" y="21" textAnchor="middle" fill="#3B82F6" fontSize="6" fontWeight="700">ADVENTURE IS</SvgText>
       <SvgText x="45" y="73" textAnchor="middle" fill="#3B82F6" fontSize="6" fontWeight="700">WORTHWHILE</SvgText>
+      {/* Plane silhouette */}
       <Path d="M26 50 L37 39 L40 42 L34 48 L47 51 L44 54 L31 51 L33 57 L30 59 Z" fill="#3B82F6" opacity={0.8} />
     </Svg>
   );
@@ -113,19 +124,30 @@ function TrustScoreBar({ score, onPress }: { score: number; onPress?: () => void
   );
 }
 
-// ─── Stat ticket ──────────────────────────────────────────────────────────────
+// ─── Stat ticket with icon ────────────────────────────────────────────────────
 
-function StatTicket({ n, label, accent, onPress }: StatItem & { accent: string }) {
+function StatTicket({ n, label, onPress }: StatItem) {
+  const cfg = STAT_CFG[label] ?? STAT_FALLBACK;
+  const { Icon, color, bg } = cfg;
   return (
     <Pressable style={s.statTicket} onPress={onPress} disabled={!onPress} hitSlop={6}>
-      <Text style={[s.statN, { color: accent }]}>{n}</Text>
+      <View style={[s.statIconBg, { backgroundColor: bg }]}>
+        <Icon size={16} color={color} strokeWidth={1.8} />
+      </View>
+      <Text style={[s.statN, { color }]}>{n}</Text>
       <Text style={s.statL}>{label}</Text>
-      <View style={[s.statUnderline, { backgroundColor: accent }]} />
+      <View style={[s.statUnderline, { backgroundColor: color }]} />
     </Pressable>
   );
 }
 
-const STAT_ACCENTS = ['#8B5CF6', '#EC4899', '#10B981', '#F59E0B'];
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatStatN(n: number | string): string {
+  if (typeof n === 'string') return n;
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K`;
+  return String(n);
+}
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -158,11 +180,23 @@ export function PassportIdentityCard({
   const initials      = fallbackInitials(profile);
   const isVerified    = isTravelBuddyVerified(profile);
 
+  // Location: prefer currentCity, then homeCity + homeCountry
+  const homeCity    = 'homeCity'    in profile ? (profile.homeCity    ?? null) : null;
+  const homeCountry = 'homeCountry' in profile ? (profile.homeCountry ?? null) : null;
+  const currentCity = 'currentCity' in profile ? (profile.currentCity ?? null) : null;
+  const locationLine = currentCity ?? (homeCity && homeCountry ? `${homeCity}, ${homeCountry}` : homeCity ?? homeCountry ?? null);
+
+  // Interests as pill tags
+  const interests: string[] = 'interests' in profile && Array.isArray(profile.interests)
+    ? (profile.interests as string[]).slice(0, 3)
+    : [];
+
   const ownStats: StatItem[] = [
-    { n: 'tripCount'      in profile ? (profile.tripCount      ?? 0) : 0, label: 'Trips',     onPress: () => onStatPress?.('Trips')     },
-    { n: 'followersCount' in profile ? (profile.followersCount ?? 0) : 0, label: 'Followers', onPress: () => onStatPress?.('Followers') },
-    { n: 'followingCount' in profile ? (profile.followingCount ?? 0) : 0, label: 'Following'                                            },
-    { n: liveStats?.totalStamps ?? 0,                                      label: 'Stamps',    onPress: () => onStatPress?.('Stamps')    },
+    { n: formatStatN('tripCount'      in profile ? (profile.tripCount      ?? 0) : 0), label: 'Trips',     onPress: () => onStatPress?.('Trips')     },
+    { n: formatStatN('followersCount' in profile ? (profile.followersCount ?? 0) : 0), label: 'Followers', onPress: () => onStatPress?.('Followers') },
+    { n: formatStatN('followingCount' in profile ? (profile.followingCount ?? 0) : 0), label: 'Following'                                            },
+    { n: liveStats?.countries ?? 0,                                                     label: 'Countries', onPress: () => onStatPress?.('Countries') },
+    { n: liveStats?.totalStamps ?? 0,                                                   label: 'Stamps',    onPress: () => onStatPress?.('Stamps')    },
   ];
   const stats = overrideStats ?? ownStats;
 
@@ -194,7 +228,6 @@ export function PassportIdentityCard({
 
               {/* Avatar area */}
               <View style={s.avatarOuter}>
-                {/* Gold ring */}
                 <View style={s.goldRing}>
                   <HighlightRing
                     hasActive={hasHighlights ?? false}
@@ -225,7 +258,7 @@ export function PassportIdentityCard({
                   <Pressable
                     style={s.cameraBtn}
                     onPress={onChangeCover}
-                    hitSlop={10}
+                    hitSlop={12}
                     accessibilityLabel="Change profile photo"
                   >
                     {coverUploading ? (
@@ -259,10 +292,12 @@ export function PassportIdentityCard({
                 <Text style={s.handle}>{handleSubline}</Text>
               ) : null}
 
+              {/* Trust Score — compact, inside identity area */}
               {trustScore != null ? (
                 <TrustScoreBar score={trustScore} onPress={onTrustInfo} />
               ) : null}
 
+              {/* Verified pill */}
               {isVerified ? (
                 <View style={s.verifiedPill}>
                   <CheckCircle2 size={11} color="#2563EB" fill="#2563EB" strokeWidth={0} />
@@ -270,10 +305,21 @@ export function PassportIdentityCard({
                 </View>
               ) : null}
 
-              {'bio' in profile && profile.bio ? (
+              {/* Interests tags */}
+              {interests.length > 0 ? (
                 <View style={s.tagsRow}>
                   <Globe size={12} color={MUTED} strokeWidth={1.8} />
-                  <Text style={s.tagsText} numberOfLines={2}>{profile.bio}</Text>
+                  <Text style={s.tagsText} numberOfLines={1}>
+                    {interests.join(' · ')}
+                  </Text>
+                </View>
+              ) : null}
+
+              {/* Location */}
+              {locationLine ? (
+                <View style={s.locationRow}>
+                  <MapPin size={12} color={MUTED} strokeWidth={1.8} />
+                  <Text style={s.locationText} numberOfLines={1}>{locationLine}</Text>
                 </View>
               ) : null}
 
@@ -281,11 +327,11 @@ export function PassportIdentityCard({
               {isOwner ? (
                 <View style={s.ownerActions}>
                   <Pressable style={s.actionCard} onPress={() => {}} hitSlop={8} accessibilityLabel="Saved">
-                    <Bookmark size={16} color={INK} strokeWidth={1.8} />
+                    <Bookmark size={15} color={INK} strokeWidth={1.8} />
                     <Text style={s.actionCardText}>Saved</Text>
                   </Pressable>
                   <Pressable style={s.actionCard} onPress={onMenuPress} hitSlop={8} accessibilityLabel="Edit Profile">
-                    <UserCircle2 size={16} color={INK} strokeWidth={1.8} />
+                    <UserCircle2 size={15} color={INK} strokeWidth={1.8} />
                     <Text style={s.actionCardText}>Edit Profile</Text>
                   </Pressable>
                 </View>
@@ -320,14 +366,8 @@ export function PassportIdentityCard({
           <View style={s.statsStrip}>
             <View style={s.stripDividerTop} />
             <View style={s.statsRow}>
-              {stats.map((item, i) => (
-                <StatTicket
-                  key={item.label}
-                  n={item.n}
-                  label={item.label}
-                  accent={STAT_ACCENTS[i % STAT_ACCENTS.length]}
-                  onPress={item.onPress}
-                />
+              {stats.map((item) => (
+                <StatTicket key={item.label} {...item} />
               ))}
             </View>
             <View style={s.stripDividerBot} />
@@ -443,9 +483,9 @@ const s = StyleSheet.create({
     position: 'absolute',
     bottom: -2,
     right: -2,
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: INK,
     alignItems: 'center',
     justifyContent: 'center',
@@ -460,7 +500,7 @@ const s = StyleSheet.create({
   /* Right column */
   rightCol: {
     flex: 1,
-    gap: 5,
+    gap: 4,
     paddingTop: 2,
   },
   portavaStampWrap: {
@@ -482,17 +522,17 @@ const s = StyleSheet.create({
     flexWrap: 'nowrap',
   },
   displayName: {
-    fontSize: 16,
+    fontSize: 22,
     fontWeight: '800',
     color: INK,
-    letterSpacing: -0.3,
+    letterSpacing: -0.5,
     flexShrink: 1,
   },
   verifiedCheck: {
     flexShrink: 0,
   },
   handle: {
-    fontSize: 12,
+    fontSize: 13,
     color: MUTED,
     fontWeight: '400',
     marginTop: -2,
@@ -559,25 +599,35 @@ const s = StyleSheet.create({
     color: '#2563EB',
   },
 
-  /* Tags / bio snip */
+  /* Interests tags */
   tagsRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 4,
-    marginTop: 1,
   },
   tagsText: {
     fontSize: 11,
     color: MUTED,
     flex: 1,
-    lineHeight: 15,
+  },
+
+  /* Location */
+  locationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  locationText: {
+    fontSize: 11,
+    color: MUTED,
+    flex: 1,
   },
 
   /* Owner actions */
   ownerActions: {
     flexDirection: 'row',
     gap: 6,
-    marginTop: 2,
+    marginTop: 4,
   },
   actionCard: {
     flex: 1,
@@ -602,7 +652,7 @@ const s = StyleSheet.create({
   publicActions: {
     flexDirection: 'row',
     gap: 8,
-    marginTop: 2,
+    marginTop: 4,
   },
   followPill: {
     flexDirection: 'row',
@@ -635,8 +685,8 @@ const s = StyleSheet.create({
   statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    paddingVertical: 12,
-    paddingHorizontal: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
   },
   stripDividerBot: {
     height: 1,
@@ -645,11 +695,19 @@ const s = StyleSheet.create({
   },
   statTicket: {
     alignItems: 'center',
-    minWidth: 52,
     gap: 2,
+    minWidth: 44,
+  },
+  statIconBg: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 2,
   },
   statN: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '800',
     letterSpacing: -0.5,
   },
@@ -658,11 +716,11 @@ const s = StyleSheet.create({
     color: MUTED,
     fontWeight: '500',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.4,
   },
   statUnderline: {
     height: 2,
-    width: 20,
+    width: 18,
     borderRadius: 1,
     marginTop: 2,
   },
