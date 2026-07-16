@@ -18,7 +18,7 @@ import { logger as rootLogger } from "./logger.js";
 import { sendPushNotification, type PushPayload } from "./push.js";
 import { clearDeadTokens } from "./pushTokenCleanup.js";
 
-// ── Test seam ──────────────────────────────────────────────────────────────────
+// ── Test seams ─────────────────────────────────────────────────────────────────
 // Allows unit tests to replace clearDeadTokens with a mock (e.g. one that
 // throws) without having to mock the entire module.  Production code always
 // sees null here, so the real clearDeadTokens is used.
@@ -29,6 +29,22 @@ export function _setTestClearDeadTokens(
   fn: ((db: SupabaseClient, tokens: string[]) => Promise<void>) | null,
 ): void {
   _testClearDeadTokensFn = fn;
+}
+
+// Allows unit tests to pin the "now" ISO string used by processQueue() so the
+// claim filter (lte("next_retry_at", now)) and the pre-seeded next_retry_at can
+// be made exactly equal — testing the inclusive boundary deterministically.
+// Production code always sees null here, so new Date().toISOString() is used.
+let _testNowFn: (() => string) | null = null;
+
+/** @internal Only call from tests. Pass null to restore the real implementation. */
+export function _setTestNow(fn: (() => string) | null): void {
+  _testNowFn = fn;
+}
+
+/** Returns the current ISO timestamp, or the test-injected value when set. */
+function getNow(): string {
+  return _testNowFn ? _testNowFn() : new Date().toISOString();
 }
 
 const logger = rootLogger.child({ service: "PushRetryQueue" });
@@ -138,7 +154,7 @@ export class PushRetryQueue {
     // Recover rows stranded by a previous crash/restart before claiming new ones
     await this.recoverStaleProcessing();
 
-    const now = new Date().toISOString();
+    const now = getNow();
 
     // Claim all due items atomically
     const { data: items, error: fetchErr } = await this.db

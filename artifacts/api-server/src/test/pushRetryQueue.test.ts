@@ -18,7 +18,7 @@
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { PushRetryQueue, _setTestClearDeadTokens } from "../lib/pushRetryQueue.js";
+import { PushRetryQueue, _setTestClearDeadTokens, _setTestNow } from "../lib/pushRetryQueue.js";
 import { _setTestFetch } from "../lib/push.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -2699,6 +2699,84 @@ describe("PushRetryQueue.processQueue() — recovered row (next_retry_at just pa
     assert.ok(
       ndaUpdate,
       "notification_delivery_attempts must be updated to 'sent' after the recovered row succeeds",
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 13b — exact-boundary claim: next_retry_at === now (same millisecond)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The claim filter in processQueue() is `.lte("next_retry_at", now)`.
+ * The most fragile boundary is when next_retry_at equals the exact ISO string
+ * that processQueue() uses for 'now' — i.e. the same millisecond.
+ *
+ * If lte() were ever tightened to strict-less-than, or if Supabase used a
+ * slightly different timestamp comparison, this exact-equality row would be
+ * silently dropped.  This test seeds next_retry_at to new Date().toISOString()
+ * (current millisecond) and confirms processQueue() claims and processes it.
+ */
+describe("PushRetryQueue.processQueue() — exact-boundary claim: next_retry_at === now", () => {
+  afterEach(() => {
+    // Restore the real clock after each test in this suite.
+    _setTestNow(null);
+  });
+
+  it("picks up a row whose next_retry_at equals the exact 'now' string used by the claim filter (lte is inclusive on the boundary)", async () => {
+    // Pin a fixed ISO timestamp so that:
+    //   - next_retry_at is set to EXACTLY this string (the boundary case), and
+    //   - processQueue()'s own 'now' is also this string (via the _setTestNow seam).
+    // Without the seam, processQueue() would compute a slightly later timestamp,
+    // making next_retry_at < now and never truly testing the equal-timestamp path.
+    // With the seam, both values are identical, so lte("next_retry_at", now) is
+    // satisfied only because lte is inclusive — strict-less-than would miss it.
+    const pinnedNow = "2026-01-15T12:00:00.000Z";
+    _setTestNow(() => pinnedNow);
+
+    const boundaryRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       pinnedNow, // identical to 'now' — the exact boundary
+    };
+
+    const client = makeFakeClient([boundaryRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    _setTestFetch(expoOkFetch()); // Expo returns success
+    await queue.processQueue();
+
+    // The row must have been claimed — next_retry_at === now is within the lte
+    // filter (inclusive boundary), so the claim step must transition it to
+    // 'processing' and processItem must finalise it as 'sent'.
+    const finaliseCall = client.updateCalls.find(
+      (c) =>
+        c.table        === "push_retry_queue" &&
+        c.patch.status === "sent"             &&
+        c.filters.id   === QUEUE_ROW_ID,
+    );
+    assert.ok(
+      finaliseCall,
+      "boundary row (next_retry_at === now, same ISO string) must be claimed and finalised as 'sent' — lte filter must be inclusive",
+    );
+
+    // Delivery attempt must also be updated to 'sent'
+    const ndaUpdate = client.updateCalls.find(
+      (c) =>
+        c.table        === "notification_delivery_attempts" &&
+        c.patch.status === "sent"                          &&
+        c.filters.id   === ATTEMPT_ID,
+    );
+    assert.ok(
+      ndaUpdate,
+      "notification_delivery_attempts must be updated to 'sent' when the boundary row succeeds",
     );
   });
 });
