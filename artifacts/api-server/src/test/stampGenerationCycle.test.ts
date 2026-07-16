@@ -669,7 +669,35 @@ describe("runGenerationCycle — orphan cleanup on mid-batch failure", () => {
     assert.equal(deleteCalls.length, 1, "must issue a storage delete for the orphaned upload");
     const { paths } = deleteCalls[0];
     assert.equal(paths.length, 1);
+    // The path must follow the exact catalog/<catalogId>/<versionId>.png template
+    // used by uploadToStorage. A typo in that template would produce an unrecognisable
+    // path and this assertion would catch it.
+    assert.ok(
+      paths[0].startsWith("catalog/cat-1/"),
+      `deleted path must start with "catalog/cat-1/", got: ${paths[0]}`,
+    );
+    assert.ok(
+      paths[0].endsWith(".png"),
+      `deleted path must end with ".png", got: ${paths[0]}`,
+    );
     assert.equal(paths[0], storageCalls[0].path, "deleted path must match the orphaned upload path");
+  });
+
+  it("does not issue a delete when the first download fails before any upload", async () => {
+    const { sc, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage();
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    // The very first download returns 404 — nothing is ever uploaded.
+    installFetch(failOnNthFetch(1));
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+
+    // No uploads happened, so there is nothing to clean up.
+    assert.equal(storageCalls.length, 0, "no upload should have been attempted after the first download failed");
+    assert.equal(inserts.length, 0, "must not insert any version rows");
+    assert.equal(deleteCalls.length, 0, "must not issue a storage delete when nothing was uploaded");
   });
 
   it("does not issue a delete when no uploads preceded the failure", async () => {
