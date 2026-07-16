@@ -86,6 +86,7 @@ import {
   type MatchPreferences,
 } from "../services/rentBuddy/CompatibilityScoreService.js";
 import { NotificationPreferenceService } from "../services/notifications/NotificationPreferenceService.js";
+import { syncFavoritesCount } from "../services/rentBuddy/ReliabilityCounters.js";
 import {
   getPricingSuggestion,
   calculateDeposit,
@@ -1576,6 +1577,7 @@ router.post("/api/rent-a-buddy/buddies/:buddyId/save", async (req, res) => {
     }, { onConflict: "user_id,buddy_id" });
 
   if (error) return sendError(res, 'db_error', error.message);
+  await syncFavoritesCount(svc, req.params.buddyId);
   res.json({ ok: true });
 });
 
@@ -1585,6 +1587,7 @@ router.delete("/api/rent-a-buddy/buddies/:buddyId/save", async (req, res) => {
   const svc = sc() ?? auth.client;
 
   await svc.from("rent_buddy_saved").delete().eq("user_id", auth.user.id).eq("buddy_id", req.params.buddyId);
+  await syncFavoritesCount(svc, req.params.buddyId);
   res.json({ ok: true });
 });
 

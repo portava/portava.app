@@ -20,6 +20,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
+import { adjustBuddyCounter, syncFavoritesCount } from "../services/rentBuddy/ReliabilityCounters.js";
 import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js";
 import { endFairExposure } from "../compass/CompassFairExposureEngine.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
@@ -1439,6 +1440,11 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => 
     metadata: { hoursUntil: Math.round(hoursUntil * 10) / 10, cancellation_reason: cancellation_reason ?? null },
   });
 
+  // Buddy-initiated cancellations count against the buddy's reliability.
+  if (isBuddyCancel) {
+    await adjustBuddyCounter(serviceClient, b.buddy_id, "cancel_count", 1);
+  }
+
   void recordTrustEvent(serviceClient, {
     userId: auth.user.id,
     eventType: trustEventType,
@@ -1865,6 +1871,9 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
     .from("rent_buddy_profiles")
     .update({ completed_bookings: currentCount + 1, updated_at: now })
     .eq("id", (booking as any).buddy_id);
+
+  // Reliability counter — atomic DB-side increment (see ReliabilityCounters).
+  await adjustBuddyCounter(serviceClient, (booking as any).buddy_id, "completed_count", 1);
 
   void recordTrustEvent(serviceClient, {
     userId: auth.user.id,
@@ -3228,6 +3237,7 @@ router.post("/api/rent-a-buddy/saved/:buddyId", async (req, res) => {
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   await serviceClient.from("rent_buddy_saved").upsert({ user_id: auth.user.id, buddy_id: req.params.buddyId });
+  await syncFavoritesCount(serviceClient, req.params.buddyId);
   return res.json({ ok: true });
 });
 
@@ -3238,6 +3248,7 @@ router.delete("/api/rent-a-buddy/saved/:buddyId", async (req, res) => {
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   await serviceClient.from("rent_buddy_saved").delete().eq("user_id", auth.user.id).eq("buddy_id", req.params.buddyId);
+  await syncFavoritesCount(serviceClient, req.params.buddyId);
   return res.json({ ok: true });
 });
 
@@ -6025,6 +6036,15 @@ router.post("/api/admin/buddy-bookings/:bookingId/resolve-dispute", async (req, 
 
   const now = new Date().toISOString();
 
+  // Capture the open dispute BEFORE resolving it — needed to detect a
+  // confirmed buddy no-show below.
+  const { data: openDispute } = await serviceClient
+    .from("rent_buddy_disputes")
+    .select("id, reason, raised_by")
+    .eq("booking_id", bookingId)
+    .eq("status", "open")
+    .maybeSingle();
+
   await serviceClient
     .from("rent_buddy_disputes")
     .update({ status: "resolved", resolution_note: resolutionNote ?? null, resolved_at: now })
@@ -6041,6 +6061,17 @@ router.post("/api/admin/buddy-bookings/:bookingId/resolve-dispute", async (req, 
     from_status: "disputed", to_status: finalStatus,
     metadata: { final_status: finalStatus, resolution_note: resolutionNote ?? null },
   });
+
+  // Confirmed buddy no-show: a no_show dispute raised by the traveler that the
+  // admin resolves as 'cancelled' (i.e. the session did not happen) counts
+  // against the buddy's reliability.
+  if (
+    (openDispute as any)?.reason === "no_show" &&
+    finalStatus === "cancelled" &&
+    (openDispute as any)?.raised_by === (booking as any).traveler_id
+  ) {
+    await adjustBuddyCounter(serviceClient, (booking as any).buddy_id, "no_show_count", 1);
+  }
 
   void emitBookingMilestone(serviceClient, bookingId, auth.user.id, "rent_buddy_dispute_resolved",
     "Dispute resolved by the Travel Buddy team.");
