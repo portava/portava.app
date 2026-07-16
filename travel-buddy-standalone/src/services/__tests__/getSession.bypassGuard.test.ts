@@ -20,7 +20,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -65,7 +65,7 @@ const serviceFiles = collectTs(SERVICES_DIR).filter(
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
-describe('getSession bypass guard — travel-buddy-standalone services', () => {
+describe('getSession bypass guard — travel-buddy services', () => {
   it('has at least one service file to scan (sanity check)', () => {
     assert.ok(
       serviceFiles.length > 0,
