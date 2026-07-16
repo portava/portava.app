@@ -32,7 +32,7 @@ const { _setTestStampImageProvider, _resetProviderCache } = await import(
   "../lib/stamps/imageProvider.js"
 );
 const { _setTestServiceClient } = await import("../lib/supabase.js");
-const { CANDIDATE_COUNT } = await import("../lib/stamps/artDirection.js");
+const { CANDIDATE_COUNT, buildStampPrompt } = await import("../lib/stamps/artDirection.js");
 
 // ── Fakes ─────────────────────────────────────────────────────────────────────
 
@@ -1354,6 +1354,87 @@ describe("runGenerationCycle — orphan cleanup: remove() returns error object (
 
     // 6. No version rows inserted.
     assert.equal(inserts.length, 0, "must not insert any version rows after a mid-batch failure");
+  });
+});
+
+// ── Unrecognized country code: explicit fallback, not wrong art-direction ─────
+
+describe("runGenerationCycle — catalog row with unrecognized country code (XX)", () => {
+  it("buildStampPrompt returns the generic landmark fallback for an unknown country code on a country stamp", () => {
+    // Verify artDirection.ts does NOT silently produce wrong art-direction for an
+    // unrecognized country_code. The landmarkHint branch must reach the explicit
+    // generic-fallback string rather than returning undefined or an empty string.
+    const prompt = buildStampPrompt({
+      id: "cat-xx",
+      display_name: "Unknown Country",
+      country: "Unknown",
+      country_code: "XX",
+      region: null,
+      city: null,
+      neighborhood: null,
+      stamp_type: "country",
+      canonical_location_key: "xx/unknown",
+    });
+
+    // The prompt must contain the generic fallback text — not an empty hint.
+    assert.ok(
+      prompt.includes("generalized destination motif"),
+      `prompt for unknown country code must include the generic landmark fallback, got: ${prompt.slice(0, 200)}`,
+    );
+
+    // The prompt must still include the unrecognized code in the typography block
+    // (it should NOT be silently stripped or replaced).
+    assert.ok(
+      prompt.includes("XX"),
+      `prompt must reference the country code "XX" in the typography guidance, got: ${prompt.slice(0, 200)}`,
+    );
+  });
+
+  it("completes the generation cycle with review_required and inserts version rows", async () => {
+    // Exercise the full worker path with a catalog row whose country_code is "XX"
+    // and stamp_type is "country" — this hits both the destinationInstruction
+    // unknown-code path and the landmarkHint generic-fallback branch.
+    const { sc, updates, inserts } = makeFakeClient({
+      catalogOverride: {
+        ...CATALOG_ROW,
+        country_code: "XX",
+        stamp_type: "country",
+      },
+    });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeProvider(CANDIDATE_COUNT));
+
+    const result = await runGenerationCycle();
+
+    // The worker must complete successfully — unrecognized code must not crash
+    // the cycle or silently route to an untested branch.
+    assert.equal(result.processed, true);
+    assert.equal(result.catalogId, "cat-1");
+
+    // Version rows must be inserted — generation proceeded to completion.
+    assert.equal(inserts.length, 1);
+    const { table, rows } = inserts[0];
+    assert.equal(table, "stamp_artwork_versions");
+    assert.equal(rows.length, CANDIDATE_COUNT);
+    for (const row of rows) {
+      assert.equal(row.catalog_id, "cat-1");
+      assert.equal(row.status, "candidate");
+    }
+
+    // Job must reach review_required — the defined successful-run outcome.
+    const review = updates.find((u) => u.payload.status === "review_required");
+    assert.ok(review, "must mark the job review_required after a full run with unknown country code");
+    assert.equal(review!.payload.last_error, null);
+    assert.equal(review!.payload.locked_until, null);
+    assert.equal(review!.payload.locked_by, null);
+    assert.deepEqual(review!.eqFilters, [["id", "job-1"]]);
+
+    // Must never reach permanently_failed — the fallback is defined, not fatal.
+    assert.equal(
+      updates.some((u) => u.payload.status === "permanently_failed"),
+      false,
+      "unrecognized country code must not cause permanently_failed",
+    );
   });
 });
 
