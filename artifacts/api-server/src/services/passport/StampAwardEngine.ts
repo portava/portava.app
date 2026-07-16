@@ -12,8 +12,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
-import { resolveOrEnqueue } from "../../lib/stamps/StampCatalogService.js";
-import { canonicalLocationKeyFromStrings } from "../../lib/stamps/locationKey.js";
+import { resolveOrEnqueue, resolveOrEnqueueForDefinition } from "../../lib/stamps/StampCatalogService.js";
 import { resolveCountry } from "../../lib/stamps/countryLookup.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -174,7 +173,7 @@ async function _awardStampCore(
   // 1. Load definition
   const { data: def, error: defErr } = await sc
     .from("stamp_definitions")
-    .select("id, slug, stamp_type, is_active, is_repeatable, max_awards_per_user, visibility_default, criteria_type")
+    .select("id, slug, name, stamp_type, is_active, is_repeatable, max_awards_per_user, visibility_default, criteria_type")
     .eq("slug", definitionSlug)
     .maybeSingle();
 
@@ -350,24 +349,31 @@ async function _awardStampCore(
       // Fall back to "city" only if the row somehow lacks the field.
       const defType: string = (definition as any).stamp_type ?? "city";
 
-      const canonKey = canonicalLocationKeyFromStrings({
-        stampType: defType,
-        country,
-        city,
-      });
-
-      const { catalogEntry } = await resolveOrEnqueue(
-        sc,
-        {
-          stampType:    defType,
-          country:      country ?? "Unknown",
-          country_code: countryCode,
-          city:         city ?? null,
-          displayName,
-        },
-        defType,
-        `user_stamp:${newStampId}`,
-      );
+      let catalogEntry;
+      if (!city && !country) {
+        // Location-less stamp (badge / social / safety / trip achievement):
+        // resolve a definition-scoped catalog entry ("definition:{slug}") so
+        // every award of this definition shares one entry and one artwork —
+        // same behaviour as the reconciliation script.
+        ({ catalogEntry } = await resolveOrEnqueueForDefinition(
+          sc,
+          { slug: definition.slug, name: definition.name ?? null, stamp_type: defType },
+          `user_stamp:${newStampId}`,
+        ));
+      } else {
+        ({ catalogEntry } = await resolveOrEnqueue(
+          sc,
+          {
+            stampType:    defType,
+            country:      country ?? "Unknown",
+            country_code: countryCode,
+            city:         city ?? null,
+            displayName,
+          },
+          defType,
+          `user_stamp:${newStampId}`,
+        ));
+      }
 
       // Back-fill catalog_id on the newly inserted user_stamp row
       if (catalogEntry?.id) {
@@ -671,7 +677,7 @@ export async function recalculateForUser(
     if (!definition) {
       const { data: def } = await sc
         .from("stamp_definitions")
-        .select("id, is_active, visibility_default, is_repeatable")
+        .select("id, slug, name, stamp_type, is_active, visibility_default, is_repeatable")
         .eq("id", event.stamp_definition_id)
         .maybeSingle();
 
@@ -697,12 +703,34 @@ export async function recalculateForUser(
       }
     }
 
+    // Resolve the definition-scoped catalog entry up front. Rows re-created
+    // here have no location, so they map to "definition:{slug}" — same as the
+    // reconciliation script. Resolution failure never blocks the re-insert.
+    let catalogId: string | null = null;
+    if (definition.slug) {
+      try {
+        const { catalogEntry } = await resolveOrEnqueueForDefinition(
+          sc,
+          { slug: definition.slug, name: definition.name ?? null, stamp_type: definition.stamp_type ?? null },
+          "recalculate",
+        );
+        catalogId = catalogEntry?.id ?? null;
+      } catch (e: any) {
+        console.error(JSON.stringify({
+          event: "stamp.recalculate.catalog_link_failed",
+          definition_id: event.stamp_definition_id,
+          error: e?.message ?? String(e),
+        }));
+      }
+    }
+
     // Re-create the missing user_stamp
     const { error: insertErr } = await sc.from("user_stamps").insert({
       user_id:             userId,
       stamp_definition_id: event.stamp_definition_id,
       source_type:         event.source_type,
       source_id:           event.source_id,
+      catalog_id:          catalogId,
       metadata:            null,
       visibility:          definition.visibility_default ?? "public",
       display_on_passport: true,

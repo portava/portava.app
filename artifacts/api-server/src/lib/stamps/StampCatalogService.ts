@@ -11,7 +11,8 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { canonicalLocationKey, type LocationKeyInput } from "./locationKey.js";
+import { canonicalLocationKey, definitionScopedKey, type LocationKeyInput } from "./locationKey.js";
+import { STYLE_VERSION } from "./artDirection.js";
 
 // ── LRU cache ─────────────────────────────────────────────────────────────────
 
@@ -189,6 +190,56 @@ export async function resolveOrEnqueue(
 ): Promise<ResolveResult> {
   const canonKey = canonicalLocationKey({ ...location, stampType });
 
+  return resolveEntryCore(sc, canonKey, stampType, {
+    canonical_location_key: canonKey,
+    stamp_type:             stampType,
+    display_name:           location.displayName,
+    country:                location.country,
+    country_code:           location.country_code.toUpperCase().slice(0, 2),
+    region:                 location.region ?? null,
+    city:                   location.city ?? null,
+    neighborhood:           location.neighborhood ?? null,
+    lat:                    location.lat ?? null,
+    lng:                    location.lng ?? null,
+    status:                 "pending_artwork",
+  }, triggerAction);
+}
+
+/**
+ * Resolve a catalog entry for a location-less stamp definition (badges,
+ * social/safety/trip achievements), creating a definition-scoped entry
+ * ("definition:{slug}") if it doesn't exist, and enqueue a generation job.
+ *
+ * Mirrors the reconciliation script's behaviour so award-time resolution and
+ * batch reconciliation always produce identical catalog entries.
+ */
+export async function resolveOrEnqueueForDefinition(
+  sc: SupabaseClient,
+  definition: { slug: string; name?: string | null; stamp_type?: string | null },
+  triggerAction?: string,
+): Promise<ResolveResult> {
+  const canonKey  = definitionScopedKey(definition.slug);
+  const stampType = definition.stamp_type ?? "social";
+
+  return resolveEntryCore(sc, canonKey, stampType, {
+    canonical_location_key:  canonKey,
+    stamp_type:              stampType,
+    display_name:            definition.name ?? definition.slug,
+    country:                 "Global",
+    country_code:            "XX",
+    city:                    null,
+    status:                  "pending_artwork",
+    prompt_template_version: STYLE_VERSION,
+  }, triggerAction);
+}
+
+async function resolveEntryCore(
+  sc: SupabaseClient,
+  canonKey: string,
+  stampType: string,
+  insertPayload: Record<string, unknown>,
+  triggerAction?: string,
+): Promise<ResolveResult> {
   // 1. Check cache first
   const cached = catalogCache.get(cacheKey(canonKey, stampType));
   if (cached) {
@@ -205,19 +256,7 @@ export async function resolveOrEnqueue(
     // 3. Create catalog entry
     const { data: newRow, error: insertErr } = await sc
       .from("universal_stamp_catalog")
-      .insert({
-        canonical_location_key: canonKey,
-        stamp_type:             stampType,
-        display_name:           location.displayName,
-        country:                location.country,
-        country_code:           location.country_code.toUpperCase().slice(0, 2),
-        region:                 location.region ?? null,
-        city:                   location.city ?? null,
-        neighborhood:           location.neighborhood ?? null,
-        lat:                    location.lat ?? null,
-        lng:                    location.lng ?? null,
-        status:                 "pending_artwork",
-      })
+      .insert(insertPayload)
       .select("id")
       .single();
 

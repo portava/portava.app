@@ -12,7 +12,8 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
-import { canonicalLocationKeyFromStrings, definitionScopedKey } from "../lib/stamps/locationKey.js";
+import { canonicalLocationKeyFromStrings } from "../lib/stamps/locationKey.js";
+import { resolveOrEnqueueForDefinition } from "../lib/stamps/StampCatalogService.js";
 import { resolveCountry } from "../lib/stamps/countryLookup.js";
 import { STYLE_VERSION } from "../lib/stamps/artDirection.js";
 
@@ -303,11 +304,21 @@ async function main() {
     }
 
     for (const [defId, { rows, def }] of byDef) {
-      let canonKey: string;
+      const stampType = def.stamp_type ?? "social";
+
+      // Find or create the definition-scoped catalog entry and enqueue artwork
+      // generation, via the same shared helper the award paths use.
+      let catalogId: string;
       try {
-        canonKey = definitionScopedKey(def.slug);
+        const { catalogEntry, wasEnqueued } = await resolveOrEnqueueForDefinition(
+          sc,
+          { slug: def.slug, name: def.name ?? null, stamp_type: def.stamp_type ?? null },
+          "reconciliation_script",
+        );
+        catalogId = catalogEntry.id;
+        if (wasEnqueued) stats.enqueued++;
       } catch (e: any) {
-        console.warn("[reconcile] Failed to build definition key:", def.slug, e?.message);
+        console.warn("[reconcile] Definition catalog resolve failed:", def.slug, e?.message);
         stats.flagged++;
         for (const row of rows) {
           await sc.from("stamp_reconciliation_log").insert({
@@ -315,75 +326,13 @@ async function main() {
             source_id:          row.id,
             raw_country:        null,
             raw_city:           null,
-            stamp_type:         def.stamp_type ?? null,
+            stamp_type:         stampType,
             canonical_key:      null,
             needs_admin_review: true,
-            review_reason:      `location-less stamp: bad definition slug (${e?.message ?? "unknown"})`,
+            review_reason:      `location-less stamp: catalog resolve failed (${e?.message ?? "unknown"})`,
           });
         }
         continue;
-      }
-
-      const stampType = def.stamp_type ?? "social";
-
-      // Find or create the definition-scoped catalog entry
-      const { data: existingEntry } = await sc
-        .from("universal_stamp_catalog")
-        .select("id")
-        .eq("canonical_location_key", canonKey)
-        .eq("stamp_type", stampType)
-        .maybeSingle();
-
-      let catalogId: string;
-      if (existingEntry) {
-        catalogId = (existingEntry as any).id;
-      } else {
-        const { data: newEntry, error: insertErr } = await sc
-          .from("universal_stamp_catalog")
-          .insert({
-            canonical_location_key:  canonKey,
-            stamp_type:              stampType,
-            display_name:            def.name ?? def.slug,
-            country:                 "Global",
-            country_code:            "XX",
-            city:                    null,
-            status:                  "pending_artwork",
-            prompt_template_version: STYLE_VERSION,
-          })
-          .select("id")
-          .single();
-
-        if (insertErr) {
-          if ((insertErr as any).code === "23505") {
-            const { data: retry } = await sc
-              .from("universal_stamp_catalog")
-              .select("id")
-              .eq("canonical_location_key", canonKey)
-              .eq("stamp_type", stampType)
-              .maybeSingle();
-            if (!retry) { stats.flagged++; continue; }
-            catalogId = (retry as any).id;
-          } else {
-            console.warn("[reconcile] Definition catalog insert failed:", insertErr.message, def.slug);
-            stats.flagged++;
-            for (const row of rows) {
-              await sc.from("stamp_reconciliation_log").insert({
-                source_table:       "user_stamps",
-                source_id:          row.id,
-                raw_country:        null,
-                raw_city:           null,
-                stamp_type:         stampType,
-                canonical_key:      canonKey,
-                needs_admin_review: true,
-                review_reason:      insertErr.message,
-              });
-            }
-            continue;
-          }
-        } else {
-          catalogId = (newEntry as any).id;
-          newCatalogIds.push(catalogId);
-        }
       }
 
       const { error: updErr } = await sc
