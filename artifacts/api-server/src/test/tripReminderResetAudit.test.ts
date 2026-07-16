@@ -67,11 +67,13 @@ function makeFakeClient(opts: {
   tripExists?: boolean;
   captureInserts?: Record<string, any[]>;
   updateError?: boolean;
+  modInsertError?: boolean;
 }) {
   const {
     tripExists = true,
     captureInserts = {},
     updateError = false,
+    modInsertError = false,
   } = opts;
 
   const adminProfile = { id: ADMIN_ID, role: "admin", account_status: "active", handle: "testadmin" };
@@ -126,7 +128,25 @@ function makeFakeClient(opts: {
     from: (table: string) => {
       if (table === "profiles")           return builder(table, [adminProfile]);
       if (table === "trips")              return builder(table, tripExists ? [tripRow] : []);
-      if (table === "moderation_actions") return builder(table, []);
+      if (table === "moderation_actions") {
+        if (modInsertError) {
+          const errBuilder: any = {
+            select:      () => errBuilder,
+            insert:      (data: any) => {
+              const row = Array.isArray(data) ? data[0] : data;
+              if (!captureInserts[table]) captureInserts[table] = [];
+              captureInserts[table].push(row);
+              return {
+                then: (resolve: any) =>
+                  Promise.resolve({ data: null, error: { message: "moderation_actions insert failed" } }).then(resolve),
+              };
+            },
+            then: (resolve: any) => Promise.resolve({ data: [], error: null }).then(resolve),
+          };
+          return errBuilder;
+        }
+        return builder(table, []);
+      }
       // Passthrough stub for any other table the route may touch.
       const stub: any = {
         select: () => stub, insert: () => stub, update: () => stub,
@@ -152,6 +172,11 @@ describe("POST /admin/trips/:tripId/reset-reminder — audit trail", () => {
   before((_, done) => {
     const app = express();
     app.use(express.json());
+    // Attach a no-op logger so req.log.error() calls in the route don't throw.
+    app.use((req: any, _res, next) => {
+      req.log = { error: () => {}, warn: () => {}, info: () => {}, debug: () => {} };
+      next();
+    });
     app.use(adminRouter);
     server = http.createServer(app);
     server.listen(0, "127.0.0.1", () => {
@@ -208,5 +233,20 @@ describe("POST /admin/trips/:tripId/reset-reminder — audit trail", () => {
     assert.equal(res.status, 400);
     const modRows = captureInserts["moderation_actions"] ?? [];
     assert.equal(modRows.length, 0, "no audit row should be written for an invalid tripId");
+  });
+
+  it("still returns 200 with reset:true when the moderation_actions insert fails", async () => {
+    const captureInserts: Record<string, any[]> = {};
+    const client = makeFakeClient({ tripExists: true, captureInserts, modInsertError: true });
+    _setTestClient(client, true);
+
+    const res = await req("POST", `/admin/trips/${TRIP_ID}/reset-reminder`);
+
+    assert.equal(res.status, 200,
+      `audit failure must not surface as a 500 — got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.reset, true, "response body should still have reset: true");
+    // The insert was still attempted — the route should not have skipped it.
+    const modRows = captureInserts["moderation_actions"] ?? [];
+    assert.equal(modRows.length, 1, "the moderation_actions insert must have been attempted");
   });
 });

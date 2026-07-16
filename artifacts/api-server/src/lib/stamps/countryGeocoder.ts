@@ -125,7 +125,10 @@ async function runCorrectionSweep(): Promise<void> {
         logEvent("stamp.country_geocode.sweep_tombstone_evicted", { city_key: key });
       }
       // Hard-delete the tombstone rows so they don't re-appear in future sweeps.
-      await sc.from(DB_CACHE_TABLE).delete().in("city_key", keys);
+      // Guard: only delete rows that are still tombstoned (deleted_at IS NOT NULL).
+      // A concurrent PUT can revive a row between this sweep's select and delete;
+      // adding the guard prevents the sweep from discarding a freshly-revived row.
+      await sc.from(DB_CACHE_TABLE).delete().in("city_key", keys).not("deleted_at", "is", null);
     }
   } catch {
     // Best-effort — transient DB errors are silently swallowed.
