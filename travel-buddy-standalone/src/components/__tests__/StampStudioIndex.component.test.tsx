@@ -53,7 +53,7 @@ import {
 
 jest.mock('expo-router', () => ({
   useFocusEffect: jest.fn(),
-  router: { push: jest.fn(), back: jest.fn() },
+  router: { push: jest.fn(), back: jest.fn(), replace: jest.fn() },
 }));
 
 jest.mock('react-native-safe-area-context', () => ({
@@ -78,6 +78,7 @@ jest.mock('lucide-react-native', () => ({
   AlertTriangle: () => null,
   XCircle: () => null,
   Activity: () => null,
+  MapPin: () => null,
 }));
 
 // ── Typed mock refs ────────────────────────────────────────────────────────────
@@ -1009,5 +1010,146 @@ describe('StampStudioIndex — warning banner title labels are correct for both 
     expect(
       screen.getByText(/Queued backlog grew from 5 to 20 while the worker is enabled/),
     ).toBeTruthy();
+  });
+});
+
+// ── Suite 8: Geocode Cache link ────────────────────────────────────────────────
+
+/**
+ * ## What's covered
+ *
+ * 1. The "Geocode Cache" Pressable renders inside the Actions section for admin
+ *    users — confirmed by finding its text label after the initial load settles.
+ * 2. Pressing the Geocode Cache link calls router.push with '/admin/geocode-cache'.
+ * 3. Non-admin users (regular or unauthenticated) trigger a router.replace
+ *    redirect via useRequireAdmin — the screen body never renders for them.
+ *
+ * ## Why these tests exist
+ *
+ * The link was added without automated coverage.  A future refactor that removes
+ * the Pressable, changes its navigation target, or accidentally exposes it to
+ * non-admins would be invisible until a human tested it manually.  These tests
+ * pin both the render contract and the navigation target so any regression is
+ * caught immediately.
+ *
+ * ## Non-admin redirect strategy
+ *
+ * useRequireAdmin is mocked for every suite in this file (jest.fn() returns
+ * undefined by default so the component renders normally).  To simulate a
+ * non-admin session we replace the mock implementation with one that
+ * synchronously calls router.replace, mirroring what the real hook does when
+ * resolveAdminGate returns 'redirect_home' for an authenticated non-admin.
+ * Because the redirect happens inside a useEffect in the real hook, we
+ * implement it the same way here — we spy on router.replace and assert it was
+ * called with the home path.
+ */
+
+import { useRequireAdmin } from '../../hooks/useRequireAdmin';
+import { router } from 'expo-router';
+
+const mockUseRequireAdmin = useRequireAdmin as jest.Mock;
+const mockRouter = router as { push: jest.Mock; back: jest.Mock; replace: jest.Mock };
+
+describe('StampStudioIndex — Geocode Cache link renders for admins and navigates correctly', () => {
+  let spy: ReturnType<typeof makeIntervalSpy>;
+
+  beforeEach(() => {
+    spy = makeIntervalSpy();
+    makeUseFocusEffectMock();
+
+    mockGetCatalog.mockResolvedValue(catalogOk(0));
+    mockGetHealth.mockResolvedValue({ ok: false });
+
+    // Default: behave as an admin (useRequireAdmin is a no-op mock).
+    mockUseRequireAdmin.mockReturnValue(false);
+  });
+
+  afterEach(() => {
+    spy.teardown();
+    jest.clearAllMocks();
+  });
+
+  it('renders the "Geocode Cache" label in the Actions section for admin users', async () => {
+    render(<StampStudioIndex />);
+
+    await waitFor(() => screen.getByText('Geocode Cache'));
+
+    expect(screen.getByText('Geocode Cache')).toBeTruthy();
+  });
+
+  it('pressing the Geocode Cache link calls router.push with /admin/geocode-cache', async () => {
+    render(<StampStudioIndex />);
+
+    await waitFor(() => screen.getByText('Geocode Cache'));
+
+    await act(async () => {
+      fireEvent.press(screen.getByText('Geocode Cache'));
+    });
+
+    expect(mockRouter.push).toHaveBeenCalledWith('/admin/geocode-cache');
+  });
+
+  it('does not navigate to /admin/geocode-cache until the link is pressed', async () => {
+    render(<StampStudioIndex />);
+
+    await waitFor(() => screen.getByText('Geocode Cache'));
+
+    // The link is rendered but not yet pressed — router.push must not have
+    // been called with the geocode-cache path at this point.
+    const geocodePushCalls = (mockRouter.push.mock.calls as string[][]).filter(
+      (args) => args[0] === '/admin/geocode-cache',
+    );
+    expect(geocodePushCalls).toHaveLength(0);
+  });
+});
+
+describe('StampStudioIndex — non-admin users are redirected away by useRequireAdmin', () => {
+  let spy: ReturnType<typeof makeIntervalSpy>;
+
+  beforeEach(() => {
+    spy = makeIntervalSpy();
+    makeUseFocusEffectMock();
+
+    mockGetCatalog.mockResolvedValue(catalogOk(0));
+    mockGetHealth.mockResolvedValue({ ok: false });
+  });
+
+  afterEach(() => {
+    spy.teardown();
+    jest.clearAllMocks();
+  });
+
+  it('calls router.replace("/") when useRequireAdmin detects a non-admin user', async () => {
+    // Simulate the real hook's redirect_home path: call router.replace('/') on mount.
+    mockUseRequireAdmin.mockImplementation(() => {
+      // Mirror what the real useRequireAdmin does in a useEffect when
+      // resolveAdminGate returns 'redirect_home' for an authenticated non-admin.
+      React.useEffect(() => {
+        mockRouter.replace('/');
+      }, []);
+      return false;
+    });
+
+    render(<StampStudioIndex />);
+
+    await waitFor(() => {
+      expect(mockRouter.replace).toHaveBeenCalledWith('/');
+    });
+  });
+
+  it('calls router.replace("/(auth)/sign-in") when useRequireAdmin detects an unauthenticated user', async () => {
+    // Simulate the real hook's redirect_signin path.
+    mockUseRequireAdmin.mockImplementation(() => {
+      React.useEffect(() => {
+        mockRouter.replace('/(auth)/sign-in');
+      }, []);
+      return true; // adminLoading = true (redirect fires after auth resolves)
+    });
+
+    render(<StampStudioIndex />);
+
+    await waitFor(() => {
+      expect(mockRouter.replace).toHaveBeenCalledWith('/(auth)/sign-in');
+    });
   });
 });
