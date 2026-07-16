@@ -119,7 +119,7 @@ describe('SDK 54 downgrade — package version pins', () => {
   });
 
   it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-    const standalone = readPkg('../../../artifacts/travel-buddy/package.json');
+    const standalone = readPkg('../../../../travel-buddy-standalone/package.json');
     const saDeps: Record<string, string> = {
       ...standalone.dependencies,
       ...standalone.devDependencies,
@@ -164,8 +164,8 @@ describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and 
     ...tb.devDependencies,
   };
 
-  // artifacts/travel-buddy/package.json is 3 levels up then into artifacts/travel-buddy.
-  const sa = readPkg('../../../artifacts/travel-buddy/package.json');
+  // travel-buddy-standalone/package.json is 4 levels up from src/services.
+  const sa = readPkg('../../../../travel-buddy-standalone/package.json');
   const saAll: Record<string, string> = {
     ...sa.dependencies,
     ...sa.devDependencies,
