@@ -10,7 +10,7 @@ import {
   View, Text, Modal, Pressable, StyleSheet, Linking, ScrollView,
 } from 'react-native';
 import { X, Phone, MessageCircle, MapPin, Car, Users, Shield } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
 
 interface Props {
   visible: boolean;

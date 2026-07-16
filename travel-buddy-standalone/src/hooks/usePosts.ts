@@ -14,7 +14,7 @@ import {
   deletePost,
   type PostRow,
   type PostResult,
-} from '../services/posts.ts';
+} from '../services/posts';
 
 const PAGE_SIZE = 20;
 

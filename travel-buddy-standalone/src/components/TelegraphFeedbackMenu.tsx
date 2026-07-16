@@ -9,8 +9,8 @@ import {
   View, Text, Pressable, Modal, StyleSheet,
 } from 'react-native';
 import { MoreHorizontal, ThumbsUp, ThumbsDown, X, Heart, EyeOff } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
-import { sendFeedback, type FeedbackSignal } from '../services/intelligence.ts';
+import { color, space, radius, type as t } from '../theme/tokens';
+import { sendFeedback, type FeedbackSignal } from '../services/intelligence';
 
 interface FeedbackMenuProps {
   recommendationId: string;

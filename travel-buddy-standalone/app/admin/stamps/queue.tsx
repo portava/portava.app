@@ -31,16 +31,24 @@ export default function StampQueueScreen() {
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch]         = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [status, setStatus]         = useState<string>(params.status ?? '');
   const [total, setTotal]           = useState(0);
   const [error, setError]           = useState<string | null>(null);
+
+  // Debounce the search value so the API is only called after the user
+  // stops typing for 350 ms — not on every individual keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 350);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   const load = useCallback(async (reset = true) => {
     const res = await getAdminStampCatalog({
       page: 1,
       limit: 100,
       status: status || undefined,
-      search: search || undefined,
+      search: debouncedSearch || undefined,
     });
     if (res.ok) {
       setError(null);
@@ -64,7 +72,7 @@ export default function StampQueueScreen() {
     }
     setLoading(false);
     setRefreshing(false);
-  }, [status, search]);
+  }, [status, debouncedSearch]);
 
   useEffect(() => { load(); }, [load]);
 

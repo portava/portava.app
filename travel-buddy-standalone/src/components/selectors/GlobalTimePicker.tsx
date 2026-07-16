@@ -20,8 +20,8 @@ import {
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { X, Clock } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { fromHHmm, toHHmm, formatDisplayTime } from '../../lib/dateTime/formatters.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
+import { fromHHmm, toHHmm, formatDisplayTime } from '../../lib/dateTime/formatters';
 
 export interface TimePreset {
   label: string;

@@ -10,9 +10,9 @@
  * New code should use GlobalPlacePicker directly.
  */
 import React from 'react';
-import { useLocationContext } from '../context/LocationContext.tsx';
-import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
-import type { Place } from '../lib/location/placeTypes.ts';
+import { useLocationContext } from '../context/LocationContext';
+import { GlobalPlacePicker } from './selectors/GlobalPlacePicker';
+import type { Place } from '../lib/location/placeTypes';
 
 interface Props {
   /** When provided, replaces the context's showCityPicker flag (standalone use). */

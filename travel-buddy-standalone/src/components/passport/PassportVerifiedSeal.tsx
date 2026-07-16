@@ -6,7 +6,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { ShieldCheck } from 'lucide-react-native';
-import { PP, PP_LABEL, fmtMonthYear } from '../../theme/passportTokens.ts';
+import { PP, PP_LABEL, fmtMonthYear } from '../../theme/passportTokens';
 
 interface Props {
   status: string;

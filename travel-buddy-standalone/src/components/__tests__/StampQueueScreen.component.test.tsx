@@ -33,8 +33,8 @@
 
 import React from 'react';
 import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
-import StampQueueScreen from '../../../app/admin/stamps/queue.tsx';
-import { getAdminStampCatalog } from '../../services/adminStamps.ts';
+import StampQueueScreen from '../../../app/admin/stamps/queue';
+import { getAdminStampCatalog } from '../../services/adminStamps';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
@@ -47,11 +47,11 @@ jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-jest.mock('../../hooks/useRequireAdmin.ts', () => ({
+jest.mock('../../hooks/useRequireAdmin', () => ({
   useRequireAdmin: jest.fn(),
 }));
 
-jest.mock('../../services/adminStamps.ts', () => ({
+jest.mock('../../services/adminStamps', () => ({
   getAdminStampCatalog: jest.fn(),
 }));
 
@@ -345,9 +345,10 @@ describe('StampQueueScreen — search filter', () => {
   });
 
   it('shows only the matching entry after typing a search term', async () => {
-    // Initial load returns both entries; filtered load returns only ENTRY_B.
+    // Initial load returns only ENTRY_A so Tokyo Tower is absent until the
+    // debounced search fires — ensuring waitFor doesn't resolve prematurely.
     mockGetCatalog
-      .mockResolvedValueOnce(catalogOk([ENTRY_A, ENTRY_B]))
+      .mockResolvedValueOnce(catalogOk([ENTRY_A]))
       .mockResolvedValue(catalogOk([ENTRY_B]));
 
     render(<StampQueueScreen />);
@@ -464,5 +465,68 @@ describe('StampQueueScreen — API error', () => {
     await waitFor(() => screen.getByText('Paris Eiffel'));
     expect(screen.getByText('Paris Eiffel')).toBeTruthy();
     expect(screen.queryByTestId('catalog-queue-error')).toBeNull();
+  });
+});
+
+// ── Search debounce suite ──────────────────────────────────────────────────────
+
+/**
+ * Verifies that rapid keystrokes do not flood the API with one request per
+ * character. The debounce in queue.tsx means only one call should fire after
+ * the user stops typing.
+ *
+ * ## Why this test exists
+ *
+ * Without debouncing, typing "Tokyo" (5 characters) would trigger 5 sequential
+ * getAdminStampCatalog calls. On a slow connection the responses can arrive out
+ * of order and clobber each other. This test pins the debounce contract so a
+ * future refactor cannot accidentally remove it.
+ *
+ * ## Timer strategy
+ *
+ * We use jest fake timers so we can control exactly when the debounce window
+ * expires without waiting 350 ms of wall-clock time in CI. This suite is
+ * placed last so fake-timer teardown cannot affect the other suites above.
+ */
+
+describe('StampQueueScreen — search debounce', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('fires only one getAdminStampCatalog call when multiple characters are typed in quick succession', async () => {
+    mockGetCatalog.mockResolvedValue(catalogOk([ENTRY_A]));
+
+    render(<StampQueueScreen />);
+
+    // Wait for the initial load to settle before typing.
+    await waitFor(() => screen.getByText('Paris Eiffel'));
+
+    const callsAfterMount = mockGetCatalog.mock.calls.length;
+    const input = screen.getByPlaceholderText('Search by name…');
+
+    // Fire five changeText events inside a single async act() call.
+    // async act() flushes synchronous effects (scheduling the debounce timer)
+    // but does NOT advance macrotask timers, so the 350 ms setTimeout has not
+    // yet fired when act() resolves.
+    await act(async () => {
+      fireEvent.changeText(input, 'T');
+      fireEvent.changeText(input, 'To');
+      fireEvent.changeText(input, 'Tok');
+      fireEvent.changeText(input, 'Toky');
+      fireEvent.changeText(input, 'Tokyo');
+    });
+
+    // Debounce window has not elapsed — no new API call yet.
+    expect(mockGetCatalog.mock.calls.length).toBe(callsAfterMount);
+
+    // Wait for the single deferred call that fires after the debounce window.
+    await waitFor(() => {
+      expect(mockGetCatalog.mock.calls.length).toBe(callsAfterMount + 1);
+    });
+
+    // That single call must carry the final search term — not an intermediate one.
+    const lastArgs = mockGetCatalog.mock.calls[mockGetCatalog.mock.calls.length - 1][0];
+    expect(lastArgs.search).toBe('Tokyo');
   });
 });

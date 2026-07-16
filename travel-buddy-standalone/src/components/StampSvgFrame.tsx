@@ -9,7 +9,7 @@ import Svg, {
   Ellipse, Circle, Rect, Polygon, Defs,
   RadialGradient, Stop, Line, G, ClipPath,
 } from 'react-native-svg';
-import type { StampShape, StampBorderStyle, StampPattern } from '../types/stampArtwork.ts';
+import type { StampShape, StampBorderStyle, StampPattern } from '../types/stampArtwork';
 
 interface Props {
   size: number;

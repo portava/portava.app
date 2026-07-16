@@ -15,19 +15,19 @@
 
 import React from 'react';
 import { act, render } from '@testing-library/react-native';
-import { ReviewsSection } from '../ReviewsSection.tsx';
+import { ReviewsSection } from '../ReviewsSection';
 
 // ── No expo-router override — file-level mock is used ─────────────────────────
 
 // ── Session context mock ──────────────────────────────────────────────────────
 
-jest.mock('../../context/SessionContext.tsx', () => ({
+jest.mock('../../context/SessionContext', () => ({
   useSession: () => ({ isAuthed: false }),
 }));
 
 // ── Reviews service mock ──────────────────────────────────────────────────────
 
-jest.mock('../../services/reviews.ts', () => ({
+jest.mock('../../services/reviews', () => ({
   getTripReviews:  jest.fn(),
   getMyReview:     jest.fn(),
   getEventReviews: jest.fn().mockResolvedValue({ reviews: [] }),
@@ -65,7 +65,7 @@ describe('ReviewsSection — file-level useFocusEffect stub (no double-fetch)', 
 
   beforeEach(() => {
     jest.clearAllMocks();
-    const reviews = require('../../services/reviews.ts');
+    const reviews = require('../../services/reviews');
     getTripReviews = reviews.getTripReviews;
   });
 

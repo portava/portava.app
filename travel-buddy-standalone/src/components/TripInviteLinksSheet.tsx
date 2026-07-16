@@ -18,8 +18,8 @@ import { X, Link2, Trash2, Users } from 'lucide-react-native';
 import {
   getInviteLinks, revokeInviteLink,
   type InviteLinkUsage, type InviteLinkJoiner,
-} from '../services/trips.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+} from '../services/trips';
+import { color, space, radius, type as t } from '../theme/tokens';
 
 interface Props {
   tripId: string;

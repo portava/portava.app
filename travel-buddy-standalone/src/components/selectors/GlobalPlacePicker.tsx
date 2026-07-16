@@ -40,12 +40,12 @@ import {
 import { X, MapPin, Search, Navigation, Clock, TrendingUp } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ExpoLocation from 'expo-location';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { usePlaceSearch } from '../../hooks/usePlaceSearch.ts';
-import { useRecentPlaces } from '../../hooks/useRecentPlaces.ts';
-import { usePopularCities } from '../../hooks/usePopularCities.ts';
-import { resolveCanonicalPlace } from '../../lib/location/resolveCanonical.ts';
-import type { Place } from '../../lib/location/placeTypes.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
+import { usePlaceSearch } from '../../hooks/usePlaceSearch';
+import { useRecentPlaces } from '../../hooks/useRecentPlaces';
+import { usePopularCities } from '../../hooks/usePopularCities';
+import { resolveCanonicalPlace } from '../../lib/location/resolveCanonical';
+import type { Place } from '../../lib/location/placeTypes';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';

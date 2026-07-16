@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, Image, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
-import { ScreenHeader } from '../ScreenHeader.tsx';
-import { getBlockList, unblockUser, type BlockedUser } from '../../services/blocks.ts';
-import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { NavBarFiller, useNavBarScrollHandler } from '../../hooks/useNavBarCollapse.ts';
+import { ScreenHeader } from '../ScreenHeader';
+import { getBlockList, unblockUser, type BlockedUser } from '../../services/blocks';
+import { useBlockedIds } from '../../context/BlockedIdsContext';
+import { color, space, radius, type as t } from '../../theme/tokens';
+import { NavBarFiller, useNavBarScrollHandler } from '../../hooks/useNavBarCollapse';
 
 export function SocialSafetyControlsScreen() {
   const { removeBlock } = useBlockedIds();

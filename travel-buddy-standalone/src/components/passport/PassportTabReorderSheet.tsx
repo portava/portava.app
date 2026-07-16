@@ -13,13 +13,13 @@ import {
   PanResponder, ActivityIndicator, Alert, ScrollView,
 } from 'react-native';
 import { GripVertical, RotateCcw, ChevronLeft, ChevronRight } from 'lucide-react-native';
-import { updateMyProfile } from '../../services/profile.ts';
+import { updateMyProfile } from '../../services/profile';
 import {
   CANONICAL_TAB_ORDER, TAB_LABELS, isCanonicalTabOrder, resolveTabOrder,
   type PassportTabKey,
-} from './passportTabs.ts';
-import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
-import { space, radius, type as t } from '../../theme/tokens.ts';
+} from './passportTabs';
+import { PP, PP_LABEL } from '../../theme/passportTokens';
+import { space, radius, type as t } from '../../theme/tokens';
 
 const ROW_HEIGHT = 56;
 

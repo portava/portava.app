@@ -7,8 +7,8 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { MapPin } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
-import type { FullRoutePlan } from '../services/routePlan.ts';
+import { color, space, radius, type as t } from '../theme/tokens';
+import type { FullRoutePlan } from '../services/routePlan';
 
 interface Props {
   routePlan: FullRoutePlan;

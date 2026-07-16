@@ -2,12 +2,12 @@ import React, { useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { Star, CheckCircle, Globe, Zap, Clock, Bookmark, BookmarkCheck, MapPin } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
-import { Stamp } from './ui.tsx';
-import type { BuddyProfile } from '../services/rentABuddy.ts';
-import { saveBuddy, unsaveBuddy } from '../services/rentABuddy.ts';
-import { CompassFeedbackMenu } from './compass/CompassFeedbackMenu.tsx';
-import { CompassWhySheet } from './compass/CompassWhySheet.tsx';
+import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
+import { Stamp } from './ui';
+import type { BuddyProfile } from '../services/rentABuddy';
+import { saveBuddy, unsaveBuddy } from '../services/rentABuddy';
+import { CompassFeedbackMenu } from './compass/CompassFeedbackMenu';
+import { CompassWhySheet } from './compass/CompassWhySheet';
 
 /** "650 m away" / "2.3 km away" / "12 km away" */
 export function formatDistanceAway(km: number): string {

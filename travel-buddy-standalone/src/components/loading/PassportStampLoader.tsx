@@ -36,7 +36,7 @@ import Animated, {
   Easing,
   cancelAnimation,
 } from 'react-native-reanimated';
-import { color, space, type as t, font } from '../../theme/tokens.ts';
+import { color, space, type as t, font } from '../../theme/tokens';
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 const AnimatedG = Animated.createAnimatedComponent(G);

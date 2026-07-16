@@ -25,12 +25,12 @@ import {
 } from 'react-native';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
 import {
   toMidnight, isSameDay, isBeforeDay, isAfterDay, isBetweenDays,
   toISODate, fromISODate, formatDisplayDate, formatDisplayDateRange,
   monthName,
-} from '../../lib/dateTime/formatters.ts';
+} from '../../lib/dateTime/formatters';
 
 const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 

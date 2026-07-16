@@ -18,11 +18,11 @@ import {
   type NativeSyntheticEvent, type NativeScrollEvent, type ImageStyle,
 } from 'react-native';
 import { Search, Clock } from 'lucide-react-native';
-import { TypeIcon } from './searchNav.tsx';
-import type { SuggestGroup } from '../../services/discovery.ts';
-import type { UnifiedSearchResult, SearchHistoryEntry } from '../../services/discovery.ts';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { NavBarFiller } from '../../hooks/useNavBarCollapse.ts';
+import { TypeIcon } from './searchNav';
+import type { SuggestGroup } from '../../services/discovery';
+import type { UnifiedSearchResult, SearchHistoryEntry } from '../../services/discovery';
+import { color, space, radius, type as t } from '../../theme/tokens';
+import { NavBarFiller } from '../../hooks/useNavBarCollapse';
 
 interface Props {
   query: string;

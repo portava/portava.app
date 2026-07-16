@@ -6,8 +6,8 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { ShieldCheck, Shield } from 'lucide-react-native';
-import type { VerificationLevelStatus } from '../VerificationLevelsRail.tsx';
-import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
+import type { VerificationLevelStatus } from '../VerificationLevelsRail';
+import { PP, PP_LABEL } from '../../theme/passportTokens';
 
 interface Props {
   levels: VerificationLevelStatus;

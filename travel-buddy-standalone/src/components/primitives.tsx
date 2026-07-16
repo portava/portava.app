@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronRight, SlidersHorizontal, AlertCircle, RefreshCw } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow, icon, layout } from '../theme/tokens.ts';
+import { color, space, radius, type as t, shadow, icon, layout } from '../theme/tokens';
 
 /**
  * Travel Buddy shared primitives. New/incomplete sections use these so every

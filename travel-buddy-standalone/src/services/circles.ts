@@ -3,7 +3,7 @@
  * Each user owns one circle (their inner travel circle). Circles have their own
  * UUID and name; the owner_id links back to the user's profile.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 export interface CircleRow {
   id: string;

@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, Pressable, Image, StyleSheet } from 'react-native';
-import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity.ts';
+import { useBlockedIds } from '../../context/BlockedIdsContext';
+import { color, space, radius, type as t } from '../../theme/tokens';
+import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity';
 
 interface Props {
   senderId: string;

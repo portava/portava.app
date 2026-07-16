@@ -11,8 +11,8 @@
  *      interacts with recommendations and feedback signals are recorded.
  *   5. Items with unknown availability stay visible (openNearby), not penalized.
  */
-import type { Availability, CityEvent, Interest, PulseBuckets, PulseFeedItem, PulseFilter } from '../types/models.ts';
-import { isWithinAvailability } from './availability.ts';
+import type { Availability, CityEvent, Interest, PulseBuckets, PulseFeedItem, PulseFilter } from '../types/models';
+import { isWithinAvailability } from './availability';
 
 export function filterPulse(
   events: CityEvent[],

@@ -4,8 +4,8 @@
  * a dropped field here (e.g. structured media with stamp_overlay) silently
  * kills downstream rendering, which is exactly what the regression tests catch.
  */
-import type { PostRow } from '../services/posts.ts';
-import type { PulseFeedItem } from '../types/models.ts';
+import type { PostRow } from '../services/posts';
+import type { PulseFeedItem } from '../types/models';
 
 /** Convert a real PostRow from the API into a PulseFeedItem for the Pulse Wall. */
 export function postRowToFeedItem(p: PostRow): PulseFeedItem {

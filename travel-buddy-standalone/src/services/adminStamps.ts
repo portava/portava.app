@@ -2,7 +2,7 @@
  * Admin Stamp Catalog service — typed fetch wrappers for all admin stamp
  * catalog endpoints. Uses the same auth pattern as other mobile services.
  */
-import { adminGet, adminPost, adminPatch, type AdminApiResult } from './adminApi.ts';
+import { adminGet, adminPost, adminPatch, type AdminApiResult } from './adminApi';
 
 type ApiResult<T> = AdminApiResult<T>;
 

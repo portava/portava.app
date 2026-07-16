@@ -5,7 +5,7 @@
  *
  * No GPS fields, no service-role leakage.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type TimeBlock = 'morning' | 'afternoon' | 'evening' | 'late';

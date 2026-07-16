@@ -12,11 +12,11 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Bell } from 'lucide-react-native';
-import { color, space, type as t, radius, shadow } from '../theme/tokens.ts';
-import { useRecentNotifications, useUnreadNotificationCount } from '../hooks/useNotifications.ts';
-import { markAllNotificationsRead, type AppNotification } from '../services/notifications.ts';
+import { color, space, type as t, radius, shadow } from '../theme/tokens';
+import { useRecentNotifications, useUnreadNotificationCount } from '../hooks/useNotifications';
+import { markAllNotificationsRead, type AppNotification } from '../services/notifications';
 
-import { formatRelativeTime } from '../lib/dateTime/formatters.ts';
+import { formatRelativeTime } from '../lib/dateTime/formatters';
 
 const CATEGORY_ICONS: Record<string, string> = {
   plans:       '📋',

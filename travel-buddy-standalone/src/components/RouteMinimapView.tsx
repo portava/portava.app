@@ -16,8 +16,8 @@ import {
   Layer,
 } from '@maplibre/maplibre-react-native';
 import { Maximize2 } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
-import type { FullRoutePlan, RouteStop } from '../services/routePlan.ts';
+import { color, space, radius, type as t } from '../theme/tokens';
+import type { FullRoutePlan, RouteStop } from '../services/routePlan';
 
 // ── Map tile style ─────────────────────────────────────────────────────────────
 

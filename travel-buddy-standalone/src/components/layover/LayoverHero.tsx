@@ -8,11 +8,11 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { BadgeCheck, Moon, Plane } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { fmtClock, fmtDur, remainingMin, tierDotColor } from './layoverFormat.ts';
+import { color, space, radius, type as t } from '../../theme/tokens';
+import { fmtClock, fmtDur, remainingMin, tierDotColor } from './layoverFormat';
 import type {
   LayoverLocalTimes, LayoverSession, LayoverWindow, PublicAirport,
-} from '../../services/layover.ts';
+} from '../../services/layover';
 
 interface Props {
   airport: PublicAirport;

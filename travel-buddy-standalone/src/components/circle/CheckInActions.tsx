@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { MapPin, Users, LogOut, Shield, AlertTriangle } from 'lucide-react-native';
-import { postCheckIn } from '../../services/circle.ts';
-import { color, type as t } from '../../theme/tokens.ts';
+import { postCheckIn } from '../../services/circle';
+import { color, type as t } from '../../theme/tokens';
 
 export type CheckinType = 'arrived' | 'with_group' | 'leaving' | 'safe';
 

@@ -8,7 +8,7 @@
  *
  * UI calls these functions; it never calls fetch or supabase for posts itself.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type PostVisibility = 'public' | 'trip_only' | 'private';
@@ -48,7 +48,7 @@ export interface PostRow {
   content: string;
   mediaUrls: string[];
   /** Structured ready media (url/type/dims + stamp_overlay) from feed + detail endpoints. */
-  media?: import('../types/models.ts').PostcardMediaItem[];
+  media?: import('../types/models').PostcardMediaItem[];
   visibility: PostVisibility;
   status: PostStatus;
   createdAt: string;

@@ -14,9 +14,9 @@ import { useRouter } from 'expo-router';
 import {
   X, Plane, Clock, MapPin, AlertCircle, CalendarDays, Moon, BadgeCheck,
 } from 'lucide-react-native';
-import { GlobalTimePicker } from '../selectors/GlobalTimePicker.tsx';
-import { GlobalCalendarPicker } from '../selectors/GlobalCalendarPicker.tsx';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { GlobalTimePicker } from '../selectors/GlobalTimePicker';
+import { GlobalCalendarPicker } from '../selectors/GlobalCalendarPicker';
+import { color, space, radius, type as t } from '../../theme/tokens';
 import {
   createLayoverSession,
   searchAirports,
@@ -24,7 +24,7 @@ import {
   type CreateSessionPayload,
   type FlightType,
   type ComfortLevel,
-} from '../../services/layover.ts';
+} from '../../services/layover';
 
 interface Props {
   visible: boolean;
