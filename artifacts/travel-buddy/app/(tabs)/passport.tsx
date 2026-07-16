@@ -498,6 +498,7 @@ function PassportContent({
           onStatPress={(label) => {
             if (label === 'Trips') setTab('plans');
             else if (label === 'Stamps') setTab('stamps');
+            else if (label === 'Countries') setTab('map');
           }}
         />
 

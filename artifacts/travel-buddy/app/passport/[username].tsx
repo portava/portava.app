@@ -301,6 +301,9 @@ export default function PassportDeepLinkScreen() {
           profile={profile}
           isOwner={false}
           overrideStats={visitorStats}
+          onStatPress={(label) => {
+            if (label === 'Countries') setTab('map');
+          }}
         />
 
         {/* ── Document-style tab bar — order from owner's saved preference ── */}
