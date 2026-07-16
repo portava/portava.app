@@ -27,8 +27,8 @@
 import React from 'react';
 import { Alert } from 'react-native';
 import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
-import FailedJobsScreen from '../../../app/admin/stamps/failed';
-import { getAdminStampQueue, requeueFailedJob } from '../../services/adminStamps';
+import FailedJobsScreen from '../../../app/admin/stamps/failed.tsx';
+import { getAdminStampQueue, requeueFailedJob } from '../../services/adminStamps.ts';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
@@ -40,11 +40,11 @@ jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-jest.mock('../../hooks/useRequireAdmin', () => ({
+jest.mock('../../hooks/useRequireAdmin.ts', () => ({
   useRequireAdmin: jest.fn(),
 }));
 
-jest.mock('../../services/adminStamps', () => ({
+jest.mock('../../services/adminStamps.ts', () => ({
   getAdminStampQueue: jest.fn(),
   requeueFailedJob: jest.fn(),
 }));

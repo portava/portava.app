@@ -16,14 +16,14 @@ import {
   UserPlus, UserCheck, MoreHorizontal,
   Briefcase, Users, Stamp, PenLine,
 } from 'lucide-react-native';
-import type { OwnProfile, PublicProfile } from '../../types/models';
-import { resolveAvatarUrl, fallbackInitials } from '../../utils/identity';
-import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity';
-import { isTravelBuddyVerified } from '../../lib/verification';
-import { HighlightRing } from '../HighlightRing';
-import { getPassportStats } from '../../services/passportStamps';
-import type { PassportStats } from '../../services/passportStamps';
-import { PP } from '../../theme/passportTokens';
+import type { OwnProfile, PublicProfile } from '../../types/models.ts';
+import { resolveAvatarUrl, fallbackInitials } from '../../utils/identity.ts';
+import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity.ts';
+import { isTravelBuddyVerified } from '../../lib/verification.ts';
+import { HighlightRing } from '../HighlightRing.tsx';
+import { getPassportStats } from '../../services/passportStamps.ts';
+import type { PassportStats } from '../../services/passportStamps.ts';
+import { PP } from '../../theme/passportTokens.ts';
 
 type AnyProfile = OwnProfile | PublicProfile;
 

@@ -6,7 +6,7 @@
  * component. Lives outside app/ so Expo Router does not treat it as a route.
  */
 
-import type { GemCategory, GemSensitivity } from '../../services/hiddenGems';
+import type { GemCategory, GemSensitivity } from '../../services/hiddenGems.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

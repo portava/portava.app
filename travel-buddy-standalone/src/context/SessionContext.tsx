@@ -1,13 +1,13 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { AppState } from 'react-native';
-import { getSessionUserId, onAuthChange, signOut as svcSignOut, ensureProfile } from '../services/auth';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { getAccountStatus } from '../services/profile';
-import type { AccountStatus } from '../services/profile';
-import { pauseOnSessionEnd } from '../services/circle';
-import { clearForUser as clearLikedForUser, primeLikes } from '../services/likedPostsCache';
-import { clearForUser as clearSavedForUser, primeSaved } from '../services/savedPostsCache';
-import { fetchMyLikedPostIds, fetchMySavedPostIds } from '../services/postEngagement';
+import { getSessionUserId, onAuthChange, signOut as svcSignOut, ensureProfile } from '../services/auth.ts';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
+import { getAccountStatus } from '../services/profile.ts';
+import type { AccountStatus } from '../services/profile.ts';
+import { pauseOnSessionEnd } from '../services/circle.ts';
+import { clearForUser as clearLikedForUser, primeLikes } from '../services/likedPostsCache.ts';
+import { clearForUser as clearSavedForUser, primeSaved } from '../services/savedPostsCache.ts';
+import { fetchMyLikedPostIds, fetchMySavedPostIds } from '../services/postEngagement.ts';
 
 /**
  * Session context — single source of auth truth for the app. Wraps the auth

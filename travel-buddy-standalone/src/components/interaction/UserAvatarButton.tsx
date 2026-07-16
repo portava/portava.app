@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Pressable, Image, View, Text, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { useBlockedIds } from '../../context/BlockedIdsContext';
-import { color } from '../../theme/tokens';
+import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
+import { color } from '../../theme/tokens.ts';
 
 interface Props {
   userId: string;

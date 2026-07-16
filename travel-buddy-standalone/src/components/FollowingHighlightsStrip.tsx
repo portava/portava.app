@@ -9,11 +9,11 @@ import React, { useState } from 'react';
 import {
   View, Text, Image, ScrollView, StyleSheet, Pressable,
 } from 'react-native';
-import { HighlightRing } from './HighlightRing';
-import { HighlightViewer } from './HighlightViewer';
-import { color, space } from '../theme/tokens';
-import type { HighlightFeedUser } from '../services/highlights';
-import { useSession } from '../context/SessionContext';
+import { HighlightRing } from './HighlightRing.tsx';
+import { HighlightViewer } from './HighlightViewer.tsx';
+import { color, space } from '../theme/tokens.ts';
+import type { HighlightFeedUser } from '../services/highlights.ts';
+import { useSession } from '../context/SessionContext.tsx';
 
 const AVATAR_SIZE = 52;
 

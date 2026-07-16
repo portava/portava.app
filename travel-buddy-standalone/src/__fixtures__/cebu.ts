@@ -7,7 +7,7 @@ import type {
   AppNotification,
   ChatMessage,
   TelegraphMessage,
-} from '../types/models';
+} from '../types/models.ts';
 
 /* Images: Unsplash source URLs (stable IDs). Replace with backend media later. */
 const img = (id: string, w = 1200) =>

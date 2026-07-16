@@ -42,12 +42,12 @@
 import React from 'react';
 import { ScrollView } from 'react-native';
 import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
-import StampStudioIndex from '../../../app/admin/stamps/index';
+import StampStudioIndex from '../../../app/admin/stamps/index.tsx';
 import { useFocusEffect } from 'expo-router';
 import {
   getAdminStampCatalog,
   getStampWorkerHealth,
-} from '../../services/adminStamps';
+} from '../../services/adminStamps.ts';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
@@ -60,11 +60,11 @@ jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-jest.mock('../../hooks/useRequireAdmin', () => ({
+jest.mock('../../hooks/useRequireAdmin.ts', () => ({
   useRequireAdmin: jest.fn(),
 }));
 
-jest.mock('../../services/adminStamps', () => ({
+jest.mock('../../services/adminStamps.ts', () => ({
   getAdminStampCatalog: jest.fn(),
   getStampWorkerHealth: jest.fn(),
 }));

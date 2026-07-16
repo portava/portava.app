@@ -1,13 +1,13 @@
 import React, { createContext, useContext, useState, useCallback, useMemo, useEffect } from 'react';
-import type { Availability, Weekday, TimeBlock, TripWindow } from '../types/models';
-import { mockAvailability } from '../data/events';
+import type { Availability, Weekday, TimeBlock, TripWindow } from '../types/models.ts';
+import { mockAvailability } from '../data/events.ts';
 import {
   getMyAvailability,
   patchMyAvailability,
   patchMyQuickStatus,
   type QuickStatus,
-} from '../services/availability';
-import { useSession } from './SessionContext';
+} from '../services/availability.ts';
+import { useSession } from './SessionContext.tsx';
 
 interface AvailabilityContextValue {
   availability: Availability;

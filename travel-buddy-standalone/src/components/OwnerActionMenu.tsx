@@ -5,7 +5,7 @@ import {
   Edit3, Eye, Share2, MessageCircle,
   Bookmark, Shield, Settings, Info, LayoutGrid, Columns,
 } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 interface Props {
   visible: boolean;

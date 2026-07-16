@@ -13,10 +13,10 @@
  * Does NOT run watchPosition (that belongs to Safe Return / active tracking).
  */
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { getCurrentGps, reverseGeocodeToPlace, checkLocationPermission } from '../services/location';
-import type { Place } from '../lib/location/placeTypes';
-import { isSupabaseConfigured } from '../lib/supabase';
-import { buildManualCityState, buildManualCityPayload } from './activeLocation.state';
+import { getCurrentGps, reverseGeocodeToPlace, checkLocationPermission } from '../services/location.ts';
+import type { Place } from '../lib/location/placeTypes.ts';
+import { isSupabaseConfigured } from '../lib/supabase.ts';
+import { buildManualCityState, buildManualCityPayload } from './activeLocation.state.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -122,7 +122,7 @@ async function apiBase(): Promise<string> {
 }
 
 async function fetchToken(): Promise<string | null> {
-  const { freshToken } = await import('../services/apiToken');
+  const { freshToken } = await import('../services/apiToken.ts');
   return freshToken();
 }
 

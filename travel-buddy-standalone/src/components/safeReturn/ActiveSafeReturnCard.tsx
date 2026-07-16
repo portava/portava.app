@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Shield, CheckCircle, Clock, X, PhoneCall, MapPin, ChevronRight, Share2, MessageCircle } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import {
   confirmSafe,
   cancelSession,
@@ -19,8 +19,8 @@ import {
   startLiveShare,
   getSessionContacts,
   type SafeReturnSession,
-} from '../../services/safeReturn';
-import { EmergencyHelpSheet } from './EmergencyHelpSheet';
+} from '../../services/safeReturn.ts';
+import { EmergencyHelpSheet } from './EmergencyHelpSheet.tsx';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

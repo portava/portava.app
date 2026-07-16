@@ -5,7 +5,7 @@
  * Action functions (accept/decline/cancel) replace the fragmented per-domain calls
  * so that notifications.tsx has a single, consistent entry point for all request types.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 export type RequestType = 'friend_request' | 'circle_invite' | 'trip_invite';

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
-import type { Attachment, AttachSource, AttachTarget } from '../types/models';
-import type { AttachmentService } from '../services/attachments';
+import type { Attachment, AttachSource, AttachTarget } from '../types/models.ts';
+import type { AttachmentService } from '../services/attachments.ts';
 
 /**
  * In-memory session attachment store. Implements AttachmentService.

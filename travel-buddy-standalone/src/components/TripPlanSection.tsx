@@ -5,20 +5,20 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Plus, Lock, Map as MapIcon, List, RotateCcw, AlertTriangle, Settings2, RefreshCw, Route } from 'lucide-react-native';
-import type { TripPlanItem, TripPlanCategory } from '../types/models';
-import { fetchTripPlan, fetchTripPlanMap, type TripPlanResult } from '../services/tripPlan';
-import { usePlanSync } from '../hooks/usePlanSync';
-import { color, space, radius, type as t } from '../theme/tokens';
-import { AddToPlanSheet } from './AddToPlanSheet';
-import { TimelineView, type DayBucket } from './itinerary/TimelineView';
-import { ItineraryMapView } from './itinerary/MapView';
-import { PlanItemSheet } from './itinerary/PlanItemSheet';
-import { TripPlanSettingsSheet } from './TripPlanSettingsSheet';
-import { SafeReturnSetupSheet } from './safeReturn/SafeReturnSetupSheet';
-import { ActiveSafeReturnCard } from './safeReturn/ActiveSafeReturnCard';
-import { MissedCheckinPrompt } from './safeReturn/MissedCheckinPrompt';
-import { getSuggestion, getActiveSession } from '../services/safeReturn';
-import { RouteBuilderSheet, type RouteStopDraft } from './RouteBuilderSheet';
+import type { TripPlanItem, TripPlanCategory } from '../types/models.ts';
+import { fetchTripPlan, fetchTripPlanMap, type TripPlanResult } from '../services/tripPlan.ts';
+import { usePlanSync } from '../hooks/usePlanSync.ts';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { AddToPlanSheet } from './AddToPlanSheet.tsx';
+import { TimelineView, type DayBucket } from './itinerary/TimelineView.tsx';
+import { ItineraryMapView } from './itinerary/MapView.tsx';
+import { PlanItemSheet } from './itinerary/PlanItemSheet.tsx';
+import { TripPlanSettingsSheet } from './TripPlanSettingsSheet.tsx';
+import { SafeReturnSetupSheet } from './safeReturn/SafeReturnSetupSheet.tsx';
+import { ActiveSafeReturnCard } from './safeReturn/ActiveSafeReturnCard.tsx';
+import { MissedCheckinPrompt } from './safeReturn/MissedCheckinPrompt.tsx';
+import { getSuggestion, getActiveSession } from '../services/safeReturn.ts';
+import { RouteBuilderSheet, type RouteStopDraft } from './RouteBuilderSheet.tsx';
 
 // ── Category filter data ───────────────────────────────────────────────────────
 
@@ -264,7 +264,7 @@ export function TripPlanSection({
   const [safeReturnSetupOpen, setSafeReturnSetupOpen] = useState(false);
   const [safeReturnChecking, setSafeReturnChecking] = useState(false);
   const [safeReturnSlowCheck, setSafeReturnSlowCheck] = useState(false);
-  const [activeSafeReturnSession, setActiveSafeReturnSession] = useState<import('../services/safeReturn').SafeReturnSession | null>(null);
+  const [activeSafeReturnSession, setActiveSafeReturnSession] = useState<import('../services/safeReturn.ts').SafeReturnSession | null>(null);
   const [showMissedPrompt, setShowMissedPrompt] = useState(false);
   const [routeBuilderOpen, setRouteBuilderOpen] = useState(false);
   const router = useRouter();
