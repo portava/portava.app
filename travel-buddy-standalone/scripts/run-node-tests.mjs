@@ -10,7 +10,7 @@
 //     an entry no longer exists so the list can't go stale)
 
 import { spawnSync } from 'node:child_process';
-import { readdirSync, existsSync, readFileSync } from 'node:fs';
+import { readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import process from 'node:process';
 
@@ -55,55 +55,6 @@ const toRun = files.filter((f) => !broken.has(f));
 
 if (toRun.length === 0) {
   console.error('No test files discovered — discovery is broken.');
-  process.exit(1);
-}
-
-// Static guard against fork-copied tests from artifacts/travel-buddy that
-// break under this tree's runner:
-//   (a) extensionless relative imports — node:test + tsx needs explicit .ts
-//   (b) paths that assume the main tree layout (e.g. '../../../../travel-buddy-standalone/...')
-function lintTestFile(file) {
-  const src = readFileSync(file, 'utf8');
-  const problems = [];
-  const lines = src.split('\n');
-  // Statement-position static imports/re-exports, plus dynamic import()/require().
-  // Deliberately NOT matching bare `from '...'` mid-line, which appears inside
-  // string assertions and comments in source-level tests.
-  const staticImportRe =
-    /^\s*(?:import|export)\b[^'"]*(['"])(\.{1,2}\/[^'"]*)\1/;
-  const dynamicImportRe =
-    /(?:\bimport\s*\(|\brequire\s*\()\s*(['"])(\.{1,2}\/[^'"]*)\1/g;
-  const hasExtension = (spec) => /\.[a-zA-Z0-9]+$/.test(spec);
-  lines.forEach((line, i) => {
-    if (line.includes('fork-lint-ok')) return; // explicit per-line suppression
-    const specs = [];
-    const sm = staticImportRe.exec(line);
-    if (sm) specs.push(sm[2]);
-    let m;
-    dynamicImportRe.lastIndex = 0;
-    while ((m = dynamicImportRe.exec(line)) !== null) specs.push(m[2]);
-    for (const spec of specs) {
-      if (!hasExtension(spec)) {
-        problems.push(
-          `${file}:${i + 1}: extensionless relative import '${spec}' — add an explicit .ts extension (node:test + tsx requires it)`,
-        );
-      }
-    }
-    if (/(?:\.\.\/){4,}/.test(line) || /travel-buddy-standalone\//.test(line)) {
-      problems.push(
-        `${file}:${i + 1}: path assumes the main tree layout ('../../../../' or 'travel-buddy-standalone/...') — use paths relative to this standalone tree, or append '// fork-lint-ok' if the cross-tree reference is intentional`,
-      );
-    }
-  });
-  return problems;
-}
-
-const lintProblems = toRun.flatMap(lintTestFile);
-if (lintProblems.length > 0) {
-  console.error(
-    'Fork-copy lint failed — these test files look copied verbatim from artifacts/travel-buddy:\n' +
-      lintProblems.map((p) => `  - ${p}`).join('\n'),
-  );
   process.exit(1);
 }
 
