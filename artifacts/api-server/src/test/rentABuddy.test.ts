@@ -3466,6 +3466,56 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
       "booking status must remain 'completed_pending_traveler_confirmation' when the batch update DB call errors",
     );
   });
+
+  it("auto_completed booking events and completion notifications are NOT written when the batch update errors", async () => {
+    // The event loop and notifyBookingParty calls are inside the same
+    // if (!autoCompleteErr) guard.  If a future refactor moves them outside,
+    // this test will catch it by asserting that neither side-effect fires when
+    // the status update DB call errors.
+    const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+
+    state = {
+      bookings: {
+        "bk-ac-side-effect-err": {
+          id: "bk-ac-side-effect-err",
+          traveler_id: USER_ID,
+          buddy_id: BUDDY_PROF,
+          status: "completed_pending_traveler_confirmation",
+          dispute_window_expires_at: PAST,
+        },
+      },
+      // Arm the update error so the rent_buddy_bookings status update fails.
+      updateErrorOverrides: {
+        rent_buddy_bookings: { message: "simulated DB error on auto-complete update", code: "23514" },
+      },
+    };
+
+    const r = await reqSweep();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    // No auto_completed booking events must have been inserted — the event loop
+    // is inside the guard and must not run when the status update fails.
+    const autoCompletedEvents = ((state as any).bookingEvents ?? []).filter(
+      (e: any) => e.event === "auto_completed",
+    );
+    assert.equal(
+      autoCompletedEvents.length,
+      0,
+      "no auto_completed booking events must be inserted when the batch status update DB call errors",
+    );
+
+    // No completion notifications must have been queued — notifyBookingParty
+    // is inside the same guard and must not fire when the update fails.
+    const notifications = (state as any).notifications ?? [];
+    assert.equal(
+      notifications.length,
+      0,
+      "no completion notifications must be queued when the batch status update DB call errors",
+    );
+  });
 });
 
 // ── No-show duplicate-report guard (canonical /no-show handler) ───────────────
