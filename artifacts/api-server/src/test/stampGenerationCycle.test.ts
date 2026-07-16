@@ -444,6 +444,52 @@ describe("runGenerationCycle — below-minimum run (1 of 3, STAMP_MIN_CANDIDATES
       false,
     );
   });
+
+  it("reaches retryable_failed when attempts are exhausted on a shortfall run", async () => {
+    // Simulate a job that has already used max_attempts - 1 attempts.
+    const exhaustedJob = { ...JOB, attempts: 2, max_attempts: 3 };
+
+    const { sc, updates, inserts } = makeFakeClientWithStorage({
+      jobOverride: exhaustedJob,
+    });
+    _setTestServiceClient(sc);
+    // Provider returns only 1 candidate — below STAMP_MIN_CANDIDATES=2.
+    _setTestStampImageProvider(makeFakeProvider(1));
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+
+    // No version rows must be inserted for a failed run.
+    assert.equal(inserts.length, 0);
+
+    // No review_required update at all.
+    assert.equal(
+      updates.some((u) => u.payload.status === "review_required"),
+      false,
+      "a below-minimum run must never reach review_required",
+    );
+
+    // With attempts 2 + 1 = 3 >= max_attempts 3, status must be retryable_failed.
+    const fail = updates.find(
+      (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
+    );
+    assert.ok(fail, "must record a failure update");
+    assert.equal(
+      fail!.payload.status,
+      "retryable_failed",
+      "exhausted shortfall attempts must produce retryable_failed, not queued",
+    );
+    assert.equal(fail!.payload.attempts, 3);
+    assert.ok(
+      typeof fail!.payload.last_error === "string" &&
+        fail!.payload.last_error.startsWith(CANDIDATE_SHORTFALL_PREFIX),
+      `last_error must carry the shortfall prefix, got: ${fail!.payload.last_error}`,
+    );
+    assert.equal(fail!.payload.locked_until, null);
+    assert.equal(fail!.payload.locked_by, null);
+    assert.deepEqual(fail!.eqFilters, [["id", "job-1"]]);
+  });
 });
 
 // ── Real-image path (http URLs): download + storage upload ────────────────────

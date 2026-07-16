@@ -655,4 +655,72 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     assert.deepEqual(cleanedUpKeys[0], ["berlin"],
       "sweep cleaned up the correct city_key tombstone");
   });
+
+  it("tombstone hard-delete is guarded by deleted_at IS NOT NULL — a row revived before the DELETE survives", async () => {
+    // Regression guard for a race condition: the sweep SELECTs tombstoned rows,
+    // then hard-DELETEs them. Between those two operations an admin PUT can
+    // clear deleted_at (reviving the row). Without a guard the DELETE would
+    // remove the now-live corrected row.
+    //
+    // This test verifies the DELETE chain includes
+    //   .not("deleted_at", "is", null)
+    // so only rows that are still tombstoned at DELETE-time are removed.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let deleteNotCol: string | undefined;
+    let deleteNotFilter: string | undefined;
+    let deleteNotVal: string | undefined;
+
+    let sweepQueryCount = 0;
+    const sweepClient = {
+      from(_table: string) {
+        let isDelete = false;
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not(col: string, filter: string, val: string) {
+            if (isDelete) {
+              deleteNotCol = col;
+              deleteNotFilter = filter;
+              deleteNotVal = val;
+            }
+            return chain;
+          },
+          delete() { isDelete = true; return chain; },
+          in(_col: string, _keys: string[]) { return chain; },
+          then(resolve: (v: any) => void) {
+            if (isDelete) { resolve({ error: null }); return; }
+            const q = sweepQueryCount++;
+            if (q === 0) {
+              resolve({ data: [], error: null }); // pass 1: corrected_at
+            } else {
+              resolve({ data: [{ city_key: "oslo" }], error: null }); // pass 2: deleted_at
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(sweepClient);
+    await _runCorrectionSweepForTests();
+
+    assert.equal(
+      deleteNotCol,
+      "deleted_at",
+      "hard-delete must chain .not() on the deleted_at column to guard against revived rows",
+    );
+    assert.equal(
+      deleteNotFilter,
+      "is",
+      "hard-delete .not() guard must use the 'is' filter",
+    );
+    assert.equal(
+      deleteNotVal,
+      null,
+      "hard-delete .not() guard must check for null — only tombstoned rows should be removed",
+    );
+  });
 });
