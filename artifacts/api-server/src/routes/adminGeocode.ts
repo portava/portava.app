@@ -94,9 +94,14 @@ router.delete("/admin/geocode-cache/:city_key", async (req, res) => {
     req.query.repair_catalog === "true" ||
     req.query.repair_catalog === "1";
 
+  // Soft-delete: write a tombstone so the background correction sweep can
+  // propagate this deletion to other instances within the next sweep cycle
+  // (≤ 5 minutes).  The sweep evicts in-memory entries for tombstoned rows,
+  // then hard-deletes the tombstone itself.  A hard delete here would make
+  // the row invisible to the sweep (deleted rows have no deleted_at to query).
   const { error } = await sc
     .from(DB_CACHE_TABLE)
-    .delete()
+    .update({ deleted_at: new Date().toISOString() })
     .eq("city_key", cityKey);
 
   if (error) return sendError(res, "db_error", error.message);
@@ -169,6 +174,9 @@ router.put("/admin/geocode-cache/:city_key", async (req, res) => {
       country_code: normalised_code,
       updated_at: now,
       corrected_at: now,
+      // Revive any soft-deleted (tombstoned) row so the sweep doesn't
+      // treat this correction as a deletion and hard-delete it next cycle.
+      deleted_at: null,
     },
     { onConflict: "city_key" },
   );

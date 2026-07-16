@@ -118,7 +118,8 @@ function makeFakeClient(opts: {
       if (table === "city_country_geocode_cache") {
         return {
           select: (_cols: string) => builder(cacheRows),
-          delete: () => ({
+          // DELETE handler now soft-deletes (update deleted_at) instead of hard-deleting.
+          update: (_fields: Record<string, unknown>) => ({
             eq: (_col: string, key: string) => {
               onDelete?.(key);
               return Promise.resolve({ data: null, error: deleteError ? { message: deleteError } : null });
@@ -493,7 +494,8 @@ function makeDeleteRepairClient(opts: {
       if (table === "city_country_geocode_cache") {
         return {
           select: (_cols: string) => builder([]),
-          delete: () => ({
+          // DELETE handler now soft-deletes via update(deleted_at).
+          update: (_fields: Record<string, unknown>) => ({
             eq: (_col: string, _key: string) =>
               Promise.resolve({ data: null, error: deleteError ? { message: deleteError } : null }),
           }),
@@ -1061,7 +1063,8 @@ describe("DELETE /admin/geocode-cache/:city_key with repair_catalog", () => {
         if (table === "city_country_geocode_cache") {
           return {
             select: (_cols: string) => builder([]),
-            delete: () => ({
+            // DELETE handler soft-deletes via update(deleted_at) — track that call.
+            update: (_fields: Record<string, unknown>) => ({
               eq: (_col: string, _key: string) => {
                 deleteCallCount += 1;
                 return Promise.resolve({ data: null, error: null });

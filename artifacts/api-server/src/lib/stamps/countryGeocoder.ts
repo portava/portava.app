@@ -83,26 +83,52 @@ const CORRECTION_SWEEP_WINDOW_MS = 60 * 60 * 1_000; // look back 1 hour
 async function runCorrectionSweep(): Promise<void> {
   const sc = dbClient();
   if (!sc) return;
+  const since = new Date(Date.now() - CORRECTION_SWEEP_WINDOW_MS).toISOString();
+
+  // Pass 1 — admin corrections (corrected_at updated on existing rows).
   try {
-    const since = new Date(Date.now() - CORRECTION_SWEEP_WINDOW_MS).toISOString();
     const { data, error } = await sc
       .from(DB_CACHE_TABLE)
       .select("city_key, corrected_at")
       .gte("corrected_at", since);
-    if (error || !data) return;
-    for (const row of data as Array<{ city_key: string; corrected_at: string }>) {
-      const entry = _cache.get(row.city_key);
-      if (!entry) continue;
-      const correctedMs = new Date(row.corrected_at).getTime();
-      if (entry.writtenAt < correctedMs) {
-        _cache.delete(row.city_key);
-        _pending.delete(row.city_key);
-        logEvent("stamp.country_geocode.sweep_evicted", { city_key: row.city_key });
+    if (!error && data) {
+      for (const row of data as Array<{ city_key: string; corrected_at: string }>) {
+        const entry = _cache.get(row.city_key);
+        if (!entry) continue;
+        const correctedMs = new Date(row.corrected_at).getTime();
+        if (entry.writtenAt < correctedMs) {
+          _cache.delete(row.city_key);
+          _pending.delete(row.city_key);
+          logEvent("stamp.country_geocode.sweep_evicted", { city_key: row.city_key });
+        }
       }
     }
   } catch {
-    // Best-effort — any transient DB error is silently swallowed so the sweep
-    // never crashes the process.
+    // Best-effort — transient DB errors are silently swallowed.
+  }
+
+  // Pass 2 — tombstoned rows (soft-deleted by the admin DELETE handler).
+  // Deleted rows have no corrected_at so they're invisible to pass 1.
+  // The sweep evicts in-memory entries for tombstoned cities, then hard-deletes
+  // the tombstone rows so they don't accumulate indefinitely.
+  try {
+    const { data: tombstoned, error: tombErr } = await sc
+      .from(DB_CACHE_TABLE)
+      .select("city_key")
+      .gte("deleted_at", since)
+      .not("deleted_at", "is", null);
+    if (!tombErr && tombstoned && (tombstoned as any[]).length > 0) {
+      const keys = (tombstoned as Array<{ city_key: string }>).map((r) => r.city_key);
+      for (const key of keys) {
+        _cache.delete(key);
+        _pending.delete(key);
+        logEvent("stamp.country_geocode.sweep_tombstone_evicted", { city_key: key });
+      }
+      // Hard-delete the tombstone rows so they don't re-appear in future sweeps.
+      await sc.from(DB_CACHE_TABLE).delete().in("city_key", keys);
+    }
+  } catch {
+    // Best-effort — transient DB errors are silently swallowed.
   }
 }
 
@@ -212,14 +238,15 @@ async function evictIfDbCorrected(key: string, entry: CacheEntry): Promise<boole
   try {
     const { data, error } = await sc
       .from(DB_CACHE_TABLE)
-      .select("corrected_at")
+      .select("corrected_at, deleted_at")
       .eq("city_key", key)
       .maybeSingle();
     if (error) return false; // Transient DB error — keep the cache, retry next interval.
-    if (!data) {
-      // Row is gone (admin DELETE on another instance).  Evict so the next
-      // geocodeCityCountry call re-resolves from a fresh Nominatim lookup
-      // instead of serving the now-invalid stale entry indefinitely.
+    if (!data || (data as any).deleted_at) {
+      // Row is gone or soft-deleted (tombstoned by the admin DELETE handler on
+      // another instance).  Evict so the next geocodeCityCountry call
+      // re-resolves from a fresh Nominatim lookup instead of serving the
+      // now-invalid stale entry indefinitely.
       _cache.delete(key);
       _pending.delete(key);
       logEvent("stamp.country_geocode.deletion_evicted", { city_key: key });
@@ -244,10 +271,12 @@ async function readDbCache(key: string): Promise<GeocodedCountry | null> {
   try {
     const { data, error } = await sc
       .from(DB_CACHE_TABLE)
-      .select("country, country_code, corrected_at")
+      .select("country, country_code, corrected_at, deleted_at")
       .eq("city_key", key)
       .maybeSingle();
-    if (error || !data) return null;
+    // Treat tombstoned rows (deleted_at set) the same as "not found" so a
+    // soft-deleted row is never served as a cached positive result.
+    if (error || !data || (data as any).deleted_at) return null;
     return shapeResult((data as any).country_code, (data as any).country);
   } catch {
     return null;
@@ -264,6 +293,9 @@ async function writeDbCache(key: string, result: GeocodedCountry): Promise<void>
         country: result.country,
         country_code: result.countryCode,
         updated_at: new Date().toISOString(),
+        // Clear any soft-delete tombstone written by a prior admin deletion —
+        // this row now has a fresh geocode result and must be treated as live.
+        deleted_at: null,
       },
       { onConflict: "city_key" },
     );

@@ -2,25 +2,26 @@
  * Geocode DELETE propagation — stale-entry eviction on other instances.
  *
  * When an admin deletes a geocode-cache row via DELETE /admin/geocode-cache/:city_key,
- * the row is removed from the DB.  The instance that handled the request calls
- * evictGeocodeCacheKey() immediately, so its own in-memory cache is cleared.
- * Other instances, however, may still have a warm (positive) entry for that
- * city and will keep serving it until:
+ * the handler writes a soft-delete tombstone (deleted_at = now()) and calls
+ * evictGeocodeCacheKey() to clear the local in-memory entry immediately.
+ * Other instances may still have a warm (positive) entry for that city and
+ * will keep serving it until one of two mechanisms fires:
  *
- *   a) The 30-day TTL expires, or
- *   b) The periodic correction-check probe fires and discovers the row is gone.
+ *   a) On-request probe (evictIfDbCorrected): the next geocodeCityCountry call
+ *      for that city after the correction-check interval fires a DB probe,
+ *      finds deleted_at set, and evicts the stale entry.
  *
- * These tests confirm path (b): once the CORRECTION_CHECK_INTERVAL_MS window
- * elapses, the next geocodeCityCountry call probes the DB, finds the row
- * missing, evicts the stale entry, and re-resolves from Nominatim — without
- * waiting for a full 30-day TTL.
+ *   b) Background sweep: every 5 minutes the sweep queries deleted_at >= since,
+ *      evicts in-memory entries for all tombstoned cities, and hard-deletes the
+ *      tombstone rows — without waiting for any request to arrive for that city.
  *
- * They also verify that a plain DB *error* (transient, not a clean "not found")
- * does NOT evict, so a flaky connection never incorrectly invalidates the cache.
- *
- * The background sweep is also tested: it cannot detect deletions on its own
- * (it queries corrected_at, and deleted rows have no corrected_at) — the
- * on-request probe is the sole mechanism for cross-instance deletion propagation.
+ * These tests confirm:
+ *   1. Path (a): on-request probe evicts when deleted_at is found.
+ *   2. Path (a): a transient DB error does NOT evict (network blip ≠ deletion).
+ *   3. Path (a): after eviction a fresh Nominatim lookup is made (not stale served).
+ *   4. Hard-deleted rows (no deleted_at column) are invisible to the sweep —
+ *      the on-request probe remains the only mechanism for that case.
+ *   5. Path (b): sweep evicts a tombstoned city and cleans up the tombstone row.
  *
  * Run: node --import tsx/esm --test src/test/stampGeocodeDeletionPropagation.test.ts
  */
@@ -81,7 +82,11 @@ function fakeNominatim(
   };
 }
 
-/** Supabase client that returns `row` for maybeSingle() — or null when row is null (deleted). */
+/**
+ * Supabase client that returns `row` for maybySingle() — or null when row is
+ * null (deleted / not found).  Supports the probe path (maybySingle) and the
+ * sweep path (then on a select chain), both returning empty by default.
+ */
 function makeFixedDbClient(
   row: Record<string, unknown> | null,
   opts: { isError?: boolean; onCall?: () => void } = {},
@@ -93,6 +98,14 @@ function makeFixedDbClient(
         select() { return chain; },
         eq() { return chain; },
         gte() { return chain; },
+        not() { return chain; },
+        async maybySingle() {
+          opts.onCall?.();
+          if (opts.isError) {
+            return { data: null, error: { message: "connection refused" } };
+          }
+          return { data: row, error: null };
+        },
         async maybeSingle() {
           opts.onCall?.();
           if (opts.isError) {
@@ -126,6 +139,7 @@ function makePhasedDbClient(initialRow: Record<string, unknown>) {
         select() { return chain; },
         eq() { return chain; },
         gte() { return chain; },
+        not() { return chain; },
         async maybySingle() { return { data: null, error: null }; },
         async maybeSingle() {
           callCount++;
@@ -147,10 +161,53 @@ function makePhasedDbClient(initialRow: Record<string, unknown>) {
   };
 }
 
+/**
+ * Build a sweep-path client that returns tombstoned rows on the second query
+ * (deleted_at pass) and empty on the first (corrected_at pass).
+ * Tracks the city_key list passed to the cleanup hard-delete call.
+ */
+function makeTombstoneSweepClient(
+  tombstonedRows: Array<{ city_key: string }>,
+  onCleanupDelete?: (keys: string[]) => void,
+): SupabaseClient {
+  let sweepQueryCount = 0;
+  return {
+    from(_table: string) {
+      let isDelete = false;
+      const chain: any = {
+        select() { return chain; },
+        eq() { return chain; },
+        gte() { return chain; },
+        not() { return chain; },
+        delete() { isDelete = true; return chain; },
+        in(_col: string, keys: string[]) {
+          onCleanupDelete?.(keys);
+          return chain;
+        },
+        then(resolve: (v: any) => void) {
+          if (isDelete) {
+            resolve({ error: null });
+            return;
+          }
+          const q = sweepQueryCount++;
+          if (q === 0) {
+            // First sweep pass: corrected_at — nothing to evict
+            resolve({ data: [], error: null });
+          } else {
+            // Second sweep pass: deleted_at — return the tombstoned rows
+            resolve({ data: tombstonedRows, error: null });
+          }
+        },
+      };
+      return chain;
+    },
+  } as unknown as SupabaseClient;
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("geocode DELETE cross-instance propagation", () => {
-  it("evicts a stale entry when the on-request probe finds the DB row has been deleted", async () => {
+  it("evicts a stale entry when the on-request probe finds deleted_at set (tombstoned row)", async () => {
     const T0 = 1_700_000_000_000;
     mockNow(T0);
 
@@ -163,11 +220,12 @@ describe("geocode DELETE cross-instance propagation", () => {
       };
     });
 
-    // Phase 1: DB has the row — initial warm-up uses DB cache directly.
+    // Phase 1: DB has the live row — initial warm-up uses DB cache directly.
     const { client, switchToDeleted, getCallCount } = makePhasedDbClient({
       country: "Japan",
       country_code: "JP",
       corrected_at: null,
+      deleted_at: null,
     });
     _setGeocodeDbClientForTests(client);
 
@@ -176,7 +234,7 @@ describe("geocode DELETE cross-instance propagation", () => {
     // Should have loaded from DB cache without calling Nominatim.
     assert.equal(nominatimCalls, 0, "no Nominatim call when DB cache hits");
 
-    // Phase 2: Simulate DELETE on another instance — the DB row is now gone.
+    // Phase 2: Simulate soft-delete on another instance — deleted_at is now set.
     switchToDeleted();
 
     // Before the check interval elapses the probe must NOT fire.
@@ -185,7 +243,7 @@ describe("geocode DELETE cross-instance propagation", () => {
     assert.equal(beforeInterval?.countryCode, "JP", "stale entry still served before interval");
     assert.equal(nominatimCalls, 0, "no re-resolve before interval");
 
-    // Advance past the correction-check interval — probe fires, finds row gone, evicts.
+    // Advance past the correction-check interval — probe fires, finds deleted_at, evicts.
     mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000);
     const afterDeletion = await geocodeCityCountry("Tokyo");
 
@@ -207,7 +265,7 @@ describe("geocode DELETE cross-instance propagation", () => {
 
     // Initial load from DB cache.
     _setGeocodeDbClientForTests(
-      makeFixedDbClient({ country: "Japan", country_code: "JP", corrected_at: null }),
+      makeFixedDbClient({ country: "Japan", country_code: "JP", corrected_at: null, deleted_at: null }),
     );
     const first = await geocodeCityCountry("Osaka");
     assert.equal(first?.countryCode, "JP");
@@ -252,13 +310,14 @@ describe("geocode DELETE cross-instance propagation", () => {
       country: "South Korea",
       country_code: "KR",
       corrected_at: null,
+      deleted_at: null,
     });
     _setGeocodeDbClientForTests(client);
 
     await geocodeCityCountry("Seoul");
     assert.equal(nominatimResults.length, 0, "DB cache hit — no Nominatim call");
 
-    // Admin deletes the row on another instance.
+    // Admin soft-deletes the row on another instance.
     switchToDeleted();
 
     mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000);
@@ -432,7 +491,7 @@ describe("geocode DELETE cross-instance propagation", () => {
     assert.equal(nominatimCalls, 2, "Nominatim called again after the TTL expired");
   });
 
-  it("sweep does NOT evict a deleted city — deletion propagation relies solely on the on-request probe", async () => {
+it("sweep does NOT evict a hard-deleted city — the on-request probe handles rows with no deleted_at tombstone", async () => {
     const T0 = 1_700_000_000_000;
     mockNow(T0);
 
@@ -447,21 +506,22 @@ describe("geocode DELETE cross-instance propagation", () => {
 
     // Seed the in-memory cache via a DB load.
     _setGeocodeDbClientForTests(
-      makeFixedDbClient({ country: "Germany", country_code: "DE", corrected_at: null }),
+      makeFixedDbClient({ country: "Germany", country_code: "DE", corrected_at: null, deleted_at: null }),
     );
     const first = await geocodeCityCountry("Berlin");
     assert.equal(first?.countryCode, "DE");
 
-    // Sweep DB returns empty results (deleted row has no corrected_at, so it
-    // doesn't appear in the sweep query at all).
+    // Sweep DB returns empty results for both passes: the hard-deleted row has
+    // neither corrected_at nor deleted_at visible to the sweep query.
     const sweepClient: SupabaseClient = {
       from(table: string) {
         assert.equal(table, "city_country_geocode_cache");
         const chain: any = {
           select() { return chain; },
           gte() { return chain; },
+          not() { return chain; },
           then(resolve: (v: any) => void) {
-            // No rows returned — the deleted row isn't visible to the sweep.
+            // No rows returned for either sweep pass — hard-deleted row is invisible.
             resolve({ data: [], error: null });
           },
         };
@@ -473,11 +533,126 @@ describe("geocode DELETE cross-instance propagation", () => {
     await _runCorrectionSweepForTests();
 
     // Sweep found nothing — cache entry should still be in memory.
-    // (Deletion propagation only happens via the on-request probe.)
+    // (For hard-deleted rows, eviction only happens via the on-request probe.)
     const afterSweep = await geocodeCityCountry("Berlin");
     assert.equal(afterSweep?.countryCode, "DE",
-      "sweep cannot detect deletions — stale entry is still in memory after sweep");
+      "sweep cannot detect hard-deleted rows — stale entry remains after sweep");
     assert.equal(nominatimCalls, 0,
-      "no re-resolve after sweep; on-request probe is needed to detect the deletion");
+      "no re-resolve after sweep; on-request probe is needed for hard-deleted rows");
+  });
+
+  it("PUT correction after soft-delete is read by the geocoder — sweep does not remove the corrected row", async () => {
+    // Regression guard: the PUT handler must set deleted_at: null so the corrected
+    // row is never skipped by readDbCache or hard-deleted by the tombstone sweep.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "pt", country: "Portugal" } }],
+      };
+    });
+
+    // Step 1 — tombstoned row (state immediately after admin DELETE, before sweep).
+    // readDbCache must skip it and fall through to Nominatim.
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({
+        country: "Spain",
+        country_code: "ES",
+        corrected_at: null,
+        deleted_at: new Date(T0 - 1_000).toISOString(),
+      }),
+    );
+    const tombstonedResult = await geocodeCityCountry("Madrid");
+    assert.equal(tombstonedResult?.countryCode, "PT",
+      "tombstoned row is skipped — geocoder fell through to Nominatim");
+    assert.equal(nominatimCalls, 1, "Nominatim called because tombstoned row was skipped");
+
+    // Clear the cache so the next call hits the DB fresh.
+    _clearCountryGeocodeCache();
+    nominatimCalls = 0;
+
+    // Step 2 — corrected row after PUT (deleted_at: null).
+    // readDbCache must return the corrected result, not skip it.
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({
+        country: "Portugal",
+        country_code: "PT",
+        corrected_at: new Date(T0).toISOString(),
+        deleted_at: null, // PUT cleared the tombstone
+      }),
+    );
+    const correctedResult = await geocodeCityCountry("Madrid");
+    assert.equal(correctedResult?.countryCode, "PT",
+      "revived row (deleted_at: null) is served from the DB — not skipped");
+    assert.equal(nominatimCalls, 0,
+      "no Nominatim call — corrected DB row hit directly");
+
+    // Step 3 — sweep must NOT evict the corrected entry (deleted_at is null).
+    const cleanedUpKeys: string[][] = [];
+    _setGeocodeDbClientForTests(
+      makeTombstoneSweepClient([], (keys) => { cleanedUpKeys.push(keys); }),
+    );
+    await _runCorrectionSweepForTests();
+    assert.equal(cleanedUpKeys.length, 0,
+      "sweep found no tombstones — corrected row not hard-deleted");
+
+    // Cache entry still serves PT after the sweep.
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({ country: "Portugal", country_code: "PT", corrected_at: new Date(T0).toISOString(), deleted_at: null }),
+    );
+    const afterSweep = await geocodeCityCountry("Madrid");
+    assert.equal(afterSweep?.countryCode, "PT",
+      "geocoder still returns PT after sweep — entry was not evicted");
+  });
+
+  it("sweep evicts a tombstoned city and cleans up the tombstone row within one cycle", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "de", country: "Germany" } }],
+      };
+    });
+
+    // Phase 1: seed the in-memory cache via a DB load.
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({ country: "Germany", country_code: "DE", corrected_at: null, deleted_at: null }),
+    );
+    const first = await geocodeCityCountry("Berlin");
+    assert.equal(first?.countryCode, "DE", "pre-condition: initial load returns DE");
+    assert.equal(nominatimCalls, 0, "DB cache hit — no Nominatim call during seed");
+
+    // Phase 2: switch to a sweep client that reports "berlin" as tombstoned.
+    // The sweep should evict the in-memory entry and hard-delete the tombstone.
+    const cleanedUpKeys: string[][] = [];
+    const sweepClient = makeTombstoneSweepClient(
+      [{ city_key: "berlin" }],
+      (keys) => { cleanedUpKeys.push(keys); },
+    );
+    _setGeocodeDbClientForTests(sweepClient);
+
+    await _runCorrectionSweepForTests();
+
+    // Phase 3: verify the sweep evicted the entry.
+    // Switch to a null DB client so the next geocodeCityCountry falls through to Nominatim.
+    _setGeocodeDbClientForTests(makeFixedDbClient(null));
+    const afterSweep = await geocodeCityCountry("Berlin");
+
+    assert.equal(nominatimCalls, 1,
+      "Nominatim called once — sweep eviction forced a fresh lookup");
+    assert.equal(afterSweep?.countryCode, "DE",
+      "fresh Nominatim lookup still returns DE");
+    assert.equal(cleanedUpKeys.length, 1,
+      "sweep issued exactly one cleanup hard-delete call");
+    assert.deepEqual(cleanedUpKeys[0], ["berlin"],
+      "sweep cleaned up the correct city_key tombstone");
   });
 });
