@@ -3435,6 +3435,82 @@ describe("PushRetryQueue.processQueue() — clearDeadTokens throws during partia
       "delivery_attempt error_message must mirror last_error ('DeviceNotRegistered × 2')",
     );
   });
+
+  it("final-attempt single-dead-token stays 'failed' (attempt_count=3, last_error='DeviceNotRegistered × 1') when clearDeadTokens throws", async () => {
+    // attempt_count=2, max_attempts=3 → this run is the 3rd and final attempt.
+    // One token returns DeviceNotRegistered (result.sent === 0, result.retryable === false).
+    // clearDeadTokens throws — confirms the isolated inner try/catch swallows the error so the
+    // outer catch's else-branch (finalise as 'failed') is NOT needed to save the row.
+    // The row must be finalised by the normal exhausted-attempts path, not the catch path.
+    //
+    // Expected outcome:
+    //   - push_retry_queue → 'failed', attempt_count=3, last_error='DeviceNotRegistered × 1'
+    //   - notification_delivery_attempts → 'failed', error_message='DeviceNotRegistered × 1'
+    //   - NOT re-queued (no status='queued' update targeting QUEUE_ROW_ID)
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN],   // single token; will produce DeviceNotRegistered
+      payload:             BASE_PAYLOAD,
+      attempt_count:       2,              // final attempt: newAttemptCount will be 3 = max_attempts
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    // Single token returns DeviceNotRegistered → result.sent === 0, result.retryable === false
+    _setTestFetch(expoDeadTokenFetch("DeviceNotRegistered"));
+
+    // clearDeadTokens throws — must be swallowed by the inner isolated try/catch,
+    // NOT surface into the outer catch (which would set last_error to the Error message string)
+    _setTestClearDeadTokens(async (_db, _tokens) => {
+      throw new Error("transient DB error during dead-token cleanup — final single-dead attempt");
+    });
+
+    await queue.processQueue();
+
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+
+    // Must be finalised as 'failed' via the exhausted-attempts path
+    const failedUpdate = prqUpdates.find((c) => c.patch.status === "failed");
+    assert.ok(
+      failedUpdate,
+      "push_retry_queue must be finalised as 'failed' on the final single-dead-token attempt even when clearDeadTokens throws",
+    );
+    assert.equal(failedUpdate.filters.id,      QUEUE_ROW_ID, "failed update must target the correct queue row");
+    assert.equal(failedUpdate.patch.attempt_count, 3,        "attempt_count must be 3 (the final attempt number)");
+    assert.equal(
+      failedUpdate.patch.last_error,
+      "DeviceNotRegistered \u00d7 1",
+      "last_error must name the dead-token error code and count ('DeviceNotRegistered × 1')",
+    );
+
+    // Must NOT be re-queued — cleanup throw must stay inside the inner catch
+    const requeued = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(
+      !requeued,
+      "must NOT re-queue the row on the final attempt — even when clearDeadTokens throws",
+    );
+
+    // Delivery attempt must also be finalised as 'failed' with the dead-token error
+    const ndaUpdates2 = client.updateCalls.filter((c) => c.table === "notification_delivery_attempts");
+    assert.ok(ndaUpdates2.length > 0, "notification_delivery_attempts must be updated on final single-dead-token failure");
+    const ndaUpdate2 = ndaUpdates2[ndaUpdates2.length - 1];
+    assert.equal(ndaUpdate2.patch.status, "failed",   "delivery_attempt status must be 'failed'");
+    assert.equal(ndaUpdate2.filters.id,   ATTEMPT_ID, "delivery_attempt update must target the correct id");
+    assert.equal(
+      ndaUpdate2.patch.error_message,
+      "DeviceNotRegistered \u00d7 1",
+      "delivery_attempt error_message must mirror last_error ('DeviceNotRegistered × 1')",
+    );
+  });
 });
 
 
