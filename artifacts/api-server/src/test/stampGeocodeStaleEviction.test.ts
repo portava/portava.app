@@ -980,4 +980,57 @@ describe("staleness-eviction: corrected_at probe (continued)", () => {
     assert.equal(probeCount, 0,
       "correction probe must not run before the interval elapses");
   });
+
+  it("does not probe the DB before the interval elapses for a Nominatim-sourced entry where correctionCheckedAt is absent", async () => {
+    // When the DB has no persisted row the code falls through to forwardGeocodeCity
+    // (Nominatim).  The resulting CacheEntry is written WITHOUT correctionCheckedAt
+    // (see the forwardGeocodeCity branch in geocodeCityCountry).  The probe guard
+    // must fall back to `correctionCheckedAt ?? writtenAt` and still prevent an
+    // early re-probe within the same interval.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Set fetch BEFORE the DB client: _setGeocodeFetchForTests resets
+    // _dbClientOverride to null, so the DB client must be installed afterwards.
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "jp", country: "Japan" } }],
+    }));
+
+    let dbCallCount = 0;
+    const db = makeQueuedDbClient(
+      [
+        // call 0: readDbCache — no persisted row; falls through to Nominatim.
+        null,
+        // Any further call would be a correction probe — must NOT happen within the interval.
+        { corrected_at: new Date(T0 + 500).toISOString() },
+      ],
+      (idx) => { dbCallCount = idx + 1; },
+    );
+    _setGeocodeDbClientForTests(db);
+
+    // First call: DB miss → Nominatim hit → cache entry written WITHOUT correctionCheckedAt.
+    const first = await geocodeCityCountry("NominatimCity");
+    assert.equal(first?.countryCode, "JP",
+      "pre-condition: Nominatim-sourced entry should resolve to JP");
+    assert.equal(dbCallCount, 1,
+      "exactly one DB call for the initial readDbCache — no extra probe");
+
+    // Confirm the Nominatim path leaves correctionCheckedAt unset.
+    const entry = _getGeocodeCacheEntryForTests("nominatimcity");
+    assert.ok(entry, "pre-condition: cache entry must exist after Nominatim geocode");
+    assert.equal(entry.correctionCheckedAt, undefined,
+      "Nominatim-sourced entries must not set correctionCheckedAt — this is the fallback path under test");
+
+    // Advance by LESS than one full interval from writtenAt.
+    // Guard: lastCheck = correctionCheckedAt ?? writtenAt = writtenAt ≈ T0.
+    // (T0 + INTERVAL - 1_000) - T0 < INTERVAL → probe must NOT fire.
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS - 1_000);
+
+    const second = await geocodeCityCountry("NominatimCity");
+    assert.equal(second?.countryCode, "JP",
+      "should return the cached Nominatim result without probing the DB");
+    assert.equal(dbCallCount, 1,
+      "the correctionCheckedAt ?? writtenAt fallback must prevent a DB probe before the interval elapses");
+  });
 });
