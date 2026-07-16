@@ -2383,6 +2383,25 @@ describe("Rent a Buddy — rebook", () => {
     );
   });
 
+  it("rebook total_usd reflects buddy's current rate — not the original booking amount", async () => {
+    setupRebookState("completed");
+    // Original booking: duration_h=3, total_usd=75 (i.e. was priced at $25/h).
+    // Buddy has since raised their rate to $40/h.
+    // Rebooking the same duration should produce 40 * 3 = $120, not the original $75.
+    state.buddyProfiles![BUDDY_PROF].hourly_rate_usd = 40;
+    const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
+      bookingDate: FUTURE_DATE,
+      startTime: "10:00",
+      // durationH not sent — falls back to original's duration_h of 3
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(
+      r.body.booking?.total_usd,
+      120,
+      `total_usd should be 40 * 3 = 120 (new rate), not 75 (original booking amount); got ${r.body.booking?.total_usd}`,
+    );
+  });
+
   it("rebook for someone else's booking returns 403", async () => {
     state = {
       featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
