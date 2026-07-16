@@ -409,6 +409,11 @@ router.patch("/admin/venues/:id/status", async (req, res) => {
   if (!admin) return;
   const { sc } = admin;
 
+  const { id } = req.params;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    sendError(res, "invalid_payload", "id must be a valid UUID"); return;
+  }
+
   const schema = z.object({
     status: z.enum(["active", "removed", "verified", "blocked", "provisional"]),
   });
