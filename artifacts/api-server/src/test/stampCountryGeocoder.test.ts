@@ -670,4 +670,61 @@ describe("background correction sweep", () => {
     assert.equal(r!.country, "France", "should return the admin-corrected country name from the DB");
     assert.ok(dbReads >= 2, "should have read the DB at least twice (sweep + readDbCache)");
   });
+
+  it("after sweep eviction falls back to Nominatim when the DB row was deleted — not null", async () => {
+    // Step 1: populate the in-memory cache with a stale entry (CA for Banff).
+    _setGeocodeFetchForTests(fakeNominatim({
+      "banff": { country_code: "ca", country: "Canada" },
+    }));
+    await geocodeCityCountry("Banff");
+    assert.equal(fetchCalls.length, 1, "first resolve should hit Nominatim");
+
+    // Step 2: the sweep DB returns a corrected_at that post-dates writtenAt,
+    // but readDbCache returns null — the admin DELETE removed the row entirely.
+    const correctedAt = new Date(Date.now() + 1_000).toISOString();
+    const deletedDb = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache");
+        let _isMaybeSingle = false;
+        const chain: any = {
+          select() { return chain; },
+          eq()     { return chain; },
+          gte()    { return chain; },
+          maybeSingle() { _isMaybeSingle = true; return chain; },
+          then(resolve: (v: any) => void) {
+            if (_isMaybeSingle) {
+              // readDbCache path: row was deleted — return null
+              resolve({ data: null, error: null });
+            } else {
+              // sweep path: report the corrected_at so the entry is evicted
+              resolve({ data: [{ city_key: "banff", corrected_at: correctedAt }], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    // Step 3: run the sweep — it should evict the stale CA entry.
+    _setGeocodeDbClientForTests(deletedDb);
+    await _runCorrectionSweepForTests();
+
+    // Step 4: set up Nominatim to return a fresh result (GB for illustration).
+    fetchCalls = [];
+    _setGeocodeFetchForTests(fakeNominatim({
+      "banff": { country_code: "gb", country: "United Kingdom" },
+    }));
+
+    // Re-inject the deleted DB client (setGeocodeFetch resets it).
+    _setGeocodeDbClientForTests(deletedDb);
+
+    // Step 5: geocodeCityCountry should fall through to Nominatim because
+    // the DB row is gone — not return null.
+    const r = await geocodeCityCountry("Banff");
+
+    assert.equal(fetchCalls.length, 1, "exactly one Nominatim call should be made after deletion eviction");
+    assert.ok(r !== null, "should return a resolved result — not stuck returning null");
+    assert.equal(r!.countryCode, "GB", "should return the fresh Nominatim country code");
+    assert.equal(r!.country, "United Kingdom", "should return the fresh Nominatim country name");
+  });
 });
