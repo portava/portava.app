@@ -114,8 +114,8 @@ function ArrivalStamp() {
 function PassportVerifiedStamp() {
   return (
     <Svg
-      width={26}
-      height={26}
+      width={22}
+      height={22}
       viewBox="0 0 30 30"
       accessibilityLabel="Verified traveler"
     >
@@ -142,7 +142,7 @@ function TrustScoreBar({ score, onPress }: { score: number; onPress?: () => void
   return (
     <Pressable style={s.trustCard} onPress={onPress} disabled={!onPress} hitSlop={8}>
       <View style={s.trustCardRow}>
-        <ShieldCheck size={13} color={GREEN_STAMP} strokeWidth={2.5} />
+        <ShieldCheck size={14} color={GREEN_STAMP} strokeWidth={2.5} />
         <Text style={s.trustCardLabel}>TRUST SCORE</Text>
         <Text style={s.trustCardScore}>{Math.round(score)}</Text>
         <Text style={s.trustCardTotal}>/100</Text>
@@ -165,7 +165,7 @@ export function StatTicket({ n, label, onPress, iconOnly }: StatItem & { iconOnl
     <Pressable style={st.statTicket} onPress={onPress} disabled={!onPress} hitSlop={6}>
       {iconOnly ? (
         <View style={[st.statIconBg, { backgroundColor: bg }]}>
-          <Icon size={16} color={color} strokeWidth={1.8} />
+          <Icon size={18} color={color} strokeWidth={1.8} />
         </View>
       ) : null}
       <Text style={[st.statN, { color }]}>{n}</Text>
@@ -323,7 +323,7 @@ export function PassportIdentityCard({
                     {coverUploading ? (
                       <ActivityIndicator size="small" color="#fff" />
                     ) : (
-                      <Camera size={13} color="#fff" strokeWidth={2} />
+                      <Camera size={15} color="#fff" strokeWidth={2} />
                     )}
                   </Pressable>
                 ) : null}
@@ -358,7 +358,7 @@ export function PassportIdentityCard({
               {/* Interests tags */}
               {interests.length > 0 ? (
                 <View style={s.tagsRow}>
-                  <Globe size={12} color={MUTED} strokeWidth={1.8} />
+                  <Globe size={14} color={MUTED} strokeWidth={1.8} />
                   <Text style={s.tagsText} numberOfLines={1}>
                     {interests.join(' · ')}
                   </Text>
@@ -368,7 +368,7 @@ export function PassportIdentityCard({
               {/* Location */}
               {locationLine ? (
                 <View style={s.locationRow}>
-                  <MapPin size={12} color={MUTED} strokeWidth={1.8} />
+                  <MapPin size={14} color={MUTED} strokeWidth={1.8} />
                   <Text style={s.locationText} numberOfLines={1}>{locationLine}</Text>
                 </View>
               ) : null}
@@ -382,7 +382,7 @@ export function PassportIdentityCard({
                     hitSlop={12}
                     accessibilityLabel="Saved places"
                   >
-                    <Bookmark size={16} color={INK} strokeWidth={1.8} />
+                    <Bookmark size={18} color={INK} strokeWidth={1.8} />
                   </Pressable>
                   <Pressable
                     style={s.actionIcon}
@@ -390,7 +390,7 @@ export function PassportIdentityCard({
                     hitSlop={12}
                     accessibilityLabel="Edit profile"
                   >
-                    <UserCircle2 size={16} color={INK} strokeWidth={1.8} />
+                    <UserCircle2 size={18} color={INK} strokeWidth={1.8} />
                   </Pressable>
                 </View>
               ) : (
@@ -405,12 +405,12 @@ export function PassportIdentityCard({
                       <ActivityIndicator size="small" color="#fff" />
                     ) : isFollowing ? (
                       <>
-                        <UserCheck size={13} color="#fff" strokeWidth={2} />
+                        <UserCheck size={14} color="#fff" strokeWidth={2} />
                         <Text style={s.followPillText}>Following</Text>
                       </>
                     ) : (
                       <>
-                        <UserPlus size={13} color="#fff" strokeWidth={2} />
+                        <UserPlus size={14} color="#fff" strokeWidth={2} />
                         <Text style={s.followPillText}>Follow</Text>
                       </>
                     )}
@@ -553,7 +553,7 @@ const s = StyleSheet.create({
     marginBottom: 2,
   },
   travelerLabel: {
-    fontSize: 8,
+    fontSize: 10,
     fontWeight: '700',
     letterSpacing: 2,
     color: MUTED,
@@ -566,14 +566,14 @@ const s = StyleSheet.create({
     flexWrap: 'nowrap',
   },
   displayName: {
-    fontSize: 22,
+    fontSize: 26,
     fontWeight: '800',
     color: INK,
     letterSpacing: -0.5,
     flexShrink: 1,
   },
   handle: {
-    fontSize: 13,
+    fontSize: 14,
     color: MUTED,
     fontWeight: '400',
     marginTop: -2,
@@ -595,7 +595,7 @@ const s = StyleSheet.create({
     gap: 4,
   },
   trustCardLabel: {
-    fontSize: 8,
+    fontSize: 10,
     fontWeight: '700',
     letterSpacing: 1.5,
     color: GREEN_STAMP,
@@ -607,7 +607,7 @@ const s = StyleSheet.create({
     color: GREEN_STAMP,
   },
   trustCardTotal: {
-    fontSize: 10,
+    fontSize: 11,
     color: MUTED,
   },
   trustBarBg: {
@@ -628,7 +628,7 @@ const s = StyleSheet.create({
     gap: 4,
   },
   tagsText: {
-    fontSize: 11,
+    fontSize: 13,
     color: MUTED,
     flex: 1,
   },
@@ -640,7 +640,7 @@ const s = StyleSheet.create({
     gap: 4,
   },
   locationText: {
-    fontSize: 11,
+    fontSize: 13,
     color: MUTED,
     flex: 1,
   },
@@ -681,7 +681,7 @@ const s = StyleSheet.create({
     backgroundColor: '#0D9B6F',
   },
   followPillText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
     color: '#fff',
   },
@@ -707,20 +707,20 @@ const st = StyleSheet.create({
     minWidth: 44,
   },
   statIconBg: {
-    width: 34,
-    height: 34,
+    width: 32,
+    height: 32,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 2,
   },
   statN: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '800',
     letterSpacing: -0.5,
   },
   statL: {
-    fontSize: 9,
+    fontSize: 11,
     color: MUTED,
     fontWeight: '500',
     textTransform: 'uppercase',
