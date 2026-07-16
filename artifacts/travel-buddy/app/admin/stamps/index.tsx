@@ -26,6 +26,7 @@ type StatusCounts = {
   approved: number;
   rejected: number;
   archived: number;
+  retryable_failed: number;
 };
 
 export default function StampStudioIndex() {
@@ -33,7 +34,7 @@ export default function StampStudioIndex() {
   useRequireAdmin();
 
   const [statusCounts, setStatusCounts] = useState<StatusCounts>({
-    pending_artwork: 0, review_required: 0, approved: 0, rejected: 0, archived: 0,
+    pending_artwork: 0, review_required: 0, approved: 0, rejected: 0, archived: 0, retryable_failed: 0,
   });
   const [recentEntries, setRecentEntries] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,6 +105,10 @@ export default function StampStudioIndex() {
             <Pressable style={styles.linkRow} onPress={() => router.push('/admin/stamps/queue?status=review_required' as any)}>
               <AlertTriangle size={18} color="#3B82F6" strokeWidth={2} />
               <Text style={styles.linkText}>Review pending artwork ({statusCounts.review_required ?? 0})</Text>
+            </Pressable>
+            <Pressable style={styles.linkRow} onPress={() => router.push('/admin/stamps/failed' as any)}>
+              <XCircle size={18} color="#EF4444" strokeWidth={2} />
+              <Text style={styles.linkText}>Failed generation jobs ({statusCounts.retryable_failed ?? 0})</Text>
             </Pressable>
           </View>
 

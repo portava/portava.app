@@ -214,6 +214,7 @@ router.get("/admin/stamps/catalog", async (req, res) => {
     rejected: 0,
     archived: 0,
     review_required: 0,
+    retryable_failed: 0,
   };
 
   // Queue review_required count
@@ -223,6 +224,14 @@ router.get("/admin/stamps/catalog", async (req, res) => {
     .eq("status", "review_required");
 
   statusCounts.review_required = reviewCount ?? 0;
+
+  // Queue retryable_failed count (jobs that exhausted retries)
+  const { count: failedCount } = await sc
+    .from("stamp_generation_queue")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "retryable_failed");
+
+  statusCounts.retryable_failed = failedCount ?? 0;
 
   for (const row of ((counts ?? []) as any[])) {
     if (statusCounts[row.status] !== undefined) {
@@ -631,6 +640,53 @@ router.post("/admin/stamps/catalog/:id/regenerate", async (req, res) => {
   });
 
   res.json({ ok: true });
+});
+
+// ── POST /admin/stamps/queue/:jobId/requeue ───────────────────────────────────
+// Re-queue a generation job stuck in retryable_failed (resets attempts to 0).
+
+router.post("/admin/stamps/queue/:jobId/requeue", async (req, res) => {
+  const { jobId } = req.params;
+  if (!isUuid(jobId)) { sendError(res, "invalid_payload", "Invalid job id"); return; }
+
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { userId: adminId, sc } = admin;
+
+  const { data, error } = await sc
+    .from("stamp_generation_queue")
+    .update({
+      status:       "queued",
+      attempts:     0,
+      last_error:   null,
+      locked_until: null,
+      locked_by:    null,
+      updated_at:   new Date().toISOString(),
+    })
+    .eq("id", jobId)
+    .eq("status", "retryable_failed") // Guard: only re-queue failed jobs
+    .select("id, catalog_id, status, attempts")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  if (!data) {
+    sendError(res, "not_found", "Job not found or not in retryable_failed status");
+    return;
+  }
+
+  await writeAuditLog(sc, adminId, "requeue_failed_job", {
+    catalogId: (data as any).catalog_id,
+    notes:     `Re-queued failed generation job ${jobId}`,
+  });
+
+  console.log(JSON.stringify({
+    event:      "stamp.queue.requeued",
+    job_id:     jobId,
+    catalog_id: (data as any).catalog_id,
+    admin_id:   adminId,
+  }));
+
+  res.json({ job: data });
 });
 
 // ── POST /admin/stamps/catalog/:id/upload ─────────────────────────────────────

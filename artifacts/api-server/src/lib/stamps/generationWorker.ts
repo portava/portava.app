@@ -22,6 +22,57 @@ const WORKER_ID = `worker-${randomUUID()}`;
 const LOCK_DURATION_MS = 5 * 60 * 1_000; // 5 min pessimistic lock
 const STORAGE_BUCKET = "stamp-artwork";
 
+// Auto-requeue: retryable_failed jobs older than N hours get reset to queued.
+// Set STAMP_FAILED_REQUEUE_HOURS=0 to disable.
+const AUTO_REQUEUE_AFTER_HOURS = Number(process.env.STAMP_FAILED_REQUEUE_HOURS ?? "6");
+const AUTO_REQUEUE_CHECK_INTERVAL_MS = 10 * 60 * 1_000; // sweep at most every 10 min
+let _lastAutoRequeueAt = 0;
+
+// ── Auto-requeue of stale failed jobs ─────────────────────────────────────────
+
+/**
+ * Reset retryable_failed jobs whose last update is older than the configured
+ * threshold back to queued (attempts → 0) so the worker picks them up again.
+ * Returns the number of jobs re-queued. Accepts an injectable client for tests.
+ */
+export async function requeueStaleFailedJobs(scOverride?: any): Promise<number> {
+  if (!(AUTO_REQUEUE_AFTER_HOURS > 0)) return 0;
+
+  const sc = scOverride ?? getServiceClient();
+  if (!sc) return 0;
+
+  const cutoff = new Date(Date.now() - AUTO_REQUEUE_AFTER_HOURS * 3_600_000).toISOString();
+
+  const { data, error } = await sc
+    .from("stamp_generation_queue")
+    .update({
+      status:       "queued",
+      attempts:     0,
+      last_error:   null,
+      locked_until: null,
+      locked_by:    null,
+      updated_at:   new Date().toISOString(),
+    })
+    .eq("status", "retryable_failed")
+    .lt("updated_at", cutoff)
+    .select("id");
+
+  if (error) {
+    console.error(JSON.stringify({ event: "stamp.queue.auto_requeue_error", error: error.message }));
+    return 0;
+  }
+
+  const requeued = ((data ?? []) as any[]).length;
+  if (requeued > 0) {
+    console.log(JSON.stringify({
+      event:        "stamp.queue.auto_requeued",
+      count:        requeued,
+      older_than_h: AUTO_REQUEUE_AFTER_HOURS,
+    }));
+  }
+  return requeued;
+}
+
 // ── Image download + upload ───────────────────────────────────────────────────
 
 async function downloadImageBuffer(url: string): Promise<Buffer> {
@@ -62,6 +113,16 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
   if (!sc) {
     console.warn("[stamp-worker] Service client not available — skipping cycle");
     return { processed: false };
+  }
+
+  // Periodically sweep stale retryable_failed jobs back into the queue
+  if (Date.now() - _lastAutoRequeueAt > AUTO_REQUEUE_CHECK_INTERVAL_MS) {
+    _lastAutoRequeueAt = Date.now();
+    try {
+      await requeueStaleFailedJobs(sc);
+    } catch (e: any) {
+      console.error(JSON.stringify({ event: "stamp.queue.auto_requeue_error", error: e?.message }));
+    }
   }
 
   const now = new Date().toISOString();

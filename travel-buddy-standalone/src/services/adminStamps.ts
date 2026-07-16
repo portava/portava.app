@@ -139,7 +139,7 @@ export async function getAdminStampQueue(opts: {
   page?: number;
   limit?: number;
   status?: string;
-}): Promise<ApiResult<{ jobs: any[]; total: number; page: number }>> {
+}): Promise<ApiResult<{ jobs: GenerationQueueJob[]; total: number; page: number }>> {
   const params = new URLSearchParams();
   if (opts.page)   params.set('page',   String(opts.page));
   if (opts.limit)  params.set('limit',  String(opts.limit));
@@ -164,6 +164,30 @@ export async function rejectCatalogEntry(catalogId: string, reason: string): Pro
 
 export async function regenerateCatalogEntry(catalogId: string): Promise<ApiResult<any>> {
   return adminPost(`/api/admin/stamps/catalog/${catalogId}/regenerate`, {});
+}
+
+// ── Generation queue ───────────────────────────────────────────────────────────
+
+export interface GenerationQueueJob {
+  id: string;
+  catalog_id: string;
+  status: string;
+  priority: number;
+  attempts: number;
+  max_attempts: number;
+  last_error: string | null;
+  triggered_by_action: string | null;
+  created_at: string;
+  updated_at: string;
+  universal_stamp_catalog?: {
+    display_name: string;
+    stamp_type: string;
+    country_code: string;
+  } | null;
+}
+
+export async function requeueFailedJob(jobId: string): Promise<ApiResult<{ job: any }>> {
+  return adminPost(`/api/admin/stamps/queue/${jobId}/requeue`, {});
 }
 
 // ── Upload replacement ─────────────────────────────────────────────────────────
