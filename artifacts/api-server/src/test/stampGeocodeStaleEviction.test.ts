@@ -218,6 +218,49 @@ describe("staleness-eviction: corrected_at probe", () => {
       "correction probe must never fire for a negative (null) cache entry");
   });
 
+  it("does not re-probe within the same interval after a clean (non-evicting) check", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    silentFetch();
+
+    let dbCallCount = 0;
+    const db = makeQueuedDbClient(
+      [
+        // call 0: readDbCache — initial load
+        { country: "France", country_code: "FR", corrected_at: null },
+        // call 1: evictIfDbCorrected — no corrected_at → no eviction, correctionCheckedAt bumped
+        { corrected_at: null },
+        // Any further call would be a second probe — must not happen
+        { corrected_at: null },
+      ],
+      (idx) => { dbCallCount = idx + 1; },
+    );
+    _setGeocodeDbClientForTests(db);
+
+    // First call: populates the in-memory cache from the DB.
+    const first = await geocodeCityCountry("Lyon");
+    assert.equal(first?.countryCode, "FR", "first call should return FR");
+
+    // Advance past the correction-check interval so the probe fires on the second call.
+    const T1 = T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000;
+    mockNow(T1);
+
+    // Second call: triggers the probe (corrected_at is null → no eviction, timer reset to T1).
+    const second = await geocodeCityCountry("Lyon");
+    assert.equal(second?.countryCode, "FR", "second call should still return FR");
+    assert.equal(dbCallCount, 2, "exactly two DB calls after the second geocode");
+
+    // Advance time by LESS than one full interval from T1 — probe must NOT fire again.
+    mockNow(T1 + CORRECTION_CHECK_INTERVAL_MS - 1_000);
+
+    // Third call: must return cached value without triggering a new DB probe.
+    const third = await geocodeCityCountry("Lyon");
+    assert.equal(third?.countryCode, "FR", "third call should still return FR");
+    assert.equal(dbCallCount, 2,
+      "correctionCheckedAt was bumped after the clean probe — no second probe within the same interval");
+  });
+
   it("does not probe the DB before the check interval has elapsed", async () => {
     const T0 = 1_700_000_000_000;
     mockNow(T0);
