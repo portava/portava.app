@@ -1186,6 +1186,93 @@ describe("DELETE /admin/geocode-cache/:city_key with repair_catalog", () => {
     );
   });
 
+  it("counts only the exact city key — a city whose normalised form is a prefix of the key is not counted (port vs portland)", async () => {
+    // normCityKey uses strict equality (===), not substring matching.
+    // Deleting /admin/geocode-cache/portland must count only the "Portland"
+    // entry; the "Port" entry normalises to "port" which does not equal
+    // "portland", so it must be excluded.
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-exact-prefix-1",
+          canonical_location_key: "city:XX:port",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Port",       // normalises to "port" — must not match "portland"
+          neighborhood: null,
+          display_name: "Port",
+        },
+        {
+          id: "cat-exact-prefix-2",
+          canonical_location_key: "city:XX:portland",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Portland",
+          neighborhood: null,
+          display_name: "Portland",
+        },
+      ],
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/portland");
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.deleted, true);
+    assert.ok(!r.body.repair, "repair field must be absent — repair_catalog was not passed");
+    assert.equal(
+      r.body.xx_entries_pending,
+      1,
+      "only 'Portland' must be counted — 'Port' normalises to 'port', which does not equal 'portland'",
+    );
+  });
+
+  it("counts only the exact city key — a city whose normalised form is a superset of the key is not counted (portland vs port)", async () => {
+    // Deleting /admin/geocode-cache/port must count only the "Port" entry;
+    // the "Portland" entry normalises to "portland" which does not equal "port",
+    // so it must be excluded even though "port" is a prefix of "portland".
+    const client = makeDeleteRepairClient({
+      xxEntries: [
+        {
+          id: "cat-exact-suffix-1",
+          canonical_location_key: "city:XX:port",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Port",
+          neighborhood: null,
+          display_name: "Port",
+        },
+        {
+          id: "cat-exact-suffix-2",
+          canonical_location_key: "city:XX:portland",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Portland",   // normalises to "portland" — must not match "port"
+          neighborhood: null,
+          display_name: "Portland",
+        },
+      ],
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("DELETE", "/admin/geocode-cache/port");
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.deleted, true);
+    assert.ok(!r.body.repair, "repair field must be absent — repair_catalog was not passed");
+    assert.equal(
+      r.body.xx_entries_pending,
+      1,
+      "only 'Port' must be counted — 'Portland' normalises to 'portland', which does not equal 'port'",
+    );
+  });
+
   it("does not count a catalog re-key as successful when the DB update call fails", async () => {
     // The city resolves successfully (unresolvedCities must be empty), but the
     // DB write that re-keys the catalog entry returns an error.  The repair stats
@@ -3851,6 +3938,100 @@ describe("PUT /admin/geocode-cache/:city_key — xx_entries_pending", () => {
     assert.ok(r.body.repair, "repair stats must be present when repair_catalog=true");
     assert.equal(r.body.xx_entries_pending, undefined,
       "xx_entries_pending must be absent when repair_catalog=true — repair already ran");
+  });
+
+  it("counts only the exact city key — a city whose normalised form is a prefix of the key is not counted (port vs portland)", async () => {
+    // normCityKey uses strict equality (===), not substring matching.
+    // PUT /admin/geocode-cache/portland must count only the "Portland" entry;
+    // the "Port" entry normalises to "port" which does not equal "portland".
+    const client = makeRepairClient({
+      xxEntries: [
+        {
+          id: "cat-put-exact-prefix-1",
+          canonical_location_key: "city:XX:port",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Port",       // normalises to "port" — must not match "portland"
+          neighborhood: null,
+          display_name: "Port",
+        },
+        {
+          id: "cat-put-exact-prefix-2",
+          canonical_location_key: "city:XX:portland",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Portland",
+          neighborhood: null,
+          display_name: "Portland",
+        },
+      ],
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("PUT", "/admin/geocode-cache/portland", {
+      country_code: "US",
+      country: "United States",
+      // repair_catalog omitted
+    });
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.updated, true);
+    assert.ok(!r.body.repair, "repair field must be absent when repair_catalog is not set");
+    assert.equal(
+      r.body.xx_entries_pending,
+      1,
+      "only 'Portland' must be counted — 'Port' normalises to 'port', which does not equal 'portland'",
+    );
+  });
+
+  it("counts only the exact city key — a city whose normalised form is a superset of the key is not counted (portland vs port)", async () => {
+    // PUT /admin/geocode-cache/port must count only the "Port" entry;
+    // the "Portland" entry normalises to "portland" which does not equal "port",
+    // so it must be excluded even though "port" is a prefix of "portland".
+    const client = makeRepairClient({
+      xxEntries: [
+        {
+          id: "cat-put-exact-suffix-1",
+          canonical_location_key: "city:XX:port",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Port",
+          neighborhood: null,
+          display_name: "Port",
+        },
+        {
+          id: "cat-put-exact-suffix-2",
+          canonical_location_key: "city:XX:portland",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Portland",   // normalises to "portland" — must not match "port"
+          neighborhood: null,
+          display_name: "Portland",
+        },
+      ],
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("PUT", "/admin/geocode-cache/port", {
+      country_code: "GB",
+      country: "United Kingdom",
+      // repair_catalog omitted
+    });
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.updated, true);
+    assert.ok(!r.body.repair, "repair field must be absent when repair_catalog is not set");
+    assert.equal(
+      r.body.xx_entries_pending,
+      1,
+      "only 'Port' must be counted — 'Portland' normalises to 'portland', which does not equal 'port'",
+    );
   });
 });
 
