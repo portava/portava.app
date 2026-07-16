@@ -55,6 +55,10 @@ type Props = (SingleProps | RangeProps) & {
   minDate?: string;
   maxDate?: string;
   allowPast?: boolean;
+  /** ISO dates ("YYYY-MM-DD") that cannot be selected (e.g. buddy blocked/vacation days). */
+  disabledDates?: string[];
+  /** Optional note shown under the grid when disabledDates is non-empty. */
+  disabledDatesNote?: string;
   onCancel: () => void;
   title?: string;
 };
@@ -73,7 +77,8 @@ function buildGrid(year: number, month: number): (Date | null)[][] {
 }
 
 export function GlobalCalendarPicker(props: Props) {
-  const { visible, mode, minDate, maxDate, allowPast = false, onCancel, title } = props;
+  const { visible, mode, minDate, maxDate, allowPast = false, disabledDates, disabledDatesNote, onCancel, title } = props;
+  const disabledSet = React.useMemo(() => new Set(disabledDates ?? []), [disabledDates]);
   const insets = useSafeAreaInsets();
   const today = toMidnight(new Date());
 
@@ -114,7 +119,12 @@ export function GlobalCalendarPicker(props: Props) {
     if (!allowPast && isBeforeDay(d, today)) return true;
     if (minD && isBeforeDay(d, minD)) return true;
     if (maxD && isAfterDay(d, maxD)) return true;
+    if (disabledSet.size > 0 && disabledSet.has(toISODate(d))) return true;
     return false;
+  }
+
+  function isBlockedDate(d: Date): boolean {
+    return disabledSet.size > 0 && disabledSet.has(toISODate(d));
   }
 
   function prevMonth() {
@@ -187,16 +197,17 @@ export function GlobalCalendarPicker(props: Props) {
   function dayStyle(d: Date | null) {
     if (!d) return null;
     const disabled = isDisabled(d);
+    const blocked = isBlockedDate(d);
     const todayDay = isSameDay(d, today);
 
     if (mode === 'single') {
       const selected = singleSel && isSameDay(d, singleSel);
-      return { disabled, today: todayDay, selected: !!selected, inRange: false, rangeStart: false, rangeEnd: false };
+      return { disabled, blocked, today: todayDay, selected: !!selected, inRange: false, rangeStart: false, rangeEnd: false };
     } else {
       const isStart = rangeStart && isSameDay(d, rangeStart);
       const isEnd = rangeEnd && isSameDay(d, rangeEnd);
       const inRange = !!(rangeStart && rangeEnd && isBetweenDays(d, rangeStart, rangeEnd));
-      return { disabled, today: todayDay, selected: !!(isStart || isEnd), inRange, rangeStart: !!isStart, rangeEnd: !!isEnd };
+      return { disabled, blocked, today: todayDay, selected: !!(isStart || isEnd), inRange, rangeStart: !!isStart, rangeEnd: !!isEnd };
     }
   }
 
@@ -264,10 +275,12 @@ export function GlobalCalendarPicker(props: Props) {
                       s.dayCircle,
                       ds.selected && s.daySelected,
                       !ds.selected && ds.today && s.dayToday,
+                      ds.blocked && s.dayBlocked,
                     ]}>
                       <Text style={[
                         s.dayText,
                         ds.disabled && s.dayDisabled,
+                        ds.blocked && s.dayBlockedText,
                         ds.selected && s.daySelectedText,
                         !ds.selected && ds.today && s.dayTodayText,
                       ]}>
@@ -279,6 +292,13 @@ export function GlobalCalendarPicker(props: Props) {
               })}
             </View>
           ))}
+
+          {/* Blocked-dates note */}
+          {disabledSet.size > 0 && (
+            <Text style={s.blockedNote}>
+              {disabledDatesNote ?? 'Crossed-out dates are unavailable.'}
+            </Text>
+          )}
 
           {/* Summary + quick actions */}
           <View style={s.footer}>
@@ -359,6 +379,12 @@ const s = StyleSheet.create({
   dayToday: { borderWidth: 1.5, borderColor: color.signal },
   dayText: { ...t.body, color: color.ink, fontSize: 14 },
   dayDisabled: { color: color.faint },
+  dayBlocked: { backgroundColor: `${color.faint}22` },
+  dayBlockedText: { color: color.faint, textDecorationLine: 'line-through' },
+  blockedNote: {
+    ...t.small, color: color.mute, textAlign: 'center',
+    paddingHorizontal: space.sm, paddingTop: space.sm,
+  },
   daySelectedText: { color: color.onInk, fontWeight: '700' },
   dayTodayText: { color: color.signal, fontWeight: '600' },
   footer: {

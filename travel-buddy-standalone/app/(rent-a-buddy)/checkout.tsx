@@ -12,15 +12,15 @@ import { color, space, radius, type as t, shadow, layout } from '../../src/theme
 import { TravelLoadingState, TravelErrorState } from '../../src/components/primitives';
 import { Stamp } from '../../src/components/ui';
 import {
-  getBuddyProfile, createBooking,
-  type BuddyProfile, type BuddyPackage, type BuddyCategory,
+  getBuddyProfile, createBooking, getBuddyBlockedDates,
+  type BuddyProfile, type BuddyPackage, type BuddyCategory, type BuddyBlockedRange,
 } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlobalCalendarPicker } from '../../src/components/selectors/GlobalCalendarPicker';
 import { GlobalTimePicker } from '../../src/components/selectors/GlobalTimePicker';
 import { DurationPicker, type DurationOption } from '../../src/components/selectors/DurationPicker';
 import {
-  fromISODate, fromHHmm, formatDisplayDate, formatDisplayTime,
+  fromISODate, fromHHmm, formatDisplayDate, formatDisplayTime, toISODate,
 } from '../../src/lib/dateTime/formatters';
 
 type AsyncStorageStub = { setItem(k: string, v: string): Promise<void>; getItem(k: string): Promise<string | null> };
@@ -156,6 +156,7 @@ export default function RentABuddyCheckout() {
   const [duration, setDuration] = useState(2 * 3600);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
+  const [blockedRanges, setBlockedRanges] = useState<BuddyBlockedRange[]>([]);
   const [groupSize, setGroupSize] = useState(1);
   const [zoneIndex, setZoneIndex] = useState<number | null>(null);
   const [customZone, setCustomZone] = useState('');
@@ -184,6 +185,32 @@ export default function RentABuddyCheckout() {
   }, [buddyId, params.packageId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Load the buddy's blocked/vacation dates so the picker greys them out.
+  useEffect(() => {
+    if (!buddyId) return;
+    let alive = true;
+    getBuddyBlockedDates(buddyId).then((res) => {
+      if (alive && res.ok) setBlockedRanges(res.data.blocked ?? []);
+    });
+    return () => { alive = false; };
+  }, [buddyId]);
+
+  // Expand blocked ranges into individual ISO dates (capped at 366 days per range).
+  const blockedDates = React.useMemo(() => {
+    const out: string[] = [];
+    for (const r of blockedRanges) {
+      const start = fromISODate(r.startDate);
+      const end = fromISODate(r.endDate) ?? start;
+      if (!start || !end) continue;
+      const d = new Date(start);
+      for (let i = 0; i <= 366 && d <= end; i++) {
+        out.push(toISODate(d));
+        d.setDate(d.getDate() + 1);
+      }
+    }
+    return out;
+  }, [blockedRanges]);
 
   const hourlyRate = buddy?.hourlyRateUsd ?? 0;
 
@@ -217,6 +244,10 @@ export default function RentABuddyCheckout() {
   const handleBook = async () => {
     if (!buddy || !policyAccepted) return;
     if (!date.trim()) { Alert.alert('Missing date', 'Please select a booking date.'); return; }
+    if (blockedDates.includes(date)) {
+      Alert.alert('Date unavailable', 'This Buddy is not available on that date. Please pick another date.');
+      return;
+    }
     if (!location.trim()) { Alert.alert('Missing location', 'Please enter a meetup location.'); return; }
 
     const storage = getStorage();
@@ -496,6 +527,8 @@ export default function RentABuddyCheckout() {
         mode="single"
         value={date || null}
         allowPast={false}
+        disabledDates={blockedDates}
+        disabledDatesNote="Crossed-out dates are unavailable — this Buddy is away or fully blocked."
         onConfirm={(v) => { setDate(v ?? ''); setShowDatePicker(false); }}
         onCancel={() => setShowDatePicker(false)}
         title="Select booking date"
