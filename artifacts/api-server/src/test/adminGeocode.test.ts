@@ -3032,3 +3032,132 @@ describe("PUT /admin/geocode-cache/:city_key — xx_entries_pending", () => {
       "xx_entries_pending must be absent when repair_catalog=true — repair already ran");
   });
 });
+
+// ── DELETE then PUT — tombstone revival ───────────────────────────────────────
+
+describe("DELETE then PUT for the same city_key — tombstone revival", () => {
+  it("PUT clears deleted_at tombstone so readDbCache returns the new result", async () => {
+    let upsertedRow: any = null;
+    let softDeletedKey: string | null = null;
+
+    // A single fake client that handles both the DELETE (soft-delete via update)
+    // and the subsequent PUT (upsert that must clear deleted_at).
+    const client: any = {
+      auth: {
+        getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+      },
+      from: (table: string) => {
+        if (table === "profiles") {
+          return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+        }
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: (_cols: string) => builder([]),
+            // DELETE handler soft-deletes by calling update({ deleted_at: now }).eq(...)
+            update: (_fields: Record<string, unknown>) => ({
+              eq: (_col: string, key: string) => {
+                softDeletedKey = key;
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+            // PUT handler revives the row via upsert — must include deleted_at: null
+            upsert: (row: unknown, _opts?: unknown) => {
+              upsertedRow = row;
+              return Promise.resolve({ data: null, error: null });
+            },
+          };
+        }
+        // universal_stamp_catalog: return empty (xx_entries_pending: 0)
+        return builder([]);
+      },
+    };
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    // Step 1: DELETE — writes the tombstone (deleted_at = now()).
+    const deleteResp = await apiReq("DELETE", "/admin/geocode-cache/revivecity");
+    assert.equal(deleteResp.status, 200);
+    assert.equal(deleteResp.body.deleted, true);
+    assert.equal(softDeletedKey, "revivecity", "soft-delete should have targeted 'revivecity'");
+
+    // Step 2: PUT — re-adds the same city_key; the upsert must clear the tombstone.
+    const putResp = await apiReq("PUT", "/admin/geocode-cache/revivecity", {
+      country_code: "JP",
+      country: "Japan",
+    });
+    assert.equal(putResp.status, 200);
+    assert.equal(putResp.body.updated, true);
+    assert.equal(putResp.body.country_code, "JP");
+
+    // Step 3: Confirm the upserted payload included deleted_at: null.
+    assert.ok(upsertedRow, "PUT must have called upsert");
+    assert.equal(
+      upsertedRow.deleted_at,
+      null,
+      "upsert payload must set deleted_at: null to clear the tombstone",
+    );
+    assert.equal(upsertedRow.city_key, "revivecity");
+    assert.equal(upsertedRow.country_code, "JP");
+
+    // Step 4: readDbCache must return the revived result — not null.
+    // Point the geocoder at a DB that returns the row as live (deleted_at: null).
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests({
+      from: (table: string) => {
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  // Row is live — deleted_at is null so readDbCache must not skip it.
+                  data: { country: "Japan", country_code: "JP", corrected_at: null, deleted_at: null },
+                  error: null,
+                }),
+              }),
+            }),
+            upsert: () => Promise.resolve({ data: null, error: null }),
+          };
+        }
+        return {};
+      },
+    } as any);
+
+    const geocoded = await geocodeCityCountry("revivecity");
+    assert.ok(geocoded, "geocodeCityCountry must return a result after PUT revives the tombstoned row");
+    assert.equal(geocoded.countryCode, "JP", "revived entry must have country_code JP, not null");
+  });
+
+  it("readDbCache returns null when deleted_at is still set — tombstone not yet cleared", async () => {
+    // Confirm the inverse: if a row has deleted_at set, readDbCache skips it.
+    // This validates the guard that makes the tombstone-clearing test meaningful.
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests({
+      from: (table: string) => {
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  // Tombstoned row: deleted_at is set.
+                  data: { country: "Japan", country_code: "JP", corrected_at: null, deleted_at: "2026-01-01T00:00:00.000Z" },
+                  error: null,
+                }),
+              }),
+            }),
+            upsert: () => Promise.resolve({ data: null, error: null }),
+          };
+        }
+        return {};
+      },
+    } as any);
+
+    // geocodeCityCountry falls through readDbCache (returns null for tombstoned row)
+    // and then hits forwardGeocodeCity — our fake fetch returns empty, so result is null.
+    const result = await geocodeCityCountry("tombstonedcity");
+    assert.equal(
+      result,
+      null,
+      "readDbCache must return null for a tombstoned row (deleted_at set), forcing re-resolution",
+    );
+  });
+});
