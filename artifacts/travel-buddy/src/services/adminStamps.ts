@@ -74,12 +74,25 @@ export interface CatalogAuditEntry {
   created_at: string;
 }
 
+/**
+ * Shape of each row returned in the earnSample array of a catalog detail
+ * response. Using this type instead of `any` catches mismatched field names
+ * (e.g. wrong id / user_id / source_type / earned_at) at compile time rather
+ * than silently at runtime.
+ */
+export interface CatalogEarnSampleRow {
+  id: string;
+  user_id: string | null;
+  source_type: string;
+  earned_at: string;
+}
+
 export interface CatalogDetail {
   entry: CatalogEntry;
   versions: ArtworkVersion[];
   queue: GenerationQueueJob | null;
   audit: CatalogAuditEntry[];
-  earnSample: any[];
+  earnSample: CatalogEarnSampleRow[];
 }
 
 // ── Catalog list ───────────────────────────────────────────────────────────────

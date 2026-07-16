@@ -205,7 +205,7 @@ export default function StampCatalogDetail() {
         {earnSample.length > 0 ? (
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Recent Earners</Text>
-            {earnSample.map((r: any) => (
+            {earnSample.map((r) => (
               <Text key={r.id} style={styles.earnRow}>
                 {r.user_id?.slice(0, 8)}… — {r.source_type} — {new Date(r.earned_at).toLocaleDateString()}
               </Text>
