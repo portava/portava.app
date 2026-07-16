@@ -1964,7 +1964,7 @@ router.post("/admin/trips/:tripId/reset-reminder", async (req, res) => {
 
   const { data: trip } = await sc
     .from("trips")
-    .select("id")
+    .select("id, owner_id")
     .eq("id", tripId)
     .maybeSingle();
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
@@ -1983,6 +1983,20 @@ router.post("/admin/trips/:tripId/reset-reminder", async (req, res) => {
   // Clear the in-memory dedup set so the scheduler re-considers this trip on
   // the very next poll — not only after a process restart.
   clearReminderDedup(tripId);
+
+  // Audit: record which admin performed the reset so ops can review later.
+  const { error: modErr } = await sc
+    .from("moderation_actions")
+    .insert({
+      action_type:    "trip_reminder_reset",
+      performed_by:   admin.userId,
+      target_user_id: (trip as any).owner_id,
+      reason:         `trip_id:${tripId}`,
+    });
+  if (modErr) {
+    req.log.error({ err: modErr, tripId, adminId: admin.userId },
+      "trip reset-reminder: moderation_actions insert failed");
+  }
 
   logger.info({ tripId, adminId: admin.userId },
     "TripReminderScheduler: reminder outbox reset by admin — will re-enter normal sweep on next poll");
