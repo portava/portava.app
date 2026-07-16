@@ -102,6 +102,8 @@ interface FakeDbOpts {
   legacyToken?: string | null;
   /** When set, notification_devices DELETE returns this error instead of succeeding. */
   deleteDeviceError?: Error | null;
+  /** When set, rent_buddy_profiles UPDATE returns this error instead of succeeding. */
+  rentBuddyUpdateError?: Error | null;
 }
 
 interface FakeDb {
@@ -128,6 +130,7 @@ function makeFakeDb(opts: FakeDbOpts = {}): FakeDb {
         : [TOKEN]);
   const legacyToken = opts.legacyToken !== undefined ? opts.legacyToken : null;
   const deleteDeviceError = opts.deleteDeviceError !== undefined ? opts.deleteDeviceError : null;
+  const rentBuddyUpdateError = opts.rentBuddyUpdateError !== undefined ? opts.rentBuddyUpdateError : null;
 
   const deletedDeviceTokens: string[][] = [];
   const profilesNulled: string[] = [];
@@ -261,6 +264,9 @@ function makeFakeDb(opts: FakeDbOpts = {}): FakeDb {
             },
             in(_col: string, vals: any[]) {
               if (table === "rent_buddy_profiles") {
+                if (rentBuddyUpdateError) {
+                  return Promise.resolve({ error: rentBuddyUpdateError });
+                }
                 rentBuddyTokensNulled.push([...vals]);
               }
               return Promise.resolve({ error: null });
@@ -516,6 +522,37 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
       _getCleanupFailureCount(),
       0,
       "cleanup failure counter must reset to 0 after a fully-successful cleanup",
+    );
+  });
+
+  it("escalates cleanup failure log from warn to error when rent_buddy_profiles UPDATE fails CLEANUP_ERROR_THRESHOLD times", async () => {
+    // Use InvalidCredentials so cleanupStaleTokens is invoked each time.
+    // Step 1 (notification_devices DELETE) succeeds; Step 2 (profiles) is
+    // skipped (no legacyToken); Step 3 (rent_buddy_profiles UPDATE) fails.
+    // Each call therefore increments _consecutiveCleanupFailures by exactly 1,
+    // reaching CLEANUP_ERROR_THRESHOLD (3) after three routes.
+    _setTestFetch(invalidCredFetch);
+    const DB_ERROR = new Error("rent_buddy db down");
+    const { client } = makeFakeDb({
+      deviceToken: TOKEN,
+      legacyToken: null,
+      rentBuddyUpdateError: DB_ERROR,
+    });
+
+    const router = new NotificationRouter(client);
+
+    await router.route(BASE_NOTIF);
+    assert.ok(
+      _getCleanupFailureCount() >= 1,
+      `failure count should be at least 1 after first route, got ${_getCleanupFailureCount()}`,
+    );
+
+    await router.route(BASE_NOTIF);
+    await router.route(BASE_NOTIF);
+
+    assert.ok(
+      _getCleanupFailureCount() >= 3,
+      `cleanup failure count should reach CLEANUP_ERROR_THRESHOLD (3) via rent_buddy_profiles step, got ${_getCleanupFailureCount()}`,
     );
   });
 
