@@ -19,6 +19,10 @@
  * Legitimate uses of getSession() — e.g. reading `session.user.id` to build a
  * storage path — do not touch access_token and therefore pass this check.
  *
+ * A companion guard (below) additionally scans the entire src/ tree for
+ * locally-defined functions whose body contains both strings — catching
+ * wrappers placed outside the primary scanned directories.
+ *
  * Run with:
  *   node --import tsx/esm --test \
  *     src/services/__tests__/getSession.bypassGuard.test.ts
@@ -31,13 +35,13 @@ import { join, relative } from 'node:path';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-/** Recursively collect all .ts files under `dir`. */
+/** Recursively collect all .ts and .tsx files under `dir`. */
 function collectTs(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
       collectTs(full, out);
-    } else if (entry.name.endsWith('.ts')) {
+    } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
       out.push(full);
     }
   }
@@ -59,6 +63,72 @@ function bypassesTokenHelper(src: string): boolean {
   return src.includes('getSession') && src.includes('access_token');
 }
 
+/**
+ * Extracts the text of every brace-delimited function body found in `src`.
+ *
+ * Uses a simple brace-counting walk — not a full AST parser — but sufficient
+ * for this guard.  Matches all common function definition forms:
+ *   - `function name(`
+ *   - `async function name(`
+ *   - `const name = (async)? function(`
+ *   - `const name = (async)? (args) => {`
+ *   - `const name = async arg => {`
+ *   - method shorthand `name(` inside class/object bodies
+ */
+function extractFunctionBodies(src: string): string[] {
+  // Regex that matches the start of a function definition.
+  // We do NOT rely on the regex to capture the full body — it only locates
+  // the start position; brace counting does the rest.
+  const fnStart =
+    /(?:(?:async\s+)?function\s*\w*\s*\(|(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?(?:function\s*\(|\([^)]*\)\s*=>|\w+\s*=>))/g;
+
+  const bodies: string[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = fnStart.exec(src)) !== null) {
+    // Scan forward from the end of the match to find the opening `{`.
+    let i = match.index + match[0].length;
+    while (i < src.length && src[i] !== '{' && src[i] !== '\n') i++;
+    if (i >= src.length || src[i] !== '{') continue; // arrow with expression body — no block
+
+    // Walk the block counting braces to find the matching `}`.
+    let depth = 0;
+    const start = i;
+    while (i < src.length) {
+      if (src[i] === '{') depth++;
+      else if (src[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          i++;
+          break;
+        }
+      }
+      i++;
+    }
+    bodies.push(src.slice(start, i));
+  }
+
+  return bodies;
+}
+
+/**
+ * Returns true when `src` contains a locally-defined function whose body
+ * contains both `getSession` and `access_token`.
+ *
+ * This catches the pattern where a developer hides a bypass inside a wrapper
+ * like `async function freshToken()` or `const getToken = async () => { … }`
+ * that is defined outside the primary scanned directories (services/hooks/lib),
+ * so the top-level file-scan guard would never see it.
+ */
+function definesLocalTokenWrapper(src: string): boolean {
+  // Fast pre-filter: both strings must be present somewhere in the file.
+  if (!src.includes('getSession') || !src.includes('access_token')) return false;
+  // Check whether any individual function body contains both strings.
+  return extractFunctionBodies(src).some(
+    (body) => body.includes('getSession') && body.includes('access_token'),
+  );
+}
+
 // ── scan ─────────────────────────────────────────────────────────────────────
 
 // src/services/__tests__/ → src/
@@ -66,15 +136,31 @@ const SERVICES_DIR = join(new URL('.', import.meta.url).pathname, '../');
 const SRC_DIR = join(SERVICES_DIR, '../');
 const EXEMPT_FILE = 'apiToken.ts'; // the helper itself — always allowed
 
-// Directories covered by this guard (relative to SRC_DIR).
+// Directories covered by the primary guard (relative to SRC_DIR).
 // hooks/ and lib/ were added because violations were found there in practice.
 const SCANNED_DIRS = ['services', 'hooks', 'lib'].map((d) => join(SRC_DIR, d));
 
 const scannedFiles = SCANNED_DIRS.flatMap((dir) =>
   existsSync(dir) ? collectTs(dir) : [],
-).filter((f) => !f.endsWith(EXEMPT_FILE) && !f.endsWith('.test.ts'));
+).filter(
+  (f) =>
+    !f.endsWith(EXEMPT_FILE) &&
+    !f.endsWith('.test.ts') &&
+    !f.endsWith('.test.tsx'),
+);
 
-// ── tests ─────────────────────────────────────────────────────────────────────
+// All directories under src/ — used by the companion guard so that a wrapper
+// placed in components/, screens/, utils/, context/, etc. cannot sneak past.
+const ALL_SRC_FILES = existsSync(SRC_DIR)
+  ? collectTs(SRC_DIR).filter(
+      (f) =>
+        !f.endsWith(EXEMPT_FILE) &&
+        !f.endsWith('.test.ts') &&
+        !f.endsWith('.test.tsx'),
+    )
+  : [];
+
+// ── primary guard ─────────────────────────────────────────────────────────────
 
 describe('getSession bypass guard — travel-buddy services/hooks/lib', () => {
   it('has at least one file to scan (sanity check)', () => {
@@ -99,3 +185,35 @@ describe('getSession bypass guard — travel-buddy services/hooks/lib', () => {
     });
   }
 });
+
+// ── companion guard — local wrapper functions anywhere in src/ ─────────────────
+
+describe(
+  'getSession bypass guard — companion: no locally-defined wrapper in all of src/',
+  () => {
+    it('has at least one file to scan (sanity check)', () => {
+      assert.ok(
+        ALL_SRC_FILES.length > 0,
+        `No .ts files found under ${SRC_DIR} — discovery is broken`,
+      );
+    });
+
+    for (const filePath of ALL_SRC_FILES) {
+      const label = relative(SRC_DIR, filePath);
+
+      it(
+        `${label} does not define a local function that wraps getSession() + access_token`,
+        () => {
+          const src = readFileSync(path.resolve(filePath), 'utf8');
+          const violates = definesLocalTokenWrapper(src);
+          assert.ok(
+            !violates,
+            `${label} defines a local function whose body contains both getSession() and access_token.\n` +
+              `This is a hidden bypass of the stale-token guard.\n` +
+              `Remove the local wrapper and use freshToken() from services/apiToken.ts instead.`,
+          );
+        },
+      );
+    }
+  },
+);
