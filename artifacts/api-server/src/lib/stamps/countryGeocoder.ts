@@ -167,13 +167,13 @@ let _fetchImpl: FetchLike = (url, init) => fetch(url, init);
 
 /**
  * Test-only: swap the fetch implementation (also disables the throttle gap).
- * Setting a fake fetch also detaches the persistent DB cache from the real
- * Supabase client (tests must opt back in via _setGeocodeDbClientForTests).
+ * This setter is independent of the DB-client override — calling it does NOT
+ * reset _dbClientOverride.  Use _setGeocodeDbClientForTests separately to
+ * control the persistent cache client.
  */
 export function _setGeocodeFetchForTests(f: FetchLike | null): void {
   _fetchImpl = f ?? ((url, init) => fetch(url, init));
   _throttleDisabled = f != null;
-  _dbClientOverride = f != null ? null : undefined;
 }
 
 /** Test-only: inject a fake Supabase client for the persistent cache (null disables it). */

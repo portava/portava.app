@@ -94,9 +94,6 @@ describe("readDbCache tombstone handling", () => {
       corrected_at: null,
       deleted_at: new Date().toISOString(), // <-- tombstone
     };
-    // IMPORTANT: set fetch BEFORE DB client — _setGeocodeFetchForTests resets
-    // _dbClientOverride to null when a non-null fetch is provided, so the DB
-    // override must be applied after the fetch override.
     // Geocoder must not be reached if the tombstone check itself is broken and
     // tries to return data; forbid it to make accidental pass-throughs obvious.
     _setGeocodeFetchForTests(forbiddenNominatim());
@@ -137,7 +134,6 @@ describe("readDbCache tombstone handling", () => {
       corrected_at: null,
       deleted_at: null, // <-- live row
     };
-    // Set fetch BEFORE DB client (see first test for explanation).
     _setGeocodeFetchForTests(forbiddenNominatim());
     _setGeocodeDbClientForTests(makeFixedDbClient(liveRow));
     _clearCountryGeocodeCache();
@@ -161,7 +157,6 @@ describe("readDbCache tombstone handling", () => {
       corrected_at: null,
       deleted_at: new Date(Date.now() - 10 * 60 * 1_000).toISOString(), // 10 min ago
     };
-    // Set fetch BEFORE DB client (see first test for explanation).
     _setGeocodeFetchForTests(forbiddenNominatim());
     _setGeocodeDbClientForTests(makeFixedDbClient(oldTombstone));
     _clearCountryGeocodeCache();
@@ -211,7 +206,6 @@ describe("readDbCache tombstone handling", () => {
       },
     } as unknown as SupabaseClient;
 
-    // Set fetch BEFORE DB client (see first test for explanation).
     _setGeocodeFetchForTests(fakeNominatim({}));
     _setGeocodeDbClientForTests(countingClient);
     _clearCountryGeocodeCache();

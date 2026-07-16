@@ -49,6 +49,10 @@ beforeEach(() => {
   fetchCalls = [];
   _clearCountryGeocodeCache();
   _setGeocodeFetchForTests(null);
+  // Explicitly disable the DB client so tests that don't set one don't
+  // accidentally fall through to the real Supabase client.  Tests that need
+  // the persistent cache must call _setGeocodeDbClientForTests explicitly.
+  _setGeocodeDbClientForTests(null);
 });
 
 // ── geocodeCityCountry ────────────────────────────────────────────────────────
@@ -803,9 +807,6 @@ describe("background correction sweep", () => {
       throw new Error("Nominatim must not be called after sweep eviction");
     });
 
-    // Re-inject the same combined DB client (setGeocodeFetch resets it).
-    _setGeocodeDbClientForTests(combinedDb);
-
     // Step 5: geocodeCityCountry should re-resolve from the DB row only.
     const r = await geocodeCityCountry("Banff");
 
@@ -859,9 +860,6 @@ describe("background correction sweep", () => {
     _setGeocodeFetchForTests(fakeNominatim({
       "banff": { country_code: "gb", country: "United Kingdom" },
     }));
-
-    // Re-inject the deleted DB client (setGeocodeFetch resets it).
-    _setGeocodeDbClientForTests(deletedDb);
 
     // Step 5: geocodeCityCountry should fall through to Nominatim because
     // the DB row is gone — not return null.
@@ -923,9 +921,6 @@ describe("background correction sweep", () => {
     _setGeocodeFetchForTests(fakeNominatim({
       "banff": { country_code: "gb", country: "United Kingdom" },
     }));
-
-    // Re-inject the same DB client (setGeocodeFetch resets _dbClientOverride to null).
-    _setGeocodeDbClientForTests(deletionDb);
 
     // Step 5: geocodeCityCountry should re-resolve from Nominatim and persist
     // the fresh result back to the DB via exactly one upsert.
@@ -993,9 +988,6 @@ describe("background correction sweep", () => {
     _setGeocodeFetchForTests(fakeNominatim({
       "banff": { country_code: "fr", country: "France" },
     }));
-
-    // Re-inject the DB client (setGeocodeFetch resets _dbClientOverride to null).
-    _setGeocodeDbClientForTests(tombstonedDb);
 
     // Step 5: geocodeCityCountry resolves via Nominatim and writes back to the DB.
     const r = await geocodeCityCountry("Banff");
@@ -1144,9 +1136,6 @@ describe("background correction sweep", () => {
       "banff": { country_code: "gb", country: "United Kingdom" },
     }));
 
-    // Re-inject the DB client (setGeocodeFetch resets _dbClientOverride to null).
-    _setGeocodeDbClientForTests(tombstoneDb);
-
     // Step 5: geocodeCityCountry must fall through to Nominatim (readDbCache
     // returns null because the tombstone row was hard-deleted) and then write
     // the fresh result back to the DB via exactly one upsert.
@@ -1279,9 +1268,6 @@ describe("background correction sweep", () => {
       fetchCalls.push(url);
       throw new Error("Nominatim must not be called — entry is still cached");
     });
-    // Re-inject the DB client (setGeocodeFetch resets _dbClientOverride).
-    _setGeocodeDbClientForTests(noOpDb);
-
     // First call — the backdated timestamp triggers the probe; DB returns a
     // stale corrected_at so no eviction occurs. correctionCheckedAt is bumped.
     const r1 = await geocodeCityCountry("Oslo");
@@ -1343,9 +1329,6 @@ describe("background correction sweep", () => {
       fetchCalls.push(url);
       throw new Error("Nominatim must not be called — entry is still cached");
     });
-    // Re-inject the error DB client (setGeocodeFetch resets _dbClientOverride).
-    _setGeocodeDbClientForTests(errorDb);
-
     // First call — the backdated timestamp triggers the probe; DB errors out.
     const r1 = await geocodeCityCountry("Reykjavik");
     assert.equal(dbProbeCalls, 1, "DB must be probed exactly once on the first call");

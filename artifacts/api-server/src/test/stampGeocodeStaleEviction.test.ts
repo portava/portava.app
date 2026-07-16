@@ -991,8 +991,6 @@ describe("staleness-eviction: corrected_at probe (continued)", () => {
     const T0 = 1_700_000_000_000;
     mockNow(T0);
 
-    // Set fetch BEFORE the DB client: _setGeocodeFetchForTests resets
-    // _dbClientOverride to null, so the DB client must be installed afterwards.
     _setGeocodeFetchForTests(async () => ({
       ok: true,
       json: async () => [{ address: { country_code: "jp", country: "Japan" } }],
