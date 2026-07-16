@@ -14,6 +14,7 @@ import type { Place } from '../../src/lib/location/placeTypes';
 import {
   searchBuddies, type BuddyProfile, type BuddyCategory, type BuddySortBy,
 } from '../../src/services/rentABuddy';
+import { applyCoords } from '../../src/lib/cityCoords';
 
 type SessionMode = 'any' | 'in_person' | 'remote';
 
@@ -96,10 +97,8 @@ export default function Marketplace() {
     } else {
       setLoadingMore(true);
     }
-    const res = await searchBuddies({
+    const res = await searchBuddies(applyCoords({
       city: city.trim(),
-      ...(cityLat != null ? { lat: cityLat } : {}),
-      ...(cityLng != null ? { lng: cityLng } : {}),
       ...(category !== 'all' ? { category: category as BuddyCategory } : {}),
       sortBy,
       verifiedOnly: verifiedOnly || undefined,
@@ -109,7 +108,7 @@ export default function Marketplace() {
       ...(sessionMode !== 'any' ? { sessionMode } : {}),
       page: pg,
       perPage: PER_PAGE,
-    });
+    }, { lat: cityLat, lng: cityLng }));
     if (pg === 1) {
       if (!silent) setLoading(false);
       setRefreshing(false);

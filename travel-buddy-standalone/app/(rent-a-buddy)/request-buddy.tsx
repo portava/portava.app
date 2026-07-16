@@ -29,6 +29,7 @@ import {
   createRequest, createBooking, getBuddyPackages, getBuddyProfile,
   type BuddyCategory, type MarketplacePackage, type BuddyProfile,
 } from '../../src/services/rentABuddy';
+import { applyCoords } from '../../src/lib/cityCoords';
 
 // ── AsyncStorage helper (lazy-require so module load never crashes) ─────────
 
@@ -131,17 +132,15 @@ function OpenRequestForm() {
   const submit = useCallback(async () => {
     if (!city.trim()) { Alert.alert('Missing city', 'Please enter the city for your request.'); return; }
     setLoading(true);
-    const result = await createRequest({
+    const result = await createRequest(applyCoords({
       city: city.trim(),
-      lat: cityCoords?.lat,
-      lng: cityCoords?.lng,
       category, durationMinutes, groupSize,
       budgetMinUsd: budget.min ?? undefined,
       budgetMaxUsd: budget.max ?? undefined,
       languageNeeded: language.trim() || undefined,
       safetyPrefs: { publicOnly },
       notes: notes.trim() || undefined,
-    });
+    }, cityCoords));
     setLoading(false);
     if (!result.ok) { Alert.alert('Error', result.error); return; }
     Alert.alert(
