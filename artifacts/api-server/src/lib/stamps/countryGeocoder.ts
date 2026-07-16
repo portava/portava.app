@@ -66,6 +66,72 @@ function throttled(): Promise<void> {
   return next;
 }
 
+// ── Background correction sweep ───────────────────────────────────────────────
+//
+// Periodically queries the DB for rows that were admin-corrected in the last
+// hour and evicts any stale in-memory entries whose writtenAt predates the
+// correction.  This ensures corrections propagate to instances that haven't
+// handled a geocode request for the affected city recently — not only to the
+// instance that received the admin PUT/DELETE.
+//
+// The sweep is NOT started automatically; call startCorrectionSweep() from the
+// server entry-point after the app is listening.  Tests run the sweep
+// synchronously via _runCorrectionSweepForTests() without touching timers.
+
+const CORRECTION_SWEEP_WINDOW_MS = 60 * 60 * 1_000; // look back 1 hour
+
+async function runCorrectionSweep(): Promise<void> {
+  const sc = dbClient();
+  if (!sc) return;
+  try {
+    const since = new Date(Date.now() - CORRECTION_SWEEP_WINDOW_MS).toISOString();
+    const { data, error } = await sc
+      .from(DB_CACHE_TABLE)
+      .select("city_key, corrected_at")
+      .gte("corrected_at", since);
+    if (error || !data) return;
+    for (const row of data as Array<{ city_key: string; corrected_at: string }>) {
+      const entry = _cache.get(row.city_key);
+      if (!entry) continue;
+      const correctedMs = new Date(row.corrected_at).getTime();
+      if (entry.writtenAt < correctedMs) {
+        _cache.delete(row.city_key);
+        _pending.delete(row.city_key);
+        logEvent("stamp.country_geocode.sweep_evicted", { city_key: row.city_key });
+      }
+    }
+  } catch {
+    // Best-effort — any transient DB error is silently swallowed so the sweep
+    // never crashes the process.
+  }
+}
+
+let _sweepTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start the background correction sweep.
+ * Returns a stop function that clears the interval — call it on server shutdown.
+ * Safe to call multiple times: a second call replaces the previous interval.
+ */
+export function startCorrectionSweep(intervalMs = 5 * 60 * 1_000): () => void {
+  if (_sweepTimer !== null) clearInterval(_sweepTimer);
+  _sweepTimer = setInterval(() => { runCorrectionSweep().catch(() => {}); }, intervalMs);
+  // setInterval refs the event loop — unref so it doesn't prevent a clean exit
+  // when the server decides to shut down without explicitly calling stop.
+  if (typeof (_sweepTimer as any).unref === "function") (_sweepTimer as any).unref();
+  return function stopCorrectionSweep() {
+    if (_sweepTimer !== null) {
+      clearInterval(_sweepTimer);
+      _sweepTimer = null;
+    }
+  };
+}
+
+/** Test-only: run one sweep cycle synchronously (no timer involved). */
+export async function _runCorrectionSweepForTests(): Promise<void> {
+  return runCorrectionSweep();
+}
+
 // ── Test hooks ────────────────────────────────────────────────────────────────
 type FetchLike = (url: string, init?: any) => Promise<any>;
 let _fetchImpl: FetchLike = (url, init) => fetch(url, init);

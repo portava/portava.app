@@ -19,6 +19,7 @@ import { getServiceClient } from "./lib/supabase";
 import { assertRequiredEnv } from "./lib/envValidation";
 import { startWorkerLoop, queryStampWorkerHealth, startHealthMonitorLoop } from "./lib/stamps/generationWorker";
 import { startXXCatalogSweeper } from "./lib/stamps/xxCatalogRepair";
+import { startCorrectionSweep } from "./lib/stamps/countryGeocoder";
 import { runSchemaDriftCheck } from "./lib/schemaDriftCheck";
 
 assertRequiredEnv(logger);
@@ -72,6 +73,12 @@ app.listen(port, (err) => {
   // becomes resolvable (static lookup or geocoding for less-known cities).
   // Disable with STAMP_COUNTRY_SWEEP_ENABLED=false.
   startXXCatalogSweeper(() => getServiceClient());
+
+  // Background correction sweep: evicts in-memory geocode entries that were
+  // admin-corrected on another instance (corrected_at updated in the DB) so
+  // corrections propagate to instances that haven't seen a recent request for
+  // the affected city — without waiting for the full 30-day TTL.
+  startCorrectionSweep();
 
   // Startup stamp-worker health summary — log pending queue depth and any
   // jobs stuck in `generating` past their lock (a crashed worker never

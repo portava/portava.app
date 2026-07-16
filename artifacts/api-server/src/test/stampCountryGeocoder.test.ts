@@ -19,6 +19,8 @@ import {
   _setGeocodeFetchForTests,
   _setGeocodeDbClientForTests,
   _clearCountryGeocodeCache,
+  _runCorrectionSweepForTests,
+  startCorrectionSweep,
 } from "../lib/stamps/countryGeocoder.js";
 import {
   repairXXCatalogEntries,
@@ -409,5 +411,104 @@ describe("repairXXCatalogEntries", () => {
     assert.equal(fetchCalls.length, 1);
     assert.equal(stats.catalogRekeyed, 1);
     assert.equal(stats.unresolvedCities.length, 1);
+  });
+});
+
+// ── Background correction sweep ───────────────────────────────────────────────
+
+/**
+ * Build a minimal fake DB client whose city_country_geocode_cache table
+ * returns a fixed list of rows for .select().gte() queries (the sweep pattern).
+ */
+function makeSweepDb(recentlyCorrectRows: Array<{ city_key: string; corrected_at: string }>) {
+  const client = {
+    from(table: string) {
+      assert.equal(table, "city_country_geocode_cache");
+      const chain: any = {
+        select() { return chain; },
+        gte() { return chain; },
+        then(resolve: (v: any) => void) {
+          resolve({ data: recentlyCorrectRows, error: null });
+        },
+      };
+      return chain;
+    },
+  } as unknown as SupabaseClient;
+  return client;
+}
+
+describe("background correction sweep", () => {
+  it("evicts an in-memory entry whose writtenAt predates the DB corrected_at", async () => {
+    // Seed the in-memory cache with a stale entry (writtenAt in the past).
+    _setGeocodeFetchForTests(fakeNominatim({ "banff": { country_code: "ca", country: "Canada" } }));
+    await geocodeCityCountry("Banff");                   // populates in-memory cache
+    assert.equal(fetchCalls.length, 1);
+
+    // DB reports that "banff" was corrected one second after the entry was written.
+    const correctedAt = new Date(Date.now() + 1_000).toISOString(); // future = definitely after writtenAt
+    _setGeocodeDbClientForTests(makeSweepDb([{ city_key: "banff", corrected_at: correctedAt }]));
+
+    await _runCorrectionSweepForTests();
+
+    // Cache entry should have been evicted; the next call re-resolves.
+    await geocodeCityCountry("Banff");
+    assert.equal(fetchCalls.length, 2, "should have re-geocoded after sweep eviction");
+  });
+
+  it("leaves an in-memory entry alone when writtenAt is newer than corrected_at", async () => {
+    // Seed the in-memory cache.
+    _setGeocodeFetchForTests(fakeNominatim({ "banff": { country_code: "ca", country: "Canada" } }));
+    await geocodeCityCountry("Banff");
+    assert.equal(fetchCalls.length, 1);
+
+    // DB reports a correction that happened BEFORE the cache entry was written.
+    const correctedAt = new Date(Date.now() - 10_000).toISOString(); // 10 s in the past
+    _setGeocodeDbClientForTests(makeSweepDb([{ city_key: "banff", corrected_at: correctedAt }]));
+
+    await _runCorrectionSweepForTests();
+
+    // Cache should still be valid; no new fetch.
+    await geocodeCityCountry("Banff");
+    assert.equal(fetchCalls.length, 1, "cache entry should still be valid — no re-fetch expected");
+  });
+
+  it("is a no-op when the DB reports no recently-corrected rows", async () => {
+    _setGeocodeFetchForTests(fakeNominatim({ "banff": { country_code: "ca", country: "Canada" } }));
+    await geocodeCityCountry("Banff");
+    assert.equal(fetchCalls.length, 1);
+
+    _setGeocodeDbClientForTests(makeSweepDb([])); // nothing corrected recently
+
+    await _runCorrectionSweepForTests();
+
+    await geocodeCityCountry("Banff");
+    assert.equal(fetchCalls.length, 1, "empty sweep result should leave the cache untouched");
+  });
+
+  it("only evicts keys that are actually present in the in-memory cache", async () => {
+    // DB reports a correction for "tromso", but it was never cached in memory.
+    _setGeocodeDbClientForTests(
+      makeSweepDb([{ city_key: "tromso", corrected_at: new Date().toISOString() }]),
+    );
+    // Should not throw or cause any issues.
+    await _runCorrectionSweepForTests();
+  });
+
+  it("survives a DB error without throwing", async () => {
+    const errorClient = {
+      from() { throw new Error("db exploded"); },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(errorClient);
+    // Must not throw.
+    await _runCorrectionSweepForTests();
+  });
+
+  it("startCorrectionSweep returns a stop function that clears the interval", () => {
+    const stop = startCorrectionSweep(60_000);
+    assert.equal(typeof stop, "function");
+    // Calling stop must not throw.
+    stop();
+    // Calling stop a second time must also be safe.
+    stop();
   });
 });
