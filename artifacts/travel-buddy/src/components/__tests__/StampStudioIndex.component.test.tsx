@@ -434,3 +434,113 @@ describe('StampStudioIndex — pull-to-refresh picks up newly approved artwork',
     ).toBeTruthy();
   });
 });
+
+// ── Suite 4: 45-second health poll ────────────────────────────────────────────
+
+/**
+ * The component registers a separate 45-second interval that calls
+ * refreshHealth (→ getStampWorkerHealth) independently of the 60-second
+ * catalog poll.  These tests confirm that:
+ *   1. The 45 s interval is registered (delay === 45_000).
+ *   2. Manually invoking its callback triggers getStampWorkerHealth.
+ *   3. The warning strip updates in the UI to reflect the new health data.
+ *
+ * A refactor that accidentally removes or disconnects the health interval
+ * would be caught here before it reaches production.
+ */
+describe('StampStudioIndex — 45-second health poll updates the warning strip', () => {
+  let spy: ReturnType<typeof makeIntervalSpy>;
+
+  beforeEach(() => {
+    spy = makeIntervalSpy();
+    makeUseFocusEffectMock();
+
+    // Initial catalog load returns a stable count so tile assertions are easy.
+    mockGetCatalog.mockResolvedValue(catalogOk(10));
+
+    // First health call (from load()) returns no warnings so the strip is
+    // absent on mount.  Subsequent calls (from the 45 s interval) return a
+    // stuck_jobs warning so we can assert it appears after the tick.
+    mockGetHealth
+      .mockResolvedValueOnce({ ok: false })
+      .mockResolvedValue({
+        ok: true as const,
+        data: {
+          warnings: [
+            { key: 'stuck_jobs' as const, message: 'stuck', details: { stuck_count: 3 } },
+          ],
+          health: {
+            worker_enabled: true,
+            worker_running: true,
+            worker_id: 'w1',
+            last_success_at: null,
+            queue_depth: {},
+            stuck_jobs: [],
+          },
+        },
+      });
+  });
+
+  afterEach(() => {
+    spy.teardown();
+    jest.clearAllMocks();
+  });
+
+  it('registers a 45-second interval for the health poll', async () => {
+    render(<StampStudioIndex />);
+    await waitFor(() => screen.getByText('10'));
+
+    const healthPoll = spy.captured.find((e) => e.delay === 45_000);
+    expect(healthPoll).toBeDefined();
+  });
+
+  it('invoking the 45-second interval callback calls getStampWorkerHealth', async () => {
+    render(<StampStudioIndex />);
+    await waitFor(() => screen.getByText('10'));
+
+    const healthCallsBefore = mockGetHealth.mock.calls.length;
+
+    const healthPoll = spy.captured.find((e) => e.delay === 45_000);
+    expect(healthPoll).toBeDefined();
+
+    await act(async () => { healthPoll!.fn(); });
+
+    expect(mockGetHealth.mock.calls.length).toBeGreaterThan(healthCallsBefore);
+  });
+
+  it('warning strip appears in the UI after the 45-second health poll fires', async () => {
+    render(<StampStudioIndex />);
+    await waitFor(() => screen.getByText('10'));
+
+    // No warning strip on initial render — first health call returned ok: false.
+    expect(screen.queryByText(/stuck in 'generating'/)).toBeNull();
+
+    const healthPoll = spy.captured.find((e) => e.delay === 45_000);
+    expect(healthPoll).toBeDefined();
+
+    await act(async () => { healthPoll!.fn(); });
+
+    // After the poll tick the stuck_jobs warning must now be visible.
+    await waitFor(() =>
+      screen.getByText(/3 jobs stuck in 'generating' past lock expiry/),
+    );
+    expect(
+      screen.getByText(/3 jobs stuck in 'generating' past lock expiry/),
+    ).toBeTruthy();
+  });
+
+  it('does NOT call getAdminStampCatalog when the health poll fires', async () => {
+    render(<StampStudioIndex />);
+    await waitFor(() => screen.getByText('10'));
+
+    const catalogCallsBefore = mockGetCatalog.mock.calls.length;
+
+    const healthPoll = spy.captured.find((e) => e.delay === 45_000);
+    expect(healthPoll).toBeDefined();
+
+    await act(async () => { healthPoll!.fn(); });
+
+    // The health-only poll must not trigger a catalog fetch.
+    expect(mockGetCatalog.mock.calls.length).toBe(catalogCallsBefore);
+  });
+});
