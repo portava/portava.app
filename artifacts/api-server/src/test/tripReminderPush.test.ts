@@ -785,6 +785,39 @@ describe("TripReminderScheduler push", () => {
     );
   });
 
+  it("recovers a stale claim whose reminder_sent_at is exactly at the MAX_RECOVERY_AGE_MS boundary", async () => {
+    // The recovery filter is .gte("reminder_sent_at", recoveryFloor) where
+    // recoveryFloor = new Date(now - MAX_RECOVERY_AGE_MS).toISOString().
+    // A claim where reminder_sent_at === recoveryFloor satisfies >= and must
+    // still be recovered — the fence-post is inclusive on both sides.
+    const PINNED_NOW = new Date("2026-07-16T12:00:00.000Z").getTime();
+    _setTestNow(PINNED_NOW);
+
+    const MAX_RECOVERY_AGE_MS = 26 * 3_600_000;
+
+    // Exactly at the floor — not 1 ms inside, not 1 ms outside.
+    const exactFloor = new Date(PINNED_NOW - MAX_RECOVERY_AGE_MS).toISOString();
+
+    // start_date inside the recovery window (now + 24 h, always safely inside).
+    const startDate = new Date(PINNED_NOW + 24 * 3_600_000).toISOString().slice(0, 10);
+
+    const state = baseState("trip-age-floor-exact");
+    state.trips![0].reminder_sent_at      = exactFloor;
+    state.trips![0].reminder_delivered_at = null;
+    state.trips![0].start_date            = startDate;
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 1,
+      "recovery must fire when reminder_sent_at is exactly at the MAX_RECOVERY_AGE_MS floor (>= is inclusive)");
+    assert.ok(
+      state.trips![0].reminder_delivered_at,
+      "reminder_delivered_at must be set after recovery at the exact boundary",
+    );
+  });
+
   // ── midnight-clock boundary tests ─────────────────────────────────────────
   // These four tests pin Date.now() to 23:00 UTC so that the window boundary
   // dates straddle midnight.  With the clock at 23:00:
