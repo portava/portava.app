@@ -255,6 +255,95 @@ describe("geocode DELETE cross-instance propagation", () => {
       "result is still JP (Nominatim agrees), but it was re-resolved fresh");
   });
 
+  it("evicts a warm entry when the on-request probe finds deleted_at set — not only when the row is missing entirely", async () => {
+    // This test specifically exercises the (data as any).deleted_at branch of
+    // evictIfDbCorrected.  The DB row still exists in the table but has
+    // deleted_at set (soft-delete / tombstone).  The probe must treat this the
+    // same as a missing row and evict the stale in-memory entry.
+    //
+    // The first test in this suite covers the hard-delete path (row completely
+    // absent, data === null).  This one covers the soft-delete / tombstone path.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "cn", country: "China" } }],
+      };
+    });
+
+    // Phase 1: warm the in-memory cache via a DB load (deleted_at is null — live row).
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({
+        country: "China",
+        country_code: "CN",
+        corrected_at: null,
+        deleted_at: null,
+      }),
+    );
+    const first = await geocodeCityCountry("Beijing");
+    assert.equal(first?.countryCode, "CN", "pre-condition: initial DB cache load returns CN");
+    assert.equal(nominatimCalls, 0, "no Nominatim call when DB cache hits");
+
+    // Phase 2: switch the DB so subsequent probe calls return the same row but
+    // with deleted_at set (tombstone written by an admin DELETE on another instance).
+    // The row still EXISTS in the DB — data is not null — but deleted_at is set.
+    let probeCallCount = 0;
+    _setGeocodeDbClientForTests({
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() {
+            probeCallCount++;
+            // Row still present but tombstoned — deleted_at IS NOT NULL.
+            return {
+              data: {
+                country: "China",
+                country_code: "CN",
+                corrected_at: null,
+                deleted_at: new Date(T0 - 1_000).toISOString(),
+              },
+              error: null,
+            };
+          },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            resolve({ data: [], error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient);
+
+    // Before the check interval elapses the probe must NOT fire.
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS - 1_000);
+    const beforeInterval = await geocodeCityCountry("Beijing");
+    assert.equal(beforeInterval?.countryCode, "CN", "stale entry still served before interval");
+    assert.equal(probeCallCount, 0, "probe not fired before interval");
+    assert.equal(nominatimCalls, 0, "no Nominatim call before interval");
+
+    // Advance past the correction-check interval — probe fires, finds deleted_at set, evicts.
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000);
+    const afterDeletion = await geocodeCityCountry("Beijing");
+
+    // probeCallCount is 2: once from evictIfDbCorrected and once from
+    // readDbCache during the re-resolve path — both call maybySingle().
+    // The meaningful signal is nominatimCalls: it only reaches 1 if the
+    // stale entry was actually evicted and a fresh re-resolve was attempted.
+    assert.ok(probeCallCount >= 1, "DB probe was attempted after interval elapsed");
+    assert.equal(nominatimCalls, 1,
+      "Nominatim called once — stale entry was evicted when probe found deleted_at set");
+    assert.equal(afterDeletion?.countryCode, "CN",
+      "result is still CN (Nominatim agrees) but it was re-resolved fresh after tombstone-eviction");
+  });
+
   it("does NOT evict when the probe returns a DB error (transient failure, not a clean delete)", async () => {
     const T0 = 1_700_000_000_000;
     mockNow(T0);
