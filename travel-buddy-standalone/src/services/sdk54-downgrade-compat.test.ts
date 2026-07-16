@@ -119,7 +119,7 @@ describe('SDK 54 downgrade — package version pins', () => {
   });
 
   it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-    const standalone = readPkg('../../../../travel-buddy-standalone/package.json');
+    const standalone = readPkg('../../../artifacts/travel-buddy/package.json');
     const saDeps: Record<string, string> = {
       ...standalone.dependencies,
       ...standalone.devDependencies,
@@ -164,8 +164,8 @@ describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and 
     ...tb.devDependencies,
   };
 
-  // travel-buddy-standalone/package.json is 4 levels up from src/services.
-  const sa = readPkg('../../../../travel-buddy-standalone/package.json');
+  // artifacts/travel-buddy/package.json is 3 levels up then into the artifacts tree.
+  const sa = readPkg('../../../artifacts/travel-buddy/package.json');
   const saAll: Record<string, string> = {
     ...sa.dependencies,
     ...sa.devDependencies,
@@ -239,10 +239,8 @@ describe('SDK 54 — other explicitly pinned Expo packages sync between artifact
     ...tb.devDependencies,
   };
 
-  // travel-buddy-standalone/package.json is 4 levels up from src/services in
-  // the artifacts tree (artifacts/travel-buddy/src/services → workspace root →
-  // travel-buddy-standalone).
-  const sa = readPkg('../../../../travel-buddy-standalone/package.json');
+  // artifacts/travel-buddy/package.json is 3 levels up then into the artifacts tree.
+  const sa = readPkg('../../../artifacts/travel-buddy/package.json');
   const saAll: Record<string, string> = {
     ...sa.dependencies,
     ...sa.devDependencies,
@@ -649,10 +647,10 @@ describe('expo-clipboard ~8.0.8 — setStringAsync call contract (mirrors GroupC
 // exactly one version and that version is identical in both trees.
 
 describe('Lockfile-resolved transitive peer dep versions — @expo/config-plugins and expo-modules-core', () => {
-  // travel-buddy-standalone/pnpm-lock.yaml is 4 levels up from src/services/ in artifacts/travel-buddy/
-  const standaloneLockText = readFileSync(pathResolve(__dir, '../../../../travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
-  // monorepo root pnpm-lock.yaml is also 4 levels up from src/services/ in artifacts/travel-buddy/
-  const monoLockText = readFileSync(pathResolve(__dir, '../../../../pnpm-lock.yaml'), 'utf8');
+  // travel-buddy-standalone/pnpm-lock.yaml is 2 levels up from src/services/ in travel-buddy-standalone/
+  const standaloneLockText = readFileSync(pathResolve(__dir, '../../pnpm-lock.yaml'), 'utf8');
+  // monorepo root pnpm-lock.yaml is 3 levels up from src/services/ in travel-buddy-standalone/
+  const monoLockText = readFileSync(pathResolve(__dir, '../../../pnpm-lock.yaml'), 'utf8');
 
   /**
    * Scan a lockfile text for all resolved base versions of a given package.
