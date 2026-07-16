@@ -3,7 +3,7 @@
  * Wraps all /api/threads/:threadId/telegraph/* endpoints.
  */
 
-import { supabase } from '../lib/supabase';
+import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 function apiBase(): string {

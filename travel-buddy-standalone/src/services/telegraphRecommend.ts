@@ -2,7 +2,7 @@
  * Telegraph recommend service — fetches AI place recommendations for the
  * Discovery Hub's "For You" tab.
  */
-import { supabase } from '../lib/supabase';
+import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';

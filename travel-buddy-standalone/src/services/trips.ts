@@ -3,8 +3,8 @@
  * (snake_case) to the app's types (camelCase). UI calls these, never supabase
  * tables directly.
  */
-import { supabase, isSupabaseConfigured, authedClient } from '../lib/supabase';
-import type { TripStatus, TripVisibility } from '../types/models';
+import { supabase, isSupabaseConfigured, authedClient } from '../lib/supabase.ts';
+import type { TripStatus, TripVisibility } from '../types/models.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 /* ---------- Profiles ---------- */

@@ -5,7 +5,7 @@
  * do server-side joins/filtering cleanly.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
-import type { OwnProfile, PublicProfile, PassportPostcard, PassportStamp, PostcardMediaItem } from '../types/models';
+import type { OwnProfile, PublicProfile, PassportPostcard, PassportStamp, PostcardMediaItem } from '../types/models.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 
 function apiBase(): string {
