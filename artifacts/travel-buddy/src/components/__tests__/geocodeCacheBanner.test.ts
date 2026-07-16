@@ -39,6 +39,7 @@ import {
   warningsAfterRepairFailure,
   type PendingWarning,
   type DeleteGeocodeCacheResult,
+  type PutGeocodeCacheResult,
 } from '../../lib/geocodeCacheWarnings.ts';
 import type { AdminApiResult } from '../../services/adminApi.ts';
 
@@ -48,6 +49,11 @@ type DeleteFn = (
   cityKey: string,
   repairCatalog: boolean,
 ) => Promise<AdminApiResult<DeleteGeocodeCacheResult>>;
+
+type PutFn = (
+  cityKey: string,
+  fields: { country_code: string; country: string; repair_catalog?: boolean },
+) => Promise<AdminApiResult<PutGeocodeCacheResult>>;
 
 function okDelete(xxEntriesPending?: number): AdminApiResult<DeleteGeocodeCacheResult> {
   return {
@@ -452,5 +458,167 @@ describe('createGeocodeCacheWarningMachine — delete failure', () => {
 
     assert.equal(machine.hasWarning('lisbon__pt'), true, 'first warning must remain intact');
     assert.equal(machine.hasWarning('unknown__xx'), false, 'no banner for failed delete');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUT without repair_catalog — banner appears
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Build an ok PUT response with the given xx_entries_pending count. */
+function okPut(
+  xxEntriesPending?: number,
+  cityKey = 'test',
+): AdminApiResult<PutGeocodeCacheResult> {
+  return {
+    ok: true,
+    data: {
+      updated: true,
+      city_key: cityKey,
+      country_code: 'DE',
+      country: 'Germany',
+      xx_entries_pending: xxEntriesPending,
+    } as PutGeocodeCacheResult,
+  };
+}
+
+function failPut(error = 'Server error'): AdminApiResult<PutGeocodeCacheResult> {
+  return { ok: false, error, data: {} as PutGeocodeCacheResult };
+}
+
+function makePutFake(
+  response: AdminApiResult<PutGeocodeCacheResult>,
+): { fn: PutFn; calls: Array<{ cityKey: string; fields: { country_code: string; country: string; repair_catalog?: boolean } }> } {
+  const calls: Array<{ cityKey: string; fields: { country_code: string; country: string; repair_catalog?: boolean } }> = [];
+  const fn: PutFn = async (cityKey, fields) => {
+    calls.push({ cityKey, fields });
+    return response;
+  };
+  return { fn, calls };
+}
+
+/** Stub delete fn — never called in PUT-only tests but required by the factory. */
+const noOpDeleteFn: DeleteFn = async () => okDelete(0);
+
+describe('createGeocodeCacheWarningMachine — PUT without repair_catalog → banner appears', () => {
+  it('banner is visible after PUT returns xx_entries_pending > 0', async () => {
+    const { fn } = makePutFake(okPut(3, 'vienna__at'));
+    const machine = createGeocodeCacheWarningMachine(noOpDeleteFn, fn);
+
+    await machine.performPut('vienna__at', { country_code: 'AT', country: 'Austria' });
+
+    assert.equal(machine.hasWarning('vienna__at'), true,
+      'warning banner must appear when PUT returns xx_entries_pending > 0');
+  });
+
+  it('banner count matches xx_entries_pending from the PUT response', async () => {
+    const { fn } = makePutFake(okPut(7, 'vienna__at'));
+    const machine = createGeocodeCacheWarningMachine(noOpDeleteFn, fn);
+
+    await machine.performPut('vienna__at', { country_code: 'AT', country: 'Austria' });
+
+    assert.equal(machine.getWarning('vienna__at')!.count, 7,
+      'warning count must reflect the xx_entries_pending value from the PUT response');
+  });
+
+  it('repairing flag starts false when banner first appears via PUT', async () => {
+    const { fn } = makePutFake(okPut(2, 'prague__cz'));
+    const machine = createGeocodeCacheWarningMachine(noOpDeleteFn, fn);
+
+    await machine.performPut('prague__cz', { country_code: 'CZ', country: 'Czechia' });
+
+    assert.equal(machine.getWarning('prague__cz')!.repairing, false,
+      'repairing must be false when the banner first appears');
+  });
+
+  it('PUT passes the supplied fields to the put function', async () => {
+    const { fn, calls } = makePutFake(okPut(1, 'bruges__be'));
+    const machine = createGeocodeCacheWarningMachine(noOpDeleteFn, fn);
+
+    await machine.performPut('bruges__be', { country_code: 'BE', country: 'Belgium' });
+
+    assert.equal(calls.length, 1, 'put function must be called exactly once');
+    assert.equal(calls[0]!.cityKey, 'bruges__be');
+    assert.equal(calls[0]!.fields.country_code, 'BE');
+    assert.equal(calls[0]!.fields.country, 'Belgium');
+  });
+
+  it('PUT banner coexists with an existing delete banner for a different city', async () => {
+    const deleteFn: DeleteFn = async () => okDelete(5);
+    const { fn: putFn } = makePutFake(okPut(3, 'oslo__no'));
+    const machine = createGeocodeCacheWarningMachine(deleteFn, putFn);
+
+    await machine.performDelete('stockholm__se');
+    await machine.performPut('oslo__no', { country_code: 'NO', country: 'Norway' });
+
+    assert.equal(machine.hasWarning('stockholm__se'), true, 'delete banner must still be visible');
+    assert.equal(machine.hasWarning('oslo__no'), true, 'PUT banner must also be visible');
+    assert.equal(machine.getWarnings().length, 2);
+  });
+
+  it('PUT failure does not create a banner', async () => {
+    const { fn } = makePutFake(failPut('Forbidden'));
+    const machine = createGeocodeCacheWarningMachine(noOpDeleteFn, fn);
+
+    await machine.performPut('reykjavik__is', { country_code: 'IS', country: 'Iceland' });
+
+    assert.equal(machine.hasWarning('reykjavik__is'), false,
+      'no warning must appear when the PUT call itself fails');
+    assert.equal(machine.getWarnings().length, 0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUT without repair_catalog — no banner when xx_entries_pending = 0 or absent
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('createGeocodeCacheWarningMachine — PUT without repair_catalog → no banner', () => {
+  it('no warning when PUT returns xx_entries_pending = 0', async () => {
+    const { fn } = makePutFake(okPut(0, 'athens__gr'));
+    const machine = createGeocodeCacheWarningMachine(noOpDeleteFn, fn);
+
+    await machine.performPut('athens__gr', { country_code: 'GR', country: 'Greece' });
+
+    assert.equal(machine.hasWarning('athens__gr'), false,
+      'no warning banner when xx_entries_pending = 0');
+    assert.equal(machine.getWarnings().length, 0);
+  });
+
+  it('no warning when PUT response omits xx_entries_pending', async () => {
+    const { fn } = makePutFake(okPut(undefined, 'lisbon__pt'));
+    const machine = createGeocodeCacheWarningMachine(noOpDeleteFn, fn);
+
+    await machine.performPut('lisbon__pt', { country_code: 'PT', country: 'Portugal' });
+
+    assert.equal(machine.hasWarning('lisbon__pt'), false,
+      'no warning when xx_entries_pending is absent from the PUT response');
+  });
+
+  it('existing warning for same key clears when a subsequent PUT returns 0', async () => {
+    let n = 0;
+    const fn: PutFn = async (cityKey) =>
+      n++ === 0 ? okPut(4, cityKey) : okPut(0, cityKey);
+    const machine = createGeocodeCacheWarningMachine(noOpDeleteFn, fn);
+
+    await machine.performPut('warsaw__pl', { country_code: 'PL', country: 'Poland' });
+    assert.equal(machine.hasWarning('warsaw__pl'), true, 'warning visible after first PUT');
+
+    await machine.performPut('warsaw__pl', { country_code: 'PL', country: 'Poland' });
+    assert.equal(machine.hasWarning('warsaw__pl'), false,
+      'warning must clear when subsequent PUT returns xx_entries_pending = 0');
+  });
+
+  it('warning for a different city is unaffected when PUT returns 0 for its own city', async () => {
+    const deleteFn: DeleteFn = async () => okDelete(3);
+    const { fn: putFn } = makePutFake(okPut(0, 'budapest__hu'));
+    const machine = createGeocodeCacheWarningMachine(deleteFn, putFn);
+
+    await machine.performDelete('zagreb__hr');
+    await machine.performPut('budapest__hu', { country_code: 'HU', country: 'Hungary' });
+
+    assert.equal(machine.hasWarning('zagreb__hr'), true,
+      'unrelated delete banner must remain intact');
+    assert.equal(machine.hasWarning('budapest__hu'), false,
+      'PUT city with 0 pending must not get a banner');
   });
 });
