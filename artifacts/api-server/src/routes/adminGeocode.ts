@@ -17,6 +17,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { evictGeocodeCacheKey } from "../lib/stamps/countryGeocoder.js";
+import { repairXXCatalogEntries, makeGeocodingResolver } from "../lib/stamps/xxCatalogRepair.js";
 
 const router = Router();
 
@@ -106,6 +107,7 @@ const PutBodySchema = z.object({
     .string()
     .refine((v) => COUNTRY_CODE_RE.test(v), { message: "country_code must be two letters (ISO 3166-1 alpha-2)" }),
   country: z.string().min(1),
+  repair_catalog: z.boolean().optional(),
 });
 
 router.put("/admin/geocode-cache/:city_key", async (req, res) => {
@@ -123,7 +125,7 @@ router.put("/admin/geocode-cache/:city_key", async (req, res) => {
     return sendError(res, "invalid_payload", parsed.error.issues.map((i) => i.message).join("; "));
   }
 
-  const { country_code, country } = parsed.data;
+  const { country_code, country, repair_catalog } = parsed.data;
   const normalised_code = country_code.toUpperCase();
 
   const now = new Date().toISOString();
@@ -140,9 +142,30 @@ router.put("/admin/geocode-cache/:city_key", async (req, res) => {
 
   if (error) return sendError(res, "db_error", error.message);
 
+  // Evict the in-memory geocode cache so the next resolution uses the
+  // corrected DB row immediately (no server restart required).
   evictGeocodeCacheKey(cityKey);
 
-  res.json({ updated: true, city_key: cityKey, country_code: normalised_code, country });
+  let repairStats: import("../lib/stamps/xxCatalogRepair.js").RepairStats | undefined;
+  if (repair_catalog) {
+    // Re-key catalog entries for this city using the corrected geocode.
+    // The geocoder will now read the just-written DB cache row, so no
+    // external network call is needed.
+    repairStats = await repairXXCatalogEntries(
+      sc,
+      makeGeocodingResolver(),
+      { info: console.log, warn: console.warn },
+      { cityKeyFilter: cityKey },
+    );
+  }
+
+  res.json({
+    updated: true,
+    city_key: cityKey,
+    country_code: normalised_code,
+    country,
+    ...(repairStats !== undefined ? { repair: repairStats } : {}),
+  });
 });
 
 export default router;

@@ -25,6 +25,7 @@ import {
   geocodeCityCountry,
 } from "../lib/stamps/countryGeocoder.js";
 import adminGeocodeRouter from "../routes/adminGeocode.js";
+import type { RepairStats } from "../lib/stamps/xxCatalogRepair.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
@@ -369,5 +370,211 @@ describe("PUT /admin/geocode-cache/:city_key", () => {
     setClients({ upsertError: "db write failed" });
     const r = await apiReq("PUT", "/admin/geocode-cache/paris", { country_code: "ES", country: "Spain" });
     assert.equal(r.status, 500);
+  });
+});
+
+// ── PUT /admin/geocode-cache/:city_key with repair_catalog: true ──────────────
+
+/**
+ * Minimal chainable fake for universal_stamp_catalog.
+ * Distinguishes the XX scan (select with many columns) from the survivor
+ * check (select "id" only → ends with maybeSingle).
+ */
+function makeCatalogFake(
+  xxEntries: Record<string, unknown>[],
+  onUpdate?: (fields: Record<string, unknown>) => void,
+) {
+  return {
+    select: (cols: string) => {
+      if (cols.includes("canonical_location_key")) {
+        // Full scan for XX entries — awaited directly (thenable).
+        return {
+          eq: (_col: string, _val: unknown) => ({
+            then: (resolve: (v: { data: unknown[]; error: null }) => void) =>
+              resolve({ data: xxEntries, error: null }),
+          }),
+        };
+      }
+      // Survivor-check chain: select("id").eq(...).eq(...).neq(...).maybeSingle()
+      const chain: any = {
+        eq: () => chain,
+        neq: () => chain,
+        maybeSingle: async () => ({ data: null, error: null }), // no survivor
+      };
+      return chain;
+    },
+    update: (fields: Record<string, unknown>) => {
+      onUpdate?.(fields);
+      return { eq: () => Promise.resolve({ data: null, error: null }) };
+    },
+  };
+}
+
+/** Build a fake Supabase client that also handles universal_stamp_catalog. */
+function makeRepairClient(opts: {
+  xxEntries?: Record<string, unknown>[];
+  onCatalogUpdate?: (fields: Record<string, unknown>) => void;
+  upsertError?: string;
+}) {
+  const { xxEntries = [], onCatalogUpdate, upsertError } = opts;
+  const client: any = {
+    auth: {
+      getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+    },
+    from: (table: string) => {
+      if (table === "profiles") {
+        return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+      }
+      if (table === "city_country_geocode_cache") {
+        return {
+          select: (_cols: string) => builder([]),
+          upsert: (_row: unknown, _o?: unknown) =>
+            Promise.resolve({
+              data: null,
+              error: upsertError ? { message: upsertError } : null,
+            }),
+        };
+      }
+      if (table === "universal_stamp_catalog") {
+        return makeCatalogFake(xxEntries, onCatalogUpdate);
+      }
+      return builder([]);
+    },
+  };
+  return client;
+}
+
+/** Geocode DB client that returns a pre-set country for any city key. */
+function makeGeocodeDbClient(country: string, countryCode: string): any {
+  return {
+    from: (table: string) => {
+      if (table === "city_country_geocode_cache") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: { country, country_code: countryCode },
+                error: null,
+              }),
+            }),
+          }),
+          upsert: () => Promise.resolve({ data: null, error: null }),
+        };
+      }
+      return {};
+    },
+  };
+}
+
+describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
+  it("re-keys a matching XX catalog entry and returns repair stats", async () => {
+    const catalogUpdates: Record<string, unknown>[] = [];
+
+    const client = makeRepairClient({
+      xxEntries: [
+        {
+          id: "cat-1",
+          canonical_location_key: "city:XX:fooville",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Fooville",
+          neighborhood: null,
+          display_name: "Fooville",
+        },
+      ],
+      onCatalogUpdate: (f) => catalogUpdates.push(f),
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    // Fake fetch must be set BEFORE the geocode DB client because
+    // _setGeocodeFetchForTests resets _dbClientOverride to null internally.
+    // We set a no-op fetch (Nominatim is not needed — the DB cache hit suffices).
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    // Now inject the geocode DB client so readDbCache returns the corrected Spain.
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Spain", "ES"));
+
+    const r = await apiReq("PUT", "/admin/geocode-cache/fooville", {
+      country_code: "ES",
+      country: "Spain",
+      repair_catalog: true,
+    });
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.ok(r.body.repair, "response should include repair stats");
+    const repair = r.body.repair as RepairStats;
+    assert.equal(repair.catalogRekeyed, 1, "one catalog entry should have been re-keyed");
+    assert.equal(repair.catalogMerged, 0);
+    assert.ok(catalogUpdates.length >= 1, "catalog update should have been called");
+    assert.equal(catalogUpdates[0].country_code, "ES");
+  });
+
+  it("skips catalog entries for other cities when using cityKeyFilter", async () => {
+    const catalogUpdates: Record<string, unknown>[] = [];
+
+    const client = makeRepairClient({
+      xxEntries: [
+        {
+          id: "cat-other",
+          canonical_location_key: "city:XX:bartown",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Bartown",  // different city from the corrected "fooville"
+          neighborhood: null,
+          display_name: "Bartown",
+        },
+      ],
+      onCatalogUpdate: (f) => catalogUpdates.push(f),
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Spain", "ES"));
+
+    const r = await apiReq("PUT", "/admin/geocode-cache/fooville", {
+      country_code: "ES",
+      country: "Spain",
+      repair_catalog: true,
+    });
+
+    assert.equal(r.status, 200);
+    assert.ok(r.body.repair, "response should include repair stats");
+    const repair = r.body.repair as RepairStats;
+    assert.equal(repair.catalogRekeyed, 0, "Bartown entry should be skipped (different city)");
+    assert.equal(catalogUpdates.length, 0, "no catalog update should have been issued");
+  });
+
+  it("omitting repair_catalog skips repair and returns no repair field", async () => {
+    let updateCalled = false;
+    const client = makeRepairClient({
+      xxEntries: [
+        {
+          id: "cat-1",
+          canonical_location_key: "city:XX:fooville",
+          stamp_type: "city",
+          country: "Unknown",
+          country_code: "XX",
+          city: "Fooville",
+          neighborhood: null,
+          display_name: "Fooville",
+        },
+      ],
+      onCatalogUpdate: () => { updateCalled = true; },
+    });
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("PUT", "/admin/geocode-cache/fooville", {
+      country_code: "ES",
+      country: "Spain",
+      // repair_catalog omitted
+    });
+
+    assert.equal(r.status, 200);
+    assert.ok(!r.body.repair, "repair field should be absent when repair_catalog is not set");
+    assert.equal(updateCalled, false, "catalog update should not have been called");
   });
 });

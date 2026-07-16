@@ -118,13 +118,30 @@ export async function mergeCatalogEntry(
 }
 
 /**
+ * Normalise a city string the same way the geocode cache key is derived:
+ * lowercase, NFD, strip combining diacritics, collapse whitespace.
+ */
+function normCityKey(raw: string): string {
+  return raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
  * Scan XX catalog entries and re-key / merge every one whose country is now
  * resolvable via `resolver`. Never throws; individual failures are logged.
+ *
+ * @param opts.cityKeyFilter - When provided, only entries whose city normalises
+ *   to this key are processed (targeted repair after a single geocode correction).
  */
 export async function repairXXCatalogEntries(
   sc: SupabaseClient,
   resolver: CountryResolver = makeGeocodingResolver(),
   log: { info: WarnLog; warn: WarnLog } = { info: console.log, warn: console.warn },
+  opts?: { cityKeyFilter?: string },
 ): Promise<RepairStats> {
   const stats: RepairStats = {
     scanned: 0,
@@ -144,12 +161,21 @@ export async function repairXXCatalogEntries(
     return stats;
   }
 
+  const { cityKeyFilter } = opts ?? {};
+
   for (const entry of (entries ?? []) as any[]) {
     // Definition-scoped (badge) entries are intentionally XX/Global — skip.
     if (typeof entry.canonical_location_key === "string" &&
         entry.canonical_location_key.startsWith("definition:")) {
       continue;
     }
+
+    // When a targeted city filter is set, skip entries for other cities.
+    if (cityKeyFilter !== undefined) {
+      const entryKey = entry.city ? normCityKey(entry.city) : "";
+      if (entryKey !== cityKeyFilter) continue;
+    }
+
     stats.scanned += 1;
 
     const rawCountry = entry.country === "Unknown" || entry.country === "Global"
