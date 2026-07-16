@@ -5,6 +5,9 @@
  * outage enqueues rows on push_retry_queue (one per recipient) instead of
  * silently dropping the alert.
  *
+ * Also verifies the two-phase outbox (reminder_sent_at / reminder_delivered_at)
+ * correctly recovers reminders lost to a crash between claim and send.
+ *
  * Run: node --import tsx/esm --test src/test/tripReminderPush.test.ts
  */
 import { describe, it, before, after, afterEach } from "node:test";
@@ -54,6 +57,11 @@ function makeFakeClient(state: FakeState) {
       in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return b; },
       is(col: string, val: any) {
         filters.push((r) => (val === null ? r[col] == null : r[col] === val));
+        return b;
+      },
+      lt(col: string, val: any) {
+        // Null values are never less-than anything (mirrors SQL behaviour).
+        filters.push((r) => r[col] != null && r[col] < val);
         return b;
       },
       gte() { return b; }, lte() { return b; }, order() { return b; },
@@ -139,21 +147,23 @@ describe("TripReminderScheduler push", () => {
     }
   });
 
-  it("marks reminder_sent_at when sending", async () => {
+  it("marks reminder_sent_at and reminder_delivered_at when sending", async () => {
     const state = baseState("trip-claim");
     const svc = makeFakeClient(state);
     _setTestServiceClient(svc);
     await runOnce();
 
     assert.equal(pushCalls.length, 1);
-    assert.ok(state.trips![0].reminder_sent_at, "reminder_sent_at set on the trip row");
+    assert.ok(state.trips![0].reminder_sent_at,    "reminder_sent_at set on the trip row");
+    assert.ok(state.trips![0].reminder_delivered_at, "reminder_delivered_at set after successful send");
   });
 
   it("does not re-send when reminder_sent_at is already set (e.g. after a restart)", async () => {
     // Fresh trip id so the in-memory Set can't be what dedups — only the
     // persisted reminder_sent_at column stands between us and a double-send.
     const state = baseState("trip-already-sent");
-    state.trips![0].reminder_sent_at = "2026-07-15T09:00:00.000Z";
+    state.trips![0].reminder_sent_at    = "2026-07-15T09:00:00.000Z";
+    state.trips![0].reminder_delivered_at = "2026-07-15T09:00:05.000Z";
     const svc = makeFakeClient(state);
     _setTestServiceClient(svc);
     await runOnce();
@@ -177,5 +187,63 @@ describe("TripReminderScheduler push", () => {
     await runOnce();
     assert.equal(pushCalls.length, 0, "second run sends nothing");
     assert.ok(state.trips![0].reminder_sent_at);
+    assert.ok(state.trips![0].reminder_delivered_at);
+  });
+
+  it("recovers a reminder claimed before a crash (sent_at set, delivered_at null, claim is stale)", async () => {
+    // Simulate: server A claimed the trip (set reminder_sent_at) but crashed
+    // before the push was sent (reminder_delivered_at is NULL). The claim
+    // timestamp is old enough to be considered stale.
+    const STALE_CLAIM_MINUTES = 10;
+    const staleTime = new Date(Date.now() - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
+
+    const state = baseState("trip-crash-recovery");
+    state.trips![0].reminder_sent_at    = staleTime;   // claimed, but stale
+    state.trips![0].reminder_delivered_at = null;       // never delivered
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 1, "recovery sweep sends the missed reminder");
+    assert.deepEqual(
+      pushCalls[0].map((m: any) => m.to).sort(),
+      [OWNER_TOKEN, MEMBER_TOKEN].sort(),
+    );
+    assert.ok(
+      state.trips![0].reminder_delivered_at,
+      "reminder_delivered_at is set after recovery",
+    );
+  });
+
+  it("does not retry a stale claim that was already delivered", async () => {
+    // reminder_sent_at is stale, but reminder_delivered_at is set — nothing to do.
+    const STALE_CLAIM_MINUTES = 10;
+    const staleTime = new Date(Date.now() - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
+
+    const state = baseState("trip-already-delivered");
+    state.trips![0].reminder_sent_at    = staleTime;
+    state.trips![0].reminder_delivered_at = new Date(Date.now() - 5 * 60_000).toISOString();
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 0, "no re-send when reminder was already delivered");
+  });
+
+  it("does not retry a fresh claim that might still be in-flight", async () => {
+    // reminder_sent_at is very recent — could be a concurrent send still running.
+    const recentTime = new Date(Date.now() - 30_000).toISOString(); // 30 seconds ago
+
+    const state = baseState("trip-fresh-claim");
+    state.trips![0].reminder_sent_at    = recentTime;
+    state.trips![0].reminder_delivered_at = null;
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 0, "fresh claim is not retried — not yet stale");
   });
 });
