@@ -44,7 +44,8 @@ import { TelegraphSystemNotice } from './TelegraphSystemNotice';
 import { TranslationSettingsSheet } from './TranslationSettingsSheet';
 import { TripMembersSheet } from './TripMembersSheet';
 import type { Message } from '../services/messaging';
-import { deleteMessage, saveMessage, reportMessage } from '../services/messaging';
+import { deleteMessage, saveMessage } from '../services/messaging';
+import { reportContent, type ReasonCode } from '../services/reports';
 import { getTripMembers, getCircleMembers, type FriendUser } from '../services/friends';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
@@ -79,6 +80,16 @@ const dd = StyleSheet.create({
   label: { ...t.stamp, fontFamily: 'Courier', fontSize: 10, color: color.mute, paddingHorizontal: 10, letterSpacing: 0.5 },
 });
 
+const REPORT_MSG_REASONS: { code: ReasonCode; label: string }[] = [
+  { code: 'spam',           label: 'Spam or misleading' },
+  { code: 'harassment',     label: 'Harassment or bullying' },
+  { code: 'hate_speech',    label: 'Hate speech' },
+  { code: 'violence',       label: 'Violent or dangerous content' },
+  { code: 'nudity',         label: 'Nudity or sexual content' },
+  { code: 'misinformation', label: 'Misinformation' },
+  { code: 'other',          label: 'Something else' },
+];
+
 function LongPressActionSheet({
   message,
   mine,
@@ -94,6 +105,28 @@ function LongPressActionSheet({
   onReply: (msg: Message) => void;
   onSave: (msg: Message) => void;
 }) {
+  const [showReport, setShowReport] = useState(false);
+  const [reportReason, setReportReason] = useState<ReasonCode | null>(null);
+  const [reportSending, setReportSending] = useState(false);
+
+  async function submitReport() {
+    if (!reportReason || !message) return;
+    setReportSending(true);
+    const result = await reportContent({
+      target_type: 'message',
+      target_id: message.id,
+      reason_code: reportReason,
+    }).catch(() => ({ ok: false as const }));
+    setReportSending(false);
+    if (result.ok) {
+      setShowReport(false);
+      onClose();
+      Alert.alert('Report submitted', 'Thank you. Our team will review this message.');
+    } else {
+      Alert.alert('Error', (result as any).error ?? 'Could not submit report');
+    }
+  }
+
   if (!message) return null;
   const text = message.displayBody ?? message.body ?? '';
   const actions: [string, string, React.ComponentType<{ size: number; color: string }>][] = [
@@ -103,6 +136,40 @@ function LongPressActionSheet({
     ['save',      'Save message',  BookmarkPlus ],
     ['report',    'Report',        Flag         ],
   ];
+  if (showReport) {
+    return (
+      <Modal visible animationType="slide" transparent onRequestClose={onClose}>
+        <Pressable style={las.overlay} onPress={onClose} />
+        <View style={las.sheet}>
+          <View style={las.handle} />
+          <Text style={las.reportTitle}>Report this message</Text>
+          <Text style={las.reportSub}>What's wrong with this message?</Text>
+          {REPORT_MSG_REASONS.map((r) => (
+            <Pressable
+              key={r.code}
+              style={[las.reasonOption, reportReason === r.code && las.reasonSelected]}
+              onPress={() => setReportReason(r.code)}
+            >
+              <Text style={[las.reasonText, reportReason === r.code && las.reasonTextSelected]}>{r.label}</Text>
+              {reportReason === r.code && <Text style={las.reasonCheck}>✓</Text>}
+            </Pressable>
+          ))}
+          <Pressable
+            style={[las.reportBtn, (!reportReason || reportSending) && las.reportBtnDisabled]}
+            onPress={submitReport}
+            disabled={!reportReason || reportSending}
+          >
+            {reportSending
+              ? <ActivityIndicator size="small" color={color.onInk} />
+              : <Text style={las.reportBtnLabel}>Submit Report</Text>}
+          </Pressable>
+          <Pressable style={las.backBtn} onPress={() => setShowReport(false)}>
+            <Text style={las.backLabel}>Back</Text>
+          </Pressable>
+        </View>
+      </Modal>
+    );
+  }
   return (
     <Modal visible animationType="slide" transparent onRequestClose={onClose}>
       <Pressable style={las.overlay} onPress={onClose} />
@@ -116,33 +183,23 @@ function LongPressActionSheet({
             key={key}
             style={las.row}
             onPress={async () => {
-              onClose();
               if (key === 'copy') {
+                onClose();
                 await Clipboard.setStringAsync(text);
                 Alert.alert('Copied', 'Message copied to clipboard.');
               } else if (key === 'report') {
-                Alert.alert('Report message', 'Are you sure you want to report this message?', [
-                  { text: 'Cancel', style: 'cancel' },
-                  {
-                    text: 'Report',
-                    style: 'destructive',
-                    onPress: async () => {
-                      const res = await reportMessage(message.id, 'inappropriate_content').catch(() => null);
-                      if (res?.ok) {
-                        Alert.alert('Report submitted', 'Thank you. Our team will review this message.');
-                      } else {
-                        Alert.alert('Error', res?.message ?? 'Could not submit report. Please try again.');
-                      }
-                    },
-                  },
-                ]);
+                setShowReport(true);
               } else if (key === 'reply') {
+                onClose();
                 onReply(message);
               } else if (key === 'save') {
+                onClose();
                 onSave(message);
               } else if (key === 'translate') {
+                onClose();
                 Alert.alert('Translation', 'Translations are applied automatically based on your language settings.');
               } else {
+                onClose();
                 Alert.alert(label, 'This feature is coming soon.');
               }
             }}
@@ -195,6 +252,18 @@ const las = StyleSheet.create({
     borderTopColor: color.haze,
   },
   rowLabel: { ...t.body, color: color.ink },
+  reportTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700', fontSize: 15, marginBottom: 2 },
+  reportSub: { ...t.small, color: color.mute, marginBottom: space.md },
+  reasonOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 11, paddingHorizontal: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, marginBottom: 6 },
+  reasonSelected: { borderColor: color.signal, backgroundColor: color.signal + '0A' },
+  reasonText: { ...t.body, color: color.ink },
+  reasonTextSelected: { color: color.signal, fontWeight: '700' },
+  reasonCheck: { fontSize: 14, color: color.signal, fontWeight: '700' },
+  reportBtn: { marginTop: space.md, backgroundColor: '#EF4444', borderRadius: radius.md, paddingVertical: 13, alignItems: 'center' },
+  reportBtnDisabled: { opacity: 0.45 },
+  reportBtnLabel: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },
+  backBtn: { paddingVertical: 10, alignItems: 'center' },
+  backLabel: { ...t.body, color: color.mute },
 });
 
 function GroupMessageBubble({
