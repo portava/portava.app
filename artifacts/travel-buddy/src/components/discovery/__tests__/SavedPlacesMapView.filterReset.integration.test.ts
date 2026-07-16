@@ -75,6 +75,10 @@ function makePlace(id: string, category: string, withCoords = true): BookmarkedP
     savedAt: Date.now(),
     lat: withCoords ? 48.8566 : null,
     lng: withCoords ? 2.3522 : null,
+    // Entries saved from a trip screen are tagged with the trip's listId —
+    // toggleSave matches by (id, listId), and untagged (legacy v1) entries
+    // belong to the 'global' list, not the trip list.
+    listId: TRIP_ID,
   };
 }
 

@@ -10,7 +10,7 @@ import {
   defaultPassportToggle,
   buildLocationPayload,
   payloadHasForbiddenKeys,
-} from './composerLogic';
+} from './composerLogic.ts';
 
 test('1. media required before submit', () => {
   assert.equal(canSubmit({ hasMedia: false, submitting: false }), false);

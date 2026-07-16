@@ -1,68 +1,74 @@
+/**
+ * displayIdentity tests — node:test + node:assert only.
+ * Run: node --import tsx/esm --test src/lib/displayIdentity.test.ts
+ */
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 import {
   identityHandle,
   identityRealName,
   primaryIdentityText,
   secondaryIdentityText,
-} from './displayIdentity';
+} from './displayIdentity.ts';
 
 describe('displayIdentity', () => {
   describe('identityHandle', () => {
     it('prefers handle over username', () => {
-      expect(identityHandle({ handle: 'kai', username: 'other' })).toBe('kai');
+      assert.equal(identityHandle({ handle: 'kai', username: 'other' }), 'kai');
     });
     it('falls back to username', () => {
-      expect(identityHandle({ username: 'wanda' })).toBe('wanda');
+      assert.equal(identityHandle({ username: 'wanda' }), 'wanda');
     });
     it('strips a leading @', () => {
-      expect(identityHandle({ handle: '@kai' })).toBe('kai');
+      assert.equal(identityHandle({ handle: '@kai' }), 'kai');
     });
     it('returns null for empty/blank values', () => {
-      expect(identityHandle({ handle: '  ', username: '' })).toBeNull();
-      expect(identityHandle(null)).toBeNull();
-      expect(identityHandle(undefined)).toBeNull();
+      assert.equal(identityHandle({ handle: '  ', username: '' }), null);
+      assert.equal(identityHandle(null), null);
+      assert.equal(identityHandle(undefined), null);
     });
   });
 
   describe('identityRealName', () => {
     it('prefers displayName, then name, then fullName', () => {
-      expect(identityRealName({ displayName: 'Kai R', name: 'K', fullName: 'F' })).toBe('Kai R');
-      expect(identityRealName({ name: 'Kai', fullName: 'F' })).toBe('Kai');
-      expect(identityRealName({ fullName: 'Full Name' })).toBe('Full Name');
+      assert.equal(identityRealName({ displayName: 'Kai R', name: 'K', fullName: 'F' }), 'Kai R');
+      assert.equal(identityRealName({ name: 'Kai', fullName: 'F' }), 'Kai');
+      assert.equal(identityRealName({ fullName: 'Full Name' }), 'Full Name');
     });
     it('treats blank strings as missing (server sends null when hidden)', () => {
-      expect(identityRealName({ displayName: '  ', name: '' })).toBeNull();
+      assert.equal(identityRealName({ displayName: '  ', name: '' }), null);
     });
   });
 
   describe('primaryIdentityText', () => {
     it('shows the real name when the subject opted in (server sent it)', () => {
-      expect(primaryIdentityText({ displayName: 'Kai Rivera', handle: 'kai' })).toBe('Kai Rivera');
+      assert.equal(primaryIdentityText({ displayName: 'Kai Rivera', handle: 'kai' }), 'Kai Rivera');
     });
     it('shows @handle when the name is hidden (null from server)', () => {
-      expect(primaryIdentityText({ displayName: null, handle: 'kai' })).toBe('@kai');
+      assert.equal(primaryIdentityText({ displayName: null, handle: 'kai' }), '@kai');
     });
     it('does not double the @ for handles stored with one', () => {
-      expect(primaryIdentityText({ handle: '@kai' })).toBe('@kai');
+      assert.equal(primaryIdentityText({ handle: '@kai' }), '@kai');
     });
     it('falls back to Traveler when nothing is available', () => {
-      expect(primaryIdentityText({})).toBe('Traveler');
-      expect(primaryIdentityText(null)).toBe('Traveler');
+      assert.equal(primaryIdentityText({}), 'Traveler');
+      assert.equal(primaryIdentityText(null), 'Traveler');
     });
   });
 
   describe('secondaryIdentityText', () => {
     it('returns @handle under a real name', () => {
-      expect(secondaryIdentityText({ displayName: 'Kai Rivera', handle: 'kai' })).toBe('@kai');
+      assert.equal(secondaryIdentityText({ displayName: 'Kai Rivera', handle: 'kai' }), '@kai');
     });
     it('returns null when the primary line is already the handle', () => {
-      expect(secondaryIdentityText({ displayName: null, handle: 'kai' })).toBeNull();
+      assert.equal(secondaryIdentityText({ displayName: null, handle: 'kai' }), null);
     });
     it('returns null when name and handle would duplicate', () => {
-      expect(secondaryIdentityText({ displayName: 'kai', handle: 'kai' })).toBeNull();
-      expect(secondaryIdentityText({ displayName: '@kai', handle: 'kai' })).toBeNull();
+      assert.equal(secondaryIdentityText({ displayName: 'kai', handle: 'kai' }), null);
+      assert.equal(secondaryIdentityText({ displayName: '@kai', handle: 'kai' }), null);
     });
     it('returns null when there is no handle', () => {
-      expect(secondaryIdentityText({ displayName: 'Kai Rivera' })).toBeNull();
+      assert.equal(secondaryIdentityText({ displayName: 'Kai Rivera' }), null);
     });
   });
 });
