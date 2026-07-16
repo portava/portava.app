@@ -2898,4 +2898,148 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     assert.equal(sweepQueryCount, 2,
       "both sweep passes (corrected_at and deleted_at) were executed");
   });
+
+  it("evicts both corrected-at (Pass 1) and tombstoned (Pass 2) entries when both passes error on cycle 1 but recover together on cycle 2", async () => {
+    // Task 637: the untested edge from Task 560 — both passes fail simultaneously
+    // (e.g. a total DB outage), then both recover in the same subsequent cycle.
+    //
+    // Cycle 1: Pass 1 (corrected_at query) errors + Pass 2 (deleted_at query) errors.
+    //          → Neither entry is evicted; no cleanup delete is issued.
+    // Cycle 2: Both passes succeed.
+    //          → Both entries are evicted; the tombstone cleanup delete fires for Pass 2.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Nominatim stub — counts calls; used to confirm eviction happened.
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "fr", country: "France" } }],
+      };
+    });
+
+    // ── Seed Pass 1 target: "paris" ──────────────────────────────────────────────
+    // Load it from the DB so writtenAt = T0.  The sweep's Pass 1 will return a
+    // corrected_at of T0 + 1 000 ms — guaranteed to be newer than writtenAt.
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({ country: "France", country_code: "FR", corrected_at: null, deleted_at: null }),
+    );
+    const parisFirst = await geocodeCityCountry("Paris");
+    assert.equal(parisFirst?.countryCode, "FR", "pre-condition: paris seeded as FR");
+    assert.equal(nominatimCalls, 0, "no Nominatim call during paris seed");
+
+    const correctedAtIso = new Date(T0 + 1_000).toISOString(); // > writtenAt (T0)
+
+    // ── Seed Pass 2 target: "berlin" ─────────────────────────────────────────────
+    // Load a second entry; the sweep's Pass 2 will return it as tombstoned.
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({ country: "Germany", country_code: "DE", corrected_at: null, deleted_at: null }),
+    );
+    const berlinFirst = await geocodeCityCountry("Berlin");
+    assert.equal(berlinFirst?.countryCode, "DE", "pre-condition: berlin seeded as DE");
+    assert.equal(nominatimCalls, 0, "no Nominatim call during berlin seed");
+
+    // ── Cycle 1: both passes return DB errors ────────────────────────────────────
+    let cycle1QueryCount = 0;
+    let cycle1DeleteCount = 0;
+    const errorSweepClient: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          delete() { isDelete = true; return chain; },
+          in(_col: string, _keys: string[]) {
+            cycle1DeleteCount++;
+            return chain;
+          },
+          then(resolve: (v: any) => void) {
+            if (isDelete) {
+              cycle1DeleteCount++;
+              resolve({ error: null });
+              return;
+            }
+            cycle1QueryCount++;
+            // Both Pass 1 and Pass 2 error in cycle 1.
+            resolve({ data: null, error: { message: "connection refused" } });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(errorSweepClient);
+    await _runCorrectionSweepForTests();
+
+    assert.equal(cycle1QueryCount, 2, "cycle 1: both sweep passes ran");
+    assert.equal(cycle1DeleteCount, 0, "cycle 1: no cleanup delete issued when both passes error");
+
+    // Both entries must still be in memory after the failed sweep.
+    _setGeocodeDbClientForTests(makeFixedDbClient(null));
+    const parisAfterCycle1 = await geocodeCityCountry("Paris");
+    assert.equal(parisAfterCycle1?.countryCode, "FR",
+      "paris entry preserved after cycle 1 — Pass 1 error must not evict");
+    const berlinAfterCycle1 = await geocodeCityCountry("Berlin");
+    assert.equal(berlinAfterCycle1?.countryCode, "DE",
+      "berlin entry preserved after cycle 1 — Pass 2 error must not evict");
+    assert.equal(nominatimCalls, 0,
+      "Nominatim not called after cycle 1 — both stale entries kept by error guard");
+
+    // ── Cycle 2: both passes recover and return their respective rows ─────────────
+    const cycle2CleanedKeys: string[][] = [];
+    let cycle2QueryCount = 0;
+    const recoverySweepClient2: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          delete() { isDelete = true; return chain; },
+          in(_col: string, keys: string[]) {
+            cycle2CleanedKeys.push(keys);
+            return chain;
+          },
+          then(resolve: (v: any) => void) {
+            if (isDelete) {
+              resolve({ error: null });
+              return;
+            }
+            const q = cycle2QueryCount++;
+            if (q === 0) {
+              // Pass 1 — corrected_at: paris was corrected after its cache entry was written.
+              resolve({ data: [{ city_key: "paris", corrected_at: correctedAtIso }], error: null });
+            } else {
+              // Pass 2 — deleted_at: berlin is tombstoned.
+              resolve({ data: [{ city_key: "berlin" }], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(recoverySweepClient2);
+    await _runCorrectionSweepForTests();
+
+    assert.equal(cycle2QueryCount, 2, "cycle 2: both sweep passes ran");
+    assert.equal(cycle2CleanedKeys.length, 1,
+      "cycle 2: cleanup hard-delete issued exactly once (for Pass 2 tombstones)");
+    assert.deepEqual(cycle2CleanedKeys[0], ["berlin"],
+      "cycle 2: correct city_key passed to the tombstone cleanup delete");
+
+    // Both entries must now be evicted — subsequent calls must fall through to Nominatim.
+    _setGeocodeDbClientForTests(makeFixedDbClient(null));
+    await geocodeCityCountry("Paris");
+    assert.equal(nominatimCalls, 1,
+      "Nominatim called for paris after cycle 2 eviction — Pass 1 correctly evicted the entry");
+    await geocodeCityCountry("Berlin");
+    assert.equal(nominatimCalls, 2,
+      "Nominatim called for berlin after cycle 2 eviction — Pass 2 correctly evicted the entry");
+  });
 });
