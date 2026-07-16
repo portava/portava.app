@@ -661,6 +661,66 @@ describe('StampStudioIndex — 45-second health poll updates the warning strip',
       screen.getByText(/Queued backlog grew from 11 to 20 while the worker is enabled/),
     ).toBeTruthy();
   });
+
+  it('warning strip clears when the 45-second health poll returns no warnings', async () => {
+    // Override the beforeEach mock so that:
+    //   - the initial load() returns a stuck_jobs warning (strip visible on mount)
+    //   - the 45 s poll tick returns warnings: [] (strip must disappear)
+    mockGetHealth.mockReset();
+    mockGetHealth
+      .mockResolvedValueOnce({
+        ok: true as const,
+        data: {
+          warnings: [
+            { key: 'stuck_jobs' as const, message: 'stuck', details: { stuck_count: 2 } },
+          ],
+          health: {
+            worker_enabled: true,
+            worker_running: true,
+            worker_id: 'w1',
+            last_success_at: null,
+            queue_depth: {},
+            stuck_jobs: [],
+          },
+        },
+      })
+      .mockResolvedValue({
+        ok: true as const,
+        data: {
+          warnings: [],
+          health: {
+            worker_enabled: true,
+            worker_running: true,
+            worker_id: 'w1',
+            last_success_at: null,
+            queue_depth: {},
+            stuck_jobs: [],
+          },
+        },
+      });
+
+    render(<StampStudioIndex />);
+
+    // Wait for the initial load to complete — the stuck_jobs warning must be visible.
+    await waitFor(() =>
+      screen.getByText(/2 jobs stuck in 'generating' past lock expiry/),
+    );
+    expect(
+      screen.getByText(/2 jobs stuck in 'generating' past lock expiry/),
+    ).toBeTruthy();
+
+    // Fire the 45-second health poll tick — it returns warnings: [].
+    const healthPoll = spy.captured.find((e) => e.delay === 45_000);
+    expect(healthPoll).toBeDefined();
+
+    await act(async () => { healthPoll!.fn(); });
+
+    // The warning text must no longer be in the tree.
+    await waitFor(() =>
+      expect(screen.queryByText(/stuck in 'generating'/)).toBeNull(),
+    );
+    expect(screen.queryByText(/stuck in 'generating'/)).toBeNull();
+  });
 });
 
 // ── Suite 5: blur clears all three intervals ───────────────────────────────────
