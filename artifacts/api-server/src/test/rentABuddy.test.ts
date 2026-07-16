@@ -159,6 +159,7 @@ function makeClient(userId: string, role = "user") {
       upsert(data: any, opts?: any) { this._upsertData = data; return this; },
       delete() { this._updateData = "__delete__"; return this; },
       eq(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
+      neq(col: string, val: any) { this._filters.push(["neq", col, val]); return this; },
       in(col: string, vals: any[]) { this._filters.push(["in", col, vals]); return this; },
       gt(col: string, val: any) { this._filters.push(["gt", col, val]); return this; },
       lt(col: string, val: any) { this._filters.push(["lt", col, val]); return this; },
@@ -389,11 +390,11 @@ function makeClient(userId: string, role = "user") {
 
           let rows = Object.values(bks);
           for (const [op, col, val] of this._filters) {
-            if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
+            if (op === "eq")  rows = rows.filter((r: any) => r[col] === val);
             if (op === "neq") rows = rows.filter((r: any) => r[col] !== val);
-            if (op === "in") rows = rows.filter((r: any) => (val as any[]).includes(r[col]));
-            if (op === "lt") rows = rows.filter((r: any) => r[col] < val);
-            if (op === "gt") rows = rows.filter((r: any) => r[col] > val);
+            if (op === "in")  rows = rows.filter((r: any) => (val as any[]).includes(r[col]));
+            if (op === "lt")  rows = rows.filter((r: any) => r[col] < val);
+            if (op === "gt")  rows = rows.filter((r: any) => r[col] > val);
             if (op === "lte") rows = rows.filter((r: any) => r[col] <= val);
             if (op === "gte") rows = rows.filter((r: any) => r[col] >= val);
           }
@@ -3528,5 +3529,122 @@ describe("Rent a Buddy — message payload: booking_id and sender_id correctness
     const cardBody = JSON.parse(card.body);
     assert.equal(cardBody.booking_id, BOOKING_ID, "card body booking_id must match the booking");
     assert.equal(cardBody.status, "disputed");
+  });
+});
+
+// ── Notification recipient correctness ────────────────────────────────────────
+// Asserts that notifyBookingParty targets the OTHER party — not the actor —
+// for each booking status transition.
+
+describe("Rent a Buddy — notifications: recipient is the other party", () => {
+  // notifyBookingParty runs inside a fire-and-forget void IIFE so the HTTP
+  // response arrives before the notification insert completes.  A short drain
+  // gives the microtask queue time to flush the in-memory fake-client write.
+  const drain = () => new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+  it("accept: traveler (not the buddy actor) receives booking_accepted notification", async () => {
+    // Buddy (BUDDY_USER) accepts → traveler (USER_ID) must be notified
+    setupState();
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/accept`, {}, BUDDY_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    await drain();
+    const notes: any[] = (state as any).notifications ?? [];
+    const note = notes.find((n: any) => n.event_type === "rent_buddy.booking_accepted");
+    assert.ok(note, "expected a booking_accepted notification row");
+    assert.equal(note.user_id, USER_ID,
+      `notification recipient must be the traveler (${USER_ID}), got: ${note.user_id}`);
+    assert.notEqual(note.user_id, BUDDY_USER,
+      "notification must not target the buddy who performed the action");
+  });
+
+  it("cancel by traveler: buddy (not the traveler actor) receives booking_cancelled_by_traveler notification", async () => {
+    // Traveler (USER_ID) cancels → buddy (BUDDY_USER) must be notified
+    setupState();
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/cancel`, {});
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    await drain();
+    const notes: any[] = (state as any).notifications ?? [];
+    const note = notes.find((n: any) => n.event_type === "rent_buddy.booking_cancelled_by_traveler");
+    assert.ok(note, "expected a booking_cancelled_by_traveler notification row");
+    assert.equal(note.user_id, BUDDY_USER,
+      `notification recipient must be the buddy (${BUDDY_USER}), got: ${note.user_id}`);
+    assert.notEqual(note.user_id, USER_ID,
+      "notification must not target the traveler who performed the action");
+  });
+
+  it("cancel by buddy: traveler (not the buddy actor) receives booking_cancelled_by_buddy notification", async () => {
+    // Buddy (BUDDY_USER) cancels → traveler (USER_ID) must be notified
+    setupState();
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/cancel`, {}, BUDDY_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    await drain();
+    const notes: any[] = (state as any).notifications ?? [];
+    const note = notes.find((n: any) => n.event_type === "rent_buddy.booking_cancelled_by_buddy");
+    assert.ok(note, "expected a booking_cancelled_by_buddy notification row");
+    assert.equal(note.user_id, USER_ID,
+      `notification recipient must be the traveler (${USER_ID}), got: ${note.user_id}`);
+    assert.notEqual(note.user_id, BUDDY_USER,
+      "notification must not target the buddy who performed the action");
+  });
+
+  it("decline: traveler (not the buddy actor) receives booking_declined notification", async () => {
+    // Buddy (BUDDY_USER) declines → traveler (USER_ID) must be notified
+    setupState();
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/decline`, {}, BUDDY_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    await drain();
+    const notes: any[] = (state as any).notifications ?? [];
+    const note = notes.find((n: any) => n.event_type === "rent_buddy.booking_declined");
+    assert.ok(note, "expected a booking_declined notification row");
+    assert.equal(note.user_id, USER_ID,
+      `notification recipient must be the traveler (${USER_ID}), got: ${note.user_id}`);
+    assert.notEqual(note.user_id, BUDDY_USER,
+      "notification must not target the buddy who performed the action");
+  });
+
+  it("dispute by traveler: buddy (not the traveler actor) receives dispute_opened notification", async () => {
+    // Traveler (USER_ID) opens dispute → buddy (BUDDY_USER) must be notified
+    setupState({
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+          status: "in_progress",
+          updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+        },
+      },
+    });
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "other" });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    await drain();
+    const notes: any[] = (state as any).notifications ?? [];
+    const note = notes.find((n: any) => n.event_type === "rent_buddy.dispute_opened");
+    assert.ok(note, "expected a dispute_opened notification row");
+    assert.equal(note.user_id, BUDDY_USER,
+      `notification recipient must be the buddy (${BUDDY_USER}), got: ${note.user_id}`);
+    assert.notEqual(note.user_id, USER_ID,
+      "notification must not target the traveler who raised the dispute");
+  });
+
+  it("dispute by buddy: traveler (not the buddy actor) receives dispute_opened notification", async () => {
+    // Buddy (BUDDY_USER) opens dispute → traveler (USER_ID) must be notified
+    setupState({
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+          status: "in_progress",
+          updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+        },
+      },
+    });
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "other" }, BUDDY_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    await drain();
+    const notes: any[] = (state as any).notifications ?? [];
+    const note = notes.find((n: any) => n.event_type === "rent_buddy.dispute_opened");
+    assert.ok(note, "expected a dispute_opened notification row");
+    assert.equal(note.user_id, USER_ID,
+      `notification recipient must be the traveler (${USER_ID}), got: ${note.user_id}`);
+    assert.notEqual(note.user_id, BUDDY_USER,
+      "notification must not target the buddy who raised the dispute");
   });
 });
