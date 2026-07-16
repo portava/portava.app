@@ -1,5 +1,5 @@
 /**
- * Catalog detail screen — last_error resilience tests (standalone)
+ * Catalog detail screen — last_error resilience tests (main app)
  *
  * The admin stamp detail page ([catalogId].tsx) derives a shortfall banner
  * from queue.last_error with this guard:
@@ -21,7 +21,7 @@
  *      queue payload intact — the service layer never throws on it.
  *
  * Run:
- *   cd travel-buddy-standalone
+ *   cd artifacts/travel-buddy
  *   node --import tsx/esm --test \
  *     src/services/__tests__/catalogDetail.lastError.test.ts
  */
