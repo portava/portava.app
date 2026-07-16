@@ -1891,6 +1891,72 @@ describe("PushRetryQueue.recoverStaleProcessing() — within-threshold row left 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 10c — recoverStaleProcessing: next_retry_at must be <= now, never in the future
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("PushRetryQueue.recoverStaleProcessing() — next_retry_at is not in the future", () => {
+  it("sets next_retry_at to now (not a future time) so the recovered row is claimed on the very next tick", async () => {
+    // Seed a row that has been stuck in 'processing' for 5 minutes — well past
+    // the 2-minute stale threshold — so recoverStaleProcessing() would genuinely
+    // match it if the fake client's lt() filter were applied.
+    const staleRow = {
+      id:           QUEUE_ROW_ID,
+      user_id:      USER_ID,
+      notification_id: NOTIF_ID,
+      tokens:       [PUSH_TOKEN],
+      payload:      BASE_PAYLOAD,
+      attempt_count: 1,
+      max_attempts:  3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:       "processing",
+      updated_at:   new Date(Date.now() - 5 * 60 * 1_000).toISOString(), // 5 min ago
+      next_retry_at: new Date(Date.now() - 5 * 60 * 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([staleRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    const before = Date.now();
+    // Call recoverStaleProcessing() directly — not via processQueue() — so the
+    // assertion is unambiguous and isolated from the claim/process path.
+    await (queue as unknown as { recoverStaleProcessing(): Promise<void> }).recoverStaleProcessing();
+    const after = Date.now();
+
+    // The recovery UPDATE must target push_retry_queue with eq("status","processing")
+    const recoveryUpdate = client.updateCalls.find(
+      (c) => c.table === "push_retry_queue" && c.filters["status"] === "processing",
+    );
+    assert.ok(
+      recoveryUpdate,
+      "recoverStaleProcessing must issue an UPDATE on push_retry_queue with eq('status','processing')",
+    );
+
+    // next_retry_at must be present in the patch
+    assert.ok(
+      recoveryUpdate.patch.next_retry_at !== undefined,
+      "recovery patch must include next_retry_at",
+    );
+
+    const nextRetryMs = new Date(recoveryUpdate.patch.next_retry_at as string).getTime();
+
+    // The critical assertion: next_retry_at must be <= now (i.e. in the past or
+    // current instant), never a future timestamp that would silently delay the row.
+    assert.ok(
+      nextRetryMs <= after,
+      `next_retry_at must be <= now so the row is claimed immediately on the next tick; ` +
+      `got ${recoveryUpdate.patch.next_retry_at} which is ${nextRetryMs - after} ms in the future`,
+    );
+
+    // Also confirm it is not absurdly old — must be within the test window
+    assert.ok(
+      nextRetryMs >= before - 100,
+      `next_retry_at must be approximately now (within the test window); ` +
+      `got ${recoveryUpdate.patch.next_retry_at}`,
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 11 — Surgical precision: three-token batch, only one dead
 // ─────────────────────────────────────────────────────────────────────────────
 
