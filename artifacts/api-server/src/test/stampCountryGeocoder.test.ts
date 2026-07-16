@@ -727,4 +727,74 @@ describe("background correction sweep", () => {
     assert.equal(r!.countryCode, "GB", "should return the fresh Nominatim country code");
     assert.equal(r!.country, "United Kingdom", "should return the fresh Nominatim country name");
   });
+
+  it("after deletion-eviction re-geocode, writes the fresh Nominatim result back to the DB", async () => {
+    // Step 1: populate the in-memory cache with a stale entry (CA for Banff).
+    _setGeocodeFetchForTests(fakeNominatim({
+      "banff": { country_code: "ca", country: "Canada" },
+    }));
+    await geocodeCityCountry("Banff");
+    assert.equal(fetchCalls.length, 1, "first resolve should hit Nominatim");
+
+    // Step 2: build a DB client that:
+    //   • for the sweep query returns a corrected_at post-dating writtenAt (triggers eviction)
+    //   • for readDbCache (maybeSingle) returns null — the admin deleted the row entirely
+    //   • records any upsert calls so the write-back can be verified
+    const correctedAt = new Date(Date.now() + 1_000).toISOString();
+    const upsertCalls: Array<{ city_key: string; country: string; country_code: string }> = [];
+    const deletionDb = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache");
+        let _isMaybeSingle = false;
+        const chain: any = {
+          select()      { return chain; },
+          eq()          { return chain; },
+          gte()         { return chain; },
+          maybeSingle() { _isMaybeSingle = true; return chain; },
+          async upsert(row: any) {
+            upsertCalls.push(row);
+            return { error: null };
+          },
+          then(resolve: (v: any) => void) {
+            if (_isMaybeSingle) {
+              // readDbCache path: row was deleted — return null
+              resolve({ data: null, error: null });
+            } else {
+              // sweep path: signal eviction via a corrected_at that post-dates writtenAt
+              resolve({ data: [{ city_key: "banff", corrected_at: correctedAt }], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    // Step 3: run the sweep — it should evict the stale CA entry.
+    _setGeocodeDbClientForTests(deletionDb);
+    await _runCorrectionSweepForTests();
+
+    // Step 4: set up Nominatim to return a fresh result (GB for illustration).
+    fetchCalls = [];
+    _setGeocodeFetchForTests(fakeNominatim({
+      "banff": { country_code: "gb", country: "United Kingdom" },
+    }));
+
+    // Re-inject the same DB client (setGeocodeFetch resets _dbClientOverride to null).
+    _setGeocodeDbClientForTests(deletionDb);
+
+    // Step 5: geocodeCityCountry should re-resolve from Nominatim and persist
+    // the fresh result back to the DB via exactly one upsert.
+    const r = await geocodeCityCountry("Banff");
+
+    assert.equal(fetchCalls.length, 1, "exactly one Nominatim call should be made after deletion eviction");
+    assert.ok(r !== null, "should return a resolved result — not stuck returning null");
+    assert.equal(r!.countryCode, "GB", "should return the fresh Nominatim country code");
+    assert.equal(r!.country, "United Kingdom", "should return the fresh Nominatim country name");
+
+    // The write-back assertion: the fresh result must be persisted via one upsert.
+    assert.equal(upsertCalls.length, 1, "exactly one upsert must be made to persist the fresh geocode result");
+    assert.equal(upsertCalls[0].city_key, "banff", "upsert must use the normalised city_key");
+    assert.equal(upsertCalls[0].country_code, "GB", "upsert must carry the correct country_code");
+    assert.equal(upsertCalls[0].country, "United Kingdom", "upsert must carry the correct country name");
+  });
 });
