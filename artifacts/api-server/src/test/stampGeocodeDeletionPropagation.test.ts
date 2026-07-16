@@ -2807,4 +2807,95 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     assert.equal(tombstoneStore.size, 0,
       "tombstone store is empty after cycle 2 — hard-delete succeeded on retry");
   });
+
+  it("sweep issues no hard-delete and does not evict the cache when Pass 2 returns an empty array", async () => {
+    // Scenario: the sweep runs, Pass 1 finds no corrected rows, and Pass 2 finds
+    // no tombstoned rows (empty array). The guard `tombstoned.length > 0` must
+    // prevent any hard-delete call from firing.  A warm in-memory cache entry
+    // must also remain intact — no spurious eviction from an empty result.
+
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Seed a warm positive cache entry so we can assert it is NOT evicted.
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "de", country: "Germany" } }],
+    }));
+
+    // Build a minimal DB client: both sweep passes return empty arrays.
+    // If delete() is ever called the test fails immediately.
+    let deleteCallCount = 0;
+    let sweepQueryCount = 0;
+    const emptyPassClient: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          delete() {
+            isDelete = true;
+            deleteCallCount++;
+            return chain;
+          },
+          in() { return chain; },
+          async maybySingle() { return { data: null, error: null }; },
+          async maybeSingle() {
+            // readDbCache for the warm-up — returns a live row the first time.
+            return {
+              data: {
+                country: "Germany",
+                country_code: "DE",
+                corrected_at: null,
+                deleted_at: null,
+              },
+              error: null,
+            };
+          },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            if (isDelete) { resolve({ error: null }); return; }
+            // Both Pass 1 and Pass 2 return empty — no corrected or tombstoned rows.
+            sweepQueryCount++;
+            resolve({ data: [], error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(emptyPassClient);
+
+    // Warm up the in-memory cache with a positive entry (reads from DB).
+    const warmResult = await geocodeCityCountry("Berlin");
+    assert.equal(warmResult?.countryCode, "DE",
+      "pre-condition: warm cache entry loaded from DB");
+
+    // Run the correction sweep — Pass 1 and Pass 2 both return [].
+    await _runCorrectionSweepForTests();
+
+    // No hard-delete must have been issued.
+    assert.equal(deleteCallCount, 0,
+      "hard-delete must NOT be called when Pass 2 returns an empty array");
+
+    // The warm cache entry must still be present and serve the cached value.
+    // Advance time just short of the correction-check interval so the probe
+    // does NOT fire — only the sweep ran.
+    mockNow(T0 + 1_000);
+    let nominatimAfterSweep = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimAfterSweep++;
+      return { ok: true, json: async () => [] };
+    });
+
+    const afterSweep = await geocodeCityCountry("Berlin");
+    assert.equal(afterSweep?.countryCode, "DE",
+      "cached entry must still be served — sweep must not evict when Pass 2 is empty");
+    assert.equal(nominatimAfterSweep, 0,
+      "Nominatim must not be called — the cache entry was NOT evicted by the empty-result sweep");
+    assert.equal(sweepQueryCount, 2,
+      "both sweep passes (corrected_at and deleted_at) were executed");
+  });
 });
