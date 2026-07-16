@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { findBlockingAvailabilityException, sendBuddyUnavailable } from "./rentABuddy.js";
+import { adjustBuddyCounter } from "../services/rentBuddy/ReliabilityCounters.js";
 
 const router = Router();
 
@@ -1424,6 +1425,26 @@ router.post("/api/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", async
     return res.status(400).json({ error: "invalid_payload", message: "resolution is required." });
   }
 
+  // Fetch booking to get traveler_id and buddy_id for counter logic
+  const { data: booking } = await serviceClient
+    .from("rent_buddy_bookings")
+    .select("traveler_id, buddy_id, status")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return res.status(404).json({ error: "not_found" });
+  if ((booking as any).status !== "disputed") {
+    return res.status(409).json({ error: "invalid_transition", message: "Booking is not in disputed status." });
+  }
+
+  // Capture open dispute before updating — needed for no_show_count logic below,
+  // since the update response only returns the post-update row without reason/raised_by.
+  const { data: openDispute } = await serviceClient
+    .from("rent_buddy_disputes")
+    .select("id, reason, raised_by")
+    .eq("booking_id", bookingId)
+    .in("status", ["open", "reviewing"])
+    .maybeSingle();
+
   // Resolve the dispute row
   const { data: dispute, error: dErr } = await serviceClient
     .from("rent_buddy_disputes")
@@ -1454,6 +1475,16 @@ router.post("/api/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", async
     notes: note ?? resolution,
     details: { bookingId, favorTraveler: favorTraveler ?? null },
   });
+
+  // Confirmed buddy no-show: a no_show dispute raised by the traveler, resolved
+  // as cancelled (session did not happen), increments the buddy's no_show_count.
+  if (
+    (openDispute as any)?.reason === "no_show" &&
+    newBookingStatus === "cancelled" &&
+    (openDispute as any)?.raised_by === (booking as any).traveler_id
+  ) {
+    await adjustBuddyCounter(serviceClient, (booking as any).buddy_id, "no_show_count", 1);
+  }
 
   return res.json({ dispute, resolution, bookingStatus: newBookingStatus });
 });

@@ -21,6 +21,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
+import { specAliasRewrite } from "../lib/specAliasRewrite.js";
 
 const BUDDY_USER_ID = "aaaaaaaa-0000-0000-0000-000000000001";
 const TRAVELER_ID   = "bbbbbbbb-0000-0000-0000-000000000002";
@@ -132,10 +133,15 @@ let port: number;
 
 before(async () => {
   const { default: rentABuddyRouter } = await import("../routes/rentABuddy.js");
+  const { default: rentABuddySpecRouter } = await import("../routes/rentABuddySpec.js");
   const { default: marketplaceRouter } = await import("../routes/rentABuddyMarketplace.js");
   const app = express();
   app.use(express.json());
+  // Same alias rewrite as production so tests exercise the alias URLs the mobile
+  // client actually calls (e.g. /api/admin/buddy-bookings/:id/resolve-dispute).
+  app.use(specAliasRewrite);
   app.use(rentABuddyRouter);
+  app.use(rentABuddySpecRouter);
   app.use(marketplaceRouter);
   server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -210,8 +216,10 @@ describe("no_show_count — admin dispute resolution", () => {
       openDispute: { id: "disp-1", reason: "no_show", raised_by: TRAVELER_ID },
       profileCounters: { no_show_count: 1 },
     });
+    // Call through the alias URL — specAliasRewrite rewrites it to the canonical
+    // /api/rent-a-buddy/admin/bookings/:id/resolve-dispute handler in rentABuddySpec.ts.
     const res = await call("POST", `/api/admin/buddy-bookings/${BOOKING_ID}/resolve-dispute`, fake,
-      { finalStatus: "cancelled" });
+      { resolution: "no_show_confirmed", favorTraveler: true });
     assert.equal(res.status, 200);
 
     const pu = profileUpdates(fake.updates).find((p) => "no_show_count" in p);
@@ -225,7 +233,7 @@ describe("no_show_count — admin dispute resolution", () => {
       openDispute: { id: "disp-1", reason: "no_show", raised_by: TRAVELER_ID },
     });
     const res = await call("POST", `/api/admin/buddy-bookings/${BOOKING_ID}/resolve-dispute`, fake,
-      { finalStatus: "completed" });
+      { resolution: "no_show_confirmed", favorTraveler: false });
     assert.equal(res.status, 200);
     assert.ok(!profileUpdates(fake.updates).some((p) => "no_show_count" in p));
   });
@@ -236,7 +244,7 @@ describe("no_show_count — admin dispute resolution", () => {
       openDispute: { id: "disp-1", reason: "no_show", raised_by: BUDDY_USER_ID },
     });
     const res = await call("POST", `/api/admin/buddy-bookings/${BOOKING_ID}/resolve-dispute`, fake,
-      { finalStatus: "cancelled" });
+      { resolution: "no_show_confirmed", favorTraveler: true });
     assert.equal(res.status, 200);
     assert.ok(!profileUpdates(fake.updates).some((p) => "no_show_count" in p));
   });
