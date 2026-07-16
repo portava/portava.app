@@ -18,7 +18,7 @@ import { ArrowLeft, Search } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
-import { getAdminStampCatalog } from '../../../src/services/adminStamps';
+import { getAdminStampCatalog, type CatalogListEntry } from '../../../src/services/adminStamps';
 
 const STATUS_FILTERS = ['', 'pending_artwork', 'review_required', 'approved', 'rejected'] as const;
 
@@ -27,7 +27,7 @@ export default function StampQueueScreen() {
   useRequireAdmin();
 
   const params = useLocalSearchParams<{ status?: string }>();
-  const [entries, setEntries]       = useState<any[]>([]);
+  const [entries, setEntries]       = useState<CatalogListEntry[]>([]);
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch]         = useState('');
@@ -42,9 +42,8 @@ export default function StampQueueScreen() {
       search: search || undefined,
     });
     if (res.ok) {
-      const data = res.data as any;
-      setEntries(data.entries ?? []);
-      setTotal(data.total ?? 0);
+      setEntries(res.data.entries ?? []);
+      setTotal(res.data.total ?? 0);
     }
     setLoading(false);
     setRefreshing(false);
@@ -54,7 +53,7 @@ export default function StampQueueScreen() {
 
   const onRefresh = useCallback(() => { setRefreshing(true); load(); }, [load]);
 
-  const renderEntry = ({ item }: { item: any }) => (
+  const renderEntry = ({ item }: { item: CatalogListEntry }) => (
     <Pressable
       style={styles.row}
       onPress={() => router.push(`/admin/stamps/${item.id}` as any)}

@@ -25,6 +25,18 @@ export interface CatalogEntry {
   updated_at: string;
 }
 
+/**
+ * Shape returned by the catalog list endpoint. Extends the base CatalogEntry
+ * with the `review_required` status (set by the generation worker) and the
+ * optional `last_error` field that records the most recent failure reason.
+ * Using this type instead of `any` catches unexpected last_error shapes at
+ * compile time rather than silently at runtime.
+ */
+export interface CatalogListEntry extends Omit<CatalogEntry, 'status'> {
+  status: CatalogEntry['status'] | 'review_required';
+  last_error?: string | null;
+}
+
 export interface ArtworkVersion {
   id: string;
   catalog_id: string;
@@ -54,7 +66,7 @@ export async function getAdminStampCatalog(opts: {
   stampType?: string;
   countryCode?: string;
   search?: string;
-}): Promise<ApiResult<{ entries: CatalogEntry[]; total: number; page: number; statusCounts: Record<string, number> }>> {
+}): Promise<ApiResult<{ entries: CatalogListEntry[]; total: number; page: number; statusCounts: Record<string, number> }>> {
   const params = new URLSearchParams();
   if (opts.page)        params.set('page',         String(opts.page));
   if (opts.limit)       params.set('limit',        String(opts.limit));
