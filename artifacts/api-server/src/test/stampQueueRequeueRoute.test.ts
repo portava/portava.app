@@ -236,6 +236,150 @@ describe("POST /admin/stamps/queue/:jobId/requeue — retry-cap reset", () => {
   });
 });
 
+// ── cleanup_error clearing ────────────────────────────────────────────────────
+
+const JOB_WITH_CLEANUP_ERROR = "00000000-0000-0000-0004-000000000004";
+
+function makeStampQueueClientWithCleanupError() {
+  const db: Record<string, any[]> = {
+    profiles: [{ id: ADMIN_USER_ID, role: "admin" }],
+    stamp_generation_queue: [
+      {
+        id: JOB_WITH_CLEANUP_ERROR,
+        catalog_id: CATALOG_ID,
+        status: "retryable_failed",
+        attempts: 2,
+        requeue_count: 1,
+        last_error: "storage_upload_failed: timeout",
+        cleanup_error: "remove() returned unexpected error: 503",
+        cleanup_error_paths: ["stamps/abc/v1.webp", "stamps/abc/v2.webp"],
+      },
+    ],
+    stamp_artwork_versions: [],
+    universal_stamp_catalog: [{ id: CATALOG_ID, status: "approved" }],
+    stamp_admin_audit_log: [],
+  };
+
+  const updateCalls: UpdateCall[] = [];
+
+  function chain(tableName: string, rows: any[]) {
+    let filtered = rows;
+    let pendingUpdate: Record<string, any> | null = null;
+    let call: UpdateCall | null = null;
+
+    const applyUpdate = () => {
+      if (pendingUpdate !== null) {
+        for (const row of filtered) Object.assign(row, pendingUpdate);
+        pendingUpdate = null;
+      }
+    };
+
+    const b: any = {
+      select: () => b,
+      insert: (data: any) => {
+        const newRows = Array.isArray(data) ? data : [data];
+        db[tableName] = [...(db[tableName] ?? []), ...newRows];
+        filtered = newRows;
+        return b;
+      },
+      update: (data: Record<string, any>) => {
+        pendingUpdate = data;
+        call = { table: tableName, payload: data, eqFilters: [] };
+        updateCalls.push(call);
+        return b;
+      },
+      eq: (col: string, val: any) => {
+        filtered = filtered.filter((r: any) => r[col] === val);
+        call?.eqFilters.push([col, val]);
+        return b;
+      },
+      in: (col: string, vals: any[]) => {
+        filtered = filtered.filter((r: any) => vals.includes(r[col]));
+        if (call) call.inFilter = [col, vals];
+        return b;
+      },
+      not:   () => b,
+      order: () => b,
+      limit: () => b,
+      range: () => b,
+      maybeSingle: () => {
+        applyUpdate();
+        return Promise.resolve({ data: filtered[0] ?? null, error: null });
+      },
+      single: () => {
+        applyUpdate();
+        return Promise.resolve(
+          filtered[0] ? { data: filtered[0], error: null } : { data: null, error: { message: "No rows" } },
+        );
+      },
+      then: (resolve: any, reject: any) => {
+        applyUpdate();
+        return Promise.resolve({ data: filtered, error: null, count: filtered.length }).then(resolve, reject);
+      },
+    };
+    return b;
+  }
+
+  return {
+    from: (tableName: string) => chain(tableName, [...(db[tableName] ?? [])]),
+    auth: {
+      getUser: () => Promise.resolve({ data: { user: { id: ADMIN_USER_ID } }, error: null }),
+    },
+    _db: db,
+    _updateCalls: updateCalls,
+  };
+}
+
+describe("POST /admin/stamps/queue/:jobId/requeue — cleanup_error clearing", () => {
+  let cleanupClient: ReturnType<typeof makeStampQueueClientWithCleanupError>;
+
+  beforeEach(() => {
+    cleanupClient = makeStampQueueClientWithCleanupError();
+    _setTestClient(cleanupClient as any, true);
+    _setTestServiceClient(cleanupClient as any);
+  });
+
+  it("sets cleanup_error: null and cleanup_error_paths: null in the update payload", async () => {
+    const { status } = await req("POST", `/admin/stamps/queue/${JOB_WITH_CLEANUP_ERROR}/requeue`);
+
+    assert.equal(status, 200);
+
+    const call = cleanupClient._updateCalls.find((c) => c.table === "stamp_generation_queue");
+    assert.ok(call, "must update stamp_generation_queue");
+    assert.equal(call!.payload.cleanup_error, null,
+      "cleanup_error must be null so the orphaned-files badge disappears");
+    assert.equal(call!.payload.cleanup_error_paths, null,
+      "cleanup_error_paths must be null so the orphaned-files badge disappears");
+  });
+
+  it("the row reflects cleanup_error: null and cleanup_error_paths: null after requeue", async () => {
+    const { status, body } = await req("POST", `/admin/stamps/queue/${JOB_WITH_CLEANUP_ERROR}/requeue`);
+
+    assert.equal(status, 200);
+    assert.equal(body.job.id, JOB_WITH_CLEANUP_ERROR);
+
+    const row = cleanupClient._db.stamp_generation_queue.find(
+      (r) => r.id === JOB_WITH_CLEANUP_ERROR,
+    )!;
+    assert.equal(row.status, "queued");
+    assert.equal(row.cleanup_error, null,
+      "in-memory row must have cleanup_error cleared after requeue");
+    assert.equal(row.cleanup_error_paths, null,
+      "in-memory row must have cleanup_error_paths cleared after requeue");
+  });
+
+  it("also clears last_error and resets attempts alongside cleanup_error", async () => {
+    const { status } = await req("POST", `/admin/stamps/queue/${JOB_WITH_CLEANUP_ERROR}/requeue`);
+
+    assert.equal(status, 200);
+
+    const call = cleanupClient._updateCalls.find((c) => c.table === "stamp_generation_queue")!;
+    assert.equal(call.payload.last_error, null);
+    assert.equal(call.payload.attempts, 0);
+    assert.equal(call.payload.requeue_count, 0);
+  });
+});
+
 // ── POST /admin/stamps/catalog/:id/regenerate ─────────────────────────────────
 
 describe("POST /admin/stamps/catalog/:id/regenerate — failed-job reset", () => {
