@@ -15,11 +15,13 @@ import { ScreenHeader } from '../src/components/ScreenHeader';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { getBlockList, unblockUser } from '../src/services/blocks';
 import type { BlockedUser } from '../src/services/blocks';
+import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 
 export default function BlockedUsersScreen() {
   const [users, setUsers] = useState<BlockedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [unblocking, setUnblocking] = useState<string | null>(null);
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -71,6 +73,9 @@ export default function BlockedUsersScreen() {
           data={users}
           keyExtractor={(u) => u.id}
           contentContainerStyle={{ padding: space.lg, gap: space.sm }}
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
+          ListFooterComponent={<NavBarFiller />}
           renderItem={({ item }) => (
             <View style={s.row}>
               {item.avatarUrl ? (

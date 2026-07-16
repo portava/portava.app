@@ -20,6 +20,7 @@ import {
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { useCompassPreferences } from '../src/hooks/compass/useCompassPreferences';
 import { putCompassBoostVisibility } from '../src/services/compass';
+import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 
 // ── Option constants ──────────────────────────────────────────────────────────
 
@@ -155,6 +156,7 @@ export default function CompassPreferencesScreen() {
   const insets = useSafeAreaInsets();
   const { prefs, loading, saving, update } = useCompassPreferences();
   const [boostExpanded, setBoostExpanded] = useState(false);
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const toggle = useCallback(
     async (key: keyof import('../src/services/compass').CompassPreferences, value: unknown) => {
@@ -254,6 +256,8 @@ export default function CompassPreferencesScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 80 }}
+        onScroll={navBarScrollHandler}
+        scrollEventThrottle={16}
       >
 
         {/* ── Interests & Style ── */}
@@ -429,6 +433,8 @@ export default function CompassPreferencesScreen() {
             </>
           )}
         </Section>
+
+        <NavBarFiller />
 
       </ScrollView>
     </View>

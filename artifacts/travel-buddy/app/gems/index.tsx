@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useGemList, useSavedGems, useLayoverGems } from '../../src/hooks/useHiddenGems';
 import { verificationBadge, sensitivityLabel, type HiddenGem, type GemCategory } from '../../src/services/hiddenGems';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 // ── Category filter chips ─────────────────────────────────────────────────────
 
@@ -97,6 +98,7 @@ function GemCard({ gem, onPress }: { gem: HiddenGem; onPress: () => void }) {
 
 function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
   const router = useRouter();
+  const navBarScrollHandler = useNavBarScrollHandler();
   const [city, setCity]           = useState('');
   const [category, setCategory]   = useState<GemCategory | 'all'>('all');
   const [appliedCity, setApplied] = useState('');
@@ -201,6 +203,9 @@ function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
             contentContainerStyle={styles.list}
             refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} />}
             ItemSeparatorComponent={() => <View style={styles.sep} />}
+            onScroll={navBarScrollHandler}
+            scrollEventThrottle={16}
+            ListFooterComponent={<NavBarFiller />}
           />
         )
       )}
@@ -212,6 +217,7 @@ function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
 
 function SavedTab() {
   const router = useRouter();
+  const navBarScrollHandler = useNavBarScrollHandler();
   const { gems, loading, error, refresh } = useSavedGems();
 
   if (loading && gems.length === 0) {
@@ -244,6 +250,9 @@ function SavedTab() {
       contentContainerStyle={styles.list}
       refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} />}
       ItemSeparatorComponent={() => <View style={styles.sep} />}
+      onScroll={navBarScrollHandler}
+      scrollEventThrottle={16}
+      ListFooterComponent={<NavBarFiller />}
     />
   );
 }
@@ -260,6 +269,7 @@ const LAYOVER_OPTIONS = [
 
 function LayoverTab() {
   const router = useRouter();
+  const navBarScrollHandler = useNavBarScrollHandler();
   const [selected, setSelected] = useState(120);
   const { gems, loading } = useLayoverGems(selected);
 
@@ -299,6 +309,9 @@ function LayoverTab() {
           )}
           contentContainerStyle={styles.list}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
+          ListFooterComponent={<NavBarFiller />}
         />
       )}
     </View>

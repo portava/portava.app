@@ -17,6 +17,7 @@ import {
   type AppealTargetType,
   type AppealState,
 } from '../src/services/appeals';
+import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 
 // ── State badge ───────────────────────────────────────────────────────────────
 
@@ -73,6 +74,8 @@ export default function AppealsScreen() {
   const [reason, setReason]           = useState('');
   const [evidenceUrl, setEvidenceUrl] = useState('');
 
+  const navBarScrollHandler = useNavBarScrollHandler();
+
   const targetType  = (params.targetType as AppealTargetType | undefined) ?? 'account_warning';
   const targetId    = params.targetId ?? '';
 
@@ -127,7 +130,7 @@ export default function AppealsScreen() {
   };
 
   return (
-    <ScrollView style={s.container} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+    <ScrollView style={s.container} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" onScroll={navBarScrollHandler} scrollEventThrottle={16}>
 
       {/* Header */}
       <View style={s.header}>
@@ -213,6 +216,8 @@ export default function AppealsScreen() {
           appeals.map((a) => <AppealCard key={a.id} appeal={a} />)
         )}
       </View>
+
+      <NavBarFiller />
 
     </ScrollView>
   );

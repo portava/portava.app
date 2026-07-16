@@ -21,6 +21,7 @@ import { TripWishlistPicker, type AddToTripPayload } from '../../src/components/
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { GemMapPreview } from '../../src/components/discovery/GemMapPreview';
 import { useSession } from '../../src/context/SessionContext';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 // ── Privacy section ────────────────────────────────────────────────────────────
 
@@ -223,6 +224,7 @@ export default function GemDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router  = useRouter();
   const { isAuthed } = useSession();
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const { gem, savedByMe, guideProfile, loading, error, refresh, toggleSave } = useGemDetail(id!);
 
@@ -294,7 +296,7 @@ export default function GemDetailScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={['top']}>
-      <ScrollView>
+      <ScrollView onScroll={navBarScrollHandler} scrollEventThrottle={16}>
         {/* Header */}
         <View style={styles.detailHeader}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
@@ -469,6 +471,7 @@ export default function GemDetailScreen() {
             <Text style={[styles.actionBtnText, { color: '#FF6B6B' }]}>Report</Text>
           </TouchableOpacity>
         </View>
+        <NavBarFiller />
       </ScrollView>
 
       {/* Modals */}

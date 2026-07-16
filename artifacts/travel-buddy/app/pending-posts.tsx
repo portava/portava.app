@@ -35,6 +35,7 @@ import {
   changeLocationPrivacy,
   type PendingPostRow,
 } from '../src/services/posts';
+import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 
 function statusLabel(post: PendingPostRow): string {
   switch (post.postStatus) {
@@ -114,6 +115,8 @@ export default function PendingPostsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const load = useCallback(async () => {
     const result = await getPendingPosts();
@@ -243,6 +246,9 @@ export default function PendingPostsScreen() {
               onCancel={() => handleCancel(item)}
             />
           )}
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
+          ListFooterComponent={<NavBarFiller />}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}

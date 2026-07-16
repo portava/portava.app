@@ -27,6 +27,7 @@ import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { RichText } from '../../src/components/RichText';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { addMeetupToCalendar } from '../../src/services/calendar';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 const TODAY_START = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
 
@@ -195,6 +196,7 @@ export default function MeetupScreen() {
   const insets = useSafeAreaInsets();
   const { isAuthed } = useSession();
   const { open: openPlanPicker, isAdded } = usePlanPicker();
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const [meetup, setMeetup] = useState<MeetupDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -508,7 +510,7 @@ export default function MeetupScreen() {
         ) : null}
       </View>
 
-      <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
 
         {/* Confirmed time banner — visible without scrolling on any phone */}
         <ConfirmedTimeBanner meetup={meetup} />
@@ -913,6 +915,7 @@ export default function MeetupScreen() {
           </Pressable>
         )}
 
+        <NavBarFiller />
       </ScrollView>
 
       {/* Success toast */}

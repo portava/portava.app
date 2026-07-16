@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../src/lib/supabase';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -83,6 +84,7 @@ function AdminQueue<T extends { id: string }>({
   responseKey: string;
   renderRow: (item: T, refresh: () => void) => React.ReactElement;
 }) {
+  const navBarScrollHandler = useNavBarScrollHandler();
   const [items, setItems]     = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
@@ -111,6 +113,9 @@ function AdminQueue<T extends { id: string }>({
       keyExtractor={(i) => i.id ?? (i as any).user_id}
       renderItem={({ item }) => renderRow(item, load)}
       contentContainerStyle={styles.list}
+      onScroll={navBarScrollHandler}
+      scrollEventThrottle={16}
+      ListFooterComponent={<NavBarFiller />}
     />
   );
 }
