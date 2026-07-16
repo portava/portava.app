@@ -1205,6 +1205,97 @@ describe("sections display cards — completed_count takes precedence over compl
   });
 });
 
+// ── saved-buddies (featured) display cards — completed_count precedence ────────
+//
+// GET /api/rent-a-buddy/me/saved-buddies returns buddy display cards built via
+// mapProfile(row.buddy) where row.buddy is the joined rent_buddy_profiles sub-
+// object. mapProfile picks completed_count ?? completed_bookings. When both
+// columns disagree, the canonical completed_count must win so the "sessions
+// completed" count shown on these prominently featured saved-buddy cards is
+// always accurate.
+
+describe("saved-buddies display cards — completed_count takes precedence over completed_bookings", () => {
+  it("returns completedBookings=11 (not 4) when completed_count=11 and completed_bookings=4", async () => {
+    // The buddy profile has both counters with different values.
+    // completed_count is the canonical column written by the completion route;
+    // completed_bookings is the legacy column. mapProfile must prefer
+    // completed_count so the display card shows 11, not 4.
+    const buddyProfile = {
+      id: BP_ID, user_id: BUDDY_USER_ID, city: "Bangkok",
+      status: "active", admin_status: "active",
+      display_name: "Test Buddy", tagline: null, country: "Thailand",
+      categories: ["city"], languages: ["English"],
+      hourly_rate_usd: 30, half_day_rate_usd: null, full_day_rate_usd: null,
+      nightlife_rate_usd: null, arrival_rate_usd: null,
+      vibe_tags: [], safety_badges: [], energy_type: null,
+      buddy_level: "experienced", average_rating: null, review_count: 0,
+      completed_bookings: 4,   // legacy counter — must be ignored
+      completed_count: 11,     // canonical counter — must win
+      response_time_h: null, cover_photo_url: null, gallery_urls: [],
+      verified: false, featured: true, city_ambassador: false,
+      available_now: false, female_only_service: false, public_meetup_only: false,
+      group_approved: false, nightlife_approved: false,
+      arrival_approved: false, category_approvals: {}, max_group_size: 4,
+      new_buddy_public_only: false, new_buddy_daytime_only: false,
+      risk_hold: false, created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    // The saved-buddies endpoint fetches rent_buddy_saved with a join:
+    //   .select("*, buddy:rent_buddy_profiles(*)")
+    // so each data row has a `buddy` sub-object containing the profile fields.
+    const savedRow = {
+      buddy_id: BP_ID,
+      user_id: TRAVELER_ID,
+      notes: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      buddy: buddyProfile,
+    };
+
+    function makeSavedBuddiesBuilder(table: string): any {
+      const b: any = {
+        select:      () => b,
+        eq:          () => b,
+        neq:         () => b,
+        order:       () => b,
+        limit:       () => b,
+        single:      () => Promise.resolve({ data: null, error: null }),
+        maybeSingle: () => Promise.resolve({ data: null, error: null }),
+        then: (resolve: any, reject: any) =>
+          Promise.resolve({
+            data: table === "rent_buddy_saved" ? [savedRow] : [],
+            error: null,
+          }).then(resolve, reject),
+      };
+      return b;
+    }
+
+    const fake = {
+      client: {
+        auth: { getUser: () => Promise.resolve({ data: { user: { id: TRAVELER_ID } }, error: null }) },
+        from: (table: string) => makeSavedBuddiesBuilder(table),
+      },
+    };
+
+    const res = await call("GET", "/api/rent-a-buddy/me/saved-buddies", fake as any);
+
+    assert.equal(res.status, 200, `saved-buddies should return 200, got ${res.status}`);
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.saved), "response.saved should be an array");
+    assert.equal(body.saved.length, 1, "should return the one saved buddy");
+
+    // mapProfile: completedBookings: row.completed_count ?? row.completed_bookings ?? 0
+    // With completed_count=11 → completedBookings=11  ← expected
+    // With completed_bookings=4  → completedBookings=4   ← would indicate a regression
+    assert.equal(
+      body.saved[0].buddy.completedBookings,
+      11,
+      `display card must use completed_count=11, not completed_bookings=4; got ${body.saved[0].buddy.completedBookings}`,
+    );
+  });
+});
+
 describe("toBuddyScoringData — completed_count takes precedence over completed_bookings", () => {
   it("uses completed_count=7 (not completed_bookings=3) when ranking via POST /api/rent-a-buddy/match", async () => {
     // Buddy row deliberately has the two counters out of sync.
