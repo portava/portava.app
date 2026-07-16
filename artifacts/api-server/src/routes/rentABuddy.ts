@@ -2707,6 +2707,14 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) =>
   const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
   if (!party) return;
 
+  // Already disputed — give a dedicated code so clients can show a targeted message.
+  if ((booking as any).status === "disputed") {
+    return res.status(409).json({
+      error: "already_disputed",
+      currentStatus: "disputed",
+    });
+  }
+
   // completed and cancelled are terminal — disputing them would corrupt the final state.
   const disputableStatuses = ["in_progress", "completed_pending_traveler_confirmation"];
   if (!disputableStatuses.includes((booking as any).status)) {

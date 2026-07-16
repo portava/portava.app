@@ -268,7 +268,7 @@ describe("POST /api/rent-a-buddy/bookings/:id/dispute — terminal-status guard"
     state.bookings[BOOKING_ID].status = "disputed";
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "no_show" });
     assert.equal(r.status, 409, `expected 409 for already-disputed booking, got ${r.status}: ${JSON.stringify(r.body)}`);
-    assert.equal(r.body.error, "invalid_transition");
+    assert.equal(r.body.error, "already_disputed");
   });
 
   it("does not insert a dispute row when the booking is already disputed", async () => {
@@ -281,7 +281,7 @@ describe("POST /api/rent-a-buddy/bookings/:id/dispute — terminal-status guard"
     state.bookings[BOOKING_ID].status = "disputed";
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "no_show" }, BUDDY_TOKEN);
     assert.equal(r.status, 409, `expected 409 for already-disputed booking (buddy), got ${r.status}: ${JSON.stringify(r.body)}`);
-    assert.equal(r.body.error, "invalid_transition");
+    assert.equal(r.body.error, "already_disputed");
   });
 
   it("the 409 response echoes currentStatus as 'disputed' for an already-disputed booking", async () => {
