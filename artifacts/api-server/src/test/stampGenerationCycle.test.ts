@@ -1895,3 +1895,98 @@ describe("buildStampPrompt — null country guard", () => {
     );
   });
 });
+
+// ── Unrecognized stamp_type routes to defined defaults ────────────────────────
+
+describe("runGenerationCycle — unrecognized stamp_type routes to defaults", () => {
+  it("completes successfully and uses the default shape instruction for an unknown stamp_type", async () => {
+    // Capture the prompt so we can inspect the shape and type-hint sections.
+    let capturedPrompt: string | undefined;
+    const capturingProvider = {
+      async generate(prompt: string, _n?: number) {
+        capturedPrompt = prompt;
+        return Array.from({ length: CANDIDATE_COUNT }, (_, i) => ({
+          url: `data:image/svg+xml,fake-${i}`,
+          metadata: { model: "fake-provider", candidate_index: i },
+        }));
+      },
+    };
+
+    const { sc, updates, inserts } = makeFakeClient({
+      catalogOverride: { ...CATALOG_ROW, stamp_type: "XX_TYPE" },
+    });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(capturingProvider);
+
+    const result = await runGenerationCycle();
+
+    // The cycle must not crash — an unrecognized stamp_type must be handled silently.
+    assert.equal(result.processed, true, "an unrecognized stamp_type must not prevent the cycle from completing");
+    assert.equal(result.catalogId, "cat-1");
+
+    // Version rows must be inserted — the run is not aborted.
+    assert.equal(inserts.length, 1, "must insert exactly one batch of version rows");
+    assert.equal(inserts[0].rows.length, CANDIDATE_COUNT, "must insert all candidate rows");
+
+    // Queue row must be marked review_required, not an error status.
+    const review = updates.find((u) => u.payload.status === "review_required");
+    assert.ok(review, "must mark the job review_required on success");
+    assert.equal(review!.payload.last_error, null, "last_error must be null on a clean run");
+
+    // Provider must be called with a non-empty prompt.
+    assert.ok(
+      typeof capturedPrompt === "string" && capturedPrompt.length > 0,
+      "provider must be called with a non-empty prompt",
+    );
+
+    // The prompt must contain the default shape instruction from shapeInstruction()'s
+    // default branch — not an empty string or an unknown-type fallback.
+    assert.ok(
+      capturedPrompt!.includes("classic circular stamp"),
+      `prompt must contain the default shape instruction ("classic circular stamp"); ` +
+        `got prompt snippet: ${capturedPrompt!.slice(0, 400)}`,
+    );
+
+    // The prompt must contain a non-empty type hint — the ?? typeHints.city fallback
+    // must have fired, producing the city hint text rather than an empty string.
+    assert.ok(
+      capturedPrompt!.includes("iconic city skyline"),
+      `prompt must contain the city-fallback type hint ("iconic city skyline") for an unrecognized stamp_type; ` +
+        `got prompt snippet: ${capturedPrompt!.slice(0, 400)}`,
+    );
+  });
+
+  it("uses buildStampPrompt directly to confirm both default branches fire for an unrecognized stamp_type", () => {
+    // Unit-level check: call buildStampPrompt directly so neither branch is
+    // hidden behind the generation cycle machinery.
+    const prompt = buildStampPrompt({
+      id: "cat-99",
+      display_name: "Mystery Place",
+      country: "Testland",
+      country_code: "TS",
+      region: null,
+      city: null,
+      neighborhood: null,
+      stamp_type: "XX_TYPE",
+      canonical_location_key: "ts/mystery",
+    });
+
+    // shapeInstruction() default branch must fire.
+    assert.ok(
+      prompt.includes("classic circular stamp"),
+      `buildStampPrompt must include the default shape instruction for stamp_type "XX_TYPE"; ` +
+        `got prompt snippet: ${prompt.slice(0, 400)}`,
+    );
+
+    // typeHints ?? fallback must fire — the city hint must appear.
+    assert.ok(
+      prompt.includes("iconic city skyline"),
+      `buildStampPrompt must include the city-fallback type hint for stamp_type "XX_TYPE"; ` +
+        `got prompt snippet: ${prompt.slice(0, 400)}`,
+    );
+
+    // Prompt must be non-empty and contain the destination name.
+    assert.ok(prompt.includes("Mystery Place"), "prompt must include the display_name");
+    assert.ok(prompt.length > 0, "prompt must not be empty");
+  });
+});
