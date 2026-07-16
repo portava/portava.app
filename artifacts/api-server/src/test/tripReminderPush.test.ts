@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 
 import { _setTestFetch } from "../lib/push.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import { runOnce, clearReminderDedup } from "../lib/tripReminderScheduler.js";
+import { runOnce, clearReminderDedup, _setTestNow } from "../lib/tripReminderScheduler.js";
 
 const OWNER_ID  = "cc000000-0001-0001-0001-000000000001";
 const MEMBER_ID = "cc000000-0002-0002-0002-000000000002";
@@ -111,7 +111,7 @@ function okFetch(): typeof fetch {
 
 before(() => { _setTestFetch(okFetch()); });
 after(() => { _setTestFetch(null); _setTestServiceClient(null); });
-afterEach(() => { pushCalls = []; _setTestFetch(okFetch()); });
+afterEach(() => { pushCalls = []; _setTestFetch(okFetch()); _setTestNow(null); });
 
 function baseState(tripId: string): FakeState {
   // start_date within the normal 22-26h sweep window (now + 24h, date-only).
@@ -667,5 +667,130 @@ describe("TripReminderScheduler push", () => {
 
     assert.equal(pushCalls.length, 0,
       "recovery must not fire when start_date is exactly one day before the lower boundary date");
+  });
+
+  // ── midnight-clock boundary tests ─────────────────────────────────────────
+  // These four tests pin Date.now() to 23:00 UTC so that the window boundary
+  // dates straddle midnight.  With the clock at 23:00:
+  //   windowLowerDate = (23:00 + 20 h) → next day at 19:00 → "YYYY-MM-DD+1"
+  //   windowUpperDate = (23:00 + 28 h) → day after next at 03:00 → "YYYY-MM-DD+2"
+  // A naive implementation that computed these dates incorrectly (e.g. using
+  // local time instead of UTC, or rounding the wrong direction) would flip
+  // inside/outside for trips near the boundary.
+
+  it("[midnight clock] recovers a stale claim when start_date equals the lower boundary date", async () => {
+    // Pin the scheduler clock to 23:00:00 UTC on an arbitrary date so the
+    // window boundary computation straddles midnight.
+    const PINNED_NOW = new Date("2026-07-16T23:00:00Z").getTime();
+    _setTestNow(PINNED_NOW);
+
+    const STALE_CLAIM_MINUTES = 10;
+    // staleTime must be relative to the PINNED clock so it is older than the
+    // staleThreshold that recoverStaleClaims derives from that same clock.
+    const staleTime = new Date(PINNED_NOW - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
+
+    // windowLowerDate = new Date(PINNED_NOW + 20 h).slice(0,10) = "2026-07-17"
+    const windowLowerDate = new Date(PINNED_NOW + 20 * 3_600_000).toISOString().slice(0, 10);
+
+    const state = baseState("trip-midnight-lower-inside");
+    state.trips![0].reminder_sent_at     = staleTime;
+    state.trips![0].reminder_delivered_at = null;
+    state.trips![0].start_date           = windowLowerDate; // exactly on the lower boundary
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 1,
+      "[midnight clock] recovery must fire when start_date equals the lower boundary date");
+    assert.ok(
+      state.trips![0].reminder_delivered_at,
+      "[midnight clock] reminder_delivered_at must be set after recovery at lower boundary",
+    );
+  });
+
+  it("[midnight clock] does not recover a stale claim when start_date is one day before the lower boundary", async () => {
+    // Same pinned clock as above.  A trip whose start_date is one calendar day
+    // before windowLowerDate is outside the window and must not trigger recovery.
+    const PINNED_NOW = new Date("2026-07-16T23:00:00Z").getTime();
+    _setTestNow(PINNED_NOW);
+
+    const STALE_CLAIM_MINUTES = 10;
+    const staleTime = new Date(PINNED_NOW - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
+
+    // windowLowerDate = "2026-07-17"; one day before = "2026-07-16".
+    const windowLowerDate = new Date(PINNED_NOW + 20 * 3_600_000).toISOString().slice(0, 10);
+    const outsideLowerDate = new Date(
+      new Date(windowLowerDate + "T00:00:00Z").getTime() - 24 * 3_600_000,
+    ).toISOString().slice(0, 10);
+
+    const state = baseState("trip-midnight-lower-outside");
+    state.trips![0].reminder_sent_at     = staleTime;
+    state.trips![0].reminder_delivered_at = null;
+    state.trips![0].start_date           = outsideLowerDate; // one day before lower boundary
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 0,
+      "[midnight clock] recovery must stay silent when start_date is one day before the lower boundary");
+  });
+
+  it("[midnight clock] recovers a stale claim when start_date equals the upper boundary date", async () => {
+    // Pin to 23:00 UTC.  windowUpperDate = (23:00 + 28 h) = next day + 3 h
+    // → "2026-07-18".  A trip on that date is on the boundary and must be recovered.
+    const PINNED_NOW = new Date("2026-07-16T23:00:00Z").getTime();
+    _setTestNow(PINNED_NOW);
+
+    const STALE_CLAIM_MINUTES = 10;
+    const staleTime = new Date(PINNED_NOW - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
+
+    // windowUpperDate = new Date(PINNED_NOW + 28 h).slice(0,10) = "2026-07-18"
+    const windowUpperDate = new Date(PINNED_NOW + 28 * 3_600_000).toISOString().slice(0, 10);
+
+    const state = baseState("trip-midnight-upper-inside");
+    state.trips![0].reminder_sent_at     = staleTime;
+    state.trips![0].reminder_delivered_at = null;
+    state.trips![0].start_date           = windowUpperDate; // exactly on the upper boundary
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 1,
+      "[midnight clock] recovery must fire when start_date equals the upper boundary date");
+    assert.ok(
+      state.trips![0].reminder_delivered_at,
+      "[midnight clock] reminder_delivered_at must be set after recovery at upper boundary",
+    );
+  });
+
+  it("[midnight clock] does not recover a stale claim when start_date is one day after the upper boundary", async () => {
+    // Same pinned clock.  A trip whose start_date is one calendar day after
+    // windowUpperDate is outside the window and must not trigger recovery.
+    const PINNED_NOW = new Date("2026-07-16T23:00:00Z").getTime();
+    _setTestNow(PINNED_NOW);
+
+    const STALE_CLAIM_MINUTES = 10;
+    const staleTime = new Date(PINNED_NOW - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
+
+    // windowUpperDate = "2026-07-18"; one day after = "2026-07-19".
+    const windowUpperDate = new Date(PINNED_NOW + 28 * 3_600_000).toISOString().slice(0, 10);
+    const outsideUpperDate = new Date(
+      new Date(windowUpperDate + "T00:00:00Z").getTime() + 24 * 3_600_000,
+    ).toISOString().slice(0, 10);
+
+    const state = baseState("trip-midnight-upper-outside");
+    state.trips![0].reminder_sent_at     = staleTime;
+    state.trips![0].reminder_delivered_at = null;
+    state.trips![0].start_date           = outsideUpperDate; // one day after upper boundary
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 0,
+      "[midnight clock] recovery must stay silent when start_date is one day after the upper boundary");
   });
 });

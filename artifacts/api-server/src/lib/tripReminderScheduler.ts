@@ -31,6 +31,25 @@ import { sendPushWithRetry } from "./pushWithRetry.js";
 
 const logger = rootLogger.child({ job: "TripReminderScheduler" });
 
+// ── test clock hook ───────────────────────────────────────────────────────────
+
+/** Pinned epoch-ms value injected by tests; null = use wall clock. */
+let _testNow: number | null = null;
+
+/**
+ * Override the scheduler's notion of "now" in tests.  Pass null to restore
+ * the real wall clock.  This lets tests pin the clock to a specific time
+ * (e.g. near midnight UTC) without monkey-patching Date.
+ */
+export function _setTestNow(ms: number | null): void {
+  _testNow = ms;
+}
+
+/** Returns the current epoch-ms, honouring any test-injected clock override. */
+function getNow(): number {
+  return _testNow ?? Date.now();
+}
+
 const POLL_INTERVAL_MS    = 60 * 60 * 1000; // every 60 minutes
 const WINDOW_LOWER_HRS    = 22;
 const WINDOW_UPPER_HRS    = 26;
@@ -103,7 +122,7 @@ async function markDelivered(
 ): Promise<void> {
   await (sc as any)
     .from("trips")
-    .update({ reminder_delivered_at: new Date().toISOString() })
+    .update({ reminder_delivered_at: new Date(getNow()).toISOString() })
     .eq("id", tripId)
     .is("reminder_delivered_at", null);
 }
@@ -117,7 +136,7 @@ async function markDelivered(
  * mark delivered so the reminder is not permanently lost.
  */
 async function recoverStaleClaims(sc: ReturnType<typeof getServiceClient>): Promise<void> {
-  const now            = new Date();
+  const now            = new Date(getNow());
   const staleThreshold = new Date(now.getTime() - STALE_CLAIM_MINUTES * 60_000).toISOString();
   // Don't recover claims older than MAX_RECOVERY_AGE_MS: the reminder window has
   // passed, so there is nothing useful to deliver and retries would be indefinite.
@@ -208,7 +227,7 @@ export async function runOnce() {
   // Recovery pass first: re-send any crash-orphaned claims before claiming new ones.
   await recoverStaleClaims(sc);
 
-  const now   = new Date();
+  const now   = new Date(getNow());
   const lower = new Date(now.getTime() + WINDOW_LOWER_HRS * 3_600_000).toISOString();
   const upper = new Date(now.getTime() + WINDOW_UPPER_HRS * 3_600_000).toISOString();
 
@@ -233,7 +252,7 @@ export async function runOnce() {
     // can't double-send. Claiming before the push errs on the side of at-most-once.
     const { data: claimed, error: claimError } = await (sc as any)
       .from("trips")
-      .update({ reminder_sent_at: new Date().toISOString() })
+      .update({ reminder_sent_at: new Date(getNow()).toISOString() })
       .eq("id", tripId)
       .is("reminder_sent_at", null)
       .select("id");
