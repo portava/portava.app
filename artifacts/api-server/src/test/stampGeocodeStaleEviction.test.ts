@@ -23,6 +23,7 @@ import {
   _setGeocodeFetchForTests,
   _setGeocodeDbClientForTests,
   _clearCountryGeocodeCache,
+  _runCorrectionSweepForTests,
 } from "../lib/stamps/countryGeocoder.js";
 
 // ── Timing control ────────────────────────────────────────────────────────────
@@ -336,6 +337,105 @@ describe("negative cache TTL expiry", () => {
       1,
       "no second fetch call should be made while the negative entry is still valid",
     );
+  });
+});
+
+// ── Correction-sweep eviction retry ──────────────────────────────────────────
+//
+// The correction sweep (_runCorrectionSweepForTests) can evict a null (negative)
+// cache entry when the DB row has a corrected_at that post-dates writtenAt.
+// After eviction the key is absent from the cache, so the next
+// geocodeCityCountry call must re-geocode — not silently skip or stay null.
+
+describe("correction-sweep eviction: negative entry retries after sweep removes it", () => {
+  /**
+   * Build a fake Supabase client suitable for the correction sweep.
+   *
+   * The sweep uses array-returning chains (.select().gte() — no .maybeSingle()),
+   * so the chain must be thenable.  Each top-level `await sc.from(...)...` call
+   * consumes one slot from `awaitedResponses`; maybeSingle() calls (from
+   * geocodeCityCountry internals) are handled separately.
+   */
+  function makeSweepDbClient(
+    pass1Rows: Array<{ city_key: string; corrected_at: string }>,
+  ): SupabaseClient {
+    let awaitIdx = 0;
+    // Indexed by top-level await call order:
+    //   0 → pass-1 query (corrected_at rows)
+    //   1 → pass-2 query (tombstoned rows — empty in this test)
+    const awaitedResponses: Array<{ data: any; error: null }> = [
+      { data: pass1Rows, error: null },
+      { data: [],        error: null },
+    ];
+
+    return {
+      from(_table: string) {
+        const chain: any = {
+          select()  { return chain; },
+          eq()      { return chain; },
+          gte()     { return chain; },
+          not()     { return chain; },
+          in()      { return chain; },
+          delete()  { return chain; },
+          upsert()  { return Promise.resolve({ error: null }); },
+          // Used by geocodeCityCountry → readDbCache after the sweep evicts the entry.
+          // Returns null so the code falls through to Nominatim (the swapped fetch).
+          async maybeSingle() {
+            return { data: null, error: null };
+          },
+          // Thenable: consumed when the caller does `await chain` (sweep array queries).
+          then(
+            resolve: (v: any) => any,
+            reject?: (e: any) => any,
+          ): Promise<any> {
+            const idx = awaitIdx++;
+            const resp = awaitedResponses[Math.min(idx, awaitedResponses.length - 1)];
+            return Promise.resolve(resp).then(resolve, reject);
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+  }
+
+  it("retries and returns a valid result after the sweep evicts a null cache entry", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Step 1 — seed a null (negative) cache entry.
+    // _setGeocodeFetchForTests also sets _dbClientOverride = null (no DB),
+    // so readDbCache returns null and the code falls through to Nominatim.
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+
+    const first = await geocodeCityCountry("SweepCity");
+    assert.equal(first, null, "pre-condition: unresolved city should be cached as null");
+
+    // Step 2 — install a sweep DB client whose pass-1 row has corrected_at > T0,
+    // which will cause the sweep to evict the null entry.
+    const correctedAtIso = new Date(T0 + 500).toISOString();
+    // Normalized key produced by normCity("SweepCity"):
+    const cityKey = "sweepcity";
+    const sweepDb = makeSweepDbClient([{ city_key: cityKey, corrected_at: correctedAtIso }]);
+    _setGeocodeDbClientForTests(sweepDb);
+
+    await _runCorrectionSweepForTests();
+
+    // Step 3 — swap fetch to return a valid geocode result.
+    // _setGeocodeFetchForTests resets _dbClientOverride to null, so readDbCache
+    // returns null and the code proceeds straight to forwardGeocodeCity.
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "jp", country: "Japan" } }],
+    }));
+
+    // Step 4 — the sweep-evicted key must re-geocode, not stay absent/null.
+    const second = await geocodeCityCountry("SweepCity");
+    assert.equal(
+      second?.countryCode,
+      "JP",
+      "after sweep eviction the null entry must be absent so the next call retries and returns a valid result",
+    );
+    assert.equal(second?.country, "Japan");
   });
 });
 
