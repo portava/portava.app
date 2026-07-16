@@ -1023,6 +1023,121 @@ describe("DELETE /admin/geocode-cache/:city_key with repair_catalog", () => {
       `unresolvedCities must be empty when the city resolved — got: ${JSON.stringify(repair.unresolvedCities)}`,
     );
   });
+
+  it("reports accurate xx_entries_pending on a second DELETE after the geocode row is re-added via PUT", async () => {
+    // Scenario: admin deletes the geocode row, then immediately re-adds it via
+    // PUT (no repair_catalog), then deletes again.  The XX catalog entries were
+    // never repaired by either call, so both DELETEs must report the same
+    // count — not a stale zero or a count from a previous state.
+
+    const XX_ENTRIES = [
+      {
+        id: "cat-reset-1",
+        canonical_location_key: "city:XX:resetville",
+        stamp_type: "city",
+        country: "Unknown",
+        country_code: "XX",
+        city: "Resetville",
+        neighborhood: null,
+        display_name: "Resetville",
+      },
+    ];
+
+    let deleteCallCount = 0;
+    let upsertCallCount = 0;
+
+    // A single client object that handles DELETE, upsert (PUT path), and the
+    // catalog count query.  The catalog table always returns the same XX entry
+    // because repair_catalog is never passed — the entries are never fixed.
+    const client: any = {
+      auth: {
+        getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+      },
+      from: (table: string) => {
+        if (table === "profiles") {
+          return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+        }
+
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: (_cols: string) => builder([]),
+            delete: () => ({
+              eq: (_col: string, _key: string) => {
+                deleteCallCount += 1;
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+            upsert: (_row: unknown, _opts?: unknown) => {
+              upsertCallCount += 1;
+              return Promise.resolve({ data: null, error: null });
+            },
+          };
+        }
+
+        if (table === "universal_stamp_catalog") {
+          // countXXEntriesForCityKey selects "city, canonical_location_key"
+          // filtered by country_code="XX" — always return the XX entry so
+          // both DELETEs see the same unrepaired state.
+          return {
+            select: (cols: string) => {
+              if (cols === "city, canonical_location_key") {
+                return {
+                  eq: (_col: string, _val: unknown) => ({
+                    then: (resolve: (v: { data: unknown[]; error: null }) => void) =>
+                      resolve({ data: XX_ENTRIES, error: null }),
+                  }),
+                };
+              }
+              // Fallback for any other select shape
+              const chain: any = {
+                eq: () => chain,
+                neq: () => chain,
+                maybeSingle: async () => ({ data: null, error: null }),
+              };
+              return chain;
+            },
+          };
+        }
+
+        return builder([]);
+      },
+    };
+
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    // ── Step 1: first DELETE (no repair_catalog) ──────────────────────────────
+    const r1 = await apiReq("DELETE", "/admin/geocode-cache/resetville");
+
+    assert.equal(r1.status, 200, `first DELETE: expected 200, got ${r1.status}: ${JSON.stringify(r1.body)}`);
+    assert.equal(r1.body.deleted, true, "first DELETE: deleted must be true");
+    assert.ok(!r1.body.repair, "first DELETE: repair field must be absent — repair did not run");
+    assert.equal(r1.body.xx_entries_pending, 1,
+      "first DELETE: must report the single XX entry that exists");
+
+    // ── Step 2: PUT re-adds the geocode row (no repair_catalog) ──────────────
+    const r2 = await apiReq("PUT", "/admin/geocode-cache/resetville", {
+      country_code: "DE",
+      country: "Germany",
+    });
+
+    assert.equal(r2.status, 200, `PUT: expected 200, got ${r2.status}: ${JSON.stringify(r2.body)}`);
+    assert.equal(r2.body.updated, true, "PUT: updated must be true");
+    assert.ok(!r2.body.repair, "PUT: repair field must be absent — repair_catalog was not passed");
+
+    // ── Step 3: second DELETE (no repair_catalog) ─────────────────────────────
+    const r3 = await apiReq("DELETE", "/admin/geocode-cache/resetville");
+
+    assert.equal(r3.status, 200, `second DELETE: expected 200, got ${r3.status}: ${JSON.stringify(r3.body)}`);
+    assert.equal(r3.body.deleted, true, "second DELETE: deleted must be true");
+    assert.ok(!r3.body.repair, "second DELETE: repair field must be absent — repair did not run");
+    assert.equal(r3.body.xx_entries_pending, 1,
+      "second DELETE after PUT must still report 1 — the XX entry was never repaired");
+
+    // Sanity: both DELETEs and the PUT must have been exercised
+    assert.equal(deleteCallCount, 2, "geocode delete must have been called exactly twice");
+    assert.equal(upsertCallCount, 1, "geocode upsert must have been called exactly once (the PUT)");
+  });
 });
 
 describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {

@@ -119,7 +119,9 @@ describe('SDK 54 downgrade — package version pins', () => {
   });
 
   it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-    const standalone = readPkg('../../../../travel-buddy-standalone/package.json');
+    // This file lives in travel-buddy-standalone/src/services/, so
+    // artifacts/travel-buddy/package.json is 3 levels up then into artifacts/.
+    const standalone = readPkg('../../../artifacts/travel-buddy/package.json');
     const saDeps: Record<string, string> = {
       ...standalone.dependencies,
       ...standalone.devDependencies,
@@ -157,15 +159,16 @@ describe('SDK 54 downgrade — package version pins', () => {
 //   react-native-view-shot → react-native, react
 
 describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-  // artifacts/travel-buddy/package.json is 2 levels up from src/services.
-  const tb = readPkg('../../package.json');
+  // This file lives in travel-buddy-standalone/src/services/, so
+  // artifacts/travel-buddy/package.json is 3 levels up then into artifacts/.
+  const tb = readPkg('../../../artifacts/travel-buddy/package.json');
   const tbAll: Record<string, string> = {
     ...tb.dependencies,
     ...tb.devDependencies,
   };
 
-  // travel-buddy-standalone/package.json is 4 levels up from src/services.
-  const sa = readPkg('../../../../travel-buddy-standalone/package.json');
+  // travel-buddy-standalone/package.json is 2 levels up from src/services.
+  const sa = readPkg('../../package.json');
   const saAll: Record<string, string> = {
     ...sa.dependencies,
     ...sa.devDependencies,
