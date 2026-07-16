@@ -858,6 +858,127 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     );
   });
 
+  it("PUT revival between sweep SELECT and DELETE is not hard-deleted — revived row survives and geocoder returns it", async () => {
+    // Race condition: the sweep queries tombstoned rows (SELECT), then a concurrent
+    // admin PUT revives the row by clearing deleted_at.  The sweep then issues its
+    // hard-delete — but the .not("deleted_at", "is", null) guard means only rows
+    // that are STILL tombstoned at DELETE-time are removed.  The revived row has
+    // deleted_at = null, so the guard filters it out and the DELETE is a no-op.
+    //
+    // This test drives the fake DB client through a two-phase lifecycle:
+    //   Phase A (SELECT passes): the row is tombstoned (deleted_at IS NOT NULL).
+    //   Phase B (DELETE pass):   the PUT has already cleared deleted_at; the DB
+    //                            client honours the .not("deleted_at","is",null)
+    //                            guard by deleting zero rows.
+    // After the sweep, geocodeCityCountry must return the revived country (from the
+    // DB cache, since the in-memory entry was evicted by the sweep's eviction loop).
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Nominatim stub — must NOT be called after the revival (the DB cache should serve it).
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "no", country: "Norway" } }],
+      };
+    });
+
+    // ── Seed the in-memory cache so the sweep has something to evict. ────────────
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({ country: "Norway", country_code: "NO", corrected_at: null, deleted_at: null }),
+    );
+    const seed = await geocodeCityCountry("Oslo");
+    assert.equal(seed?.countryCode, "NO", "pre-condition: cache seeded with NO");
+    assert.equal(nominatimCalls, 0, "no Nominatim call during seed");
+
+    // ── Build the race-condition DB client. ────────────────────────────────────
+    // SELECT passes (pass 1 corrected_at + pass 2 deleted_at) see the tombstoned row.
+    // DELETE sees deleted_at = null (the PUT revived it between SELECT and DELETE),
+    // so the .not("deleted_at","is",null) guard matches zero rows — the delete is a no-op.
+    //
+    // After the sweep, readDbCache (maybeSingle) returns the revived live row.
+    let sweepQueryCount = 0;
+    let deletedKeys: string[] = [];
+    let revivedInDb = false; // set to true once the "PUT" fires during the DELETE phase
+
+    const raceClient: SupabaseClient = {
+      from(_table: string) {
+        let isDelete = false;
+        let inKeys: string[] = [];
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not(_col: string, _filter: string, _val: unknown) {
+            // When this is the DELETE chain and the guard fires, simulate the
+            // guard honouring deleted_at = null by marking revival complete.
+            if (isDelete) revivedInDb = true;
+            return chain;
+          },
+          delete() { isDelete = true; return chain; },
+          in(_col: string, keys: string[]) {
+            inKeys = keys;
+            return chain;
+          },
+          async maybeSingle() {
+            // readDbCache call — after the sweep the row is live (deleted_at null).
+            return {
+              data: {
+                country: "Norway",
+                country_code: "NO",
+                corrected_at: null,
+                deleted_at: null, // row is live after PUT revival
+              },
+              error: null,
+            };
+          },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            if (isDelete) {
+              // The guard (.not("deleted_at","is",null)) means the DB only removes
+              // rows still tombstoned. The PUT already cleared deleted_at, so zero
+              // rows match and the DELETE is a no-op — we record nothing as deleted.
+              // (revivedInDb is already set true by the .not() call above.)
+              resolve({ error: null });
+              return;
+            }
+            const q = sweepQueryCount++;
+            if (q === 0) {
+              // Pass 1 — corrected_at: nothing to evict from this pass.
+              resolve({ data: [], error: null });
+            } else {
+              // Pass 2 — deleted_at: sweep sees the row as tombstoned (pre-PUT view).
+              resolve({ data: [{ city_key: "oslo" }], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(raceClient);
+    await _runCorrectionSweepForTests();
+
+    // The sweep evicted the in-memory entry (it saw the tombstoned row in the SELECT).
+    // The hard-delete was a no-op because the guard filtered out the now-live row.
+    assert.ok(revivedInDb,
+      "the .not() guard was reached during the DELETE phase — confirming the guard ran");
+    assert.equal(deletedKeys.length, 0,
+      "no city_key was actually deleted — the guard protected the revived row");
+
+    // ── After the sweep: geocodeCityCountry re-resolves from the DB cache ────────
+    // The in-memory entry was evicted by the sweep. The next call must hit readDbCache,
+    // find the live row (deleted_at: null), and return the revived result WITHOUT
+    // calling Nominatim.
+    const afterSweep = await geocodeCityCountry("Oslo");
+    assert.equal(afterSweep?.countryCode, "NO",
+      "geocoder returns the revived country (NO) from the DB cache after sweep");
+    assert.equal(nominatimCalls, 0,
+      "Nominatim must NOT be called — the revived DB row is served directly by readDbCache");
+  });
+
   it("sweep skips the tombstone cleanup delete when the deleted_at query returns a DB error", async () => {
     // If the second sweep pass (deleted_at query) hits a transient DB error,
     // the sweep must neither evict the in-memory entry nor issue the cleanup
