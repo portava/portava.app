@@ -9,11 +9,13 @@ import { ScreenHeader } from '../src/components/ScreenHeader';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { getSaveList, unsaveProfile } from '../src/services/saves';
 import type { SavedUser } from '../src/services/saves';
+import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 
 export default function SavedProfilesScreen() {
   const [users, setUsers] = useState<SavedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [unsaving, setUnsaving] = useState<string | null>(null);
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -70,6 +72,9 @@ export default function SavedProfilesScreen() {
           data={users}
           keyExtractor={(u) => u.id}
           contentContainerStyle={{ padding: space.lg, gap: space.sm }}
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
+          ListFooterComponent={<NavBarFiller />}
           renderItem={({ item }) => (
             <Pressable
               style={s.row}

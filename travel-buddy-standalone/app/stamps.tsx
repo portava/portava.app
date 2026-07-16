@@ -8,6 +8,7 @@ import { getMyPassportStamps, updateStampVisibility } from '../src/services/pass
 import type { PassportStampNew, StampVisibility } from '../src/services/passportStamps';
 import type { PassportStamp } from '../src/types/models';
 import { color, space, radius, type as t } from '../src/theme/tokens';
+import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 
 const FILTERS: { label: string; kind?: string }[] = [
   { label: 'All' },
@@ -63,6 +64,8 @@ export default function StampsPage() {
   const [selected, setSelected]   = useState<PassportStampNew | null>(null);
   const [visUpdating, setVisUpdating] = useState(false);
 
+  const navBarScrollHandler = useNavBarScrollHandler();
+
   const load = useCallback(async () => {
     setLoading(true);
     const res = await getMyPassportStamps();
@@ -100,7 +103,7 @@ export default function StampsPage() {
       {loading ? (
         <View style={styles.center}><ActivityIndicator color={color.signal} /></View>
       ) : (
-        <ScrollView contentContainerStyle={styles.grid}>
+        <ScrollView contentContainerStyle={styles.grid} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
           {shown.map((s, i) => {
             const leg = toLegacy(s);
             return (
@@ -115,6 +118,7 @@ export default function StampsPage() {
           {shown.length === 0 && (
             <View style={styles.empty}><Text style={styles.emptyText}>No stamps in this category yet.</Text></View>
           )}
+          <NavBarFiller />
         </ScrollView>
       )}
 

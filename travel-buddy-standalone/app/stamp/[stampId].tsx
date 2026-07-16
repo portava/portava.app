@@ -25,6 +25,7 @@ import {
 import type { PassportStampNew, NewStampVisibility } from '../../src/services/stamps';
 import { stampToLegacy, makeStampShareLinks } from '../../src/services/stampShareUtils';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 const RARITY_COLORS: Record<string, string> = {
   common:    '#6B7280',
@@ -65,6 +66,7 @@ function StampDetailContent({
   const [visUpdating, setVisUpdating] = useState(false);
   const [displayUpdating, setDisplayUpdating] = useState(false);
   const [copied, setCopied] = useState(false);
+  const navBarScrollHandler = useNavBarScrollHandler();
   const { cardRef, share, sharing } = useStampShare(stamp, null);
 
   const legacy = stampToLegacy(stamp);
@@ -98,6 +100,8 @@ function StampDetailContent({
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.body}
         bounces={false}
+        onScroll={navBarScrollHandler}
+        scrollEventThrottle={16}
       >
         <View style={styles.artworkWrap}>
           <StampArtwork stamp={legacy} size={120} />
@@ -227,6 +231,7 @@ function StampDetailContent({
             </Pressable>
           </View>
         )}
+        <NavBarFiller />
       </ScrollView>
 
       <View ref={cardRef} style={styles.offscreen} collapsable={false}>

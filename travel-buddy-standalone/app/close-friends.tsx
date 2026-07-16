@@ -15,6 +15,7 @@ import {
   getCloseFriends, addCloseFriend, removeCloseFriend,
   type CloseFriend,
 } from '../src/services/stories';
+import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 
 export default function CloseFriendsScreen() {
   const insets = useSafeAreaInsets();
@@ -22,6 +23,7 @@ export default function CloseFriendsScreen() {
   const [loading, setLoading] = useState(true);
   const [addInput, setAddInput] = useState('');
   const [adding, setAdding] = useState(false);
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -133,6 +135,9 @@ export default function CloseFriendsScreen() {
           )}
           ItemSeparatorComponent={() => <View style={s.sep} />}
           contentContainerStyle={{ paddingHorizontal: space.md }}
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
+          ListFooterComponent={<NavBarFiller />}
         />
       )}
     </View>

@@ -14,6 +14,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getGuideProfile } from '../../src/services/hiddenGems';
 import { useGemList } from '../../src/hooks/useHiddenGems';
+import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 // ── Guide level badges ─────────────────────────────────────────────────────────
 
@@ -53,6 +54,7 @@ function StatTile({ label, value }: { label: string; value: string | number }) {
 export default function GuideProfileScreen() {
   const { userId } = useLocalSearchParams<{ userId: string }>();
   const router = useRouter();
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const [guide, setGuide]   = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -111,6 +113,8 @@ export default function GuideProfileScreen() {
       <ScrollView
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
+        onScroll={navBarScrollHandler}
+        scrollEventThrottle={16}
       >
         {/* Header */}
         <View style={styles.header}>
@@ -165,6 +169,7 @@ export default function GuideProfileScreen() {
             ))}
           </View>
         )}
+        <NavBarFiller />
       </ScrollView>
     </SafeAreaView>
   );

@@ -27,6 +27,7 @@ import {
   isNetworkError,
 } from '../../../src/services/reviewDraftStorage';
 import { useSession } from '../../../src/context/SessionContext';
+import { NavBarFiller, useNavBarScrollHandler } from '../../../src/hooks/useNavBarCollapse';
 
 // ── Star rating ───────────────────────────────────────────────────────────────
 
@@ -86,6 +87,8 @@ export default function ReviewComposerScreen() {
   const [saving, setSaving]           = useState(false);
   const [loading, setLoading]         = useState(false);
   const [hasDraft, setHasDraft]       = useState(false);
+
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   // Edit-mode state
   const [existingReviewId, setExistingReviewId] = useState<string | null>(null);
@@ -261,7 +264,7 @@ export default function ReviewComposerScreen() {
   }
 
   return (
-    <ScrollView style={s.container} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+    <ScrollView style={s.container} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" onScroll={navBarScrollHandler} scrollEventThrottle={16}>
 
       {/* Header */}
       <View style={s.header}>
@@ -363,6 +366,8 @@ export default function ReviewComposerScreen() {
       <TouchableOpacity style={s.cancelBtn} onPress={() => router.back()}>
         <Text style={s.cancelBtnText}>Go back</Text>
       </TouchableOpacity>
+
+      <NavBarFiller />
 
     </ScrollView>
   );

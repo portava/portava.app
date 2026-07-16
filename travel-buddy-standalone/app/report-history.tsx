@@ -8,6 +8,7 @@ import { ArrowLeft } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { fetchMyReports, type MyReport } from '../src/services/reports';
+import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 
 const STATUS_LABEL: Record<string, string> = {
   pending:    'Under review',
@@ -81,6 +82,7 @@ export default function ReportHistoryScreen() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const navBarScrollHandler = useNavBarScrollHandler();
   const PAGE = 20;
 
   const load = useCallback(async (reset = true) => {
@@ -138,6 +140,8 @@ export default function ReportHistoryScreen() {
           }
           onEndReached={loadMore}
           onEndReachedThreshold={0.3}
+          onScroll={navBarScrollHandler}
+          scrollEventThrottle={16}
           ListEmptyComponent={
             <View style={styles.center}>
               <Text style={styles.emptyIcon}>🛡️</Text>
@@ -145,11 +149,16 @@ export default function ReportHistoryScreen() {
               <Text style={styles.emptyBody}>Reports you file will appear here.</Text>
             </View>
           }
-          ListFooterComponent={loadingMore ? (
-            <View style={{ padding: space.lg, alignItems: 'center' }}>
-              <ActivityIndicator size="small" color={color.mute} />
-            </View>
-          ) : null}
+          ListFooterComponent={
+            <>
+              {loadingMore ? (
+                <View style={{ padding: space.lg, alignItems: 'center' }}>
+                  <ActivityIndicator size="small" color={color.mute} />
+                </View>
+              ) : null}
+              <NavBarFiller />
+            </>
+          }
           renderItem={({ item }) => <ReportCard report={item} />}
           ItemSeparatorComponent={() => <View style={{ height: space.sm }} />}
         />

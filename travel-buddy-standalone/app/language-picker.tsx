@@ -14,6 +14,7 @@ import { Check } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { color, space, type as t, radius } from '../src/theme/tokens';
 import { useLanguagePreference } from '../src/context/LanguagePreferenceContext';
+import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 
 export const SUPPORTED_LANGUAGES: Array<{ code: string; name: string }> = [
   { code: 'en',    name: 'English' },
@@ -44,6 +45,7 @@ export default function LanguagePicker() {
   const [selected, setSelected] = useState<string | null>(params.current || ctxLanguage || null);
   const [query, setQuery] = useState('');
   const [saving, setSaving] = useState(false);
+  const navBarScrollHandler = useNavBarScrollHandler();
 
   const filtered = query.trim()
     ? SUPPORTED_LANGUAGES.filter(
@@ -99,6 +101,9 @@ export default function LanguagePicker() {
         keyExtractor={(item) => item.code}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ paddingBottom: 40 }}
+        onScroll={navBarScrollHandler}
+        scrollEventThrottle={16}
+        ListFooterComponent={<NavBarFiller />}
         renderItem={({ item }) => {
           const active = selected === item.code;
           return (
