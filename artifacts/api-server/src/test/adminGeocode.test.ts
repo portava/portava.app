@@ -1401,6 +1401,169 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
       "no artwork update should leave rows still pointing at the XX catalog id");
   });
 
+  it("completes the merge and still counts it when a user_stamps ownership repoint errors", async () => {
+    const XX_ID = "cat-xx-ownership-fail";
+    const SURVIVOR_ID = "cat-survivor-ownership-fail";
+
+    const warnMessages: string[] = [];
+    let xxEntryDeleted = false;
+
+    const client: any = {
+      auth: {
+        getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+      },
+      from: (table: string) => {
+        if (table === "profiles") {
+          return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+        }
+
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: (_cols: string) => builder([]),
+            upsert: (_row: unknown, _o?: unknown) =>
+              Promise.resolve({ data: null, error: null }),
+          };
+        }
+
+        if (table === "universal_stamp_catalog") {
+          return {
+            select: (cols: string) => {
+              if (cols.includes("canonical_location_key")) {
+                return {
+                  eq: (_col: string, _val: unknown) => ({
+                    then: (resolve: (v: { data: unknown[]; error: null }) => void) =>
+                      resolve({
+                        data: [
+                          {
+                            id: XX_ID,
+                            canonical_location_key: "city:XX:warnville",
+                            stamp_type: "city",
+                            country: "Unknown",
+                            country_code: "XX",
+                            city: "Warnville",
+                            neighborhood: null,
+                            display_name: "Warnville",
+                          },
+                        ],
+                        error: null,
+                      }),
+                  }),
+                };
+              }
+              if (cols === "id, earn_count") {
+                return {
+                  in: (_col: string, _ids: string[]) =>
+                    Promise.resolve({
+                      data: [
+                        { id: XX_ID, earn_count: 1 },
+                        { id: SURVIVOR_ID, earn_count: 4 },
+                      ],
+                      error: null,
+                    }),
+                };
+              }
+              const survivorChain: any = {
+                eq: () => survivorChain,
+                neq: () => survivorChain,
+                maybeSingle: async () => ({ data: { id: SURVIVOR_ID }, error: null }),
+              };
+              return survivorChain;
+            },
+            update: (_fields: Record<string, unknown>) => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+            delete: () => ({
+              eq: (_col: string, val: string) => {
+                if (val === XX_ID) xxEntryDeleted = true;
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+        }
+
+        if (table === "user_stamps") {
+          return {
+            update: (_fields: Record<string, unknown>) => ({
+              eq: () =>
+                // Simulate a transient DB error on the ownership repoint
+                Promise.resolve({
+                  data: null,
+                  error: { message: "deadlock detected" },
+                }),
+            }),
+          };
+        }
+
+        if (table === "passport_stamps") {
+          return {
+            update: (_fields: Record<string, unknown>) => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        if (table === "stamp_artwork_versions") {
+          return {
+            update: (_fields: unknown) => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        if (table === "stamp_generation_queue") {
+          return {
+            delete: () => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        return builder([]);
+      },
+    };
+
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    _setGeocodeDbClientForTests(makeGeocodeDbClient("Germany", "DE"));
+
+    // Intercept warn calls forwarded through mergeCatalogEntry
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnMessages.push(args.map(String).join(" "));
+    };
+
+    let r: { status: number; body: any };
+    try {
+      r = await apiReq("PUT", "/admin/geocode-cache/warnville", {
+        country_code: "DE",
+        country: "Germany",
+        repair_catalog: true,
+      });
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.equal(r!.status, 200, `expected 200, got ${r!.status}: ${JSON.stringify(r!.body)}`);
+    assert.ok(r!.body.repair, "response should include repair stats");
+    const repair = r!.body.repair as RepairStats;
+
+    // Ownership repoint failure is fatal — the merge must not be counted
+    assert.equal(repair.catalogMerged, 0,
+      "catalogMerged must be 0: a user_stamps repoint error must prevent the merge from being counted as successful");
+    assert.equal(repair.catalogRekeyed, 0,
+      "catalogRekeyed must be 0 — a merge path was attempted, not a re-key");
+
+    // The XX entry must not be deleted when the repoint failed
+    assert.equal(xxEntryDeleted, false,
+      "the XX catalog entry must not be deleted when the ownership repoint errors — leaving it prevents data loss");
+
+    // The error was logged — not silently swallowed
+    const repointWarn = warnMessages.find((m) => m.includes("user_stamps") && m.includes("repoint"));
+    assert.ok(repointWarn,
+      "a warn should have been emitted for the failed user_stamps repoint so it is not silently swallowed");
+  });
+
   it("does not count a merge as successful when the XX entry DELETE fails", async () => {
     const XX_ID = "cat-xx-delete-fail";
     const SURVIVOR_ID = "cat-survivor-delete-fail";

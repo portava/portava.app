@@ -82,6 +82,7 @@ export async function mergeCatalogEntry(
     const { error } = await sc.from(table).update({ catalog_id: survivorId }).eq("catalog_id", xxId);
     if (error && !/does not exist/i.test(error.message)) {
       warn(`[xx-repair] repoint ${table} failed:`, error.message);
+      return false;
     }
   }
 
