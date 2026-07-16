@@ -779,6 +779,55 @@ describe("NotificationRouter — InvalidCredentials handling", () => {
     );
   });
 
+  it("resets the cleanup failure counter to 0 after a healthy call that follows a triple-step failure run", async () => {
+    // Drive _consecutiveCleanupFailures above CLEANUP_ERROR_THRESHOLD (3) by
+    // running a single call where all three cleanup steps fail together:
+    //   Step 1 — notification_devices DELETE        (deleteDeviceError)
+    //   Step 2 — profiles UPDATE (null legacy token) (profilesUpdateError, triggered because legacyToken === deviceToken)
+    //   Step 3 — rent_buddy_profiles UPDATE          (rentBuddyUpdateError)
+    // Each step increments the counter independently, so one call contributes 3
+    // increments — reaching CLEANUP_ERROR_THRESHOLD (3) immediately.  Two calls
+    // push it to 6, safely above the threshold.
+    _setTestFetch(invalidCredFetch);
+    const STEP1_ERROR = new Error("notification_devices unavailable");
+    const STEP2_ERROR = new Error("profiles table unavailable");
+    const STEP3_ERROR = new Error("rent_buddy_profiles unavailable");
+    const { client: errorClient } = makeFakeDb({
+      deviceToken: LEGACY_TOKEN,
+      legacyToken: LEGACY_TOKEN,
+      deleteDeviceError: STEP1_ERROR,
+      profilesUpdateError: STEP2_ERROR,
+      rentBuddyUpdateError: STEP3_ERROR,
+    });
+    const errorRouter = new NotificationRouter(errorClient);
+
+    await errorRouter.route(BASE_NOTIF);
+    await errorRouter.route(BASE_NOTIF);
+
+    assert.ok(
+      _getCleanupFailureCount() >= 3,
+      `pre-condition: counter should be above CLEANUP_ERROR_THRESHOLD (3) after two triple-failure calls, got ${_getCleanupFailureCount()}`,
+    );
+
+    // Subsequent call: healthy DB where all three steps succeed.
+    // legacyToken === deviceToken ensures step 2 is exercised alongside steps 1
+    // and 3.  anyFailure stays false, so the router must reset
+    // _consecutiveCleanupFailures to 0.
+    const { client: healthyClient } = makeFakeDb({
+      deviceToken: LEGACY_TOKEN,
+      legacyToken: LEGACY_TOKEN,
+    });
+    const healthyRouter = new NotificationRouter(healthyClient);
+
+    await healthyRouter.route(BASE_NOTIF);
+
+    assert.equal(
+      _getCleanupFailureCount(),
+      0,
+      "cleanup failure counter must reset to 0 after a fully-successful cleanup following a triple-step failure run",
+    );
+  });
+
   it("counter increments three times in a single call when all three cleanup steps fail together", async () => {
     // Use LEGACY_TOKEN as both the device token and the legacy profile token so
     // that all three cleanup steps are attempted:
