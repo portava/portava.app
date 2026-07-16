@@ -9,6 +9,23 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildCityCoords } from '../cityCoords.ts';
 
+describe('buildCityCoords — string (non-numeric) rejection', () => {
+  it('returns {} when lat is a numeric string like "48.8566"', () => {
+    const result = buildCityCoords({ lat: '48.8566' as unknown as number, lng: 2.3522 });
+    assert.deepEqual(result, {});
+  });
+
+  it('returns {} when lat is the string "Infinity"', () => {
+    const result = buildCityCoords({ lat: 'Infinity' as unknown as number, lng: 2.3522 });
+    assert.deepEqual(result, {});
+  });
+
+  it('returns {} when lng is a numeric string like "2.3522"', () => {
+    const result = buildCityCoords({ lat: 48.8566, lng: '2.3522' as unknown as number });
+    assert.deepEqual(result, {});
+  });
+});
+
 describe('buildCityCoords — Infinity rejection', () => {
   it('returns {} when lat is Infinity and lng is finite', () => {
     const result = buildCityCoords({ lat: Infinity, lng: 1 });
