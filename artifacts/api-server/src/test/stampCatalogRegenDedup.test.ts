@@ -598,6 +598,95 @@ describe("POST regenerate — catalog status reset fails after queue insert succ
 
 });
 
+// ── Double failure: catalog reset fails AND the failure-audit insert fails ───
+//
+// The regenerate handler writes a "regenerate_catalog_reset_failed" audit row
+// when the catalog status reset errors. If that audit insert itself fails
+// (e.g. DB unreachable), writeAuditLog falls back to console.error so the
+// double failure is never fully silent. This client injects errors on both
+// the universal_stamp_catalog update and the stamp_admin_audit_log insert.
+
+function makeClientWithCatalogUpdateAndAuditInsertError(db: DB) {
+  const inner = makeClientWithCatalogUpdateError(db);
+  return {
+    ...inner,
+    from(tableName: string) {
+      const chain = inner.from(tableName);
+      if (tableName === "stamp_admin_audit_log") {
+        const origInsert = chain.insert.bind(chain);
+        chain.insert = (row: Record<string, any>) => {
+          origInsert(row);
+          // Override the thenable resolution: audit inserts always fail.
+          chain.then = (resolve: any, reject: any) =>
+            Promise.resolve({
+              data:  null,
+              error: { message: "audit db unreachable", code: "PGRST000" },
+            }).then(resolve, reject);
+          return chain;
+        };
+      }
+      return chain;
+    },
+  };
+}
+
+describe("POST regenerate — audit insert for the reset-failure entry also fails", () => {
+
+  beforeEach(() => {
+    db = makeDb();
+    const client = makeClientWithCatalogUpdateAndAuditInsertError(db);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  });
+
+  it("logs a console.error mentioning the failed audit write for regenerate_catalog_reset_failed, and still returns 200 { ok: true }", async () => {
+    const errors: unknown[][] = [];
+    const origError = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args); };
+    let res: { status: number; body: any };
+    try {
+      res = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    } finally {
+      console.error = origError;
+    }
+
+    // The double failure must not break the response.
+    assert.equal(
+      res.status,
+      200,
+      `expected 200 even when both the catalog reset and the audit insert fail, got ${res.status}: ${JSON.stringify(res.body)}`,
+    );
+    assert.deepEqual(res.body, { ok: true });
+
+    // writeAuditLog's console.error fallback must fire for the new action.
+    const auditFailureLogs = errors
+      .map((args) => args.map(String).join(" "))
+      .filter(
+        (msg) =>
+          msg.includes("failed to write audit log entry") &&
+          msg.includes("regenerate_catalog_reset_failed"),
+      );
+    assert.equal(
+      auditFailureLogs.length,
+      1,
+      `expected exactly 1 console.error for the failed regenerate_catalog_reset_failed audit write, found ${auditFailureLogs.length}. All errors: ${errors.map((a) => a.map(String).join(" ")).join("\n")}`,
+    );
+
+    // The fallback log must carry enough context to act on.
+    const msg = auditFailureLogs[0];
+    assert.ok(msg.includes(CATALOG_ID), `expected the fallback log to include the catalog_id, got: ${msg}`);
+    assert.ok(msg.includes("audit db unreachable"), `expected the fallback log to include the insert error message, got: ${msg}`);
+
+    // Nothing was actually written to the audit table.
+    assert.equal(
+      db.stamp_admin_audit_log.length,
+      0,
+      `expected no audit rows when every audit insert fails, found ${db.stamp_admin_audit_log.length}: ${JSON.stringify(db.stamp_admin_audit_log)}`,
+    );
+  });
+
+});
+
 // ── Catalog-status scoping: only "rejected" is reset ─────────────────────────
 //
 // The regenerate handler resets the catalog status to "pending_artwork" only
