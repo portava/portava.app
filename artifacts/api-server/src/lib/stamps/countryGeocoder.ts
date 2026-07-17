@@ -450,6 +450,13 @@ export async function geocodeCityCountry(city: string): Promise<GeocodedCountry 
       // provider doesn't get hammered, but retry after the TTL.
       // Guard: skip the write if we were evicted while the request was in-flight.
       if (_pending.get(key) === p) {
+        // Same LRU cap guard as the success path: trim the oldest entry only
+        // when the cache is at or over MAX_CACHE_SIZE, so a negative re-seed
+        // never grows the cache past the cap.
+        if (_cache.size >= MAX_CACHE_SIZE) {
+          const firstKey = _cache.keys().next().value;
+          if (firstKey !== undefined) _cache.delete(firstKey);
+        }
         const now = Date.now();
         _cache.set(key, { result: null, expiresAt: now + NEGATIVE_TTL_MS, writtenAt: now });
       }

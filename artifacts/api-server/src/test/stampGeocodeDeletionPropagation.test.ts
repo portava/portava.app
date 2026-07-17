@@ -4560,4 +4560,69 @@ describe("DB-cache re-resolve path re-arms the correction check", () => {
     assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE,
       "cache size remains exactly MAX_CACHE_SIZE — no over-cap write, no spurious trim");
   });
+
+  it("negative-cache re-seed at capacity trims the oldest unrelated entry — not the re-seeded city's own entry", async () => {
+    const T0 = 1_700_000_000_000;
+    const NEGATIVE_TTL_MS = 6 * 60 * 60 * 1_000;
+    const MAX_CACHE_SIZE = 2_000; // must match the private constant in countryGeocoder.ts
+    mockNow(T0);
+
+    // No DB — readDbCache short-circuits, all writes stay in-memory.
+    _setGeocodeDbClientForTests(null);
+
+    // Phase 1: fill the cache to MAX_CACHE_SIZE - 1 with synthetic positive entries.
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "de", country: "Germany" } }],
+    }));
+    for (let i = 0; i < MAX_CACHE_SIZE - 1; i++) {
+      await geocodeCityCountry(`synthcity${String(i).padStart(4, "0")}`);
+    }
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE - 1,
+      "pre-condition: cache filled to MAX_CACHE_SIZE - 1");
+
+    // Phase 2: seed a null entry for the target city (Nominatim down → catch path).
+    let nominatimThrows = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimThrows++;
+      throw new Error("network_error");
+    });
+    const seeded = await geocodeCityCountry("Atlantis");
+    assert.equal(seeded, null, "target city seeded as null");
+    assert.equal(nominatimThrows, 1, "one failed Nominatim attempt for the seed");
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE,
+      "cache is now exactly at MAX_CACHE_SIZE");
+    assert.ok(_getGeocodeCacheEntryForTests("synthcity0000"),
+      "oldest synthetic entry still present — the seed itself did not trim (size was under cap)");
+
+    // Phase 3: advance past the negative TTL so the null entry expires,
+    // then trigger a re-seed (Nominatim still down → catch-path cache write).
+    const T1 = T0 + NEGATIVE_TTL_MS + 1_000;
+    mockNow(T1);
+    const reseeded = await geocodeCityCountry("Atlantis");
+    assert.equal(reseeded, null, "re-seed returns null again (Nominatim still down)");
+    assert.equal(nominatimThrows, 2, "a fresh Nominatim attempt was made after the negative TTL expired");
+
+    // The cap trim fired (size >= MAX_CACHE_SIZE) and evicted the OLDEST
+    // unrelated synthetic entry — not the target city's own entry.
+    assert.equal(_getGeocodeCacheEntryForTests("synthcity0000"), undefined,
+      "oldest synthetic entry was the one evicted by the cap trim");
+    assert.ok(_getGeocodeCacheEntryForTests("synthcity0001"),
+      "second-oldest synthetic entry survives — only one entry was trimmed");
+
+    // The re-seeded null entry is present and correctly sized.
+    const target = _getGeocodeCacheEntryForTests("atlantis");
+    assert.ok(target, "re-seeded null entry is present for the target city");
+    assert.equal(target!.result, null, "re-seeded entry is a negative (null) entry");
+    assert.equal(target!.writtenAt, T1, "re-seeded entry written at the re-seed time");
+    assert.equal(target!.expiresAt, T1 + NEGATIVE_TTL_MS,
+      "re-seeded entry carries the 6-hour negative TTL");
+
+    // Cache never exceeds the cap; after trimming an unrelated entry and
+    // replacing the target's expired entry in place, size sits under the cap.
+    assert.ok(_getCacheSizeForTests() <= MAX_CACHE_SIZE,
+      "cache size never exceeds MAX_CACHE_SIZE after the re-seed");
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE - 1,
+      "one unrelated entry trimmed + in-place replace of the target's expired entry");
+  });
 });
