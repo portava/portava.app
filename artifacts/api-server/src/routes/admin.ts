@@ -439,6 +439,14 @@ router.patch("/admin/venues/:id/status", async (req, res) => {
 // Table: geofence_admin_settings (migration 0039)
 // Single-row config for default/min/max check-in radius and global no-show flag.
 
+/** Fallback defaults that mirror the migration 0039 column defaults. */
+export const GEOFENCE_SETTINGS_DEFAULTS = {
+  default_radius_m: 150,
+  min_radius_m: 50,
+  max_radius_m: 5000,
+  no_show_affects_reliability: false,
+} as const;
+
 /** GET /admin/geofence-settings — read current admin radius config */
 router.get("/admin/geofence-settings", async (req, res) => {
   const admin = await requireAdmin(req, res);
@@ -452,14 +460,7 @@ router.get("/admin/geofence-settings", async (req, res) => {
     .maybeSingle();
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({
-    settings: data ?? {
-      default_radius_m: 150,
-      min_radius_m: 50,
-      max_radius_m: 5000,
-      no_show_affects_reliability: false,
-    },
-  });
+  res.json({ settings: data ?? GEOFENCE_SETTINGS_DEFAULTS });
 });
 
 /** PATCH /admin/geofence-settings — update radius defaults */

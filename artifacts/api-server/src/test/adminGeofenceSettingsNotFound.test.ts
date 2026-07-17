@@ -15,7 +15,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import adminRouter from "../routes/admin.js";
+import adminRouter, { GEOFENCE_SETTINGS_DEFAULTS } from "../routes/admin.js";
 
 const FAKE_TOKEN = "fake.jwt.token";
 const USER_ID    = "aaaaaaaa-1111-1111-1111-000000000001";
@@ -176,9 +176,9 @@ describe("GET /admin/geofence-settings — missing settings row", () => {
     );
     const s = r.body?.settings;
     assert.ok(s && typeof s === "object", "settings must be a non-null object");
-    assert.equal(s.default_radius_m, 150);
-    assert.equal(s.min_radius_m, 50);
-    assert.equal(s.max_radius_m, 5000);
-    assert.equal(s.no_show_affects_reliability, false);
+    assert.equal(s.default_radius_m,          GEOFENCE_SETTINGS_DEFAULTS.default_radius_m);
+    assert.equal(s.min_radius_m,              GEOFENCE_SETTINGS_DEFAULTS.min_radius_m);
+    assert.equal(s.max_radius_m,              GEOFENCE_SETTINGS_DEFAULTS.max_radius_m);
+    assert.equal(s.no_show_affects_reliability, GEOFENCE_SETTINGS_DEFAULTS.no_show_affects_reliability);
   });
 });
