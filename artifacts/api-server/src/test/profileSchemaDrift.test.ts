@@ -832,6 +832,75 @@ describe("PATCH /api/me/profile under schema drift (missing newer columns)", () 
     );
   });
 
+  it("clearing defaultLanguage alone under drift errors — no silent no-op 200", async () => {
+    // { defaultLanguage: null } is the ONLY field in the PATCH and
+    // default_language is drifted. Every requested field would be stripped by
+    // the fallback, so the route must hit the all-stripped error path naming
+    // defaultLanguage — not return a no-op 200.
+    const driftedColsDefaultLangOnly = new Set(["default_language"]);
+    const soloClearUpdates: UpdateRecord[] = [];
+    const soloClearRow: any = {
+      id: ME, username: "me_user", handle: "me_user", name: "Me",
+      bio: "old bio", is_private: false, passport_visibility: "public",
+      avatar_url: null, created_at: new Date("2026-01-01").toISOString(),
+    };
+    function makeBuilder6(table: string) {
+      let pendingUpdate: any = null;
+      const builder: any = {
+        select() { return builder; },
+        eq() { return builder; },
+        neq() { return builder; },
+        limit() { return builder; },
+        update(patch: any) { pendingUpdate = patch; return builder; },
+        insert() { return builder; },
+        maybeSingle() {
+          return Promise.resolve({ data: table === "profiles" ? { ...soloClearRow } : null, error: null });
+        },
+        single() {
+          if (pendingUpdate && table === "profiles") {
+            const bad = Object.keys(pendingUpdate).find((k) => driftedColsDefaultLangOnly.has(k));
+            if (bad) {
+              return Promise.resolve({
+                data: null,
+                error: { code: "PGRST204", message: `Could not find the '${bad}' column of 'profiles' in the schema cache` },
+              });
+            }
+            soloClearUpdates.push({ table, patch: pendingUpdate });
+            return Promise.resolve({ data: { ...soloClearRow, ...pendingUpdate }, error: null });
+          }
+          return Promise.resolve({ data: table === "profiles" ? { ...soloClearRow } : null, error: null });
+        },
+        then(onF: any, onR: any) {
+          return Promise.resolve({ data: [], error: null }).then(onF, onR);
+        },
+      };
+      return builder;
+    }
+    const soloClearClient: any = {
+      auth: {
+        getUser: async (tok: string) =>
+          tok === ME_TOK
+            ? { data: { user: { id: ME } }, error: null }
+            : { data: { user: null }, error: { message: "invalid token" } },
+      },
+      from: (table: string) => makeBuilder6(table),
+      storage: { from: () => ({ remove: async () => ({ error: null }) }) },
+      __updates: soloClearUpdates,
+    };
+
+    _setTestClient(soloClearClient, true);
+    _setTestServiceClient(soloClearClient);
+
+    const r = await patchProfile({ defaultLanguage: null });
+    assert.notEqual(r.status, 200, "a null-clear that saves nothing must not return 200");
+    const body = await r.json() as any;
+    assert.ok(
+      JSON.stringify(body).includes("defaultLanguage"),
+      `error body must mention "defaultLanguage" — got: ${JSON.stringify(body)}`,
+    );
+    assert.equal(soloClearClient.__updates.length, 0, "no fallback write should have been committed");
+  });
+
   // ── Fallback retry DB error ────────────────────────────────────────────────
   // After the schema-drift fallback strips newer columns and retries, the
   // retry itself can fail (e.g. a constraint violation or transient DB error).
