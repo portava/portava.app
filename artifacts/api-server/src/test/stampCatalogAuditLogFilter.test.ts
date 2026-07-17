@@ -286,6 +286,99 @@ beforeEach(() => {
 
 describe("Audit log is filtered to the correct catalog — not shared across entries", () => {
 
+  it("concurrent regenerate on both catalogs: each catalog's audit is scoped to its own catalog_id", async () => {
+    // ── Fire both regenerations simultaneously ────────────────────────────────
+    const [regenA, regenB] = await Promise.all([
+      post(`/admin/stamps/catalog/${CATALOG_A}/regenerate`),
+      post(`/admin/stamps/catalog/${CATALOG_B}/regenerate`),
+    ]);
+
+    assert.equal(
+      regenA.status, 200,
+      `regenerate catalog A must return 200, got ${regenA.status}: ${JSON.stringify(regenA.body)}`,
+    );
+    assert.deepEqual(regenA.body, { ok: true });
+
+    assert.equal(
+      regenB.status, 200,
+      `regenerate catalog B must return 200, got ${regenB.status}: ${JSON.stringify(regenB.body)}`,
+    );
+    assert.deepEqual(regenB.body, { ok: true });
+
+    // ── Exactly two audit rows in DB, one per catalog ─────────────────────────
+    assert.equal(
+      db.stamp_admin_audit_log.length,
+      2,
+      `exactly two audit rows must exist after concurrent regeneration, got ${db.stamp_admin_audit_log.length}: ${JSON.stringify(db.stamp_admin_audit_log)}`,
+    );
+
+    const rowForA = db.stamp_admin_audit_log.find((r: any) => r.catalog_id === CATALOG_A);
+    const rowForB = db.stamp_admin_audit_log.find((r: any) => r.catalog_id === CATALOG_B);
+
+    assert.ok(
+      rowForA !== undefined,
+      `an audit row with catalog_id === CATALOG_A must exist in the DB`,
+    );
+    assert.ok(
+      rowForB !== undefined,
+      `an audit row with catalog_id === CATALOG_B must exist in the DB`,
+    );
+    assert.equal(rowForA!.action, "regenerate", "catalog A audit row must have action 'regenerate'");
+    assert.equal(rowForB!.action, "regenerate", "catalog B audit row must have action 'regenerate'");
+
+    // ── GET detail for catalog A: exactly one audit entry, scoped to A ────────
+    const detailA = await get(`/admin/stamps/catalog/${CATALOG_A}`);
+    assert.equal(
+      detailA.status, 200,
+      `catalog A detail must return 200, got ${detailA.status}: ${JSON.stringify(detailA.body)}`,
+    );
+    assert.ok(Array.isArray(detailA.body.audit), "catalog A audit must be an array");
+    assert.equal(
+      detailA.body.audit.length,
+      1,
+      `catalog A detail must have exactly one audit entry, got ${detailA.body.audit.length}: ${JSON.stringify(detailA.body.audit)}`,
+    );
+    assert.equal(
+      detailA.body.audit[0].action,
+      "regenerate",
+      `catalog A audit entry action must be 'regenerate', got '${detailA.body.audit[0].action}'`,
+    );
+
+    // No catalog B row leaked into catalog A's audit
+    const leakInA = detailA.body.audit.filter((r: any) => r.catalog_id === CATALOG_B);
+    assert.equal(
+      leakInA.length,
+      0,
+      `catalog A detail must not contain audit rows belonging to catalog B, got: ${JSON.stringify(leakInA)}`,
+    );
+
+    // ── GET detail for catalog B: exactly one audit entry, scoped to B ────────
+    const detailB = await get(`/admin/stamps/catalog/${CATALOG_B}`);
+    assert.equal(
+      detailB.status, 200,
+      `catalog B detail must return 200, got ${detailB.status}: ${JSON.stringify(detailB.body)}`,
+    );
+    assert.ok(Array.isArray(detailB.body.audit), "catalog B audit must be an array");
+    assert.equal(
+      detailB.body.audit.length,
+      1,
+      `catalog B detail must have exactly one audit entry, got ${detailB.body.audit.length}: ${JSON.stringify(detailB.body.audit)}`,
+    );
+    assert.equal(
+      detailB.body.audit[0].action,
+      "regenerate",
+      `catalog B audit entry action must be 'regenerate', got '${detailB.body.audit[0].action}'`,
+    );
+
+    // No catalog A row leaked into catalog B's audit
+    const leakInB = detailB.body.audit.filter((r: any) => r.catalog_id === CATALOG_A);
+    assert.equal(
+      leakInB.length,
+      0,
+      `catalog B detail must not contain audit rows belonging to catalog A, got: ${JSON.stringify(leakInB)}`,
+    );
+  });
+
   it("regenerating catalog A: catalog A detail has one audit entry; catalog B detail has none", async () => {
     // ── Pre-condition: both catalogs start with empty audit arrays ────────────
     const beforeA = await get(`/admin/stamps/catalog/${CATALOG_A}`);
