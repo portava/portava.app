@@ -18,7 +18,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { X, Camera, ChevronDown, Lock, Users, Globe, Heart, UserCheck } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
-import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
+import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
 import type { StoryVisibility } from '../services/stories.ts';
 import { createStory, uploadStoryMedia } from '../services/stories.ts';
 
@@ -177,11 +177,10 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
           </View>
         ) : null}
 
-        <KeyboardSafeScrollView offset={insets.top}>
-        <ScrollView
-          style={{ flex: 1 }}
+        <KeyboardSafeView
+          offset={insets.top}
+          scrollViewProps={{ style: { flex: 1 } }}
           contentContainerStyle={{ padding: space.lg, gap: space.lg }}
-          keyboardShouldPersistTaps="handled"
         >
           {/* Media picker */}
           {mediaUri ? (
@@ -244,8 +243,7 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
               <Text style={s.infoText}>Only people on your Close Friends list will see this story.</Text>
             </View>
           )}
-        </ScrollView>
-        </KeyboardSafeScrollView>
+        </KeyboardSafeView>
 
         {/* Visibility picker sheet */}
         {visibilityOpen && (

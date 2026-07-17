@@ -22,7 +22,7 @@ import {
   ActivityIndicator, Switch,
   type StyleProp, type ViewStyle, type TextInputProps,
 } from 'react-native';
-import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
+import { KeyboardSafeView } from '../ui/KeyboardSafeView.tsx';
 import { useNavigation, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, ChevronRight, Check, AlertCircle, RotateCcw } from 'lucide-react-native';
@@ -126,18 +126,14 @@ export function SettingsScreen({
   return (
     <View style={st.root}>
       <SettingsHeader title={title} subtitle={subtitle} right={right} />
-      <KeyboardSafeScrollView>
-        <ScrollView
-          ref={scrollRef}
-          style={{ flex: 1 }}
-          contentContainerStyle={[st.content, contentStyle]}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {children}
-          <NavBarFiller />
-        </ScrollView>
-      </KeyboardSafeScrollView>
+      <KeyboardSafeView
+        scrollViewRef={scrollRef}
+        scrollViewProps={{ style: { flex: 1 } }}
+        contentContainerStyle={[st.content, contentStyle]}
+      >
+        {children}
+        <NavBarFiller />
+      </KeyboardSafeView>
     </View>
   );
 }
