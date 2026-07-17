@@ -239,7 +239,38 @@ export async function getCatalogEarners(catalogId: string, page = 1): Promise<Ap
 
 // ── Duplicates ─────────────────────────────────────────────────────────────────
 
-export async function getStampDuplicates(): Promise<ApiResult<any>> {
+/**
+ * A single catalog row as returned inside a duplicate pair. Fields mirror the
+ * select in GET /admin/stamps/duplicates.
+ */
+export interface StampDuplicateRow {
+  id: string;
+  canonical_location_key: string;
+  stamp_type: string;
+  display_name: string;
+  country_code: string;
+  lat: number | null;
+  lng: number | null;
+  earn_count: number;
+  status: string;
+}
+
+export interface StampDuplicatePair {
+  a: StampDuplicateRow;
+  b: StampDuplicateRow;
+  reason: 'coordinate_proximity' | 'name_similarity';
+}
+
+/**
+ * Shape returned by GET /admin/stamps/duplicates.
+ * Using this type instead of `any` catches mismatched field names at compile
+ * time rather than silently at runtime.
+ */
+export interface StampDuplicatesResponse {
+  duplicates: StampDuplicatePair[];
+}
+
+export async function getStampDuplicates(): Promise<ApiResult<StampDuplicatesResponse>> {
   return adminGet('/api/admin/stamps/duplicates');
 }
 
