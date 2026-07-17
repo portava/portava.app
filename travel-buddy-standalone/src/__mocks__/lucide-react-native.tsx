@@ -1,92 +1,35 @@
+/**
+ * Catch-all mock for lucide-react-native.
+ *
+ * Uses a JS Proxy so any named icon export (MapPin, Check, X, …) is
+ * auto-generated as a simple <View testID="icon-<Name>" /> without needing
+ * to be listed here explicitly. This eliminates "Element type is invalid"
+ * failures when a new component test imports an icon not previously mocked.
+ */
 import React from 'react';
 import { View } from 'react-native';
 
-const icon = (name: string) =>
-  function MockIcon(props: { size?: number; color?: string }) {
+const makeIcon = (name: string) =>
+  function MockIcon(_props: { size?: number; color?: string; [key: string]: unknown }) {
     return <View testID={`icon-${name}`} />;
   };
 
-export const X = icon('X');
-export const MoreVertical = icon('MoreVertical');
-export const Share2 = icon('Share2');
-export const Flag = icon('Flag');
-export const MapPin = icon('MapPin');
-export const ChevronRight = icon('ChevronRight');
-export const CalendarPlus = icon('CalendarPlus');
-export const UserPlus = icon('UserPlus');
-export const Sparkles = icon('Sparkles');
-export const Settings = icon('Settings');
-export const MessageCircle = icon('MessageCircle');
-export const ChevronDown = icon('ChevronDown');
-export const ChevronUp = icon('ChevronUp');
-export const Check = icon('Check');
-export const AlertCircle = icon('AlertCircle');
-export const Info = icon('Info');
-export const Search = icon('Search');
-export const Plus = icon('Plus');
-export const Minus = icon('Minus');
-export const Heart = icon('Heart');
-export const Star = icon('Star');
-export const Home = icon('Home');
-export const User = icon('User');
-export const Send = icon('Send');
-export const Camera = icon('Camera');
-export const Image = icon('Image');
-export const Map = icon('Map');
-export const Navigation = icon('Navigation');
-export const Clock = icon('Clock');
-export const Calendar = icon('Calendar');
-export const Globe = icon('Globe');
-export const Lock = icon('Lock');
-export const Unlock = icon('Unlock');
-export const Eye = icon('Eye');
-export const EyeOff = icon('EyeOff');
-export const Trash = icon('Trash');
-export const Edit = icon('Edit');
-export const ArrowLeft = icon('ArrowLeft');
-export const ArrowRight = icon('ArrowRight');
-export const Bell = icon('Bell');
-export const BellOff = icon('BellOff');
-export const LogOut = icon('LogOut');
-export const Menu = icon('Menu');
-export const Filter = icon('Filter');
-export const Bookmark = icon('Bookmark');
-export const BookmarkCheck = icon('BookmarkCheck');
-export const Coffee = icon('Coffee');
-export const Utensils = icon('Utensils');
-export const Music = icon('Music');
-export const Zap = icon('Zap');
-export const Shield = icon('Shield');
-export const ShieldCheck = icon('ShieldCheck');
-export const UserCheck = icon('UserCheck');
-export const UserX = icon('UserX');
-export const UserMinus = icon('UserMinus');
-export const Users = icon('Users');
-export const MessageSquare = icon('MessageSquare');
-export const Phone = icon('Phone');
-export const Mail = icon('Mail');
-export const Link = icon('Link');
-export const ExternalLink = icon('ExternalLink');
-export const Upload = icon('Upload');
-export const Download = icon('Download');
-export const RefreshCw = icon('RefreshCw');
-export const RotateCw = icon('RotateCw');
-export const Loader = icon('Loader');
-export const Wifi = icon('Wifi');
-export const WifiOff = icon('WifiOff');
-export const Volume2 = icon('Volume2');
-export const VolumeX = icon('VolumeX');
-export const Mic = icon('Mic');
-export const MicOff = icon('MicOff');
-export const Video = icon('Video');
-export const VideoOff = icon('VideoOff');
-export const Plane = icon('Plane');
-export const Car = icon('Car');
-export const Train = icon('Train');
-export const Compass = icon('Compass');
-export const Layers = icon('Layers');
-export const Grid = icon('Grid');
-export const List = icon('List');
-export const LayoutGrid = icon('LayoutGrid');
-export const ListPlus = icon('ListPlus');
-export default icon('default');
+const cache: Record<string, ReturnType<typeof makeIcon>> = {};
+
+const proxy = new Proxy(
+  {},
+  {
+    get(_target, prop: string) {
+      if (prop === '__esModule') return true;
+      if (prop === 'default') return makeIcon('default');
+      if (!cache[prop]) cache[prop] = makeIcon(prop);
+      return cache[prop];
+    },
+  },
+);
+
+// Export via module.exports so the Proxy is the actual module object that
+// Jest resolves named imports from (Babel rewrites named imports to
+// property accesses on the module, which the Proxy intercepts).
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+(module as NodeModule & { exports: unknown }).exports = proxy;

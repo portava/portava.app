@@ -143,7 +143,7 @@ export default function StampStudioIndex() {
         >
           {/* Worker health warnings */}
           {healthWarnings.map((w) => (
-            <View key={w.key} style={styles.warnBanner}>
+            <View key={w.key} style={styles.warnBanner} testID={`health-warning-${w.key}`} accessibilityRole="alert" accessibilityLiveRegion="assertive">
               <AlertTriangle size={18} color="#B45309" strokeWidth={2} />
               <View style={styles.warnBody}>
                 <Text style={styles.warnTitle}>

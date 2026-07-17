@@ -1213,3 +1213,45 @@ describe('StampStudioIndex — non-admin users are redirected away by useRequire
     });
   });
 });
+
+
+describe('StampStudioIndex — health warning banners are announced to screen readers', () => {
+  let spy: ReturnType<typeof makeIntervalSpy>;
+
+  afterEach(() => {
+    spy.teardown();
+    jest.clearAllMocks();
+  });
+
+  it('exposes the warning banner via alert role and assertive live region', async () => {
+    spy = makeIntervalSpy();
+    makeUseFocusEffectMock();
+
+    mockGetCatalog.mockResolvedValue(catalogOk(10));
+    mockGetHealth.mockResolvedValue({
+      ok: true as const,
+      data: {
+        warnings: [
+          { key: 'stuck_jobs' as const, message: 'stuck', details: { stuck_count: 4 } },
+        ],
+        health: {
+          worker_enabled: true,
+          worker_running: true,
+          worker_id: 'w1',
+          last_success_at: null,
+          queue_depth: {},
+          stuck_jobs: [],
+        },
+      },
+    });
+
+    await render(<StampStudioIndex />);
+    await screen.findByText('Stuck generation jobs');
+
+    const banner = screen.getByTestId('health-warning-stuck_jobs');
+    // Without these props, TalkBack/VoiceOver never announces a dynamically
+    // appearing worker-health warning — a screen-reader admin would miss it.
+    expect(banner.props.accessibilityRole).toBe('alert');
+    expect(banner.props.accessibilityLiveRegion).toBe('assertive');
+  });
+});

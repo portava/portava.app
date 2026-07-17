@@ -611,3 +611,27 @@ describe('FailedJobsScreen — orphaned-files badge', () => {
     expect(screen.getByText('1 orphaned file need manual removal')).toBeTruthy();
   });
 });
+
+
+describe('FailedJobsScreen — cleanup warning badge is announced to screen readers', () => {
+  beforeEach(() => {
+    cleanup();
+    mockGetQueue.mockReset();
+    mockGetQueue.mockResolvedValue(queueOk([JOB_WITH_CLEANUP_ERROR]));
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('exposes the cleanup badge via alert role and assertive live region', async () => {
+    render(<FailedJobsScreen />);
+    await waitFor(() => screen.getByTestId('row-cleanup-badge'));
+
+    const badge = screen.getByTestId('row-cleanup-badge');
+    // Without these props, TalkBack/VoiceOver never announces a dynamically
+    // appearing cleanup warning — a screen-reader admin would miss it.
+    expect(badge.props.accessibilityRole).toBe('alert');
+    expect(badge.props.accessibilityLiveRegion).toBe('assertive');
+  });
+});

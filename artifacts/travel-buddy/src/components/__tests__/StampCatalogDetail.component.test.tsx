@@ -267,3 +267,59 @@ describe('StampCatalogDetail — API error banner', () => {
     expect(scrollAfter.props.refreshControl.props.refreshing).toBe(false);
   });
 });
+
+
+describe('StampCatalogDetail — dynamic error banners are announced to screen readers', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('exposes the load-error banner via alert role and assertive live region', async () => {
+    mockGetEntry.mockResolvedValue({ ok: false });
+
+    await act(async () => { render(<StampCatalogDetail />); });
+
+    const banner = screen.getByTestId('catalog-detail-error');
+    // Without these props, TalkBack/VoiceOver never announces a dynamically
+    // appearing error — a screen-reader admin would miss it entirely.
+    expect(banner.props.accessibilityRole).toBe('alert');
+    expect(banner.props.accessibilityLiveRegion).toBe('assertive');
+  });
+
+  it('exposes the cleanup card, shortfall banner, and inline refresh-error banner with alert props', async () => {
+    const base = detailOkWithCandidate();
+    const withQueue = {
+      ...base,
+      data: {
+        ...base.data,
+        queue: {
+          status: 'completed',
+          cleanup_error: 'remove() returned unexpected error: 503',
+          cleanup_error_paths: ['stamps/abc/v1.webp'],
+          last_error: 'candidate_shortfall: Only 1 of 3 candidates were generated.',
+        },
+      },
+    };
+    mockGetEntry
+      .mockResolvedValueOnce(withQueue)
+      .mockResolvedValue({ ok: false });
+
+    await act(async () => { render(<StampCatalogDetail />); });
+
+    const cleanup = screen.getByTestId('cleanup-error-card');
+    expect(cleanup.props.accessibilityRole).toBe('alert');
+    expect(cleanup.props.accessibilityLiveRegion).toBe('assertive');
+
+    const shortfall = screen.getByTestId('shortfall-banner');
+    expect(shortfall.props.accessibilityRole).toBe('alert');
+    expect(shortfall.props.accessibilityLiveRegion).toBe('assertive');
+
+    // A failing pull-to-refresh raises the inline error banner over content.
+    const scroll = screen.getByTestId('catalog-detail-scroll');
+    await act(async () => { scroll.props.refreshControl.props.onRefresh(); });
+
+    const banner = screen.getByTestId('catalog-detail-error');
+    expect(banner.props.accessibilityRole).toBe('alert');
+    expect(banner.props.accessibilityLiveRegion).toBe('assertive');
+  });
+});

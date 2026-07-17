@@ -113,7 +113,7 @@ export default function StampCatalogDetail() {
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
             testID="catalog-detail-scroll"
           >
-            <View style={styles.errorBanner} testID="catalog-detail-error">
+            <View style={styles.errorBanner} testID="catalog-detail-error" accessibilityRole="alert" accessibilityLiveRegion="assertive">
               <Text style={styles.errorText}>{error}</Text>
             </View>
           </ScrollView>
@@ -172,7 +172,7 @@ export default function StampCatalogDetail() {
         testID="catalog-detail-scroll"
       >
         {error ? (
-          <View style={styles.errorBanner} testID="catalog-detail-error">
+          <View style={styles.errorBanner} testID="catalog-detail-error" accessibilityRole="alert" accessibilityLiveRegion="assertive">
             <Text style={styles.errorText}>{error}</Text>
           </View>
         ) : null}
@@ -189,7 +189,7 @@ export default function StampCatalogDetail() {
 
         {/* Orphaned storage files */}
         {queue?.cleanup_error ? (
-          <View style={[styles.card, styles.cleanupCard]} testID="cleanup-error-card">
+          <View style={[styles.card, styles.cleanupCard]} testID="cleanup-error-card" accessibilityRole="alert" accessibilityLiveRegion="assertive">
             <View style={styles.cleanupBadge}>
               <TriangleAlert size={13} color="#92400E" strokeWidth={2} />
               <Text style={styles.cleanupBadgeTitle}>
@@ -239,7 +239,7 @@ export default function StampCatalogDetail() {
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Candidate Artworks ({candidates.length})</Text>
             {shortfall ? (
-              <View style={styles.shortfallBanner}>
+              <View style={styles.shortfallBanner} testID="shortfall-banner" accessibilityRole="alert" accessibilityLiveRegion="assertive">
                 <Text style={styles.shortfallText}>⚠️ Degraded generation: {shortfall} Consider regenerating for a full set.</Text>
               </View>
             ) : null}

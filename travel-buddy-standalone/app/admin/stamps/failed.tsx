@@ -128,7 +128,7 @@ export default function FailedJobsScreen() {
             <Text style={styles.rowError} numberOfLines={2}>{item.last_error}</Text>
           ) : null}
           {item.cleanup_error ? (
-            <View style={styles.cleanupBadge}>
+            <View style={styles.cleanupBadge} testID="row-cleanup-badge" accessibilityRole="alert" accessibilityLiveRegion="assertive">
               <TriangleAlert size={11} color="#92400E" strokeWidth={2} />
               <Text style={styles.cleanupBadgeTitle}>
                 {item.cleanup_error_paths && item.cleanup_error_paths.length > 0
