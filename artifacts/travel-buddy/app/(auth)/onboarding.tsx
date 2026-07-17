@@ -14,7 +14,7 @@ import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 const INTERESTS: Interest[] = ['nightlife','beach','food','luxury','backpacking','culture','adventure','shopping','photography','business','dating','wellness','events'];
 const STYLES: TravelStyle[] = ['solo','couple','group','business'];
 const TOTAL_STEPS = 4;
-const DISPLAY_NAME_MAX = 40;
+const DISPLAY_NAME_MAX = 30;
 
 export default function Onboarding() {
   const [step, setStep] = useState(0);

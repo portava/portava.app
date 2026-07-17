@@ -32,7 +32,7 @@ describe('truncateDisplayName', () => {
     assert.equal(truncateDisplayName('abcdefgh', 5), 'abcde…');
   });
 
-  it('exports the shared 40-char limit', () => {
-    assert.equal(DISPLAY_NAME_MAX_LENGTH, 40);
+  it('exports the shared 30-char limit', () => {
+    assert.equal(DISPLAY_NAME_MAX_LENGTH, 30);
   });
 });

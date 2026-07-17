@@ -306,7 +306,7 @@ router.get("/me/profile", async (req, res) => {
  * User identity always from auth token — never from body.
  */
 const patchProfileSchema = z.object({
-  displayName: z.string().min(1).max(60).optional(),
+  displayName: z.string().min(1).max(30).optional(),
   username: z.string().optional(),
   bio: z.string().max(300).nullish(),
   homeCity: z.string().max(100).nullish(),
