@@ -33,10 +33,7 @@ import {
   type GeocodeCacheRow,
 } from '../../src/services/adminGeocode';
 import {
-  warningsAfterDelete,
-  warningsAfterRepairStart,
-  warningsAfterRepairSuccess,
-  warningsAfterRepairFailure,
+  createGeocodeCacheWarningMachine,
   type PendingWarning,
 } from '../../src/lib/geocodeCacheWarnings';
 
@@ -53,8 +50,16 @@ export default function AdminGeocodeCacheScreen() {
   const [search, setSearch] = useState('');
   const [deletingKeys, setDeletingKeys] = useState<Set<string>>(new Set());
 
+  // Warning-state machine: delete/PUT/repair all flow through it so banner
+  // state is managed consistently. React state mirrors machine.getWarnings().
+  const [machine] = useState(() =>
+    createGeocodeCacheWarningMachine(deleteGeocodeCacheRow, putGeocodeCacheRow),
+  );
   // Inline warnings for city keys whose deletion/correction left xx_entries_pending > 0.
   const [warnings, setWarnings] = useState<PendingWarning[]>([]);
+  const syncWarnings = useCallback(() => {
+    setWarnings([...machine.getWarnings()]);
+  }, [machine]);
 
   // Inline country-code correction state.
   const [correcting, setCorrecting] = useState<{
@@ -108,7 +113,7 @@ export default function AdminGeocodeCacheScreen() {
 
   async function performDelete(cityKey: string, repairCatalog = false) {
     setDeletingKeys((prev) => new Set(prev).add(cityKey));
-    const res = await deleteGeocodeCacheRow(cityKey, repairCatalog);
+    const res = await machine.performDelete(cityKey, repairCatalog);
     setDeletingKeys((prev) => {
       const next = new Set(prev);
       next.delete(cityKey);
@@ -122,16 +127,14 @@ export default function AdminGeocodeCacheScreen() {
 
     // Remove the row from the list on success.
     setRows((prev) => prev.filter((r) => r.city_key !== cityKey));
-
-    const pending = res.data.xx_entries_pending ?? 0;
-    setWarnings((prev) => warningsAfterDelete(prev, cityKey, pending));
+    syncWarnings();
   }
 
   async function handleCorrect() {
     if (!correcting) return;
     const { cityKey, countryCode, country } = correcting;
     setCorrectingBusy(true);
-    const res = await putGeocodeCacheRow(cityKey, { country_code: countryCode, country });
+    const res = await machine.performPut(cityKey, { country_code: countryCode, country });
     setCorrectingBusy(false);
 
     if (!res.ok) {
@@ -148,28 +151,23 @@ export default function AdminGeocodeCacheScreen() {
       ),
     );
 
-    // Show warning banner when xx_entries_pending > 0 (repair_catalog was not sent).
-    const pending = res.data.xx_entries_pending ?? 0;
-    setWarnings((prev) => warningsAfterDelete(prev, cityKey, pending));
+    // Warning banner appears when xx_entries_pending > 0 (repair_catalog not sent).
+    syncWarnings();
     setCorrecting(null);
   }
 
   async function handleRepairNow(cityKey: string) {
-    // Mark as repairing in place so the button shows a spinner.
-    setWarnings((prev) => warningsAfterRepairStart(prev, cityKey));
+    // The machine flags the warning as repairing synchronously before the
+    // network call — sync immediately so the button shows a spinner.
+    const pending = machine.handleRepairNow(cityKey);
+    syncWarnings();
 
-    const res = await deleteGeocodeCacheRow(cityKey, true);
+    const res = await pending;
+    syncWarnings();
 
     if (!res.ok) {
-      setWarnings((prev) => warningsAfterRepairFailure(prev, cityKey));
       Alert.alert('Repair failed', res.error ?? 'Please try again.');
-      return;
     }
-
-    // Repair succeeded — dismiss the warning regardless of residual count.
-    // The row was already removed when we deleted it without repair. Nothing to
-    // remove from the list again — the row may not even exist any more.
-    setWarnings((prev) => warningsAfterRepairSuccess(prev, cityKey));
   }
 
   // ── Rendering ─────────────────────────────────────────────────────────────────
