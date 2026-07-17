@@ -1527,6 +1527,7 @@ router.get("/compass/recommendations", async (req, res) => {
   }
 
   const { surface = "for_you", q, city, limit, startDate, endDate, tripId } = parsed.data;
+  const nowMs = Date.now();
 
   // Feature-flag gate — silently return empty list when Compass is off.
   const enabled = await isCompassEnabled(sc);
@@ -1599,7 +1600,7 @@ router.get("/compass/recommendations", async (req, res) => {
       const availMap = new Map<string, AvailStatus>();
       for (const b of candidateBuddies) availMap.set(b.id, "not_available");
       if (candidateBuddies.length > 0) {
-        const nowDate     = new Date();
+        const nowDate     = new Date(nowMs);
         const todayStr    = nowDate.toISOString().slice(0, 10);
         const nextWeekStr = new Date(nowDate.getTime() + 7 * 86_400_000).toISOString().slice(0, 10);
         const { data: availRows } = await sc
@@ -1776,7 +1777,7 @@ router.get("/compass/recommendations", async (req, res) => {
       // Travelers heading to the same cities as the viewer's upcoming trips
       const destOverlapSet = new Set<string>();
       if (travCandidateIds.length > 0) {
-        const nowStr = new Date().toISOString().slice(0, 10);
+        const nowStr = new Date(nowMs).toISOString().slice(0, 10);
         const { data: aliceTripRows } = await sc
           .from("trips")
           .select("destination_city")
@@ -1840,7 +1841,7 @@ router.get("/compass/recommendations", async (req, res) => {
 
         // Activity freshness proxy via created_at (10 pts max)
         if (p.created_at) {
-          const ageDays = (Date.now() - new Date(p.created_at).getTime()) / 86_400_000;
+          const ageDays = (nowMs - new Date(p.created_at).getTime()) / 86_400_000;
           score += Math.max(0, 10 * Math.pow(2, -ageDays / 90));
         }
 

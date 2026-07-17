@@ -578,7 +578,7 @@ export function computeStatusLabel(
   const minsToStart = (startMs - now) / 60_000;
   if (minsToStart <= 60) return 'Starting Soon';
 
-  const todayEnd = new Date();
+  const todayEnd = new Date(now);
   todayEnd.setHours(23, 59, 59, 999);
   if (startMs <= todayEnd.getTime()) return 'Tonight';
 
@@ -688,7 +688,8 @@ router.get("/pulse/live", async (req, res) => {
     items.push(item);
   }
 
-  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
 
   // ── 0. Safe Return — active sessions (urgency 0, highest priority) ─────────
   if (safeReturnEnabled) {
@@ -704,7 +705,7 @@ router.get("/pulse/live", async (req, res) => {
 
       for (const session of (sessions as any[]) ?? []) {
         const minutesLeft = session.timer_end_at
-          ? Math.ceil((new Date(session.timer_end_at as string).getTime() - Date.now()) / 60_000)
+          ? Math.ceil((new Date(session.timer_end_at as string).getTime() - nowMs) / 60_000)
           : null;
         const subtitle = minutesLeft !== null ? `Check-in in ${minutesLeft} min` : 'Check-in required';
         addItem({
@@ -915,7 +916,7 @@ router.get("/pulse/live", async (req, res) => {
   // ── 3. Circles — active gatherings in user's trips/events ─────────────────
   if (circlesEnabled && callerTripIds.length > 0) {
     try {
-      const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+      const fourHoursAgo = new Date(nowMs - 4 * 60 * 60 * 1000).toISOString();
       const { data: presences } = await sc
         .from("circle_presence")
         .select("context_id, user_id, updated_at")

@@ -356,6 +356,7 @@ router.patch("/me/profile", async (req, res) => {
     return;
   }
   const p = parsed.data;
+  const nowMs = Date.now();
 
   const row: Record<string, unknown> = {};
 
@@ -398,7 +399,7 @@ router.patch("/me/profile", async (req, res) => {
         sendError(res, "invalid_payload", "Invalid dateOfBirth");
         return;
       }
-      const now = new Date();
+      const now = new Date(nowMs);
       if (dob >= now) {
         sendError(res, "invalid_payload", "dateOfBirth must be in the past");
         return;
@@ -455,7 +456,7 @@ router.patch("/me/profile", async (req, res) => {
 
     if (currentProfile?.username_updated_at && currentProfile.username !== p.username) {
       const lastChanged = new Date(currentProfile.username_updated_at);
-      const msSince = Date.now() - lastChanged.getTime();
+      const msSince = nowMs - lastChanged.getTime();
       const daysSince = msSince / (1000 * 60 * 60 * 24);
       if (daysSince < 30) {
         const daysLeft = Math.ceil(30 - daysSince);
@@ -476,7 +477,7 @@ router.patch("/me/profile", async (req, res) => {
     }
     row.username = p.username;
     row.handle = p.username; // invariant: username === handle (handle canonical)
-    row.username_updated_at = new Date().toISOString();
+    row.username_updated_at = new Date(nowMs).toISOString();
   }
 
   // Capture old avatar / cover URLs before the update so we can clean up the
@@ -1121,8 +1122,9 @@ router.post("/me/delete-request", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
-  const now = new Date().toISOString();
-  const scheduledAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
+  const scheduledAt = new Date(nowMs + 30 * 24 * 60 * 60 * 1000).toISOString();
 
   const { error } = await sc
     .from("user_deletion_requests")

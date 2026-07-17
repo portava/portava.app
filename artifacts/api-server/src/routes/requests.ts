@@ -279,11 +279,12 @@ router.post("/me/requests/friend_request/:id/decline", async (req, res) => {
     return;
   }
 
-  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
   await sc.from("friend_requests").update({ status: "declined", responded_at: now, updated_at: now }).eq("id", id);
 
   // Anti-retaliation cooldown: requester cannot re-send for 24 hours after a decline
-  const cooldownExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const cooldownExpiry = new Date(nowMs + 24 * 60 * 60 * 1000).toISOString();
   await permScD.from("user_interaction_cooldowns").upsert({
     user_id:        fr.requester_id,
     target_user_id: user.id,
@@ -440,12 +441,13 @@ router.post("/me/requests/circle_invite/:id/decline", async (req, res) => {
   if (!inv) { sendError(res, "not_found", "Circle invite not found"); return; }
   if (inv.status !== "pending") { sendError(res, "invalid_payload", `Invite is already ${inv.status}`); return; }
   if (inv.recipient_id !== user.id) { sendError(res, "forbidden", "Only the recipient may decline this invite"); return; }
+  const nowMs = Date.now();
 
-  const now = new Date().toISOString();
+  const now = new Date(nowMs).toISOString();
   await sc.from("circle_invites").update({ status: "declined", responded_at: now }).eq("id", id);
 
   // Anti-retaliation cooldown: invite owner cannot re-invite for 48 hours after a decline
-  const ciCooldownExpiry = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+  const ciCooldownExpiry = new Date(nowMs + 48 * 60 * 60 * 1000).toISOString();
   const ciPermSc = getServiceClient();
   if (ciPermSc) {
     const { data: ciInvFull } = await ciPermSc.from("circle_invites")

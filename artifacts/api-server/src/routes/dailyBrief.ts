@@ -789,7 +789,8 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
     return;
   }
 
-  const date = (req.query.date as string) ?? new Date().toISOString().slice(0, 10);
+  const nowMs = Date.now();
+  const date = (req.query.date as string) ?? new Date(nowMs).toISOString().slice(0, 10);
   if (!DATE_RE.test(date)) { sendError(res, "invalid_payload", "date must be YYYY-MM-DD"); return; }
 
   // L1: in-memory cache (keyed per-user-per-day)
@@ -860,7 +861,6 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
   // Attach activeTripId to the brief so cache invalidation knows which trip to check
   const briefWithMeta = { ...brief, activeTripId: ctx.activeTripId };
 
-  const nowMs = Date.now();
   setCachedBrief(user.id, date, briefWithMeta);
   await storeBriefInDB(client, user.id, tripId, date, ctx.briefType, briefWithMeta);
 
@@ -886,7 +886,8 @@ router.post("/trips/:tripId/daily-brief/refresh", async (req, res) => {
   }
 
   const dateParam = z.string().regex(DATE_RE).optional().safeParse(req.body?.date);
-  const date = dateParam.success && dateParam.data ? dateParam.data : new Date().toISOString().slice(0, 10);
+  const nowMs = Date.now();
+  const date = dateParam.success && dateParam.data ? dateParam.data : new Date(nowMs).toISOString().slice(0, 10);
 
   // Always invalidate both cache layers on explicit refresh (per-user-per-day keys)
   invalidateBriefCache(user.id, date);
@@ -913,7 +914,7 @@ router.post("/trips/:tripId/daily-brief/refresh", async (req, res) => {
   });
 
   const briefWithMeta = { ...brief, activeTripId: ctx.activeTripId };
-  const refreshedAt = Date.now();
+  const refreshedAt = nowMs;
   setCachedBrief(user.id, date, briefWithMeta);
   await storeBriefInDB(client, user.id, tripId, date, ctx.briefType, briefWithMeta);
 

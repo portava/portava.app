@@ -151,11 +151,12 @@ router.patch("/me/quick-availability", async (req, res) => {
   const defaultHours: Record<string, number> = {
     free_now: 4, free_tonight: 6, open_to_plans: 24, busy: 8,
   };
-  const expiresAt = b.expiresAt ?? new Date(Date.now() + (defaultHours[b.status] ?? 8) * 3_600_000).toISOString();
+  const nowMs = Date.now();
+  const expiresAt = b.expiresAt ?? new Date(nowMs + (defaultHours[b.status] ?? 8) * 3_600_000).toISOString();
 
   const { data, error } = await client
     .from("quick_availability_status")
-    .upsert({ user_id: user.id, status: b.status, expires_at: expiresAt, updated_at: new Date().toISOString() }, { onConflict: "user_id" })
+    .upsert({ user_id: user.id, status: b.status, expires_at: expiresAt, updated_at: new Date(nowMs).toISOString() }, { onConflict: "user_id" })
     .select("*")
     .single();
 

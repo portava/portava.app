@@ -974,6 +974,7 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
+  const nowMs = Date.now();
   const serviceClient = sc(auth.client);
 
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
@@ -1083,7 +1084,7 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
       return res.status(403).json({ error: "age_verification_required", message: "Date of birth verification is required to make a booking in this location." });
     }
     const bd = new Date(travProf.date_of_birth);
-    const today = new Date();
+    const today = new Date(nowMs);
     let calcAge = today.getFullYear() - bd.getFullYear();
     const m = today.getMonth() - bd.getMonth();
     if (m < 0 || (m === 0 && today.getDate() < bd.getDate())) calcAge--;
@@ -1292,11 +1293,11 @@ router.post("/api/rent-a-buddy/bookings", async (req, res) => {
       deposit_usd: depositUsd,
       cash_balance_usd: cashBalanceUsd,
       is_test_booking: !!(req.body?.is_test_booking),
-      expires_at: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
+      expires_at: new Date(nowMs + 48 * 3600 * 1000).toISOString(),
       status: "requested",
       safety_status: "normal",
       route_plan: [],
-      updated_at: new Date().toISOString(),
+      updated_at: new Date(nowMs).toISOString(),
     })
     .select()
     .maybeSingle();
@@ -1841,13 +1842,14 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
   // Buddy completing → pending traveler confirmation with a 24h dispute window.
   // Traveler completing directly → completed (backward-compatible path).
   const isBuddyCompleting = completingBP && (booking as any).buddy_id === (completingBP as any).id;
+  const nowMs = Date.now();
   const disputeWindowH = 24;
   const disputeWindowExpiresAt = isBuddyCompleting
-    ? new Date(Date.now() + disputeWindowH * 3600 * 1000).toISOString()
+    ? new Date(nowMs + disputeWindowH * 3600 * 1000).toISOString()
     : null;
   const finalStatus = isBuddyCompleting ? "completed_pending_traveler_confirmation" : "completed";
 
-  const now = new Date().toISOString();
+  const now = new Date(nowMs).toISOString();
   await serviceClient
     .from("rent_buddy_bookings")
     .update({
@@ -2015,7 +2017,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/complete", async (req, res) =
   if (finalStatus === "completed" && !bothStayConnected) {
     const telegraphThreadId2: string | null = (booking as any).telegraph_thread_id ?? null;
     if (telegraphThreadId2) {
-      const archiveNow = new Date().toISOString();
+      const archiveNow = new Date(nowMs).toISOString();
       await serviceClient
         .from("message_thread_members")
         .update({ archived_at: archiveNow })
@@ -2868,8 +2870,9 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/no-show", async (req, res) =>
   // Enter a 2-hour grace period instead of opening a dispute immediately.
   // The other party has this window to submit their account.
   // The expiry sweeper escalates no_show_pending → disputed after the grace period.
-  const now = new Date().toISOString();
-  const graceExpiry = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
+  const graceExpiry = new Date(nowMs + 2 * 3600 * 1000).toISOString();
 
   await serviceClient
     .from("rent_buddy_bookings")

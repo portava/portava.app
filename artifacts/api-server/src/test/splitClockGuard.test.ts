@@ -14,10 +14,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
-const LIB_DIR = path.resolve(
+const SRC_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  "../lib",
+  "..",
 );
+const SCAN_DIRS = [
+  path.join(SRC_DIR, "lib"),
+  path.join(SRC_DIR, "routes"),
+];
 
 function collectTsFiles(dir: string): string[] {
   const out: string[] = [];
@@ -124,9 +128,9 @@ function scanBody(fn: FunctionLikeNode): {
   return { hasDateNow, hasNewDate };
 }
 
-test("no function in src/lib mixes Date.now() with no-arg new Date()", () => {
+test("no function in src/lib or src/routes mixes Date.now() with no-arg new Date()", () => {
   const offenders: string[] = [];
-  for (const file of collectTsFiles(LIB_DIR)) {
+  for (const file of SCAN_DIRS.flatMap((dir) => collectTsFiles(dir))) {
     const sf = ts.createSourceFile(
       file,
       readFileSync(file, "utf8"),
@@ -141,7 +145,7 @@ test("no function in src/lib mixes Date.now() with no-arg new Date()", () => {
             node.getStart(sf),
           );
           offenders.push(
-            `${path.relative(LIB_DIR, file)}:${line + 1} in function "${functionName(node, sf)}"`,
+            `${path.relative(SRC_DIR, file)}:${line + 1} in function "${functionName(node, sf)}"`,
           );
         }
       }

@@ -345,6 +345,7 @@ router.get('/hashtags/:slug', async (req, res) => {
   const { user } = auth;
 
   const slug = req.params.slug.toLowerCase().replace(/^#/, '');
+  const nowMs = Date.now();
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
@@ -353,7 +354,7 @@ router.get('/hashtags/:slug', async (req, res) => {
   const { data: ht, error } = await sc
     .from('hashtags')
     .upsert(
-      { slug, name: slug, updated_at: new Date().toISOString() },
+      { slug, name: slug, updated_at: new Date(nowMs).toISOString() },
       { onConflict: 'slug' },
     )
     .select('id, slug, name, usage_count, is_blocked, created_at')
@@ -382,7 +383,7 @@ router.get('/hashtags/:slug', async (req, res) => {
       .select('city')
       .eq('hashtag_id', htRow.id)
       .not('city', 'is', null)
-      .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+      .gte('created_at', new Date(nowMs - 30 * 24 * 60 * 60 * 1000).toISOString())
       .limit(200),
   ]);
 

@@ -51,7 +51,8 @@ router.post("/users/:userId/block", async (req, res) => {
   }
 
   // Remove all social edges between the two users — fire-and-forget errors
-  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
   await Promise.all([
     // Follow edges (both directions)
     client.from("user_follows").delete().eq("follower_id", user.id).eq("following_id", target),
@@ -71,7 +72,7 @@ router.post("/users/:userId/block", async (req, res) => {
 
   // Anti-retaliation cooldowns: prevent blocked user from re-requesting for 90 days
   // (uses client which is already the service-role client, available before sc is declared below)
-  const expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+  const expiresAt = new Date(nowMs + 90 * 24 * 60 * 60 * 1000).toISOString();
   await client.from("user_interaction_cooldowns").upsert([
     { user_id: target, target_user_id: user.id, cooldown_type: "message_request", expires_at: expiresAt },
     { user_id: target, target_user_id: user.id, cooldown_type: "friend_request",  expires_at: expiresAt },

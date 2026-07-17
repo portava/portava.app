@@ -619,11 +619,12 @@ router.post("/api/rent-a-buddy/me/available-now", async (req, res) => {
   if (!buddyProfile) return sendError(res, 'not_found', "Buddy profile not found.");
 
   const durationMinutes = Number(req.body?.durationMinutes ?? 60);
-  const until = new Date(Date.now() + durationMinutes * 60 * 1000).toISOString();
+  const nowMs = Date.now();
+  const until = new Date(nowMs + durationMinutes * 60 * 1000).toISOString();
 
   const { error } = await svc
     .from("rent_buddy_profiles")
-    .update({ available_now: true, available_now_until: until, updated_at: new Date().toISOString() })
+    .update({ available_now: true, available_now_until: until, updated_at: new Date(nowMs).toISOString() })
     .eq("id", buddyProfile.id);
 
   if (error) return sendError(res, 'db_error', error.message);
@@ -1899,7 +1900,8 @@ router.get("/api/rent-a-buddy/admin/marketplace/analytics", async (req, res) => 
   if (!admin) return;
   const { svc } = admin;
 
-  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const nowMs = Date.now();
+  const since = new Date(nowMs - 30 * 24 * 60 * 60 * 1000).toISOString();
 
   const [bookingsRes, analyticsRes, waitlistRes, buddiesRes, feeRulesRes] = await Promise.all([
     svc.from("rent_buddy_bookings").select("id, city, category, status, total_usd, deposit_usd, cash_balance_usd, payment_mode, created_at, buddy_id").gte("created_at", since),
@@ -1967,7 +1969,7 @@ router.get("/api/rent-a-buddy/admin/marketplace/analytics", async (req, res) => 
   const criticalFlags = flags.filter((f) => f.severity === "critical").length;
 
   res.json({
-    period: { since, until: new Date().toISOString() },
+    period: { since, until: new Date(nowMs).toISOString() },
     bookings: {
       total: bookings.length,
       byStatus: statusCounts,

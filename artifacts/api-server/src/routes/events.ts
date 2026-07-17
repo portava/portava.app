@@ -2238,6 +2238,7 @@ router.post("/events/:id/waitlist", async (req, res) => {
 
   const { id } = req.params;
   if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+  const nowMsWl = Date.now();
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
@@ -2291,7 +2292,7 @@ router.post("/events/:id/waitlist", async (req, res) => {
         sendError(res, "forbidden", "Your profile must have a date of birth to join this age-restricted event"); return;
       }
       const dobWl = new Date((profileAgeWl as any).date_of_birth);
-      const ageYearsWl = Math.floor((Date.now() - dobWl.getTime()) / (1000 * 60 * 60 * 24 * 365.25));
+      const ageYearsWl = Math.floor((nowMsWl - dobWl.getTime()) / (1000 * 60 * 60 * 24 * 365.25));
       if ((ev as any).age_min != null && ageYearsWl < (ev as any).age_min) {
         sendError(res, "forbidden", `This event requires attendees to be at least ${(ev as any).age_min}`); return;
       }
@@ -2320,7 +2321,7 @@ router.post("/events/:id/waitlist", async (req, res) => {
   const nextPos = ((maxPos as any)?.position ?? 0) + 1;
 
   await sc.from("event_waitlist").insert({ event_id: id, user_id: user.id, position: nextPos });
-  await sc.from("events").update({ waitlist_count: nextPos, updated_at: new Date().toISOString() }).eq("id", id);
+  await sc.from("events").update({ waitlist_count: nextPos, updated_at: new Date(nowMsWl).toISOString() }).eq("id", id);
 
   res.status(201).json({ position: nextPos });
 });

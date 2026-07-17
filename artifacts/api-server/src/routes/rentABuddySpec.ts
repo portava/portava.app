@@ -642,6 +642,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/report-no-show", async (req, 
 
   const { bookingId } = req.params;
   const { notes } = req.body ?? {};
+  const nowMs = Date.now();
 
   const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
@@ -697,7 +698,7 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/report-no-show", async (req, 
       event_type: "no_show",
       event_status: "open",
       metadata: { notes: notes ?? null },
-      created_at: new Date().toISOString(),
+      created_at: new Date(nowMs).toISOString(),
     })
     .select()
     .single();
@@ -706,8 +707,8 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/report-no-show", async (req, 
 
   // Enter a 2-hour grace period so the other party can respond before escalation.
   // The expiry sweeper promotes no_show_pending → disputed after the window closes.
-  const now = new Date().toISOString();
-  const graceExpiry = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
+  const now = new Date(nowMs).toISOString();
+  const graceExpiry = new Date(nowMs + 2 * 3600 * 1000).toISOString();
 
   const { error: updateError } = await serviceClient
     .from("rent_buddy_bookings")

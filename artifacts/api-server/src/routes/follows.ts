@@ -949,7 +949,7 @@ router.get("/users/suggestions", async (req, res) => {
   //    as fallback). This takes priority over all other reason labels.
   const sharedDestinations: Record<string, string> = {};
   try {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date(nowMs).toISOString().slice(0, 10);
 
     // Fetch caller's upcoming trips with destination details in 2 queries.
     // The inner join on trip_members filters out past memberships without an

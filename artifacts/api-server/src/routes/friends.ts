@@ -206,13 +206,14 @@ router.post("/friend-requests/:requestId/decline", async (req, res) => {
     return;
   }
 
-  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
   await sc.from("friend_requests")
     .update({ status: "declined", responded_at: now, updated_at: now })
     .eq("id", requestId);
 
   // Anti-retaliation cooldown: requester cannot re-send for 24 hours after a decline
-  const cooldownExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const cooldownExpiry = new Date(nowMs + 24 * 60 * 60 * 1000).toISOString();
   await sc.from("user_interaction_cooldowns").upsert({
     user_id:        fr.requester_id,
     target_user_id: user.id,

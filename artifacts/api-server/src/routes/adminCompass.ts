@@ -130,8 +130,9 @@ router.get("/admin/compass/dashboard", async (req, res) => {
   const { sc } = admin;
 
   try {
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000).toISOString();
-    const now           = new Date().toISOString();
+    const nowMs         = Date.now();
+    const thirtyDaysAgo = new Date(nowMs - 30 * 24 * 60 * 60 * 1_000).toISOString();
+    const now           = new Date(nowMs).toISOString();
 
     const [
       abuseFlagsRes,
@@ -382,7 +383,7 @@ router.get("/admin/compass/dashboard", async (req, res) => {
       ? Math.round((positiveEngagementCount / feedbackTotal) * 1_000) / 10 : 0;
 
     res.json({
-      generatedAt:    new Date().toISOString(),
+      generatedAt:    new Date(nowMs).toISOString(),
       windowDays:     30,
 
       // Algorithm
