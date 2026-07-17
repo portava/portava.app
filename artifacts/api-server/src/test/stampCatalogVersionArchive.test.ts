@@ -525,3 +525,192 @@ describe("Candidate artwork versions are archived after regenerate", () => {
     }
   });
 });
+
+// ── Queue job isolation ────────────────────────────────────────────────────────
+//
+// Regenerating catalog entry A must only reset failed queue jobs whose
+// catalog_id matches A. The failed job belonging to entry B must be
+// left untouched — same status, same attempts, same last_error.
+
+describe("Queue job for entry B is not reset when regenerating entry A", () => {
+
+  // IDs used only inside this suite to avoid any cross-test interference.
+  const CATALOG_A  = "cccccccc-0000-4000-8000-000000000050";
+  const CATALOG_B  = "cccccccc-0000-4000-8000-000000000051";
+  const QUEUE_JOB_A = "eeeeeeee-0000-4000-8000-000000000050";
+  const QUEUE_JOB_B = "eeeeeeee-0000-4000-8000-000000000051";
+
+  // The outer beforeEach already resets db = makeDb() before each test.
+  // This inner beforeEach runs after that reset and extends the fresh db
+  // with the two catalog entries and their failed queue rows.
+  beforeEach(() => {
+    db.universal_stamp_catalog.push(
+      {
+        id:                     CATALOG_A,
+        canonical_location_key: "city:alpha:country",
+        stamp_type:             "location",
+        display_name:           "Alpha City",
+        country:                "Country",
+        country_code:           "CC",
+        status:                 "rejected",
+        active_version_id:      null,
+        earn_count:             0,
+        created_at:             "2024-03-01T00:00:00Z",
+        updated_at:             "2024-03-01T00:00:00Z",
+      },
+      {
+        id:                     CATALOG_B,
+        canonical_location_key: "city:beta:country",
+        stamp_type:             "location",
+        display_name:           "Beta City",
+        country:                "Country",
+        country_code:           "CC",
+        status:                 "rejected",
+        active_version_id:      null,
+        earn_count:             0,
+        created_at:             "2024-03-02T00:00:00Z",
+        updated_at:             "2024-03-02T00:00:00Z",
+      },
+    );
+    db.stamp_generation_queue.push(
+      {
+        id:            QUEUE_JOB_A,
+        catalog_id:    CATALOG_A,
+        status:        "retryable_failed",
+        attempts:      3,
+        requeue_count: 1,
+        last_error:    "network timeout",
+        cleanup_error: null,
+        cleanup_error_paths: null,
+      },
+      {
+        id:            QUEUE_JOB_B,
+        catalog_id:    CATALOG_B,
+        status:        "permanently_failed",
+        attempts:      5,
+        requeue_count: 2,
+        last_error:    "max attempts exceeded",
+        cleanup_error: null,
+        cleanup_error_paths: null,
+      },
+    );
+  });
+
+  it("regenerating entry A resets its own failed job but leaves entry B's job unchanged", async () => {
+    // ── Pre-condition ─────────────────────────────────────────────────────────
+    const jobABefore = db.stamp_generation_queue.find((r) => r.id === QUEUE_JOB_A);
+    const jobBBefore = db.stamp_generation_queue.find((r) => r.id === QUEUE_JOB_B);
+    assert.ok(jobABefore, "entry A's queue job must be present before regenerate");
+    assert.ok(jobBBefore, "entry B's queue job must be present before regenerate");
+    assert.equal(
+      jobABefore.status,
+      "retryable_failed",
+      "entry A's job must start in 'retryable_failed'",
+    );
+    assert.equal(
+      jobBBefore.status,
+      "permanently_failed",
+      "entry B's job must start in 'permanently_failed'",
+    );
+
+    // ── Action: regenerate only entry A ──────────────────────────────────────
+    const regen = await post(`/admin/stamps/catalog/${CATALOG_A}/regenerate`);
+    assert.equal(
+      regen.status, 200,
+      `regenerate must return 200, got ${regen.status}: ${JSON.stringify(regen.body)}`,
+    );
+    assert.deepEqual(regen.body, { ok: true });
+
+    // ── Entry A's failed job must be reset to "queued" ────────────────────────
+    const jobAAfter = db.stamp_generation_queue.find((r) => r.id === QUEUE_JOB_A);
+    assert.ok(jobAAfter, "entry A's queue job must still exist after regenerate");
+    assert.equal(
+      jobAAfter.status,
+      "queued",
+      "entry A's queue job must be reset to 'queued' by regenerate",
+    );
+    assert.equal(
+      jobAAfter.attempts,
+      0,
+      "entry A's attempts must be reset to 0",
+    );
+    assert.equal(
+      jobAAfter.requeue_count,
+      0,
+      "entry A's requeue_count must be reset to 0",
+    );
+    assert.equal(
+      jobAAfter.last_error,
+      null,
+      "entry A's last_error must be cleared to null",
+    );
+
+    // ── Entry B's job must be completely unchanged ────────────────────────────
+    const jobBAfter = db.stamp_generation_queue.find((r) => r.id === QUEUE_JOB_B);
+    assert.ok(jobBAfter, "entry B's queue job must still exist after regenerating entry A");
+    assert.equal(
+      jobBAfter.status,
+      "permanently_failed",
+      "entry B's job must remain 'permanently_failed' — regenerating entry A must not reset it",
+    );
+    assert.equal(
+      jobBAfter.attempts,
+      5,
+      "entry B's attempts must remain at 5",
+    );
+    assert.equal(
+      jobBAfter.requeue_count,
+      2,
+      "entry B's requeue_count must remain at 2",
+    );
+    assert.equal(
+      jobBAfter.last_error,
+      "max attempts exceeded",
+      "entry B's last_error must not be cleared",
+    );
+  });
+
+  it("regenerating entry B resets its own failed job but leaves entry A's retryable_failed job unchanged", async () => {
+    // ── Pre-condition ─────────────────────────────────────────────────────────
+    const jobABefore = db.stamp_generation_queue.find((r) => r.id === QUEUE_JOB_A);
+    assert.equal(
+      jobABefore?.status,
+      "retryable_failed",
+      "entry A's job must start in 'retryable_failed'",
+    );
+
+    // ── Action: regenerate only entry B ──────────────────────────────────────
+    const regen = await post(`/admin/stamps/catalog/${CATALOG_B}/regenerate`);
+    assert.equal(
+      regen.status, 200,
+      `regenerate must return 200, got ${regen.status}: ${JSON.stringify(regen.body)}`,
+    );
+    assert.deepEqual(regen.body, { ok: true });
+
+    // ── Entry B's permanently_failed job must be reset to "queued" ────────────
+    const jobBAfter = db.stamp_generation_queue.find((r) => r.id === QUEUE_JOB_B);
+    assert.equal(
+      jobBAfter?.status,
+      "queued",
+      "entry B's queue job must be reset to 'queued' by its own regenerate",
+    );
+
+    // ── Entry A's retryable_failed job must remain untouched ─────────────────
+    const jobAAfter = db.stamp_generation_queue.find((r) => r.id === QUEUE_JOB_A);
+    assert.equal(
+      jobAAfter?.status,
+      "retryable_failed",
+      "entry A's queue job must remain 'retryable_failed' — regenerating entry B must not affect it",
+    );
+    assert.equal(
+      jobAAfter?.attempts,
+      3,
+      "entry A's attempts must remain at 3",
+    );
+    assert.equal(
+      jobAAfter?.last_error,
+      "network timeout",
+      "entry A's last_error must not be cleared",
+    );
+  });
+});
