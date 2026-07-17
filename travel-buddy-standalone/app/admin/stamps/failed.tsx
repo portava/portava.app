@@ -23,6 +23,7 @@ import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import {
   getAdminStampQueue,
   requeueFailedJob,
+  clearCleanupError,
   type GenerationQueueJob,
 } from '../../../src/services/adminStamps';
 
@@ -34,6 +35,7 @@ export default function FailedJobsScreen() {
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId]         = useState<string | null>(null);
+  const [clearingId, setClearingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const res = await getAdminStampQueue({ status: 'retryable_failed,permanently_failed', limit: 100 });
@@ -45,6 +47,36 @@ export default function FailedJobsScreen() {
   useEffect(() => { load(); }, [load]);
 
   const onRefresh = useCallback(() => { setRefreshing(true); load(); }, [load]);
+
+  const onMarkCleaned = useCallback((job: GenerationQueueJob) => {
+    const name = job.universal_stamp_catalog?.display_name ?? job.catalog_id;
+    Alert.alert(
+      'Mark files as cleaned?',
+      `Confirm you have manually removed the orphaned files for "${name}" from the stamp-artwork bucket. The warning badge will be dismissed.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Mark cleaned',
+          onPress: async () => {
+            setClearingId(job.id);
+            const res = await clearCleanupError(job.id);
+            setClearingId(null);
+            if (res.ok) {
+              setJobs((prev) =>
+                prev.map((j) =>
+                  j.id === job.id
+                    ? { ...j, cleanup_error: null, cleanup_error_paths: null }
+                    : j
+                )
+              );
+            } else {
+              Alert.alert('Error', (res as any).error ?? 'Failed to clear cleanup error');
+            }
+          },
+        },
+      ],
+    );
+  }, []);
 
   const onRequeue = useCallback((job: GenerationQueueJob) => {
     const name = job.universal_stamp_catalog?.display_name ?? job.catalog_id;
@@ -114,20 +146,35 @@ export default function FailedJobsScreen() {
             <Text style={styles.cleanupError} numberOfLines={2}>{item.cleanup_error}</Text>
           ) : null}
         </View>
-        <Pressable
-          style={styles.requeueBtn}
-          onPress={() => onRequeue(item)}
-          disabled={busyId === item.id}
-        >
-          {busyId === item.id ? (
-            <ActivityIndicator size="small" color={color.onInk} />
-          ) : (
-            <>
-              <RefreshCw size={14} color={color.onInk} strokeWidth={2} />
-              <Text style={styles.requeueText}>Re-queue</Text>
-            </>
-          )}
-        </Pressable>
+        <View style={styles.actions}>
+          {item.cleanup_error ? (
+            <Pressable
+              style={styles.cleanedBtn}
+              onPress={() => onMarkCleaned(item)}
+              disabled={clearingId === item.id}
+            >
+              {clearingId === item.id ? (
+                <ActivityIndicator size="small" color="#92400E" />
+              ) : (
+                <Text style={styles.cleanedText}>Mark cleaned</Text>
+              )}
+            </Pressable>
+          ) : null}
+          <Pressable
+            style={styles.requeueBtn}
+            onPress={() => onRequeue(item)}
+            disabled={busyId === item.id}
+          >
+            {busyId === item.id ? (
+              <ActivityIndicator size="small" color={color.onInk} />
+            ) : (
+              <>
+                <RefreshCw size={14} color={color.onInk} strokeWidth={2} />
+                <Text style={styles.requeueText}>Re-queue</Text>
+              </>
+            )}
+          </Pressable>
+        </View>
       </View>
     );
   };
@@ -180,8 +227,11 @@ const styles = StyleSheet.create({
   permBadgeText: { fontSize: 10, fontWeight: '700', color: '#B91C1C' },
   rowSub:      { ...t.small, color: color.mute },
   rowError:    { ...t.small, color: '#DC2626', marginTop: 2 },
+  actions:          { flexDirection: 'column', alignItems: 'flex-end', gap: 6 },
   requeueBtn:       { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: color.ink, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 8 },
   requeueText:      { fontSize: 12, fontWeight: '700', color: color.onInk },
+  cleanedBtn:       { borderWidth: 1, borderColor: '#D97706', borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 6 },
+  cleanedText:      { fontSize: 12, fontWeight: '700', color: '#92400E' },
   sep:              { height: 1, backgroundColor: color.haze, marginLeft: space.md },
   emptyWrap:        { alignItems: 'center', gap: space.xs, padding: space.xl },
   empty:            { color: color.mute },
