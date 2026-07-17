@@ -3155,8 +3155,11 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     );
   });
 
-  it("still promotes booking to disputed and writes the event with dispute_id: null when the dispute insert fails", async () => {
-    // Grace window expired 3 hours ago.
+  it("skips the booking promotion and escalation count when the dispute-row insert errors", async () => {
+    // Grace window expired 3 hours ago — the booking is eligible for escalation.
+    // But the rent_buddy_disputes insert returns a DB error, so the sweep must
+    // abandon this booking: noShowEscalated stays 0, booking stays no_show_pending,
+    // and no buddy_booking_events row is written.
     const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
     const client = makeClient(USER_ID);
     _setTestClient(client as any, false);
@@ -3183,38 +3186,30 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
 
     const r = await reqSweep();
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body.noShowEscalated, 1, JSON.stringify(r.body));
 
-    // Booking must still be promoted to disputed even though the dispute insert failed.
+    // The sweep must NOT count a failed dispute insert as a successful escalation.
+    assert.equal(
+      r.body.noShowEscalated,
+      0,
+      "noShowEscalated must be 0 when the dispute-row insert errors",
+    );
+
+    // The booking must remain no_show_pending — the dispute insert failing
+    // must prevent the booking-status update from running at all.
     assert.equal(
       state.bookings!["bk-ns-dispute-err"].status,
-      "disputed",
-      "booking must be promoted to disputed even when the dispute-row insert fails",
+      "no_show_pending",
+      "booking must remain no_show_pending when the dispute-row insert errors",
     );
 
-    // No dispute row must have been persisted (the insert errored out).
-    const storedDisputes = (state.disputes ?? []).filter(
-      (d: any) => d.booking_id === "bk-ns-dispute-err",
-    );
-    assert.equal(
-      storedDisputes.length,
-      0,
-      "no dispute row should be stored when the insert returns an error",
-    );
-
-    // The buddy_booking_events row must still be written, with dispute_id: null.
+    // No no_show_escalated event must be written when the escalation was aborted.
     const escalationEvents = ((state as any).bookingEvents ?? []).filter(
       (e: any) => e.booking_id === "bk-ns-dispute-err" && e.event === "no_show_escalated",
     );
     assert.equal(
       escalationEvents.length,
-      1,
-      "a no_show_escalated event must be recorded even when dispute insert fails",
-    );
-    assert.equal(
-      escalationEvents[0].metadata?.dispute_id,
-      null,
-      "event metadata.dispute_id must be null when the dispute-row insert failed",
+      0,
+      "no no_show_escalated event must be written when the dispute-row insert errors",
     );
   });
 
@@ -3277,18 +3272,20 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
       "no no_show_escalated event must be written when the booking status update DB call errors",
     );
 
-    // ORPHAN CHECK — the booking-status update is attempted BEFORE the dispute
-    // row is inserted (fixed ordering in rentABuddy.ts).  When the update errors
-    // the loop `continue`s before reaching the dispute insert, so no dispute row
-    // is ever written against the still-no_show_pending booking.
+    // ORDERING NOTE — the dispute row is now inserted BEFORE the booking-status
+    // update.  When the update errors, the dispute row has already been committed
+    // (it is an orphan in the sense that the booking remains no_show_pending).
+    // That is an acceptable trade-off: the alternative (inserting the dispute
+    // only after a successful booking update) would allow a failed dispute insert
+    // to silently leave a booking promoted to disputed without any dispute record.
     const orphanedDisputes = (state.disputes ?? []).filter(
       (d: any) => d.booking_id === "bk-ns-update-err" && d.reason === "no_show",
     );
     assert.equal(
       orphanedDisputes.length,
-      0,
-      "no dispute row must be persisted when the booking-status update errors — " +
-        "the sweep inserts the dispute only after a successful booking update",
+      1,
+      "a dispute row is written before the booking update; if the update errors " +
+        "the dispute row remains (acceptable orphan — the booking stays no_show_pending)",
     );
   });
 

@@ -5673,17 +5673,9 @@ router.post("/api/internal/buddy-requests/expire", async (req, res) => {
       // Fall back to traveler_id only if the event row is missing (data inconsistency)
       const reporterUserId: string = (noShowEvent as any)?.actor_user_id ?? (bk.traveler_id as string);
 
-      // Promote the booking to disputed FIRST.  Only insert the dispute row
-      // after the booking update succeeds so a failed update cannot leave an
-      // orphaned dispute row against a booking still in no_show_pending.
-      const { error: updateError } = await serviceClient
-        .from("rent_buddy_bookings")
-        .update({ status: "disputed", updated_at: now })
-        .eq("id", bk.id as string);
-
-      if (updateError) continue;
-
-      // Booking is now disputed — resolve or create the dispute row.
+      // Resolve or create the dispute row FIRST.  If the insert fails we
+      // skip the booking update entirely, so the booking stays no_show_pending
+      // and noShowEscalatedCount is never incremented.
       const { data: existingDispute } = await serviceClient
         .from("rent_buddy_disputes")
         .select("id")
@@ -5694,12 +5686,27 @@ router.post("/api/internal/buddy-requests/expire", async (req, res) => {
       let disputeId: string | null = (existingDispute as any)?.id ?? null;
 
       if (!disputeId) {
-        const { data: newDispute } = await serviceClient
+        const { data: newDispute, error: disputeInsertError } = await serviceClient
           .from("rent_buddy_disputes")
           .insert({ booking_id: bk.id, raised_by: reporterUserId, reason: "no_show", status: "open" })
           .select("id")
           .maybeSingle();
+        if (disputeInsertError) {
+          console.error("[sweep] failed to insert no_show dispute row for booking", bk.id, disputeInsertError);
+          continue;
+        }
         disputeId = (newDispute as any)?.id ?? null;
+      }
+
+      // Dispute row is confirmed — now promote the booking to disputed.
+      const { error: updateError } = await serviceClient
+        .from("rent_buddy_bookings")
+        .update({ status: "disputed", updated_at: now })
+        .eq("id", bk.id as string);
+
+      if (updateError) {
+        console.error("[sweep] failed to promote booking to disputed after dispute insert", bk.id, updateError);
+        continue;
       }
 
       noShowEscalatedCount++;
