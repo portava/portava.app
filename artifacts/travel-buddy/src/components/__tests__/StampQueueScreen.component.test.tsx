@@ -841,3 +841,92 @@ describe('StampQueueScreen — search debounce', () => {
     expect(lastArgs.search).toBe('Tokyo');
   });
 });
+
+// ── Search in-flight spinner suite ─────────────────────────────────────────────
+
+/**
+ * Verifies the inline search spinner (testID "catalog-queue-search-spinner"):
+ *
+ * 1. It appears (and the list is dimmed) while a search-triggered
+ *    getAdminStampCatalog call is still pending.
+ * 2. It disappears (and the dim clears) once the call resolves with results.
+ * 3. It also disappears when the call fails ({ ok: false }) — the finally-style
+ *    setSearching(false) must run on the error path too.
+ *
+ * ## Why these tests exist
+ *
+ * setSearching(false) runs after the res.ok branch in load(). A refactor that
+ * early-returns on error, or moves setSearching(false) inside the ok branch,
+ * would leave admins with a permanently spinning search row and a dimmed list.
+ * These tests hold the API promise pending to pin both transitions explicitly.
+ */
+
+describe('StampQueueScreen — search in-flight spinner', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  /** Returns a promise plus its externally callable resolve function. */
+  function deferred<T>() {
+    let resolve!: (v: T) => void;
+    const promise = new Promise<T>((r) => { resolve = r; });
+    return { promise, resolve };
+  }
+
+  it('shows the spinner and dims the list while the search request is pending, then clears both on success', async () => {
+    const pending = deferred<ReturnType<typeof catalogOk>>();
+    mockGetCatalog
+      .mockResolvedValueOnce(catalogOk([ENTRY_A])) // initial load
+      .mockImplementation(() => pending.promise);  // debounced search load
+
+    await render(<StampQueueScreen />);
+    await screen.findByText('Paris Eiffel');
+
+    // No spinner while idle after the initial load settles.
+    expect(screen.queryByTestId('catalog-queue-search-spinner')).toBeNull();
+
+    const input = screen.getByPlaceholderText('Search by name…');
+    await act(async () => { fireEvent.changeText(input, 'Tokyo'); });
+
+    // After the 350 ms debounce, load() starts and holds on the pending
+    // promise — the spinner must be visible and the list dimmed.
+    await waitFor(() => expect(screen.getByTestId('catalog-queue-search-spinner')).toBeTruthy());
+    const dimmedList = screen.getByTestId('catalog-queue-list');
+    const flatten = require('react-native').StyleSheet.flatten;
+    expect(flatten(dimmedList.props.style)?.opacity).toBe(0.45);
+
+    // Resolve the held request — spinner and dim must clear.
+    await act(async () => { pending.resolve(catalogOk([ENTRY_B])); });
+
+    await waitFor(() => expect(screen.queryByTestId('catalog-queue-search-spinner')).toBeNull());
+    await screen.findByText('Tokyo Tower');
+    const settledList = screen.getByTestId('catalog-queue-list');
+    expect(flatten(settledList.props.style)?.opacity).toBeUndefined();
+  });
+
+  it('clears the spinner and the dim when the search load fails', async () => {
+    const pending = deferred<{ ok: false }>();
+    mockGetCatalog
+      .mockResolvedValueOnce(catalogOk([ENTRY_A])) // initial load
+      .mockImplementation(() => pending.promise);  // failing search load
+
+    await render(<StampQueueScreen />);
+    await screen.findByText('Paris Eiffel');
+
+    const input = screen.getByPlaceholderText('Search by name…');
+    await act(async () => { fireEvent.changeText(input, 'Tokyo'); });
+
+    // Spinner appears while the request is held pending.
+    await waitFor(() => expect(screen.getByTestId('catalog-queue-search-spinner')).toBeTruthy());
+
+    // Fail the request — the spinner must still clear (no stuck spin on error).
+    await act(async () => { pending.resolve({ ok: false }); });
+
+    await waitFor(() => expect(screen.queryByTestId('catalog-queue-search-spinner')).toBeNull());
+    // The error banner is shown and the list is no longer dimmed.
+    expect(screen.getByTestId('catalog-queue-error')).toBeTruthy();
+    const flatten = require('react-native').StyleSheet.flatten;
+    const list = screen.getByTestId('catalog-queue-list');
+    expect(flatten(list.props.style)?.opacity).toBeUndefined();
+  });
+});
