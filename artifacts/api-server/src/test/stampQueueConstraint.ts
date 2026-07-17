@@ -71,6 +71,25 @@ export function insertWouldViolateQueuedUnique(
   return false;
 }
 
+/**
+ * The statuses that the production partial unique index treats as *terminal*
+ * (excluded from the index via WHERE status NOT IN (...)).  Rows with these
+ * statuses are invisible to the constraint, so a new job can be enqueued for
+ * the same catalog_id even when one of these rows exists.
+ *
+ * Source: migration 0136_stamp_queue_requeue_cap.sql — uix_queue_catalog_active
+ * WHERE status NOT IN ('archived', 'retryable_failed', 'permanently_failed')
+ *
+ * ⚠ KEEP IN SYNC: if the WHERE clause in that migration ever changes, update
+ * this list to match and update the schema-audit test in
+ * stampQueueConstraintSync.test.ts.
+ */
+export const QUEUE_INDEX_EXCLUDED_STATUSES: readonly string[] = [
+  "archived",
+  "retryable_failed",
+  "permanently_failed",
+];
+
 /** Standard 23505 error object returned when the constraint would be violated. */
 export const DUPLICATE_QUEUED_ERROR = {
   code:    "23505",

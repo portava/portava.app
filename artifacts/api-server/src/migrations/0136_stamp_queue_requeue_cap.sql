@@ -17,6 +17,12 @@ ALTER TABLE stamp_generation_queue
 -- The one-active-job-per-catalog partial unique index must not treat
 -- permanently_failed rows as "active", or admin regenerate could never
 -- enqueue a fresh job for that catalog entry.
+--
+-- ⚠ KEEP IN SYNC: src/test/stampQueueConstraint.ts mirrors this constraint
+-- in the fake Supabase client used by unit tests.  The constant
+-- QUEUE_INDEX_EXCLUDED_STATUSES exported from that file must list exactly the
+-- same statuses that appear in the WHERE NOT IN clause below.  Update both
+-- together whenever this clause changes.
 DROP INDEX IF EXISTS uix_queue_catalog_active;
 CREATE UNIQUE INDEX uix_queue_catalog_active
   ON stamp_generation_queue (catalog_id)
