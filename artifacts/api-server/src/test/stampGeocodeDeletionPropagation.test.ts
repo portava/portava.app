@@ -1696,6 +1696,111 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     assert.equal(nominatimCalls, 0, "no Nominatim call — second probe was also a no-op");
   });
 
+  it("probe-triggered eviction re-arms the correction check for the fresh entry — next call within the interval does not re-probe", async () => {
+    // After evictIfDbCorrected evicts a stale entry (found deleted_at set) and
+    // geocodeCityCountry re-resolves a fresh entry via Nominatim, the new cache
+    // entry must have its correctionCheckedAt (or writtenAt fallback) set to the
+    // resolution time.  A second call made immediately after — before another
+    // CORRECTION_CHECK_INTERVAL_MS has elapsed — must NOT trigger another DB probe.
+    //
+    // If correctionCheckedAt were missing or set to 0, the very next request
+    // would compute Date.now() - 0 >= CORRECTION_CHECK_INTERVAL_MS and fire a
+    // redundant probe on every call until the interval elapsed naturally.
+    //
+    // Timeline:
+    //   T0             — cache seeded from DB (no Nominatim call)
+    //   T0 + I + 1s    — interval elapsed; probe fires, finds deleted_at, evicts;
+    //                    Nominatim re-resolves a fresh entry (maybeSingle call #2)
+    //   T0 + I + 1s    — second call immediately after: interval NOT elapsed again
+    //                    → maybeSingle must NOT fire
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "nl", country: "Netherlands" } }],
+      };
+    });
+
+    // ── Phase 1: seed the in-memory cache via a DB read ──────────────────────────
+    // maybeSingle fires once here (readDbCache).
+    let maybeSingleCallCount = 0;
+    const { client, switchToDeleted } = makePhasedDbClient({
+      country: "Netherlands",
+      country_code: "NL",
+      corrected_at: null,
+      deleted_at: null,
+    });
+
+    // Wrap the phased client to count maybeSingle calls precisely.
+    const trackingClient: SupabaseClient = {
+      from(table: string) {
+        const inner = (client as any).from(table);
+        return {
+          ...inner,
+          select() { return this; },
+          eq() { return this; },
+          gte() { return this; },
+          not() { return this; },
+          async maybeSingle() {
+            maybeSingleCallCount++;
+            return inner.maybeSingle();
+          },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            resolve({ data: [], error: null });
+          },
+        };
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(trackingClient);
+
+    const first = await geocodeCityCountry("Amsterdam");
+    assert.equal(first?.countryCode, "NL", "pre-condition: DB cache hit returns NL");
+    assert.equal(nominatimCalls, 0, "no Nominatim call on DB cache seed");
+    // One maybeSingle call expected from readDbCache during the initial load.
+    const callsAfterSeed = maybeSingleCallCount;
+
+    // ── Phase 2: tombstone the row — probe will find deleted_at set ───────────────
+    switchToDeleted();
+
+    // Advance past the correction-check interval — probe fires, finds deleted_at,
+    // evicts the stale entry.  Nominatim then re-resolves a fresh entry.
+    const T1 = T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000;
+    mockNow(T1);
+
+    const afterEviction = await geocodeCityCountry("Amsterdam");
+    assert.equal(afterEviction?.countryCode, "NL",
+      "fresh Nominatim resolve after eviction still returns NL");
+    assert.equal(nominatimCalls, 1, "Nominatim called exactly once during the re-resolve");
+    // At least one more maybeSingle call expected from the eviction probe.
+    assert.ok(
+      maybeSingleCallCount > callsAfterSeed,
+      "maybeSingle called during the eviction probe",
+    );
+
+    // ── Phase 3: second call immediately after re-resolve — no probe must fire ────
+    // The fresh entry's correctionCheckedAt (or writtenAt fallback) equals T1.
+    // Date.now() is still T1, so Date.now() - T1 = 0 < CORRECTION_CHECK_INTERVAL_MS.
+    // maybeSingle must NOT be called again.
+    const callsAfterResolve = maybeSingleCallCount;
+
+    const secondCall = await geocodeCityCountry("Amsterdam");
+    assert.equal(secondCall?.countryCode, "NL",
+      "second call returns NL from the fresh in-memory entry");
+    assert.equal(nominatimCalls, 1,
+      "Nominatim not called again — second call hits the fresh in-memory entry");
+    assert.equal(
+      maybeSingleCallCount,
+      callsAfterResolve,
+      "maybeSingle must NOT be called during the second call — fresh entry is correctly re-armed",
+    );
+  });
+
   it("Pass 1 throw does not block Pass 2 — tombstoned entry is evicted and cleanup delete fires", async () => {
     // Regression guard: each pass of runCorrectionSweep is wrapped in its own
     // try/catch.  If Pass 1 (corrected_at query) throws — not just returns an
