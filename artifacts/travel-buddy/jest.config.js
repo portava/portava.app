@@ -36,6 +36,9 @@ module.exports = {
   // src/components/__tests__/TESTING.md for both rules and the reasoning.
   setupFilesAfterEnv: ['<rootDir>/src/jest.setup.ts'],
   moduleNameMapper: {
+    // AsyncStorage's native module is null under jest; map every import to the
+    // official jest mock so no test file needs a per-file jest.mock.
+    '^@react-native-async-storage/async-storage$': '@react-native-async-storage/async-storage/jest/async-storage-mock',
     'lucide-react-native': '<rootDir>/src/__mocks__/lucide-react-native.tsx',
     'expo-router': '<rootDir>/src/__mocks__/expo-router.tsx',
   },
