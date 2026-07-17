@@ -255,6 +255,19 @@ describe("Rebook via /api/buddy-bookings alias — blocked-date enforcement", ()
     assert.equal(state.insertedBookings.length, 1);
   });
 
+  it("rejects rebook of a no_show_pending (mid-escalation) booking with 400 and creates no row", async () => {
+    state.bookings[BOOKING_ID].status = "no_show_pending";
+    const r = await req("POST", `/api/buddy-bookings/${BOOKING_ID}/rebook`, {
+      bookingDate: FUTURE_DATE,
+      startTime: "10:00",
+      durationH: 3,
+    });
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.error, "invalid_payload");
+    assert.match(r.body.message ?? "", /completed booking/i);
+    assert.equal(state.insertedBookings.length, 0, "no booking row should be created");
+  });
+
   it("allows rebook when the buddy has no availability exceptions at all (201)", async () => {
     const r = await req("POST", `/api/buddy-bookings/${BOOKING_ID}/rebook`, {
       bookingDate: FUTURE_DATE,
