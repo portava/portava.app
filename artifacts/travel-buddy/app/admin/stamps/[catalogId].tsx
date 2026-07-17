@@ -16,7 +16,7 @@ import {
   View,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, CheckCircle, XCircle, RefreshCw } from 'lucide-react-native';
+import { ArrowLeft, CheckCircle, XCircle, RefreshCw, TriangleAlert } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
@@ -152,6 +152,26 @@ export default function StampCatalogDetail() {
           <InfoRow label="Earn Count"    value={String(entry.earn_count)} />
           <InfoRow label="Queue Status"  value={queue?.status ?? 'no job'} />
         </View>
+
+        {/* Orphaned storage files */}
+        {queue?.cleanup_error ? (
+          <View style={[styles.card, styles.cleanupCard]} testID="cleanup-error-card">
+            <View style={styles.cleanupBadge}>
+              <TriangleAlert size={13} color="#92400E" strokeWidth={2} />
+              <Text style={styles.cleanupBadgeTitle}>
+                {queue.cleanup_error_paths && queue.cleanup_error_paths.length > 0
+                  ? `${queue.cleanup_error_paths.length} orphaned file${queue.cleanup_error_paths.length !== 1 ? 's' : ''} need manual removal`
+                  : 'Orphaned storage files need manual removal'}
+              </Text>
+            </View>
+            {queue.cleanup_error_paths && queue.cleanup_error_paths.length > 0 ? (
+              <Text style={styles.cleanupPaths} testID="cleanup-error-paths">
+                {queue.cleanup_error_paths.join('\n')}
+              </Text>
+            ) : null}
+            <Text style={styles.cleanupError} numberOfLines={2}>{queue.cleanup_error}</Text>
+          </View>
+        ) : null}
 
         {/* Actions */}
         <View style={styles.actionRow}>
@@ -327,6 +347,11 @@ const styles = StyleSheet.create({
   activateBtn:       { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: color.success, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.pill },
   activateBtnDisabled: { opacity: 0.5 },
   activateBtnText:   { color: color.onInk, fontSize: 10, fontWeight: '700' },
+  cleanupCard:       { borderColor: '#FDE68A', borderWidth: 1 },
+  cleanupBadge:      { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FEF3C7', borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3, marginBottom: space.sm, alignSelf: 'flex-start' },
+  cleanupBadgeTitle: { fontSize: 10, fontWeight: '700', color: '#92400E' },
+  cleanupPaths:      { ...t.small, color: '#78350F', fontFamily: 'monospace', marginBottom: space.xs, fontSize: 10 },
+  cleanupError:      { ...t.small, color: '#D97706' },
   earnRow:           { ...t.small, color: color.mute, paddingVertical: 2 },
   auditRow:          { paddingVertical: space.xs, borderBottomWidth: 1, borderBottomColor: color.haze },
   auditAction:       { ...t.small, color: color.ink, fontWeight: '700', textTransform: 'uppercase' },
