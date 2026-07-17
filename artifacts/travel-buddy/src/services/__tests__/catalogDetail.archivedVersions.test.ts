@@ -386,3 +386,105 @@ describe('render-branch logic — all-archived versions hit the empty-state, not
     );
   });
 });
+
+// ── Suite 4: empty-state hint text — queue-status branch ──────────────────────
+//
+// Inside the empty-state card, the hint text depends on the queue job status
+// ([catalogId].tsx lines ~256-260):
+//
+//   {queue?.status === 'queued' || queue?.status === 'generating'
+//     ? '⏳ AI artwork generation is in progress…'
+//     : 'No candidates yet. Tap Regenerate to queue AI artwork generation.'}
+//
+// After a regenerate, all versions are archived (candidates.length === 0) and a
+// queue job is 'queued'/'generating' — the hint must say generation is in
+// progress, not prompt the admin to regenerate again.
+
+describe('empty-state hint — shows in-progress text when a queue job is active', () => {
+  const IN_PROGRESS = '⏳ AI artwork generation is in progress…';
+  const REGENERATE_PROMPT = 'No candidates yet. Tap Regenerate to queue AI artwork generation.';
+
+  // Exact replica of the screen's hint-text expression.
+  function emptyStateHint(queue: { status: string } | null): string {
+    return queue?.status === 'queued' || queue?.status === 'generating'
+      ? IN_PROGRESS
+      : REGENERATE_PROMPT;
+  }
+
+  // Combined predicate: all versions archived → empty state renders, and the
+  // hint text is derived from the queue status.
+  function hintForScreen(versions: Array<{ status: string }>, queue: { status: string } | null): string | null {
+    const candidates = versions.filter((v) => v.status === 'candidate');
+    const approved = versions.find((v) => v.status === 'approved');
+    if (candidates.length > 0 || approved) return null; // empty-state not rendered
+    return emptyStateHint(queue);
+  }
+
+  it("all archived + queue status 'queued' → in-progress message", () => {
+    const versions = [
+      makeVersion('ver-archived-1', 'archived'),
+      makeVersion('ver-archived-2', 'archived'),
+    ];
+    assert.equal(
+      hintForScreen(versions, { status: 'queued' }),
+      IN_PROGRESS,
+      "hint must say generation is in progress when a job is queued",
+    );
+  });
+
+  it("all archived + queue status 'generating' → in-progress message", () => {
+    const versions = [makeVersion('ver-archived-1', 'archived')];
+    assert.equal(
+      hintForScreen(versions, { status: 'generating' }),
+      IN_PROGRESS,
+      "hint must say generation is in progress when a job is generating",
+    );
+  });
+
+  it('all archived + queue is null → regenerate-prompt message', () => {
+    const versions = [makeVersion('ver-archived-1', 'archived')];
+    assert.equal(
+      hintForScreen(versions, null),
+      REGENERATE_PROMPT,
+      'hint must prompt regeneration when there is no queue job',
+    );
+  });
+
+  it("all archived + terminal queue status ('completed') → regenerate-prompt message", () => {
+    const versions = [makeVersion('ver-archived-1', 'archived')];
+    assert.equal(
+      hintForScreen(versions, { status: 'completed' }),
+      REGENERATE_PROMPT,
+      'a finished job must not claim generation is still in progress',
+    );
+  });
+
+  it("all archived + failed queue status → regenerate-prompt message", () => {
+    const versions = [makeVersion('ver-archived-1', 'archived')];
+    assert.equal(
+      hintForScreen(versions, { status: 'failed' }),
+      REGENERATE_PROMPT,
+      'a failed job must fall back to the regenerate prompt',
+    );
+  });
+
+  it('no versions at all + queued job → in-progress message', () => {
+    assert.equal(
+      hintForScreen([], { status: 'queued' }),
+      IN_PROGRESS,
+      'a brand-new entry with a queued job must also show the in-progress hint',
+    );
+  });
+
+  it('approved version present → empty-state (and its hint) never renders regardless of queue', () => {
+    const versions = [
+      makeVersion('ver-archived-1', 'archived'),
+      makeVersion('ver-approved-1', 'approved'),
+    ];
+    assert.equal(
+      hintForScreen(versions, { status: 'queued' }),
+      null,
+      'empty-state must not render when an approved version exists',
+    );
+  });
+});
