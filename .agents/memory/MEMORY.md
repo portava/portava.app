@@ -18,6 +18,7 @@
 - [Mobile test import extensions](mobile-test-ts-extensions.md) — travel-buddy node:test files need explicit .ts import extensions and manual registration in the package.json test list.
 - [Dynamic import() breaks under Jest](jest-dynamic-import.md) — `await import(...)` in app code throws under jest-expo and can be silently swallowed; use static imports for testable paths.
 - [Stale partial jest.mock factories](stale-partial-jest-mocks.md) — "not a function"/"Element type undefined" render crashes usually mean a hand-written mock object drifted behind the component's imports.
+- [Demo profile seeding gotchas](demo-profile-seeding.md) — live DB constraints and stale code paths that broke idempotent seeding attempts.
 - [Geocode tests and live DB](geocode-tests-live-db.md) — geocode tests must null the DB client override in beforeEach or they silently hit the real Supabase cache table.
 - [Alert onPress act() poison](rn-alert-onpress-act-poison.md) — awaiting an Alert button's async onPress inside act() kills effects for all later renders in the file; await outside, then flush with empty act().
 - [Jest moduleNameMapper vs per-file mocks](jest-mapper-vs-perfile-mocks.md) — mapping a module globally while a test file still has a jest.mock factory requiring the mock path causes infinite recursion; remove per-file mocks when adding a mapper entry.
