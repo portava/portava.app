@@ -131,8 +131,10 @@ async function runCorrectionSweep(): Promise<void> {
       // adding the guard prevents the sweep from discarding a freshly-revived row.
       await sc.from(DB_CACHE_TABLE).delete().in("city_key", keys).not("deleted_at", "is", null);
     }
-  } catch {
-    // Best-effort — transient DB errors are silently swallowed.
+  } catch (e: any) {
+    // Best-effort — transient DB errors never abort the sweep, but they must
+    // be visible to operators.
+    logEvent("stamp.country_geocode.sweep_pass2_error", { error: e?.message ?? String(e) });
   }
 }
 

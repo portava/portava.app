@@ -3169,6 +3169,60 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     assert.equal(tombstoneEvents[0].city_key, tombstonedKey);
   });
 
+  it("sweep logs sweep_pass2_error when Pass 2 throws — no re-throw, best-effort semantics preserved", async () => {
+    // Install a client where Pass 1 succeeds (empty) and Pass 2 throws.
+    let sweepQueryCount = 0;
+    const pass2ThrowClient: SupabaseClient = {
+      from(_table: string) {
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          delete() { return chain; },
+          in() { return chain; },
+          async maybeSingle() { return { data: null, error: null }; },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            const q = sweepQueryCount++;
+            if (q === 0) {
+              // Pass 1 — corrected_at query succeeds with no rows.
+              resolve({ data: [], error: null });
+            } else {
+              // Pass 2 — throw to simulate the DB being unreachable.
+              throw new Error("pass2_connection_refused");
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(pass2ThrowClient);
+
+    // Capture log output.
+    const logLines: string[] = [];
+    const origLog = console.log;
+    console.log = (msg: string) => { logLines.push(msg); };
+
+    try {
+      // Must NOT throw — the sweep stays best-effort.
+      await _runCorrectionSweepForTests();
+    } finally {
+      console.log = origLog;
+    }
+
+    const parsed = logLines.map((l) => { try { return JSON.parse(l); } catch { return null; } });
+
+    const pass2ErrorEvents = parsed.filter((o) => o?.event === "stamp.country_geocode.sweep_pass2_error");
+    assert.equal(pass2ErrorEvents.length, 1, "sweep_pass2_error event logged exactly once");
+    assert.equal(pass2ErrorEvents[0].error, "pass2_connection_refused",
+      "sweep_pass2_error carries the thrown error message");
+
+    // Pass 1 succeeded — no pass1 error event.
+    const pass1ErrorEvents = parsed.filter((o) => o?.event === "stamp.country_geocode.sweep_pass1_error");
+    assert.equal(pass1ErrorEvents.length, 0, "no sweep_pass1_error when Pass 1 succeeds");
+  });
+
   it("sweep hard-delete error is swallowed — in-memory entry is evicted but tombstone rows remain for the next cycle", async () => {
     // The sweep evicts in-memory entries BEFORE issuing the hard-delete.
     // If the hard-delete throws (DB outage, network error), the outer try/catch
