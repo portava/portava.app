@@ -332,12 +332,24 @@ export default function MemoryDetailScreen() {
 
           {/* Location */}
           {(memory.locationCity || memory.locationCountry) && (
-            <View style={s.locationRow}>
-              <MapPin size={13} color={color.mute} />
-              <Text style={s.locationText}>
+            <Pressable
+              style={s.locationRow}
+              onPress={() => router.push({
+                pathname: '/memory/location' as any,
+                params: {
+                  label: [memory.locationCity, memory.locationCountry].filter(Boolean).join(', '),
+                  ...(memory.canonicalLocationId ? { canonicalLocationId: memory.canonicalLocationId } : {}),
+                  ...(memory.locationCity    ? { city: memory.locationCity }       : {}),
+                  ...(memory.locationCountry ? { country: memory.locationCountry } : {}),
+                },
+              })}
+              hitSlop={6}
+            >
+              <MapPin size={13} color={color.signal} />
+              <Text style={[s.locationText, s.locationTextTappable]}>
                 {[memory.locationCity, memory.locationCountry].filter(Boolean).join(', ')}
               </Text>
-            </View>
+            </Pressable>
           )}
 
           {/* Metadata row */}
@@ -461,6 +473,7 @@ const s = StyleSheet.create({
 
   locationRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   locationText: { ...(t.small as object), color: color.mute },
+  locationTextTappable: { color: color.signal },
 
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: space.xs },
   metaChip: { ...(t.small as object), color: color.mute },

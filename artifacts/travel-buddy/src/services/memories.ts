@@ -182,14 +182,24 @@ export async function getMemory(
 
 // ── Discovery feed ────────────────────────────────────────────────────────────
 
+export interface MemoryFeedFilter {
+  city?: string | null;
+  country?: string | null;
+  canonicalLocationId?: string | null;
+}
+
 export async function getMemoryFeed(
   limit = 20,
   cursor?: string | null,
+  filter?: MemoryFeedFilter | null,
 ): Promise<{ ok: true; memories: Memory[]; nextCursor: string | null } | { ok: false; message: string }> {
   try {
     const headers = await authHeader();
     const params = new URLSearchParams({ limit: String(limit) });
     if (cursor) params.set('cursor', cursor);
+    if (filter?.canonicalLocationId) params.set('canonicalLocationId', filter.canonicalLocationId);
+    else if (filter?.city)           params.set('city', filter.city);
+    if (filter?.country)             params.set('country', filter.country);
     const res = await fetch(`${apiBase()}/api/memories?${params}`, { headers });
     if (!res.ok) return { ok: false, message: `HTTP ${res.status}` };
     const json = await res.json();
