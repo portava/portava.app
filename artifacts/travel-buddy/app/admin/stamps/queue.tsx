@@ -30,6 +30,7 @@ export default function StampQueueScreen() {
   const [entries, setEntries]       = useState<CatalogListEntry[]>([]);
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [searching, setSearching]   = useState(false);
   const [search, setSearch]         = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [status, setStatus]         = useState<string>(params.status ?? '');
@@ -44,6 +45,7 @@ export default function StampQueueScreen() {
   }, [search]);
 
   const load = useCallback(async (reset = true) => {
+    setSearching(true);
     const res = await getAdminStampCatalog({
       page: 1,
       limit: 100,
@@ -70,6 +72,7 @@ export default function StampQueueScreen() {
     } else {
       setError('Failed to load catalog. Please try again.');
     }
+    setSearching(false);
     setLoading(false);
     setRefreshing(false);
   }, [status, debouncedSearch]);
@@ -139,6 +142,9 @@ export default function StampQueueScreen() {
           onChangeText={setSearch}
           returnKeyType="search"
         />
+        {searching && !loading && !refreshing ? (
+          <ActivityIndicator size="small" color={color.mute} testID="catalog-queue-search-spinner" />
+        ) : null}
       </View>
 
       {/* Status filter chips */}
@@ -172,6 +178,7 @@ export default function StampQueueScreen() {
       ) : (
         <FlatList
           testID="catalog-queue-list"
+          style={searching && !refreshing ? styles.listDimmed : undefined}
           data={entries}
           keyExtractor={(item) => item.id}
           renderItem={renderEntry}
@@ -209,6 +216,7 @@ const styles = StyleSheet.create({
   chipText:      { fontSize: 11, color: color.mute, fontWeight: '600' },
   chipTextActive:{ color: color.onInk },
   center:        { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  listDimmed:    { opacity: 0.45 },
   row:           { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.md, paddingVertical: space.md, backgroundColor: color.paper },
   rowMeta:       { flex: 1 },
   rowName:       { ...t.body, color: color.ink, fontWeight: '600' },
