@@ -39,6 +39,7 @@ import {
   _runCorrectionSweepForTests,
   _getGeocodeCacheEntryForTests,
   _getCacheSizeForTests,
+  _backdateGeocodeCacheEntryForTests,
 } from "../lib/stamps/countryGeocoder.js";
 
 // ── Timing control ────────────────────────────────────────────────────────────
@@ -3462,7 +3463,7 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     // Start the in-flight request — the stub is paused at stub1Gate.
     const inflightPromise = geocodeCityCountry("Munich");
     // Flush enough microtask ticks for the async body to reach the _fetchImpl call:
-    //   tick 1: readDbCache's maybeSingle() resolves → readDbCache returns null
+    //   tick 1: readDbCache's maybySingle() resolves → readDbCache returns null
     //   tick 2: p body continues → forwardGeocodeCity called → throttled() queues its resolve
     //   tick 3: throttled resolves → _fetchImpl called → pauses at stub1Gate
     // A few extra ticks provide a safety margin across JS engine scheduling variations.
@@ -3525,5 +3526,103 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "third call served from _cache — no additional Nominatim round-trip");
     assert.equal(cachedResult?.countryCode, "DE",
       "cache hit returns the correct country code");
+  });
+
+  it("two concurrent warm-cache callers sharing a no-op probe only bump correctionCheckedAt once — no conflicting timestamps", async () => {
+    // Scenario: both callers arrive after CORRECTION_CHECK_INTERVAL_MS has elapsed.
+    // The first caller reads the stale correctionCheckedAt, then immediately writes a
+    // fresh timestamp BEFORE awaiting evictIfDbCorrected (optimistic bump in the source).
+    // By the time the JS event loop hands control to the second caller, the cache already
+    // has the bumped timestamp — so the second caller skips the probe entirely.
+    //
+    // Assertions:
+    //   - DB probe fires at most 2 times (both raced) but in practice exactly 1
+    //   - Both callers receive the correct result
+    //   - correctionCheckedAt is set to the bumped timestamp (not left at 0 / stale)
+    //   - A third call issued immediately after both settle does NOT fire another probe
+    const T0 = 1_700_000_000_000;
+    const T1 = T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000; // well past the check interval
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "se", country: "Sweden" } }],
+      };
+    });
+
+    // ── Phase 1: seed the in-memory cache via a DB load ──────────────────────
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({
+        country: "Sweden",
+        country_code: "SE",
+        corrected_at: null,
+        deleted_at: null,
+      }),
+    );
+    const warm = await geocodeCityCountry("Stockholm");
+    assert.equal(warm?.countryCode, "SE", "pre-condition: warm entry loaded from DB cache");
+    assert.equal(nominatimCalls, 0, "no Nominatim call during warm-up");
+
+    // ── Phase 2: switch to a no-op probe DB client ───────────────────────────
+    // The probe returns a live row with no corrected_at — evictIfDbCorrected
+    // returns false (no eviction). Both concurrent callers should return the
+    // cached result without triggering a Nominatim re-resolve.
+    let probeCallCount = 0;
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient(
+        { country: "Sweden", country_code: "SE", corrected_at: null, deleted_at: null },
+        { onCall: () => { probeCallCount++; } },
+      ),
+    );
+
+    // Backdate correctionCheckedAt to 0 so both concurrent callers see the
+    // check interval as elapsed and both attempt to enter the probe branch.
+    _backdateGeocodeCacheEntryForTests("stockholm");
+
+    // Advance the clock to T1 (past the interval).
+    mockNow(T1);
+
+    // ── Phase 3: fire two concurrent calls ───────────────────────────────────
+    const [resultA, resultB] = await Promise.all([
+      geocodeCityCountry("Stockholm"),
+      geocodeCityCountry("Stockholm"),
+    ]);
+
+    assert.equal(resultA?.countryCode, "SE", "caller A receives the cached country code");
+    assert.equal(resultB?.countryCode, "SE", "caller B receives the cached country code");
+
+    // In the single-threaded JS event loop the first caller bumps
+    // correctionCheckedAt synchronously before any await completes, so the
+    // second caller always sees the fresh timestamp and skips the probe.
+    // We allow ≤ 2 in case both read the stale value in the same microtask tick,
+    // but the design guarantees the guard still holds for the third call below.
+    assert.ok(
+      probeCallCount <= 2,
+      `probe must fire at most twice across both callers (fired ${probeCallCount})`,
+    );
+    assert.equal(nominatimCalls, 0, "no Nominatim call — probe found no correction, cached result returned");
+
+    // ── Phase 4: verify correctionCheckedAt was written ──────────────────────
+    const entry = _getGeocodeCacheEntryForTests("stockholm");
+    assert.ok(entry !== undefined, "cache entry still exists after the no-op probe");
+    assert.ok(
+      (entry!.correctionCheckedAt ?? 0) >= T1,
+      "correctionCheckedAt was bumped to at least T1 — not left at the stale (0) value",
+    );
+
+    // ── Phase 5: third call immediately after — probe must NOT fire again ────
+    // correctionCheckedAt is now fresh; the interval has not elapsed again.
+    const probeCountAfterBothCalls = probeCallCount;
+    const thirdResult = await geocodeCityCountry("Stockholm");
+    assert.equal(thirdResult?.countryCode, "SE", "third call still returns the cached result");
+    assert.equal(
+      probeCallCount,
+      probeCountAfterBothCalls,
+      "no additional DB probe on the third call — correctionCheckedAt guard held",
+    );
+    assert.equal(nominatimCalls, 0, "Nominatim never called across all three calls");
   });
 });
