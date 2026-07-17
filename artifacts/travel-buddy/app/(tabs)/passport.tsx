@@ -355,8 +355,9 @@ function PassportContent({
   const [buddyProfile, setBuddyProfile] = useState<BuddyProfile | null | undefined>(undefined);
   const [, setTrustSheetOpen] = useState(false);
 
-  // Availability chip — read from the store so no new network calls are needed.
-  const { availability, quickStatus } = useAvailabilityStore();
+  // Availability chip — read from the store; refresh on focus so it stays in sync
+  // with the backend after the user saves changes on the availability screen.
+  const { availability, quickStatus, refresh: refreshAvailability } = useAvailabilityStore();
   const ownerChipState = resolveAvailabilityChip({
     openToMeet: availability.openToMeet,
     quickStatus: quickStatus ?? null,
@@ -402,15 +403,18 @@ function PassportContent({
       reload();
       lastPassportLoadedAt.current = Date.now();
     }
-    // These two fetches are lightweight and don't affect scroll position, so
+    // These three fetches are lightweight and don't affect scroll position, so
     // they stay unconditional.
+    // Refresh availability so the chip always reflects the latest saved state
+    // (e.g. the user toggled "Open to meet" on the availability screen and saved).
+    refreshAvailability().catch(() => {});
     getPendingPosts().then((r) => {
       if (r.ok && r.data) setPendingCount(r.data.length);
     }).catch(() => {});
     getMyBuddyProfile().then(res => {
       setBuddyProfile(res.ok ? (res.data.profile ?? null) : null);
     }).catch(() => setBuddyProfile(null));
-  }, [reload]));
+  }, [reload, refreshAvailability]));
 
   const navScrollHandler = useNavBarScrollHandler();
   const [statsIconOnly, setStatsIconOnly] = useState(false);
