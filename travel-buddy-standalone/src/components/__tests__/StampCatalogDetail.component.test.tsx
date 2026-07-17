@@ -41,7 +41,7 @@
 import React from 'react';
 import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
 import StampCatalogDetail from '../../../app/admin/stamps/[catalogId]';
-import { getAdminCatalogEntry, activateStampVersion } from '../../services/adminStamps';
+import { getAdminCatalogEntry, activateStampVersion, rejectCatalogEntry } from '../../services/adminStamps';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
@@ -78,6 +78,7 @@ jest.mock('lucide-react-native', () => ({
 
 const mockGetEntry  = getAdminCatalogEntry as jest.Mock;
 const mockActivate  = activateStampVersion as jest.Mock;
+const mockReject    = rejectCatalogEntry as jest.Mock;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -290,6 +291,48 @@ describe('StampCatalogDetail — API error banner', () => {
   });
 });
 
+
+describe('StampCatalogDetail — cross-platform reject flow', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('rejects via the modal (not iOS-only Alert.prompt), passes the reason, and reloads', async () => {
+    mockGetEntry.mockResolvedValue(detailOk());
+    mockReject.mockResolvedValue({ ok: true });
+
+    await act(async () => { render(<StampCatalogDetail />); });
+    expect(mockGetEntry).toHaveBeenCalledTimes(1);
+
+    // Tapping Reject Entry opens the modal instead of calling Alert.prompt.
+    await act(async () => { fireEvent.press(screen.getByText('Reject Entry')); });
+    expect(screen.getByTestId('reject-modal')).toBeTruthy();
+
+    // Confirm is disabled until a non-blank reason is entered.
+    await act(async () => { fireEvent.press(screen.getByTestId('reject-confirm-btn')); });
+    expect(mockReject).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('reject-reason-input'), 'Duplicate entry');
+    });
+    await act(async () => { fireEvent.press(screen.getByTestId('reject-confirm-btn')); });
+
+    // Reason is required and passed through, and a successful reject reloads.
+    expect(mockReject).toHaveBeenCalledWith('cat-abc', 'Duplicate entry');
+    await waitFor(() => expect(mockGetEntry).toHaveBeenCalledTimes(2));
+  });
+
+  it('cancelling the modal does not call rejectCatalogEntry', async () => {
+    mockGetEntry.mockResolvedValue(detailOk());
+
+    await act(async () => { render(<StampCatalogDetail />); });
+    await act(async () => { fireEvent.press(screen.getByText('Reject Entry')); });
+    await act(async () => { fireEvent.press(screen.getByTestId('reject-cancel-btn')); });
+
+    expect(mockReject).not.toHaveBeenCalled();
+    expect(mockGetEntry).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('StampCatalogDetail — dynamic error banners are announced to screen readers', () => {
   afterEach(() => {

@@ -8,11 +8,13 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -70,16 +72,26 @@ export default function StampCatalogDetail() {
     }
   }, [catalogId, load]);
 
+  // Cross-platform reject flow. Alert.prompt is iOS-only (a no-op on
+  // Android), so we collect the rejection reason via an inline modal instead.
+  const [rejectVisible, setRejectVisible] = useState(false);
+  const [rejectReason, setRejectReason]   = useState('');
+
   const handleReject = useCallback(() => {
-    Alert.prompt('Reject Entry', 'Enter reason for rejection:', async (reason) => {
-      if (!reason) return;
-      setActing(true);
-      const res = await rejectCatalogEntry(catalogId!, reason);
-      setActing(false);
-      if (res.ok) { Alert.alert('Rejected', 'Catalog entry marked as rejected.'); load(); }
-      else Alert.alert('Error', (res as any).error ?? 'Failed to reject');
-    });
-  }, [catalogId, load]);
+    setRejectReason('');
+    setRejectVisible(true);
+  }, []);
+
+  const submitReject = useCallback(async () => {
+    const reason = rejectReason.trim();
+    if (!reason) return;
+    setRejectVisible(false);
+    setActing(true);
+    const res = await rejectCatalogEntry(catalogId!, reason);
+    setActing(false);
+    if (res.ok) { Alert.alert('Rejected', 'Catalog entry marked as rejected.'); load(); }
+    else Alert.alert('Error', (res as any).error ?? 'Failed to reject');
+  }, [catalogId, load, rejectReason]);
 
   const handleRegenerate = useCallback(() => {
     Alert.alert('Regenerate Artwork', 'This will archive existing candidates and queue new AI generation. Continue?', [
@@ -287,6 +299,48 @@ export default function StampCatalogDetail() {
           </View>
         ) : null}
       </ScrollView>
+
+      {/* Reject-reason modal (Alert.prompt is iOS-only, so use a modal) */}
+      <Modal
+        visible={rejectVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setRejectVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard} testID="reject-modal">
+            <Text style={styles.modalTitle}>Reject Entry</Text>
+            <Text style={styles.modalSubtitle}>Enter reason for rejection:</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={rejectReason}
+              onChangeText={setRejectReason}
+              placeholder="Reason"
+              placeholderTextColor={color.faint}
+              multiline
+              autoFocus
+              testID="reject-reason-input"
+            />
+            <View style={styles.modalBtnRow}>
+              <Pressable
+                style={[styles.modalBtn, styles.modalBtnCancel]}
+                onPress={() => setRejectVisible(false)}
+                testID="reject-cancel-btn"
+              >
+                <Text style={styles.modalBtnCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalBtn, styles.modalBtnConfirm, !rejectReason.trim() && styles.modalBtnDisabled]}
+                onPress={submitReject}
+                disabled={!rejectReason.trim()}
+                testID="reject-confirm-btn"
+              >
+                <Text style={styles.modalBtnConfirmText}>Reject</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -393,4 +447,16 @@ const styles = StyleSheet.create({
   auditAction:       { ...t.small, color: color.ink, fontWeight: '700', textTransform: 'uppercase' },
   auditNotes:        { ...t.small, color: color.mute },
   auditDate:         { fontSize: 10, color: color.faint },
+  modalBackdrop:     { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: space.lg },
+  modalCard:         { backgroundColor: color.paperRaised, borderRadius: radius.md, padding: space.md, gap: space.sm },
+  modalTitle:        { ...t.heading, color: color.ink },
+  modalSubtitle:     { ...t.small, color: color.mute },
+  modalInput:        { borderWidth: 1, borderColor: color.haze, borderRadius: radius.sm, padding: space.sm, minHeight: 72, color: color.ink, textAlignVertical: 'top' },
+  modalBtnRow:       { flexDirection: 'row', justifyContent: 'flex-end', gap: space.sm },
+  modalBtn:          { paddingHorizontal: space.md, paddingVertical: 8, borderRadius: radius.md },
+  modalBtnCancel:    { backgroundColor: color.haze },
+  modalBtnCancelText:{ color: color.ink, fontSize: 13, fontWeight: '700' },
+  modalBtnConfirm:   { backgroundColor: '#EF4444' },
+  modalBtnConfirmText:{ color: color.onInk, fontSize: 13, fontWeight: '700' },
+  modalBtnDisabled:  { opacity: 0.5 },
 });
