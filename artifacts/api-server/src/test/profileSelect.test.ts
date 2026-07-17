@@ -464,6 +464,50 @@ describe("profile data-leak prevention", () => {
     });
   });
 
+  // ── PATCH /api/me/profile — clearing avatarUrl / coverUrl must be accepted ──
+
+  describe("PATCH /api/me/profile — clearing media URLs", () => {
+    it("returns HTTP 200 when clearing avatarUrl to null", async () => {
+      const { status, body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { avatarUrl: null },
+        USER_TOKEN,
+      );
+      assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    });
+
+    it("returns HTTP 200 when clearing coverUrl to null", async () => {
+      const { status, body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { coverUrl: null },
+        USER_TOKEN,
+      );
+      assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    });
+
+    it("returns HTTP 200 when clearing both avatarUrl and coverUrl to null", async () => {
+      const { status, body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { avatarUrl: null, coverUrl: null },
+        USER_TOKEN,
+      );
+      assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    });
+
+    it("still rejects a non-URL string for avatarUrl", async () => {
+      const { status } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { avatarUrl: "not-a-url" },
+        USER_TOKEN,
+      );
+      assert.equal(status, 400);
+    });
+  });
+
   // ── PATCH /api/me/profile — clearing dateOfBirth (null) must not echo DOB fields ──
 
   describe("PATCH /api/me/profile — dateOfBirth: null (clear)", () => {
