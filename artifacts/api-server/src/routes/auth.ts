@@ -29,18 +29,18 @@ router.post("/auth/lookup-username", async (req, res) => {
   }
 
   try {
-    // Query auth.users via the auth schema using the service role client.
-    // The service role key bypasses RLS on all schemas including auth.
-    const { data: authRows, error: authError } = await (client as any)
-      .schema("auth")
-      .from("users")
-      .select("id")
-      .eq("email", email.toLowerCase())
-      .limit(1);
+    // Query auth.users via the admin API. The auth schema is not exposed through
+    // PostgREST, so the service-role client cannot use client.schema("auth").
+    const { data: usersPage, error: authError } = await (client as any).auth.admin.listUsers({
+      page: 1,
+      perPage: 1000,
+    });
 
-    const userId: string | undefined = authRows?.[0]?.id;
+    const user = usersPage?.users?.find(
+      (u: any) => typeof u.email === "string" && u.email.toLowerCase() === email.toLowerCase(),
+    );
 
-    if (authError || !userId) {
+    if (authError || !user?.id) {
       res.status(404).json({ error: "No account found with that email address." });
       return;
     }
@@ -49,7 +49,7 @@ router.post("/auth/lookup-username", async (req, res) => {
     const { data: profile, error: profileError } = await client
       .from("profiles")
       .select("handle")
-      .eq("id", userId)
+      .eq("id", user.id)
       .single();
 
     if (profileError || !profile?.handle) {
