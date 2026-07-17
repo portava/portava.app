@@ -1087,7 +1087,7 @@ describe("background correction sweep", () => {
     //   • readDbCache (maybeSingle): returns null — row was hard-deleted
     //   • writeDbCache (upsert): records the call so the write-back can be verified
     const deletedAt = new Date(Date.now() + 1_000).toISOString();
-    const upsertCalls: Array<{ city_key: string; country: string; country_code: string }> = [];
+    const upsertCalls: Array<{ city_key: string; country: string; country_code: string; updated_at?: string; deleted_at: string | null }> = [];
     const tombstoneDb = {
       from(table: string) {
         assert.equal(table, "city_country_geocode_cache");
@@ -1151,6 +1151,11 @@ describe("background correction sweep", () => {
     assert.equal(upsertCalls[0].city_key, "banff", "upsert must use the normalised city_key");
     assert.equal(upsertCalls[0].country_code, "GB", "upsert must carry the correct country_code");
     assert.equal(upsertCalls[0].country, "United Kingdom", "upsert must carry the correct country name");
+    assert.equal(
+      upsertCalls[0].deleted_at,
+      null,
+      "upsert payload must explicitly set deleted_at to null to clear the soft-delete tombstone",
+    );
   });
 
   it("after deletion-eviction re-geocode, a writeDbCache failure still returns the fresh result and caches it in-memory", async () => {
