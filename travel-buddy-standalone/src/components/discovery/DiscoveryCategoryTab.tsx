@@ -8,7 +8,7 @@ import { getDiscoveryPlaces } from '../../services/discovery.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
-import { DiscoveryMapView } from './DiscoveryMapView.tsx';
+import { DiscoveryMapView } from './DiscoveryMapView';
 
 // ── Nearest chip press handler ────────────────────────────────────────────────
 //

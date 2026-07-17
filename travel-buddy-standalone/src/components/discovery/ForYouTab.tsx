@@ -18,7 +18,7 @@ import { getDiscoveryPlaces, getSavedPlaceIds } from '../../services/discovery.t
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceDetailSheet } from './PlaceDetailSheet.tsx';
-import { DiscoveryMapView } from './DiscoveryMapView.tsx';
+import { DiscoveryMapView } from './DiscoveryMapView';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { useSession } from '../../context/SessionContext.tsx';
 import { useCommunityDiscovery } from '../../hooks/useCommunityDiscovery.ts';
