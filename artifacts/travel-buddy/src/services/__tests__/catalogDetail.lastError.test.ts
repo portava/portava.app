@@ -383,6 +383,18 @@ describe('shortfallFromMeta — generation_metadata absent or incomplete clears 
     );
   });
 
+  it('returns null and does not throw when both candidates_expected and candidates_produced are strings', () => {
+    // API may return numeric fields as strings (e.g. "4" and "2"). The typeof
+    // guard must silently absorb both and keep shortfallFromMeta null — no
+    // banner should appear even though a numeric shortfall would exist.
+    assert.doesNotThrow(() => {
+      const result = extractShortfallFromMeta([
+        { generation_metadata: { candidates_expected: '4', candidates_produced: '2' } },
+      ]);
+      assert.equal(result, null);
+    });
+  });
+
   it('returns null when candidates_produced is null', () => {
     assert.equal(
       extractShortfallFromMeta([{ generation_metadata: { candidates_expected: 4, candidates_produced: null } }]),
