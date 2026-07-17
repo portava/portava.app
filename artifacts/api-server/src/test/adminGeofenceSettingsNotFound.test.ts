@@ -77,7 +77,7 @@ function makeNoSettingsRowClient() {
 }
 
 function request(
-  method: "PATCH",
+  method: "PATCH" | "GET",
   path: string,
   token?: string,
   body?: object,
@@ -159,5 +159,26 @@ describe("PATCH /admin/geofence-settings — missing settings row", () => {
       null,
       "must not respond with settings:null success payload",
     );
+  });
+});
+
+describe("GET /admin/geofence-settings — missing settings row", () => {
+  it("returns explicit defaults instead of null/blank settings", async () => {
+    const fc = makeNoSettingsRowClient();
+    _setTestClient(fc, true);
+    _setTestServiceClient(fc);
+
+    const r = await request("GET", "/admin/geofence-settings", FAKE_TOKEN);
+    assert.equal(
+      r.status,
+      200,
+      `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`,
+    );
+    const s = r.body?.settings;
+    assert.ok(s && typeof s === "object", "settings must be a non-null object");
+    assert.equal(s.default_radius_m, 150);
+    assert.equal(s.min_radius_m, 50);
+    assert.equal(s.max_radius_m, 5000);
+    assert.equal(s.no_show_affects_reliability, false);
   });
 });
