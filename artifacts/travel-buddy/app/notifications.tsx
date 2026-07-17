@@ -18,6 +18,7 @@ import { UserAvatarButton } from '../src/components/interaction/UserAvatarButton
 import { UserNameButton } from '../src/components/interaction/UserNameButton';
 import { secondaryIdentityText } from '../src/lib/displayIdentity';
 import { router, useFocusEffect } from 'expo-router';
+import { FEED_FOCUS_TTL_MS } from '../src/hooks/usePosts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, CheckCheck, UserCheck, UserMinus } from 'lucide-react-native';
 import { color, space, type as t, radius, shadow } from '../src/theme/tokens';
@@ -194,17 +195,24 @@ export default function ActivityCenter() {
   const navBarScrollHandler = useNavBarScrollHandler();
   const [activeTab, setActiveTab] = useState('all');
   const tabScrollRef = useRef<ScrollView>(null);
+  const lastMarkedReadAt = useRef<Record<string, number>>({});
 
   const activeTabDef = TABS.find((t) => t.key === activeTab) ?? TABS[0];
   const { notifications, loading, loadingMore, unreadCount, reload, loadMore, markRead, markAllRead, dismiss } =
     useNotifications(activeTabDef.category ? { category: activeTabDef.category } : {});
   const { incoming: incomingRequests, loading: reqLoading, reload: reloadRequests } = useRequests();
 
-  // Mark all read on focus when Activity Center is opened
+  // Mark all read on focus when Activity Center is opened, gated by a per-tab
+  // TTL so navigating back from a detail view doesn't fire an unnecessary API call.
   useFocusEffect(useCallback(() => {
+    const now = Date.now();
+    if (now - (lastMarkedReadAt.current[activeTab] ?? 0) < FEED_FOCUS_TTL_MS) return;
     // Slight delay so the user sees the unread state briefly
     const timer = setTimeout(() => {
-      if (unreadCount > 0) markAllRead(activeTabDef.category);
+      if (unreadCount > 0) {
+        markAllRead(activeTabDef.category);
+        lastMarkedReadAt.current[activeTab] = Date.now();
+      }
     }, 800);
     return () => clearTimeout(timer);
   }, [activeTab]));

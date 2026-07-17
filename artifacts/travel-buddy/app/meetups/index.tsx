@@ -5,12 +5,13 @@
  * grouped into Upcoming and Past sections.
  * Header has a "Create Meetup" button using MeetupCreationSheet.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
   StyleSheet, RefreshControl,
 } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
+import { FEED_FOCUS_TTL_MS } from '../../src/hooks/usePosts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, CalendarClock, MapPin, Plus, CalendarX,
@@ -147,6 +148,7 @@ export default function MeetupsScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const lastLoadedAt = useRef(0);
 
   const load = useCallback(async () => {
     if (!configured || !isAuthed) { setLoading(false); return; }
@@ -168,11 +170,16 @@ export default function MeetupsScreen() {
         if (!seen.has(m.id)) { seen.add(m.id); all.push(m); }
       }
       setMeetups(all);
+      lastLoadedAt.current = Date.now();
     }
     setLoading(false);
   }, [configured, isAuthed]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(useCallback(() => {
+    if (Date.now() - lastLoadedAt.current >= FEED_FOCUS_TTL_MS) {
+      load();
+    }
+  }, [load]));
 
   const upcoming = meetups.filter(isUpcoming);
   const past     = meetups.filter((m) => !isUpcoming(m));

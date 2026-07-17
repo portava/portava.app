@@ -11,6 +11,7 @@ import {
   ActivityIndicator, Pressable, Animated, TextInput, Modal,
 } from 'react-native';
 import { useFocusEffect, router } from 'expo-router';
+import { FEED_FOCUS_TTL_MS } from '../src/hooks/usePosts';
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { color, space, radius, shadow, type as t } from '../src/theme/tokens';
 import {
@@ -146,6 +147,7 @@ function CollectionItemsView({ collection, onBack }: CollectionItemsViewProps) {
   const [hasMore, setHasMore] = useState(false);
   const [cursor, setCursor]   = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const lastLoadedAt = useRef(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -153,10 +155,15 @@ function CollectionItemsView({ collection, onBack }: CollectionItemsViewProps) {
     setItems(result.items);
     setHasMore(result.hasMore);
     setCursor(result.nextCursor);
+    lastLoadedAt.current = Date.now();
     setLoading(false);
   }, [collection.id]);
 
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
+  useFocusEffect(useCallback(() => {
+    if (Date.now() - lastLoadedAt.current >= FEED_FOCUS_TTL_MS) {
+      void load();
+    }
+  }, [load]));
 
   const loadMore = async () => {
     if (!hasMore || !cursor || loadingMore) return;
@@ -358,6 +365,7 @@ export default function SavedScreen() {
   const [renameTarget, setRenameTarget]         = useState<Collection | null>(null);
   const [removeError, setRemoveError]           = useState<string | null>(null);
   const errorY = useRef(new Animated.Value(80)).current;
+  const lastLoadedAt = useRef(0);
 
   const showError = useCallback((msg: string) => {
     setRemoveError(msg);
@@ -373,10 +381,15 @@ export default function SavedScreen() {
     setLoading(true);
     const cols = await getCollections();
     setCollections(cols);
+    lastLoadedAt.current = Date.now();
     setLoading(false);
   }, []);
 
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
+  useFocusEffect(useCallback(() => {
+    if (Date.now() - lastLoadedAt.current >= FEED_FOCUS_TTL_MS) {
+      void load();
+    }
+  }, [load]));
 
   const handleDelete = useCallback(async (col: Collection) => {
     await withOptimisticRemoveBool({
