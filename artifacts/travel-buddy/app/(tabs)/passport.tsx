@@ -628,7 +628,9 @@ function PassportContent({
           displayName={profile.displayName ?? profile.name ?? null}
           username={profile.username ?? null}
           avatarUrl={profile.avatarUrl ?? null}
-          tripCount={trips.length}
+          // trips[] only loads once the Plans tab is opened — without the
+          // profile count a shared card could say 0 trips.
+          tripCount={profile.tripCount ?? trips.length}
           stampCount={verifiedStamps}
           tagline={profile.bio ?? null}
         />
