@@ -4314,4 +4314,67 @@ describe("DB-cache re-resolve path re-arms the correction check", () => {
       "no DB round-trip on the immediate second call — the correction check was re-armed");
     assert.equal(nominatimCalls, 0, "Nominatim still never called");
   });
+
+  // ── Mid-flight eviction at the cache-size cap ────────────────────────────────
+
+  it("a mid-flight evictGeocodeCacheKey blocks the cap-trim write — cache stays at MAX_CACHE_SIZE and the oldest entry survives", async () => {
+    // Fills _cache to MAX_CACHE_SIZE (2000), starts a re-geocode for a NEW
+    // city whose Nominatim fetch is held pending, evicts that key while the
+    // fetch is in-flight, then resolves the fetch.  The `_pending.get(key) === p`
+    // guard must skip the ENTIRE write block — including the MAX_CACHE_SIZE
+    // trim — so the cache stays exactly at the cap, no entry is written for
+    // the evicted key, and the oldest entry is NOT trimmed away.
+    const MAX_CACHE_SIZE = 2_000; // must match the private constant
+
+    // Disable the DB cache so every call goes straight to (fake) Nominatim.
+    _setGeocodeDbClientForTests(null);
+
+    // Deferred fetch for the racing city; instant answers for everything else.
+    let releaseRaceFetch!: () => void;
+    const raceFetchGate = new Promise<void>((r) => { releaseRaceFetch = r; });
+    let raceFetchStarted = false;
+    _setGeocodeFetchForTests(async (url: string) => {
+      const q = decodeURIComponent(new URL(url).searchParams.get("q") ?? "").toLowerCase();
+      if (q === "race city") {
+        raceFetchStarted = true;
+        await raceFetchGate; // hold the request in-flight
+      }
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "jp", country: "Japan" } }],
+      };
+    });
+
+    // Fill the cache to exactly MAX_CACHE_SIZE.
+    for (let i = 0; i < MAX_CACHE_SIZE; i++) {
+      await geocodeCityCountry(`filler${i}`);
+    }
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE, "pre-condition: cache filled to the cap");
+    assert.ok(_getGeocodeCacheEntryForTests("filler0"), "pre-condition: oldest entry present");
+
+    // Start the re-geocode for a new city — its fetch stays pending.
+    const inflight = geocodeCityCountry("Race City");
+    // Wait until the fetch has actually started (readDbCache is a no-op here,
+    // but yield until the fake fetch is entered to be robust).
+    while (!raceFetchStarted) await new Promise<void>((r) => setImmediate(r));
+
+    // Racing admin eviction fires while the geocode is in-flight.
+    evictGeocodeCacheKey("race city");
+
+    // Let the Nominatim response arrive.
+    releaseRaceFetch();
+    const result = await inflight;
+
+    // The caller still receives the resolved result…
+    assert.equal(result?.countryCode, "JP", "in-flight caller still gets the resolved result");
+    // …but the guard blocked the write: no entry for the evicted key,
+    assert.equal(_getGeocodeCacheEntryForTests("race city"), undefined,
+      "in-flight result was NOT written to the cache after eviction");
+    // …no cap-trim happened (oldest entry survives),
+    assert.ok(_getGeocodeCacheEntryForTests("filler0"),
+      "oldest entry was NOT trimmed — the cap-trim was skipped along with the write");
+    // …and the cache size is exactly at the cap (not above, not below).
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE,
+      "cache size remains exactly MAX_CACHE_SIZE — no over-cap write, no spurious trim");
+  });
 });
