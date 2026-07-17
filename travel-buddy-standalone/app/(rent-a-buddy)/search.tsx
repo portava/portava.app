@@ -14,7 +14,7 @@ import {
 } from '../../src/components/primitives';
 import { Stamp } from '../../src/components/ui';
 import { BuddyCard, BuddyCardSkeleton } from '../../src/components/BuddyCard';
-import { searchBuddies, type BuddyProfile, type BuddyCategory, type CoordPair } from '../../src/services/rentABuddy';
+import { searchBuddies, type BuddyProfile, type BuddyCategory } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CompassBuddyRow } from '../../src/components/compass/CompassBuddyRow';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
@@ -126,9 +126,8 @@ export default function RentABuddySearch() {
     if (reset) { setLoading(true); setError(null); }
     const res = await searchBuddies({
       city,
-      ...(cityLat != null && cityLng != null
-        ? ({ lat: cityLat, lng: cityLng } as CoordPair)
-        : ({} as CoordPair)),
+      ...(cityLat != null ? { lat: cityLat } : {}),
+      ...(cityLng != null ? { lng: cityLng } : {}),
       category: selectedCategory,
       page: nextPage,
       perPage: 10,
