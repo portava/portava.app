@@ -164,7 +164,10 @@ export async function getWeatherContext(
   startDate?: string,
   endDate?: string,
 ): Promise<WeatherContext | null> {
-  const today = new Date().toISOString().slice(0, 10);
+  // Single clock read for this call — `today` and the cache timestamp both
+  // derive from nowMs so they can never disagree (split-clock risk).
+  const nowMs = Date.now();
+  const today = new Date(nowMs).toISOString().slice(0, 10);
   const start = startDate ?? today;
   const end = endDate && endDate >= start ? endDate : start;
 
@@ -213,7 +216,7 @@ export async function getWeatherContext(
       forecasts,
       briefSummary: buildBriefSummary(forecasts),
     };
-    const entry: CacheEntry = { context, cachedAt: Date.now() };
+    const entry: CacheEntry = { context, cachedAt: nowMs };
 
     // Write to both layers (DB is best-effort — don't await to block response)
     cache.set(key, entry);

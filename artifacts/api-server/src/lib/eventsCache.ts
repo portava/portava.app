@@ -85,7 +85,10 @@ export async function getEventsNearDestination(
   const apiKey = process.env.TICKETMASTER_API_KEY;
   if (!apiKey) return null; // Integration inactive — skip silently
 
-  const today = new Date().toISOString().slice(0, 10);
+  // Single clock read for this call — `today` and the cache timestamp both
+  // derive from nowMs so they can never disagree (split-clock risk).
+  const nowMs = Date.now();
+  const today = new Date(nowMs).toISOString().slice(0, 10);
   const start = startDate ?? today;
   const end = endDate && endDate >= start ? endDate : start;
 
@@ -115,7 +118,7 @@ export async function getEventsNearDestination(
     const events = parseEvents(data, maxCount);
 
     const context: EventsContext = { destination, events };
-    cache.set(key, { context, cachedAt: Date.now() });
+    cache.set(key, { context, cachedAt: nowMs });
     return context;
   } catch {
     return null;

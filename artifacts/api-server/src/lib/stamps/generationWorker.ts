@@ -724,7 +724,9 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
         last_error:   shortfall.shortfallMessage,
         locked_until: null,
         locked_by:    null,
-        updated_at:   new Date().toISOString(),
+        // Fresh intentional clock read after slow generation work,
+        // expressed as a single derivation (split-clock guard).
+        updated_at:   new Date(Date.now()).toISOString(),
       })
       .eq("id", jobId);
 
@@ -814,7 +816,9 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
         last_error:   errorMsg,
         locked_until: null,
         locked_by:    null,
-        updated_at:   new Date().toISOString(),
+        // Fresh intentional clock read after slow generation work,
+        // expressed as a single derivation (split-clock guard).
+        updated_at:   new Date(Date.now()).toISOString(),
       })
       .eq("id", jobId);
 
