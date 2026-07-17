@@ -3825,6 +3825,45 @@ describe("Rent a Buddy — dispute: duplicate-report guard", () => {
   });
 });
 
+// ── Dispute no-show-pending guard ─────────────────────────────────────────────
+// A no_show_pending booking has a no-show report already in progress that will
+// escalate to a dispute automatically — the handler must return the dedicated
+// no_show_in_progress code, not the generic invalid_transition.
+
+describe("Rent a Buddy — dispute: no_show_pending guard", () => {
+  it("returns 409 no_show_in_progress when traveler calls /dispute on a no_show_pending booking", async () => {
+    setupState({
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+          status: "no_show_pending",
+          updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+        },
+      },
+    });
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "other" });
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(r.body.error, "no_show_in_progress", JSON.stringify(r.body));
+    assert.equal(r.body.currentStatus, "no_show_pending", JSON.stringify(r.body));
+  });
+
+  it("returns 409 no_show_in_progress when buddy calls /dispute on a no_show_pending booking", async () => {
+    setupState({
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+          status: "no_show_pending",
+          updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+        },
+      },
+    });
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "other" }, BUDDY_TOKEN);
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(r.body.error, "no_show_in_progress", JSON.stringify(r.body));
+    assert.equal(r.body.currentStatus, "no_show_pending", JSON.stringify(r.body));
+  });
+});
+
 // ── Dispute terminal-status guard ─────────────────────────────────────────────
 // cancelled and completed are terminal — the disputableStatuses list excludes
 // them, so the handler must return 409 invalid_transition with currentStatus.

@@ -2715,6 +2715,16 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) =>
     });
   }
 
+  // A no-show report is already open — it escalates to a dispute automatically
+  // after the grace period. Dedicated code so clients can distinguish
+  // "already in process" from "wrong state".
+  if ((booking as any).status === "no_show_pending") {
+    return res.status(409).json({
+      error: "no_show_in_progress",
+      currentStatus: "no_show_pending",
+    });
+  }
+
   // completed and cancelled are terminal — disputing them would corrupt the final state.
   const disputableStatuses = ["in_progress", "completed_pending_traveler_confirmation"];
   if (!disputableStatuses.includes((booking as any).status)) {
