@@ -79,7 +79,6 @@ jest.mock('lucide-react-native', () => ({
   XCircle: () => null,
   Activity: () => null,
   MapPin: () => null,
-  Copy: () => null,
 }));
 
 // ── Typed mock refs ────────────────────────────────────────────────────────────
