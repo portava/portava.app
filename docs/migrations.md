@@ -8,6 +8,19 @@ All migrations have been applied to production Supabase unless noted otherwise.
 
 > **Contributing reminder:** When you apply a new migration to Supabase, immediately append a row to this table before merging. Include the filename, a plain-English description of every table/column/index/policy created or altered, and the date applied. Skipping this step is the primary cause of log drift.
 
+## Automated audit
+
+The full audit is committed as `artifacts/api-server/src/scripts/auditMigrationsVsLive.ts`. Run it on demand from `artifacts/api-server`:
+
+```
+pnpm run audit:schema                     # canonical chain (src/migrations/)
+pnpm run audit:schema -- --include-legacy # also audit the legacy migrations/ dir
+```
+
+It parses every migration file for the objects it claims (tables and every column declared in their `CREATE TABLE` bodies, `ALTER TABLE … ADD COLUMN` columns, functions, indexes, policies, enums/enum values, table-scoped triggers, views) and diffs them against the live schema via the Supabase Management API (requires `SUPABASE_URL` and `SUPABASE_ACCESS_TOKEN`). Exit 0 = clean, 1 = missing objects (listed per file), 2 = env/API error. Run it after applying any migration, and whenever "column/relation does not exist" errors appear in production.
+
+Encoded gotchas: triggers are checked via `pg_trigger` (TRUNCATE triggers are invisible to `information_schema.triggers`); tables match views too (legacy `buddy_*` compat views); `0050` and `0105` are skipped (superseded/drifted); an allowlist (in the script, with per-entry comments) covers columns where the migration files are wrong vs live — renamed (`feature_flags.key`→`flag`, `highlights.user_id`→`owner_id`, `user_location_state.latitude`→`lat`, `passport_stamps.earned_at`→`awarded_at`, …) or dropped (`tags.tagged_at`, `highlights.trip_id`, …); all verified against live 2026-07-17. The legacy `artifacts/api-server/migrations/` chain diverges heavily from live and is only audited with the opt-in flag.
+
 | Migration | Description | Applied |
 |-----------|-------------|---------|
 | `0102_safe_return_single_session.sql` | Partial unique index `safe_return_sessions_one_open_per_user` on `safe_return_sessions(user_id) WHERE status IN ('pending','active')`. **Audit 2026-07-17:** was never applied and never documented here — the `safe_return_sessions` table itself was missing live; applied legacy `0040_safe_return.sql` (with `feature_flags.flag` column fix) and then this index via Management API. | 2026-07-17 |
