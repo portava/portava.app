@@ -502,7 +502,10 @@ router.patch("/admin/stamps/catalog/:id/activate-version", async (req, res) => {
   }
   const { versionId, notes } = parsed.data;
 
-  // Approve the version row
+  // Approve the version row.
+  // Guard: .neq("status","approved") ensures a second call with the same
+  // versionId finds no matching row and returns null — preventing a duplicate
+  // audit log entry.
   const { data: versionRow, error: vErr } = await sc
     .from("stamp_artwork_versions")
     .update({
@@ -512,11 +515,38 @@ router.patch("/admin/stamps/catalog/:id/activate-version", async (req, res) => {
     })
     .eq("id", versionId)
     .eq("catalog_id", id)
+    .neq("status", "approved")
     .select("id, public_url")
     .maybeSingle();
 
-  if (vErr || !versionRow) {
-    sendError(res, "not_found", "Version not found for this catalog entry");
+  if (vErr) {
+    sendError(res, "db_error", vErr.message);
+    return;
+  }
+
+  if (!versionRow) {
+    // Either the version doesn't exist for this catalog entry, or it is
+    // already approved.  Fetch the current row to distinguish the two cases.
+    const { data: existingVersion } = await sc
+      .from("stamp_artwork_versions")
+      .select("id, public_url")
+      .eq("id", versionId)
+      .eq("catalog_id", id)
+      .maybeSingle();
+
+    if (!existingVersion) {
+      sendError(res, "not_found", "Version not found for this catalog entry");
+      return;
+    }
+
+    // Already approved — idempotent success, no duplicate audit log.
+    const { data: existingCatalog } = await sc
+      .from("universal_stamp_catalog")
+      .select()
+      .eq("id", id)
+      .maybeSingle();
+
+    res.json({ entry: existingCatalog, version: existingVersion });
     return;
   }
 

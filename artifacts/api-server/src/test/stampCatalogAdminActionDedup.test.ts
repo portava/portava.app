@@ -27,6 +27,7 @@ const CATALOG_ID  = "cccccccc-0000-4000-8000-000000000010";
 const SOURCE_ID   = "cccccccc-0000-4000-8000-000000000020";
 const TARGET_ID   = "cccccccc-0000-4000-8000-000000000021";
 const JOB_ID      = "dddddddd-0000-4000-8000-000000000030";
+const VERSION_ID  = "eeeeeeee-0000-4000-8000-000000000040";
 
 // ── HTTP helpers ───────────────────────────────────────────────────────────────
 
@@ -239,6 +240,17 @@ function makeDb(): DB {
         locked_until: null,
         locked_by:    null,
         updated_at:   "2024-01-01T00:00:00Z",
+      },
+    ],
+
+    stamp_artwork_versions: [
+      {
+        id:         VERSION_ID,
+        catalog_id: CATALOG_ID,
+        status:     "candidate",
+        public_url: "https://cdn.example.com/stamp.png",
+        reviewed_by_admin_id: null,
+        reviewed_at: null,
       },
     ],
 
@@ -482,6 +494,99 @@ describe("POST requeue called twice does not write duplicate audit entries", () 
     assert.equal(
       db.stamp_admin_audit_log.length, 1,
       `expected still 1 audit entry after second requeue, found ${db.stamp_admin_audit_log.length}`,
+    );
+  });
+
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ACTIVATE-VERSION
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("PATCH activate-version called twice does not double-write the audit log", () => {
+
+  it("first activate-version call returns 200 and writes exactly one audit entry", async () => {
+    const res = await patch(
+      `/admin/stamps/catalog/${CATALOG_ID}/activate-version`,
+      { versionId: VERSION_ID },
+    );
+
+    assert.equal(
+      res.status, 200,
+      `first activate-version must return 200, got ${res.status}: ${JSON.stringify(res.body)}`,
+    );
+    assert.ok(res.body.entry,   "response must include entry");
+    assert.ok(res.body.version, "response must include version");
+
+    const auditEntries = db.stamp_admin_audit_log.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.action === "activate_version",
+    );
+    assert.equal(
+      auditEntries.length, 1,
+      `expected 1 audit entry after first activate-version, found ${auditEntries.length}`,
+    );
+  });
+
+  it("second activate-version call also returns 200 — idempotent, no error", async () => {
+    const first = await patch(
+      `/admin/stamps/catalog/${CATALOG_ID}/activate-version`,
+      { versionId: VERSION_ID },
+    );
+    assert.equal(first.status, 200, `first activate-version failed: ${JSON.stringify(first.body)}`);
+
+    const second = await patch(
+      `/admin/stamps/catalog/${CATALOG_ID}/activate-version`,
+      { versionId: VERSION_ID },
+    );
+    assert.equal(
+      second.status, 200,
+      `second activate-version must also return 200 (idempotent), got ${second.status}: ${JSON.stringify(second.body)}`,
+    );
+    assert.ok(second.body.entry,   "second response must still include entry");
+    assert.ok(second.body.version, "second response must still include version");
+  });
+
+  it("after two activate-version calls audit log has exactly one activate_version entry", async () => {
+    const first = await patch(
+      `/admin/stamps/catalog/${CATALOG_ID}/activate-version`,
+      { versionId: VERSION_ID },
+    );
+    assert.equal(first.status, 200, `first activate-version failed: ${JSON.stringify(first.body)}`);
+
+    const second = await patch(
+      `/admin/stamps/catalog/${CATALOG_ID}/activate-version`,
+      { versionId: VERSION_ID },
+    );
+    assert.equal(second.status, 200, `second activate-version failed: ${JSON.stringify(second.body)}`);
+
+    const auditEntries = db.stamp_admin_audit_log.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.action === "activate_version",
+    );
+    assert.equal(
+      auditEntries.length, 1,
+      `expected exactly 1 audit entry after two activate-version calls, found ${auditEntries.length}: ${JSON.stringify(auditEntries)}`,
+    );
+  });
+
+  it("first activate-version writes the audit entry; second call (already approved) writes none", async () => {
+    assert.equal(db.stamp_admin_audit_log.length, 0, "audit log must start empty");
+
+    await patch(
+      `/admin/stamps/catalog/${CATALOG_ID}/activate-version`,
+      { versionId: VERSION_ID },
+    );
+    assert.equal(
+      db.stamp_admin_audit_log.length, 1,
+      `expected 1 audit entry after first activate-version, found ${db.stamp_admin_audit_log.length}`,
+    );
+
+    await patch(
+      `/admin/stamps/catalog/${CATALOG_ID}/activate-version`,
+      { versionId: VERSION_ID },
+    );
+    assert.equal(
+      db.stamp_admin_audit_log.length, 1,
+      `expected still 1 audit entry after second activate-version, found ${db.stamp_admin_audit_log.length}`,
     );
   });
 
