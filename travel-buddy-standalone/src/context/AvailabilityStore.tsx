@@ -18,6 +18,8 @@ interface AvailabilityContextValue {
   addTripWindow: (w: TripWindow) => void;
   removeTripWindow: (id: string) => void;
   save: () => Promise<void>;
+  /** Re-fetch availability from the backend — call on screen focus to stay fresh. */
+  refresh: () => Promise<void>;
   saveError: string | null;
   saving: boolean;
   quickStatus: QuickStatus | null;
@@ -110,14 +112,32 @@ export function AvailabilityProvider({ children }: { children: React.ReactNode }
     }
   }, []);
 
+  /** Re-fetch availability from backend — call on screen focus to stay fresh. */
+  const refresh = useCallback(async () => {
+    if (!configured || !isAuthed) return;
+    const res = await getMyAvailability();
+    if (res.ok && res.data) {
+      const d = res.data;
+      setAvailability({
+        weekly: { days: d.weeklyDays as Partial<Record<Weekday, TimeBlock[]>> },
+        trips: [],
+        openToMeet: d.openToMeet,
+      });
+      if (d.quickStatus) {
+        setQuickStatusState(d.quickStatus.status as QuickStatus);
+        setQuickStatusExpiresAt(d.quickStatus.expiresAt);
+      }
+    }
+  }, [configured, isAuthed]);
+
   const value = useMemo(
     () => ({
       availability, toggleBlock, applyWeekly, clearWeekly, setOpenToMeet,
-      addTripWindow, removeTripWindow, save, saveError, saving,
+      addTripWindow, removeTripWindow, save, refresh, saveError, saving,
       quickStatus, quickStatusExpiresAt, setQuickStatus,
     }),
     [availability, toggleBlock, applyWeekly, clearWeekly, setOpenToMeet,
-     addTripWindow, removeTripWindow, save, saveError, saving,
+     addTripWindow, removeTripWindow, save, refresh, saveError, saving,
      quickStatus, quickStatusExpiresAt, setQuickStatus],
   );
 
@@ -132,7 +152,7 @@ export function useAvailabilityStore(): AvailabilityContextValue {
       availability: (mockAvailability as Availability) ?? EMPTY,
       toggleBlock: () => {}, applyWeekly: () => {}, clearWeekly: () => {},
       setOpenToMeet: () => {}, addTripWindow: () => {}, removeTripWindow: () => {},
-      save: async () => {}, saveError: null, saving: false,
+      save: async () => {}, refresh: async () => {}, saveError: null, saving: false,
       quickStatus: null, quickStatusExpiresAt: null, setQuickStatus: async () => {},
     };
   }
