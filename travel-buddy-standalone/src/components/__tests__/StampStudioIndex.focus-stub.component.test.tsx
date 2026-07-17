@@ -45,10 +45,12 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 jest.mock('../../hooks/useRequireAdmin', () => ({
+  ...jest.requireActual('../../hooks/useRequireAdmin'),
   useRequireAdmin: jest.fn(),
 }));
 
 jest.mock('../../services/adminStamps', () => ({
+  ...jest.requireActual('../../services/adminStamps'),
   getAdminStampCatalog: jest.fn(),
   getStampWorkerHealth: jest.fn(),
 }));

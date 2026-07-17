@@ -20,9 +20,11 @@ jest.mock('react-native-safe-area-context', () => {
 });
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('../../lib/supabase', () => ({
+  ...jest.requireActual('../../lib/supabase'),
   supabase: { auth: { getSession: jest.fn(async () => ({ data: { session: { access_token: 'tok' } } })) } },
 }));
 jest.mock('../../hooks/useNavBarCollapse', () => ({
+  ...jest.requireActual('../../hooks/useNavBarCollapse'),
   NavBarFiller: () => null,
   useNavBarScrollHandler: () => () => {},
 }));

@@ -47,12 +47,14 @@ jest.mock('expo-router', () => ({
 // ── Session context mock ──────────────────────────────────────────────────────
 
 jest.mock('../../context/SessionContext.tsx', () => ({
+  ...jest.requireActual('../../context/SessionContext.tsx'),
   useSession: () => ({ isAuthed: true }),
 }));
 
 // ── Reviews service mock ──────────────────────────────────────────────────────
 
 jest.mock('../../services/reviews.ts', () => ({
+  ...jest.requireActual('../../services/reviews.ts'),
   getMyReview:       jest.fn(),
   createReview:      jest.fn().mockResolvedValue({}),
   updateReview:      jest.fn().mockResolvedValue({}),

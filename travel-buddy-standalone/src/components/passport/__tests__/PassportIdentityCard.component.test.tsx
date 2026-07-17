@@ -35,41 +35,46 @@ jest.mock('react-native-svg', () => {
 
 // ── Identity / verification helpers ──────────────────────────────────────────
 
+// These helper modules are pure and safe to load under jest, so we spread
+// jest.requireActual and override only the functions the test controls.
+// A hand-written object literal here fell behind the real module once
+// (truncateDisplayName) and crashed the suite with "X is not a function".
+
 jest.mock('../../../utils/identity', () => ({
+  ...jest.requireActual('../../../utils/identity'),
   resolveAvatarUrl:  (_url: unknown) => null,
   fallbackInitials:  (_profile: unknown) => 'TU',
 }));
 
 jest.mock('../../../lib/displayIdentity', () => ({
+  ...jest.requireActual('../../../lib/displayIdentity'),
   primaryIdentityText:   (_identity: unknown) => 'Test User',
   secondaryIdentityText: (_identity: unknown) => '@testuser',
 }));
 
 jest.mock('../../../lib/verification', () => ({
+  ...jest.requireActual('../../../lib/verification'),
   isTravelBuddyVerified: (_profile: unknown) => false,
 }));
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 jest.mock('../../HighlightRing', () => ({
+  ...jest.requireActual('../../HighlightRing'),
   HighlightRing: ({ children }: { children: React.ReactNode }) => children,
 }));
 
 // ── Services ─────────────────────────────────────────────────────────────────
 
 jest.mock('../../../services/passportStamps', () => ({
+  ...jest.requireActual('../../../services/passportStamps'),
   getPassportStats: jest.fn().mockResolvedValue({ ok: false }),
 }));
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
-
-jest.mock('../../../theme/passportTokens', () => ({
-  PP: {
-    paper:       '#FFFFFF',
-    inkMuted:    '#8A7E6E',
-    borderLight: 'rgba(0,0,0,0.08)',
-  },
-}));
+// No mock for passportTokens: the real module is a pure token object, so we
+// load it directly — a hand-picked subset here would break the component the
+// moment it reads a token the literal didn't include.
 
 // ── Minimal profile fixtures ──────────────────────────────────────────────────
 

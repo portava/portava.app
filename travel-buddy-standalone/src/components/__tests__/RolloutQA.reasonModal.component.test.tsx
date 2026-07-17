@@ -18,6 +18,7 @@ jest.mock('react-native-safe-area-context', () => ({
 jest.mock('../../hooks/useRequireAdmin', () => ({ useRequireAdmin: jest.fn() }));
 jest.mock('lucide-react-native', () => new Proxy({}, { get: () => () => null }));
 jest.mock('../../lib/supabase', () => ({
+  ...jest.requireActual('../../lib/supabase'),
   supabase: { auth: { getSession: jest.fn(async () => ({ data: { session: { access_token: 'tok' } } })) } },
 }));
 

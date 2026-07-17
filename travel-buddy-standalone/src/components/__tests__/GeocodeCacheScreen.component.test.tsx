@@ -53,23 +53,20 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 jest.mock('../../hooks/useRequireAdmin', () => ({
+  ...jest.requireActual('../../hooks/useRequireAdmin'),
   useRequireAdmin: jest.fn(),
 }));
 
 jest.mock('../../services/adminGeocode', () => ({
+  ...jest.requireActual('../../services/adminGeocode'),
   getGeocodeCacheRows:   jest.fn(),
   deleteGeocodeCacheRow: jest.fn(),
   putGeocodeCacheRow:    jest.fn(),
 }));
 
-jest.mock('lucide-react-native', () => ({
-  AlertTriangle: () => null,
-  ArrowLeft:     () => null,
-  Pencil:        () => null,
-  Search:        () => null,
-  Trash2:        () => null,
-  Wrench:        () => null,
-}));
+// No per-file lucide mock: the global Proxy mock (src/__mocks__/lucide-react-native.tsx,
+// wired via moduleNameMapper) auto-generates every icon export, so new icons on
+// the screen can never crash this suite with "Element type is invalid".
 
 // ── Typed mock refs ────────────────────────────────────────────────────────────
 

@@ -28,6 +28,10 @@ jest.mock('expo-router', () => {
   };
 });
 
+// NOTE: intentionally an exhaustive object literal — NOT a requireActual
+// spread. The real module imports @react-native-async-storage/async-storage,
+// whose NativeModule is null under jest, so loading it crashes the suite.
+// If the component starts using a new export from this module, add it here.
 jest.mock('../../services/discoveryBookmarks.ts', () => ({
   listSaved: jest.fn(),
   clearAllSaved: jest.fn(),

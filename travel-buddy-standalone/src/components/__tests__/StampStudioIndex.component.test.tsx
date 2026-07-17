@@ -51,7 +51,11 @@ import {
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
+// requireActual resolves through moduleNameMapper to the shared manual mock,
+// so any expo-router export the screen adds later is still covered — we only
+// override what this suite needs to control.
 jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
   useFocusEffect: jest.fn(),
   router: { push: jest.fn(), back: jest.fn(), replace: jest.fn() },
 }));
@@ -61,25 +65,22 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 jest.mock('../../hooks/useRequireAdmin', () => ({
+  ...jest.requireActual('../../hooks/useRequireAdmin'),
   useRequireAdmin: jest.fn(),
 }));
 
+// Spread requireActual so any new export on the service module is still real —
+// only the functions this suite controls are replaced. A hand-written object
+// literal here would crash the suite when the screen imports a new helper.
 jest.mock('../../services/adminStamps', () => ({
+  ...jest.requireActual('../../services/adminStamps'),
   getAdminStampCatalog: jest.fn(),
   getStampWorkerHealth: jest.fn(),
 }));
 
-// Override the global lucide mock with every icon the screen imports.
-jest.mock('lucide-react-native', () => ({
-  ArrowLeft: () => null,
-  Image: () => null,
-  Clock: () => null,
-  CheckCircle: () => null,
-  AlertTriangle: () => null,
-  XCircle: () => null,
-  Activity: () => null,
-  MapPin: () => null,
-}));
+// No per-file lucide mock: the global Proxy mock (src/__mocks__/lucide-react-native.tsx,
+// wired via moduleNameMapper) auto-generates every icon export, so new icons on
+// the screen can never crash this suite with "Element type is invalid".
 
 // ── Typed mock refs ────────────────────────────────────────────────────────────
 
