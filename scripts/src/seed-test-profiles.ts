@@ -150,8 +150,12 @@ for (const u of TEST_USERS) {
   process.stdout.write(`  • ${u.display_name} (${u.email}) … `);
 
   // Check if the user already exists by listing auth users and searching
-  const { data: existing } = await admin.auth.admin.listUsers({ perPage: 1000 });
-  const existingUser = existing?.users?.find((au) => au.email === u.email);
+  const { data: existing, error: listError } = await admin.auth.admin.listUsers({ perPage: 1000 });
+  if (listError) {
+    console.error(`FAILED — could not list users: ${listError.message}`);
+    continue;
+  }
+  const existingUser = existing.users.find((au) => au.email === u.email);
 
   let userId: string;
   let created: boolean;
