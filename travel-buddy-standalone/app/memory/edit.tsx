@@ -175,6 +175,7 @@ export default function EditMemoryScreen() {
         <Pressable
           onPress={handleSave}
           disabled={saving}
+          testID="memory-edit-save-btn"
           style={[s.saveBtn, saving && s.saveBtnDisabled]}
         >
           {saving
