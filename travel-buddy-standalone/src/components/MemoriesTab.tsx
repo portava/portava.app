@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, Pressable, Image, ScrollView,
   ActivityIndicator, Modal, TextInput,
 } from 'react-native';
-import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
+import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
 import { MapPin, Lock, Globe, Users, Eye, EyeOff, Plus, X } from 'lucide-react-native';
 import type { PassportMemory, MemoryVisibility } from '../services/passportStamps.ts';
 import {
@@ -154,12 +154,12 @@ function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalProps) {
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <KeyboardSafeScrollView>
+      <KeyboardSafeView>
         <View style={cm.header}>
           <Text style={cm.title}>New Memory</Text>
           <Pressable onPress={onClose} hitSlop={8}><X size={22} color={color.ink} /></Pressable>
         </View>
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={cm.body} keyboardShouldPersistTaps="handled">
+        <View style={cm.body}>
           <Text style={cm.label}>Title *</Text>
           <TextInput style={cm.input} value={title} onChangeText={setTitle} placeholder="A memorable moment…" placeholderTextColor={color.faint} maxLength={200} />
 
@@ -211,8 +211,8 @@ function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalProps) {
           <Pressable style={[cm.saveBtn, saving && cm.saveBtnDisabled]} onPress={handleSave} disabled={saving}>
             {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={cm.saveBtnText}>Save Memory</Text>}
           </Pressable>
-        </ScrollView>
-      </KeyboardSafeScrollView>
+        </View>
+      </KeyboardSafeView>
     </Modal>
   );
 }

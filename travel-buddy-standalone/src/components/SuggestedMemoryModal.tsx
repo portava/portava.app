@@ -9,9 +9,9 @@
 import React, { useState } from 'react';
 import {
   View, Text, Modal, Pressable, StyleSheet,
-  TextInput, ActivityIndicator, ScrollView,
+  TextInput, ActivityIndicator,
 } from 'react-native';
-import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
+import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
 import { X, MapPin, Globe, Users, Eye, Lock, Shield } from 'lucide-react-native';
 import type { PassportMemory, MemoryVisibility } from '../services/passportStamps.ts';
 import { acceptPassportSuggestion, dismissPassportSuggestion } from '../services/passportStamps.ts';
@@ -97,7 +97,7 @@ export function SuggestedMemoryModal({ suggestion, visible, onClose, onAccepted,
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <KeyboardSafeScrollView>
+      <KeyboardSafeView>
         <View style={s.header}>
           <View style={s.headerLeft}>
             <Shield size={18} color={color.signal} />
@@ -106,7 +106,7 @@ export function SuggestedMemoryModal({ suggestion, visible, onClose, onAccepted,
           <Pressable onPress={onClose} hitSlop={8}><X size={22} color={color.ink} /></Pressable>
         </View>
 
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
+        <View style={s.body}>
 
           {/* Why suggested */}
           {suggestion.suggestionReason && (
@@ -196,8 +196,8 @@ export function SuggestedMemoryModal({ suggestion, visible, onClose, onAccepted,
           <Text style={s.note}>
             Saved memories appear in your Passport. Skipped suggestions are discarded.
           </Text>
-        </ScrollView>
-      </KeyboardSafeScrollView>
+        </View>
+      </KeyboardSafeView>
     </Modal>
   );
 }
