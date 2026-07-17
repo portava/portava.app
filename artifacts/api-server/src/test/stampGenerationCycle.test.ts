@@ -1323,7 +1323,6 @@ describe("runGenerationCycle — placeholder data-URL candidates excluded from o
       `real-http row storage_path must be a catalog storage path, got: ${realRow.storage_path}`,
     );
   });
-});
 
   it("issues no storage deletes when a mixed run fully succeeds (data-URL + real http)", async () => {
     // Provider: 1 data-URL placeholder + 2 real http URLs = CANDIDATE_COUNT (3) total.
@@ -1415,6 +1414,7 @@ describe("runGenerationCycle — placeholder data-URL candidates excluded from o
       );
     }
   });
+});
 
 // ── DB insert failure after all uploads succeed ───────────────────────────────
 
