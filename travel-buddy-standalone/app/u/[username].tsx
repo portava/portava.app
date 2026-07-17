@@ -782,11 +782,11 @@ function PublicPassportScreenNative() {
   const canViewAbout = isOwn || (!socialLoading && !social?.isPrivate && !isBlockedRelation);
   const rawHandle = (social?.handle ?? username ?? '').replace(/^@+/, '');
   const displayHandle = rawHandle;
-  const displayName = resolveDisplayName({
+  const displayName = truncateDisplayName(resolveDisplayName({
     name: social?.name,
     displayName: (profile && 'displayName' in profile) ? profile.displayName : null,
     username: username ?? undefined,
-  });
+  }));
 
   async function handleUnmuteFromBadge() {
     if (!profile?.id) return;
