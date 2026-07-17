@@ -24,7 +24,24 @@ const SCAN_DIRS = [
   path.join(SRC_DIR, "services"),
   path.join(SRC_DIR, "middlewares"),
   path.join(SRC_DIR, "compass"),
+  path.join(SRC_DIR, "scripts"),
 ];
+
+/** Top-level src files (non-recursive), e.g. src/app.ts, src/index.ts */
+function collectTopLevelTsFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (
+      entry.isFile() &&
+      entry.name.endsWith(".ts") &&
+      !entry.name.endsWith(".test.ts") &&
+      !entry.name.endsWith(".d.ts")
+    ) {
+      out.push(path.join(dir, entry.name));
+    }
+  }
+  return out;
+}
 
 function collectTsFiles(dir: string): string[] {
   const out: string[] = [];
@@ -131,9 +148,13 @@ function scanBody(fn: FunctionLikeNode): {
   return { hasDateNow, hasNewDate };
 }
 
-test("no function in src/lib, src/routes, src/services, src/middlewares, or src/compass mixes Date.now() with no-arg new Date()", () => {
+test("no function in src/lib, src/routes, src/services, src/middlewares, src/compass, src/scripts, or top-level src files mixes Date.now() with no-arg new Date()", () => {
   const offenders: string[] = [];
-  for (const file of SCAN_DIRS.flatMap((dir) => collectTsFiles(dir))) {
+  const files = [
+    ...SCAN_DIRS.flatMap((dir) => collectTsFiles(dir)),
+    ...collectTopLevelTsFiles(SRC_DIR),
+  ];
+  for (const file of files) {
     const sf = ts.createSourceFile(
       file,
       readFileSync(file, "utf8"),
