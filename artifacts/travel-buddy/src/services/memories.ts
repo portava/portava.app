@@ -312,6 +312,43 @@ export async function deleteMemoryItem(
   }
 }
 
+// ── Update memory ─────────────────────────────────────────────────────────────
+
+export interface UpdateMemoryInput {
+  title?: string | null;
+  caption?: string | null;
+  visibility?: MemoryVisibility;
+  placeId?: string | null;
+  locationCity?: string | null;
+  locationCountry?: string | null;
+  locationLat?: number | null;
+  locationLng?: number | null;
+  canonicalLocationId?: string | null;
+  state?: 'draft' | 'published' | 'archived';
+}
+
+export async function updateMemory(
+  id: string,
+  input: UpdateMemoryInput,
+): Promise<{ ok: true; memory: Memory } | { ok: false; message: string }> {
+  try {
+    const headers = { ...(await authHeader()), 'Content-Type': 'application/json' };
+    const res = await fetch(`${apiBase()}/api/memories/${id}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      return { ok: false, message: j.message ?? `HTTP ${res.status}` };
+    }
+    const json = await res.json();
+    return { ok: true, memory: json.memory };
+  } catch (e: any) {
+    return { ok: false, message: e?.message ?? 'Network error' };
+  }
+}
+
 // ── Delete memory ─────────────────────────────────────────────────────────────
 
 export async function deleteMemory(id: string): Promise<{ ok: boolean }> {

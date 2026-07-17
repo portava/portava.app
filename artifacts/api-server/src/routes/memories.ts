@@ -161,6 +161,11 @@ const patchMemorySchema = z.object({
   allowedUserIds: z.array(z.string().uuid()).max(200).optional(),
   hiddenUserIds: z.array(z.string().uuid()).max(200).optional(),
   placeId: z.string().max(200).nullable().optional(),
+  locationCity: z.string().max(200).nullable().optional(),
+  locationCountry: z.string().max(200).nullable().optional(),
+  locationLat: z.number().min(-90).max(90).nullable().optional(),
+  locationLng: z.number().min(-180).max(180).nullable().optional(),
+  canonicalLocationId: z.string().uuid().nullable().optional(),
   startsAt: z.string().datetime({ offset: true }).nullable().optional(),
   endsAt: z.string().datetime({ offset: true }).nullable().optional(),
   state: z.enum(["draft", "published", "archived"]).optional(),
@@ -499,6 +504,11 @@ router.patch("/memories/:id", async (req, res) => {
   if (d.allowedUserIds !== undefined) patch.allowed_user_ids = d.allowedUserIds;
   if (d.hiddenUserIds !== undefined) patch.hidden_user_ids = d.hiddenUserIds;
   if (d.placeId !== undefined) patch.place_id = d.placeId;
+  if (d.locationCity !== undefined) patch.location_city = d.locationCity;
+  if (d.locationCountry !== undefined) patch.location_country = d.locationCountry;
+  if (d.locationLat !== undefined) patch.location_lat = d.locationLat;
+  if (d.locationLng !== undefined) patch.location_lng = d.locationLng;
+  if (d.canonicalLocationId !== undefined) patch.canonical_location_id = d.canonicalLocationId;
   if (d.startsAt !== undefined) patch.starts_at = d.startsAt;
   if (d.endsAt !== undefined) patch.ends_at = d.endsAt;
   if (d.state !== undefined) patch.state = d.state;
