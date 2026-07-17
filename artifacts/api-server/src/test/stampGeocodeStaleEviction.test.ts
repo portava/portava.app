@@ -919,6 +919,74 @@ describe("negative cache TTL expiry", () => {
       "persist_failed must carry the thrown error message",
     );
   });
+
+  it("a network error during TTL retry does not overwrite a positive DB cache row with null", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Step 1: seed a positive DB cache row by resolving the city once.
+    // The successful geocode writes the result back to the DB via writeDbCache.
+    let seedUpsertCount = 0;
+    const seedDb = {
+      from(_table: string) {
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          async maybeSingle() { return { data: null, error: null }; },
+          upsert(_row?: Record<string, unknown>) {
+            seedUpsertCount++;
+            return Promise.resolve({ error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(seedDb);
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "fr", country: "France" } }],
+    }));
+
+    const first = await geocodeCityCountry("NoOverwriteCity");
+    assert.equal(first?.countryCode, "FR", "pre-condition: initial geocode should resolve FR");
+    assert.equal(seedUpsertCount, 1, "pre-condition: positive DB row should be seeded");
+
+    // Step 2: advance past NEGATIVE_TTL_MS and evict the in-memory entry so the
+    // next call must re-resolve (simulating a TTL retry).
+    const T1 = T0 + NEGATIVE_TTL_MS + 1_000;
+    mockNow(T1);
+    evictGeocodeCacheKey("nooverwritecity");
+
+    // Step 3: install a DB client that returns null (no row) and tracks upsert
+    // calls, and make Nominatim throw a network error.
+    let retryUpsertCount = 0;
+    const errorDb = {
+      from(_table: string) {
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          async maybeSingle() { return { data: null, error: null }; },
+          upsert() {
+            retryUpsertCount++;
+            return Promise.resolve({ error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(errorDb);
+    _setGeocodeFetchForTests(async () => {
+      throw new Error("network_error");
+    });
+
+    // Step 4: the retry should fail and cache null in-memory, but must never
+    // call writeDbCache (upsert) with that null result.
+    const second = await geocodeCityCountry("NoOverwriteCity");
+    assert.equal(second, null, "network error should return null");
+    assert.equal(retryUpsertCount, 0,
+      "writeDbCache must NOT be called after a network error — a null upsert could corrupt the previously seeded positive DB row");
+
+  });
 });
 
 // ── Correction-sweep eviction retry ──────────────────────────────────────────
