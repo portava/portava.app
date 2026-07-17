@@ -3822,6 +3822,72 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "cache hit returns the correct country code");
   });
 
+  it("force-eviction mid-flight with a null (Nominatim-down) result: no ghost negative-cache entry, next request retries fresh", async () => {
+    // Complement to the happy-path mid-flight eviction test above: here the
+    // in-flight Nominatim call resolves to a FAILED geocode (empty results →
+    // null).  The same guard (`_pending.get(key) === p`) must block the null
+    // from writing to _cache after evictGeocodeCacheKey ran — otherwise a
+    // ghost negative-cache entry would serve null for up to 6 hours, bypassing
+    // the eviction the admin just performed.
+
+    // Deferred gate pauses the stub mid-flight so the eviction can fire first.
+    let resolveStub1!: () => void;
+    const stub1Gate = new Promise<void>((res) => { resolveStub1 = res; });
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      await stub1Gate;
+      // Nominatim is "down" in the sense that it returns no usable result —
+      // an empty result set shapes to a null (failed) geocode.
+      return { ok: true, json: async () => [] };
+    });
+
+    // No DB cache row so the geocoder falls through to Nominatim.
+    _setGeocodeDbClientForTests(makeFixedDbClient(null));
+
+    // Start the in-flight request — paused at stub1Gate.
+    const inflightPromise = geocodeCityCountry("Munich");
+    // Flush microtask ticks so the async body reaches the paused _fetchImpl call.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    assert.equal(nominatimCalls, 1, "Nominatim called once for the in-flight request");
+
+    // Evict the key mid-flight — clears both _cache and _pending.
+    evictGeocodeCacheKey("munich");
+
+    // Unblock the stub; the in-flight promise settles to null.
+    resolveStub1();
+    const inflightResult = await inflightPromise;
+    assert.equal(inflightResult, null,
+      "in-flight promise settles to null — Nominatim returned no result");
+
+    // The guard must have blocked the null write: no ghost negative entry.
+    const cacheAfterSettlement = _getGeocodeCacheEntryForTests("munich");
+    assert.equal(cacheAfterSettlement, undefined,
+      "eviction + guard blocked the null from poisoning _cache — no ghost negative-cache entry");
+
+    // A subsequent call must trigger a FRESH Nominatim attempt — not serve a
+    // stale negative-cache hit.  Swap in a working stub to prove the retry.
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "de", country: "Germany" } }],
+      };
+    });
+
+    const retryResult = await geocodeCityCountry("Munich");
+    assert.equal(nominatimCalls, 2,
+      "a fresh Nominatim attempt was made — not a stale negative-cache hit");
+    assert.equal(retryResult?.countryCode, "DE",
+      "retry resolves correctly once Nominatim is back");
+
+    // And the fresh positive result lands in _cache normally.
+    const cacheAfterRetry = _getGeocodeCacheEntryForTests("munich");
+    assert.equal(cacheAfterRetry?.result?.countryCode, "DE",
+      "fresh positive result is cached after the retry");
+  });
+
   it("two concurrent warm-cache callers sharing a no-op probe only bump correctionCheckedAt once — no conflicting timestamps", async () => {
     // Scenario: both callers arrive after CORRECTION_CHECK_INTERVAL_MS has elapsed.
     // The first caller reads the stale correctionCheckedAt, then immediately writes a
