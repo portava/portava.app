@@ -326,7 +326,12 @@ export default function AdminGeocodeCacheScreen() {
           <ActivityIndicator color={color.ink} />
         </View>
       ) : error ? (
-        <View style={s.center}>
+        <View
+          style={s.center}
+          testID="geocode-cache-error"
+          accessibilityRole="alert"
+          accessibilityLiveRegion="assertive"
+        >
           <Text style={s.errorText}>{error}</Text>
           <Pressable onPress={() => load()} style={s.retryBtn}>
             <Text style={s.retryText}>Retry</Text>

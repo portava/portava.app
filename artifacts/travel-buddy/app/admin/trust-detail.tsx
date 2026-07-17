@@ -297,7 +297,12 @@ export default function TrustDetailScreen() {
 
   if (error || !detail) {
     return (
-      <View style={s.centered}>
+      <View
+        style={s.centered}
+        testID="trust-detail-error"
+        accessibilityRole="alert"
+        accessibilityLiveRegion="assertive"
+      >
         <Text style={s.errorText}>{error ?? 'Not found'}</Text>
         <TouchableOpacity style={s.retryBtn} onPress={() => { setLoading(true); load().finally(() => setLoading(false)); }}>
           <Text style={s.retryText}>Retry</Text>

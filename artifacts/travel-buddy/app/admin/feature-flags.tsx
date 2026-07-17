@@ -140,7 +140,12 @@ function FlagHistorySheet({
             <ActivityIndicator color={color.signal} />
           </View>
         ) : error ? (
-          <View style={sh.center}>
+          <View
+            style={sh.center}
+            testID="flag-history-error"
+            accessibilityRole="alert"
+            accessibilityLiveRegion="assertive"
+          >
             <Text style={sh.errorText}>{error}</Text>
             {!!flagName && (
               <Pressable style={sh.retryBtn} onPress={() => load(flagName)}>
@@ -370,7 +375,12 @@ export default function FeatureFlagsScreen() {
           <ActivityIndicator size="large" color={color.signal} />
         </View>
       ) : error ? (
-        <View style={s.center}>
+        <View
+          style={s.center}
+          testID="feature-flags-error"
+          accessibilityRole="alert"
+          accessibilityLiveRegion="assertive"
+        >
           <Text style={s.errorText}>{error}</Text>
           <Pressable style={s.retryBtn} onPress={() => load()}>
             <Text style={s.retryText}>Retry</Text>

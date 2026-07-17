@@ -257,7 +257,12 @@ export default function AdminHashtagsScreen() {
       {loading ? (
         <ActivityIndicator style={{ marginTop: 40 }} color={color.signal} size="large" />
       ) : error ? (
-        <View style={s.emptyWrap}>
+        <View
+          style={s.emptyWrap}
+          testID="hashtags-error"
+          accessibilityRole="alert"
+          accessibilityLiveRegion="assertive"
+        >
           <Text style={s.emptyText}>{error}</Text>
           <Pressable onPress={() => fetchHashtags()} style={s.retryBtn}>
             <Text style={s.retryText}>Retry</Text>

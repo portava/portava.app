@@ -119,7 +119,12 @@ export default function ContentReportsScreen() {
           <ActivityIndicator size="large" color="#3B82F6" />
         </View>
       ) : error ? (
-        <View style={s.centered}>
+        <View
+          style={s.centered}
+          testID="content-reports-error"
+          accessibilityRole="alert"
+          accessibilityLiveRegion="assertive"
+        >
           <Text style={s.errorText}>{error}</Text>
           <Pressable style={s.retryBtn} onPress={() => { setLoading(true); load(1).finally(() => setLoading(false)); }}>
             <Text style={s.retryText}>Retry</Text>

@@ -153,7 +153,12 @@ export default function SchemaDriftScreen() {
           showsVerticalScrollIndicator={false}
         >
           {!!error && (
-            <View style={s.errorBox}>
+            <View
+              style={s.errorBox}
+              testID="schema-drift-error"
+              accessibilityRole="alert"
+              accessibilityLiveRegion="assertive"
+            >
               <Text style={s.errorText}>{error}</Text>
             </View>
           )}
