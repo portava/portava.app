@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 import {
   View,
   Text,
@@ -8,8 +9,6 @@ import {
   Alert,
   TextInput,
   Modal,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
@@ -172,10 +171,7 @@ export function MeetingPointCard({
         presentationStyle="pageSheet"
         onRequestClose={() => setEditOpen(false)}
       >
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
+        <KeyboardSafeScrollView>
           <View style={m.header}>
             <Pressable onPress={() => setEditOpen(false)} hitSlop={8}>
               <X size={22} color={color.ink} />
@@ -236,7 +232,7 @@ export function MeetingPointCard({
               />
             </View>
           </ScrollView>
-        </KeyboardAvoidingView>
+        </KeyboardSafeScrollView>
       </Modal>
 
       {/* Venue search picker */}

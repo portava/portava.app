@@ -8,11 +8,10 @@ import {
   Alert,
   TextInput,
   Modal,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
+import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 import { MapPin, ExternalLink, Edit2, X, Check, Search } from 'lucide-react-native';
 import type { MeetingPoint } from '../../services/circle.ts';
 import { postMeetingPoint, patchMeetingPoint } from '../../services/circle.ts';
@@ -172,10 +171,7 @@ export function MeetingPointCard({
         presentationStyle="pageSheet"
         onRequestClose={() => setEditOpen(false)}
       >
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
+        <KeyboardSafeScrollView>
           <View style={m.header}>
             <Pressable onPress={() => setEditOpen(false)} hitSlop={8}>
               <X size={22} color={color.ink} />
@@ -236,7 +232,7 @@ export function MeetingPointCard({
               />
             </View>
           </ScrollView>
-        </KeyboardAvoidingView>
+        </KeyboardSafeScrollView>
       </Modal>
 
       {/* Venue search picker */}

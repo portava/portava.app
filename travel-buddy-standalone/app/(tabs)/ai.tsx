@@ -1,9 +1,10 @@
 import React, { useState, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
-  KeyboardAvoidingView, Platform, ActivityIndicator,
+  ActivityIndicator,
 } from 'react-native';
 import { ScrollView } from 'react-native';
+import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 import { Sparkles, Send, Plane, MessageCircle, Map, PlusCircle } from 'lucide-react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -97,10 +98,7 @@ export default function AiChat() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: color.paper }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <KeyboardSafeScrollView style={{ backgroundColor: color.paper }}>
       <ScreenHeader title="AI Buddy" back />
       <ScrollView
         ref={scroll}
@@ -172,7 +170,7 @@ export default function AiChat() {
         visible={layoverOpen}
         onClose={() => setLayoverOpen(false)}
       />
-    </KeyboardAvoidingView>
+    </KeyboardSafeScrollView>
   );
 }
 

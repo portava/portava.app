@@ -2,8 +2,6 @@ import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
+import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft } from 'lucide-react-native';
 import { fetchTrustSettings, updateTrustSetting, type TrustSettingKey } from '../../src/services/trustAdmin';
@@ -191,10 +190,7 @@ export default function TrustSettingsScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, paddingTop: insets.top }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+    <KeyboardSafeScrollView style={{ paddingTop: insets.top }}>
       <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 48 }}>
         <View style={styles.header}>
           <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
@@ -222,7 +218,7 @@ export default function TrustSettingsScreen() {
           </View>
         ))}
       </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardSafeScrollView>
   );
 }
 

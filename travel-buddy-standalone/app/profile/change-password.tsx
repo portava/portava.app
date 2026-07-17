@@ -1,8 +1,9 @@
 import React, { useState, useRef } from 'react';
 import {
   View, Text, TextInput, Pressable, ScrollView,
-  ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Platform,
+  ActivityIndicator, Alert, StyleSheet,
 } from 'react-native';
+import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { router } from 'expo-router';
 import { ArrowLeft, Eye, EyeOff } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -49,10 +50,7 @@ export default function ChangePassword() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: color.paper }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <KeyboardSafeScrollView style={{ backgroundColor: color.paper }}>
       <View style={[styles.header, { paddingTop: insets.top + space.sm }]}>
         <Pressable
           style={({ pressed }) => [styles.back, pressed && { opacity: 0.6 }]}
@@ -135,7 +133,7 @@ export default function ChangePassword() {
           )}
         </View>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardSafeScrollView>
   );
 }
 

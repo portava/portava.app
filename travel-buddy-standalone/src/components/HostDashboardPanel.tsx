@@ -10,9 +10,10 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView,
-  ActivityIndicator, Alert, TextInput, KeyboardAvoidingView, Platform,
+  ActivityIndicator, Alert, TextInput,
 } from 'react-native';
 import { X, Check, X as XIcon, UserX, Crown, Shield, Clock } from 'lucide-react-native';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import {
   getJoinRequests, reviewJoinRequest, assignEventRole, removeEventRole,
   postEventUpdate, updateEvent, getEventWaitlist,
@@ -192,7 +193,7 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
   ];
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.kav}>
+    <KeyboardSafeScrollView style={s.kav}>
       <View style={s.backdrop}>
         <View style={s.panel}>
           {/* Header */}
@@ -428,7 +429,7 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
           </ScrollView>
         </View>
       </View>
-    </KeyboardAvoidingView>
+    </KeyboardSafeScrollView>
   );
 }
 

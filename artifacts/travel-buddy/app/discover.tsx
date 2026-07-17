@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, FlatList, ActivityIndicator,
-  Pressable, StyleSheet, KeyboardAvoidingView, Platform, LayoutAnimation,
+  Pressable, StyleSheet, LayoutAnimation,
 } from 'react-native';
+import { KeyboardSafeScrollView } from '../src/components/ui/KeyboardSafeView';
 import { router } from 'expo-router';
 import { Search, X, RefreshCw, Sparkles } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
@@ -99,11 +100,7 @@ export default function DiscoverScreen() {
     <View style={styles.root}>
       <ScreenHeader title="Find Travelers" back />
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={0}
-      >
+      <KeyboardSafeScrollView>
         <View style={styles.searchRow}>
           <Search size={16} color={color.faint} style={styles.searchIcon} />
           <TextInput
@@ -232,7 +229,7 @@ export default function DiscoverScreen() {
             ListFooterComponent={<NavBarFiller />}
           />
         )}
-      </KeyboardAvoidingView>
+      </KeyboardSafeScrollView>
     </View>
   );
 }

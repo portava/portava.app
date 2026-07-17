@@ -15,8 +15,6 @@ import {
   FlatList,
   Pressable,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
   ActivityIndicator,
   Image,
   Alert,
@@ -30,6 +28,7 @@ import { MentionInput, type MentionInputHandle } from './MentionInput.tsx';
 import { MentionSuggestionList } from './MentionSuggestionList.tsx';
 import type { AnyMentionSuggestion } from '../services/tagging.ts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { router } from 'expo-router';
 import {
   ArrowLeft, Send, Users, Globe, Info, VolumeX, Languages, Paperclip,
@@ -695,10 +694,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.screen}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+    <KeyboardSafeScrollView style={styles.screen}>
       {Header}
 
       {/* Quick-action bar — context-sensitive shortcuts */}
@@ -963,7 +959,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           onDismiss={() => setShowMembersSheet(false)}
         />
       )}
-    </KeyboardAvoidingView>
+    </KeyboardSafeScrollView>
   );
 }
 

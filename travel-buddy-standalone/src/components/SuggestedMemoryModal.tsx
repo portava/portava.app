@@ -9,9 +9,10 @@
 import React, { useState } from 'react';
 import {
   View, Text, Modal, Pressable, StyleSheet,
-  TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView,
+  TextInput, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { X, MapPin, Globe, Users, Eye, Lock, Shield } from 'lucide-react-native';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import type { PassportMemory, MemoryVisibility } from '../services/passportStamps.ts';
 import { acceptPassportSuggestion, dismissPassportSuggestion } from '../services/passportStamps.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
@@ -96,7 +97,7 @@ export function SuggestedMemoryModal({ suggestion, visible, onClose, onAccepted,
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardSafeScrollView>
         <View style={s.header}>
           <View style={s.headerLeft}>
             <Shield size={18} color={color.signal} />
@@ -196,7 +197,7 @@ export function SuggestedMemoryModal({ suggestion, visible, onClose, onAccepted,
             Saved memories appear in your Passport. Skipped suggestions are discarded.
           </Text>
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

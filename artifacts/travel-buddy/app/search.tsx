@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, TextInput, FlatList, Pressable, StyleSheet,
-  ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView,
+  ActivityIndicator, ScrollView,
 } from 'react-native';
+import { KeyboardSafeScrollView } from '../src/components/ui/KeyboardSafeView';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Search, X, Clock, Zap, MapPin, AlertCircle } from 'lucide-react-native';
 import { ScreenHeader } from '../src/components/ScreenHeader';
@@ -325,10 +326,7 @@ export default function SearchScreen() {
   }, [locationGranted]);
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: color.paper }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <KeyboardSafeScrollView style={{ backgroundColor: color.paper }}>
       <ScreenHeader title="Search" back />
 
       {/* Search bar */}
@@ -567,7 +565,7 @@ export default function SearchScreen() {
           }
         />
       )}
-    </KeyboardAvoidingView>
+    </KeyboardSafeScrollView>
   );
 }
 

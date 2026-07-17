@@ -9,9 +9,10 @@
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import {
   View, Text, TextInput, Pressable, ScrollView, StyleSheet, Modal,
-  ActivityIndicator, KeyboardAvoidingView, Platform, Alert,
+  ActivityIndicator, Alert,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { Zap, Send, ChevronDown, ChevronUp, Sparkles, CheckCircle } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { sendConciergeCommand, confirmCommandAction, declineCommandAction } from '../services/intelligence.ts';
@@ -150,7 +151,7 @@ function ConciergeCommandBar({ tripId, destination, compact: _compact = false },
   }
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardSafeScrollView>
       <View style={s.wrap}>
         {/* Header */}
         <View style={s.header}>
@@ -232,7 +233,7 @@ function ConciergeCommandBar({ tripId, destination, compact: _compact = false },
         onConfirm={() => confirmAction && doConfirm(confirmAction.commandId, confirmAction.action)}
         onDecline={handleDecline}
       />
-    </KeyboardAvoidingView>
+    </KeyboardSafeScrollView>
   );
 });
 

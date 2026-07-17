@@ -7,10 +7,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
-  StyleSheet, Alert, TextInput, KeyboardAvoidingView, Platform,
+  StyleSheet, Alert, TextInput, Platform,
   AppState, type AppStateStatus, Image, Modal, Linking, Animated, Switch,
 } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, MapPin, CalendarClock, Check, ThumbsUp, ThumbsDown,
@@ -517,7 +518,7 @@ export default function MeetupScreen() {
 
         {/* Status + title (edit mode or view mode) */}
         {editing ? (
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <KeyboardSafeScrollView>
             <View style={s.card}>
               <Text style={s.editLabel}>Title</Text>
               <TextInput
@@ -628,7 +629,7 @@ export default function MeetupScreen() {
                 </View>
               )}
             </View>
-          </KeyboardAvoidingView>
+          </KeyboardSafeScrollView>
         ) : (
           <View style={s.card}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: space.sm, flexWrap: 'wrap' }}>

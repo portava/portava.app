@@ -35,8 +35,9 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, Pressable, FlatList, Modal,
-  StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator,
+  StyleSheet, ActivityIndicator,
 } from 'react-native';
+import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 import { X, MapPin, Search, Navigation, Clock, TrendingUp, RefreshCw } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ExpoLocation from 'expo-location';
@@ -281,10 +282,7 @@ export function GlobalPlacePicker({
           iOS: 'padding' insets the overlay by the keyboard height.
           Android: 'height' shrinks the overlay — needed because this Modal is
           statusBarTranslucent, which stops adjustResize from resizing it. */}
-      <KeyboardAvoidingView
-        style={s.overlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
+      <KeyboardSafeScrollView style={s.overlay}>
         <Pressable style={s.backdrop} onPress={onClose} />
         <View style={[s.sheet, { paddingBottom: insets.bottom + 8 }]}>
           {/* Header */}
@@ -424,7 +422,7 @@ export function GlobalPlacePicker({
             }
           />
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

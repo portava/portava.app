@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Image } from 'react-native';
+import { View, Text, TextInput, Pressable, ActivityIndicator, ScrollView, StyleSheet, Image } from 'react-native';
+import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Mail, Lock, User as UserIcon, ArrowLeft, Eye, EyeOff } from 'lucide-react-native';
@@ -111,7 +112,7 @@ export default function SignIn() {
   const isForgot = mode === 'forgot-password' || mode === 'forgot-username';
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: color.paper }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardSafeScrollView style={{ backgroundColor: color.paper }}>
       <ScrollView contentContainerStyle={[s.wrap, { paddingTop: insets.top + space.xxxl, paddingBottom: insets.bottom + space.xl }]} keyboardShouldPersistTaps="handled">
         <View style={s.centreBox}>
           <View style={s.brand}>
@@ -227,7 +228,7 @@ export default function SignIn() {
           <Text style={s.legal}>By continuing you agree to travel kindly and respect fellow travelers.</Text>
         </View>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardSafeScrollView>
   );
 }
 

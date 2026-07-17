@@ -2,9 +2,10 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, ScrollView, Pressable, Modal, Share, StyleSheet,
   Image, ActivityIndicator, useWindowDimensions,
-  KeyboardAvoidingView, Platform, Keyboard,
+  Keyboard,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
+import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import * as Linking from 'expo-linking';
 import {
   MoreVertical, Share2, Flag, Flag as FlagFill,
@@ -247,10 +248,7 @@ export default function PostDetail() {
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       <ScreenHeader title="Post" back right={headerRight} />
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <KeyboardSafeScrollView>
         <ScrollView
           ref={scrollRef}
           contentContainerStyle={{ padding: space.lg, gap: space.lg }}
@@ -291,7 +289,7 @@ export default function PostDetail() {
           )}
           <NavBarFiller />
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardSafeScrollView>
 
       {post && !isOwnPost && (
         <>
