@@ -3335,6 +3335,59 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     );
   });
 
+  it("logs the booking ID to console.error when the event-row insert fails", async () => {
+    // When the buddy_booking_events insert returns a DB error the sweep must call
+    // console.error with the affected booking ID so operators can identify which
+    // bookings lost their audit trail.
+    const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+
+    state = {
+      bookings: {
+        "bk-ns-event-log-err": {
+          id: "bk-ns-event-log-err",
+          traveler_id: USER_ID,
+          buddy_id: BUDDY_PROF,
+          status: "no_show_pending",
+          no_show_grace_expires_at: PAST,
+        },
+      },
+      // Arm the error override so the buddy_booking_events insert returns a DB error.
+      insertErrorOverrides: {
+        buddy_booking_events: { message: "simulated DB error on event insert", code: "23505" },
+      },
+    };
+    (state as any).bookingEvents = [
+      { id: "ev-event-log-err-1", booking_id: "bk-ns-event-log-err", actor_user_id: USER_ID, event: "no_show_reported" },
+    ];
+
+    // Spy on console.error to capture calls made during the sweep.
+    const errorCalls: unknown[][] = [];
+    const originalConsoleError = console.error;
+    console.error = (...args: unknown[]) => {
+      errorCalls.push(args);
+    };
+
+    try {
+      const r = await reqSweep();
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    // At least one console.error call must include the booking ID so operators
+    // know which booking lost its audit trail.
+    const mentionsBookingId = errorCalls.some((args) =>
+      args.some((a) => typeof a === "string" && a.includes("bk-ns-event-log-err")),
+    );
+    assert.ok(
+      mentionsBookingId,
+      `expected console.error to be called with booking ID 'bk-ns-event-log-err' when the event-row insert fails, got: ${JSON.stringify(errorCalls)}`,
+    );
+  });
+
   it("expired-request count stays at zero when the status update DB call fails", async () => {
     // A stale requested booking whose .update({ status: 'expired' }) errors must
     // leave expired = 0 and the booking in its original status.
