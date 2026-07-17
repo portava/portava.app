@@ -8,6 +8,7 @@ import { pauseOnSessionEnd } from '../services/circle';
 import { clearForUser as clearLikedForUser, primeLikes } from '../services/likedPostsCache';
 import { clearForUser as clearSavedForUser, primeSaved } from '../services/savedPostsCache';
 import { fetchMyLikedPostIds, fetchMySavedPostIds } from '../services/postEngagement';
+import { clearCachedFeed } from '../services/compass';
 
 /**
  * Session context — single source of auth truth for the app. Wraps the auth
@@ -157,6 +158,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (userId) {
       clearLikedForUser(userId);
       clearSavedForUser(userId);
+      await clearCachedFeed(userId).catch(() => {});
     }
     await svcSignOut();
     setUserId(null);

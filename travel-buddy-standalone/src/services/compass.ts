@@ -11,7 +11,14 @@ type AsyncStorageStub = {
   getItem(k: string): Promise<string | null>;
   removeItem(k: string): Promise<void>;
 };
+let _testStorage: AsyncStorageStub | null | undefined;
+/** For tests only — override the AsyncStorage implementation. */
+export function _setStorageForTest(store: AsyncStorageStub | null | undefined): void {
+  _testStorage = store;
+}
+
 const getStorage = (): AsyncStorageStub | null => {
+  if (_testStorage !== undefined) return _testStorage;
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { Platform } = require('react-native') as { Platform: { OS: string } };
@@ -801,6 +808,17 @@ export async function setCachedFeed(userId: string, feed: CompassFeedResponse): 
   if (!store) return;
   try {
     await store.setItem(`${FEED_CACHE_PREFIX}${userId}`, JSON.stringify({ feed, _cachedAt: Date.now() }));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+/** Remove a user's cached feed from device storage (e.g. on sign-out). */
+export async function clearCachedFeed(userId: string): Promise<void> {
+  const store = getStorage();
+  if (!store) return;
+  try {
+    await store.removeItem(`${FEED_CACHE_PREFIX}${userId}`);
   } catch {
     // ignore storage errors
   }
