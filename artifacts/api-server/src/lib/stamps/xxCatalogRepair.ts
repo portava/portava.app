@@ -108,13 +108,23 @@ export async function mergeCatalogEntry(
     .from("universal_stamp_catalog")
     .select("id, earn_count")
     .in("id", [xxId, survivorId]);
-  const xxCount       = (pair ?? []).find((r: any) => r.id === xxId)?.earn_count ?? 0;
-  const survivorCount = (pair ?? []).find((r: any) => r.id === survivorId)?.earn_count ?? 0;
+  const xxCount     = (pair ?? []).find((r: any) => r.id === xxId)?.earn_count ?? 0;
+  const survivorRow = (pair ?? []).find((r: any) => r.id === survivorId);
   if (xxCount > 0) {
-    await sc
-      .from("universal_stamp_catalog")
-      .update({ earn_count: survivorCount + xxCount })
-      .eq("id", survivorId);
+    if (survivorRow === undefined) {
+      // The pair select came back without the survivor row. Writing
+      // `0 + xxCount` here would silently zero out whatever earn_count the
+      // survivor already holds in the DB — skip the transfer instead.
+      warn(
+        `[xx-repair] earn_count transfer skipped: survivor ${survivorId} absent from pair select (xx=${xxId})`,
+      );
+    } else {
+      const survivorCount = (survivorRow as any).earn_count ?? 0;
+      await sc
+        .from("universal_stamp_catalog")
+        .update({ earn_count: survivorCount + xxCount })
+        .eq("id", survivorId);
+    }
   }
 
   // Drop the XX entry's queue jobs, then the entry itself (audit/reconcile

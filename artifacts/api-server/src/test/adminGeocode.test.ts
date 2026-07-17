@@ -2574,14 +2574,12 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
     assert.ok(xxEntryDeleted, "XX catalog entry must still be deleted even when its earn_count row is absent");
   });
 
-  it("writes only the XX earn_count when the survivor row is absent from the pair select — survivorCount falls back to 0", async () => {
+  it("skips the earn_count update when the survivor row is absent from the pair select — never zeroes the survivor", async () => {
     // Complementary edge case to the partial-pair test above.
     // Here the pair select returns ONLY the XX row; the survivor row is absent.
-    // survivorCount falls back to 0 via ?? 0.  xxCount holds the real XX value.
-    // The guard (xxCount > 0) fires and issues the update with survivorCount(0) + xxCount,
-    // which silently discards whatever the survivor held in the DB.
-    // This test documents that behaviour: the update IS issued and writes only
-    // the XX count — the survivor's prior DB value is not preserved in this path.
+    // Writing survivorCount(0) + xxCount would silently discard whatever the
+    // survivor held in the DB, so mergeCatalogEntry skips the earn_count
+    // transfer entirely (with a warning) and still completes the merge.
     const XX_ID = "cat-xx-survivor-absent";
     const SURVIVOR_ID = "cat-survivor-survivor-absent";
     const XX_EARN_COUNT = 5;
@@ -2715,12 +2713,13 @@ describe("PUT /admin/geocode-cache/:city_key with repair_catalog: true", () => {
       "merge should complete even when only the XX row is returned by the pair select");
     assert.equal(repair.catalogRekeyed, 0, "re-key count must be 0 when a merge occurred");
 
-    // xxCount is 5 (present), survivorCount falls back to 0 (absent via ?? 0).
-    // The guard (xxCount > 0) fires → update IS issued with survivorCount(0) + xxCount(5).
-    assert.equal(earnCountUpdateCalled, true,
-      "earn_count update must still be issued — xxCount > 0 guard fires even when survivor row is absent");
-    assert.equal(earnCountWrittenValue, XX_EARN_COUNT,
-      "written value must equal only the XX earn_count (0 + xxCount) because survivorCount falls back to 0 when the survivor row is absent from the pair result — the survivor's prior DB value is silently discarded in this path");
+    // xxCount is 5 (present) but the survivor row is absent from the pair
+    // result. Writing 0 + xxCount would silently zero the survivor's existing
+    // DB earn_count, so the transfer is skipped entirely.
+    assert.equal(earnCountUpdateCalled, false,
+      "earn_count update must be skipped when the survivor row is absent from the pair result — writing 0 + xxCount would discard the survivor's existing count");
+    assert.equal(earnCountWrittenValue, null,
+      "no earn_count value should be written when the survivor row is absent");
 
     // XX entry must still be deleted to complete the merge.
     assert.ok(xxEntryDeleted, "XX catalog entry must still be deleted even when the survivor row is absent from the pair result");
