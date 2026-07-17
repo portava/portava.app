@@ -376,7 +376,7 @@ export async function backfillOwnershipCountries(
 
       for (const row of rows as any[]) {
         if (backfilled + pending >= maxBackfills) break;
-        const cityKey = String(row.city).toLowerCase().trim();
+        const cityKey = normCityKey(String(row.city));
         let country = cityCountry.get(cityKey);
         if (country === undefined) {
           try {

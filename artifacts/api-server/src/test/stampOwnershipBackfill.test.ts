@@ -151,6 +151,31 @@ test("a throwing resolver marks the city unresolved and does not abort the run",
   assert.equal(tables.user_stamps[1].country, "United Kingdom");
 });
 
+test("accented and unaccented spellings of the same city share one geocode call", async () => {
+  const tables = {
+    user_stamps: [
+      { id: "01", city: "São Paulo", country: null },
+      { id: "02", city: "SAO PAULO", country: null },
+      { id: "03", city: "sao  paulo", country: null },
+    ],
+    passport_stamps: [],
+  };
+  const resolvedCities: string[] = [];
+  const countingResolver: CountryResolver = async ({ city }) => {
+    resolvedCities.push(city ?? "");
+    return { country: "Brazil", countryCode: "BR" };
+  };
+  const stats = await backfillOwnershipCountries(
+    makeFakeClient(tables),
+    countingResolver,
+    {},
+    silentLog,
+  );
+  assert.equal(resolvedCities.length, 1); // one geocode for all spellings
+  assert.equal(stats.userStampsBackfilled, 3);
+  for (const r of tables.user_stamps) assert.equal(r.country, "Brazil");
+});
+
 test("a missing table is skipped without failing the other table", async () => {
   const tables = {
     user_stamps: [{ id: "01", city: "Paris", country: null }],

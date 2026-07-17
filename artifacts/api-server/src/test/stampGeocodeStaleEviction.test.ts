@@ -408,7 +408,7 @@ describe("negative cache TTL expiry", () => {
     mockNow(T0);
 
     // First fetch returns empty → null geocode → negative cache entry.
-    // _setGeocodeFetchForTests also sets _dbClientOverride = null (no DB).
+    // (DB cache is disabled in beforeEach via _setGeocodeDbClientForTests(null).)
     _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
 
     const first = await geocodeCityCountry("RetryCity");
