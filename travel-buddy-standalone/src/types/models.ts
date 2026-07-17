@@ -489,6 +489,16 @@ export interface PublicProfile {
   verificationLevel?: 'none' | 'basic_verified' | 'trusted_traveler' | 'host_verified' | 'buddy_verified' | null;
   /** Owner's preferred passport tab order; null/absent = canonical order. */
   passportTabOrder?: string[] | null;
+  /**
+   * Whether the user is open to meeting people — surfaced in the Passport
+   * header chip when the API returns it. Absent = chip hidden (safe default).
+   */
+  openToMeet?: boolean;
+  /**
+   * Active quick-availability status string (e.g. 'free_now', 'free_tonight',
+   * 'open_to_plans', 'busy'). Absent = no quick-status secondary on the chip.
+   */
+  quickStatus?: string | null;
 }
 
 /* ───────────────────────────────────────────────────────────────────────

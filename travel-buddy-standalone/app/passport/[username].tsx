@@ -5,7 +5,7 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert,
+  View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, Modal,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,6 +27,7 @@ import { resolveTabOrder, type PassportTabKey, TAB_LABELS } from '../../src/comp
 import { resolveDisplayName, formatHandle, truncateDisplayName } from '../../src/utils/identity';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { PP, PP_LABEL } from '../../src/theme/passportTokens';
+import { resolveAvailabilityChip } from '../../src/lib/availabilityChip';
 
 // New passport design components
 import { PassportIdentityCard, PassportStatsRow } from '../../src/components/passport/PassportIdentityCard';
@@ -91,6 +92,9 @@ export default function PassportDeepLinkScreen() {
         verifiedAt: card.verifiedAt ?? null,
         passportVisibility: (card.passportVisibility ?? 'public') as 'public' | 'private',
         createdAt: card.createdAt ?? null,
+        // Availability fields — present when the API returns them; absent = chip hidden.
+        openToMeet: (card as any).openToMeet ?? undefined,
+        quickStatus: (card as any).quickStatus ?? undefined,
       };
       setState((s) => ({ ...s, profile, loading: false }));
 
@@ -113,8 +117,21 @@ export default function PassportDeepLinkScreen() {
   const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
   const [tab, setTab] = useState<PassportTabKey>('postcards');
   const [statsIconOnly, setStatsIconOnly] = useState(false);
+  const [availStatusSheetOpen, setAvailStatusSheetOpen] = useState(false);
   const insets = useSafeAreaInsets();
   const navBarScrollHandler = useNavBarScrollHandler();
+
+  // Availability chip — computed from public profile fields when the API returns them.
+  // homeCity visibility: show only when the profile makes it public (homeCity present).
+  const publicChipState = profile
+    ? resolveAvailabilityChip({
+        openToMeet: profile.openToMeet ?? false,
+        quickStatus: (profile.quickStatus as any) ?? null,
+        trips: [],           // trip windows are not exposed in the public profile API
+        homeCity: profile.homeCity ?? null,
+        showHomeCity: !!(profile.homeCity),
+      })
+    : null;
 
   const handleScroll = useCallback((e: any) => {
     navBarScrollHandler(e);
@@ -302,6 +319,8 @@ export default function PassportDeepLinkScreen() {
           isFollowing={isAuthed ? follow.isFollowing : undefined}
           followLoading={isAuthed ? (follow.loading || follow.toggling) : undefined}
           onFollowPress={isAuthed ? follow.toggle : undefined}
+          availabilityChip={publicChipState}
+          onAvailabilityChipPress={publicChipState ? () => setAvailStatusSheetOpen(true) : undefined}
         />
         <PassportStatsRow
           profile={profile}
@@ -348,6 +367,31 @@ export default function PassportDeepLinkScreen() {
         highlights={ringState?.highlights ?? []}
         onClose={() => setHighlightViewerOpen(false)}
       />
+
+      {/* ── Read-only availability status sheet (public view) ── */}
+      <Modal
+        visible={availStatusSheetOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAvailStatusSheetOpen(false)}
+      >
+        <Pressable style={vs.sheetBackdrop} onPress={() => setAvailStatusSheetOpen(false)}>
+          <View style={vs.sheetCard}>
+            <View style={vs.sheetDot} />
+            <View style={{ flex: 1 }}>
+              <Text style={vs.sheetPrimary}>
+                {publicChipState?.primary ?? 'Open to meet'}
+              </Text>
+              {publicChipState?.secondary ? (
+                <Text style={vs.sheetSecondary}>{publicChipState.secondary}</Text>
+              ) : null}
+            </View>
+            <Pressable onPress={() => setAvailStatusSheetOpen(false)} hitSlop={8}>
+              <ArrowLeft size={18} color={PP.inkMuted} style={{ transform: [{ rotate: '180deg' }] }} />
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -391,4 +435,39 @@ const vs = StyleSheet.create({
     height: 2, borderRadius: 1, backgroundColor: PP.inkLight,
   },
   tabRule: { height: 1, backgroundColor: PP.borderLight, marginHorizontal: 16 },
+
+  /* Read-only availability status sheet */
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingBottom: 32,
+  },
+  sheetCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#F0FAF4',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(34,197,94,0.3)',
+    padding: 16,
+  },
+  sheetDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#22C55E',
+  },
+  sheetPrimary: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  sheetSecondary: {
+    fontSize: 13,
+    color: '#166534',
+    marginTop: 2,
+  },
 });

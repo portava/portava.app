@@ -24,6 +24,8 @@ import { HighlightRing } from '../HighlightRing.tsx';
 import { getPassportStats } from '../../services/passportStamps.ts';
 import type { PassportStats } from '../../services/passportStamps.ts';
 import { PP } from '../../theme/passportTokens.ts';
+import { AvailabilityChip } from './AvailabilityChip.tsx';
+import type { AvailabilityChipState } from '../../lib/availabilityChip.ts';
 
 type AnyProfile = OwnProfile | PublicProfile;
 
@@ -51,6 +53,10 @@ interface Props {
   onEditBio?: () => void;
   /** Owner: tap compact Saved shortcut → navigate to /saved */
   onSavedPress?: () => void;
+  /** Resolved chip state from resolveAvailabilityChip(); null = hide chip */
+  availabilityChip?: AvailabilityChipState | null;
+  /** Called when the chip is pressed (owner → /availability; public → meet-up action) */
+  onAvailabilityChipPress?: () => void;
 }
 
 const AVATAR_SIZE  = 76;
@@ -213,6 +219,7 @@ export function PassportIdentityCard({
   trustScore, trustLabel, onTrustInfo,
   isFollowing, followLoading, onFollowPress,
   onEditBio, onSavedPress,
+  availabilityChip, onAvailabilityChipPress,
 }: Props) {
   const username      = 'username' in profile ? profile.username : null;
   const identity      = {
@@ -337,6 +344,12 @@ export function PassportIdentityCard({
               {handleSubline ? (
                 <Text style={s.handle}>{handleSubline}</Text>
               ) : null}
+
+              {/* Availability chip — below handle, above trust/tags/actions */}
+              <AvailabilityChip
+                chipState={availabilityChip ?? null}
+                onPress={onAvailabilityChipPress}
+              />
 
               {/* Trust Score — compact, inside identity area */}
               {trustScore != null ? (
