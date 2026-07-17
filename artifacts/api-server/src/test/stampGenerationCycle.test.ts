@@ -1944,6 +1944,26 @@ describe("runGenerationCycle — orphan cleanup: remove() returns error object (
       "must NOT log orphan_cleanup (success) when remove() returned an error",
     );
 
+    // 4b. orphan_cleanup_error log entry must include the affected paths array.
+    const cleanupErrorLine = loggedErrors.find(
+      (l) => l.includes("orphan_cleanup_error") && l.includes(removeErrorMessage),
+    );
+    let parsedCleanupError: any;
+    try {
+      parsedCleanupError = JSON.parse(cleanupErrorLine!);
+    } catch {
+      assert.fail(`orphan_cleanup_error log line must be parseable JSON, got: ${cleanupErrorLine}`);
+    }
+    assert.ok(
+      Array.isArray(parsedCleanupError.paths) && parsedCleanupError.paths.length > 0,
+      `orphan_cleanup_error must include a non-empty paths array so ops can manually recover files, got: ${JSON.stringify(parsedCleanupError)}`,
+    );
+    assert.equal(
+      parsedCleanupError.paths.length,
+      1,
+      `paths must list exactly the one successfully uploaded file (upload #1 succeeded, upload #2 threw), got: ${JSON.stringify(parsedCleanupError.paths)}`,
+    );
+
     // 5. Job is reset and last_error carries the original generation error — not the cleanup error.
     const fail = updates.find(
       (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
@@ -2100,6 +2120,26 @@ describe("runGenerationCycle — orphan cleanup: remove() returns error object (
       hasCleanupSuccess,
       false,
       "must NOT log orphan_cleanup (success) when remove() returned an error",
+    );
+
+    // 6b. orphan_cleanup_error log entry must include the affected paths array.
+    const cleanupErrorLine = loggedErrors.find(
+      (l) => l.includes("orphan_cleanup_error") && l.includes(removeErrorMessage),
+    );
+    let parsedCleanupError: any;
+    try {
+      parsedCleanupError = JSON.parse(cleanupErrorLine!);
+    } catch {
+      assert.fail(`orphan_cleanup_error log line must be parseable JSON, got: ${cleanupErrorLine}`);
+    }
+    assert.ok(
+      Array.isArray(parsedCleanupError.paths) && parsedCleanupError.paths.length > 0,
+      `orphan_cleanup_error must include a non-empty paths array so ops can manually recover files, got: ${JSON.stringify(parsedCleanupError)}`,
+    );
+    assert.equal(
+      parsedCleanupError.paths.length,
+      CANDIDATE_COUNT,
+      `paths must list all ${CANDIDATE_COUNT} successfully uploaded files (all uploads completed before the insert failed), got: ${JSON.stringify(parsedCleanupError.paths)}`,
     );
 
     // 7. Job is reset; last_error carries the original insert error — not the cleanup error.
