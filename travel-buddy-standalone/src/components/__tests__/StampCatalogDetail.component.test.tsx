@@ -153,6 +153,25 @@ describe('StampCatalogDetail — API error banner', () => {
     expect(screen.queryByTestId('catalog-detail-error')).toBeNull();
   });
 
+  it('reloads from the not-found state into loaded content via pull-to-refresh', async () => {
+    mockGetEntry
+      .mockResolvedValueOnce({ ok: true, data: null }) // genuine not-found
+      .mockResolvedValue(detailOk());                  // refresh succeeds
+
+    await act(async () => { render(<StampCatalogDetail />); });
+
+    // Not-found state is shown, but inside a refreshable ScrollView.
+    expect(screen.getByText('Entry not found')).toBeTruthy();
+    const scroll = screen.getByTestId('catalog-detail-scroll');
+    expect(scroll.props.refreshControl).toBeTruthy();
+
+    // Pull-to-refresh loads the entry.
+    await act(async () => { scroll.props.refreshControl.props.onRefresh(); });
+
+    await waitFor(() => screen.getByText('Paris Eiffel'));
+    expect(screen.queryByText('Entry not found')).toBeNull();
+  });
+
   it('clears the error and shows entry content when a subsequent load succeeds', async () => {
     mockGetEntry
       .mockResolvedValueOnce({ ok: false })

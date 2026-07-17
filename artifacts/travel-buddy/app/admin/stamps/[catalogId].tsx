@@ -121,8 +121,15 @@ export default function StampCatalogDetail() {
       );
     }
     return (
-      <View style={[styles.root, styles.center, { paddingTop: insets.top }]}>
-        <Text style={{ color: color.mute }}>Entry not found</Text>
+      <View style={[styles.root, { paddingTop: insets.top }]}>
+        <ScrollView
+          contentContainerStyle={[styles.content, styles.center, { flexGrow: 1, paddingBottom: insets.bottom + space.xl }]}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          testID="catalog-detail-scroll"
+        >
+          <Text style={{ color: color.mute }}>Entry not found</Text>
+          <Text style={styles.hint}>Pull down to try again.</Text>
+        </ScrollView>
       </View>
     );
   }
