@@ -20,6 +20,7 @@ import {
   _clearCatalogCache,
 } from "../lib/stamps/StampCatalogService.js";
 import { recalculateForUser } from "../services/passport/StampAwardEngine.js";
+import { wouldCreateDuplicateQueued, DUPLICATE_QUEUED_ERROR } from "./stampQueueConstraint.js";
 
 const ALICE_ID = "aaaaaaaa-0000-4000-8000-000000000011";
 const DEF_ID   = "dddddddd-0000-4000-8000-000000000022";
@@ -91,6 +92,13 @@ function makeFakeClient(db: DB): SupabaseClient {
 
           if (_update) {
             const matched = rows().filter((r) => _filters.every((f) => f(r)));
+            // Partial unique index: one queued row per catalog_id
+            if (
+              table === "stamp_generation_queue" &&
+              wouldCreateDuplicateQueued(rows(), matched, _update)
+            ) {
+              return resolve({ data: null, error: { ...DUPLICATE_QUEUED_ERROR } });
+            }
             for (const r of matched) Object.assign(r, _update);
             return resolve({ data: matched, error: null });
           }

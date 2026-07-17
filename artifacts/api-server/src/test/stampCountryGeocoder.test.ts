@@ -28,6 +28,7 @@ import {
   makeGeocodingResolver,
   staticResolver,
 } from "../lib/stamps/xxCatalogRepair.js";
+import { wouldCreateDuplicateQueued, DUPLICATE_QUEUED_ERROR } from "./stampQueueConstraint.js";
 
 // ── Fake fetch helpers ────────────────────────────────────────────────────────
 
@@ -281,6 +282,13 @@ function makeFakeClient(db: DB): SupabaseClient {
           if (!db[table]) db[table] = [];
           const matched = rows().filter((r) => _filters.every((f) => f(r)));
           if (_update) {
+            // Partial unique index: one queued row per catalog_id
+            if (
+              table === "stamp_generation_queue" &&
+              wouldCreateDuplicateQueued(rows(), matched, _update)
+            ) {
+              return resolve({ data: null, error: { ...DUPLICATE_QUEUED_ERROR } });
+            }
             for (const r of matched) Object.assign(r, _update);
             return resolve({ data: matched, error: null });
           }

@@ -25,6 +25,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import stampCatalogRouter from "../routes/stampCatalog.js";
+import { wouldCreateDuplicateQueued, DUPLICATE_QUEUED_ERROR } from "./stampQueueConstraint.js";
 
 // ── Fixed IDs ─────────────────────────────────────────────────────────────────
 
@@ -124,6 +125,12 @@ function makeClient(db: DB) {
         const rows = db[tableName] ?? [];
         if (updateValues !== null) {
           const matched = rows.filter((r) => filters.every((f) => f(r)));
+          if (
+            tableName === "stamp_generation_queue" &&
+            wouldCreateDuplicateQueued(rows, matched, updateValues)
+          ) {
+            return Promise.resolve({ data: null, error: { ...DUPLICATE_QUEUED_ERROR } });
+          }
           matched.forEach((r) => Object.assign(r, updateValues));
           return Promise.resolve({ data: matched[0] ? { ...matched[0] } : null, error: null });
         }
@@ -214,41 +221,6 @@ function makeClient(db: DB) {
         Promise.resolve({ data: { user: { id: ADMIN_ID } }, error: null }),
     },
   };
-}
-
-// ── Shared helper: unique-constraint check for UPDATE ─────────────────────────
-//
-// The real DB has a partial unique index on stamp_generation_queue(catalog_id)
-// WHERE status = 'queued'. A single UPDATE that would promote multiple rows for
-// the same catalog_id to 'queued' violates the index. PostgreSQL raises 23505
-// and rolls the entire statement back, leaving all rows unchanged.
-//
-// The fake client simulates this: before committing an UPDATE that sets
-// status='queued', check whether the combined in-memory state (unchanged rows +
-// updated rows) would contain more than one 'queued' row for the same
-// catalog_id. If so, return a 23505 error without touching any row.
-function wouldCreateDuplicateQueued(
-  rows: any[],
-  matched: any[],
-  updateValues: Record<string, any>,
-): boolean {
-  if (updateValues.status !== "queued") return false;
-
-  // Project the table after the hypothetical update
-  const matchedIds = new Set(matched.map((r) => r.id));
-  const projected  = rows.map((r) =>
-    matchedIds.has(r.id) ? { ...r, ...updateValues } : { ...r },
-  );
-
-  // Count queued rows per catalog_id
-  const counts: Record<string, number> = {};
-  for (const r of projected) {
-    if (r.status === "queued" && r.catalog_id) {
-      counts[r.catalog_id] = (counts[r.catalog_id] ?? 0) + 1;
-      if (counts[r.catalog_id] > 1) return true;
-    }
-  }
-  return false;
 }
 
 // ── DB factory ────────────────────────────────────────────────────────────────

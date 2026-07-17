@@ -29,6 +29,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import stampCatalogRouter from "../routes/stampCatalog.js";
+import { wouldCreateDuplicateQueued, DUPLICATE_QUEUED_ERROR } from "./stampQueueConstraint.js";
 
 // ── Fixed IDs ─────────────────────────────────────────────────────────────────
 
@@ -178,6 +179,12 @@ function makeClient(db: DB) {
         const rows = db[tableName] ?? [];
         if (updateValues !== null) {
           const matched = rows.filter((r) => filters.every((f) => f(r)));
+          if (
+            tableName === "stamp_generation_queue" &&
+            wouldCreateDuplicateQueued(rows, matched, updateValues)
+          ) {
+            return Promise.resolve({ data: null, error: { ...DUPLICATE_QUEUED_ERROR } });
+          }
           matched.forEach((r) => Object.assign(r, updateValues));
           return Promise.resolve({
             data:  matched[0] ? { ...matched[0] } : null,
@@ -209,6 +216,12 @@ function makeClient(db: DB) {
             }
             if (updateValues !== null) {
               const matched = rows.filter((r) => filters.every((f) => f(r)));
+              if (
+                tableName === "stamp_generation_queue" &&
+                wouldCreateDuplicateQueued(rows, matched, updateValues)
+              ) {
+                return { data: null, error: { ...DUPLICATE_QUEUED_ERROR } };
+              }
               matched.forEach((r) => Object.assign(r, updateValues));
               return { data: matched.map((r) => ({ ...r })), error: null };
             }

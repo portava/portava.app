@@ -23,10 +23,15 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import stampCatalogRouter from "../routes/stampCatalog.js";
+import { wouldCreateDuplicateQueued, DUPLICATE_QUEUED_ERROR } from "./stampQueueConstraint.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const ADMIN_USER_ID   = "aaaaaaaa-0000-0000-0002-000000000001";
 const CATALOG_ID      = "00000000-0000-0000-0003-000000000001";
+// Separate catalog for the already-queued fixture row: the partial unique
+// index on stamp_generation_queue(catalog_id) WHERE status='queued' means a
+// queued row for CATALOG_ID would block any requeue of its failed jobs.
+const CATALOG_ID_B    = "00000000-0000-0000-0003-000000000002";
 const JOB_RETRYABLE   = "00000000-0000-0000-0004-000000000001";
 const JOB_PERMANENT   = "00000000-0000-0000-0004-000000000002";
 const JOB_QUEUED      = "00000000-0000-0000-0004-000000000003";
@@ -94,7 +99,7 @@ function makeStampQueueClient() {
     stamp_generation_queue: [
       { id: JOB_RETRYABLE, catalog_id: CATALOG_ID, status: "retryable_failed",   attempts: 3, requeue_count: 2, last_error: "boom" },
       { id: JOB_PERMANENT, catalog_id: CATALOG_ID, status: "permanently_failed", attempts: 3, requeue_count: 3, last_error: "boom" },
-      { id: JOB_QUEUED,    catalog_id: CATALOG_ID, status: "queued",             attempts: 0, requeue_count: 0, last_error: null },
+      { id: JOB_QUEUED,    catalog_id: CATALOG_ID_B, status: "queued",           attempts: 0, requeue_count: 0, last_error: null },
     ],
     stamp_artwork_versions: [],
     universal_stamp_catalog: [{ id: CATALOG_ID, status: "approved" }],
@@ -106,19 +111,44 @@ function makeStampQueueClient() {
   function chain(tableName: string, rows: any[]) {
     let filtered = rows;
     let pendingUpdate: Record<string, any> | null = null;
+    let insertError: { code: string; message: string } | null = null;
     let call: UpdateCall | null = null;
 
     const applyUpdate = () => {
       if (pendingUpdate !== null) {
+        // Partial unique index: one queued row per catalog_id — reject the
+        // whole UPDATE with 23505 instead of committing a duplicate.
+        if (
+          tableName === "stamp_generation_queue" &&
+          wouldCreateDuplicateQueued(db[tableName] ?? [], filtered, pendingUpdate)
+        ) {
+          pendingUpdate = null;
+          filtered = [];
+          return { ...DUPLICATE_QUEUED_ERROR };
+        }
         for (const row of filtered) Object.assign(row, pendingUpdate);
         pendingUpdate = null;
       }
+      return null;
     };
 
     const b: any = {
       select: () => b,
       insert: (data: any) => {
         const newRows = Array.isArray(data) ? data : [data];
+        // Partial unique index: an insert of a 'queued' row hits 23505 when a
+        // queued row for the same catalog_id already exists.
+        if (tableName === "stamp_generation_queue") {
+          const dup = newRows.some((n: any) =>
+            n.status === "queued" &&
+            (db[tableName] ?? []).some((r: any) => r.catalog_id === n.catalog_id && r.status === "queued"),
+          );
+          if (dup) {
+            insertError = { ...DUPLICATE_QUEUED_ERROR };
+            filtered = [];
+            return b;
+          }
+        }
         db[tableName] = [...(db[tableName] ?? []), ...newRows];
         filtered = newRows;
         return b;
@@ -144,17 +174,20 @@ function makeStampQueueClient() {
       limit: () => b,
       range: () => b,
       maybeSingle: () => {
-        applyUpdate();
+        const err = insertError ?? applyUpdate();
+        if (err) return Promise.resolve({ data: null, error: err });
         return Promise.resolve({ data: filtered[0] ?? null, error: null });
       },
       single: () => {
-        applyUpdate();
+        const err = insertError ?? applyUpdate();
+        if (err) return Promise.resolve({ data: null, error: err });
         return Promise.resolve(
           filtered[0] ? { data: filtered[0], error: null } : { data: null, error: { message: "No rows" } },
         );
       },
       then: (resolve: any, reject: any) => {
-        applyUpdate();
+        const err = insertError ?? applyUpdate();
+        if (err) return Promise.resolve({ data: null, error: err }).then(resolve, reject);
         return Promise.resolve({ data: filtered, error: null, count: filtered.length }).then(resolve, reject);
       },
     };
@@ -265,19 +298,44 @@ function makeStampQueueClientWithCleanupError() {
   function chain(tableName: string, rows: any[]) {
     let filtered = rows;
     let pendingUpdate: Record<string, any> | null = null;
+    let insertError: { code: string; message: string } | null = null;
     let call: UpdateCall | null = null;
 
     const applyUpdate = () => {
       if (pendingUpdate !== null) {
+        // Partial unique index: one queued row per catalog_id — reject the
+        // whole UPDATE with 23505 instead of committing a duplicate.
+        if (
+          tableName === "stamp_generation_queue" &&
+          wouldCreateDuplicateQueued(db[tableName] ?? [], filtered, pendingUpdate)
+        ) {
+          pendingUpdate = null;
+          filtered = [];
+          return { ...DUPLICATE_QUEUED_ERROR };
+        }
         for (const row of filtered) Object.assign(row, pendingUpdate);
         pendingUpdate = null;
       }
+      return null;
     };
 
     const b: any = {
       select: () => b,
       insert: (data: any) => {
         const newRows = Array.isArray(data) ? data : [data];
+        // Partial unique index: an insert of a 'queued' row hits 23505 when a
+        // queued row for the same catalog_id already exists.
+        if (tableName === "stamp_generation_queue") {
+          const dup = newRows.some((n: any) =>
+            n.status === "queued" &&
+            (db[tableName] ?? []).some((r: any) => r.catalog_id === n.catalog_id && r.status === "queued"),
+          );
+          if (dup) {
+            insertError = { ...DUPLICATE_QUEUED_ERROR };
+            filtered = [];
+            return b;
+          }
+        }
         db[tableName] = [...(db[tableName] ?? []), ...newRows];
         filtered = newRows;
         return b;
@@ -303,17 +361,20 @@ function makeStampQueueClientWithCleanupError() {
       limit: () => b,
       range: () => b,
       maybeSingle: () => {
-        applyUpdate();
+        const err = insertError ?? applyUpdate();
+        if (err) return Promise.resolve({ data: null, error: err });
         return Promise.resolve({ data: filtered[0] ?? null, error: null });
       },
       single: () => {
-        applyUpdate();
+        const err = insertError ?? applyUpdate();
+        if (err) return Promise.resolve({ data: null, error: err });
         return Promise.resolve(
           filtered[0] ? { data: filtered[0], error: null } : { data: null, error: { message: "No rows" } },
         );
       },
       then: (resolve: any, reject: any) => {
-        applyUpdate();
+        const err = insertError ?? applyUpdate();
+        if (err) return Promise.resolve({ data: null, error: err }).then(resolve, reject);
         return Promise.resolve({ data: filtered, error: null, count: filtered.length }).then(resolve, reject);
       },
     };
@@ -400,11 +461,21 @@ describe("POST /admin/stamps/catalog/:id/regenerate — failed-job reset", () =>
       "reset guard must cover retryable_failed AND permanently_failed");
     assert.deepEqual(resetCall!.eqFilters, [["catalog_id", CATALOG_ID]]);
 
-    // Both failed rows actually reset in the fake db
-    for (const id of [JOB_RETRYABLE, JOB_PERMANENT]) {
-      const row = client._db.stamp_generation_queue.find((r) => r.id === id)!;
-      assert.equal(row.status, "queued", `${id} must be re-queued`);
-      assert.equal(row.requeue_count, 0, `${id} requeue_count must reset`);
-    }
+    // Real-DB semantics: the single UPDATE would promote BOTH failed rows to
+    // 'queued' for the same catalog_id, violating the partial unique index —
+    // PostgreSQL raises 23505 and rolls the whole statement back, so the
+    // failed rows keep their statuses. The subsequent insert then succeeds
+    // (no queued row exists after the rollback), leaving exactly one queued
+    // row for the catalog.
+    const retryRow = client._db.stamp_generation_queue.find((r) => r.id === JOB_RETRYABLE)!;
+    const permRow  = client._db.stamp_generation_queue.find((r) => r.id === JOB_PERMANENT)!;
+    assert.equal(retryRow.status, "retryable_failed", "rolled-back UPDATE must leave the retryable row unchanged");
+    assert.equal(permRow.status, "permanently_failed", "rolled-back UPDATE must leave the permanent row unchanged");
+
+    const queuedRows = client._db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.status === "queued",
+    );
+    assert.equal(queuedRows.length, 1, "exactly one queued row must exist after regenerate");
+    assert.equal(queuedRows[0].triggered_by_action, `admin_regenerate:${ADMIN_USER_ID}`);
   });
 });
