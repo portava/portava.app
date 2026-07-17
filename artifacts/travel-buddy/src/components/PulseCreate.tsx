@@ -3,7 +3,7 @@ import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, TextInput,
   Image, ActivityIndicator, Switch,
 } from 'react-native';
-import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
+import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
 import { MentionInput, type MentionInputHandle } from './MentionInput.tsx';
 import { MentionSuggestionList } from './MentionSuggestionList.tsx';
 import type { AnyMentionSuggestion, TagSpan } from '../services/tagging.ts';
@@ -423,7 +423,7 @@ export function UnifiedPostComposer({
           gives the inner sheet a defined height so the ScrollView (flex: 1)
           can measure itself — without this the type grid collapses to 0 on
           Android when the keyboard is not open. */}
-      <KeyboardSafeScrollView style={uc.kav}>
+      <KeyboardSafeView style={uc.kav} scrollViewProps={{ showsVerticalScrollIndicator: false }}>
         <View style={[uc.sheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
           {/* drag handle + header */}
           <View style={uc.grab} />
@@ -435,12 +435,7 @@ export function UnifiedPostComposer({
           </View>
 
           {/* type grid + form */}
-          <ScrollView
-            style={{ flex: 1 }}
-            contentContainerStyle={uc.scroll}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
+          <View style={uc.scroll}>
             {/* When a type is selected show a compact chip; otherwise show the full 2-col grid.
                 This keeps the form fields visible even when the keyboard is open. */}
             {selectedType ? (
@@ -732,7 +727,7 @@ export function UnifiedPostComposer({
                 <Text style={uc.errorText}>{error}</Text>
               </View>
             )}
-          </ScrollView>
+          </View>
 
           {/* sticky submit — hidden for dedicated composers */}
           {selectedType && !DEDICATED_COMPOSERS[selectedType] && (
@@ -749,7 +744,7 @@ export function UnifiedPostComposer({
             </View>
           )}
         </View>
-      </KeyboardSafeScrollView>
+      </KeyboardSafeView>
 
       {/* Location picker */}
       <GlobalPlacePicker
