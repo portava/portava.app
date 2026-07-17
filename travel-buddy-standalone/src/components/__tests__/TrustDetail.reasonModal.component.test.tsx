@@ -21,7 +21,6 @@ jest.mock('react-native-safe-area-context', () => ({
 jest.mock('../../hooks/useRequireAdmin', () => ({ useRequireAdmin: jest.fn() }));
 jest.mock('lucide-react-native', () => new Proxy({}, { get: () => () => null }));
 jest.mock('../../services/trustAdmin', () => ({
-  ...jest.requireActual('../../services/trustAdmin'),
   fetchUserTrustDetail:  jest.fn(),
   confirmTrustEvent:     jest.fn(),
   dismissTrustEvent:     jest.fn(),

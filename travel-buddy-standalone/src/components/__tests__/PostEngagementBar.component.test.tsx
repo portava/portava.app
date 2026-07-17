@@ -36,7 +36,6 @@ jest.mock('../EngagementUserListSheet', () => ({
 // ── Service mocks ─────────────────────────────────────────────────────────────
 
 jest.mock('../../services/postEngagement', () => ({
-  ...jest.requireActual('../../services/postEngagement'),
   likePost:       jest.fn().mockResolvedValue(null),
   unlikePost:     jest.fn().mockResolvedValue(null),
   getReactions:   jest.fn().mockResolvedValue({ reactions: [], myReaction: null }),
@@ -46,13 +45,11 @@ jest.mock('../../services/postEngagement', () => ({
 }));
 
 jest.mock('../../services/likedPostsCache', () => ({
-  ...jest.requireActual('../../services/likedPostsCache'),
   getLiked: jest.fn().mockReturnValue(undefined),
   setLiked: jest.fn(),
 }));
 
 jest.mock('../../context/SessionContext', () => ({
-  ...jest.requireActual('../../context/SessionContext'),
   useSession: () => ({ userId: 'user-test-1', isAuthed: true }),
 }));
 

@@ -24,7 +24,6 @@ import { render, fireEvent } from '@testing-library/react-native';
 import { ReportPostSheet } from '../ReportPostSheet.tsx';
 
 jest.mock('../../services/reports', () => ({
-  ...jest.requireActual('../../services/reports'),
   reportContent: jest.fn().mockResolvedValue({ ok: true }),
 }));
 

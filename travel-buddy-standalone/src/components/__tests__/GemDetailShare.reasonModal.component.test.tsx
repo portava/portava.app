@@ -23,12 +23,10 @@ jest.mock('react-native-safe-area-context', () => {
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('expo-location', () => ({}));
 jest.mock('../../hooks/useNavBarCollapse', () => ({
-  ...jest.requireActual('../../hooks/useNavBarCollapse'),
   NavBarFiller: () => null,
   useNavBarScrollHandler: () => () => {},
 }));
 jest.mock('../../context/SessionContext', () => ({
-  ...jest.requireActual('../../context/SessionContext'),
   useSession: () => ({ isAuthed: true, loading: false }),
 }));
 jest.mock('../RouteBuilderSheet', () => ({ RouteBuilderSheet: () => null }));
@@ -36,13 +34,11 @@ jest.mock('../discovery/TripWishlistPicker', () => ({ TripWishlistPicker: () => 
 jest.mock('../ReviewsSection', () => ({ ReviewsSection: () => null }));
 jest.mock('../discovery/GemMapPreview', () => ({ GemMapPreview: () => null }));
 jest.mock('../../hooks/useHiddenGems', () => ({
-  ...jest.requireActual('../../hooks/useHiddenGems'),
   useGemDetail: jest.fn(),
   useGemCheckin: () => ({ checkin: jest.fn(), loading: false, result: null }),
   useGemReport: () => ({ report: jest.fn(), loading: false, done: false }),
 }));
 jest.mock('../../services/hiddenGems', () => ({
-  ...jest.requireActual('../../services/hiddenGems'),
   verificationBadge: () => 'Community verified',
   sensitivityLabel: () => 'Public',
   shareGemToTelegraph: jest.fn(),
