@@ -3822,4 +3822,84 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     );
     assert.equal(nominatimCalls, 0, "Nominatim never called across all three calls");
   });
+
+  it("TTL-expiry re-geocode that succeeds but writeDbCache errors still returns the positive result — not null", async () => {
+    const T0 = 1_700_000_000_000;
+    const NEGATIVE_TTL_MS = 6 * 60 * 60 * 1_000;
+    mockNow(T0);
+
+    // Phase 1: seed a null (negative) in-memory entry.
+    // Nominatim returns no results and the DB cache is empty.
+    let nominatimCalls = 0;
+    let nominatimSucceeds = false;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () =>
+          nominatimSucceeds
+            ? [{ address: { country_code: "pt", country: "Portugal" } }]
+            : [],
+      };
+    });
+
+    let upsertCalls = 0;
+    let upsertThrows = false;
+    const dbClient = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() { return { data: null, error: null }; },
+          upsert() {
+            upsertCalls++;
+            if (upsertThrows) {
+              return Promise.reject(new Error("connection reset during upsert"));
+            }
+            return Promise.resolve({ error: null });
+          },
+          then(resolve: (v: any) => void) {
+            resolve({ data: [], error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(dbClient);
+
+    const seeded = await geocodeCityCountry("Lisbon");
+    assert.equal(seeded, null, "pre-condition: negative result seeded");
+    assert.equal(nominatimCalls, 1, "one Nominatim attempt during seeding");
+    const seededEntry = _getGeocodeCacheEntryForTests("lisbon");
+    assert.ok(seededEntry && seededEntry.result === null, "null entry is in the in-memory cache");
+
+    // Phase 2: advance past the negative TTL so the entry expires; Nominatim
+    // now succeeds, but the DB upsert (writeDbCache) throws.
+    nominatimSucceeds = true;
+    upsertThrows = true;
+    mockNow(T0 + NEGATIVE_TTL_MS + 1_000);
+
+    const recovered = await geocodeCityCountry("Lisbon");
+    assert.ok(recovered !== null,
+      "positive result must be returned even though writeDbCache threw");
+    assert.equal(recovered?.countryCode, "PT", "recovered result is the fresh Nominatim result");
+    assert.equal(nominatimCalls, 2, "a fresh Nominatim call was made after TTL expiry");
+    assert.equal(upsertCalls, 1, "writeDbCache (upsert) was attempted and threw");
+
+    // Phase 3: the positive result must also be in the in-memory cache —
+    // the upsert failure must not poison or drop the entry.
+    const entry = _getGeocodeCacheEntryForTests("lisbon");
+    assert.ok(entry, "cache entry exists after the failed upsert");
+    assert.equal(entry!.result?.countryCode, "PT",
+      "in-memory cache holds the positive result despite the writeDbCache error");
+
+    // Follow-up call is served from memory — no extra Nominatim call, no extra upsert.
+    const followUp = await geocodeCityCountry("Lisbon");
+    assert.equal(followUp?.countryCode, "PT", "follow-up call returns the cached positive result");
+    assert.equal(nominatimCalls, 2, "no additional Nominatim call on the follow-up");
+    assert.equal(upsertCalls, 1, "no additional upsert attempt on the follow-up");
+  });
 });
