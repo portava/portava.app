@@ -1535,6 +1535,110 @@ describe("PATCH /api/me/profile — old storage file cleanup on clear", () => {
     );
   });
 
+  // ── Replacement (new URL while an old one exists) — the far more common path ──
+
+  it("removes the old avatar file from storage when avatarUrl is replaced with a new URL", async () => {
+    removedPaths = [];
+    profileRow = {
+      ...PROFILE_ROW_WITH_SENSITIVE,
+      avatar_url: STORAGE_BASE + OLD_AVATAR_PATH,
+      cover_photo_url: null,
+    };
+
+    const { status, body } = await patchProfile({
+      avatarUrl: STORAGE_BASE + `avatars/${USER_ID}/new-avatar.jpg`,
+    });
+    assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    await flushCleanup();
+
+    assert.deepEqual(
+      removedPaths,
+      [OLD_AVATAR_PATH],
+      `expected old avatar path to be removed after replacement — got: ${JSON.stringify(removedPaths)}`,
+    );
+  });
+
+  it("removes the old cover file from storage when coverUrl is replaced with a new URL", async () => {
+    removedPaths = [];
+    profileRow = {
+      ...PROFILE_ROW_WITH_SENSITIVE,
+      avatar_url: null,
+      cover_photo_url: STORAGE_BASE + OLD_COVER_PATH,
+    };
+
+    const { status, body } = await patchProfile({
+      coverUrl: STORAGE_BASE + `covers/${USER_ID}/new-cover.jpg`,
+    });
+    assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    await flushCleanup();
+
+    assert.deepEqual(
+      removedPaths,
+      [OLD_COVER_PATH],
+      `expected old cover path to be removed after replacement — got: ${JSON.stringify(removedPaths)}`,
+    );
+  });
+
+  it("removes both old files when avatarUrl and coverUrl are replaced in one request", async () => {
+    removedPaths = [];
+    profileRow = {
+      ...PROFILE_ROW_WITH_SENSITIVE,
+      avatar_url: STORAGE_BASE + OLD_AVATAR_PATH,
+      cover_photo_url: STORAGE_BASE + OLD_COVER_PATH,
+    };
+
+    const { status } = await patchProfile({
+      avatarUrl: STORAGE_BASE + `avatars/${USER_ID}/new-avatar.jpg`,
+      coverUrl:  STORAGE_BASE + `covers/${USER_ID}/new-cover.jpg`,
+    });
+    assert.equal(status, 200);
+    await flushCleanup();
+
+    assert.deepEqual(
+      removedPaths.sort(),
+      [OLD_AVATAR_PATH, OLD_COVER_PATH].sort(),
+      `expected both old paths to be removed after replacement — got: ${JSON.stringify(removedPaths)}`,
+    );
+  });
+
+  it("does not call storage removal when the new avatarUrl equals the old URL (idempotent re-save)", async () => {
+    removedPaths = [];
+    profileRow = {
+      ...PROFILE_ROW_WITH_SENSITIVE,
+      avatar_url: STORAGE_BASE + OLD_AVATAR_PATH,
+      cover_photo_url: null,
+    };
+
+    const { status } = await patchProfile({ avatarUrl: STORAGE_BASE + OLD_AVATAR_PATH });
+    assert.equal(status, 200);
+    await flushCleanup();
+
+    assert.deepEqual(
+      removedPaths,
+      [],
+      `no removal expected when new URL equals old URL — got: ${JSON.stringify(removedPaths)}`,
+    );
+  });
+
+  it("does not call storage removal when the new coverUrl equals the old URL (idempotent re-save)", async () => {
+    removedPaths = [];
+    profileRow = {
+      ...PROFILE_ROW_WITH_SENSITIVE,
+      avatar_url: null,
+      cover_photo_url: STORAGE_BASE + OLD_COVER_PATH,
+    };
+
+    const { status } = await patchProfile({ coverUrl: STORAGE_BASE + OLD_COVER_PATH });
+    assert.equal(status, 200);
+    await flushCleanup();
+
+    assert.deepEqual(
+      removedPaths,
+      [],
+      `no removal expected when new URL equals old URL — got: ${JSON.stringify(removedPaths)}`,
+    );
+  });
+
   it("does not remove a file whose old URL is outside the profile-media public bucket", async () => {
     removedPaths = [];
     profileRow = {
