@@ -2220,6 +2220,72 @@ describe("runGenerationCycle — orphan cleanup: remove() returns error object (
     assert.equal(inserts.length, 0, "must not insert any version rows after a mid-batch failure");
   });
 
+  it("logs all uploaded paths in orphan_cleanup_error when two uploads succeed before the third fails and remove() resolves with an error", async () => {
+    // Mirrors the thrown-remove() two-upload test (task 744), but for the
+    // silent-error path: remove() resolves with { error: { message } } instead
+    // of throwing. The orphan_cleanup_error log must list BOTH successfully
+    // uploaded paths, matching the recorded storageCalls, with no duplicates.
+    let uploadCall = 0;
+    const originalUploadError = "Storage upload failed: bucket quota exceeded";
+    const removeErrorMessage = "object not found";
+
+    const { sc, inserts, storageCalls, deleteCalls } = makeFakeClientWithStorage({
+      onUpload(_path, _buf) {
+        uploadCall++;
+        if (uploadCall === 3) throw new Error(originalUploadError);
+      },
+      removeError: { message: removeErrorMessage },
+    });
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    const loggedErrors: string[] = [];
+    const origError = console.error.bind(console);
+    console.error = (...args: any[]) => { loggedErrors.push(args.join(" ")); origError(...args); };
+
+    let result: Awaited<ReturnType<typeof runGenerationCycle>>;
+    try {
+      result = await runGenerationCycle();
+    } finally {
+      console.error = origError;
+    }
+
+    assert.equal(result!.processed, false, "processed must be false when generation fails");
+
+    // Two uploads succeeded before the third threw; remove() was called once.
+    assert.equal(storageCalls.length, 2, "first two uploads should have succeeded before the third failed");
+    assert.equal(deleteCalls.length, 1, "remove() must have been called for the orphaned uploads");
+
+    // orphan_cleanup_error must be logged with BOTH paths.
+    const cleanupErrorLine = loggedErrors.find(
+      (l) => l.includes("orphan_cleanup_error") && l.includes(removeErrorMessage),
+    );
+    assert.ok(cleanupErrorLine, "must log orphan_cleanup_error when remove() resolves with an error object");
+    let parsed: any;
+    try {
+      parsed = JSON.parse(cleanupErrorLine!);
+    } catch {
+      assert.fail(`orphan_cleanup_error log line must be parseable JSON, got: ${cleanupErrorLine}`);
+    }
+    assert.ok(Array.isArray(parsed.paths), "paths must be an array");
+    assert.equal(
+      parsed.paths.length,
+      2,
+      `paths must list exactly the two successfully uploaded files, got: ${JSON.stringify(parsed.paths)}`,
+    );
+    // No duplicates.
+    assert.equal(new Set(parsed.paths).size, 2, "paths must not contain duplicates");
+    // Each logged path matches a recorded successful upload.
+    const uploadedPaths = new Set(storageCalls.map((c) => c.path));
+    for (const p of parsed.paths) {
+      assert.ok(uploadedPaths.has(p), `logged path ${p} must match a recorded storage upload`);
+    }
+
+    // No version rows inserted.
+    assert.equal(inserts.length, 0, "must not insert any version rows after a mid-batch failure");
+  });
+
   it("writes cleanup_error and cleanup_error_paths to the queue row when remove() resolves with an error", async () => {
     // Ensures the admin badge appears for the silent-error path — not just
     // when remove() throws.
