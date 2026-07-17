@@ -773,7 +773,7 @@ router.post("/admin/stamps/catalog/:id/regenerate", async (req, res) => {
     // whether a state change happened (used for audit-log gating below).
     const { data: resetRows } = await sc
       .from("stamp_generation_queue")
-      .update({ status: "queued", attempts: 0, requeue_count: 0, last_error: null, cleanup_error: null, cleanup_error_paths: null, updated_at: new Date().toISOString() })
+      .update({ status: "queued", priority: 1, triggered_by_action: `admin_regenerate:${adminId}`, attempts: 0, requeue_count: 0, last_error: null, cleanup_error: null, cleanup_error_paths: null, updated_at: new Date().toISOString() })
       .eq("id", survivor.id)
       .in("status", ["retryable_failed", "permanently_failed"])
       .select();

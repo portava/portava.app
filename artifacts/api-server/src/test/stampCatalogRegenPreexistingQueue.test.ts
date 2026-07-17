@@ -398,6 +398,44 @@ describe("POST regenerate when a 'queued' job already exists", () => {
     assert.equal(surviving!.status, "queued", "surviving job must still be queued");
   });
 
+  it("resetting a retryable_failed job applies priority=1 and admin triggered_by_action", async () => {
+    // A failed job is reset back to 'queued' by an UPDATE (the subsequent
+    // priority=1 insert is blocked by 23505). The reset itself must apply the
+    // admin-regenerate priority, otherwise the job keeps its old priority (0)
+    // and never jumps the queue as designed.
+    Object.assign(db.stamp_generation_queue[0], {
+      status:              "retryable_failed",
+      priority:            0,
+      attempts:            3,
+      triggered_by_action: "system_auto",
+      last_error:          "boom",
+    });
+
+    const res = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(res.status, 200, `regenerate failed: ${JSON.stringify(res.body)}`);
+
+    const surviving = db.stamp_generation_queue.find((r) => r.id === EXISTING_JOB_ID);
+    assert.ok(surviving, "pre-seeded job must still exist");
+    assert.equal(surviving!.status, "queued", "failed job must be reset to queued");
+    assert.equal(
+      surviving!.priority,
+      1,
+      `admin regenerate must reset the failed job with priority=1, found priority=${surviving!.priority}: ${JSON.stringify(surviving)}`,
+    );
+    assert.equal(
+      surviving!.triggered_by_action,
+      `admin_regenerate:${ADMIN_ID}`,
+      `reset job must record the admin trigger, found '${surviving!.triggered_by_action}'`,
+    );
+    assert.equal(surviving!.attempts, 0, "attempts must be reset to 0");
+
+    // Still exactly one active row — the priority=1 insert was blocked by 23505.
+    const activeRows = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID && (r.status === "queued" || r.status === "processing"),
+    );
+    assert.equal(activeRows.length, 1, `expected 1 active row, found ${activeRows.length}`);
+  });
+
   it("the 23505 guard also applies when the pre-existing job is in 'processing' status", async () => {
     // Advance the pre-seeded job to processing (simulates the worker having
     // picked it up), then call regenerate.  The unique-constraint guard covers
