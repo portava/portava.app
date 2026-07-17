@@ -76,7 +76,7 @@ export interface UpdateProfileInput {
   passportVisibility?: 'public' | 'followers_only' | 'private';
   avatarUrl?: string;
   coverUrl?: string;
-  travelStyle?: string;
+  travelStyle?: string | null;
   openToMeet?: boolean;
   spokenLanguages?: string[];
   defaultLanguage?: string | null;

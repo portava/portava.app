@@ -13,7 +13,7 @@ import { PP } from '../../../src/theme/passportTokens';
 import { space } from '../../../src/theme/tokens';
 import {
   SettingsScreen, SettingsSection, SaveBar, useUnsavedGuard, useSavedThenBack,
-  ChipGrid, type SaveState,
+  ChipGrid, FieldLabel, FieldHint, type SaveState,
 } from '../../../src/components/settings/SettingsUI';
 
 const TRAVEL_STYLE_OPTIONS = [
@@ -33,11 +33,13 @@ const TRAVEL_STYLE_CHIP_OPTIONS = TRAVEL_STYLE_OPTIONS.map((s) => ({ key: s, lab
 interface FormState {
   interests: string[];
   travelStyles: string[];
+  /** Legacy singular travel style; null once cleared. */
+  legacyStyle: string | null;
 }
 
 export default function AboutScreen() {
   const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState<FormState>({ interests: [], travelStyles: [] });
+  const [form, setForm] = useState<FormState>({ interests: [], travelStyles: [], legacyStyle: null });
   const [originalForm, setOriginalForm] = useState<FormState | null>(null);
 
   const [saveState, setSaveState] = useState<SaveState>('idle');
@@ -47,7 +49,8 @@ export default function AboutScreen() {
 
   const isDirty = originalForm !== null && (
     form.interests.join(',') !== originalForm.interests.join(',') ||
-    form.travelStyles.join(',') !== originalForm.travelStyles.join(',')
+    form.travelStyles.join(',') !== originalForm.travelStyles.join(',') ||
+    form.legacyStyle !== originalForm.legacyStyle
   );
   useUnsavedGuard(isDirty);
 
@@ -60,6 +63,7 @@ export default function AboutScreen() {
         const initial: FormState = {
           interests: p.interests ?? [],
           travelStyles: p.travelStyles ?? [],
+          legacyStyle: p.travelStyle ?? null,
         };
         setForm(initial);
         setOriginalForm(initial);
@@ -83,6 +87,10 @@ export default function AboutScreen() {
       }
       if (form.interests.join(',') !== (originalForm?.interests ?? []).join(',')) {
         patch.interests = form.interests;
+      }
+      if (form.legacyStyle !== (originalForm?.legacyStyle ?? null)) {
+        // Explicit null clears the legacy singular travel style on the server.
+        patch.travelStyle = form.legacyStyle;
       }
 
       if (Object.keys(patch).length === 0) {
@@ -147,6 +155,20 @@ export default function AboutScreen() {
             }))}
           />
         </View>
+        {originalForm?.legacyStyle ? (
+          <View style={st.field}>
+            <FieldLabel>Legacy travel style</FieldLabel>
+            <ChipGrid
+              options={[{ key: originalForm.legacyStyle, label: originalForm.legacyStyle }]}
+              selected={form.legacyStyle ? [form.legacyStyle] : []}
+              onToggle={() => setForm((f) => ({
+                ...f,
+                legacyStyle: f.legacyStyle ? null : (originalForm?.legacyStyle ?? null),
+              }))}
+            />
+            <FieldHint>Tap to deselect and save to remove this travel style.</FieldHint>
+          </View>
+        ) : null}
       </SettingsSection>
 
       <SaveBar state={saveState} onPress={handleSave} disabled={!isDirty} error={saveError} />
