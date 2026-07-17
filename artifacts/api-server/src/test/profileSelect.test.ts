@@ -731,10 +731,10 @@ describe("profile data-leak prevention", () => {
   // ── PATCH /api/me/profile — all nullable fields cleared simultaneously ────────
   //
   // Exercises the maximum-width null-clear path through the row builder:
-  // dateOfBirth, homeCity, preferredLanguage, and bio are all sent as null in
-  // one request. Confirms that mapProfile's DOB strip holds even when every
-  // nullable column is cleared at once — no combination of null assignments
-  // must cause the strip to be skipped.
+  // dateOfBirth, homeCity, preferredLanguage, and defaultLanguage are all sent
+  // as null in one request. Confirms that mapProfile's DOB strip holds even
+  // when every nullable column is cleared at once — no combination of null
+  // assignments must cause the strip to be skipped.
 
   describe("PATCH /api/me/profile — all nullable fields cleared at once", () => {
     const ALL_NULL_PAYLOAD = {
@@ -803,6 +803,77 @@ describe("profile data-leak prevention", () => {
       assert.ok(
         !("dobVerified" in body),
         `dobVerified must not appear in all-null-clear response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+  });
+
+  // ── PATCH /api/me/profile — clearing homeCity with a non-null bio, no DOB in payload ──
+  //
+  // homeCity maps to home_city, which goes through its own branch in the
+  // update-row builder.  This confirms that mapProfile's DOB strip fires even
+  // when the PATCH payload contains neither dateOfBirth nor any DOB-adjacent
+  // field — the leaked fields can only come from the re-fetched DB row.
+
+  describe("PATCH /api/me/profile — homeCity: null with non-null bio (mixed update)", () => {
+    it("returns HTTP 200 when clearing homeCity while setting a non-null bio", async () => {
+      const { status, body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { homeCity: null, bio: "hello" },
+        USER_TOKEN,
+      );
+      assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    });
+
+    it("does not include date_of_birth (snake_case) when clearing homeCity with non-null bio", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { homeCity: null, bio: "hello" },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("date_of_birth" in body),
+        `date_of_birth must not appear in homeCity-clear/bio-set response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dateOfBirth (camelCase) when clearing homeCity with non-null bio", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { homeCity: null, bio: "hello" },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dateOfBirth" in body),
+        `dateOfBirth must not appear in homeCity-clear/bio-set response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dob_verified (snake_case) when clearing homeCity with non-null bio", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { homeCity: null, bio: "hello" },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dob_verified" in body),
+        `dob_verified must not appear in homeCity-clear/bio-set response — got keys: ${Object.keys(body).join(", ")}`,
+      );
+    });
+
+    it("does not include dobVerified (camelCase) when clearing homeCity with non-null bio", async () => {
+      const { body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { homeCity: null, bio: "hello" },
+        USER_TOKEN,
+      );
+      assert.ok(
+        !("dobVerified" in body),
+        `dobVerified must not appear in homeCity-clear/bio-set response — got keys: ${Object.keys(body).join(", ")}`,
       );
     });
   });
