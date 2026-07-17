@@ -3816,6 +3816,73 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "oldest entry (synth-city-0) was evicted by the cache-size trim in the DB-cache branch");
   });
 
+  it("cache-size cap (2000 entries) holds when a geocode THROWS and the catch branch writes a negative entry", async () => {
+    // Third sibling: the MAX_CACHE_SIZE trim exists in THREE branches of the
+    // async IIFE — the DB-cache hit branch, the Nominatim success branch (both
+    // covered above), and the catch branch that caches a negative (null) entry
+    // after a thrown Nominatim/network error.  This test covers the catch
+    // branch: with the cache exactly at the cap, a lookup for a brand-new city
+    // that THROWS must not grow the cache past 2 000 entries — the trim must
+    // evict the oldest entry before the negative write.
+    const MAX_CACHE_SIZE = 2_000;
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // No DB cache — every geocode falls through to the fetch mock.
+    _setGeocodeDbClientForTests(makeFixedDbClient(null));
+
+    // Fetch mock: succeeds for the synthetic fill cities, THROWS for failcity.
+    _setGeocodeFetchForTests(async (url: string) => {
+      const q = decodeURIComponent(new URL(url).searchParams.get("q") ?? "").toLowerCase();
+      if (q === "failcity") throw new Error("ECONNRESET: nominatim unreachable");
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "de", country: "Germany" } }],
+      };
+    });
+
+    // Step 1: fill the cache to exactly MAX_CACHE_SIZE with successful geocodes.
+    for (let i = 0; i < MAX_CACHE_SIZE; i++) {
+      await geocodeCityCountry(`synth-city-${i}`);
+    }
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE,
+      "pre-condition: cache is exactly at the 2 000-entry cap");
+    const oldestKey = "synth-city-0";
+    assert.ok(_getGeocodeCacheEntryForTests(oldestKey) !== undefined,
+      "pre-condition: oldest entry (synth-city-0) present");
+
+    // Step 2: geocode a brand-new city whose lookup throws — the catch branch
+    // caches a negative (null) entry.  The trim must fire first.
+    const result = await geocodeCityCountry("failcity");
+    assert.equal(result, null, "thrown geocode resolves to null (never guesses)");
+
+    assert.ok(_getCacheSizeForTests() <= MAX_CACHE_SIZE,
+      "cache size does not exceed MAX_CACHE_SIZE after the negative write");
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE,
+      "cache stays exactly at the cap — one evicted, one negative entry added");
+
+    // The negative entry is present with the short negative TTL semantics.
+    const failEntry = _getGeocodeCacheEntryForTests("failcity");
+    assert.ok(failEntry !== undefined, "failcity negative entry was cached");
+    assert.equal(failEntry?.result, null, "failcity entry is a negative (null) entry");
+
+    // The oldest entry was evicted by the trim in the catch branch.
+    assert.ok(_getGeocodeCacheEntryForTests(oldestKey) === undefined,
+      "oldest entry (synth-city-0) was evicted by the cache-size trim in the catch branch");
+
+    // Step 3: repeated failures for many NEW distinct cities never grow the
+    // cache — this is the unbounded-growth scenario from a Nominatim outage.
+    _setGeocodeFetchForTests(async () => {
+      throw new Error("ECONNRESET: nominatim outage");
+    });
+    for (let i = 0; i < 25; i++) {
+      const r = await geocodeCityCountry(`outage-city-${i}`);
+      assert.equal(r, null, `outage-city-${i} resolves to null`);
+    }
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE,
+      "cache stays at the cap through repeated distinct-city failures during an outage");
+  });
+
   it("positive DB write-back fires after TTL-expiry re-geocode succeeds — recovered entry survives a restart", async () => {
     // Scenario: a prior Nominatim failure cached null for 6 hours (NEGATIVE_TTL_MS).
     // After the TTL expires, Nominatim succeeds.  writeDbCache must be called with
