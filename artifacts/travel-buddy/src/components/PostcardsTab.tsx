@@ -189,9 +189,9 @@ function PostcardTile({
         </View>
       ) : null}
 
-      {/* pinned badge */}
+      {/* pinned badge — sits beside the menu button when the owner is viewing */}
       {isPinned && (
-        <View style={[pc.cornerBadge, pc.pinBadge]}>
+        <View style={[pc.cornerBadge, isOwner && actions ? pc.pinBadge : pc.menuBtn]}>
           <Pin size={12} color="#fff" strokeWidth={2.2} />
         </View>
       )}
@@ -230,8 +230,8 @@ function PostcardTile({
         </View>
       ) : null}
 
-      {/* owner-only visibility chip (non-public only) */}
-      {isOwner && card.visibility !== 'public' && (
+      {/* owner-only visibility chip (non-public only; yields to processing badges) */}
+      {isOwner && card.visibility !== 'public' && !hasPending && !hasFailed && (
         <View style={pc.visChip}>
           <Text style={pc.visChipText}>{card.visibility === 'trip_only' ? 'Trip' : 'Private'}</Text>
         </View>
