@@ -73,6 +73,7 @@ function bypassesTokenHelper(src: string): boolean {
  *   - `const name = (async)? function(`
  *   - `const name = (async)? (args) => {`
  *   - `const name = async arg => {`
+ *   - object property arrows `name: (async)? (args) => {`
  *   - method shorthand `name(` inside class/object bodies
  */
 function extractFunctionBodies(src: string): string[] {
@@ -80,7 +81,7 @@ function extractFunctionBodies(src: string): string[] {
   // We do NOT rely on the regex to capture the full body — it only locates
   // the start position; brace counting does the rest.
   const fnStart =
-    /(?:(?:async\s+)?function\s*\w*\s*\(|(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?(?:function\s*\(|\([^)]*\)\s*=>|\w+\s*=>))/g;
+    /(?:(?:async\s+)?function\s*\w*\s*\(|(?:(?:const|let|var)\s+\w+\s*=|\w+\s*:)\s*(?:async\s*)?(?:function\s*\(|\([^)]*\)\s*=>|\w+\s*=>))/g;
 
   const bodies: string[] = [];
   let match: RegExpExecArray | null;
@@ -125,9 +126,11 @@ function extractFunctionBodies(src: string): string[] {
  */
 function extractExpressionArrowBodies(src: string): string[] {
   // Matches the declarator + arrow of an expression-body arrow function.
+  // Also matches object-property arrows (`name: () =>`) so that a wrapper
+  // hidden inside an object literal cannot evade the guard.
   // Must NOT capture the `{` that a block-body arrow would have next.
   const fnStart =
-    /(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>/g;
+    /(?:(?:const|let|var)\s+\w+\s*=|\w+\s*:)\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>/g;
 
   const bodies: string[] = [];
   let match: RegExpExecArray | null;
@@ -142,23 +145,26 @@ function extractExpressionArrowBodies(src: string): string[] {
     // handled by extractFunctionBodies; skip it here to avoid double-counting.
     if (i >= src.length || src[i] === '{') continue;
 
-    // Collect the expression body, tracking paren/bracket nesting so that
-    // nested calls like `.then(…)` are fully included.
+    // Collect the expression body, tracking paren/bracket/brace nesting so
+    // that nested calls like `.then(…)` and object literals are included.
+    // Stops at `;` or `,` at depth 0 (a `,` ends an object-property arrow's
+    // expression, preventing sibling properties from bleeding into the body).
     let depth = 0;
     const start = i;
     while (i < src.length) {
       const ch = src[i];
-      if (ch === '(' || ch === '[') {
+      if (ch === '(' || ch === '[' || ch === '{') {
         depth++;
-      } else if (ch === ')' || ch === ']') {
+      } else if (ch === ')' || ch === ']' || ch === '}') {
         if (depth > 0) {
           depth--;
         } else {
           // Unmatched closing delimiter — we have stepped outside the
-          // expression (e.g. the arrow is itself inside a call argument).
+          // expression (e.g. the arrow is itself inside a call argument or
+          // object literal).
           break;
         }
-      } else if (ch === ';' && depth === 0) {
+      } else if ((ch === ';' || ch === ',') && depth === 0) {
         break;
       }
       i++;
@@ -330,6 +336,53 @@ describe('definesLocalTokenWrapper — expression-body arrow detection', () => {
     assert.ok(
       !definesLocalTokenWrapper(src),
       'Comma-operator arrow reading only user.id should pass',
+    );
+  });
+
+  it('flags an object-property expression-body arrow wrapping getSession + access_token', () => {
+    const src = `const api = { getToken: () => supabase.auth.getSession().then(d => d.data.session?.access_token) };`;
+    assert.ok(
+      definesLocalTokenWrapper(src),
+      'Object-property expression-body arrow with getSession + access_token should be flagged',
+    );
+  });
+
+  it('flags an async object-property expression-body arrow', () => {
+    const src = `const api = { getToken: async () => supabase.auth.getSession().then(d => d.data.session?.access_token) };`;
+    assert.ok(
+      definesLocalTokenWrapper(src),
+      'Async object-property expression-body arrow should be flagged',
+    );
+  });
+
+  it('flags an object-property block-body arrow wrapping getSession + access_token', () => {
+    const src = [
+      'const api = {',
+      '  getToken: async () => {',
+      '    const { data } = await supabase.auth.getSession();',
+      '    return data.session?.access_token;',
+      '  },',
+      '};',
+    ].join('\n');
+    assert.ok(
+      definesLocalTokenWrapper(src),
+      'Object-property block-body arrow should be flagged',
+    );
+  });
+
+  it('flags an object-property arrow with a single unparenthesized param', () => {
+    const src = `const api = { getToken: d => supabase.auth.getSession().then(x => x.data.session?.access_token) };`;
+    assert.ok(
+      definesLocalTokenWrapper(src),
+      'Object-property arrow with bare param should be flagged',
+    );
+  });
+
+  it('does NOT flag an object literal where getSession and access_token live in different properties', () => {
+    const src = `const api = { getUserId: () => supabase.auth.getSession().then(d => d.data.session?.user?.id), header: 'access_token' };`;
+    assert.ok(
+      !definesLocalTokenWrapper(src),
+      'Sibling properties must not bleed into each other and cause a false positive',
     );
   });
 });
