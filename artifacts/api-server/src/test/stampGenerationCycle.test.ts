@@ -1815,13 +1815,14 @@ describe("persistCleanupError — repeated failures on the same job do not dupli
    * update() persists them — so a second persistCleanupError call reads back
    * what the first one wrote, exactly like a worker retry against the real DB.
    */
-  function makeStatefulQueueClient(opts: { failUpdateOnCall?: number } = {}) {
+  function makeStatefulQueueClient(opts: { failUpdateOnCall?: number; failReadOnCall?: number } = {}) {
     const row: { cleanup_error: string | null; cleanup_error_paths: string[] | null } = {
       cleanup_error: null,
       cleanup_error_paths: null,
     };
     const updatePayloads: any[] = [];
     let updateCall = 0;
+    let readCall = 0;
     const sc: any = {
       from(_table: string) {
         return {
@@ -1829,6 +1830,13 @@ describe("persistCleanupError — repeated failures on the same job do not dupli
             const b: any = {
               eq() { return b; },
               maybeSingle() {
+                readCall++;
+                if (opts.failReadOnCall === readCall) {
+                  return Promise.resolve({
+                    data: null,
+                    error: { message: "simulated read failure" },
+                  });
+                }
                 return Promise.resolve({
                   data: { cleanup_error_paths: row.cleanup_error_paths },
                   error: null,
@@ -1922,6 +1930,30 @@ describe("persistCleanupError — repeated failures on the same job do not dupli
       updatePayloads[2].cleanup_error_paths.sort(),
       ["catalog/cat-1/a.png", "catalog/cat-1/c.png"],
       "third write must merge call 1's stored path with call 3's new path",
+    );
+  });
+
+  it("does not wipe previously stored paths when the read fails but the write would succeed", async () => {
+    // Call 1 stores a path normally. Call 2's read errors (data: null) — the
+    // merge base is unknown, so persistCleanupError must NOT write a list
+    // containing only the new paths, which would discard call 1's path.
+    const { sc, row, updatePayloads } = makeStatefulQueueClient({ failReadOnCall: 2 });
+
+    await persistCleanupError(sc, "job-1", "err-1", ["catalog/cat-1/a.png"]);
+    await persistCleanupError(sc, "job-1", "err-2", ["catalog/cat-1/b.png"]); // read fails
+
+    assert.equal(updatePayloads.length, 1, "the write must be skipped when the read errored");
+    assert.deepEqual(
+      row.cleanup_error_paths,
+      ["catalog/cat-1/a.png"],
+      `previously stored paths must survive a failed read, got: ${JSON.stringify(row.cleanup_error_paths)}`,
+    );
+
+    // A later call with a healthy read merges everything back together.
+    await persistCleanupError(sc, "job-1", "err-3", ["catalog/cat-1/c.png"]);
+    assert.deepEqual(
+      [...(row.cleanup_error_paths ?? [])].sort(),
+      ["catalog/cat-1/a.png", "catalog/cat-1/c.png"],
     );
   });
 });

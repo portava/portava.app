@@ -410,11 +410,25 @@ export async function persistCleanupError(
   newPaths: string[],
 ): Promise<void> {
   try {
-    const { data: existing } = await sc
+    const { data: existing, error: readErr } = await sc
       .from("stamp_generation_queue")
       .select("cleanup_error_paths")
       .eq("id", jobId)
       .maybeSingle();
+
+    if (readErr) {
+      // If the read failed we cannot know what paths are already stored.
+      // Writing with an empty fallback would replace the accumulated list
+      // with only the new paths — silently losing earlier orphaned files.
+      // Skip the destructive write; a later retry will merge properly.
+      console.error(JSON.stringify({
+        event:  "stamp.generation.cleanup_error_persist_read_failed",
+        job_id: jobId,
+        error:  readErr.message,
+        skipped_paths: newPaths,
+      }));
+      return;
+    }
 
     const existingPaths: string[] = (existing?.cleanup_error_paths ?? []) as string[];
     // Deduplicate so the same path never appears twice even if two cleanup
