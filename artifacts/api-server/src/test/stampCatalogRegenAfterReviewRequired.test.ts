@@ -90,11 +90,22 @@ function post(
 
 type DB = Record<string, any[]>;
 
-function makeClient(db: DB) {
+interface ClientOptions {
+  /**
+   * When set, the update of stamp_generation_queue rows with
+   * status = "review_required" will return this error instead of
+   * mutating the DB — simulating a silent DB failure on the archive step.
+   */
+  archiveReviewRequiredError?: { code: string; message: string };
+}
+
+function makeClient(db: DB, clientOpts: ClientOptions = {}) {
   function chain(tableName: string) {
     let updateValues: Record<string, any> | null = null;
     let insertRow: Record<string, any> | null    = null;
     const filters: Array<(r: any) => boolean>    = [];
+    // Track raw eq values so we can detect the review_required archive call
+    const eqValues: Record<string, any>          = {};
     let _headOnly          = false;
     let _selectCount       = false;
     let _selectAfterUpdate = false;
@@ -106,7 +117,11 @@ function makeClient(db: DB) {
         if (updateValues !== null)   _selectAfterUpdate = true;
         return b;
       },
-      eq(col: string, val: any)    { filters.push((r) => r[col] === val); return b; },
+      eq(col: string, val: any) {
+        filters.push((r) => r[col] === val);
+        eqValues[col] = val;
+        return b;
+      },
       in(col: string, vals: any[]) { filters.push((r) => (vals as any[]).includes(r[col])); return b; },
       not()    { return b; },
       order()  { return b; },
@@ -165,6 +180,17 @@ function makeClient(db: DB) {
             }
 
             if (updateValues !== null) {
+              // Inject error for the review_required archive step if requested.
+              // The archive update is identified by:
+              //   table = stamp_generation_queue, eq status = "review_required"
+              if (
+                clientOpts.archiveReviewRequiredError &&
+                tableName === "stamp_generation_queue" &&
+                eqValues["status"] === "review_required"
+              ) {
+                return { data: null, error: clientOpts.archiveReviewRequiredError };
+              }
+
               const matched = rows.filter((r) => filters.every((f) => f(r)));
               matched.forEach((r) => Object.assign(r, updateValues));
               // Match Supabase semantics: data is null unless .select() was chained
@@ -430,6 +456,74 @@ describe("POST regenerate duplicate click after review_required is archived", ()
       queuedRows.length,
       1,
       `expected exactly 1 queued row (no third row created), found ${queuedRows.length}: ${JSON.stringify(allRows)}`,
+    );
+  });
+
+});
+
+// ── Silent archive failure: safe behavior ─────────────────────────────────────
+//
+// The route now inspects the error returned by the review_required archive
+// update. If archiving fails, the route returns a db_error response and does
+// NOT proceed to insert a new queued row. This prevents two active rows from
+// existing simultaneously for the same catalog (which would let a worker pick
+// up both and generate duplicate artwork).
+
+describe("POST regenerate — review_required archive step silently fails", () => {
+
+  const ARCHIVE_ERROR = { code: "57014", message: "canceling statement due to statement timeout" };
+
+  beforeEach(() => {
+    db = makeDb();
+    const client = makeClient(db, { archiveReviewRequiredError: ARCHIVE_ERROR });
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  });
+
+  it("returns a non-200 error response when the archive step fails", async () => {
+    const res = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+
+    assert.notEqual(
+      res.status, 200,
+      `expected a non-200 error response when archive fails, got 200: ${JSON.stringify(res.body)}`,
+    );
+    assert.ok(
+      res.body && typeof res.body.error === "string",
+      `expected an error body, got: ${JSON.stringify(res.body)}`,
+    );
+  });
+
+  it("does NOT insert a new queued row when the archive step fails", async () => {
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+
+    const queuedRows = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.status === "queued",
+    );
+    assert.equal(
+      queuedRows.length,
+      0,
+      `expected no queued row to be inserted when archive fails, ` +
+        `found ${queuedRows.length}: ${JSON.stringify(db.stamp_generation_queue)}`,
+    );
+  });
+
+  it("leaves only one active row (the original review_required row, still unarchived)", async () => {
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+
+    const allQueueRows = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID,
+    );
+    assert.equal(
+      allQueueRows.length,
+      1,
+      `expected exactly 1 queue row (original review_required), ` +
+        `found ${allQueueRows.length}: ${JSON.stringify(allQueueRows)}`,
+    );
+    assert.equal(
+      allQueueRows[0].status,
+      "review_required",
+      `expected the sole row to still be review_required (archive failed), ` +
+        `got: ${allQueueRows[0].status}`,
     );
   });
 

@@ -641,12 +641,20 @@ router.post("/admin/stamps/catalog/:id/regenerate", async (req, res) => {
     .eq("catalog_id", id)
     .eq("status", "candidate");
 
-  // Archive existing active queue job (if review_required)
-  await sc
+  // Archive existing active queue job (if review_required).
+  // Must check the error: if this fails and we proceed to insert a new queued
+  // row, both the original review_required row and the new queued row become
+  // active simultaneously — a worker could pick up both and generate duplicates.
+  const { error: archiveErr } = await sc
     .from("stamp_generation_queue")
     .update({ status: "archived", updated_at: new Date().toISOString() })
     .eq("catalog_id", id)
     .eq("status", "review_required");
+
+  if (archiveErr) {
+    sendError(res, "db_error", archiveErr.message);
+    return;
+  }
 
   // Reset failed jobs to queued (admin action also resets the auto-requeue cap).
   // Chain .select() so PostgREST returns the affected rows — without it the
