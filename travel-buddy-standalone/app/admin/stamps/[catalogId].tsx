@@ -40,11 +40,17 @@ export default function StampCatalogDetail() {
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [acting, setActing]         = useState(false);
+  const [error, setError]           = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!catalogId) return;
     const res = await getAdminCatalogEntry(catalogId);
-    if (res.ok) setDetail(res.data);
+    if (res.ok) {
+      setError(null);
+      setDetail(res.data);
+    } else {
+      setError('Failed to load entry. Please try again.');
+    }
     setLoading(false);
     setRefreshing(false);
   }, [catalogId]);
@@ -99,6 +105,21 @@ export default function StampCatalogDetail() {
   }
 
   if (!detail) {
+    if (error) {
+      return (
+        <View style={[styles.root, { paddingTop: insets.top }]}>
+          <ScrollView
+            contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + space.xl }]}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+            testID="catalog-detail-scroll"
+          >
+            <View style={styles.errorBanner} testID="catalog-detail-error">
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          </ScrollView>
+        </View>
+      );
+    }
     return (
       <View style={[styles.root, styles.center, { paddingTop: insets.top }]}>
         <Text style={{ color: color.mute }}>Entry not found</Text>
@@ -141,7 +162,13 @@ export default function StampCatalogDetail() {
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + space.xl }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        testID="catalog-detail-scroll"
       >
+        {error ? (
+          <View style={styles.errorBanner} testID="catalog-detail-error">
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
         {/* Metadata */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Catalog Metadata</Text>
@@ -347,6 +374,8 @@ const styles = StyleSheet.create({
   activateBtn:       { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: color.success, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.pill },
   activateBtnDisabled: { opacity: 0.5 },
   activateBtnText:   { color: color.onInk, fontSize: 10, fontWeight: '700' },
+  errorBanner:       { margin: space.md, padding: space.md, backgroundColor: '#FEE2E2', borderRadius: radius.md, borderWidth: 1, borderColor: '#FCA5A5' },
+  errorText:         { ...t.body, color: '#B91C1C' },
   cleanupCard:       { borderColor: '#FDE68A', borderWidth: 1 },
   cleanupBadge:      { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FEF3C7', borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3, marginBottom: space.sm, alignSelf: 'flex-start' },
   cleanupBadgeTitle: { fontSize: 10, fontWeight: '700', color: '#92400E' },
