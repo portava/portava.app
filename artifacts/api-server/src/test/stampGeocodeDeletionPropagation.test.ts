@@ -2176,6 +2176,74 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     );
   });
 
+  it("five concurrent warm-cache callers fire the correction-check DB probe at most once — probe-skip holds under bursts of three or more", async () => {
+    // Extends the two-caller test: when five simultaneous geocodeCityCountry()
+    // calls arrive at the same warm entry after CORRECTION_CHECK_INTERVAL_MS,
+    // only one DB probe should fire.  The optimistic correctionCheckedAt bump
+    // (written BEFORE the first await in the probe path) ensures every subsequent
+    // concurrent caller sees a fresh timestamp and short-circuits without issuing
+    // its own maybeSingle() call.
+    //
+    // Confirmed assertions:
+    //   - maybeSingle() called at most once across all five concurrent callers.
+    //   - All five callers receive the same cached country code.
+    //   - No Nominatim call is triggered (the entry was not evicted).
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "nl", country: "Netherlands" } }],
+      };
+    });
+
+    // Phase 1: seed the warm cache entry via a DB read (no Nominatim call).
+    let probeCallCount = 0;
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient(
+        { country: "Netherlands", country_code: "NL", corrected_at: null, deleted_at: null },
+        { onCall: () => { probeCallCount++; } },
+      ),
+    );
+    const warm = await geocodeCityCountry("Amsterdam");
+    assert.equal(warm?.countryCode, "NL", "pre-condition: warm entry loaded from DB cache");
+    assert.equal(nominatimCalls, 0, "no Nominatim call during warm-up");
+    // Reset the probe counter — the readDbCache call above may have incremented it.
+    probeCallCount = 0;
+
+    // Phase 2: advance past the correction-check interval so all five concurrent
+    // callers see an elapsed interval on first inspection.
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000);
+
+    // Phase 3: fire five concurrent geocode calls for the same city.
+    const results = await Promise.all([
+      geocodeCityCountry("Amsterdam"),
+      geocodeCityCountry("Amsterdam"),
+      geocodeCityCountry("Amsterdam"),
+      geocodeCityCountry("Amsterdam"),
+      geocodeCityCountry("Amsterdam"),
+    ]);
+
+    // All five callers must receive the (unmodified) cached result.
+    for (let i = 0; i < results.length; i++) {
+      assert.equal(results[i]?.countryCode, "NL",
+        `caller ${i} received the cached country code`);
+    }
+
+    // No Nominatim call — the DB probe found no correction so the entry was kept.
+    assert.equal(nominatimCalls, 0, "Nominatim must not be called — entry was not evicted");
+
+    // The critical assertion: at most one DB probe issued across all five callers.
+    // Without the optimistic correctionCheckedAt bump this would be 5.
+    assert.ok(
+      probeCallCount <= 1,
+      `DB probe (maybeSingle) called ${probeCallCount} time(s) — expected at most 1 across five concurrent warm-cache callers`,
+    );
+  });
+
   it("sweep hard-delete is skipped when all tombstoned rows were revived before DELETE — zero rows removed, in-memory entries already evicted", async () => {
     // Race-condition edge case: the sweep's SELECT (Pass 2) returns tombstoned rows
     // and evicts their in-memory entries.  Before the hard-DELETE fires a concurrent
