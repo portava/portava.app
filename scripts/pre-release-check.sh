@@ -117,6 +117,30 @@ FAKE_CURL
     CHECK_TRIGGERS_WORKSPACE_ROOT="${SELF_TEST_TMP}" \
     bash scripts/check-db-triggers.sh
 
+  # run_self_skip_check <label> <env-var=value>... bash <script>
+  #
+  # Mirror of run_self_check for soft-skip paths: records PASS if the script
+  # exits 0 (the skip stays a skip), FAIL if it exits non-zero (a soft-skip
+  # path started hard-failing, which would block developers on unrelated work).
+  run_self_skip_check() {
+    local name="$1"
+    shift
+    printf '▶  self-test: %s\n' "$name"
+    local check_exit=0
+    env \
+      PATH="${SELF_TEST_TMP}/bin:${PATH}" \
+      SUPABASE_ACCESS_TOKEN="self-test-fixture-token" \
+      "$@" >/dev/null 2>&1 || check_exit=$?
+    if [[ "$check_exit" -eq 0 ]]; then
+      printf '  ✔  %s correctly exited 0 (soft skip preserved)\n\n' "$name"
+      self_results+=("PASS|${name}")
+    else
+      printf '  ✘  %s exited %d — soft-skip path is hard-failing\n\n' "$name" "$check_exit"
+      self_results+=("FAILSKIP|${name}")
+      self_overall=1
+    fi
+  }
+
   # ── beta-flags verifier self-test ───────────────────────────────────────────
   # Exercises verify-db-beta-flags.mjs directly with an empty fixture so that
   # any future regression that makes the verifier fail-open on missing rows is
@@ -127,6 +151,78 @@ FAKE_CURL
     BETA_FLAGS_RESPONSE='[]' \
     node scripts/src/verify-db-beta-flags.mjs
 
+  # ── schema-audit self-test ──────────────────────────────────────────────────
+  # check-schema-audit.sh runs `pnpm run audit:schema` inside
+  # <workspace>/artifacts/api-server.  We build a temp workspace whose
+  # api-server package runs the REAL auditMigrationsVsLive.ts (copied so its
+  # __dirname-relative migration dirs resolve inside the fixture) against:
+  #   • src/migrations/0001_self_test_drift.sql — claims a table that can
+  #     never exist live, and
+  #   • a fetch mock (--import, controlled by SELF_TEST_AUDIT_HTTP_STATUS)
+  #     that fakes the Management API: 200 → empty schema ([]), else an
+  #     HTTP error.
+  # Bad-data case: empty live schema → audit must exit 1 → check exits 1.
+  # Soft-skip cases: no token → exit 0; API 401 → audit exits 2 → check exit 0.
+  SCHEMA_AUDIT_TMP="${SELF_TEST_TMP}/schema-audit/artifacts/api-server"
+  mkdir -p "${SCHEMA_AUDIT_TMP}/src/scripts" "${SCHEMA_AUDIT_TMP}/src/migrations"
+
+  printf 'SUPABASE_URL=https://testproject.supabase.co\n' \
+    > "${SCHEMA_AUDIT_TMP}/.env"
+
+  cp artifacts/api-server/src/scripts/auditMigrationsVsLive.ts \
+    "${SCHEMA_AUDIT_TMP}/src/scripts/auditMigrationsVsLive.ts"
+
+  # Reuse the real node_modules so tsx resolves inside the fixture.
+  ln -s "${WORKSPACE_ROOT}/artifacts/api-server/node_modules" \
+    "${SCHEMA_AUDIT_TMP}/node_modules"
+
+  cat > "${SCHEMA_AUDIT_TMP}/src/migrations/0001_self_test_drift.sql" << 'BAD_MIGRATION'
+-- Self-test fixture: claims an object the (mocked, empty) live schema
+-- cannot contain.  The audit must flag it and exit 1.
+CREATE TABLE self_test_nonexistent_table (
+  id uuid PRIMARY KEY
+);
+BAD_MIGRATION
+
+  cat > "${SCHEMA_AUDIT_TMP}/fetch-mock.mjs" << 'FETCH_MOCK'
+// Fake Supabase Management API: 200 → empty result set; any other
+// SELF_TEST_AUDIT_HTTP_STATUS → HTTP error (audit treats it as exit 2).
+const status = Number(process.env.SELF_TEST_AUDIT_HTTP_STATUS ?? "200");
+globalThis.fetch = async () =>
+  new Response(status === 200 ? "[]" : '{"message":"self-test unauthorized"}', {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+FETCH_MOCK
+
+  cat > "${SCHEMA_AUDIT_TMP}/package.json" << 'PKG_JSON'
+{
+  "name": "self-test-api-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "audit:schema": "node --env-file-if-exists=.env --import ./fetch-mock.mjs --import tsx/esm src/scripts/auditMigrationsVsLive.ts"
+  }
+}
+PKG_JSON
+
+  # Bad data: empty live schema must fail the audit (exit 1).
+  run_self_check "schema-audit" \
+    CHECK_SCHEMA_AUDIT_WORKSPACE_ROOT="${SELF_TEST_TMP}/schema-audit" \
+    bash scripts/check-schema-audit.sh
+
+  # Soft skip: no SUPABASE_ACCESS_TOKEN → the check must exit 0 (skip).
+  run_self_skip_check "schema-audit-skip-no-token" \
+    CHECK_SCHEMA_AUDIT_WORKSPACE_ROOT="${SELF_TEST_TMP}/schema-audit" \
+    SUPABASE_ACCESS_TOKEN="" \
+    bash scripts/check-schema-audit.sh
+
+  # Soft skip: Management API 401 → audit exits 2 → the check must exit 0.
+  run_self_skip_check "schema-audit-skip-api-401" \
+    CHECK_SCHEMA_AUDIT_WORKSPACE_ROOT="${SELF_TEST_TMP}/schema-audit" \
+    SELF_TEST_AUDIT_HTTP_STATUS="401" \
+    bash scripts/check-schema-audit.sh
+
   # ── Summary ─────────────────────────────────────────────────────────────────
   printf '\n'
   sep
@@ -136,7 +232,9 @@ FAKE_CURL
     status="${entry%%|*}"
     name="${entry#*|}"
     if [[ "$status" == "PASS" ]]; then
-      printf '  ✔  %-35s correctly rejects bad fixture\n' "$name"
+      printf '  ✔  %-35s behaves correctly on fixture\n' "$name"
+    elif [[ "$status" == "FAILSKIP" ]]; then
+      printf '  ✘  %-35s hard-fails on a soft-skip path — BROKEN CHECK\n' "$name"
     else
       printf '  ✘  %-35s exits 0 on bad data — BROKEN VERIFIER\n' "$name"
     fi
