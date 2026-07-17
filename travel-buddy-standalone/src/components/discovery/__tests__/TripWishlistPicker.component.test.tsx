@@ -23,7 +23,10 @@ jest.mock('../../../services/trips', () => ({
   listMyTrips: jest.fn(),
 }));
 
+// async-storage is mocked globally in jest.setup.ts, so requireActual on the
+// real module is safe — the spread keeps any new exports from crashing tests.
 jest.mock('../../../services/discoveryBookmarks', () => ({
+  ...jest.requireActual('../../../services/discoveryBookmarks'),
   toggleSave:      jest.fn(),
   getSavedListIds: jest.fn(),
 }));

@@ -36,6 +36,7 @@ jest.mock('react-native-svg', () => {
 // ── Identity / verification helpers ──────────────────────────────────────────
 
 jest.mock('../../../utils/identity', () => ({
+  ...jest.requireActual('../../../utils/identity'),
   resolveAvatarUrl:  (_url: unknown) => null,
   fallbackInitials:  (_profile: unknown) => 'TU',
 }));
