@@ -3907,6 +3907,63 @@ describe("PushRetryQueue.processQueue() — unexpected exception on final attemp
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// catch-block re-queue — unexpected exception on a NON-final attempt
+//
+// When sendPushNotification throws an unexpected error and attempts remain
+// (newAttemptCount < maxAttempts), the catch block must re-queue the row with
+// status='queued', the incremented attempt_count, and last_error = String(err).
+// A regression that nulled last_error only on this path, or silently swallowed
+// the error without re-queuing, would be invisible to the other tests.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("PushRetryQueue.processQueue() — unexpected exception on non-final attempt", () => {
+  it("re-queues with attempt_count=2 and last_error=String(err) — not finalised as 'failed'", async () => {
+    // attempt_count=1 means attempt 1 already failed; this run is attempt 2,
+    // so newAttemptCount=2 < maxAttempts=3 and the catch block must re-queue.
+    const queueRow = {
+      id:                  QUEUE_ROW_ID,
+      user_id:             USER_ID,
+      notification_id:     NOTIF_ID,
+      tokens:              [PUSH_TOKEN],
+      payload:             BASE_PAYLOAD,
+      attempt_count:       1,
+      max_attempts:        3,
+      delivery_attempt_id: ATTEMPT_ID,
+      status:              "queued",
+      next_retry_at:       new Date(Date.now() - 1_000).toISOString(),
+    };
+
+    const client = makeFakeClient([queueRow]);
+    const queue  = new PushRetryQueue(client as never);
+
+    const boom = new Error("unexpected socket teardown");
+    _setTestSendPush(async () => { throw boom; });
+    await queue.processQueue();
+
+    const prqUpdates = client.updateCalls.filter((c) => c.table === "push_retry_queue");
+
+    // Must re-queue — identified by filters.id=QUEUE_ROW_ID to distinguish from
+    // recoverStaleProcessing's patch.status="queued" (filters.status="processing")
+    const requeuedUpdate = prqUpdates.find(
+      (c) => c.patch.status === "queued" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(requeuedUpdate, "must re-queue the row when an unexpected error is thrown with attempts remaining — not silently drop it");
+    assert.equal(requeuedUpdate.patch.attempt_count, 2, "attempt_count must be incremented to 2");
+    assert.equal(
+      requeuedUpdate.patch.last_error,
+      String(boom),
+      "re-queued row's last_error must equal String(err) — not null and not a generic message",
+    );
+
+    // Must NOT finalise — no 'failed' update targeting the row by id
+    const failedUpdate = prqUpdates.find(
+      (c) => c.patch.status === "failed" && c.filters.id === QUEUE_ROW_ID,
+    );
+    assert.ok(!failedUpdate, "must NOT finalise the row as 'failed' when attempts remain");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // _formatDeadTokenErrors — direct unit tests of the lastErr string formatter
 //
 // These tests exercise the extracted formatter function in isolation so that
