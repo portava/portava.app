@@ -112,14 +112,14 @@ describe('FailedJobsScreen — pull-to-refresh', () => {
   });
 
   it('renders the initial job from the first fetch', async () => {
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
     expect(screen.getByText('Paris Eiffel')).toBeTruthy();
   });
 
   it('calls getAdminStampQueue again when the user pulls to refresh', async () => {
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const callsBefore = mockGetQueue.mock.calls.length;
 
@@ -130,8 +130,8 @@ describe('FailedJobsScreen — pull-to-refresh', () => {
   });
 
   it('shows the updated job list after pull-to-refresh completes', async () => {
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const list = screen.getByTestId('failed-jobs-list');
     await act(async () => { list.props.refreshControl.props.onRefresh(); });
@@ -142,8 +142,8 @@ describe('FailedJobsScreen — pull-to-refresh', () => {
   });
 
   it('clears the refreshing spinner once load() resolves', async () => {
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const list = screen.getByTestId('failed-jobs-list');
     await act(async () => { list.props.refreshControl.props.onRefresh(); });
@@ -163,8 +163,8 @@ describe('FailedJobsScreen — pull-to-refresh', () => {
       .mockResolvedValueOnce(queueOk([JOB_A]))
       .mockResolvedValueOnce(queueOk([]));
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const list = screen.getByTestId('failed-jobs-list');
     await act(async () => { list.props.refreshControl.props.onRefresh(); });
@@ -227,8 +227,8 @@ describe('FailedJobsScreen — re-queue flow', () => {
   it('calls requeueFailedJob with the correct job id when the admin confirms', async () => {
     mockRequeue.mockResolvedValueOnce({ ok: true });
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     // Press the Re-queue button for JOB_A.
     const buttons = screen.getAllByText('Re-queue');
@@ -244,8 +244,8 @@ describe('FailedJobsScreen — re-queue flow', () => {
   it('removes the job row from the list after a successful re-queue', async () => {
     mockRequeue.mockResolvedValueOnce({ ok: true });
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     // Both jobs should be visible before the action.
     expect(screen.getByText('Paris Eiffel')).toBeTruthy();
@@ -264,8 +264,8 @@ describe('FailedJobsScreen — re-queue flow', () => {
   it('keeps the job row in the list when the re-queue API call fails', async () => {
     mockRequeue.mockResolvedValueOnce({ ok: false, error: 'DB write failed' });
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const buttons = screen.getAllByText('Re-queue');
     fireEvent.press(buttons[0]);
@@ -278,8 +278,8 @@ describe('FailedJobsScreen — re-queue flow', () => {
   it('shows an error Alert when the re-queue API call fails', async () => {
     mockRequeue.mockResolvedValueOnce({ ok: false, error: 'DB write failed' });
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const buttons = screen.getAllByText('Re-queue');
     fireEvent.press(buttons[0]);
@@ -295,8 +295,8 @@ describe('FailedJobsScreen — re-queue flow', () => {
   it('decreases the header count badge from 2 to 1 after a successful re-queue', async () => {
     mockRequeue.mockResolvedValueOnce({ ok: true });
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     // Both jobs are loaded — the count badge should show 2.
     expect(screen.getByText('2')).toBeTruthy();
@@ -336,8 +336,8 @@ describe('FailedJobsScreen — re-queue flow', () => {
     });
     mockRequeue.mockReturnValueOnce(requeuePromise);
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     // Both jobs are visible and both Re-queue buttons are enabled before any action.
     expect(screen.getAllByText('Re-queue')).toHaveLength(2);
@@ -456,8 +456,8 @@ describe('FailedJobsScreen — orphaned-files badge', () => {
   it('renders the "Orphaned storage files" badge when cleanup_error is set', async () => {
     mockGetQueue.mockResolvedValue(queueOk([JOB_WITH_CLEANUP_ERROR]));
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Rome Colosseum'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Rome Colosseum');
 
     expect(screen.getByText('Orphaned storage files')).toBeTruthy();
   });
@@ -465,8 +465,8 @@ describe('FailedJobsScreen — orphaned-files badge', () => {
   it('does not render the badge when cleanup_error is null', async () => {
     mockGetQueue.mockResolvedValue(queueOk([JOB_WITHOUT_CLEANUP_ERROR]));
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Berlin Wall'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Berlin Wall');
 
     expect(screen.queryByText('Orphaned storage files')).toBeNull();
   });
@@ -475,8 +475,8 @@ describe('FailedJobsScreen — orphaned-files badge', () => {
     mockGetQueue.mockResolvedValue(queueOk([JOB_WITH_CLEANUP_ERROR]));
     mockRequeue.mockResolvedValueOnce({ ok: true });
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Orphaned storage files'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Orphaned storage files');
 
     // Trigger the requeue flow.
     fireEvent.press(screen.getByText('Re-queue'));
@@ -496,8 +496,8 @@ describe('FailedJobsScreen — orphaned-files badge', () => {
       .mockResolvedValueOnce(queueOk([JOB_WITH_CLEANUP_ERROR]))
       .mockResolvedValue(queueOk([clearedJob]));
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Orphaned storage files'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Orphaned storage files');
 
     // Admin pulls to refresh after ops cleared cleanup_error.
     const list = screen.getByTestId('failed-jobs-list');

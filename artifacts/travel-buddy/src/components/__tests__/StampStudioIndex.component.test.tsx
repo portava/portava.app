@@ -211,15 +211,15 @@ describe('StampStudioIndex — 60-second catalog poll updates status tiles', () 
   });
 
   it('renders the initial approved count from the first fetch', async () => {
-    render(<StampStudioIndex />);
+    await render(<StampStudioIndex />);
     // waitFor polls until async load() resolves and the tile re-renders.
-    await waitFor(() => screen.getByText('42'));
+    await screen.findByText('42');
     expect(screen.getByText('42')).toBeTruthy();
   });
 
   it('replaces the approved count after the 60-second poll fires', async () => {
-    render(<StampStudioIndex />);
-    await waitFor(() => screen.getByText('42')); // wait for initial load
+    await render(<StampStudioIndex />);
+    await screen.findByText('42'); // wait for initial load
 
     const poll = spy.catalogPoll();
     expect(poll).toBeDefined(); // guard: interval was registered
@@ -366,8 +366,8 @@ describe('StampStudioIndex — pull-to-refresh picks up newly approved artwork',
   });
 
   it('calls load() again when the user pulls to refresh', async () => {
-    render(<StampStudioIndex />);
-    await waitFor(() => screen.getByText('5'));
+    await render(<StampStudioIndex />);
+    await screen.findByText('5');
 
     const callsBefore = mockGetCatalog.mock.calls.length;
     const scrollView = screen.getByTestId('stamp-studio-scroll');
@@ -378,8 +378,8 @@ describe('StampStudioIndex — pull-to-refresh picks up newly approved artwork',
   });
 
   it('shows the updated approved count after pull-to-refresh completes', async () => {
-    render(<StampStudioIndex />);
-    await waitFor(() => screen.getByText('5'));
+    await render(<StampStudioIndex />);
+    await screen.findByText('5');
 
     const scrollView = screen.getByTestId('stamp-studio-scroll');
     await act(async () => { scrollView.props.refreshControl.props.onRefresh(); });
@@ -390,8 +390,8 @@ describe('StampStudioIndex — pull-to-refresh picks up newly approved artwork',
   });
 
   it('clears the refreshing spinner once load() resolves', async () => {
-    render(<StampStudioIndex />);
-    await waitFor(() => screen.getByText('5'));
+    await render(<StampStudioIndex />);
+    await screen.findByText('5');
 
     const scrollView = screen.getByTestId('stamp-studio-scroll');
     await act(async () => { scrollView.props.refreshControl.props.onRefresh(); });
@@ -429,8 +429,8 @@ describe('StampStudioIndex — pull-to-refresh picks up newly approved artwork',
         },
       });
 
-    render(<StampStudioIndex />);
-    await waitFor(() => screen.getByText('5'));
+    await render(<StampStudioIndex />);
+    await screen.findByText('5');
 
     // No health warnings rendered yet — initial load got ok: false.
     expect(screen.queryByText(/stuck in 'generating'/)).toBeNull();
@@ -483,8 +483,8 @@ describe('StampStudioIndex — pull-to-refresh picks up newly approved artwork',
         },
       });
 
-    render(<StampStudioIndex />);
-    await waitFor(() => screen.getByText('5'));
+    await render(<StampStudioIndex />);
+    await screen.findByText('5');
 
     // No health warnings on initial load — health returned ok: false.
     expect(screen.queryByText(/Queued backlog grew/)).toBeNull();
@@ -557,16 +557,16 @@ describe('StampStudioIndex — 45-second health poll updates the warning strip',
   });
 
   it('registers a 45-second interval for the health poll', async () => {
-    render(<StampStudioIndex />);
-    await waitFor(() => screen.getByText('10'));
+    await render(<StampStudioIndex />);
+    await screen.findByText('10');
 
     const healthPoll = spy.captured.find((e) => e.delay === 45_000);
     expect(healthPoll).toBeDefined();
   });
 
   it('invoking the 45-second interval callback calls getStampWorkerHealth', async () => {
-    render(<StampStudioIndex />);
-    await waitFor(() => screen.getByText('10'));
+    await render(<StampStudioIndex />);
+    await screen.findByText('10');
 
     const healthCallsBefore = mockGetHealth.mock.calls.length;
 
@@ -579,8 +579,8 @@ describe('StampStudioIndex — 45-second health poll updates the warning strip',
   });
 
   it('warning strip appears in the UI after the 45-second health poll fires', async () => {
-    render(<StampStudioIndex />);
-    await waitFor(() => screen.getByText('10'));
+    await render(<StampStudioIndex />);
+    await screen.findByText('10');
 
     // No warning strip on initial render — first health call returned ok: false.
     expect(screen.queryByText(/stuck in 'generating'/)).toBeNull();
@@ -600,8 +600,8 @@ describe('StampStudioIndex — 45-second health poll updates the warning strip',
   });
 
   it('does NOT call getAdminStampCatalog when the health poll fires', async () => {
-    render(<StampStudioIndex />);
-    await waitFor(() => screen.getByText('10'));
+    await render(<StampStudioIndex />);
+    await screen.findByText('10');
 
     const catalogCallsBefore = mockGetCatalog.mock.calls.length;
 
@@ -641,8 +641,8 @@ describe('StampStudioIndex — 45-second health poll updates the warning strip',
         },
       });
 
-    render(<StampStudioIndex />);
-    await waitFor(() => screen.getByText('10'));
+    await render(<StampStudioIndex />);
+    await screen.findByText('10');
 
     // No warning strip on initial render — first health call returned ok: false.
     expect(screen.queryByText(/Queued backlog grew/)).toBeNull();
@@ -755,17 +755,17 @@ describe('StampStudioIndex — all three polling intervals stop when leaving the
   });
 
   it('registers exactly three long-delay intervals on mount', async () => {
-    render(<StampStudioIndex />);
+    await render(<StampStudioIndex />);
     // Wait for initial load to complete so all three intervals are registered.
-    await waitFor(() => screen.getByText('10'));
+    await screen.findByText('10');
 
     // The component registers: health (45 s), catalog (60 s), clock tick (30 s).
     expect(spy.captured.length).toBe(3);
   });
 
   it('clears all three interval IDs when the screen loses focus', async () => {
-    render(<StampStudioIndex />);
-    await waitFor(() => screen.getByText('10'));
+    await render(<StampStudioIndex />);
+    await screen.findByText('10');
 
     // Guard: all three must be present before we blur.
     expect(spy.captured.length).toBe(3);
@@ -779,8 +779,8 @@ describe('StampStudioIndex — all three polling intervals stop when leaving the
   });
 
   it('clears the 30-second clock-tick interval on blur', async () => {
-    render(<StampStudioIndex />);
-    await waitFor(() => screen.getByText('10'));
+    await render(<StampStudioIndex />);
+    await screen.findByText('10');
 
     const tickBefore = spy.captured.find((e) => e.delay === 30_000);
     expect(tickBefore).toBeDefined();
@@ -792,8 +792,8 @@ describe('StampStudioIndex — all three polling intervals stop when leaving the
   });
 
   it('clears the 45-second health-poll interval on blur', async () => {
-    render(<StampStudioIndex />);
-    await waitFor(() => screen.getByText('10'));
+    await render(<StampStudioIndex />);
+    await screen.findByText('10');
 
     const healthBefore = spy.captured.find((e) => e.delay === 45_000);
     expect(healthBefore).toBeDefined();
@@ -805,8 +805,8 @@ describe('StampStudioIndex — all three polling intervals stop when leaving the
   });
 
   it('clears the 60-second catalog-poll interval on blur', async () => {
-    render(<StampStudioIndex />);
-    await waitFor(() => screen.getByText('10'));
+    await render(<StampStudioIndex />);
+    await screen.findByText('10');
 
     const catalogBefore = spy.captured.find((e) => e.delay === 60_000);
     expect(catalogBefore).toBeDefined();
@@ -1016,10 +1016,10 @@ describe('StampStudioIndex — warning banner title labels are correct for both 
       },
     });
 
-    render(<StampStudioIndex />);
+    await render(<StampStudioIndex />);
 
     // Wait for load() to complete so the warning banner is rendered.
-    await waitFor(() => screen.getByText('Stuck generation jobs'));
+    await screen.findByText('Stuck generation jobs');
 
     // Title label must be the stuck_jobs label — not the backlog_growing label.
     expect(screen.getByText('Stuck generation jobs')).toBeTruthy();
@@ -1057,10 +1057,10 @@ describe('StampStudioIndex — warning banner title labels are correct for both 
       },
     });
 
-    render(<StampStudioIndex />);
+    await render(<StampStudioIndex />);
 
     // Wait for load() to complete so the warning banner is rendered.
-    await waitFor(() => screen.getByText('Backlog growing'));
+    await screen.findByText('Backlog growing');
 
     // Title label must be the backlog_growing label — not the stuck_jobs label.
     expect(screen.getByText('Backlog growing')).toBeTruthy();

@@ -103,18 +103,14 @@ describe('StampQueueScreen — pull-to-refresh', () => {
   });
 
   it('renders the initial entry from the first fetch', async () => {
-    render(<StampQueueScreen />);
-    // waitFor matches the pattern used by all other tests in this file and
-    // avoids the screen.findByText "render function has not been called" error
-    // that appears under React 19 + RNTL 14 when the async-act scope races
-    // with the query's internal polling setup.
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Paris Eiffel');
     expect(screen.getByText('Paris Eiffel')).toBeTruthy();
   });
 
   it('calls getAdminStampCatalog again when the user pulls to refresh', async () => {
-    render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const callsBefore = mockGetCatalog.mock.calls.length;
 
@@ -125,8 +121,8 @@ describe('StampQueueScreen — pull-to-refresh', () => {
   });
 
   it('shows the updated entry list after pull-to-refresh completes', async () => {
-    render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const list = screen.getByTestId('catalog-queue-list');
     await act(async () => { list.props.refreshControl.props.onRefresh(); });
@@ -137,8 +133,8 @@ describe('StampQueueScreen — pull-to-refresh', () => {
   });
 
   it('clears the refreshing spinner once load() resolves', async () => {
-    render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const list = screen.getByTestId('catalog-queue-list');
     await act(async () => { list.props.refreshControl.props.onRefresh(); });
@@ -158,8 +154,8 @@ describe('StampQueueScreen — pull-to-refresh', () => {
       .mockResolvedValueOnce(catalogOk([ENTRY_A]))
       .mockResolvedValueOnce(catalogOk([]));
 
-    render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const list = screen.getByTestId('catalog-queue-list');
     await act(async () => { list.props.refreshControl.props.onRefresh(); });
@@ -230,8 +226,8 @@ describe('StampQueueScreen — malformed entry filter', () => {
       ]),
     );
 
-    render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Valid Entry'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Valid Entry');
 
     expect(screen.getByText('Valid Entry')).toBeTruthy();
     expect(screen.queryByText('No ID')).toBeNull();
@@ -249,8 +245,8 @@ describe('StampQueueScreen — malformed entry filter', () => {
       ]),
     );
 
-    render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Valid Entry'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Valid Entry');
 
     expect(warnSpy).toHaveBeenCalledTimes(3);
     warnSpy.mock.calls.forEach((args) => {
@@ -269,8 +265,8 @@ describe('StampQueueScreen — malformed entry filter', () => {
 
     mockGetCatalog.mockResolvedValue(catalogOkRaw([VALID_ENTRY, VALID_B]));
 
-    render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Valid Entry'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Valid Entry');
     await waitFor(() => screen.getByText('Second Valid'));
 
     expect(warnSpy).not.toHaveBeenCalled();
@@ -293,8 +289,8 @@ describe('StampQueueScreen — malformed entry filter', () => {
       ]),
     );
 
-    render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Valid Entry'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Valid Entry');
 
     expect(screen.getByText('Valid Entry')).toBeTruthy();
     expect(screen.getByText('Also Valid')).toBeTruthy();
@@ -330,8 +326,8 @@ describe('StampQueueScreen — search filter', () => {
       .mockResolvedValueOnce(catalogOk([ENTRY_A]))
       .mockResolvedValue(catalogOk([ENTRY_B]));
 
-    render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const input = screen.getByPlaceholderText('Search by name…');
     await act(async () => {
@@ -353,8 +349,8 @@ describe('StampQueueScreen — search filter', () => {
       .mockResolvedValueOnce(catalogOk([ENTRY_A]))
       .mockResolvedValue(catalogOk([ENTRY_B]));
 
-    render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const input = screen.getByPlaceholderText('Search by name…');
     await act(async () => {
@@ -372,8 +368,8 @@ describe('StampQueueScreen — search filter', () => {
       .mockResolvedValueOnce(catalogOk([ENTRY_A]))
       .mockResolvedValue(catalogOk([]));
 
-    render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const input = screen.getByPlaceholderText('Search by name…');
     await act(async () => {
@@ -391,8 +387,8 @@ describe('StampQueueScreen — search filter', () => {
       .mockResolvedValueOnce(catalogOk([ENTRY_B]))
       .mockResolvedValue(catalogOk([ENTRY_A, ENTRY_B]));
 
-    render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const input = screen.getByPlaceholderText('Search by name…');
 
@@ -440,8 +436,8 @@ describe('StampQueueScreen — combined status + search filters', () => {
       .mockResolvedValueOnce(catalogOk([ENTRY_B]))       // after chip press
       .mockResolvedValue(catalogOk([ENTRY_B]));          // after search typed
 
-    render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Paris Eiffel');
 
     // Press the "approved" status chip.
     const approvedChip = screen.getByText('approved');
@@ -469,8 +465,8 @@ describe('StampQueueScreen — combined status + search filters', () => {
       .mockResolvedValueOnce(catalogOk([ENTRY_B]))       // search typed
       .mockResolvedValue(catalogOk([ENTRY_B]));          // search cleared
 
-    render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Paris Eiffel');
 
     // Press the "approved" chip.
     const approvedChip = screen.getByText('approved');
@@ -627,8 +623,8 @@ describe('StampQueueScreen — orphaned-files badge', () => {
   it('renders the "Orphaned storage files" badge when cleanup_error is set', async () => {
     mockGetCatalog.mockResolvedValue(catalogOk([ENTRY_WITH_CLEANUP_ERROR as any]));
 
-    render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Rome Colosseum'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Rome Colosseum');
 
     expect(screen.getByText('Orphaned storage files')).toBeTruthy();
   });
@@ -636,8 +632,8 @@ describe('StampQueueScreen — orphaned-files badge', () => {
   it('does not render the badge when cleanup_error is null', async () => {
     mockGetCatalog.mockResolvedValue(catalogOk([ENTRY_WITHOUT_CLEANUP_ERROR as any]));
 
-    render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Berlin Wall'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Berlin Wall');
 
     expect(screen.queryByText('Orphaned storage files')).toBeNull();
   });
@@ -651,8 +647,8 @@ describe('StampQueueScreen — orphaned-files badge', () => {
       .mockResolvedValueOnce(catalogOk([ENTRY_WITH_CLEANUP_ERROR as any]))
       .mockResolvedValue(catalogOk([clearedEntry as any]));
 
-    render(<StampQueueScreen />);
-    await waitFor(() => screen.getByText('Orphaned storage files'));
+    await render(<StampQueueScreen />);
+    await screen.findByText('Orphaned storage files');
 
     // Simulate the admin pulling to refresh after cleanup_error was cleared.
     const list = screen.getByTestId('catalog-queue-list');
@@ -743,10 +739,10 @@ describe('StampQueueScreen — search debounce', () => {
   it('fires only one getAdminStampCatalog call when multiple characters are typed in quick succession', async () => {
     mockGetCatalog.mockResolvedValue(catalogOk([ENTRY_A]));
 
-    render(<StampQueueScreen />);
+    await render(<StampQueueScreen />);
 
     // Wait for the initial load to settle before typing.
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await screen.findByText('Paris Eiffel');
 
     const callsAfterMount = mockGetCatalog.mock.calls.length;
     const input = screen.getByPlaceholderText('Search by name…');
