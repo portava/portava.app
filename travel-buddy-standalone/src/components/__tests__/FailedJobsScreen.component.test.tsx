@@ -25,7 +25,7 @@
  */
 
 import React from 'react';
-import { Alert } from 'react-native';
+import { Alert, Pressable } from 'react-native';
 import { render, act, waitFor, screen, fireEvent, cleanup } from '@testing-library/react-native';
 import FailedJobsScreen from '../../../app/admin/stamps/failed';
 import { getAdminStampQueue, requeueFailedJob } from '../../services/adminStamps';
@@ -132,14 +132,14 @@ describe('FailedJobsScreen — pull-to-refresh', () => {
   });
 
   it('renders the initial job from the first fetch', async () => {
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
     expect(screen.getByText('Paris Eiffel')).toBeTruthy();
   });
 
   it('calls getAdminStampQueue again when the user pulls to refresh', async () => {
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const callsBefore = mockGetQueue.mock.calls.length;
 
@@ -150,8 +150,8 @@ describe('FailedJobsScreen — pull-to-refresh', () => {
   });
 
   it('shows the updated job list after pull-to-refresh completes', async () => {
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const list = screen.getByTestId('failed-jobs-list');
     await act(async () => { list.props.refreshControl.props.onRefresh(); });
@@ -162,8 +162,8 @@ describe('FailedJobsScreen — pull-to-refresh', () => {
   });
 
   it('clears the refreshing spinner once load() resolves', async () => {
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const list = screen.getByTestId('failed-jobs-list');
     await act(async () => { list.props.refreshControl.props.onRefresh(); });
@@ -183,8 +183,8 @@ describe('FailedJobsScreen — pull-to-refresh', () => {
       .mockResolvedValueOnce(queueOk([JOB_A]))
       .mockResolvedValueOnce(queueOk([]));
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const list = screen.getByTestId('failed-jobs-list');
     await act(async () => { list.props.refreshControl.props.onRefresh(); });
@@ -211,8 +211,8 @@ describe('FailedJobsScreen — pull-to-refresh', () => {
  *
  * React Native's Alert.alert is mocked via jest.spyOn.  The spy captures the
  * button array, and the helper `pressAlertButton` finds the button by label
- * and invokes its onPress handler directly — the same technique used by other
- * admin-screen component tests in this project.
+ * and invokes its onPress handler synchronously inside act() — the same
+ * technique used by other admin-screen component tests in this project.
  */
 
 /**
@@ -274,28 +274,31 @@ describe('FailedJobsScreen — re-queue flow', () => {
   it('calls requeueFailedJob with the correct job id when the admin confirms', async () => {
     mockRequeue.mockResolvedValueOnce({ ok: true });
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     // Press the Re-queue button for JOB_A.
     const buttons = screen.getAllByText('Re-queue');
     fireEvent.press(buttons[0]);
 
     // Confirm in the Alert dialog.
-    pressAlertButton(alertSpy, 'Re-queue');
+    await pressAlertButton(alertSpy, 'Re-queue');
 
     expect(mockRequeue).toHaveBeenCalledTimes(1);
     expect(mockRequeue).toHaveBeenCalledWith(JOB_A.id);
 
-    // Drain the async continuation before the test ends.
+    // Wait for the component's async continuation (setBusyId(null) + setJobs)
+    // to commit before the test ends.  Without this, those state updates fire
+    // outside act() during RNTL's afterEach flushMicroTasks, producing
+    // "overlapping act()" errors that corrupt subsequent test contexts.
     await waitFor(() => expect(screen.queryByText('Paris Eiffel')).toBeNull());
   });
 
   it('removes the job row from the list after a successful re-queue', async () => {
     mockRequeue.mockResolvedValueOnce({ ok: true });
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     // Both jobs should be visible before the action.
     expect(screen.getByText('Paris Eiffel')).toBeTruthy();
@@ -304,7 +307,7 @@ describe('FailedJobsScreen — re-queue flow', () => {
     // Re-queue JOB_A (first button = first job row).
     const buttons = screen.getAllByText('Re-queue');
     fireEvent.press(buttons[0]);
-    pressAlertButton(alertSpy, 'Re-queue');
+    await pressAlertButton(alertSpy, 'Re-queue');
 
     // JOB_A must be gone; JOB_B must still be present.
     await waitFor(() => expect(screen.queryByText('Paris Eiffel')).toBeNull());
@@ -314,42 +317,47 @@ describe('FailedJobsScreen — re-queue flow', () => {
   it('keeps the job row in the list when the re-queue API call fails', async () => {
     mockRequeue.mockResolvedValueOnce({ ok: false, error: 'DB write failed' });
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const buttons = screen.getAllByText('Re-queue');
     fireEvent.press(buttons[0]);
-    pressAlertButton(alertSpy, 'Re-queue');
+    await pressAlertButton(alertSpy, 'Re-queue');
 
     // Job must still be in the list after the failed API call.
     await waitFor(() => expect(screen.getByText('Paris Eiffel')).toBeTruthy());
+    // Also wait for setBusyId(null) to commit — the Re-queue buttons return to
+    // their enabled state once busyId is cleared.  Without this, the uncommitted
+    // fiber update fires outside act() during afterEach and corrupts test 4.
     await waitFor(() => expect(screen.getAllByText('Re-queue')).toHaveLength(2));
   });
 
   it('shows an error Alert when the re-queue API call fails', async () => {
     mockRequeue.mockResolvedValueOnce({ ok: false, error: 'DB write failed' });
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     const buttons = screen.getAllByText('Re-queue');
     fireEvent.press(buttons[0]);
-    pressAlertButton(alertSpy, 'Re-queue');
+    await pressAlertButton(alertSpy, 'Re-queue');
 
     // Wait for the error Alert to be shown (second Alert call after the confirmation one).
     await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(2));
     const errorCall = alertSpy.mock.calls[1];
     expect(errorCall[0]).toBe('Error');
     expect(errorCall[1]).toBe('DB write failed');
-
+    // Wait for setBusyId(null) to commit — Re-queue buttons return to enabled.
+    // Without this, the uncommitted fiber update fires outside act() during
+    // afterEach and corrupts test 5.
     await waitFor(() => expect(screen.getAllByText('Re-queue')).toHaveLength(2));
   });
 
   it('decreases the header count badge from 2 to 1 after a successful re-queue', async () => {
     mockRequeue.mockResolvedValueOnce({ ok: true });
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     // Both jobs are loaded — the count badge should show 2.
     expect(screen.getByText('2')).toBeTruthy();
@@ -357,7 +365,7 @@ describe('FailedJobsScreen — re-queue flow', () => {
     // Re-queue JOB_A (first Re-queue button = first job row).
     const buttons = screen.getAllByText('Re-queue');
     fireEvent.press(buttons[0]);
-    pressAlertButton(alertSpy, 'Re-queue');
+    await pressAlertButton(alertSpy, 'Re-queue');
 
     // JOB_A is removed from state; count badge must now read 1.
     await waitFor(() => expect(screen.queryByText('Paris Eiffel')).toBeNull());
@@ -389,8 +397,8 @@ describe('FailedJobsScreen — re-queue flow', () => {
     });
     mockRequeue.mockReturnValueOnce(requeuePromise);
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Paris Eiffel'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Paris Eiffel');
 
     // Both jobs are visible and both Re-queue buttons are enabled before any action.
     expect(screen.getAllByText('Re-queue')).toHaveLength(2);
@@ -438,14 +446,9 @@ describe('FailedJobsScreen — re-queue flow', () => {
 /**
  * ## What's covered
  *
- * 1. A job with cleanup_error and paths renders "N orphaned file(s) need manual removal".
- * 2. A job with cleanup_error but empty paths renders "Orphaned storage files need manual removal".
- * 3. A job with cleanup_error: null does not render any badge.
- * 4. After a successful requeue the job row is removed, so the badge disappears.
- * 5. After a pull-to-refresh that returns cleanup_error: null the badge disappears
- *    but the job row stays.
- * 6. A job with 5+ paths shows the correct count — not just the first.
- * 7. A job with exactly 1 path uses the singular "file" form.
+ * 1. A job with cleanup_error set renders the "Orphaned storage files" badge.
+ * 2. A job with cleanup_error: null does not render the badge.
+ * 3. After a successful requeue the job row is removed, so the badge disappears.
  *
  * ## Why these tests exist
  *
@@ -502,8 +505,8 @@ describe('FailedJobsScreen — orphaned-files badge', () => {
   it('renders the orphan count badge when cleanup_error is set with paths', async () => {
     mockGetQueue.mockResolvedValue(queueOk([JOB_WITH_CLEANUP_ERROR]));
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Rome Colosseum'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Rome Colosseum');
 
     // Component shows "N orphaned file(s) need manual removal" when paths are present.
     expect(screen.getByText('2 orphaned files need manual removal')).toBeTruthy();
@@ -526,8 +529,8 @@ describe('FailedJobsScreen — orphaned-files badge', () => {
   it('does not render any cleanup badge when cleanup_error is null', async () => {
     mockGetQueue.mockResolvedValue(queueOk([JOB_WITHOUT_CLEANUP_ERROR]));
 
-    render(<FailedJobsScreen />);
-    await waitFor(() => screen.getByText('Berlin Wall'));
+    await render(<FailedJobsScreen />);
+    await screen.findByText('Berlin Wall');
 
     expect(screen.queryByText(/orphaned/i)).toBeNull();
   });
@@ -541,7 +544,7 @@ describe('FailedJobsScreen — orphaned-files badge', () => {
 
     // Trigger the requeue flow.
     fireEvent.press(screen.getByText('Re-queue'));
-    pressAlertButton(alertSpy, 'Re-queue');
+    await pressAlertButton(alertSpy, 'Re-queue');
 
     // The row (and therefore the badge) must be gone after a successful requeue.
     await waitFor(() =>
