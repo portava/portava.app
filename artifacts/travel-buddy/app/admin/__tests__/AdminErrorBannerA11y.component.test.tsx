@@ -17,19 +17,24 @@ import { render, waitFor, screen } from '@testing-library/react-native';
 
 // ── Module mocks ─────────────────────────────────────────────────────────────
 
+// NOTE: intentionally exhaustive — requireActual pulls native-module internals
+// that are not safe under jest.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
 jest.mock('../../../src/hooks/useRequireAdmin', () => ({
+  ...jest.requireActual('../../../src/hooks/useRequireAdmin'),
   useRequireAdmin: jest.fn(),
 }));
 
 jest.mock('../../../src/context/SessionContext', () => ({
+  ...jest.requireActual('../../../src/context/SessionContext'),
   useSession: () => ({ isAuthed: true, loading: false }),
 }));
 
 jest.mock('../../../src/services/trustAdmin', () => ({
+  ...jest.requireActual('../../../src/services/trustAdmin'),
   fetchGamingFlags: jest.fn(),
   markGamingFlagReviewed: jest.fn(),
   fetchReviews: jest.fn(),

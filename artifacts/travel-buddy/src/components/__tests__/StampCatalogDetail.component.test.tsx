@@ -46,32 +46,29 @@ import { getAdminCatalogEntry, activateStampVersion, rejectCatalogEntry } from '
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
 jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
   router: { push: jest.fn(), back: jest.fn() },
   useLocalSearchParams: jest.fn(() => ({ catalogId: 'cat-abc' })),
 }));
 
+// NOTE: intentionally exhaustive — requireActual pulls native-module internals
+// that are not safe under jest.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
 jest.mock('../../hooks/useRequireAdmin', () => ({
+  ...jest.requireActual('../../hooks/useRequireAdmin'),
   useRequireAdmin: jest.fn(),
 }));
 
 jest.mock('../../services/adminStamps', () => ({
+  ...jest.requireActual('../../services/adminStamps'),
   getAdminCatalogEntry:    jest.fn(),
   activateStampVersion:    jest.fn(),
   rejectCatalogEntry:      jest.fn(),
   regenerateCatalogEntry:  jest.fn(),
   CURRENT_STYLE_VERSION:   'v1',
-}));
-
-jest.mock('lucide-react-native', () => ({
-  ArrowLeft:     () => null,
-  CheckCircle:   () => null,
-  XCircle:       () => null,
-  RefreshCw:     () => null,
-  TriangleAlert: () => null,
 }));
 
 // ── Typed mock ref ─────────────────────────────────────────────────────────────
@@ -290,7 +287,6 @@ describe('StampCatalogDetail — API error banner', () => {
     expect(scrollAfter.props.refreshControl.props.refreshing).toBe(false);
   });
 });
-
 
 describe('StampCatalogDetail — cross-platform reject flow', () => {
   afterEach(() => {

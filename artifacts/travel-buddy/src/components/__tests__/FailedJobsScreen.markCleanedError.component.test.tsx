@@ -38,28 +38,26 @@ import { getAdminStampQueue, clearCleanupError } from '../../services/adminStamp
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
 jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
   router: { push: jest.fn(), back: jest.fn() },
 }));
 
+// NOTE: intentionally exhaustive — requireActual pulls native-module internals
+// that are not safe under jest.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
 jest.mock('../../hooks/useRequireAdmin', () => ({
+  ...jest.requireActual('../../hooks/useRequireAdmin'),
   useRequireAdmin: jest.fn(),
 }));
 
 jest.mock('../../services/adminStamps', () => ({
+  ...jest.requireActual('../../services/adminStamps'),
   getAdminStampQueue: jest.fn(),
   requeueFailedJob: jest.fn(),
   clearCleanupError: jest.fn(),
-}));
-
-jest.mock('lucide-react-native', () => ({
-  ArrowLeft: () => null,
-  RefreshCw: () => null,
-  TriangleAlert: () => null,
-  XCircle: () => null,
 }));
 
 // ── Typed mock refs ────────────────────────────────────────────────────────────
