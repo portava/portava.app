@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 
 import { _setTestFetch } from "../lib/push.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import { runOnce, clearReminderDedup, _setTestNow } from "../lib/tripReminderScheduler.js";
+import { runOnce, clearReminderDedup, _setTestNow, STALE_CLAIM_MS } from "../lib/tripReminderScheduler.js";
 
 const OWNER_ID  = "cc000000-0001-0001-0001-000000000001";
 const MEMBER_ID = "cc000000-0002-0002-0002-000000000002";
@@ -876,6 +876,44 @@ describe("TripReminderScheduler push", () => {
     assert.ok(
       state.trips![0].reminder_delivered_at,
       "reminder_delivered_at must be set after recovery at the exact boundary",
+    );
+  });
+
+  // ── STALE_CLAIM_MS exact upper-boundary test ──────────────────────────────
+  // recoverStaleClaims uses .lte("reminder_sent_at", staleThreshold) where
+  // staleThreshold = new Date(now - STALE_CLAIM_MS).toISOString().
+  // A claim where reminder_sent_at === staleThreshold satisfies <= and must
+  // still be recovered — the fence-post is inclusive (mirrors the .gte lower
+  // boundary for MAX_RECOVERY_AGE_MS fixed by task 438).
+
+  it("recovers a stale claim whose reminder_sent_at is exactly at the STALE_CLAIM_MS upper boundary", async () => {
+    // Pin the clock so every timestamp in this test is derived from the same
+    // epoch value — the scheduler reads getNow(), which respects _setTestNow.
+    const PINNED_NOW = new Date("2026-07-16T12:00:00.000Z").getTime();
+    _setTestNow(PINNED_NOW);
+
+    // staleThreshold = new Date(PINNED_NOW - STALE_CLAIM_MS).toISOString()
+    // A claim at exactly this timestamp satisfies .lte and must be recovered.
+    const exactStaleThreshold = new Date(PINNED_NOW - STALE_CLAIM_MS).toISOString();
+
+    // start_date must be inside the recovery window (now + 24 h, always safely
+    // inside the 20-28 h window), computed from the pinned clock.
+    const startDate = new Date(PINNED_NOW + 24 * 3_600_000).toISOString().slice(0, 10);
+
+    const state = baseState("trip-stale-threshold-exact");
+    state.trips![0].reminder_sent_at      = exactStaleThreshold;
+    state.trips![0].reminder_delivered_at = null;
+    state.trips![0].start_date            = startDate;
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 1,
+      "recovery must fire when reminder_sent_at equals the exact STALE_CLAIM_MS upper boundary (.lte is inclusive)");
+    assert.ok(
+      state.trips![0].reminder_delivered_at,
+      "reminder_delivered_at must be set after recovery at the exact STALE_CLAIM_MS boundary",
     );
   });
 

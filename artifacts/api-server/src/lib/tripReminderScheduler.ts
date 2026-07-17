@@ -56,6 +56,9 @@ const WINDOW_UPPER_HRS    = 26;
 /** A claim older than this with no delivery confirmation is assumed to be a
  *  crash-between-claim-and-send and will be retried. */
 const STALE_CLAIM_MINUTES = 10;
+/** STALE_CLAIM_MINUTES expressed in milliseconds.  Exported so tests can pin
+ *  the exact fence-post without duplicating the magic number. */
+export const STALE_CLAIM_MS = STALE_CLAIM_MINUTES * 60_000;
 /** Stop retrying a stale claim after this long — the reminder window has
  *  definitely passed so there is nothing useful left to deliver.
  *  Capped at WINDOW_UPPER_HRS so recovery never fires outside the valid window
@@ -154,7 +157,7 @@ async function recoverStaleClaims(sc: ReturnType<typeof getServiceClient>): Prom
     .from("trips")
     .select("id, title, owner_id, start_date, reminder_retry_count")
     .is("reminder_delivered_at", null)
-    .lt("reminder_sent_at", staleThreshold)
+    .lte("reminder_sent_at", staleThreshold)
     .gte("reminder_sent_at", recoveryFloor)
     .gte("start_date", windowLowerDate)
     .lte("start_date", windowUpperDate)
