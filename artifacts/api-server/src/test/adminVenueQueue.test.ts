@@ -187,6 +187,57 @@ function makeNonAdminClient() {
   };
 }
 
+// ── Request helper without an Authorization header ────────────────────────────
+function reqNoAuth(
+  method: string,
+  path: string,
+): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(path, base);
+    const r = http.request(
+      {
+        hostname: url.hostname,
+        port:     Number(url.port),
+        path:     url.pathname + url.search,
+        method,
+        headers: { "content-type": "application/json" },
+      },
+      (res) => {
+        let raw = "";
+        res.on("data", (c) => (raw += c));
+        res.on("end", () => {
+          let parsed: any;
+          try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+          resolve({ status: res.statusCode ?? 0, body: parsed });
+        });
+      },
+    );
+    r.on("error", reject);
+    r.end();
+  });
+}
+
+// ── Test: unauthenticated caller receives 401 ─────────────────────────────────
+
+describe("GET /admin/venues/pending — unauthenticated caller", () => {
+  it("returns 401 with error code 'unauthenticated' when no Authorization header is supplied", async () => {
+    // Even with a client that would grant admin access, the missing header
+    // must short-circuit to 401 before any auth lookup happens.
+    setClient(makeQueueClient({ venueCount: 3 }));
+
+    const { status, body } = await reqNoAuth("GET", "/admin/venues/pending");
+
+    assert.equal(
+      status, 401,
+      `Expected 401, got ${status}: ${JSON.stringify(body)}`,
+    );
+    assert.equal(
+      body.error, "unauthenticated",
+      `Expected error code 'unauthenticated', got '${body.error}'`,
+    );
+  });
+});
+
 // ── Test 0: non-admin caller receives 403 ─────────────────────────────────────
 
 describe("GET /admin/venues/pending — non-admin caller", () => {
