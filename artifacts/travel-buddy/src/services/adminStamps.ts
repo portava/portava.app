@@ -184,6 +184,10 @@ export async function requeueFailedJob(jobId: string): Promise<ApiResult<{ job: 
   return adminPost(`/api/admin/stamps/queue/${jobId}/requeue`, {});
 }
 
+export async function clearCleanupError(jobId: string): Promise<ApiResult<{ job: any }>> {
+  return adminPost(`/api/admin/stamps/queue/${jobId}/clear-cleanup-error`, {});
+}
+
 // ── Upload replacement ─────────────────────────────────────────────────────────
 
 export async function uploadStampArtwork(catalogId: string, opts: {

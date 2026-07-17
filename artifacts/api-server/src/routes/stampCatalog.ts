@@ -758,6 +758,64 @@ router.post("/admin/stamps/queue/:jobId/requeue", async (req, res) => {
   res.json({ job: data });
 });
 
+// ── POST /admin/stamps/queue/:jobId/clear-cleanup-error ───────────────────────
+// Lets operators dismiss the orphaned-files warning after manually removing
+// the files from the stamp-artwork bucket. Nulls out cleanup_error and
+// cleanup_error_paths on the queue row so the badge clears in the UI.
+
+router.post("/admin/stamps/queue/:jobId/clear-cleanup-error", async (req, res) => {
+  const { jobId } = req.params;
+  if (!isUuid(jobId)) { sendError(res, "invalid_payload", "Invalid job id"); return; }
+
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { userId: adminId, sc } = admin;
+
+  const { data, error } = await sc
+    .from("stamp_generation_queue")
+    .update({
+      cleanup_error:       null,
+      cleanup_error_paths: null,
+      updated_at:          new Date().toISOString(),
+    })
+    .eq("id", jobId)
+    .not("cleanup_error", "is", null) // Only update rows that actually have a cleanup error
+    .select("id, catalog_id, status, cleanup_error, cleanup_error_paths")
+    .maybeSingle();
+
+  if (error) { sendError(res, "db_error", error.message); return; }
+  if (!data) {
+    // Either job not found or cleanup_error was already null — fetch to distinguish
+    const { data: existing } = await sc
+      .from("stamp_generation_queue")
+      .select("id, catalog_id, status, cleanup_error, cleanup_error_paths")
+      .eq("id", jobId)
+      .maybeSingle();
+
+    if (!existing) {
+      sendError(res, "not_found", "Job not found");
+      return;
+    }
+    // Already cleared — idempotent success
+    res.json({ job: existing });
+    return;
+  }
+
+  await writeAuditLog(sc, adminId, "clear_cleanup_error", {
+    catalogId: (data as any).catalog_id,
+    notes:     `Operator marked orphaned files as cleaned for job ${jobId}`,
+  });
+
+  console.log(JSON.stringify({
+    event:      "stamp.queue.cleanup_error_cleared",
+    job_id:     jobId,
+    catalog_id: (data as any).catalog_id,
+    admin_id:   adminId,
+  }));
+
+  res.json({ job: data });
+});
+
 // ── POST /admin/stamps/catalog/:id/upload ─────────────────────────────────────
 
 router.post("/admin/stamps/catalog/:id/upload", async (req, res) => {
