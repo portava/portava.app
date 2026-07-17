@@ -13,3 +13,4 @@
 - [Spec alias URL rewrite](spec-alias-rewrite.md) — routes registered at alias paths (/api/buddy-bookings/*) are dead in production; register at canonical paths, test through the rewrite.
 - [Design-subagent restyle audits](design-subagent-restyles.md) — delegated rewrites can silently drop prop wiring (handlers, CTAs) while typechecking clean; grep every prop for render-side usage.
 - [Mobile test import extensions](mobile-test-ts-extensions.md) — travel-buddy node:test files need explicit .ts import extensions and manual registration in the package.json test list.
+- [Alert onPress act() poison](rn-alert-onpress-act-poison.md) — awaiting an Alert button's async onPress inside act() kills effects for all later renders in the file; await outside, then flush with empty act().

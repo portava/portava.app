@@ -1,0 +1,10 @@
+---
+name: RN Alert onPress inside act() poisons later renders
+description: React 19 + RNTL — awaiting an async Alert-button onPress inside act() breaks every subsequent render in the jest file
+---
+
+**Rule:** In travel-buddy jest component tests, never `await act(async () => { await btn.onPress() })` for Alert confirmation buttons. Instead `await btn.onPress?.(); await act(async () => {});` (flush after, outside).
+
+**Why:** Under React 19 + RNTL 14, awaiting the async onPress inside act() leaves the renderer in a state where every later `render()` in the same file mounts but never runs its effects — async loads never fire, so `findByText` times out with an empty tree. The symptom looks like a mock/setup bug but is renderer poisoning from the earlier test.
+
+**How to apply:** In any pressAlertButton-style helper, await the onPress bare, then flush. Prefer `jest.spyOn(Alert, 'alert').mockImplementation(() => {})`. If a shared file is already poisoned and can't be fixed yet, put new suites in a separate `.component.test.tsx` file for a fresh renderer.
