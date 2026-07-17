@@ -97,6 +97,11 @@ interface FakeState {
   /** Map of table name → error object. When set the fake client returns this
    *  error (and no data) for the next update on that table, then clears it. */
   updateErrorOverrides?: Record<string, any>;
+  /** Map of table name → { matchEq?, error }. When set the fake client returns
+   *  this error (and no data) for the next select on that table whose filters
+   *  include the given eq match (or unconditionally if matchEq is omitted),
+   *  then clears the override. */
+  selectErrorOverrides?: Record<string, { matchEq?: { col: string; val: any }; error: any }>;
 }
 
 let state: FakeState = {};
@@ -348,6 +353,27 @@ function makeClient(userId: string, role = "user") {
             }
           }
           return { data: null, error: null };
+        }
+
+        // Handle select error overrides — fire when there is no pending write and
+        // the table has an armed select error that either has no matchEq filter or
+        // whose matchEq filter matches one of the applied eq filters.
+        if (
+          this._insertData === null &&
+          this._updateData === null &&
+          this._upsertData === null &&
+          state.selectErrorOverrides?.[t]
+        ) {
+          const override = state.selectErrorOverrides[t];
+          const matches =
+            !override.matchEq ||
+            this._filters.some(
+              ([op, col, val]) => op === "eq" && col === override.matchEq!.col && val === override.matchEq!.val,
+            );
+          if (matches) {
+            delete state.selectErrorOverrides[t];
+            return { data: null, error: override.error };
+          }
         }
 
         // Handle selects
@@ -3576,6 +3602,69 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
       state.bookings!["bk-ac-multi-2"].status,
       "completed",
       "second booking must also be promoted to completed — the .in() call must cover all ids",
+    );
+  });
+
+  it("returns 200 with noShowEscalated: 0 when the stale-no-shows DB query itself errors — no crash", async () => {
+    // The sweep's step-3 query (.eq("status","no_show_pending").lt(…)) may itself
+    // return a DB error.  The code destructures only { data: staleNoShows } so
+    // data will be null; the guard `if (staleNoShows && staleNoShows.length > 0)`
+    // must skip the loop and the sweep must still return 200 with noShowEscalated: 0.
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+
+    state = {
+      bookings: {},
+      // Arm a select error override that fires only when the eq("status","no_show_pending")
+      // filter is present — i.e. the stale-no-shows fetch in step 3 of the sweep.
+      selectErrorOverrides: {
+        rent_buddy_bookings: {
+          matchEq: { col: "status", val: "no_show_pending" },
+          error: { message: "simulated DB error fetching stale no-shows", code: "PGRST301" },
+        },
+      },
+    };
+
+    const r = await reqSweep();
+
+    // Sweep must not crash — it must respond with HTTP 200.
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    // noShowEscalated must be 0 — the stale-no-shows query returned an error so
+    // the loop body must never execute.
+    assert.equal(
+      r.body.noShowEscalated,
+      0,
+      "noShowEscalated must be 0 when the stale-no-shows DB query errors",
+    );
+
+    // ok flag must still be true — a single step erroring must not fail the whole sweep.
+    assert.equal(
+      r.body.ok,
+      true,
+      "sweep must return ok:true even when the stale-no-shows DB query errors",
+    );
+
+    // No dispute rows must have been inserted — the guard short-circuits before
+    // reaching the per-booking escalation loop.
+    const noShowDisputes = (state.disputes ?? []).filter(
+      (d: any) => d.reason === "no_show",
+    );
+    assert.equal(
+      noShowDisputes.length,
+      0,
+      "no dispute rows must be inserted when the stale-no-shows DB query errors",
+    );
+
+    // No no_show_escalated events must have been written.
+    const escalationEvents = ((state as any).bookingEvents ?? []).filter(
+      (e: any) => e.event === "no_show_escalated",
+    );
+    assert.equal(
+      escalationEvents.length,
+      0,
+      "no no_show_escalated events must be written when the stale-no-shows DB query errors",
     );
   });
 });
