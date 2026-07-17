@@ -243,7 +243,7 @@ async function getOtherProfiles(excludeId: string, limit = 25) {
 async function getStampDefinitions(limit = 25) {
   const { data, error } = await sc
     .from("stamp_definitions")
-    .select("id, slug, stamp_type, name, city, country")
+    .select("id, slug, stamp_type, name, city, country, source_system, category")
     .eq("is_active", true)
     .limit(limit);
   if (error) throw error;
@@ -407,13 +407,53 @@ async function seedFollows(profileId: string, others: { id: string }[]) {
   return { inserted: toInsert.length, skipped: rows.length - toInsert.length };
 }
 
+// Balanced 20-stamp demo selection covering every available category in the
+// active catalog. Each entry is paired with a destination from DESTINATIONS so
+// the resulting stamps are geotagged and align with the user's demo trips,
+// postcards, and events.
+const STAMP_SELECTIONS = [
+  { slug: "first_trip_created", category: "trip" },
+  { slug: "first_trip_completed", category: "trip" },
+  { slug: "solo_traveler", category: "trip" },
+  { slug: "group_tripper", category: "trip" },
+  { slug: "weekend_wanderer", category: "trip" },
+  { slug: "city_explorer", category: "location" },
+  { slug: "globe_trotter", category: "location" },
+  { slug: "world_citizen", category: "location" },
+  { slug: "first_postcard", category: "community" },
+  { slug: "first_post", category: "community" },
+  { slug: "trip_planner", category: "community" },
+  { slug: "community_connector", category: "community" },
+  { slug: "storyteller", category: "community" },
+  { slug: "event_host", category: "event" },
+  { slug: "event_participant", category: "event" },
+  { slug: "first_event_joined", category: "event" },
+  { slug: "safe_return_ready", category: "safety" },
+  { slug: "verified_traveler", category: "trust" },
+  { slug: "early_adopter", category: "special" },
+  { slug: "first_buddy_hosted", category: "rent_buddy" },
+];
+
+// The legacy passport_stamps table has a narrow check constraint on stamp_type.
+const PASSPORT_STAMP_TYPE_MAP: Record<string, string> = {
+  trip: "trip",
+  location: "destination",
+  community: "destination",
+  event: "event",
+  safety: "achievement",
+  trust: "verification",
+  special: "achievement",
+  rent_buddy: "rent_a_buddy",
+};
+
 async function seedStamps(profileId: string) {
   const rows = DESTINATIONS.map((dest, i) => {
     const id = uuidv5(`stamp:${profileId}:${i}`, SEED_NS);
+    const selection = STAMP_SELECTIONS[i % STAMP_SELECTIONS.length];
     return {
       id,
       user_id: profileId,
-      stamp_type: STAMP_TYPES[i % STAMP_TYPES.length],
+      stamp_type: PASSPORT_STAMP_TYPE_MAP[selection?.category ?? "trip"] ?? "trip",
       city: dest.city,
       country: dest.country,
       awarded_at: dateDaysAgo(600 - i * 28),
@@ -423,10 +463,50 @@ async function seedStamps(profileId: string) {
   return upsertRows("passport_stamps", rows);
 }
 
-async function seedUserStamps(profileId: string, definitions: { id: string }[]) {
-  const rows = definitions.slice(0, 20).map((def, i) => {
+async function seedUserStamps(profileId: string, definitions: { id: string; slug: string; source_system: string | null }[]) {
+  const defBySlug = new Map(definitions.map((d) => [d.slug, d]));
+
+  // Load related rows so earned stamps can reference real demo sources.
+  const [{ data: trips }, { data: events }, { data: postcards }, { data: posts }] = await Promise.all([
+    sc.from("trips").select("id, destination_city").eq("owner_id", profileId),
+    sc.from("events").select("id, city").eq("host_id", profileId).eq("visibility", "public").not("state", "in", '("draft","cancelled","archived")'),
+    sc.from("passport_postcards").select("id, location_city").eq("user_id", profileId).eq("status", "active"),
+    sc.from("posts").select("id, location_city").eq("author_id", profileId).eq("status", "active"),
+  ]);
+  const tripByCity = new Map((trips ?? []).map((t: any) => [t.destination_city, t.id]));
+  const eventByCity = new Map((events ?? []).map((e: any) => [e.city, e.id]));
+  const postcardByCity = new Map((postcards ?? []).map((p: any) => [p.location_city, p.id]));
+  const postByCity = new Map((posts ?? []).map((p: any) => [p.location_city, p.id]));
+
+  const rows = STAMP_SELECTIONS.map((selection, i) => {
+    const def = defBySlug.get(selection.slug);
+    if (!def) return null;
     const id = uuidv5(`userstamp:${profileId}:${i}`, SEED_NS);
     const dest = DESTINATIONS[i % DESTINATIONS.length];
+    const sourceSystem = def.source_system ?? selection.category;
+    let sourceType = sourceSystem;
+    let sourceId: string | null = null;
+    if (selection.slug === "first_postcard") {
+      sourceType = "postcards";
+      sourceId = postcardByCity.get(dest.city) ?? null;
+    } else if (sourceSystem === "trips" || selection.category === "trip") {
+      sourceType = "trips";
+      sourceId = tripByCity.get(dest.city) ?? null;
+    } else if (sourceSystem === "events" || selection.category === "event") {
+      sourceType = "events";
+      sourceId = eventByCity.get(dest.city) ?? null;
+    } else if (sourceSystem === "posts" || selection.category === "community" || selection.category === "location") {
+      sourceType = "posts";
+      sourceId = postByCity.get(dest.city) ?? null;
+    } else if (sourceSystem === "rent_buddy") {
+      sourceType = "rent_buddy";
+    } else if (sourceSystem === "safe_return") {
+      sourceType = "safe_return";
+    } else if (selection.category === "trust") {
+      sourceType = "verification";
+    } else if (selection.category === "special") {
+      sourceType = "seed_script";
+    }
     return {
       id,
       user_id: profileId,
@@ -439,11 +519,12 @@ async function seedUserStamps(profileId: string, definitions: { id: string }[]) 
       country: dest.country,
       lat: dest.lat,
       lng: dest.lng,
-      source_type: "seed_script",
-      source_id: null,
+      source_type: sourceType,
+      source_id: sourceId,
       visibility: "public",
     };
-  });
+  }).filter(Boolean) as any[];
+
   return upsertRows("user_stamps", rows);
 }
 
