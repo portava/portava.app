@@ -388,3 +388,62 @@ describe('StampCatalogDetail — dynamic error banners are announced to screen r
     expect(banner.props.accessibilityLiveRegion).toBe('assertive');
   });
 });
+
+describe('StampCatalogDetail — trimmed activate response', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('updates to the approved state after an approve whose response contains only { id, public_url }', async () => {
+    // The activate endpoint returns a trimmed version payload — only id and
+    // public_url are selected server-side (ActivatedVersion). The screen must
+    // not read missing ArtworkVersion fields (status, prompt fields, provider)
+    // off that payload; it reloads the detail instead.
+    const approvedDetail = {
+      ok: true as const,
+      data: {
+        ...detailOk().data,
+        entry: { ...detailOk().data.entry, status: 'approved' },
+        versions: [
+          {
+            id: 'ver-1',
+            status: 'approved',
+            public_url: 'https://example.com/approved.png',
+            provider: 'ai',
+            prompt_template_version: 'v1',
+          },
+        ],
+      },
+    };
+
+    mockGetEntry
+      .mockResolvedValueOnce(detailOkWithCandidate()) // initial load: candidate present
+      .mockResolvedValue(approvedDetail);             // reload after approve
+
+    // Trimmed response: version has ONLY id and public_url — no status,
+    // provider, or prompt fields. If the screen read any missing field off
+    // this payload, this test would surface it.
+    mockActivate.mockResolvedValue({
+      ok: true,
+      data: {
+        entry: { ...detailOk().data.entry, status: 'approved' },
+        version: { id: 'ver-1', public_url: 'https://example.com/approved.png' },
+      },
+    });
+
+    await act(async () => { render(<StampCatalogDetail />); });
+
+    // Candidate state visible.
+    expect(screen.getByText('Set as Active')).toBeTruthy();
+
+    // Approve the candidate.
+    await act(async () => { fireEvent.press(screen.getByText('Set as Active')); });
+    expect(mockActivate).toHaveBeenCalledWith('cat-abc', 'ver-1', expect.any(String));
+
+    // Screen reloads and renders the approved artwork section using the
+    // refetched full detail — no crash, no error banner, candidate CTA gone.
+    await waitFor(() => expect(screen.queryByText('Set as Active')).toBeNull());
+    expect(screen.queryByTestId('catalog-detail-error')).toBeNull();
+    expect(screen.getByText('Provider: ai')).toBeTruthy();
+  });
+});
