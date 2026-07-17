@@ -375,6 +375,29 @@ describe("POST regenerate when a 'queued' job already exists", () => {
     assert.equal(row.attempts, 1, "attempts must not be reset on a processing row");
   });
 
+  it("the pre-seeded job's priority stays at 0 — not overwritten to 1 by regenerate", async () => {
+    // The handler inserts its new job with priority=1, but that insert is
+    // blocked by 23505 here. The preceding UPDATE steps (archive review_required,
+    // reset failed rows) must not touch the queued row — including its priority.
+    assert.equal(
+      db.stamp_generation_queue[0].priority,
+      0,
+      "test setup: pre-seeded job must start with priority=0",
+    );
+
+    const res = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(res.status, 200, `regenerate failed: ${JSON.stringify(res.body)}`);
+
+    const surviving = db.stamp_generation_queue.find((r) => r.id === EXISTING_JOB_ID);
+    assert.ok(surviving, "pre-seeded job must still exist");
+    assert.equal(
+      surviving!.priority,
+      0,
+      `expected the surviving queued job to keep priority=0, found priority=${surviving!.priority}: ${JSON.stringify(surviving)}`,
+    );
+    assert.equal(surviving!.status, "queued", "surviving job must still be queued");
+  });
+
   it("the 23505 guard also applies when the pre-existing job is in 'processing' status", async () => {
     // Advance the pre-seeded job to processing (simulates the worker having
     // picked it up), then call regenerate.  The unique-constraint guard covers
