@@ -1286,6 +1286,65 @@ describe("background correction sweep", () => {
     assert.equal(r2!.countryCode, "NO");
   });
 
+  it("deletion-eviction re-geocode returning null is cached in-memory — not retried on the next call", async () => {
+    // Step 1: seed the in-memory cache with an initial positive entry (CA for Banff).
+    _setGeocodeFetchForTests(fakeNominatim({
+      "banff": { country_code: "ca", country: "Canada" },
+    }));
+    await geocodeCityCountry("Banff");
+    assert.equal(fetchCalls.length, 1, "initial geocode should hit Nominatim once");
+
+    // Step 2: backdate correctionCheckedAt so the very next call immediately
+    // re-probes the DB for corrected_at / deleted_at (skips the 5-min cooldown).
+    _backdateGeocodeCacheEntryForTests("banff");
+
+    // Step 3: build a DB client where both maybeSingle() calls (the correction
+    // probe inside evictIfDbCorrected and the subsequent readDbCache call) return
+    // data: null — simulating a row that was hard-deleted by an admin.
+    let maybeSingleCalls = 0;
+    const deletedRowDb = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache");
+        const chain: any = {
+          select()      { return chain; },
+          eq()          { return chain; },
+          maybeSingle() { maybeSingleCalls += 1; return chain; },
+          then(resolve: (v: any) => void) {
+            // Both the correction probe and readDbCache paths see a missing row.
+            resolve({ data: null, error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    // Step 4: configure Nominatim to return no result for "banff" — the city is
+    // unresolvable this time around (e.g. Nominatim has no match).
+    fetchCalls = [];
+    _setGeocodeFetchForTests(fakeNominatim({})); // empty → no match
+    _setGeocodeDbClientForTests(deletedRowDb);
+
+    // Step 5: first call — correction probe fires, evictIfDbCorrected sees data: null
+    // and evicts the stale CA entry.  readDbCache also returns null.  Nominatim is
+    // called but returns null too.  The null result must be negative-cached.
+    const r1 = await geocodeCityCountry("Banff");
+    assert.equal(r1, null, "first call must return null — city is unresolvable");
+    assert.equal(fetchCalls.length, 1, "Nominatim must be called exactly once on the first call");
+    assert.ok(maybeSingleCalls >= 2, "DB must be probed at least twice (correction probe + readDbCache)");
+
+    // Step 6: second call — the null result is held in the in-memory cache under
+    // NEGATIVE_TTL_MS.  Nominatim must NOT be called again; the cached null is returned.
+    fetchCalls = [];
+    _setGeocodeFetchForTests(async (url: string) => {
+      fetchCalls.push(url);
+      throw new Error("Nominatim must not be called — null result is negative-cached");
+    });
+
+    const r2 = await geocodeCityCountry("Banff");
+    assert.equal(r2, null, "second call must also return null — served from in-memory negative cache");
+    assert.equal(fetchCalls.length, 0, "Nominatim must not be called a second time — null is already cached");
+  });
+
   it("bumps correctionCheckedAt after a transient DB error — second call skips the probe", async () => {
     // Step 1: seed the in-memory cache with a valid entry.
     _setGeocodeFetchForTests(fakeNominatim({ "reykjavik": { country_code: "is", country: "Iceland" } }));
