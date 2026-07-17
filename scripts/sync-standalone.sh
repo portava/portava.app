@@ -450,6 +450,7 @@ if $CHECK_SOURCE; then
   echo ""
 
   SOURCE_DRIFT_COUNT=0
+  PERSPECTIVE_DRIFT_COUNT=0
 
   for dir in "${SOURCE_CHECK_DIRS[@]}"; do
     from="$SRC/$dir"
@@ -484,8 +485,21 @@ if $CHECK_SOURCE; then
         echo "    + $dir/$rel (new in source — missing from standalone)"
         dir_drift=$(( dir_drift + 1 ))
       elif ! diff -q "$f" "$dst_file" &>/dev/null; then
-        echo "    ~ $dir/$rel (modified — standalone is out of date)"
-        dir_drift=$(( dir_drift + 1 ))
+        persp="$(detect_path_perspective "$f")"
+        if [[ -n "$persp" ]]; then
+          echo "    ! $dir/$rel [perspective-divergent] (differs — --fix-source will REFUSE this file; port manually)"
+          if [[ "$persp" == "monorepo" ]]; then
+            echo "        Source copy contains monorepo-perspective relative paths — copying it would break the standalone tree."
+          else
+            echo "        Source copy contains standalone-perspective relative paths — fix the artifacts/travel-buddy/ copy first."
+          fi
+          echo "        Port the change manually using the destination tree's perspective (guard: scripts/src/cross-tree-paths.test.ts)."
+          dir_drift=$(( dir_drift + 1 ))
+          PERSPECTIVE_DRIFT_COUNT=$(( PERSPECTIVE_DRIFT_COUNT + 1 ))
+        else
+          echo "    ~ $dir/$rel (modified — standalone is out of date)"
+          dir_drift=$(( dir_drift + 1 ))
+        fi
       fi
     done < <(find "$from" -type f -not -path "*/node_modules/*" -print0 | sort -z)
 
@@ -514,12 +528,20 @@ if $CHECK_SOURCE; then
 
   echo ""
   echo "  Total drifted files: $SOURCE_DRIFT_COUNT"
+  if [[ $PERSPECTIVE_DRIFT_COUNT -gt 0 ]]; then
+    echo "  Perspective-divergent: $PERSPECTIVE_DRIFT_COUNT file(s) — --fix-source will REFUSE these; port them manually."
+  fi
   echo "  Threshold:           $SOURCE_DRIFT_THRESHOLD"
   echo ""
 
   if [[ $SOURCE_DRIFT_COUNT -gt $SOURCE_DRIFT_THRESHOLD ]]; then
     echo "FAIL: Source drift ($SOURCE_DRIFT_COUNT file(s)) exceeds threshold ($SOURCE_DRIFT_THRESHOLD)."
     echo ""
+    if [[ $PERSPECTIVE_DRIFT_COUNT -gt 0 ]]; then
+      echo "NOTE: $PERSPECTIVE_DRIFT_COUNT of these are perspective-divergent — --fix-source will NOT fix them."
+      echo "      Port those changes manually using the destination tree's perspective."
+      echo ""
+    fi
     echo "To re-sync only the drifted source directories, run:"
     echo "  bash scripts/sync-standalone.sh --fix-source"
     echo ""

@@ -957,6 +957,66 @@ assert_not_contains "24d: identical divergent file not flagged" "identical.helpe
 rm -rf "$T24"
 
 # ---------------------------------------------------------------------------
+# Test 25: --check-source labels perspective-divergent files distinctly with
+# manual-port guidance, instead of counting them as ordinary drift
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 25: --check-source calls out perspective-divergent files ==="
+
+T25="$(setup_workspace)"
+src25="$T25/artifacts/travel-buddy"
+dst25="$T25/travel-buddy-standalone"
+
+mkdir -p "$src25/src/services" "$dst25/src/services"
+# Perspective-divergent pair (monorepo copy has monorepo-perspective paths)
+cat > "$src25/src/services/sdk54-downgrade-compat.test.ts" <<'EOF'
+const saPkg = readPkg('../../../../travel-buddy-standalone/package.json');
+EOF
+cat > "$dst25/src/services/sdk54-downgrade-compat.test.ts" <<'EOF'
+const monoPkg = readPkg('../../../artifacts/travel-buddy/package.json');
+EOF
+# Ordinary drifted file — must keep the plain "modified" label
+echo "v2" > "$src25/src/services/neutral.ts"
+echo "v1" > "$dst25/src/services/neutral.ts"
+
+ec25=0
+out25="$(SOURCE_DRIFT_DIRS="src" run_sync "$T25" --check-source 2>&1)" || ec25=$?
+
+assert_exit         "25a: still exits 1 (divergence counts toward drift)" 1 "$ec25"
+assert_contains     "25b: divergent file gets distinct label"      "! src/services/sdk54-downgrade-compat.test.ts [perspective-divergent]" "$out25"
+assert_contains     "25c: fix-source refusal warning shown"        "fix-source will REFUSE" "$out25"
+assert_contains     "25d: manual-port guidance shown"              "Port the change manually" "$out25"
+assert_contains     "25e: perspective count shown in summary"      "Perspective-divergent: 1 file(s)" "$out25"
+assert_contains     "25f: FAIL NOTE about manual porting shown"    "1 of these are perspective-divergent" "$out25"
+assert_contains     "25g: ordinary drift keeps plain label"        "~ src/services/neutral.ts (modified — standalone is out of date)" "$out25"
+assert_not_contains "25h: divergent file NOT labelled as ordinary modified" "~ src/services/sdk54-downgrade-compat.test.ts (modified" "$out25"
+
+rm -rf "$T25"
+
+# ---------------------------------------------------------------------------
+# Test 26: --check-source without divergent files shows no perspective noise
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 26: --check-source with only ordinary drift shows no perspective label ==="
+
+T26="$(setup_workspace)"
+src26="$T26/artifacts/travel-buddy"
+dst26="$T26/travel-buddy-standalone"
+
+mkdir -p "$src26/src" "$dst26/src"
+echo "v2" > "$src26/src/service.ts"
+echo "v1" > "$dst26/src/service.ts"
+
+ec26=0
+out26="$(SOURCE_DRIFT_DIRS="src" run_sync "$T26" --check-source 2>&1)" || ec26=$?
+
+assert_exit         "26a: exits 1 on ordinary drift"          1 "$ec26"
+assert_not_contains "26b: no perspective-divergent label"     "[perspective-divergent]" "$out26"
+assert_not_contains "26c: no perspective summary line"        "Perspective-divergent:" "$out26"
+
+rm -rf "$T26"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
