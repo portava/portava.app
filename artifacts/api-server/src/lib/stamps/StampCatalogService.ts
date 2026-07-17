@@ -72,7 +72,7 @@ export interface CatalogEntry {
   stamp_type: string;
   display_name: string;
   country: string;
-  country_code: string;
+  country_code: string | null;
   region: string | null;
   city: string | null;
   neighborhood: string | null;
@@ -148,7 +148,7 @@ function shapeRow(row: any): CatalogEntry {
     stamp_type:              row.stamp_type,
     display_name:            row.display_name,
     country:                 row.country,
-    country_code:            row.country_code,
+    country_code:            row.country_code ?? null,
     region:                  row.region ?? null,
     city:                    row.city ?? null,
     neighborhood:            row.neighborhood ?? null,
