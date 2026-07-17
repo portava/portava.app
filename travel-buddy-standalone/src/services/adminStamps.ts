@@ -180,11 +180,28 @@ export interface GenerationQueueJob {
   } | null;
 }
 
-export async function requeueFailedJob(jobId: string): Promise<ApiResult<{ job: any }>> {
+/**
+ * Partial job shape returned by POST /admin/stamps/queue/:jobId/requeue.
+ * The endpoint selects only `id, catalog_id, status, attempts` on the updated
+ * row, so callers must not expect the full GenerationQueueJob here.
+ */
+export type RequeuedJob = Pick<GenerationQueueJob, 'id' | 'catalog_id' | 'status' | 'attempts'>;
+
+/**
+ * Partial job shape returned by POST /admin/stamps/queue/:jobId/clear-cleanup-error.
+ * The endpoint selects only `id, catalog_id, status, cleanup_error,
+ * cleanup_error_paths` (both cleared fields come back null on success).
+ */
+export type CleanupClearedJob = Pick<
+  GenerationQueueJob,
+  'id' | 'catalog_id' | 'status' | 'cleanup_error' | 'cleanup_error_paths'
+>;
+
+export async function requeueFailedJob(jobId: string): Promise<ApiResult<{ job: RequeuedJob }>> {
   return adminPost(`/api/admin/stamps/queue/${jobId}/requeue`, {});
 }
 
-export async function clearCleanupError(jobId: string): Promise<ApiResult<{ job: any }>> {
+export async function clearCleanupError(jobId: string): Promise<ApiResult<{ job: CleanupClearedJob }>> {
   return adminPost(`/api/admin/stamps/queue/${jobId}/clear-cleanup-error`, {});
 }
 
