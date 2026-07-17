@@ -1,5 +1,5 @@
 /**
- * stamps/StampGrid — 2-column FlatList grid of PassportStampNew items.
+ * stamps/StampGrid — 3-column FlatList grid of PassportStampNew items.
  * Shows skeleton placeholders while loading, a retry button on error,
  * and friendly empty states when the stamp list is empty.
  */
@@ -39,7 +39,7 @@ export function StampGrid({
   if (loading && stamps.length === 0) {
     return (
       <View style={styles.skeletonGrid}>
-        {[0, 1, 2, 3].map((i) => <SkeletonCard key={i} />)}
+        {[0, 1, 2, 3, 4, 5].map((i) => <SkeletonCard key={i} />)}
       </View>
     );
   }
@@ -68,7 +68,7 @@ export function StampGrid({
   return (
     <FlatList
       data={stamps}
-      numColumns={2}
+      numColumns={3}
       keyExtractor={(s) => s.id}
       scrollEnabled={false}
       columnWrapperStyle={styles.row}
@@ -116,17 +116,17 @@ const styles = StyleSheet.create({
 
 const sk = StyleSheet.create({
   card: {
-    width: '50%',
+    width: '33.333%',
     alignItems: 'center',
     paddingVertical: space.md,
     paddingHorizontal: space.xs,
     gap: 6,
   },
   artwork: {
-    width: 76, height: 76, borderRadius: 38,
+    width: 64, height: 64, borderRadius: 32,
     backgroundColor: color.haze,
     marginBottom: 4,
   },
-  line1: { width: 60, height: 10, borderRadius: 5, backgroundColor: color.haze },
-  line2: { width: 44, height: 8,  borderRadius: 4, backgroundColor: color.haze, opacity: 0.6 },
+  line1: { width: 54, height: 10, borderRadius: 5, backgroundColor: color.haze },
+  line2: { width: 40, height: 8,  borderRadius: 4, backgroundColor: color.haze, opacity: 0.6 },
 });

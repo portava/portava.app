@@ -27,7 +27,7 @@ const VISIBILITY_LABEL: Record<string, string> = {
   trip_crew:    'Crew',
 };
 
-function toLegacy(s: PassportStampNew): PassportStamp {
+export function toLegacy(s: PassportStampNew): PassportStamp {
   const label =
     s.titleOverride ?? s.definition?.name ?? s.city ?? s.country ?? s.stampType.replace(/_/g, ' ').toUpperCase();
   const kind = (
@@ -72,7 +72,7 @@ export function StampCard({ stamp, isOwner, onPress }: Props) {
         <UniversalStampArtwork
           activeArtworkUrl={stamp.activeArtworkUrl}
           stamp={legacy}
-          size={76}
+          size={64}
           showPendingLabel={false}
         />
         {isOwner && isNonPublic && (

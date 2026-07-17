@@ -5,7 +5,8 @@
  * returned yet (first paint).
  */
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { ChevronRight } from 'lucide-react-native';
 import type { PassportStamp } from '../types/models.ts';
 import type { PassportStampNew } from '../services/passportStamps.ts';
 import { getMyPassportStamps, getUserStampsByUsername } from '../services/passportStamps.ts';
@@ -15,6 +16,8 @@ import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
 import { StampCategoryFilter } from './stamps/StampCategoryFilter.tsx';
 import type { StampCategory } from './stamps/StampCategoryFilter.tsx';
 import { StampGrid } from './stamps/StampGrid.tsx';
+import { toLegacy } from './stamps/StampCard.tsx';
+import { UniversalStampArtwork } from './stamps/UniversalStampArtwork.tsx';
 import { StampDetailModal } from './stamps/StampDetailModal.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 
@@ -101,6 +104,15 @@ export function StampsTab({ stamps: _legacyStamps = [], viewingUsername, viewing
     return matchesCategory(s, category);
   });
 
+  // Featured: the most recently earned stamp in the current view, shown as a
+  // full-width card above the grid (and excluded from the grid below).
+  // Plain computation (not useMemo): this component has an early return above,
+  // so adding hooks below it would break the Rules of Hooks.
+  const featured = displayed.length > 0
+    ? displayed.reduce((best, s) => ((s.earnedAt ?? '') > (best.earnedAt ?? '') ? s : best), displayed[0])
+    : null;
+  const gridStamps = featured ? displayed.filter((s) => s.id !== featured.id) : displayed;
+
   const totalCount = viewingUsername
     ? allStamps.filter((s) => !s.isRevoked && s.visibility !== 'private').length
     : allStamps.length;
@@ -160,9 +172,41 @@ export function StampsTab({ stamps: _legacyStamps = [], viewingUsername, viewing
       {/* Category filter strip (shown for both views so public profiles can browse) */}
       <StampCategoryFilter selected={category} onCategoryChange={setCategory} />
 
+      {/* Featured: most recent stamp (1x on top of the grid) */}
+      {featured ? (() => {
+        const legacy = toLegacy(featured);
+        const location = [featured.city, featured.country].filter(Boolean).join(', ');
+        return (
+          <Pressable
+            style={styles.featured}
+            onPress={() => setSelected(featured)}
+            accessibilityRole="button"
+            accessibilityLabel={`Most recent stamp: ${legacy.label}`}
+          >
+            <UniversalStampArtwork
+              activeArtworkUrl={featured.activeArtworkUrl}
+              stamp={legacy}
+              size={72}
+              showPendingLabel={false}
+            />
+            <View style={styles.featuredInfo}>
+              <Text style={styles.featuredKicker}>MOST RECENT</Text>
+              <Text style={styles.featuredName} numberOfLines={1}>{legacy.label}</Text>
+              {location ? (
+                <Text style={styles.featuredMeta} numberOfLines={1}>{location}</Text>
+              ) : null}
+              <Text style={styles.featuredDate}>
+                {new Date(featured.earnedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+              </Text>
+            </View>
+            <ChevronRight size={18} color={color.faint} />
+          </Pressable>
+        );
+      })() : null}
+
       {/* Stamp grid */}
       <StampGrid
-        stamps={displayed}
+        stamps={gridStamps}
         loading={loading}
         error={error}
         isOwner={isOwner}
@@ -222,4 +266,26 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   progressSub: { ...t.small, color: color.mute, fontSize: 11 },
+
+  featured: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    marginHorizontal: space.lg,
+    marginTop: space.sm,
+    marginBottom: space.xs,
+    padding: space.md,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: color.haze,
+    backgroundColor: color.paperRaised,
+  },
+  featuredInfo: { flex: 1, minWidth: 0, gap: 1 },
+  featuredKicker: {
+    fontSize: 9, fontWeight: '700', letterSpacing: 1.1,
+    color: color.mute, fontFamily: 'Courier',
+  },
+  featuredName: { ...t.bodyStrong, color: color.ink, fontSize: 15 },
+  featuredMeta: { ...t.small, color: color.mute, fontSize: 12 },
+  featuredDate: { ...t.small, color: color.faint, fontSize: 11 },
 });
