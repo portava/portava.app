@@ -9,6 +9,7 @@ import { RelationshipBadge } from './RelationshipBadge.tsx';
 import { KnownFromRow } from './KnownFromRow.tsx';
 import { UserOverflowMenu } from './UserOverflowMenu.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { primaryIdentityText } from '../../lib/displayIdentity.ts';
 
 interface Props {
   userId: string;
@@ -36,7 +37,7 @@ export function UserMiniProfileCard({
   if (blockedIds.has(userId)) return null;
   if (context?.theyBlockedMe) return null;
 
-  const name = displayName ?? handle ?? 'Traveler';
+  const name = primaryIdentityText({ displayName, handle });
 
   return (
     <View style={s.card}>

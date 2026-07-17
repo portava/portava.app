@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { X, Shield, ChevronDown, ChevronUp, Info } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { primaryIdentityText } from '../../lib/displayIdentity.ts';
 import {
   createSession,
   startSession,
@@ -402,7 +403,7 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
                             {selectedContacts.has(c.userId) && <Text style={styles.checkMark}>✓</Text>}
                           </View>
                           <View>
-                            <Text style={styles.contactName}>{c.displayName ?? c.handle ?? 'Traveler'}</Text>
+                            <Text style={styles.contactName}>{primaryIdentityText({ displayName: c.displayName, handle: c.handle })}</Text>
                             {c.handle ? <Text style={styles.contactHandle}>@{c.handle}</Text> : null}
                           </View>
                         </Pressable>

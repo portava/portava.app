@@ -32,6 +32,7 @@ import {
   type ReviewEntityType,
 } from '../services/reviews.ts';
 import { useSession } from '../context/SessionContext.tsx';
+import { primaryIdentityText } from '../lib/displayIdentity.ts';
 
 // ── Star display ──────────────────────────────────────────────────────────────
 
@@ -61,7 +62,7 @@ function ReviewCard({ review }: { review: Review }) {
       </View>
       {!review.anonymous && review.reviewer ? (
         <Text style={s.reviewerName}>
-          {review.reviewer.displayName ?? review.reviewer.handle ?? 'Traveler'}
+          {primaryIdentityText({ displayName: review.reviewer.displayName, handle: review.reviewer.handle })}
         </Text>
       ) : (
         <Text style={s.reviewerName}>Anonymous</Text>
