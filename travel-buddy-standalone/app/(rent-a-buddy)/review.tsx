@@ -8,6 +8,7 @@ import { color, space, radius, type as t, shadow, layout } from '../../src/theme
 import { Stamp } from '../../src/components/ui';
 import { submitReview } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 
 const CATEGORY_RATINGS = [
   { id: 'onTime', label: 'On time' },
@@ -96,7 +97,7 @@ export default function RentABuddyReview() {
   }
 
   return (
-    <View style={styles.page}>
+    <KeyboardSafeScrollView style={styles.page}>
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + space.sm }]}>
         <Pressable
@@ -108,7 +109,7 @@ export default function RentABuddyReview() {
         <Text style={styles.headerTitle}>Leave a Review</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         {/* Double-blind notice */}
         <View style={styles.blindNotice}>
           <Lock size={14} color={color.deep} />
@@ -211,7 +212,7 @@ export default function RentABuddyReview() {
           </Text>
         </Pressable>
       </View>
-    </View>
+    </KeyboardSafeScrollView>
   );
 }
 

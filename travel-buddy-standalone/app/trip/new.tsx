@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator, ScrollView, StyleSheet } from 'react-native';
+import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { router } from 'expo-router';
 import { CalendarDays, MapPin, X } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
@@ -73,7 +74,7 @@ export default function NewTrip() {
   const endD = endDate ? fromISODate(endDate) : null;
 
   return (
-    <View style={{ flex: 1, backgroundColor: color.paper }}>
+    <KeyboardSafeScrollView style={{ backgroundColor: color.paper }}>
       <ScreenHeader title="New trip" back />
 
       <ScrollView
@@ -166,7 +167,7 @@ export default function NewTrip() {
         onSelect={(p) => setPlace(p)}
         onClose={() => setPlaceOpen(false)}
       />
-    </View>
+    </KeyboardSafeScrollView>
   );
 }
 

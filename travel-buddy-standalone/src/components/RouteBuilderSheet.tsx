@@ -12,7 +12,9 @@ import {
   StyleSheet, ActivityIndicator, Alert,
 } from 'react-native';
 import { X, Route, Trash2, MapPin, ChevronRight, Plus } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { createRoutePlan, type CandidateStopInput, type RouteStyle, type FullRoutePlan } from '../services/routePlan.ts';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import type { Place } from '../lib/location/placeTypes.ts';
@@ -56,6 +58,7 @@ const STYLE_OPTIONS: Array<{ value: RouteStyle; label: string; emoji: string; de
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function RouteBuilderSheet({ visible, onClose, onRouteCreated, initialStops = [], tripId }: Props) {
+  const insets = useSafeAreaInsets();
   const [stops, setStops]           = useState<RouteStopDraft[]>(initialStops);
   const [routeStyle, setRouteStyle] = useState<RouteStyle>('custom');
   const [title, setTitle]           = useState('');
@@ -175,7 +178,7 @@ export function RouteBuilderSheet({ visible, onClose, onRouteCreated, initialSto
   return (
     <>
       <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-        <View style={styles.root}>
+        <KeyboardSafeScrollView offset={insets.top} style={styles.root}>
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <Route size={20} color={color.deep} />
@@ -186,7 +189,7 @@ export function RouteBuilderSheet({ visible, onClose, onRouteCreated, initialSto
             </Pressable>
           </View>
 
-          <ScrollView style={styles.body} contentContainerStyle={{ paddingBottom: 48 }} showsVerticalScrollIndicator={false}>
+          <ScrollView style={styles.body} contentContainerStyle={{ paddingBottom: 48 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             <Text style={styles.sectionLabel}>Route name (optional)</Text>
             <TextInput
               style={styles.nameInput}
@@ -312,7 +315,7 @@ export function RouteBuilderSheet({ visible, onClose, onRouteCreated, initialSto
               }
             </Pressable>
           </ScrollView>
-        </View>
+        </KeyboardSafeScrollView>
       </Modal>
 
       <GlobalPlacePicker

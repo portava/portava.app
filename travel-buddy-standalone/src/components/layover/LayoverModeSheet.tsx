@@ -14,9 +14,11 @@ import { useRouter } from 'expo-router';
 import {
   X, Plane, Clock, MapPin, AlertCircle, CalendarDays, Moon, BadgeCheck,
 } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlobalTimePicker } from '../selectors/GlobalTimePicker.tsx';
 import { GlobalCalendarPicker } from '../selectors/GlobalCalendarPicker.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 import {
   createLayoverSession,
   searchAirports,
@@ -80,6 +82,7 @@ function fmtTimeLabel(time: string | null): string {
 
 export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, initialCity }: Props) {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   // Airport
   const [query, setQuery]             = useState(initialCity ?? '');
@@ -209,7 +212,7 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={styles.container}>
+      <KeyboardSafeScrollView offset={insets.top} style={styles.container}>
         <View style={styles.header}>
           <Pressable onPress={onClose} style={styles.closeBtn} accessibilityLabel="Close" hitSlop={8}>
             <X size={22} color={color.mute} />
@@ -382,7 +385,7 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
               : <Text style={styles.submitBtnText}>Start layover</Text>}
           </Pressable>
         </ScrollView>
-      </View>
+      </KeyboardSafeScrollView>
 
       {/* Pickers */}
       <GlobalCalendarPicker

@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
-import Svg, { Path, Defs, Pattern, Rect, Circle } from 'react-native-svg';
+import Svg, { Path, Defs, Pattern, Rect, Circle, Text as SvgText } from 'react-native-svg';
 import { Plane, MapPin, MoreHorizontal, Camera, ShieldCheck, Calendar } from 'lucide-react-native';
 import type { OwnProfile, PublicProfile } from '../types/models.ts';
 import { PassportMonogramWatermark, PassportInkStamp, PassportHeroBackdrop } from './PassportMarks.tsx';
@@ -16,6 +16,30 @@ const INTEREST_LABEL: Record<string, string> = {
   photography: 'Photography', backpacking: 'Backpacking', shopping: 'Shopping',
   business: 'Business', dating: 'Social', events: 'Events',
 };
+
+const STAMP_NAVY = '#1A3A5C';
+
+function InlineVerifiedStamp({ size = 22 }: { size?: number }) {
+  return (
+    <Svg
+      width={size}
+      height={size}
+      viewBox="0 0 30 30"
+      accessibilityLabel="Verified traveler"
+      accessibilityRole="image"
+      style={{ marginLeft: 2 }}
+    >
+      <Circle cx={15} cy={15} r={13} stroke={STAMP_NAVY} strokeWidth={2} strokeDasharray="3 1.5" fill="none" />
+      <Circle cx={15} cy={15} r={9.5} stroke={STAMP_NAVY} strokeWidth={0.8} fill="none" opacity={0.55} />
+      <Path
+        d="M7.5 16.5 L12 9 L14 11.5 L10.5 14.5 L18 16.8 L16 19.2 L9.5 17 L10.5 21 L8.5 22 Z"
+        fill={STAMP_NAVY}
+        opacity={0.9}
+      />
+      <SvgText x="15" y="27.5" textAnchor="middle" fill={STAMP_NAVY} fontSize="3.5" fontWeight="800" opacity={0.6}>✦ ✦ ✦</SvgText>
+    </Svg>
+  );
+}
 
 function PhotoBackdrop() {
   return (
@@ -175,7 +199,10 @@ export function PassportHero({
 
         {/* Details */}
         <View style={styles.details}>
-          <Text style={styles.name} numberOfLines={2}>{resolvedName}</Text>
+          <View style={styles.nameRow}>
+            <Text style={styles.name} numberOfLines={2}>{resolvedName}</Text>
+            {isVerified ? <InlineVerifiedStamp size={22} /> : null}
+          </View>
           {handleSubline ? <Text style={styles.handle}>{handleSubline}</Text> : null}
           {bio ? <Text style={styles.bio} numberOfLines={2}>{bio}</Text> : null}
           {(homeCity || homeCountry) ? (
@@ -305,7 +332,8 @@ const styles = StyleSheet.create({
   },
 
   details: { flex: 1, gap: 6 },
-  name: { ...t.heading, color: color.ink, fontSize: 22, lineHeight: 28 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  name: { ...t.heading, color: color.ink, fontSize: 22, lineHeight: 28, flexShrink: 1 },
   handle: { ...t.small, color: color.mute, fontFamily: 'Courier', fontSize: 12 },
   bio: { ...t.body, color: color.ink, fontSize: 13, lineHeight: 18 },
   locRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },

@@ -16,6 +16,7 @@ import {
   type BuddyProfile, type BuddyPackage, type BuddyCategory, type BuddyBlockedRange,
 } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { GlobalCalendarPicker } from '../../src/components/selectors/GlobalCalendarPicker';
 import { GlobalTimePicker } from '../../src/components/selectors/GlobalTimePicker';
 import { DurationPicker, type DurationOption } from '../../src/components/selectors/DurationPicker';
@@ -266,7 +267,7 @@ export default function RentABuddyCheckout() {
   if (error || !buddy) return <TravelErrorState title="Couldn't load" sub={error ?? undefined} onRetry={load} />;
 
   return (
-    <View style={styles.page}>
+    <KeyboardSafeScrollView style={styles.page}>
       <View style={[styles.header, { paddingTop: insets.top + space.sm }]}>
         <Pressable style={styles.backBtn} onPress={() => router.canGoBack() ? router.back() : router.push('/(rent-a-buddy)/' as any)}>
           <ArrowLeft size={20} color={color.ink} />
@@ -274,7 +275,7 @@ export default function RentABuddyCheckout() {
         <Text style={styles.headerTitle}>Book a Buddy</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         {/* Buddy summary */}
         <View style={styles.buddyRow}>
           <View style={styles.buddyAvatar}>
@@ -555,7 +556,7 @@ export default function RentABuddyCheckout() {
           }
         }}
       />
-    </View>
+    </KeyboardSafeScrollView>
   );
 }
 

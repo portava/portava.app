@@ -23,6 +23,7 @@ import {
 } from '../services/friends.ts';
 import { showNotificationToast } from './NotificationToast.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 
 interface Props {
   tripId: string;
@@ -183,7 +184,8 @@ export function TripInviteSheet({ tripId, visible, onDismiss, onInviteSent }: Pr
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onDismiss}>
-      <Pressable style={s.overlay} onPress={onDismiss} />
+      <KeyboardSafeScrollView style={{ justifyContent: 'flex-end' }}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onDismiss} />
       <View style={s.sheet}>
         <View style={s.handle} />
 
@@ -352,6 +354,7 @@ export function TripInviteSheet({ tripId, visible, onDismiss, onInviteSent }: Pr
           </ScrollView>
         )}
       </View>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

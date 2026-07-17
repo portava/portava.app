@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, Modal, ScrollView, TextInput, StyleSheet } from 'react-native';
 import { REPORT_REASON_LABELS, type ReportReason } from '../../services/reports.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 
 interface Props {
   visible: boolean;
@@ -24,6 +25,7 @@ export function ReportUserSheet({ visible, displayName, onSubmit, onCancel, load
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
+      <KeyboardSafeScrollView>
       <Pressable style={styles.backdrop} onPress={onCancel}>
         <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
           <Text style={styles.title}>Report {displayName}</Text>
@@ -65,6 +67,7 @@ export function ReportUserSheet({ visible, displayName, onSubmit, onCancel, load
           </View>
         </Pressable>
       </Pressable>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, Pressable, Modal, ScrollView, TextInput,
-  KeyboardAvoidingView, Platform, Alert, StyleSheet,
+  Alert, StyleSheet,
 } from 'react-native';
 import {
   MapPin, Clock, Tag, FileText, AlertTriangle, Pencil, Trash2, X, CheckCircle2, ChevronDown, Shield, ChevronRight,
@@ -11,6 +11,7 @@ import { updatePlanItem, removePlanItem } from '../../services/tripPlan.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { DatePickerField } from '../DateTimePickerField';
 import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker.tsx';
+import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 
 // ── Category / status maps ────────────────────────────────────────────────────
 
@@ -299,8 +300,8 @@ export function PlanItemSheet({
 
   return (
     <Modal visible animationType="slide" transparent onRequestClose={onClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <Pressable style={sh.overlay} onPress={onClose} />
+      <KeyboardSafeScrollView style={{ justifyContent: 'flex-end' }}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={sh.sheet}>
           <View style={sh.handle} />
 
@@ -448,7 +449,7 @@ export function PlanItemSheet({
             )}
           </ScrollView>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

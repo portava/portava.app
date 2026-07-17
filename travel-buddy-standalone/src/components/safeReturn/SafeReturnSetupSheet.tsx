@@ -10,7 +10,9 @@ import {
   TextInput, StyleSheet, ActivityIndicator, Alert,
 } from 'react-native';
 import { X, Shield, ChevronDown, ChevronUp, Info } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 import {
   createSession,
   startSession,
@@ -77,6 +79,7 @@ const ESCALATION_OPTIONS: Array<{ level: 0 | 1 | 2 | 3; label: string; desc: str
 const SLOW_CHECK_LINGER_MS = 1_500;
 
 export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, tripId, planEndsAt, suggestionReason, onCheckingChange, onSlowCheck }: Props) {
+  const insets = useSafeAreaInsets();
   const [timerMinutes, setTimerMinutes] = useState<number | null>(30);
   const [escalationLevel, setEscalationLevel] = useState<0 | 1 | 2 | 3>(0);
   const [trustedCircleEnabled, setTrustedCircleEnabled] = useState(false);
@@ -269,7 +272,7 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
 
   return (
     <Modal visible={modalVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={styles.root}>
+      <KeyboardSafeScrollView offset={insets.top} style={styles.root}>
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
@@ -285,6 +288,7 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
           style={styles.body}
           contentContainerStyle={{ paddingBottom: 40 }}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
           {/* Suggestion reason */}
           {suggestionReason ? (
@@ -496,7 +500,7 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
             }
           </Pressable>
         </ScrollView>
-      </View>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

@@ -24,6 +24,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import type { Highlight } from '../services/highlights.ts';
 import {
   markHighlightViewed,
@@ -369,7 +370,9 @@ export function HighlightViewer({
           pointerEvents="none"
         />
 
-        {/* Bottom: caption + actions */}
+        {/* Bottom: caption + actions — keyboard-safe so the reply input stays
+            above the keyboard when open */}
+        <KeyboardSafeScrollView style={s.bottomWrap}>
         <View style={[s.bottom, { paddingBottom: Math.max(insets.bottom, 24) }]}>
           {current.caption ? (
             <Text style={s.caption} numberOfLines={3}>{current.caption}</Text>
@@ -464,6 +467,7 @@ export function HighlightViewer({
             )}
           </View>
         </View>
+        </KeyboardSafeScrollView>
       </View>
 
       <HighlightViewersSheet
@@ -539,14 +543,17 @@ const s = StyleSheet.create({
   tapLeft: { flex: 1 },
   tapRight: { flex: 1 },
   scrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '60%', zIndex: 8 },
-  bottom: {
+  bottomWrap: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
+    zIndex: 10,
+    flex: 0,
+  },
+  bottom: {
     padding: space.lg,
     gap: space.md,
-    zIndex: 10,
   },
   caption: {
     color: '#fff',

@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardSafeScrollView } from '../../../src/components/ui/KeyboardSafeView';
 import { ArrowLeft, ArrowRight, Check, Camera, Plus, X, BookOpen, Search, AlertCircle, CheckCircle, Circle } from 'lucide-react-native';
 import { GlobalPlacePicker } from '../../../src/components/selectors/GlobalPlacePicker';
 import { TravelButton, TravelCard, TravelChip } from '../../../src/components/primitives';
@@ -536,7 +537,7 @@ export default function ApplyToBeBuddy() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: color.paper }}>
+    <KeyboardSafeScrollView style={{ backgroundColor: color.paper }}>
       {/* Header */}
       <View style={[hdr.wrap, { paddingTop: insets.top + space.sm }]}>
         <Pressable
@@ -872,7 +873,7 @@ export default function ApplyToBeBuddy() {
           <Text style={nav.hint}>Accept both policies to submit.</Text>
         )}
       </View>
-    </View>
+    </KeyboardSafeScrollView>
   );
 }
 

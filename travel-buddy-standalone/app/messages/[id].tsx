@@ -6,8 +6,6 @@ import {
   FlatList,
   Pressable,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
   ActivityIndicator,
   Alert,
   Modal,
@@ -19,6 +17,7 @@ import {
   type AppStateStatus,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -1607,10 +1606,7 @@ export default function TelegraphThread() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.screen}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+    <KeyboardSafeScrollView style={styles.screen}>
       <ThreadHeader />
       {threadType === 'rent_buddy_booking' && contextId && (
         <RentABuddyThreadHeader
@@ -1628,6 +1624,7 @@ export default function TelegraphThread() {
         ref={listRef}
         data={listItems}
         keyExtractor={(item) => item._t === 'day' ? item.key : item.data.id}
+        keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.list}
         ListEmptyComponent={
           <View style={styles.center}>
@@ -1978,7 +1975,7 @@ export default function TelegraphThread() {
           }}
         />
       )}
-    </KeyboardAvoidingView>
+    </KeyboardSafeScrollView>
   );
 }
 

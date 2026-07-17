@@ -25,13 +25,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator,
-  KeyboardAvoidingView, Platform, ScrollView, Image,
+  ScrollView, Image,
 } from 'react-native';
 import {
   X, MapPin, CalendarClock, Users, Check, ChevronDown, ChevronUp,
   Plus, Trash2, Search, ChevronRight,
 } from 'lucide-react-native';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { DatePickerField } from './DateTimePickerField';
 import {
   createMeetup, addTimeOption, getFrequentInvitees,
@@ -443,7 +444,7 @@ export function MeetupCreationSheet({
   const inviteLabel = tripId ? 'Trip members' : circleOwnerId ? 'Circle members' : 'Friends';
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.kav}>
+    <KeyboardSafeScrollView style={s.kav}>
       <View style={s.backdrop}>
         <View style={s.sheet}>
 
@@ -842,7 +843,7 @@ export function MeetupCreationSheet({
           </ScrollView>
         </View>
       </View>
-    </KeyboardAvoidingView>
+    </KeyboardSafeScrollView>
   );
 }
 

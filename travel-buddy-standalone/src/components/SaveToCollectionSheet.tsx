@@ -15,6 +15,7 @@ import {
   getCollections, createCollection, saveItem,
 } from '../services/collections.ts';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 
 interface SaveToCollectionSheetProps {
   visible: boolean;
@@ -83,6 +84,7 @@ export function SaveToCollectionSheet({
       statusBarTranslucent
       onRequestClose={onClose}
     >
+      <KeyboardSafeScrollView style={{ justifyContent: 'flex-end' }}>
       <Pressable style={s.backdrop} onPress={onClose} />
       <View style={s.sheet}>
         <View style={s.handle} />
@@ -174,6 +176,7 @@ export function SaveToCollectionSheet({
           </ScrollView>
         )}
       </View>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }
@@ -184,10 +187,6 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.45)',
   },
   sheet: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
     maxHeight: '70%',
     backgroundColor: color.paperRaised,
     borderTopLeftRadius: 24,

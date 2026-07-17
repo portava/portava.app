@@ -11,12 +11,14 @@
 import React, { useState } from 'react';
 import {
   View, Text, Modal, Pressable, TextInput, ScrollView, StyleSheet,
-  ActivityIndicator, KeyboardAvoidingView, Platform,
+  ActivityIndicator,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, MapPin, Star, ChevronDown, ChevronUp } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { submitCommunityPlace } from '../../services/discovery.ts';
 import { GpsLocationCapture } from '../location/GpsLocationCapture.tsx';
+import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 
 const CATEGORIES = [
   'hidden_gem', 'food', 'nightlife', 'activities',
@@ -36,6 +38,7 @@ interface SubmitPlaceSheetProps {
 }
 
 export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: SubmitPlaceSheetProps) {
+  const insets = useSafeAreaInsets();
   const [placeType, setPlaceType]       = useState<'hidden_gem' | 'traveler_pick'>('hidden_gem');
   const [name, setName]                 = useState('');
   const [category, setCategory]         = useState('hidden_gem');
@@ -130,10 +133,7 @@ export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: Submit
       presentationStyle="pageSheet"
       onRequestClose={handleClose}
     >
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <KeyboardSafeScrollView offset={insets.top}>
         <View style={styles.container}>
           {/* Header */}
           <View style={styles.header}>
@@ -161,7 +161,7 @@ export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: Submit
               </Text>
             </View>
           ) : (
-            <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.form} showsVerticalScrollIndicator={false}>
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.form} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               {/* Place type */}
               <Text style={styles.label}>Type</Text>
               <View style={styles.typeRow}>
@@ -339,7 +339,7 @@ export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: Submit
             </ScrollView>
           )}
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

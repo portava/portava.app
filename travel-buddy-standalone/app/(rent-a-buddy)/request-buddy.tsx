@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import type { Place } from '../../src/lib/location/placeTypes';
 import {
@@ -152,14 +153,14 @@ function OpenRequestForm() {
   }, [city, cityCoords, category, durationMinutes, groupSize, budget, language, publicOnly, notes]);
 
   return (
-    <View style={[s.root, { paddingTop: insets.top }]}>
+    <KeyboardSafeScrollView style={[s.root, { paddingTop: insets.top }]}>
       <View style={s.header}>
         <Pressable onPress={() => router.back()} style={s.backBtn}>
           <ArrowLeft size={20} color={color.ink} />
         </Pressable>
         <Text style={s.title}>Request a Buddy</Text>
       </View>
-      <ScrollView style={s.body} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
+      <ScrollView style={s.body} contentContainerStyle={s.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         <Text style={s.notice}>{POLICY_TEXT}</Text>
 
         <Text style={s.label}>City *</Text>
@@ -229,7 +230,7 @@ function OpenRequestForm() {
           <Text style={s.submitBtnLabel}>{loading ? 'Posting…' : 'Post Request'}</Text>
         </Pressable>
       </ScrollView>
-    </View>
+    </KeyboardSafeScrollView>
   );
 }
 
@@ -330,7 +331,7 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
   }
 
   return (
-    <View style={[s.root, { paddingTop: insets.top }]}>
+    <KeyboardSafeScrollView style={[s.root, { paddingTop: insets.top }]}>
       <SafetyModal visible={safetyVisible} onAcknowledge={handleSafetyAck} />
 
       <View style={s.header}>
@@ -343,7 +344,7 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
         </View>
       </View>
 
-      <ScrollView style={s.body} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
+      <ScrollView style={s.body} contentContainerStyle={s.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         <Text style={s.notice}>{POLICY_TEXT}</Text>
 
         {/* Service / package picker */}
@@ -434,7 +435,7 @@ function BookingRequestForm({ buddyId }: { buddyId: string }) {
           <Text style={s.submitBtnLabel}>{loading ? 'Sending…' : 'Send Request'}</Text>
         </Pressable>
       </ScrollView>
-    </View>
+    </KeyboardSafeScrollView>
   );
 }
 
