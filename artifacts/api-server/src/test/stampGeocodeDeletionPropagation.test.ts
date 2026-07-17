@@ -3223,6 +3223,8 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     const NEGATIVE_TTL_MS = 6 * 60 * 60 * 1_000;
     mockNow(T0);
 
+    let nominatimCalls = 0;
+
     // Track upsert calls and capture the payload(s) passed to writeDbCache.
     let upsertCalls = 0;
     const upsertPayloads: Array<Record<string, unknown>> = [];
@@ -3253,7 +3255,6 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
 
     // Toggle the Nominatim stub — first call fails, then succeeds.
     let nominatimShouldSucceed = false;
-    let nominatimCalls = 0;
     _setGeocodeFetchForTests(async () => {
       nominatimCalls++;
       if (nominatimShouldSucceed) {
@@ -3367,5 +3368,101 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       entry!.expiresAt >= T0 + NEGATIVE_TTL_MS + 1_000 + NEGATIVE_TTL_MS - 5_000,
       "fresh entry expires ~6 hours after the re-seed time — not the original seed time",
     );
+  });
+
+  it("force-eviction mid-flight: settled result is not cached, next request resolves fresh and warms the cache", async () => {
+    // This test confirms three things:
+    //   1. When evictGeocodeCacheKey fires while a Nominatim fetch is in-flight,
+    //      the guard (`_pending.get(key) === p`) prevents the settled result from
+    //      writing to _cache — the eviction wins.
+    //   2. A request arriving AFTER the eviction-and-settlement does NOT pick up
+    //      a stale pending reference; it starts a fresh geocode instead of
+    //      resolving against the now-cleared pending slot.
+    //   3. That fresh result lands in _cache so the very next call is served instantly.
+
+    // Use a deferred promise to pause the Nominatim stub mid-flight so we can
+    // fire the eviction before the first fetch completes.
+    let resolveStub1!: () => void;
+    const stub1Gate = new Promise<void>((res) => { resolveStub1 = res; });
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      await stub1Gate;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "de", country: "Germany" } }],
+      };
+    });
+
+    // No DB cache so the geocoder always falls through to Nominatim.
+    _setGeocodeDbClientForTests(makeFixedDbClient(null));
+
+    // Start the in-flight request — the stub is paused at stub1Gate.
+    const inflightPromise = geocodeCityCountry("Munich");
+    // Flush enough microtask ticks for the async body to reach the _fetchImpl call:
+    //   tick 1: readDbCache's maybeSingle() resolves → readDbCache returns null
+    //   tick 2: p body continues → forwardGeocodeCity called → throttled() queues its resolve
+    //   tick 3: throttled resolves → _fetchImpl called → pauses at stub1Gate
+    // A few extra ticks provide a safety margin across JS engine scheduling variations.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    assert.equal(nominatimCalls, 1, "Nominatim called once for the in-flight request");
+
+    // Evict the key mid-flight — clears both _cache and _pending.
+    evictGeocodeCacheKey("munich");
+
+    // Unblock the in-flight stub so the promise settles.
+    resolveStub1();
+    const inflightResult = await inflightPromise;
+
+    // The promise itself still resolves correctly — the caller gets the right value.
+    assert.equal(inflightResult?.countryCode, "DE",
+      "in-flight promise still resolves to the correct value");
+
+    // Because the eviction removed 'munich' from _pending before the finally
+    // block ran, the guard (_pending.get(key) === p) evaluated false and the
+    // result was NOT written to _cache.
+    const cacheAfterSettlement = _getGeocodeCacheEntryForTests("munich");
+    assert.equal(cacheAfterSettlement, undefined,
+      "eviction + guard prevents the settled in-flight result from poisoning _cache");
+
+    // Swap in a new paused stub so we can confirm a genuinely fresh Nominatim
+    // call is made (not a re-use of the old pending promise).
+    let resolveStub2!: () => void;
+    const stub2Gate = new Promise<void>((res) => { resolveStub2 = res; });
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      await stub2Gate;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "de", country: "Germany" } }],
+      };
+    });
+
+    // A request arriving after eviction-and-settlement must NOT re-use the old
+    // pending promise (it was cleared by the eviction and by the finally block).
+    const freshPromise = geocodeCityCountry("Munich");
+    // Same flush as above — need enough ticks to reach _fetchImpl.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    assert.equal(nominatimCalls, 2, "a second Nominatim call was started for the fresh request");
+
+    resolveStub2();
+    const freshResult = await freshPromise;
+    assert.equal(freshResult?.countryCode, "DE", "fresh request resolves correctly");
+
+    // The fresh result MUST land in _cache so the very next caller is served
+    // from memory without another round-trip.
+    const cacheAfterFresh = _getGeocodeCacheEntryForTests("munich");
+    assert.notEqual(cacheAfterFresh, undefined,
+      "fresh result lands in _cache after a clean resolution");
+    assert.equal(cacheAfterFresh?.result?.countryCode, "DE",
+      "cached entry holds the correct country code");
+
+    // Third call — must be served from _cache, no third Nominatim call.
+    const cachedResult = await geocodeCityCountry("Munich");
+    assert.equal(nominatimCalls, 2,
+      "third call served from _cache — no additional Nominatim round-trip");
+    assert.equal(cachedResult?.countryCode, "DE",
+      "cache hit returns the correct country code");
   });
 });
