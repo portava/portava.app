@@ -95,7 +95,7 @@ export function LayoverPeopleSection({
                 )}
                 <View style={styles.buddyBody}>
                   <View style={styles.buddyNameRow}>
-                    <Text style={styles.buddyName} numberOfLines={1}>{b.displayName ?? 'Buddy'}</Text>
+                    <Text style={styles.buddyName} numberOfLines={1}>{primaryIdentityText(b)}</Text>
                     {b.verified && <BadgeCheck size={13} color={color.deep} />}
                   </View>
                   <View style={styles.buddyMeta}>
