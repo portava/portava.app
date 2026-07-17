@@ -14,6 +14,18 @@ import { readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import process from 'node:process';
 
+// Pre-flight: catch extensionless relative imports before any test starts,
+// so failures surface as the guard's clear message instead of a cryptic ESM
+// resolution error mid-run.
+const guard = spawnSync(
+  process.execPath,
+  ['scripts/check-import-extensions.mjs'],
+  { stdio: 'inherit' },
+);
+if ((guard.status ?? 1) !== 0) {
+  process.exit(guard.status ?? 1);
+}
+
 // Known-broken node:test files, excluded from the run. Fix and remove.
 const KNOWN_BROKEN = [];
 
