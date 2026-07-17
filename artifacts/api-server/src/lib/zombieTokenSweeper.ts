@@ -100,7 +100,10 @@ export async function sweepZombieTokens(opts?: {
 
   const threshold    = opts?.failureThreshold ?? FAILURE_THRESHOLD;
   const lookbackDays = opts?.lookbackDays     ?? LOOKBACK_DAYS;
-  const since        = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1_000).toISOString();
+  // Single clock read — all timestamps in this sweep derive from nowMs so the
+  // lookback cutoff and lastRunAt can never disagree (split-clock risk).
+  const nowMs        = Date.now();
+  const since        = new Date(nowMs - lookbackDays * 24 * 60 * 60 * 1_000).toISOString();
 
   try {
     // ── Step 1: Find users with repeated DeviceNotRegistered failures ──────────
@@ -135,7 +138,7 @@ export async function sweepZombieTokens(opts?: {
       .map(([userId]) => userId);
 
     if (eligibleUsers.length === 0) {
-      _status.lastRunAt = new Date().toISOString();
+      _status.lastRunAt = new Date(nowMs).toISOString();
       _status.lastSweptUserCount = 0;
       _status.consecutiveFailures = 0;
       logger.debug({ lookbackDays, threshold }, "ZombieTokenSweeper: no zombie tokens found");
@@ -176,7 +179,7 @@ export async function sweepZombieTokens(opts?: {
       );
     }
 
-    _status.lastRunAt = new Date().toISOString();
+    _status.lastRunAt = new Date(nowMs).toISOString();
     _status.lastSweptUserCount = eligibleUsers.length;
     _status.consecutiveFailures = 0;
 

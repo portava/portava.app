@@ -65,7 +65,10 @@ export async function runSweep(opts?: { client?: any }): Promise<void> {
   if (!sc) { logger.warn("service client not ready — skipping sweep"); return; }
 
   try {
-    const now = new Date().toISOString();
+    // Single clock read — the expiry cutoff and any new offer expiries derive
+    // from the same instant so they can never disagree (split-clock risk).
+    const nowMs = Date.now();
+    const now = new Date(nowMs).toISOString();
 
     // Fetch all expired offers: offer_expires_at < now AND offer_expires_at IS NOT NULL
     const { data: expired, error } = await sc
@@ -117,7 +120,7 @@ export async function runSweep(opts?: { client?: any }): Promise<void> {
           .maybeSingle();
 
         if (next) {
-          const offerExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString();
+          const offerExpiresAt = new Date(nowMs + 24 * 60 * 60 * 1_000).toISOString();
           await sc
             .from("event_waitlist")
             .update({ offer_expires_at: offerExpiresAt })

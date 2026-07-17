@@ -280,7 +280,10 @@ export class PushRetryQueue {
         // Still retryable and haven't exhausted attempts — re-queue
         const delayIdx = newAttemptCount - 1; // 0-based index into RETRY_DELAYS_SECONDS
         const delaySec = RETRY_DELAYS_SECONDS[delayIdx] ?? RETRY_DELAYS_SECONDS[RETRY_DELAYS_SECONDS.length - 1];
-        const nextRetryAt = new Date(Date.now() + delaySec * 1_000).toISOString();
+        // Single clock read — next_retry_at and updated_at derive from the same
+        // instant so they can never disagree (split-clock risk).
+        const nowMs = Date.now();
+        const nextRetryAt = new Date(nowMs + delaySec * 1_000).toISOString();
 
         await this.db
           .from("push_retry_queue")
@@ -289,7 +292,7 @@ export class PushRetryQueue {
             attempt_count: newAttemptCount,
             next_retry_at: nextRetryAt,
             last_error:    "retryable failure",
-            updated_at:    new Date().toISOString(),
+            updated_at:    new Date(nowMs).toISOString(),
           })
           .eq("id", id);
 
@@ -318,7 +321,9 @@ export class PushRetryQueue {
       if (newAttemptCount < maxAttempts) {
         const delayIdx = newAttemptCount - 1;
         const delaySec = RETRY_DELAYS_SECONDS[delayIdx] ?? RETRY_DELAYS_SECONDS[RETRY_DELAYS_SECONDS.length - 1];
-        const nextRetryAt = new Date(Date.now() + delaySec * 1_000).toISOString();
+        // Single clock read — see the retryable branch above (split-clock risk).
+        const nowMs = Date.now();
+        const nextRetryAt = new Date(nowMs + delaySec * 1_000).toISOString();
 
         await this.db
           .from("push_retry_queue")
@@ -327,7 +332,7 @@ export class PushRetryQueue {
             attempt_count: newAttemptCount,
             next_retry_at: nextRetryAt,
             last_error:    String(err),
-            updated_at:    new Date().toISOString(),
+            updated_at:    new Date(nowMs).toISOString(),
           })
           .eq("id", id);
       } else {

@@ -294,7 +294,10 @@ export async function requeueStaleFailedJobs(scOverride?: any): Promise<number> 
   const sc = scOverride ?? getServiceClient();
   if (!sc) return 0;
 
-  const cutoff = new Date(Date.now() - AUTO_REQUEUE_AFTER_HOURS * 3_600_000).toISOString();
+  // Single clock read — the staleness cutoff and updated_at stamps derive from
+  // the same instant so they can never disagree (split-clock risk).
+  const nowMs = Date.now();
+  const cutoff = new Date(nowMs - AUTO_REQUEUE_AFTER_HOURS * 3_600_000).toISOString();
 
   const { data: stale, error } = await sc
     .from("stamp_generation_queue")
@@ -322,7 +325,7 @@ export async function requeueStaleFailedJobs(scOverride?: any): Promise<number> 
         status:       "permanently_failed",
         locked_until: null,
         locked_by:    null,
-        updated_at:   new Date().toISOString(),
+        updated_at:   new Date(nowMs).toISOString(),
       })
       .in("id", exhausted.map((r) => r.id))
       .eq("status", "retryable_failed");
@@ -364,7 +367,7 @@ export async function requeueStaleFailedJobs(scOverride?: any): Promise<number> 
         locked_until:  null,
         locked_by:     null,
         requeue_count: count + 1,
-        updated_at:    new Date().toISOString(),
+        updated_at:    new Date(nowMs).toISOString(),
       })
       .in("id", ids)
       .eq("status", "retryable_failed")
@@ -549,9 +552,13 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
     return { processed: false };
   }
 
+  // Single clock read — interval checks, the lock-expiry probe, and the new
+  // lock expiry all derive from nowMs so they can never disagree (split-clock risk).
+  const nowMs = Date.now();
+
   // Periodically sweep stale retryable_failed jobs back into the queue
-  if (Date.now() - _lastAutoRequeueAt > AUTO_REQUEUE_CHECK_INTERVAL_MS) {
-    _lastAutoRequeueAt = Date.now();
+  if (nowMs - _lastAutoRequeueAt > AUTO_REQUEUE_CHECK_INTERVAL_MS) {
+    _lastAutoRequeueAt = nowMs;
     try {
       await requeueStaleFailedJobs(sc);
     } catch (e: any) {
@@ -562,8 +569,8 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
   // Periodically sweep artwork rows with an outdated prompt_template_version
   // and enqueue new generation jobs so STYLE_VERSION bumps are picked up
   // automatically without manual intervention.
-  if (STALE_ARTWORK_SWEEP_INTERVAL_MS > 0 && Date.now() - _lastStaleArtworkSweepAt > STALE_ARTWORK_SWEEP_INTERVAL_MS) {
-    _lastStaleArtworkSweepAt = Date.now();
+  if (STALE_ARTWORK_SWEEP_INTERVAL_MS > 0 && nowMs - _lastStaleArtworkSweepAt > STALE_ARTWORK_SWEEP_INTERVAL_MS) {
+    _lastStaleArtworkSweepAt = nowMs;
     try {
       await sweepStaleArtwork(sc);
     } catch (e: any) {
@@ -571,7 +578,12 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
     }
   }
 
-  const now = new Date().toISOString();
+  // Fresh clock read AFTER the (potentially slow) pre-lock sweeps — the lock
+  // window must be full-duration from acquisition, not from cycle start.
+  // `now` and `lockUntil` both derive from this single read so the expiry
+  // probe and the new lock expiry can never disagree (split-clock risk).
+  const lockNowMs = Date.now();
+  const now = new Date(lockNowMs).toISOString();
 
   // Claim one queued job with a pessimistic lock
   const { data: job, error: jobErr } = await sc
@@ -595,7 +607,7 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
 
   // Acquire lock atomically — verify a row was actually updated, not just that no error occurred.
   // Without this check a race between two workers can let both proceed on the same job.
-  const lockUntil = new Date(Date.now() + LOCK_DURATION_MS).toISOString();
+  const lockUntil = new Date(lockNowMs + LOCK_DURATION_MS).toISOString();
   const { data: locked, error: lockErr } = await sc
     .from("stamp_generation_queue")
     .update({
