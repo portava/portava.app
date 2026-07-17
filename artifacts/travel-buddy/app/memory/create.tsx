@@ -14,10 +14,13 @@ import {
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
-import { X, Camera, ImageIcon, Globe, Users, Lock, Eye, Trash2 } from 'lucide-react-native';
+import { X, Camera, ImageIcon, Globe, Users, Lock, Eye, Trash2, MapPin, ChevronDown } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { createMemory, addMemoryItem, type MemoryVisibility } from '../../src/services/memories';
 import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
+import { placeToLocationFields } from '../../src/lib/location/locationPayload';
+import type { Place } from '../../src/lib/location/placeTypes';
 
 // ── Visibility options ────────────────────────────────────────────────────────
 
@@ -51,6 +54,11 @@ export default function CreateMemoryScreen() {
   const [title, setTitle] = useState('');
   const [caption, setCaption] = useState('');
   const [visibility, setVisibility] = useState<MemoryVisibility>('friends_only');
+  // Canonical location from the universal picker. Null = no location tagged;
+  // the memory still publishes. Display-only here — the backend's existing
+  // privacy rules govern when coordinates become publicly visible.
+  const [place, setPlace] = useState<Place | null>(null);
+  const [placePickerOpen, setPlacePickerOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
 
@@ -152,6 +160,7 @@ export default function CreateMemoryScreen() {
         caption: caption.trim() || null,
         visibility,
         state: 'published',
+        ...placeToLocationFields(place),
       });
 
       if (!createResult.ok) {
@@ -181,7 +190,7 @@ export default function CreateMemoryScreen() {
       setUploading(false);
       publishLock.current = false;
     }
-  }, [assets, title, caption, visibility]);
+  }, [assets, title, caption, visibility, place]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -288,6 +297,42 @@ export default function CreateMemoryScreen() {
           />
         </View>
 
+        {/* Location */}
+        <View style={s.section}>
+          <Text style={s.sectionLabel}>Location</Text>
+          <Pressable
+            style={s.locationRow}
+            onPress={() => setPlacePickerOpen(true)}
+            testID="memory-location-row"
+          >
+            <View style={s.locationValue}>
+              <MapPin size={16} color={place ? color.signal : color.mute} />
+              <Text
+                style={[s.locationText, !place && s.locationPlaceholder]}
+                numberOfLines={1}
+              >
+                {place ? place.displayName : 'Add a location (optional)'}
+              </Text>
+            </View>
+            {place ? (
+              <Pressable
+                onPress={(e) => {
+                  // RN-web bubbles nested presses to the parent Pressable —
+                  // without this, clearing would immediately reopen the picker.
+                  e.stopPropagation();
+                  setPlace(null);
+                }}
+                hitSlop={10}
+                testID="memory-location-clear"
+              >
+                <X size={16} color={color.mute} />
+              </Pressable>
+            ) : (
+              <ChevronDown size={16} color={color.mute} />
+            )}
+          </Pressable>
+        </View>
+
         {/* Visibility */}
         <View style={s.section}>
           <Text style={s.sectionLabel}>Who can see this?</Text>
@@ -312,6 +357,15 @@ export default function CreateMemoryScreen() {
 
         <NavBarFiller />
       </ScrollView>
+
+      <GlobalPlacePicker
+        visible={placePickerOpen}
+        onClose={() => setPlacePickerOpen(false)}
+        onSelect={(p) => setPlace(p)}
+        title="Tag a Location"
+        mode="all"
+        usedFor="memory"
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -390,6 +444,20 @@ const s = StyleSheet.create({
     backgroundColor: color.paperRaised,
   },
   inputMultiline: { minHeight: 100 },
+
+  locationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: color.haze,
+    borderRadius: radius.md,
+    padding: space.md,
+    backgroundColor: color.paperRaised,
+  },
+  locationValue: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flex: 1 },
+  locationText: { ...(t.body as object), color: color.ink, flex: 1 },
+  locationPlaceholder: { color: color.faint },
 
   visGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   visOption: {

@@ -67,7 +67,14 @@ export async function fetchPlacesFromApi(
 
 export function usePlaceSearch(
   query: string,
-  opts?: { countryCode?: string; type?: string; lat?: number; lng?: number },
+  opts?: {
+    countryCode?: string; type?: string; lat?: number; lng?: number;
+    /**
+     * Bump to force a re-fetch of the current query (retry after an error).
+     * Failed requests are never cached, so re-running the effect refetches.
+     */
+    refreshKey?: number;
+  },
 ): UsePlaceSearchResult {
   const [results, setResults] = useState<Place[]>([]);
   const [loading, setLoading] = useState(false);
@@ -136,7 +143,7 @@ export function usePlaceSearch(
       if (timerRef.current) clearTimeout(timerRef.current);
       if (abortRef.current) abortRef.current.abort();
     };
-  }, [query]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [query, opts?.refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { results, loading, error };
 }

@@ -2202,12 +2202,17 @@ export type Database = {
       memories: {
         Row: {
           allowed_user_ids: string[]
+          canonical_location_id: string | null
           caption: string | null
           created_at: string
           ends_at: string | null
           event_id: string | null
           hidden_user_ids: string[]
           id: string
+          location_city: string | null
+          location_country: string | null
+          location_lat: number | null
+          location_lng: number | null
           owner_id: string
           place_id: string | null
           starts_at: string | null
@@ -2219,12 +2224,17 @@ export type Database = {
         }
         Insert: {
           allowed_user_ids?: string[]
+          canonical_location_id?: string | null
           caption?: string | null
           created_at?: string
           ends_at?: string | null
           event_id?: string | null
           hidden_user_ids?: string[]
           id?: string
+          location_city?: string | null
+          location_country?: string | null
+          location_lat?: number | null
+          location_lng?: number | null
           owner_id: string
           place_id?: string | null
           starts_at?: string | null
@@ -2236,12 +2246,17 @@ export type Database = {
         }
         Update: {
           allowed_user_ids?: string[]
+          canonical_location_id?: string | null
           caption?: string | null
           created_at?: string
           ends_at?: string | null
           event_id?: string | null
           hidden_user_ids?: string[]
           id?: string
+          location_city?: string | null
+          location_country?: string | null
+          location_lat?: number | null
+          location_lng?: number | null
           owner_id?: string
           place_id?: string | null
           starts_at?: string | null

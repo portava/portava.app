@@ -28,6 +28,7 @@ import {
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import type { Place } from '../lib/location/placeTypes.ts';
+import { placeToLocationFields } from '../lib/location/locationPayload.ts';
 import { StampPickerSheet } from './StampPickerSheet.tsx';
 import { StampOverlayBadge } from './StampOverlayBadge.tsx';
 import {
@@ -251,16 +252,15 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     setProgress(0);
     abortedRef.current = false;
 
-    // Structured canonical location: city/country strings for display and
-    // stamps, placeId for the provider reference, canonicalId linking to the
-    // universal location registry. All optional — posting works without one.
+    // Structured canonical location via the shared Place → payload mapping
+    // (same one the Memory composer uses): city/country strings for display
+    // and stamps, place-level coordinates, placeId for the provider
+    // reference, canonicalId linking to the universal location registry.
+    // All optional — posting works without one.
     const postRes = await createPostcard({
       caption: caption.trim() || undefined,
       visibility,
-      locationCity: place ? place.city ?? place.name : undefined,
-      locationCountry: place?.country ?? undefined,
-      placeId: place?.id,
-      canonicalLocationId: place?.canonicalId ?? undefined,
+      ...placeToLocationFields(place),
       addToPassport: true,
     });
 

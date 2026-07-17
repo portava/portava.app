@@ -51,6 +51,11 @@ export interface Memory {
   tripId: string | null;
   eventId: string | null;
   placeId: string | null;
+  locationCity: string | null;
+  locationCountry: string | null;
+  locationLat: number | null;
+  locationLng: number | null;
+  canonicalLocationId: string | null;
   startsAt: string | null;
   endsAt: string | null;
   state: string;
@@ -108,6 +113,11 @@ export interface CreateMemoryInput {
   tripId?: string | null;
   eventId?: string | null;
   placeId?: string | null;
+  locationCity?: string | null;
+  locationCountry?: string | null;
+  locationLat?: number | null;
+  locationLng?: number | null;
+  canonicalLocationId?: string | null;
   startsAt?: string | null;
   endsAt?: string | null;
   state?: 'draft' | 'published';
@@ -129,6 +139,11 @@ export async function createMemory(
         tripId: input.tripId ?? null,
         eventId: input.eventId ?? null,
         placeId: input.placeId ?? null,
+        locationCity: input.locationCity ?? null,
+        locationCountry: input.locationCountry ?? null,
+        locationLat: input.locationLat ?? null,
+        locationLng: input.locationLng ?? null,
+        canonicalLocationId: input.canonicalLocationId ?? null,
         startsAt: input.startsAt ?? null,
         endsAt: input.endsAt ?? null,
         state: input.state ?? 'published',

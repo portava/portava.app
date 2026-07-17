@@ -143,6 +143,11 @@ const createMemorySchema = z.object({
   tripId: z.string().uuid().nullable().optional(),
   eventId: z.string().uuid().nullable().optional(),
   placeId: z.string().max(200).nullable().optional(),
+  locationCity: z.string().max(200).nullable().optional(),
+  locationCountry: z.string().max(200).nullable().optional(),
+  locationLat: z.number().min(-90).max(90).nullable().optional(),
+  locationLng: z.number().min(-180).max(180).nullable().optional(),
+  canonicalLocationId: z.string().uuid().nullable().optional(),
   startsAt: z.string().datetime({ offset: true }).nullable().optional(),
   endsAt: z.string().datetime({ offset: true }).nullable().optional(),
   state: z.enum(["draft", "published"]).default("published"),
@@ -270,11 +275,16 @@ router.post("/memories", async (req, res) => {
       trip_id: d.tripId ?? null,
       event_id: d.eventId ?? null,
       place_id: d.placeId ?? null,
+      location_city: d.locationCity ?? null,
+      location_country: d.locationCountry ?? null,
+      location_lat: d.locationLat ?? null,
+      location_lng: d.locationLng ?? null,
+      canonical_location_id: d.canonicalLocationId ?? null,
       starts_at: d.startsAt ?? null,
       ends_at: d.endsAt ?? null,
       state: d.state,
     })
-    .select("id, owner_id, title, caption, visibility, trip_id, event_id, place_id, starts_at, ends_at, state, created_at")
+    .select("id, owner_id, title, caption, visibility, trip_id, event_id, place_id, location_city, location_country, location_lat, location_lng, canonical_location_id, starts_at, ends_at, state, created_at")
     .single();
 
   if (error) {
@@ -380,7 +390,7 @@ router.get("/memories", async (req, res) => {
 
 // ── GET /memories/:id ─────────────────────────────────────────────────────────
 
-const MEMORY_SELECT = "id, owner_id, title, caption, visibility, allowed_user_ids, hidden_user_ids, trip_id, event_id, place_id, starts_at, ends_at, state, created_at, updated_at";
+const MEMORY_SELECT = "id, owner_id, title, caption, visibility, allowed_user_ids, hidden_user_ids, trip_id, event_id, place_id, location_city, location_country, location_lat, location_lng, canonical_location_id, starts_at, ends_at, state, created_at, updated_at";
 
 router.get("/memories/:id", async (req, res) => {
   const auth = await requireUser(req, res);
@@ -1094,6 +1104,11 @@ function mapMemory(r: any) {
     tripId: r.trip_id ?? null,
     eventId: r.event_id ?? null,
     placeId: r.place_id ?? null,
+    locationCity: r.location_city ?? null,
+    locationCountry: r.location_country ?? null,
+    locationLat: r.location_lat != null ? Number(r.location_lat) : null,
+    locationLng: r.location_lng != null ? Number(r.location_lng) : null,
+    canonicalLocationId: r.canonical_location_id ?? null,
     startsAt: r.starts_at ?? null,
     endsAt: r.ends_at ?? null,
     state: r.state,
