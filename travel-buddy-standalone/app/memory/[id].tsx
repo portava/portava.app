@@ -86,24 +86,36 @@ export default function MemoryDetailScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  // ── Delete memory ───────────────────────────────────────────────────────────
+  // ── Owner actions menu ──────────────────────────────────────────────────────
 
-  const handleDeleteMemory = useCallback(() => {
+  const handleOwnerMenu = useCallback(() => {
     if (!memory) return;
-    Alert.alert(
-      'Delete memory?',
-      'This will permanently remove the memory and all its photos.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete', style: 'destructive',
-          onPress: async () => {
-            await deleteMemory(memory.id);
-            router.back();
-          },
+    Alert.alert('Memory options', undefined, [
+      {
+        text: 'Edit',
+        onPress: () => router.push({ pathname: '/memory/edit' as any, params: { id: memory.id } }),
+      },
+      {
+        text: 'Delete', style: 'destructive',
+        onPress: () => {
+          Alert.alert(
+            'Delete memory?',
+            'This will permanently remove the memory and all its photos.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Delete', style: 'destructive',
+                onPress: async () => {
+                  await deleteMemory(memory.id);
+                  router.back();
+                },
+              },
+            ],
+          );
         },
-      ],
-    );
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   }, [memory]);
 
   // ── Delete item ─────────────────────────────────────────────────────────────
@@ -234,7 +246,7 @@ export default function MemoryDetailScreen() {
           {memory.title ?? 'Memory'}
         </Text>
         {isOwner ? (
-          <Pressable onPress={handleDeleteMemory} hitSlop={8}>
+          <Pressable onPress={handleOwnerMenu} hitSlop={8}>
             <MoreHorizontal size={22} color={color.ink} />
           </Pressable>
         ) : (
