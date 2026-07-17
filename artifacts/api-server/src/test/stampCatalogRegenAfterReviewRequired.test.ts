@@ -353,3 +353,84 @@ describe("POST regenerate after a review_required job", () => {
   });
 
 });
+
+// ── Tests: duplicate click after review_required is archived ──────────────────
+//
+// When the first regenerate call archives the review_required row and inserts a
+// new queued row, a rapid second click finds no review_required row to archive
+// (the archive step is a no-op) and then hits the 23505 dedup guard on insert.
+// The net result must still be exactly 1 queued row, 1 archived row, and the
+// second call must NOT write a second audit log entry.
+
+describe("POST regenerate duplicate click after review_required is archived", () => {
+
+  beforeEach(() => setupDb());
+
+  it("first call returns 200 and writes exactly one audit entry", async () => {
+    const res = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      res.status, 200,
+      `first call must return 200, got ${res.status}: ${JSON.stringify(res.body)}`,
+    );
+
+    const auditEntries = db.stamp_admin_audit_log.filter(
+      (r) => r.catalog_id === CATALOG_ID,
+    );
+    assert.equal(
+      auditEntries.length,
+      1,
+      `expected 1 audit entry after first call, got ${auditEntries.length}`,
+    );
+  });
+
+  it("second call (queued row already exists) returns 200 but does NOT write a second audit entry", async () => {
+    // First call — archives review_required, inserts queued row, writes audit entry
+    const first = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(first.status, 200, "first call must return 200");
+
+    // Second call — archive step finds no review_required row (no-op), insert
+    // hits 23505; must NOT add a second audit entry
+    const second = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(second.status, 200, "second call must still return 200");
+    assert.deepEqual(second.body, { ok: true });
+
+    const auditEntries = db.stamp_admin_audit_log.filter(
+      (r) => r.catalog_id === CATALOG_ID,
+    );
+    assert.equal(
+      auditEntries.length,
+      1,
+      `expected exactly 1 audit entry after duplicate click, found ${auditEntries.length}: ${JSON.stringify(auditEntries)}`,
+    );
+  });
+
+  it("DB contains exactly 1 queued row and 1 archived row after duplicate click", async () => {
+    // First call
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    // Second call (duplicate)
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+
+    const allRows = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID,
+    );
+    assert.equal(
+      allRows.length,
+      2,
+      `expected exactly 2 rows total after duplicate click, found ${allRows.length}: ${JSON.stringify(allRows)}`,
+    );
+
+    const archivedRows = allRows.filter((r) => r.status === "archived");
+    const queuedRows   = allRows.filter((r) => r.status === "queued");
+    assert.equal(
+      archivedRows.length,
+      1,
+      `expected exactly 1 archived row, found ${archivedRows.length}: ${JSON.stringify(allRows)}`,
+    );
+    assert.equal(
+      queuedRows.length,
+      1,
+      `expected exactly 1 queued row (no third row created), found ${queuedRows.length}: ${JSON.stringify(allRows)}`,
+    );
+  });
+
+});
