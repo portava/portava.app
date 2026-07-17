@@ -22,7 +22,6 @@ import {
 import { searchUsers, type TravelerSearchResult } from '../services/follows.ts';
 import { Avatar } from './ui.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
-import { primaryIdentityText } from '../lib/displayIdentity.ts';
 
 interface Props {
   event: EventDetail;
@@ -230,7 +229,7 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
                   <View key={r.id} style={s.requestRow}>
                     <Avatar uri={r.user?.avatarUrl ?? ''} size={40} />
                     <View style={{ flex: 1 }}>
-                      <Text style={s.requestName}>{r.user ? primaryIdentityText(r.user) : r.userId.slice(0, 8)}</Text>
+                      <Text style={s.requestName}>{r.user?.displayName ?? r.user?.handle ?? r.userId.slice(0, 8)}</Text>
                       {r.message ? <Text style={s.requestMsg} numberOfLines={2}>{r.message}</Text> : null}
                     </View>
                     <View style={s.requestActions}>
@@ -256,7 +255,7 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
                     <View key={a.id} style={s.attendeeRow}>
                       <Avatar uri={a.avatarUrl ?? ''} size={36} />
                       <Text style={s.attendeeName} numberOfLines={1}>
-                        {(a.displayName ?? a.handle) ? primaryIdentityText(a) : a.id.slice(0, 8)}
+                        {a.displayName ?? a.handle ?? a.id.slice(0, 8)}
                       </Text>
                       <View style={s.attendeeActions}>
                         <Pressable style={s.iconBtn} onPress={() => handlePromote(a.id, 'co_host')} hitSlop={6}>
@@ -300,7 +299,7 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
                       <Avatar uri={entry.user?.avatarUrl ?? ''} size={36} />
                       <View style={{ flex: 1 }}>
                         <Text style={s.waitlistName} numberOfLines={1}>
-                          {entry.user ? primaryIdentityText(entry.user) : entry.userId.slice(0, 8)}
+                          {entry.user?.displayName ?? entry.user?.handle ?? entry.userId.slice(0, 8)}
                         </Text>
                         {entry.offerExpiresAt ? (
                           <Text style={s.waitlistOfferText}>
@@ -337,7 +336,7 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
                   <View key={u.id} style={s.attendeeRow}>
                     <Avatar uri={u.avatarUrl ?? ''} size={36} />
                     <View style={{ flex: 1 }}>
-                      <Text style={s.attendeeName} numberOfLines={1}>{primaryIdentityText(u)}</Text>
+                      <Text style={s.attendeeName} numberOfLines={1}>{u.displayName ?? u.username}</Text>
                       {u.username ? <Text style={s.requestMsg}>@{u.username}</Text> : null}
                     </View>
                     <Pressable

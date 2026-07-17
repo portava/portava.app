@@ -8,7 +8,6 @@ import type { BuddyProfile } from '../services/rentABuddy.ts';
 import { saveBuddy, unsaveBuddy } from '../services/rentABuddy.ts';
 import { CompassFeedbackMenu } from './compass/CompassFeedbackMenu.tsx';
 import { CompassWhySheet } from './compass/CompassWhySheet.tsx';
-import { truncateDisplayName } from '../utils/identity.ts';
 
 /** "650 m away" / "2.3 km away" / "12 km away" */
 export function formatDistanceAway(km: number): string {
@@ -117,7 +116,7 @@ export function BuddyCard({
       {/* Body */}
       <View style={styles.body}>
         <View style={styles.nameRow}>
-          <Text style={styles.name} numberOfLines={1}>{buddy.displayName ? truncateDisplayName(buddy.displayName) : 'Local Buddy'}</Text>
+          <Text style={styles.name} numberOfLines={1}>{buddy.displayName ?? 'Local Buddy'}</Text>
           <View style={styles.ratingRow}>
             <Star size={11} color={color.warn} fill={color.warn} />
             <Text style={styles.rating}>{stars}</Text>
