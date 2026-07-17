@@ -421,6 +421,159 @@ describe("Audit log entry appears on detail page after admin regenerates a stamp
     assert.equal(detail.body.audit[0].admin_id, ADMIN_ID);
   });
 
+  it("triple regenerate: only one audit entry written even when all three calls return 200", async () => {
+    // Scenario: three rapid POSTs land before any 23505 is observed by the first
+    // caller.  In practice the DB unique constraint ensures at most one insert
+    // succeeds; this test verifies the audit-log guard follows that same
+    // constraint — i.e. the second and third calls receive 23505 and must NOT
+    // write a duplicate audit row.
+    let queueInsertCount = 0;
+    const localDb = makeDb();
+
+    function makeClientWithTripleDup(dbArg: DB) {
+      function chain(tableName: string) {
+        let updateValues: Record<string, any> | null = null;
+        let insertRow: Record<string, any> | null    = null;
+        const filters: Array<(r: any) => boolean>    = [];
+        let _headOnly    = false;
+        let _selectCount = false;
+
+        const b: any = {
+          select(_cols?: any, opts?: any) {
+            if (opts?.count === "exact") _selectCount = true;
+            if (opts?.head  === true)    _headOnly    = true;
+            return b;
+          },
+          eq(col: string, val: any)   { filters.push((r) => r[col] === val); return b; },
+          in(col: string, vals: any[]) { filters.push((r) => (vals as any[]).includes(r[col])); return b; },
+          not(col: string, op: string, val: any) {
+            if (op === "in") {
+              const excluded = val.replace(/^\(|\)$/g, "").split(",").map((s: string) => s.trim().replace(/^"|"$/g, ""));
+              filters.push((r) => !excluded.includes(r[col]));
+            }
+            return b;
+          },
+          order()  { return b; },
+          range()  { return b; },
+          limit()  { return b; },
+          update(vals: Record<string, any>) { updateValues = vals; return b; },
+          insert(row: Record<string, any>)  { insertRow    = row;  return b; },
+
+          maybeSingle() {
+            const rows = dbArg[tableName] ?? [];
+            if (updateValues !== null) {
+              const matched = rows.filter((r: any) => filters.every((f) => f(r)));
+              matched.forEach((r: any) => Object.assign(r, updateValues));
+              return Promise.resolve({ data: matched[0] ? { ...matched[0] } : null, error: null });
+            }
+            const matched = rows.filter((r: any) => filters.every((f) => f(r)));
+            return Promise.resolve({ data: matched[0] ? { ...matched[0] } : null, error: null });
+          },
+
+          single() {
+            const rows    = dbArg[tableName] ?? [];
+            const matched = rows.filter((r: any) => filters.every((f) => f(r)));
+            if (matched.length === 1)
+              return Promise.resolve({ data: matched[0], error: null });
+            return Promise.resolve({ data: null, error: { message: "No rows" } });
+          },
+
+          then(resolve: any, reject: any) {
+            return Promise.resolve()
+              .then(() => {
+                const rows = dbArg[tableName] ?? [];
+                if (insertRow !== null) {
+                  // Simulate 23505 on 2nd and 3rd inserts into the queue table —
+                  // the DB unique constraint allows only one active queued row.
+                  if (tableName === "stamp_generation_queue") {
+                    queueInsertCount++;
+                    if (queueInsertCount > 1) {
+                      return { data: null, error: { code: "23505", message: "duplicate key value" } };
+                    }
+                  }
+                  rows.push(insertRow);
+                  return { data: { ...insertRow }, error: null };
+                }
+                if (updateValues !== null) {
+                  const matched = rows.filter((r: any) => filters.every((f) => f(r)));
+                  matched.forEach((r: any) => Object.assign(r, updateValues));
+                  return { data: matched.map((r: any) => ({ ...r })), error: null };
+                }
+                const matched = rows.filter((r: any) => filters.every((f) => f(r)));
+                if (_headOnly) return { data: null, error: null, count: matched.length };
+                return {
+                  data:  matched.map((r: any) => ({ ...r })),
+                  error: null,
+                  count: _selectCount ? matched.length : undefined,
+                };
+              })
+              .then(resolve, reject);
+          },
+        };
+        return b;
+      }
+
+      return {
+        from: (tableName: string) => chain(tableName),
+        auth: {
+          getUser: () =>
+            Promise.resolve({ data: { user: { id: ADMIN_ID } }, error: null }),
+        },
+      };
+    }
+
+    const tripleClient = makeClientWithTripleDup(localDb);
+    _setTestClient(tripleClient as any, true);
+    _setTestServiceClient(tripleClient as any);
+
+    // ── First call — must succeed and write exactly one audit entry ──────────
+    const regen1 = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      regen1.status, 200,
+      `first regenerate must return 200, got ${regen1.status}: ${JSON.stringify(regen1.body)}`,
+    );
+    assert.deepEqual(regen1.body, { ok: true });
+
+    // ── Second call — 23505; must still return 200 but not add another row ──
+    const regen2 = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      regen2.status, 200,
+      `second regenerate must return 200, got ${regen2.status}: ${JSON.stringify(regen2.body)}`,
+    );
+    assert.deepEqual(regen2.body, { ok: true });
+
+    // ── Third call — also 23505; must also return 200 with no new audit row ─
+    const regen3 = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      regen3.status, 200,
+      `third regenerate must return 200, got ${regen3.status}: ${JSON.stringify(regen3.body)}`,
+    );
+    assert.deepEqual(regen3.body, { ok: true });
+
+    // ── Exactly one audit row after all three calls ──────────────────────────
+    assert.equal(
+      localDb.stamp_admin_audit_log.length,
+      1,
+      `stamp_admin_audit_log must have exactly one row after three regenerates, got ${localDb.stamp_admin_audit_log.length}: ${JSON.stringify(localDb.stamp_admin_audit_log)}`,
+    );
+    const logRow = localDb.stamp_admin_audit_log[0];
+    assert.equal(logRow.action,     "regenerate", "audit row action must be 'regenerate'");
+    assert.equal(logRow.admin_id,   ADMIN_ID,     "audit row admin_id must match the acting admin");
+    assert.equal(logRow.catalog_id, CATALOG_ID,   "audit row catalog_id must match the regenerated catalog");
+
+    // ── Detail endpoint must also surface exactly one entry ──────────────────
+    const detail = await get(`/admin/stamps/catalog/${CATALOG_ID}`);
+    assert.equal(detail.status, 200);
+    assert.ok(Array.isArray(detail.body.audit), "detail response must include an audit array");
+    assert.equal(
+      detail.body.audit.length,
+      1,
+      `detail audit must have exactly one entry after three regenerates, got ${detail.body.audit.length}: ${JSON.stringify(detail.body.audit)}`,
+    );
+    assert.equal(detail.body.audit[0].action,   "regenerate");
+    assert.equal(detail.body.audit[0].admin_id, ADMIN_ID);
+  });
+
   it("regenerate clears cleanup_error and cleanup_error_paths on previously-failed jobs", async () => {
     // Seed the queue job with orphaned-file metadata so the badge would show.
     const queueRow = db.stamp_generation_queue[0];
