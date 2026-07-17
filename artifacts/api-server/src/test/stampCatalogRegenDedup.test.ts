@@ -465,7 +465,7 @@ describe("POST regenerate — catalog status reset fails after queue insert succ
     _setTestServiceClient(client as any);
   });
 
-  it("still returns { ok: true } — catalog reset failure is silently swallowed", async () => {
+  it("still returns { ok: true } — catalog reset failure does not abort the response", async () => {
     const res = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
     assert.equal(
       res.status,
@@ -473,6 +473,32 @@ describe("POST regenerate — catalog status reset fails after queue insert succ
       `expected 200 even when catalog update fails, got ${res.status}: ${JSON.stringify(res.body)}`,
     );
     assert.deepEqual(res.body, { ok: true });
+  });
+
+  it("logs a console.error when the catalog status reset fails — operators can observe the partial failure", async () => {
+    const errors: unknown[][] = [];
+    const origError = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args); };
+    try {
+      await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    } finally {
+      console.error = origError;
+    }
+
+    assert.ok(
+      errors.length > 0,
+      "expected at least one console.error call when catalog status reset fails, got none",
+    );
+
+    const allMessages = errors.map((args) => args.join(" ")).join("\n");
+    assert.ok(
+      allMessages.includes(CATALOG_ID),
+      `expected console.error to include the catalog_id (${CATALOG_ID}), got: ${allMessages}`,
+    );
+    assert.ok(
+      allMessages.includes("catalog status reset failed") || allMessages.includes("stampCatalog"),
+      `expected console.error to mention catalog reset failure, got: ${allMessages}`,
+    );
   });
 
   it("queue row is still inserted when catalog reset fails", async () => {

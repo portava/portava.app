@@ -714,12 +714,26 @@ router.post("/admin/stamps/catalog/:id/regenerate", async (req, res) => {
     return;
   }
 
-  // Reset catalog status to pending_artwork if it was rejected
-  await sc
+  // Reset catalog status to pending_artwork if it was rejected.
+  // The error is intentionally non-fatal: the queue insert already succeeded,
+  // so the regeneration job is live. A catalog-reset failure leaves the status
+  // stale (e.g. still "rejected") but does not lose the job. We log the error
+  // so operators can observe and correct the stale status — the audit log alone
+  // records the queue action but not whether this secondary step succeeded.
+  const { error: catalogResetErr } = await sc
     .from("universal_stamp_catalog")
     .update({ status: "pending_artwork", updated_at: new Date().toISOString() })
     .eq("id", id)
     .eq("status", "rejected");
+
+  if (catalogResetErr) {
+    console.error(
+      `[stampCatalog] regenerate: catalog status reset failed for catalog_id=${id}:`,
+      catalogResetErr.message,
+      `(code: ${(catalogResetErr as any).code ?? "unknown"})`,
+      "— catalog status may be stale; operator review required",
+    );
+  }
 
   // Write the audit log whenever state actually changed:
   //   • queueErr is null  → a fresh job was inserted
