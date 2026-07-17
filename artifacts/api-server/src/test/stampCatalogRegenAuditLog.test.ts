@@ -421,6 +421,35 @@ describe("Audit log entry appears on detail page after admin regenerates a stamp
     assert.equal(detail.body.audit[0].admin_id, ADMIN_ID);
   });
 
+  it("regenerate clears cleanup_error and cleanup_error_paths on previously-failed jobs", async () => {
+    // Seed the queue job with orphaned-file metadata so the badge would show.
+    const queueRow = db.stamp_generation_queue[0];
+    queueRow.status               = "retryable_failed";
+    queueRow.cleanup_error        = "storage.remove failed: bucket not found";
+    queueRow.cleanup_error_paths  = ["stamps/abc.png", "stamps/abc_thumb.png"];
+
+    // Trigger regenerate — should reset the failed job including cleanup columns.
+    const regen = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      regen.status, 200,
+      `regenerate must return 200, got ${regen.status}: ${JSON.stringify(regen.body)}`,
+    );
+
+    // The in-memory row must have cleanup_error and cleanup_error_paths nulled out.
+    const updatedJob = db.stamp_generation_queue.find((j: any) => j.id === JOB_ID);
+    assert.ok(updatedJob, "queue row must still exist after regenerate");
+    assert.equal(
+      updatedJob.cleanup_error,
+      null,
+      `cleanup_error must be null after regenerate, got: ${JSON.stringify(updatedJob.cleanup_error)}`,
+    );
+    assert.equal(
+      updatedJob.cleanup_error_paths,
+      null,
+      `cleanup_error_paths must be null after regenerate, got: ${JSON.stringify(updatedJob.cleanup_error_paths)}`,
+    );
+  });
+
   it("after POST regenerate: detail audit has exactly one entry — action=regenerate, admin_id=ADMIN_ID", async () => {
     // ── Pre-condition: audit is empty ────────────────────────────────────────
     const before = await get(`/admin/stamps/catalog/${CATALOG_ID}`);
