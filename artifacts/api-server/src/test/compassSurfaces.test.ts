@@ -556,9 +556,9 @@ describe("GET /api/compass/recommendations?surface=passport — non-empty result
           ends_at:        FUTURE,
           city:           "Cebu",
           max_attendees:  50,
-          attendee_count: 5,
+          going_count:    5,
           visibility:     "public",
-          status:         "published",
+          state:          "open",
         },
       ],
     }));
@@ -613,9 +613,9 @@ describe("GET /api/compass/recommendations?surface=passport — non-empty result
           ends_at:        FUTURE,
           city:           "Cebu",
           max_attendees:  50,
-          attendee_count: 0,
+          going_count:    0,
           visibility:     "public",
-          status:         "published",
+          state:          "open",
         },
       ],
       blocks: [

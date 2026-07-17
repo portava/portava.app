@@ -140,9 +140,9 @@ async function fetchEvents(
     const baseQuery = () =>
       db
         .from("events")
-        .select("id, host_id, title, category, starts_at, ends_at, city, max_attendees, attendee_count, visibility, status")
+        .select("id, host_id, title, category, starts_at, ends_at, city, max_attendees, going_count, visibility, state")
         .eq("visibility", "public")
-        .eq("status", "published")
+        .in("state", ["open", "full", "waitlist"])
         .gte("starts_at", now)
         .lte("starts_at", windowEnd)
         .limit(MAX_EVENTS);
@@ -198,7 +198,7 @@ async function fetchEvents(
       authorId:             event.host_id ?? undefined,
       city:                 event.city ?? null,
       capacity:             event.max_attendees ?? undefined,
-      currentAttendees:     event.attendee_count ?? undefined,
+      currentAttendees:     event.going_count ?? undefined,
       visibilityScope:      "public",
       qualityScore:         6,
       createdAt:            event.starts_at,
