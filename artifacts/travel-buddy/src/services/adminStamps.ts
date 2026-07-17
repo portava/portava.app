@@ -146,19 +146,53 @@ export async function getAdminStampQueue(opts: {
 
 // ── Activate version ───────────────────────────────────────────────────────────
 
-export async function activateStampVersion(catalogId: string, versionId: string, notes?: string): Promise<ApiResult<any>> {
+/**
+ * Partial version shape returned by PATCH /admin/stamps/catalog/:id/activate-version.
+ * The endpoint selects only `id, public_url` on the approved version row (both
+ * on the update path and the idempotent already-approved path), so callers
+ * must not expect the full ArtworkVersion here.
+ */
+export type ActivatedVersion = Pick<ArtworkVersion, 'id' | 'public_url'>;
+
+/**
+ * Response of PATCH /admin/stamps/catalog/:id/activate-version: the updated
+ * catalog row (full select) plus the partial approved version row.
+ */
+export interface ActivateVersionResponse {
+  entry: CatalogEntry;
+  version: ActivatedVersion;
+}
+
+export async function activateStampVersion(catalogId: string, versionId: string, notes?: string): Promise<ApiResult<ActivateVersionResponse>> {
   return adminPatch(`/api/admin/stamps/catalog/${catalogId}/activate-version`, { versionId, notes });
 }
 
 // ── Reject catalog entry ───────────────────────────────────────────────────────
 
-export async function rejectCatalogEntry(catalogId: string, reason: string): Promise<ApiResult<any>> {
+/**
+ * Response of PATCH /admin/stamps/catalog/:id/reject: the rejected catalog row
+ * (full select; same shape on the idempotent already-rejected path).
+ */
+export interface RejectCatalogResponse {
+  entry: CatalogEntry;
+}
+
+export async function rejectCatalogEntry(catalogId: string, reason: string): Promise<ApiResult<RejectCatalogResponse>> {
   return adminPatch(`/api/admin/stamps/catalog/${catalogId}/reject`, { reason });
 }
 
 // ── Regenerate ─────────────────────────────────────────────────────────────────
 
-export async function regenerateCatalogEntry(catalogId: string): Promise<ApiResult<any>> {
+/**
+ * Response of POST /admin/stamps/catalog/:id/regenerate. The endpoint returns
+ * only `{ ok: true }` on success — no entry or job payload — so callers must
+ * refetch if they need the updated catalog/queue state.
+ */
+export interface RegenerateCatalogResponse {
+  ok: true;
+}
+
+export async function regenerateCatalogEntry(catalogId: string): Promise<ApiResult<RegenerateCatalogResponse>> {
   return adminPost(`/api/admin/stamps/catalog/${catalogId}/regenerate`, {});
 }
 
@@ -214,17 +248,35 @@ export async function clearCleanupError(jobId: string): Promise<ApiResult<{ job:
 
 // ── Upload replacement ─────────────────────────────────────────────────────────
 
+/**
+ * Response of POST /admin/stamps/catalog/:id/upload: the newly inserted
+ * candidate artwork version row (full select).
+ */
+export interface UploadStampArtworkResponse {
+  version: ArtworkVersion;
+}
+
 export async function uploadStampArtwork(catalogId: string, opts: {
   imageBase64: string;
   mimeType: string;
   fileName?: string;
-}): Promise<ApiResult<any>> {
+}): Promise<ApiResult<UploadStampArtworkResponse>> {
   return adminPost(`/api/admin/stamps/catalog/${catalogId}/upload`, opts);
 }
 
 // ── Merge ──────────────────────────────────────────────────────────────────────
 
-export async function mergeCatalogEntry(sourceId: string, targetId: string): Promise<ApiResult<any>> {
+/**
+ * Response of POST /admin/stamps/catalog/:id/merge-into/:targetId. Returns
+ * only `{ ok, mergedIntoId }` (same shape on the idempotent already-archived
+ * path) — no updated rows, so callers must refetch for post-merge state.
+ */
+export interface MergeCatalogResponse {
+  ok: true;
+  mergedIntoId: string;
+}
+
+export async function mergeCatalogEntry(sourceId: string, targetId: string): Promise<ApiResult<MergeCatalogResponse>> {
   return adminPost(`/api/admin/stamps/catalog/${sourceId}/merge-into/${targetId}`, {});
 }
 
