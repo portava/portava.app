@@ -6,7 +6,8 @@
 # Called by scripts/pre-release-check.sh as the "schema-audit" check.
 #
 # Behavior (designed to be non-flaky):
-#   • Missing credentials (no SUPABASE_ACCESS_TOKEN, or no SUPABASE_URL in
+#   • Missing credentials (no SUPABASE_PROJECT_TOKEN / SUPABASE_ACCESS_TOKEN,
+#     or no SUPABASE_URL in
 #     artifacts/api-server/.env or the environment) → SKIP with a loud
 #     warning, exit 0.  Developers without Supabase credentials configured
 #     locally are not blocked on unrelated work.
@@ -19,8 +20,9 @@
 #
 # The audit itself loads artifacts/api-server/.env via node
 # --env-file-if-exists, so SUPABASE_URL normally needs no extra setup.
-# SUPABASE_ACCESS_TOKEN must be present in the environment (workspace
-# secret, CI secret, or exported manually).
+# A token must be present in the environment (workspace secret, CI secret,
+# or exported manually): SUPABASE_PROJECT_TOKEN (project-scoped, preferred
+# for CI) or SUPABASE_ACCESS_TOKEN (personal, local dev).
 #
 # Exit codes:
 #   0  audit passed, or was skipped (missing credentials / API unreachable)
@@ -49,11 +51,18 @@ elif [[ -f "${API_SERVER_DIR}/.env" ]] && grep -q '^SUPABASE_URL=' "${API_SERVER
   have_url=1
 fi
 
-if [[ -z "${SUPABASE_ACCESS_TOKEN:-}" || "$have_url" -eq 0 ]]; then
+have_token=0
+if [[ -n "${SUPABASE_PROJECT_TOKEN:-}" || -n "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
+  have_token=1
+fi
+
+if [[ "$have_token" -eq 0 || "$have_url" -eq 0 ]]; then
   printf '  ⚠  schema-audit SKIPPED — Supabase credentials not configured.\n'
-  if [[ -z "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
-    printf '     SUPABASE_ACCESS_TOKEN is not set.\n'
-    printf '     Generate at: https://supabase.com/dashboard/account/tokens\n'
+  if [[ "$have_token" -eq 0 ]]; then
+    printf '     Neither SUPABASE_PROJECT_TOKEN nor SUPABASE_ACCESS_TOKEN is set.\n'
+    printf '     CI (preferred):  set SUPABASE_PROJECT_TOKEN (project-scoped token)\n'
+    printf '     Local dev:       export SUPABASE_ACCESS_TOKEN=sbp_...\n'
+    printf '                      Generate at: https://supabase.com/dashboard/account/tokens\n'
   fi
   if [[ "$have_url" -eq 0 ]]; then
     printf '     SUPABASE_URL not set and not found in %s/.env\n' "$API_SERVER_DIR"

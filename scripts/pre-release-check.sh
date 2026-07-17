@@ -437,7 +437,8 @@ run_check "engagement-indexes" \
 # indexes, policies, enums, triggers, views) against the LIVE Supabase schema
 # via the Management API, catching never-applied migrations before a release.
 #
-# Soft-skips (warning only, exit 0) when SUPABASE_ACCESS_TOKEN / SUPABASE_URL
+# Soft-skips (warning only, exit 0) when no token (SUPABASE_PROJECT_TOKEN or
+# SUPABASE_ACCESS_TOKEN) / SUPABASE_URL
 # are unavailable or the Management API is unreachable, so a network blip or
 # a developer without credentials is not blocked on unrelated work.
 # Fails hard only on real drift (audit exit 1).
@@ -543,8 +544,9 @@ for entry in "${results[@]}"; do
         printf '          sets in artifacts/api-server/src/scripts/auditMigrationsVsLive.ts\n'
         printf '          (document the drift in docs/migrations.md).\n'
         printf '          Token required to query the Supabase Management API:\n'
-        printf '            export SUPABASE_ACCESS_TOKEN=sbp_...\n'
-        printf '            Generate at: https://supabase.com/dashboard/account/tokens\n'
+        printf '            CI (preferred):  export SUPABASE_PROJECT_TOKEN=<project-scoped token>\n'
+        printf '            Local dev:       export SUPABASE_ACCESS_TOKEN=sbp_...\n'
+        printf '                             Generate at: https://supabase.com/dashboard/account/tokens\n'
         ;;
       db-triggers)
         printf '     fix: apply missing migrations via Supabase dashboard or psql:\n'

@@ -10,7 +10,7 @@
  * Usage (from artifacts/api-server):
  *   pnpm run audit:schema
  * or:
- *   SUPABASE_URL=<url> SUPABASE_ACCESS_TOKEN=<token> \
+ *   SUPABASE_URL=<url> SUPABASE_PROJECT_TOKEN=<token> \  # or SUPABASE_ACCESS_TOKEN
  *     node --import tsx/esm src/scripts/auditMigrationsVsLive.ts
  *
  * Exit code 0 → no missing objects (ignoring the known-drift allowlist)
@@ -105,11 +105,17 @@ const ALLOWLIST = new Set([
 // ── Environment ───────────────────────────────────────────────────────────────
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const ACCESS_TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
+// Prefer SUPABASE_PROJECT_TOKEN (project-scoped, safe for CI) over the personal
+// SUPABASE_ACCESS_TOKEN so CI runners never need a developer account token
+// (mirrors the convention in scripts/check-db-triggers.sh).
+const ACCESS_TOKEN =
+  process.env.SUPABASE_PROJECT_TOKEN || process.env.SUPABASE_ACCESS_TOKEN;
 
 if (!SUPABASE_URL || !ACCESS_TOKEN) {
   console.error(
-    "ERROR: SUPABASE_URL and SUPABASE_ACCESS_TOKEN must be set.\n" +
+    "ERROR: SUPABASE_URL and a Supabase token must be set.\n" +
+      "       Set SUPABASE_PROJECT_TOKEN (project-scoped, preferred for CI)\n" +
+      "       or SUPABASE_ACCESS_TOKEN (personal access token).\n" +
       "       Run from artifacts/api-server with the .env loaded, or export them manually.",
   );
   process.exit(2);
