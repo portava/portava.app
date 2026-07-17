@@ -1080,9 +1080,9 @@ export async function bookAgain(buddyId: string, payload?: { category?: string; 
 }
 
 export async function joinWaitlistV2(payload: {
-  city: string; lat?: number; lng?: number; category?: string; language?: string; budgetMaxUsd?: number;
+  city: string; category?: string; language?: string; budgetMaxUsd?: number;
   desiredDate?: string; desiredTime?: string; notes?: string; groupSize?: number; expiryDays?: number;
-}): Promise<ApiResult<{ entry: WaitlistEntry }>> {
+} & ({ lat: number; lng: number } | { lat?: never; lng?: never })): Promise<ApiResult<{ entry: WaitlistEntry }>> {
   return apiFetch('/api/rent-a-buddy/waitlist/v2', { method: 'POST', body: JSON.stringify(payload) });
 }
 
