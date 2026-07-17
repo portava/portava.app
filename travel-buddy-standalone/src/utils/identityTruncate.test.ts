@@ -1,7 +1,7 @@
 /**
  * Unit tests for truncateDisplayName — legacy accounts created before the
- * current display-name limit may still have longer names stored in the
- * DB; the passport identity card caps them at render time.
+ * shared display-name limit may still have longer names stored in the DB;
+ * the passport identity card caps them at render time.
  * Run with:  node --import tsx/esm --test src/utils/identityTruncate.test.ts
  */
 import { describe, it } from 'node:test';
@@ -9,23 +9,27 @@ import assert from 'node:assert/strict';
 import { truncateDisplayName, DISPLAY_NAME_MAX_LENGTH } from './identity.ts';
 
 describe('truncateDisplayName', () => {
-  it('leaves names at or under the shared limit untouched', () => {
+  it('leaves names at or under the limit untouched', () => {
     const exact = 'a'.repeat(DISPLAY_NAME_MAX_LENGTH);
     assert.equal(truncateDisplayName(exact), exact);
     assert.equal(truncateDisplayName('Maria Santos'), 'Maria Santos');
     assert.equal(truncateDisplayName(''), '');
   });
 
-  it('truncates a legacy over-limit name to the shared limit plus ellipsis', () => {
-    const long = 'x'.repeat(55);
+  it('truncates a legacy over-limit name to the limit plus ellipsis', () => {
+    const long = 'x'.repeat(DISPLAY_NAME_MAX_LENGTH + 15);
     const out = truncateDisplayName(long);
     assert.equal(out, `${'x'.repeat(DISPLAY_NAME_MAX_LENGTH)}…`);
     assert.ok(out.length <= DISPLAY_NAME_MAX_LENGTH + 1);
   });
 
   it('trims trailing whitespace before adding the ellipsis', () => {
-    const name = `${'a'.repeat(DISPLAY_NAME_MAX_LENGTH - 1)} bcdef`; // char at the limit is a space
-    assert.equal(truncateDisplayName(name), `${'a'.repeat(DISPLAY_NAME_MAX_LENGTH - 1)}…`);
+    // last char inside the limit is a space
+    const name = `${'a'.repeat(DISPLAY_NAME_MAX_LENGTH - 1)} bcdef`;
+    assert.equal(
+      truncateDisplayName(name),
+      `${'a'.repeat(DISPLAY_NAME_MAX_LENGTH - 1)}…`,
+    );
   });
 
   it('respects a custom max length', () => {

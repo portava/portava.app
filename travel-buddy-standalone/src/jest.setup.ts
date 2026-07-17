@@ -19,17 +19,6 @@
  * See src/components/__tests__/TESTING.md for the companion rule: never wrap
  * an Alert button's onPress handler in act().
  */
-// This file is included in the app tsconfig (only *.test.* files are
-// excluded), which has no jest types — declare the one global we use.
-declare const jest: { mock: (moduleName: string, factory: () => unknown) => void };
-
-// AsyncStorage's native module is null under jest; use the library's official
-// in-memory mock globally so service modules that import it are safe to load
-// with jest.requireActual(...) in test mock factories.
-jest.mock('@react-native-async-storage/async-storage', () =>
-  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
-);
-
 declare global {
   // eslint-disable-next-line no-var
   var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
