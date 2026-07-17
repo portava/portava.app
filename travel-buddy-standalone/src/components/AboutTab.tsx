@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { MapPin, Calendar, User as UserIcon } from 'lucide-react-native';
-import type { OwnProfile, PublicProfile } from '../types/models';
-import { color, space, radius, type as t } from '../theme/tokens';
+import type { OwnProfile, PublicProfile } from '../types/models.ts';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 const INTEREST_LABEL: Record<string, string> = {
   nightlife: 'Nightlife', food: 'Food', beach: 'Beach', luxury: 'Luxury',

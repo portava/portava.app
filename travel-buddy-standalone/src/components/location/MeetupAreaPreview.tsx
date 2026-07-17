@@ -12,7 +12,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Map, Camera } from '@maplibre/maplibre-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
 export interface MeetupAreaPreviewProps {
   lat: number;

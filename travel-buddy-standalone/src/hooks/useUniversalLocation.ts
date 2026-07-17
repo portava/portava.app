@@ -17,12 +17,12 @@
  *   openPicker()      — open the GlobalPlacePicker sheet
  */
 import { useCallback } from 'react';
-import { useLocationContext } from '../context/LocationContext';
-import { useRecentPlaces } from './useRecentPlaces';
-import { reverseGeocodeToPlace } from '../services/location';
-import { fetchPlacesFromApi } from './usePlaceSearch';
+import { useLocationContext } from '../context/LocationContext.tsx';
+import { useRecentPlaces } from './useRecentPlaces.ts';
+import { reverseGeocodeToPlace } from '../services/location.ts';
+import { fetchPlacesFromApi } from './usePlaceSearch.ts';
 import { deriveUniversalLocation } from './activeLocation.state';
-import type { Place } from '../lib/location/placeTypes';
+import type { Place } from '../lib/location/placeTypes.ts';
 
 export interface UseUniversalLocationResult {
   /** Currently active location (null if not yet set / permission denied) */

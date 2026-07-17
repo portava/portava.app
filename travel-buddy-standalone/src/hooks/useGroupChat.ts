@@ -18,12 +18,12 @@ import {
   sendTyping,
   type GroupThread,
   type Message,
-} from '../services/messaging';
-import { useSession } from '../context/SessionContext';
+} from '../services/messaging.ts';
+import { useSession } from '../context/SessionContext.tsx';
 import {
   telegraphRealtime,
   type TelegraphEvent,
-} from '../services/telegraphRealtimeService';
+} from '../services/telegraphRealtimeService.ts';
 
 function makeClientId(): string {
   return `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;

@@ -5,9 +5,9 @@ import {
 import {
   MapPin, Clock, MoreHorizontal, CheckCircle2, Pencil, Trash2, AlertTriangle, Tag, GripVertical,
 } from 'lucide-react-native';
-import type { TripPlanItem, TripPlanCategory, TripPlanItemStatus } from '../../types/models';
-import { removePlanItem, updatePlanItem, reorderPlanItem } from '../../services/tripPlan';
-import { color, space, radius, type as t } from '../../theme/tokens';
+import type { TripPlanItem, TripPlanCategory, TripPlanItemStatus } from '../../types/models.ts';
+import { removePlanItem, updatePlanItem, reorderPlanItem } from '../../services/tripPlan.ts';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
 // ── Category / status maps ─────────────────────────────────────────────────────
 

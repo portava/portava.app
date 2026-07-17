@@ -17,9 +17,9 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { X, Camera, ChevronDown, Lock, Users, Globe, Heart, UserCheck } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t } from '../theme/tokens';
-import type { StoryVisibility } from '../services/stories';
-import { createStory, uploadStoryMedia } from '../services/stories';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
+import type { StoryVisibility } from '../services/stories.ts';
+import { createStory, uploadStoryMedia } from '../services/stories.ts';
 
 interface Props {
   visible: boolean;

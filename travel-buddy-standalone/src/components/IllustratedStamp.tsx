@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Path, Rect, Circle, Line, G } from 'react-native-svg';
-import { color } from '../theme/tokens';
+import { color } from '../theme/tokens.ts';
 
 /**
  * Level-2 illustrated city stamps. Each city = a landmark silhouette (SVG paths)

@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
-import AdminModerationScreen from '../../../app/gems/admin';
+import AdminModerationScreen from '../../../app/gems/admin.tsx';
 
 jest.mock('expo-router', () => ({
   useRouter: () => ({ back: jest.fn(), push: jest.fn() }),

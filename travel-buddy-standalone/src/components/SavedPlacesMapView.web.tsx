@@ -6,7 +6,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { MapPin } from 'lucide-react-native';
-import { color, space, type as t } from '../theme/tokens';
+import { color, space, type as t } from '../theme/tokens.ts';
 import type { SavedPlacesMapViewProps } from './SavedPlacesMapView';
 
 export function SavedPlacesMapView({ places }: SavedPlacesMapViewProps) {

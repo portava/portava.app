@@ -10,7 +10,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
 import { Heart, MessageCircle, Share2, Smile } from 'lucide-react-native';
-import { color, space, layout } from '../theme/tokens';
+import { color, space, layout } from '../theme/tokens.ts';
 import {
   likePost,
   unlikePost,
@@ -19,12 +19,12 @@ import {
   removeReaction,
   recordShare,
   type ReactionCount,
-} from '../services/postEngagement';
-import { getLiked, setLiked } from '../services/likedPostsCache';
-import { useSession } from '../context/SessionContext';
-import { CommentsSheet } from './CommentsSheet';
-import { ShareSheet, type ShareTarget } from './ShareSheet';
-import { ReactionPicker, ReactionSummary } from './ReactionPicker';
+} from '../services/postEngagement.ts';
+import { getLiked, setLiked } from '../services/likedPostsCache.ts';
+import { useSession } from '../context/SessionContext.tsx';
+import { CommentsSheet } from './CommentsSheet.tsx';
+import { ShareSheet, type ShareTarget } from './ShareSheet.tsx';
+import { ReactionPicker, ReactionSummary } from './ReactionPicker.tsx';
 import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
 
 interface Props {

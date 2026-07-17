@@ -9,8 +9,8 @@ import {
   View, Text, Pressable, Modal, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { Sparkles, X } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import { useCompassWhyExplanation } from '../../hooks/compass/useCompassWhyExplanation';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { useCompassWhyExplanation } from '../../hooks/compass/useCompassWhyExplanation.ts';
 
 interface Props {
   visible:          boolean;

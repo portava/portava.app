@@ -12,8 +12,8 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Zap, MapPin, Clock, X } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens';
-import type { TelegraphSuggestion } from '../services/telegraphChat';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
+import type { TelegraphSuggestion } from '../services/telegraphChat.ts';
 
 const CATEGORY_COLORS: Record<string, string> = {
   food: '#F97316',

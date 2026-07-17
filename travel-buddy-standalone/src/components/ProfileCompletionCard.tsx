@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { X } from 'lucide-react-native';
-import type { OwnProfile } from '../types/models';
-import { color, space, radius, type as t } from '../theme/tokens';
+import type { OwnProfile } from '../types/models.ts';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 const DISMISSED_KEY = '@passport_completion_dismissed';
 

@@ -2,8 +2,8 @@
  * Available attach targets (trips + plans) for the selector. Derived from
  * existing mock data. Replace with real user trips/plans from backend later.
  */
-import type { AttachTarget } from '../types/models';
-import { tripPlans, mockTripDetail } from './tripDetail';
+import type { AttachTarget } from '../types/models.ts';
+import { tripPlans, mockTripDetail } from './tripDetail.ts';
 
 /** Trips the user can add to. Active trip first, then upcoming/planning. */
 export const attachTripTargets: AttachTarget[] = [

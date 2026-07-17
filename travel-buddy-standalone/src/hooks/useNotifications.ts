@@ -19,11 +19,11 @@ import {
   type NotificationPreferences,
   type CategoryPreference,
   type ListNotificationsParams,
-} from '../services/notifications';
-import { getDeviceTimezone } from '../services/pushTokenService';
-import { freshToken } from '../services/apiToken';
-import { showNotificationToast } from '../components/NotificationToast';
-import { _connectOnce } from './notificationStreamUtils';
+} from '../services/notifications.ts';
+import { getDeviceTimezone } from '../services/pushTokenService.ts';
+import { freshToken } from '../services/apiToken.ts';
+import { showNotificationToast } from '../components/NotificationToast.tsx';
+import { _connectOnce } from './notificationStreamUtils.ts';
 
 const UNREAD_POLL_MS = 15_000;
 const NOTIF_POLL_MS  = 30_000;

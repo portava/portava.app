@@ -13,8 +13,8 @@ import {
   Layer,
 } from '@maplibre/maplibre-react-native';
 import { Minimize2 } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens';
-import type { RouteStop, RouteLeg } from '../services/routePlan';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
+import type { RouteStop, RouteLeg } from '../services/routePlan.ts';
 
 // ── Map tile style ─────────────────────────────────────────────────────────────
 

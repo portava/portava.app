@@ -39,11 +39,11 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, SendHorizonal, Trash2, Heart, CornerDownRight } from 'lucide-react-native';
-import { ProfilePreviewCard } from './ProfilePreviewCard';
-import { color, space, radius, shadow } from '../theme/tokens';
-import { MentionInput, type MentionInputHandle } from './MentionInput';
-import { MentionSuggestionList } from './MentionSuggestionList';
-import type { AnyMentionSuggestion } from '../services/tagging';
+import { ProfilePreviewCard } from './ProfilePreviewCard.tsx';
+import { color, space, radius, shadow } from '../theme/tokens.ts';
+import { MentionInput, type MentionInputHandle } from './MentionInput.tsx';
+import { MentionSuggestionList } from './MentionSuggestionList.tsx';
+import type { AnyMentionSuggestion } from '../services/tagging.ts';
 import {
   listComments,
   addComment,
@@ -54,14 +54,14 @@ import {
   addReply,
   type EngagementComment,
   type EngagementReply,
-} from '../services/postEngagement';
-import { RichText } from './RichText';
-import { useSession } from '../context/SessionContext';
-import { computeOptimisticLike } from '../lib/commentLikeLogic';
-import { createSubmitGuard } from '../lib/commentSubmitGuard';
-import { createLikeToggleGuard } from '../lib/likeToggleGuard';
+} from '../services/postEngagement.ts';
+import { RichText } from './RichText.tsx';
+import { useSession } from '../context/SessionContext.tsx';
+import { computeOptimisticLike } from '../lib/commentLikeLogic.ts';
+import { createSubmitGuard } from '../lib/commentSubmitGuard.ts';
+import { createLikeToggleGuard } from '../lib/likeToggleGuard.ts';
 import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
-import { primaryIdentityText } from '../lib/displayIdentity';
+import { primaryIdentityText } from '../lib/displayIdentity.ts';
 
 // ── Shared contexts ───────────────────────────────────────────────────────────
 

@@ -2,10 +2,10 @@ import React from 'react';
 import { View, Text, Image, Pressable, StyleSheet, Platform } from 'react-native';
 import { router } from 'expo-router';
 import { MapPin, PlayCircle } from 'lucide-react-native';
-import type { Post } from '../types/models';
-import { color, space, radius, type as t, shadow } from '../theme/tokens';
-import { getMediaFilter, buildCssFilter } from '../lib/media/filters';
-import { MediaStampOverlay } from './StampOverlayBadge';
+import type { Post } from '../types/models.ts';
+import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { getMediaFilter, buildCssFilter } from '../lib/media/filters.ts';
+import { MediaStampOverlay } from './StampOverlayBadge.tsx';
 
 /**
  * PostcardTile — postcard-styled tile (image-heavy, paper border, corner

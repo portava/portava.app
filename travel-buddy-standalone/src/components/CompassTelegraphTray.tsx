@@ -24,8 +24,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Compass, X, MapPin, Send, Zap } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens';
-import { fetchCompassTelegraphCards, type CompassTelegraphCard } from '../services/compass';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { fetchCompassTelegraphCards, type CompassTelegraphCard } from '../services/compass.ts';
 
 const TYPE_LABELS: Record<string, string> = {
   event:      'Event',

@@ -16,8 +16,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Clock } from 'lucide-react-native';
-import { color, space, radius, shadow } from '../theme/tokens';
-import { getEditHistory, type EditHistoryEntry } from '../services/postEngagement';
+import { color, space, radius, shadow } from '../theme/tokens.ts';
+import { getEditHistory, type EditHistoryEntry } from '../services/postEngagement.ts';
 
 interface Props {
   visible: boolean;

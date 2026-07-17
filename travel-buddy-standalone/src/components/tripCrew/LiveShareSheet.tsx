@@ -8,9 +8,9 @@ import {
   View, Text, Pressable, StyleSheet, Modal, ActivityIndicator, Switch,
 } from 'react-native';
 import { X, Navigation, Clock } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import type { CrewMemberCard, ShareDuration } from '../../services/tripCrewLocation';
-import { startLiveShare } from '../../services/tripCrewLocation';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import type { CrewMemberCard, ShareDuration } from '../../services/tripCrewLocation.ts';
+import { startLiveShare } from '../../services/tripCrewLocation.ts';
 
 interface Props {
   visible: boolean;

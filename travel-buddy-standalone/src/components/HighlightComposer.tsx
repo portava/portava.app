@@ -14,13 +14,13 @@ import * as ImagePicker from 'expo-image-picker';
 import { Video, ResizeMode } from 'expo-av';
 import { X, Camera, Video as VideoIcon, MapPin } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t, shadow } from '../theme/tokens';
-import { uploadMedia, validateMedia } from '../services/media';
-import { createHighlight, type HighlightVisibility } from '../services/highlights';
-import { useSession } from '../context/SessionContext';
+import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { uploadMedia, validateMedia } from '../services/media.ts';
+import { createHighlight, type HighlightVisibility } from '../services/highlights.ts';
+import { useSession } from '../context/SessionContext.tsx';
 import { router } from 'expo-router';
-import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor';
-import { GlobalPlacePicker } from './selectors/GlobalPlacePicker';
+import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor.tsx';
+import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 
 const MAX_VIDEO_DURATION_SECONDS = 10;
 

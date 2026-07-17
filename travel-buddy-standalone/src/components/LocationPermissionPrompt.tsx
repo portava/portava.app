@@ -7,8 +7,8 @@ import {
   View, Text, Pressable, Modal, StyleSheet,
 } from 'react-native';
 import { MapPin, Navigation, X } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens';
-import { useLocationContext } from '../context/LocationContext';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { useLocationContext } from '../context/LocationContext.tsx';
 
 export function LocationPermissionPrompt() {
   const {

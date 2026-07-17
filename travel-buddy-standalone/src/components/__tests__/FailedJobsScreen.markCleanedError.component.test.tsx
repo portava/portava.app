@@ -32,8 +32,8 @@
 import React from 'react';
 import { Alert } from 'react-native';
 import { render, act, waitFor, screen, fireEvent, cleanup } from '@testing-library/react-native';
-import FailedJobsScreen from '../../../app/admin/stamps/failed';
-import { getAdminStampQueue, clearCleanupError } from '../../services/adminStamps';
+import FailedJobsScreen from '../../../app/admin/stamps/failed.tsx';
+import { getAdminStampQueue, clearCleanupError } from '../../services/adminStamps.ts';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 

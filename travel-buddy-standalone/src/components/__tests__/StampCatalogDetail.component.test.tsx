@@ -40,8 +40,8 @@
 
 import React from 'react';
 import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
-import StampCatalogDetail from '../../../app/admin/stamps/[catalogId]';
-import { getAdminCatalogEntry, activateStampVersion, rejectCatalogEntry } from '../../services/adminStamps';
+import StampCatalogDetail from '../../../app/admin/stamps/[catalogId].tsx';
+import { getAdminCatalogEntry, activateStampVersion, rejectCatalogEntry } from '../../services/adminStamps.ts';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 

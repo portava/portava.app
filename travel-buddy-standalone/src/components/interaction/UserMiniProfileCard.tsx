@@ -1,14 +1,14 @@
 import React from 'react';
 import { View, Text, Image, StyleSheet } from 'react-native';
-import { useBlockedIds } from '../../context/BlockedIdsContext';
-import { useUserInteractionContext } from '../../hooks/useUserInteractionContext';
-import { useRelationshipLabel } from '../../hooks/useRelationshipLabel';
-import { UserAvatarButton } from './UserAvatarButton';
-import { UserNameButton } from './UserNameButton';
-import { RelationshipBadge } from './RelationshipBadge';
-import { KnownFromRow } from './KnownFromRow';
-import { UserOverflowMenu } from './UserOverflowMenu';
-import { color, space, radius, type as t } from '../../theme/tokens';
+import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
+import { useUserInteractionContext } from '../../hooks/useUserInteractionContext.ts';
+import { useRelationshipLabel } from '../../hooks/useRelationshipLabel.ts';
+import { UserAvatarButton } from './UserAvatarButton.tsx';
+import { UserNameButton } from './UserNameButton.tsx';
+import { RelationshipBadge } from './RelationshipBadge.tsx';
+import { KnownFromRow } from './KnownFromRow.tsx';
+import { UserOverflowMenu } from './UserOverflowMenu.tsx';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
 interface Props {
   userId: string;

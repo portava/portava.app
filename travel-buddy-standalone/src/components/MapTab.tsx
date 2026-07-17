@@ -14,15 +14,15 @@ import {
 } from 'react-native';
 import { Map as MapView, Camera, Marker } from '@maplibre/maplibre-react-native';
 import type { CameraRef, LngLatBounds } from '@maplibre/maplibre-react-native';
-import type { PassportPostcard } from '../types/models';
-import type { PassportMapPayload } from '../services/passportStamps';
-import { getPassportMap } from '../services/passportStamps';
-import { color, space, radius, type as t } from '../theme/tokens';
-import { HighlightRing } from './HighlightRing';
-import { HighlightViewer } from './HighlightViewer';
-import { useHighlightRingState } from '../hooks/useHighlightRingState';
-import { listNearbyUsers, type NearbyUser } from '../services/map';
-import { COUNTRY_CENTROIDS } from '../lib/countryCentroids';
+import type { PassportPostcard } from '../types/models.ts';
+import type { PassportMapPayload } from '../services/passportStamps.ts';
+import { getPassportMap } from '../services/passportStamps.ts';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { HighlightRing } from './HighlightRing.tsx';
+import { HighlightViewer } from './HighlightViewer.tsx';
+import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
+import { listNearbyUsers, type NearbyUser } from '../services/map.ts';
+import { COUNTRY_CENTROIDS } from '../lib/countryCentroids.ts';
 
 // ── Map style ──────────────────────────────────────────────────────────────────
 

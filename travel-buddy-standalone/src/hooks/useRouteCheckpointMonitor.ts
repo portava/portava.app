@@ -20,7 +20,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   CHECKPOINT_ARRIVAL_TASK,
   PENDING_ARRIVALS_STORE_KEY,
-} from '../tasks/checkpointArrivalTask';
+} from '../tasks/checkpointArrivalTask.ts';
 
 const GPS_POLL_MS      = 30_000;  // foreground fallback: GPS check interval
 const DEFAULT_RADIUS_M = 80;      // metres — matches plan_geofences default

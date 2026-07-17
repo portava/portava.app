@@ -11,7 +11,7 @@
 
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { PassportIdentityCard } from '../PassportIdentityCard';
+import { PassportIdentityCard } from '../PassportIdentityCard.tsx';
 
 // ── react-native-svg stub ─────────────────────────────────────────────────────
 // SVG elements are not available in the jest-expo JSDOM env; stub them out so

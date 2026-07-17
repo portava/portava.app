@@ -15,7 +15,7 @@
 
 import React from 'react';
 import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
-import { TripWishlistPicker } from '../TripWishlistPicker';
+import { TripWishlistPicker } from '../TripWishlistPicker.tsx';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
@@ -47,8 +47,8 @@ jest.mock('../../../theme/tokens', () => ({
 
 // ── Typed references to mocked modules ─────────────────────────────────────────
 
-import { listMyTrips } from '../../../services/trips';
-import { toggleSave, getSavedListIds } from '../../../services/discoveryBookmarks';
+import { listMyTrips } from '../../../services/trips.ts';
+import { toggleSave, getSavedListIds } from '../../../services/discoveryBookmarks.ts';
 
 const mockListMyTrips    = listMyTrips    as jest.MockedFunction<typeof listMyTrips>;
 const mockToggleSave     = toggleSave     as jest.MockedFunction<typeof toggleSave>;
