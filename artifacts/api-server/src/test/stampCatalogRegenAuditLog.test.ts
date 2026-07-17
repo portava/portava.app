@@ -833,6 +833,221 @@ describe("Audit log entry appears on detail page after admin regenerates a stamp
     );
   });
 
+  it("cross-admin failed reset: ADMIN_B's audit entry is written when it resets a re-failed job — 23505 guard must not silence it", async () => {
+    // ADMIN_A regenerates (fresh insert succeeds, audit written for A). A worker
+    // then runs the job and fails, flipping it back to retryable_failed. ADMIN_B
+    // regenerates: its reset update flips the failed row back to queued
+    // (hadFailedReset=true), the new insert hits 23505, but state DID change —
+    // ADMIN_B's audit entry must be written. Exactly two rows: one per admin.
+
+    const ADMIN_A = "aaaaaaaa-0000-4000-8000-aaaaaaaaaaaa";
+    const ADMIN_B = "bbbbbbbb-0000-4000-8000-bbbbbbbbbbbb";
+
+    const localDb: DB = {
+      profiles: [
+        { id: ADMIN_A, role: "admin" },
+        { id: ADMIN_B, role: "admin" },
+      ],
+      universal_stamp_catalog: [
+        {
+          id:                     CATALOG_ID,
+          canonical_location_key: "city:osaka:japan",
+          stamp_type:             "location",
+          display_name:           "Osaka",
+          country:                "Japan",
+          country_code:           "JP",
+          status:                 "review_required",
+          active_version_id:      null,
+          earn_count:             0,
+          created_at:             "2024-01-01T00:00:00Z",
+          updated_at:             "2024-01-01T00:00:00Z",
+        },
+      ],
+      stamp_generation_queue: [
+        {
+          id:            JOB_ID,
+          catalog_id:    CATALOG_ID,
+          status:        "review_required",
+          last_error:    "candidate_shortfall: only 1 of 3 required",
+          attempts:      3,
+          requeue_count: 0,
+        },
+      ],
+      stamp_artwork_versions: [],
+      stamp_admin_audit_log:  [],
+      user_stamps:            [],
+    };
+
+    // First request → ADMIN_A; subsequent requests → ADMIN_B.
+    let getUserCallCount = 0;
+    // First queue insert succeeds; later inserts hit the unique constraint.
+    let queueInsertCount = 0;
+
+    function makeFailedResetClient(dbArg: DB) {
+      function chain(tableName: string) {
+        let updateValues: Record<string, any> | null = null;
+        let insertRow: Record<string, any> | null    = null;
+        const filters: Array<(r: any) => boolean>    = [];
+        let _headOnly    = false;
+        let _selectCount = false;
+
+        const b: any = {
+          select(_cols?: any, opts?: any) {
+            if (opts?.count === "exact") _selectCount = true;
+            if (opts?.head  === true)    _headOnly    = true;
+            return b;
+          },
+          eq(col: string, val: any)    { filters.push((r) => r[col] === val); return b; },
+          in(col: string, vals: any[]) { filters.push((r) => (vals as any[]).includes(r[col])); return b; },
+          not(col: string, op: string, val: any) {
+            if (op === "in") {
+              const excluded = val.replace(/^\(|\)$/g, "").split(",").map((s: string) => s.trim().replace(/^"|"$/g, ""));
+              filters.push((r) => !excluded.includes(r[col]));
+            }
+            return b;
+          },
+          order()  { return b; },
+          range()  { return b; },
+          limit()  { return b; },
+          update(vals: Record<string, any>) { updateValues = vals; return b; },
+          insert(row: Record<string, any>)  { insertRow    = row;  return b; },
+
+          maybeSingle() {
+            const rows = dbArg[tableName] ?? [];
+            if (updateValues !== null) {
+              const matched = rows.filter((r: any) => filters.every((f) => f(r)));
+              if (
+                tableName === "stamp_generation_queue" &&
+                wouldCreateDuplicateQueued(rows, matched, updateValues)
+              ) {
+                return Promise.resolve({ data: null, error: { ...DUPLICATE_QUEUED_ERROR } });
+              }
+              matched.forEach((r: any) => Object.assign(r, updateValues));
+              return Promise.resolve({ data: matched[0] ? { ...matched[0] } : null, error: null });
+            }
+            const matched = rows.filter((r: any) => filters.every((f) => f(r)));
+            return Promise.resolve({ data: matched[0] ? { ...matched[0] } : null, error: null });
+          },
+
+          single() {
+            const rows    = dbArg[tableName] ?? [];
+            const matched = rows.filter((r: any) => filters.every((f) => f(r)));
+            if (matched.length === 1)
+              return Promise.resolve({ data: matched[0], error: null });
+            return Promise.resolve({ data: null, error: { message: "No rows" } });
+          },
+
+          then(resolve: any, reject: any) {
+            return Promise.resolve()
+              .then(() => {
+                const rows = dbArg[tableName] ?? [];
+                if (insertRow !== null) {
+                  if (tableName === "stamp_generation_queue") {
+                    queueInsertCount++;
+                    if (queueInsertCount > 1) {
+                      // ADMIN_B's fresh insert hits the unique constraint —
+                      // its reset already produced the single queued row.
+                      return { data: null, error: { code: "23505", message: "duplicate key value" } };
+                    }
+                  }
+                  rows.push(insertRow);
+                  return { data: { ...insertRow }, error: null };
+                }
+                if (updateValues !== null) {
+                  const matched = rows.filter((r: any) => filters.every((f) => f(r)));
+                  if (
+                    tableName === "stamp_generation_queue" &&
+                    wouldCreateDuplicateQueued(rows, matched, updateValues)
+                  ) {
+                    return { data: null, error: { ...DUPLICATE_QUEUED_ERROR } };
+                  }
+                  matched.forEach((r: any) => Object.assign(r, updateValues));
+                  return { data: matched.map((r: any) => ({ ...r })), error: null };
+                }
+                const matched = rows.filter((r: any) => filters.every((f) => f(r)));
+                if (_headOnly) return { data: null, error: null, count: matched.length };
+                return {
+                  data:  matched.map((r: any) => ({ ...r })),
+                  error: null,
+                  count: _selectCount ? matched.length : undefined,
+                };
+              })
+              .then(resolve, reject);
+          },
+        };
+        return b;
+      }
+
+      return {
+        from: (tableName: string) => chain(tableName),
+        auth: {
+          getUser: () => {
+            getUserCallCount++;
+            const userId = getUserCallCount <= 1 ? ADMIN_A : ADMIN_B;
+            return Promise.resolve({ data: { user: { id: userId } }, error: null });
+          },
+        },
+      };
+    }
+
+    const client = makeFailedResetClient(localDb);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+
+    // ── ADMIN_A regenerates: fresh insert succeeds, audit written for A ──────
+    const regen1 = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      regen1.status, 200,
+      `ADMIN_A regenerate must return 200, got ${regen1.status}: ${JSON.stringify(regen1.body)}`,
+    );
+    assert.deepEqual(regen1.body, { ok: true });
+    assert.equal(
+      localDb.stamp_admin_audit_log.length, 1,
+      "exactly one audit row must exist after ADMIN_A's regenerate",
+    );
+    assert.equal(localDb.stamp_admin_audit_log[0].admin_id, ADMIN_A);
+
+    // ── A worker picks up the queued job and fails it ─────────────────────────
+    const queuedJob = localDb.stamp_generation_queue.find(
+      (j: any) => j.catalog_id === CATALOG_ID && j.status === "queued",
+    );
+    assert.ok(queuedJob, "ADMIN_A's regenerate must have produced a queued job row");
+    queuedJob.status     = "retryable_failed";
+    queuedJob.attempts   = 1;
+    queuedJob.last_error = "generation failed: upstream timeout";
+
+    // ── ADMIN_B regenerates: hadFailedReset=true, insert hits 23505 ──────────
+    const regen2 = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      regen2.status, 200,
+      `ADMIN_B regenerate must return 200, got ${regen2.status}: ${JSON.stringify(regen2.body)}`,
+    );
+    assert.deepEqual(regen2.body, { ok: true });
+
+    // ── The failed row must have been reset back to queued by ADMIN_B ────────
+    assert.equal(
+      queuedJob.status, "queued",
+      `ADMIN_B's regenerate must reset the failed job to queued, got '${queuedJob.status}'`,
+    );
+
+    // ── Exactly two audit rows — one per admin ────────────────────────────────
+    assert.equal(
+      localDb.stamp_admin_audit_log.length,
+      2,
+      `stamp_admin_audit_log must have exactly two rows (one per admin), got ${localDb.stamp_admin_audit_log.length}: ${JSON.stringify(localDb.stamp_admin_audit_log)}`,
+    );
+    const [rowA, rowB] = localDb.stamp_admin_audit_log;
+    assert.equal(rowA.action,     "regenerate", "first audit row action must be 'regenerate'");
+    assert.equal(rowA.admin_id,   ADMIN_A,      "first audit row must belong to ADMIN_A");
+    assert.equal(rowA.catalog_id, CATALOG_ID);
+    assert.equal(rowB.action,     "regenerate", "second audit row action must be 'regenerate'");
+    assert.equal(
+      rowB.admin_id, ADMIN_B,
+      "second audit row must belong to ADMIN_B — the 23505 guard must not silence a reset that changed state",
+    );
+    assert.equal(rowB.catalog_id, CATALOG_ID);
+  });
+
   it("after POST regenerate: detail audit has exactly one entry — action=regenerate, admin_id=ADMIN_ID", async () => {
     // ── Pre-condition: audit is empty ────────────────────────────────────────
     const before = await get(`/admin/stamps/catalog/${CATALOG_ID}`);
