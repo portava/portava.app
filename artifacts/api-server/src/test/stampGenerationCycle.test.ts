@@ -2014,6 +2014,93 @@ describe("runGenerationCycle — orphan cleanup throws: original error preserved
     assert.equal(fail!.payload.locked_until, null);
     assert.equal(fail!.payload.locked_by, null);
   });
+
+  it("logs orphan_cleanup_error with paths.length === 2 when two uploads succeed before the third fails and remove() throws", async () => {
+    // Two uploads succeed; the third upload fails (generation error path fires);
+    // cleanup remove() throws. The orphan_cleanup_error log must list exactly
+    // the two successfully-uploaded paths — not just the first, and not a stale
+    // or truncated list from a previous cycle.
+    let uploadCall = 0;
+    const thirdUploadError = "Storage upload failed: quota exceeded on third upload";
+    const cleanupErrorMsg = "Storage remove failed: network timeout on cleanup";
+
+    const { sc, storageCalls } = makeFakeClientWithStorage({
+      onUpload(_path, _buf) {
+        uploadCall++;
+        if (uploadCall === 3) throw new Error(thirdUploadError);
+      },
+      onRemove(_paths) {
+        throw new Error(cleanupErrorMsg);
+      },
+    });
+    _setTestServiceClient(sc);
+    // Provider returns CANDIDATE_COUNT (3) real http URLs so all three downloads
+    // are attempted and two uploads complete before the third throws.
+    _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
+    installFetch(successFetch());
+
+    // Capture console.error so we can inspect the logged JSON payload.
+    const loggedErrors: string[] = [];
+    const origError = console.error.bind(console);
+    console.error = (...args: any[]) => { loggedErrors.push(args.join(" ")); origError(...args); };
+
+    try {
+      await runGenerationCycle();
+    } finally {
+      console.error = origError;
+    }
+
+    // Exactly two uploads should have completed before the third threw.
+    assert.equal(
+      storageCalls.length,
+      2,
+      `exactly 2 uploads must have succeeded before the third failed, got ${storageCalls.length}`,
+    );
+
+    // Find the orphan_cleanup_error log line.
+    const cleanupErrorLine = loggedErrors.find((l) => l.includes("orphan_cleanup_error"));
+    assert.ok(
+      cleanupErrorLine,
+      "must log at least one line containing 'orphan_cleanup_error' when remove() throws after two uploads",
+    );
+
+    // The line must be parseable JSON.
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(cleanupErrorLine!);
+    } catch {
+      assert.fail(`orphan_cleanup_error log line must be parseable JSON, got: ${cleanupErrorLine}`);
+    }
+
+    // paths must list every successfully-uploaded path — exactly 2 entries.
+    assert.ok(
+      "paths" in parsed && Array.isArray(parsed.paths),
+      `orphan_cleanup_error must include a paths array, got: ${JSON.stringify(parsed)}`,
+    );
+    const paths = parsed.paths as string[];
+    assert.equal(
+      paths.length,
+      2,
+      `paths.length must be 2 (one per successful upload before the failure), got: ${JSON.stringify(paths)}`,
+    );
+
+    // Each recorded storageCalls path must appear in the logged paths — no
+    // path is missing.
+    for (const call of storageCalls) {
+      assert.ok(
+        paths.includes(call.path),
+        `uploaded path ${call.path} must appear in orphan_cleanup_error paths, got: ${JSON.stringify(paths)}`,
+      );
+    }
+
+    // No duplicates: the set of unique paths must equal the full array length.
+    const uniquePaths = new Set(paths);
+    assert.equal(
+      uniquePaths.size,
+      paths.length,
+      `orphan_cleanup_error paths must not contain duplicates, got: ${JSON.stringify(paths)}`,
+    );
+  });
 });
 
 // ── Orphan cleanup: remove() returns error object instead of throwing ──────────
