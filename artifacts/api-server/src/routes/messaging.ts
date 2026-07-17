@@ -48,6 +48,7 @@ import { recordTrustEvent } from '../services/trust/TrustEventService.js';
 import { getRestrictionState } from '../services/trust/TrustRestrictionService.js';
 import { processTagging } from '../services/tagging/TaggingService.js';
 import { enrichSpans } from '../lib/enrichSpans';
+import { circleThreadTitle } from '../lib/displayName';
 import { NotificationService } from '../services/notifications/NotificationService.js';
 import { NotificationRouter } from '../services/notifications/NotificationRouter.js';
 
@@ -1999,7 +2000,7 @@ router.get('/circles/:circleOwnerId/chat', async (req, res) => {
   try {
     const threadId = await syncCircleChatMembers(sc, circleOwnerId);
     const displayName = (ownerProfile as any).name ?? (ownerProfile as any).handle ?? 'Circle';
-    const threadTitle = `${displayName}'s Circle`;
+    const threadTitle = circleThreadTitle(displayName);
 
     res.status(200).json({
       threadId,

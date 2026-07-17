@@ -21,6 +21,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { circleThreadTitle } from '../lib/displayName';
 
 // ---------------------------------------------------------------------------
 // Trip group chat sync
@@ -157,7 +158,7 @@ export async function syncCircleChatMembers(
     .maybeSingle();
 
   const displayName = (ownerProfile as any)?.name ?? (ownerProfile as any)?.handle ?? 'Circle';
-  const threadTitle = `${displayName}'s Circle`;
+  const threadTitle = circleThreadTitle(displayName);
 
   // Find or create the circle's group thread (unique index on circle_owner_id WHERE thread_type='circle').
   let threadId: string;

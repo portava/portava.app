@@ -18,3 +18,11 @@ export function truncateDisplayName(name: string, max: number = DISPLAY_NAME_MAX
   if (name.length <= max) return name;
   return `${name.slice(0, max).trimEnd()}…`;
 }
+
+/**
+ * Compose a Circle group-chat thread title from an owner's display name,
+ * capping legacy >40-char names so they can't bloat thread lists.
+ */
+export function circleThreadTitle(displayName: string): string {
+  return `${truncateDisplayName(displayName)}'s Circle`;
+}

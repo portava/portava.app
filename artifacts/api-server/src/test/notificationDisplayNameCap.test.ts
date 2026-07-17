@@ -10,7 +10,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { renderTemplate } from '../services/notifications/NotificationTemplateService';
-import { truncateDisplayName, DISPLAY_NAME_MAX_LENGTH } from '../lib/displayName';
+import { truncateDisplayName, DISPLAY_NAME_MAX_LENGTH, circleThreadTitle } from '../lib/displayName';
 
 const LONG_NAME = 'Bartholomew Maximilian Constantine von Hohenzollern-Sigmaringen III';
 const CAPPED = truncateDisplayName(LONG_NAME);
@@ -26,6 +26,17 @@ describe('truncateDisplayName', () => {
     assert.ok(CAPPED.endsWith('…'));
     assert.ok(CAPPED.length <= DISPLAY_NAME_MAX_LENGTH + 1);
     assert.ok(CAPPED.startsWith(LONG_NAME.slice(0, 30)));
+  });
+});
+
+describe('circleThreadTitle', () => {
+  it('leaves short names untouched in the thread title', () => {
+    assert.equal(circleThreadTitle('Maria Santos'), "Maria Santos's Circle");
+  });
+
+  it('caps legacy >40-char names in the thread title', () => {
+    assert.equal(circleThreadTitle(LONG_NAME), `${CAPPED}'s Circle`);
+    assert.ok(circleThreadTitle(LONG_NAME).length <= DISPLAY_NAME_MAX_LENGTH + 1 + "'s Circle".length);
   });
 });
 
