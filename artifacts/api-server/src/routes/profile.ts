@@ -308,7 +308,7 @@ router.get("/me/profile", async (req, res) => {
 const patchProfileSchema = z.object({
   displayName: z.string().min(1).max(60).optional(),
   username: z.string().optional(),
-  bio: z.string().max(300).optional(),
+  bio: z.string().max(300).nullish(),
   homeCity: z.string().max(100).nullish(),
   homeCountry: z.string().max(100).nullish(),
   currentCity: z.string().max(100).nullish(),

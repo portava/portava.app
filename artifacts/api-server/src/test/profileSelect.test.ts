@@ -450,6 +450,20 @@ describe("profile data-leak prevention", () => {
     });
   });
 
+  // ── PATCH /api/me/profile — clearing bio (null) must be accepted ─────────────
+
+  describe("PATCH /api/me/profile — bio: null (clear)", () => {
+    it("returns HTTP 200 when clearing bio to null", async () => {
+      const { status, body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { bio: null },
+        USER_TOKEN,
+      );
+      assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    });
+  });
+
   // ── PATCH /api/me/profile — clearing dateOfBirth (null) must not echo DOB fields ──
 
   describe("PATCH /api/me/profile — dateOfBirth: null (clear)", () => {
