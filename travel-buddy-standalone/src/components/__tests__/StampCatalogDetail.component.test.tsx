@@ -143,6 +143,16 @@ describe('StampCatalogDetail — API error banner', () => {
     expect(screen.getByText('Failed to load entry. Please try again.')).toBeTruthy();
   });
 
+  it('shows "Entry not found" (not the error banner) when the API succeeds with no data', async () => {
+    // Genuine 404: the request itself succeeds but there is no entry.
+    mockGetEntry.mockResolvedValue({ ok: true, data: null });
+
+    await act(async () => { render(<StampCatalogDetail />); });
+
+    expect(screen.getByText('Entry not found')).toBeTruthy();
+    expect(screen.queryByTestId('catalog-detail-error')).toBeNull();
+  });
+
   it('clears the error and shows entry content when a subsequent load succeeds', async () => {
     mockGetEntry
       .mockResolvedValueOnce({ ok: false })
