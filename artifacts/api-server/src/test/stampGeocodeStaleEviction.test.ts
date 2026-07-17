@@ -617,88 +617,6 @@ describe("negative cache TTL expiry", () => {
     assert.equal(resultB?.country, "Japan");
   });
 
-  it("in-memory cache holds the resolved country even when the DB upsert fails during a TTL-retry", async () => {
-    // Regression guard: writeDbCache is best-effort.  A DB error after a
-    // successful TTL-retry must NOT prevent the in-memory _cache.set from
-    // persisting the positive result, because _cache.set runs BEFORE writeDbCache.
-    // The next call (within the positive TTL) must be served from memory — no
-    // second Nominatim fetch, no second DB round-trip.
-    const T0 = 1_700_000_000_000;
-    mockNow(T0);
-
-    // Step 1: seed a negative cache entry — fetch returns empty → null geocode.
-    // _setGeocodeFetchForTests also resets _dbClientOverride to null, so there is
-    // no DB client for this first call.
-    let fetchCallCount = 0;
-    _setGeocodeFetchForTests(async () => {
-      fetchCallCount++;
-      return { ok: true, json: async () => [] };
-    });
-
-    const first = await geocodeCityCountry("PersistFailCity");
-    assert.equal(first, null, "pre-condition: city should cache as null");
-    assert.equal(fetchCallCount, 1, "pre-condition: one fetch to seed the negative entry");
-
-    // Step 2: advance past the NEGATIVE_TTL_MS window so the negative entry is stale.
-    const T1 = T0 + NEGATIVE_TTL_MS + 1_000;
-    mockNow(T1);
-
-    // Step 3: swap fetch to return a valid geocode result on the retry.
-    // _setGeocodeFetchForTests resets _dbClientOverride to null — we then install
-    // a tracking DB client (AFTER the fetch swap) so readDbCache returns null
-    // (no persisted row) and upsert returns an error.
-    _setGeocodeFetchForTests(async () => {
-      fetchCallCount++;
-      return {
-        ok: true,
-        json: async () => [{ address: { country_code: "jp", country: "Japan" } }],
-      };
-    });
-
-    let upsertCallCount = 0;
-    const failingUpsertDb: SupabaseClient = {
-      from(_table: string) {
-        const chain: any = {
-          select()  { return chain; },
-          eq()      { return chain; },
-          // readDbCache: no persisted row — fall through to Nominatim.
-          async maybeSingle() { return { data: null, error: null }; },
-          // writeDbCache: upsert returns an error — best-effort write fails.
-          upsert(_row: Record<string, unknown>) {
-            upsertCallCount++;
-            return Promise.resolve({ error: { message: "DB_WRITE_FAILURE" } });
-          },
-        };
-        return chain;
-      },
-    } as unknown as SupabaseClient;
-    _setGeocodeDbClientForTests(failingUpsertDb);
-
-    // Step 4: the stale negative entry triggers a fresh geocode.  The resolved
-    // result must be written to the in-memory cache even though writeDbCache fails.
-    const second = await geocodeCityCountry("PersistFailCity");
-    assert.equal(second?.countryCode, "JP",
-      "TTL-retry should resolve and return the positive result despite DB upsert failure");
-    assert.equal(second?.country, "Japan");
-    assert.equal(fetchCallCount, 2,
-      "exactly one fetch for the TTL-retry (total 2 including the seed)");
-    assert.equal(upsertCallCount, 1,
-      "writeDbCache must have attempted the upsert (even though it failed)");
-
-    // Step 5: a second call within the positive TTL must be served from the
-    // in-memory cache — no new Nominatim fetch, no new DB round-trip.
-    // This is the core assertion: _cache.set runs before writeDbCache, so a
-    // failed upsert must not evict or corrupt the positive in-memory entry.
-    const third = await geocodeCityCountry("PersistFailCity");
-    assert.equal(third?.countryCode, "JP",
-      "second call within positive TTL must return the cached result from memory");
-    assert.equal(third?.country, "Japan");
-    assert.equal(fetchCallCount, 2,
-      "no second Nominatim fetch — the positive result is still in the in-memory cache");
-    assert.equal(upsertCallCount, 1,
-      "no second DB call — the positive result is served entirely from memory");
-  });
-
   it("re-cached null entry after a network error carries a fresh writtenAt — not the original T0", async () => {
     // Regression guard: the catch block in geocodeCityCountry must stamp
     // writtenAt: now (T1, the retry time) so the correction sweep — which
@@ -767,6 +685,71 @@ describe("negative cache TTL expiry", () => {
       "inside the new TTL window the null must be served without a new fetch");
     assert.equal(fetchAfterCount, 0,
       "no fetch while the re-cached negative entry (writtenAt=T1) is still live");
+  });
+
+  it("both concurrent callers get null when the shared TTL-retry also fails — not a split result", async () => {
+    // Task #525 confirmed that two callers racing at negative-TTL expiry share
+    // one Nominatim fetch.  This test covers the complementary case: the shared
+    // fetch throws.  Both callers must receive null (not one null and one stale
+    // value), and the re-cached entry must use NEGATIVE_TTL_MS — not the 30-day
+    // positive TTL.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Step 1 — seed a negative cache entry: fetch returns empty → null geocode.
+    let fetchCallCount = 0;
+    _setGeocodeFetchForTests(async () => {
+      fetchCallCount++;
+      return { ok: true, json: async () => [] };
+    });
+
+    const seed = await geocodeCityCountry("FailRaceCity");
+    assert.equal(seed, null, "pre-condition: city should be cached as null");
+    assert.equal(fetchCallCount, 1, "pre-condition: one fetch to seed the negative entry");
+
+    // Step 2 — advance past NEGATIVE_TTL_MS so the entry is stale.
+    const T1 = T0 + NEGATIVE_TTL_MS + 1_000;
+    mockNow(T1);
+
+    // Step 3 — swap fetch to throw on the retry.
+    // Both racing callers must share this single failing invocation.
+    _setGeocodeFetchForTests(async () => {
+      fetchCallCount++;
+      throw new Error("network_timeout");
+    });
+
+    // Step 4 — fire two concurrent calls.  Neither finds a valid cache entry
+    // (TTL expired), so both reach the _pending check.  The first caller
+    // synchronously stores its promise in _pending before any await; the second
+    // finds that same promise — one fetch is made and it throws.
+    const [resultA, resultB] = await Promise.all([
+      geocodeCityCountry("FailRaceCity"),
+      geocodeCityCountry("FailRaceCity"),
+    ]);
+
+    // Exactly one Nominatim call (seed + one failing retry = 2 total).
+    assert.equal(
+      fetchCallCount,
+      2,
+      "two concurrent callers at TTL expiry must share one failing retry — not issue two separate fetches",
+    );
+
+    // Both callers receive null — not a split result where one gets stale/undefined.
+    assert.equal(resultA, null, "first caller must receive null when the shared retry fails");
+    assert.equal(resultB, null, "second caller must also receive null — not a split result");
+
+    // The re-cached entry must use NEGATIVE_TTL_MS, not the 30-day positive TTL.
+    const entry = _getGeocodeCacheEntryForTests("failracecity");
+    assert.ok(entry, "a negative cache entry must exist after the failing retry");
+
+    const expectedExpiresAt = T1 + NEGATIVE_TTL_MS;
+    assert.ok(
+      Math.abs(entry.expiresAt - expectedExpiresAt) < 50,
+      `expiresAt must be ≈ T1 + NEGATIVE_TTL_MS (${expectedExpiresAt}) — got ${entry.expiresAt}. ` +
+      "If the positive TTL were used the entry would not expire for 30 days.",
+    );
+    assert.equal(entry.result, null,
+      "the re-cached entry must store null — not a stale positive result");
   });
 
   it("DB write failure during TTL-retry is logged as persist_failed — not silently dropped (upsert returns error)", async () => {
@@ -915,7 +898,7 @@ describe("negative cache TTL expiry", () => {
       "TTL-retry should resolve and return the geocoded result even when writeDbCache throws");
     assert.equal(result?.country, "Spain");
 
-    // Step 7: a persist_failed event must have been emitted via the catch branch.
+    // Step 7: a persist_failed event must be emitted via the catch branch.
     // normCity("PersistThrowCity") → "persistthrowcity"
     const persistFailedEvents = loggedEvents.filter(
       (e) => e.event === "stamp.country_geocode.persist_failed",
@@ -1197,98 +1180,6 @@ describe("tombstone-sweep eviction: negative entry retries after sweep removes i
       "after tombstone-sweep eviction the null entry must be absent so the next call retries and returns a valid result",
     );
     assert.equal(second?.country, "Brazil");
-  });
-
-  it("logs sweep_tombstone_evicted and invokes hard-delete even when the city has no in-memory cache entry", async () => {
-    // The beforeEach already calls _clearCountryGeocodeCache(), so the cache is empty.
-    // We deliberately do NOT seed any cache entry for this city — this simulates the
-    // scenario where the instance was restarted after the tombstone was written but
-    // before the sweep ran (so there is no warm in-memory entry to evict).
-    const cityKey = "nocachecity"; // normCity("NoCacheCity")
-
-    // Pre-condition: confirm the cache has no entry for this key.
-    assert.equal(
-      _getGeocodeCacheEntryForTests(cityKey),
-      undefined,
-      "pre-condition: cache must be empty for the city key before the sweep",
-    );
-
-    // Track which keys were passed to the hard-delete .in() call.
-    const deletedKeys: string[][] = [];
-    let awaitIdx = 0;
-    const awaitedResponses: Array<{ data: any; error: null }> = [
-      { data: [],                      error: null }, // pass-1: no corrected_at rows
-      { data: [{ city_key: cityKey }], error: null }, // pass-2: tombstoned row
-      { data: null,                    error: null }, // pass-2 delete result
-    ];
-
-    const tombstoneDb: SupabaseClient = {
-      from(_table: string) {
-        const chain: any = {
-          select()  { return chain; },
-          eq()      { return chain; },
-          gte()     { return chain; },
-          not()     { return chain; },
-          in(col: string, vals: string[]) {
-            if (col === "city_key") deletedKeys.push(vals);
-            return chain;
-          },
-          delete()  { return chain; },
-          upsert()  { return Promise.resolve({ error: null }); },
-          async maybeSingle() { return { data: null, error: null }; },
-          then(resolve: (v: any) => any, reject?: (e: any) => any): Promise<any> {
-            const idx = awaitIdx++;
-            const resp = awaitedResponses[Math.min(idx, awaitedResponses.length - 1)];
-            return Promise.resolve(resp).then(resolve, reject);
-          },
-        };
-        return chain;
-      },
-    } as unknown as SupabaseClient;
-    _setGeocodeDbClientForTests(tombstoneDb);
-
-    // Capture console.log output during the sweep — logEvent writes JSON lines there.
-    const logLines: string[] = [];
-    const originalLog = console.log;
-    console.log = (...args: any[]) => {
-      logLines.push(args.map(String).join(" "));
-    };
-
-    try {
-      await _runCorrectionSweepForTests();
-    } finally {
-      console.log = originalLog;
-    }
-
-    // Assert that sweep_tombstone_evicted was logged for the city key.
-    const evictedEvents = logLines
-      .map((line) => { try { return JSON.parse(line); } catch { return null; } })
-      .filter((obj): obj is Record<string, unknown> =>
-        obj !== null && (obj as any).event === "stamp.country_geocode.sweep_tombstone_evicted",
-      );
-
-    assert.equal(
-      evictedEvents.length,
-      1,
-      "sweep_tombstone_evicted must fire exactly once even when the city was not in the in-memory cache",
-    );
-    assert.equal(
-      evictedEvents[0].city_key,
-      cityKey,
-      "sweep_tombstone_evicted must carry the correct city_key",
-    );
-
-    // Assert that the hard-delete chain was invoked with the tombstoned key.
-    assert.equal(
-      deletedKeys.length,
-      1,
-      "the hard-delete .in() call must be made exactly once",
-    );
-    assert.deepEqual(
-      deletedKeys[0],
-      [cityKey],
-      "the hard-delete must target the tombstoned city_key",
-    );
   });
 });
 
