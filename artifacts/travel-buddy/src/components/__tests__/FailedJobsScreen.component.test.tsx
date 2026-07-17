@@ -486,4 +486,26 @@ describe('FailedJobsScreen — orphaned-files badge', () => {
     await waitFor(() => expect(screen.queryByText('Orphaned storage files')).toBeNull());
     expect(screen.queryByText('Rome Colosseum')).toBeNull();
   });
+
+  it('badge disappears after a pull-to-refresh where the server now returns cleanup_error: null', async () => {
+    // Ops manually clear cleanup_error in the DB after removing the orphaned
+    // files by hand.  The next pull-to-refresh must reflect the cleared state —
+    // the job row stays (it's still failed) but the badge must be gone.
+    const clearedJob = { ...JOB_WITH_CLEANUP_ERROR, cleanup_error: null, cleanup_error_paths: null };
+    mockGetQueue
+      .mockResolvedValueOnce(queueOk([JOB_WITH_CLEANUP_ERROR]))
+      .mockResolvedValue(queueOk([clearedJob]));
+
+    render(<FailedJobsScreen />);
+    await waitFor(() => screen.getByText('Orphaned storage files'));
+
+    // Admin pulls to refresh after ops cleared cleanup_error.
+    const list = screen.getByTestId('failed-jobs-list');
+    await act(async () => { list.props.refreshControl.props.onRefresh(); });
+
+    // Badge must be gone — the job row remains but cleanup_error is now null.
+    await waitFor(() => expect(screen.queryByText('Orphaned storage files')).toBeNull());
+    // The job itself is still present (it's still a failed job, just not orphaned).
+    expect(screen.getByText('Rome Colosseum')).toBeTruthy();
+  });
 });

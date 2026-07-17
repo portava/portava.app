@@ -58,6 +58,7 @@ jest.mock('../../services/adminStamps', () => ({
 jest.mock('lucide-react-native', () => ({
   ArrowLeft: () => null,
   Search: () => null,
+  TriangleAlert: () => null,
 }));
 
 // ── Typed mock refs ────────────────────────────────────────────────────────────
@@ -577,6 +578,94 @@ describe('StampQueueScreen — API error', () => {
  * expires without waiting 350 ms of wall-clock time in CI. This suite is
  * placed last so fake-timer teardown cannot affect the other suites above.
  */
+
+// ── Orphaned-files badge suite ─────────────────────────────────────────────────
+
+/**
+ * ## What's covered
+ *
+ * 1. An entry with cleanup_error set renders the "Orphaned storage files" badge.
+ * 2. An entry with cleanup_error: null does NOT render the badge — a cleared
+ *    cleanup_error must not leave a stale warning on screen.
+ * 3. After a pull-to-refresh that returns cleanup_error: null for a previously
+ *    errored entry, the badge is gone — the screen reflects the cleared state
+ *    without requiring a full navigation reload.
+ *
+ * ## Why these tests exist
+ *
+ * Once ops manually clear cleanup_error in the DB (e.g. after manually removing
+ * the orphaned files), the next time the queue screen is refreshed the badge
+ * must no longer appear.  A stale badge would mislead admins into thinking
+ * files still need manual attention when they don't.
+ */
+
+const ENTRY_WITH_CLEANUP_ERROR = {
+  id: 'cat-orphan',
+  display_name: 'Rome Colosseum',
+  stamp_type: 'landmark',
+  country_code: 'IT',
+  status: 'review_required' as const,
+  cleanup_error: 'remove() returned unexpected error: 503',
+  cleanup_error_paths: ['stamps/abc/v1.webp', 'stamps/abc/v2.webp'],
+};
+
+const ENTRY_WITHOUT_CLEANUP_ERROR = {
+  id: 'cat-clean',
+  display_name: 'Berlin Wall',
+  stamp_type: 'landmark',
+  country_code: 'DE',
+  status: 'review_required' as const,
+  cleanup_error: null,
+  cleanup_error_paths: null,
+};
+
+describe('StampQueueScreen — orphaned-files badge', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('renders the "Orphaned storage files" badge when cleanup_error is set', async () => {
+    mockGetCatalog.mockResolvedValue(catalogOk([ENTRY_WITH_CLEANUP_ERROR as any]));
+
+    render(<StampQueueScreen />);
+    await waitFor(() => screen.getByText('Rome Colosseum'));
+
+    expect(screen.getByText('Orphaned storage files')).toBeTruthy();
+  });
+
+  it('does not render the badge when cleanup_error is null', async () => {
+    mockGetCatalog.mockResolvedValue(catalogOk([ENTRY_WITHOUT_CLEANUP_ERROR as any]));
+
+    render(<StampQueueScreen />);
+    await waitFor(() => screen.getByText('Berlin Wall'));
+
+    expect(screen.queryByText('Orphaned storage files')).toBeNull();
+  });
+
+  it('badge disappears after a pull-to-refresh where the server now returns cleanup_error: null', async () => {
+    // Initial load: entry has cleanup_error set → badge is visible.
+    // After ops manually clear the error and admin pulls to refresh,
+    // the updated entry has cleanup_error: null → badge must disappear.
+    const clearedEntry = { ...ENTRY_WITH_CLEANUP_ERROR, cleanup_error: null, cleanup_error_paths: null };
+    mockGetCatalog
+      .mockResolvedValueOnce(catalogOk([ENTRY_WITH_CLEANUP_ERROR as any]))
+      .mockResolvedValue(catalogOk([clearedEntry as any]));
+
+    render(<StampQueueScreen />);
+    await waitFor(() => screen.getByText('Orphaned storage files'));
+
+    // Simulate the admin pulling to refresh after cleanup_error was cleared.
+    const list = screen.getByTestId('catalog-queue-list');
+    await act(async () => { list.props.refreshControl.props.onRefresh(); });
+
+    // The badge must be gone — the entry is still in the list but cleanup_error is null.
+    await waitFor(() => expect(screen.queryByText('Orphaned storage files')).toBeNull());
+    // The entry itself is still visible (it wasn't removed, just cleared).
+    expect(screen.getByText('Rome Colosseum')).toBeTruthy();
+  });
+});
+
+// ── Search debounce suite ──────────────────────────────────────────────────────
 
 describe('StampQueueScreen — search debounce', () => {
   afterEach(() => {
