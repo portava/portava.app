@@ -14,7 +14,7 @@ import Svg, { Circle, Path, Rect, Text as SvgText } from 'react-native-svg';
 import {
   ShieldCheck, Globe, MapPin, Camera,
   UserPlus, UserCheck, MoreHorizontal,
-  Briefcase, Users, Stamp, PenLine,
+  Briefcase, Users, Stamp, PenLine, Bookmark,
 } from 'lucide-react-native';
 import type { OwnProfile, PublicProfile } from '../../types/models';
 import { resolveAvatarUrl, fallbackInitials } from '../../utils/identity';
@@ -49,6 +49,8 @@ interface Props {
   onFollowPress?: () => void;
   /** Owner: tap "Add a bio" empty state → navigate to edit profile */
   onEditBio?: () => void;
+  /** Owner: tap compact Saved shortcut → navigate to /saved */
+  onSavedPress?: () => void;
 }
 
 const AVATAR_SIZE  = 76;
@@ -210,7 +212,7 @@ export function PassportIdentityCard({
   hasHighlights, allHighlightsViewed, onHighlightRingPress, onNewHighlightPress,
   trustScore, trustLabel, onTrustInfo,
   isFollowing, followLoading, onFollowPress,
-  onEditBio,
+  onEditBio, onSavedPress,
 }: Props) {
   const username      = 'username' in profile ? profile.username : null;
   const identity      = {
@@ -354,6 +356,22 @@ export function PassportIdentityCard({
                 <View style={s.locationRow}>
                   <MapPin size={14} color={MUTED} strokeWidth={1.8} />
                   <Text style={s.locationText} numberOfLines={1}>{locationLine}</Text>
+                </View>
+              ) : null}
+
+              {/* Owner: Saved shortcut */}
+              {isOwner && onSavedPress ? (
+                <View style={s.publicActions}>
+                  <Pressable
+                    style={s.savedPill}
+                    onPress={onSavedPress}
+                    hitSlop={8}
+                    accessibilityLabel="Saved"
+                    testID="saved-btn"
+                  >
+                    <Bookmark size={14} color={INK} strokeWidth={2} />
+                    <Text style={s.savedPillText}>Saved</Text>
+                  </Pressable>
                 </View>
               ) : null}
 
@@ -656,6 +674,24 @@ const s = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#fff',
+  },
+
+  /* Owner: Saved shortcut pill */
+  savedPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: 'rgba(28,28,26,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(28,28,26,0.14)',
+  },
+  savedPillText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: INK,
   },
 
   /* ── Passport stamp + Bio — lower identity area ── */

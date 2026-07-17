@@ -490,6 +490,7 @@ function PassportContent({
           trustLabel={profile.trustLabel ?? undefined}
           onTrustInfo={() => setTrustSheetOpen(true)}
           onEditBio={handleEditProfile}
+          onSavedPress={() => router.push('/saved' as any)}
         />
         <PassportStatsRow
           profile={profile}
