@@ -15,7 +15,7 @@
 
 import React from 'react';
 import { Text, Pressable, View } from 'react-native';
-import { render, screen, act, waitFor } from '@testing-library/react-native';
+import { render, screen, act, waitFor, fireEvent } from '@testing-library/react-native';
 import { AvailabilityProvider, useAvailabilityStore } from '../AvailabilityStore.tsx';
 import { resolveAvailabilityChip } from '../../lib/availabilityChip.ts';
 
@@ -148,6 +148,39 @@ describe('AvailabilityStore → Passport chip: toggle on → save → chip prese
     expect(screen.getByTestId('chip')).toBeTruthy();
     expect(mockPatchMyAvailability).toHaveBeenCalledWith(
       expect.objectContaining({ openToMeet: true }),
+    );
+  });
+});
+
+describe('AvailabilityStore → Passport chip: toggle off → save fails → chip rolls back', () => {
+  it('chip is present again after a failed save rolls back the in-memory state', async () => {
+    // Backend starts with openToMeet = true (chip visible).
+    mockGetMyAvailability.mockResolvedValue({
+      ok: true,
+      data: { weeklyDays: {}, openToMeet: true, strictMode: false, quickStatus: null },
+    });
+    // The save will fail.
+    mockPatchMyAvailability.mockResolvedValue({ ok: false, message: 'Network error' });
+
+    await render(<Wrapper><ChipConsumer /></Wrapper>);
+
+    // After the initial backend load the chip should be visible.
+    await waitFor(() => expect(screen.getByTestId('chip')).toBeTruthy());
+
+    // Toggle off — in-memory store updates synchronously; chip disappears.
+    fireEvent.press(screen.getByTestId('btn-toggle-off'));
+    await waitFor(() => expect(screen.queryByTestId('chip')).toBeNull());
+
+    // Save — the backend rejects the change.
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('btn-save'));
+    });
+
+    // The store must have rolled back confirmedOpenToMeet (true) — not the
+    // just-submitted optimistic value (false). Chip is present again.
+    await waitFor(() => expect(screen.getByTestId('chip')).toBeTruthy());
+    expect(mockPatchMyAvailability).toHaveBeenCalledWith(
+      expect.objectContaining({ openToMeet: false }),
     );
   });
 });

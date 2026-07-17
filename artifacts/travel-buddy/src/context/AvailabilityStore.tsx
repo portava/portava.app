@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useMemo, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import type { Availability, Weekday, TimeBlock, TripWindow } from '../types/models.ts';
 import { mockAvailability } from '../data/events.ts';
 import {
@@ -41,6 +41,12 @@ export function AvailabilityProvider({ children }: { children: React.ReactNode }
   const [quickStatus, setQuickStatusState] = useState<QuickStatus | null>(null);
   const [quickStatusExpiresAt, setQuickStatusExpiresAt] = useState<string | null>(null);
 
+  // Tracks the last value confirmed by the server so save() can roll back to it
+  // on failure rather than to the current (already-toggled) optimistic value.
+  const confirmedOpenToMeet = useRef<boolean>(
+    ((mockAvailability as Availability) ?? EMPTY).openToMeet,
+  );
+
   // Load from backend on mount when authenticated
   useEffect(() => {
     if (!configured || !isAuthed) return;
@@ -52,6 +58,7 @@ export function AvailabilityProvider({ children }: { children: React.ReactNode }
           trips: [],
           openToMeet: d.openToMeet,
         });
+        confirmedOpenToMeet.current = d.openToMeet;
         if (d.quickStatus) {
           setQuickStatusState(d.quickStatus.status as QuickStatus);
           setQuickStatusExpiresAt(d.quickStatus.expiresAt);
@@ -93,12 +100,25 @@ export function AvailabilityProvider({ children }: { children: React.ReactNode }
   const save = useCallback(async () => {
     setSaving(true);
     setSaveError(null);
+    // Snapshot the last server-confirmed value so we can roll back to it if
+    // the save fails. Using the ref (not the current optimistic state) is
+    // critical: by the time save() is called the user has already toggled, so
+    // availability.openToMeet already holds the new value — reverting to that
+    // would be a no-op. The ref holds the last value the server accepted.
+    const snapshotOpenToMeet = confirmedOpenToMeet.current;
     try {
       const res = await patchMyAvailability({
         weeklyDays: availability.weekly?.days,
         openToMeet: availability.openToMeet,
       });
-      if (!res.ok) setSaveError(res.message ?? 'Save failed');
+      if (!res.ok) {
+        setSaveError(res.message ?? 'Save failed');
+        // Revert in-memory state to the server-confirmed value so the chip stays honest.
+        setAvailability((prev) => ({ ...prev, openToMeet: snapshotOpenToMeet }));
+      } else {
+        // Save succeeded — advance the confirmed baseline.
+        confirmedOpenToMeet.current = availability.openToMeet;
+      }
     } finally {
       setSaving(false);
     }
@@ -123,6 +143,7 @@ export function AvailabilityProvider({ children }: { children: React.ReactNode }
         trips: [],
         openToMeet: d.openToMeet,
       });
+      confirmedOpenToMeet.current = d.openToMeet;
       if (d.quickStatus) {
         setQuickStatusState(d.quickStatus.status as QuickStatus);
         setQuickStatusExpiresAt(d.quickStatus.expiresAt);
