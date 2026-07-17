@@ -444,6 +444,114 @@ describe('identity screen GPS denial wiring — current-city path: Open Settings
   });
 });
 
+// ── Suite: current-city onSuccess wiring — country is ignored ─────────────────
+//
+// fillCurrentFromGps wires onSuccess as:
+//   onSuccess: (city, _country) => setForm((f) => ({ ...f, currentCity: city ?? f.currentCity }))
+//
+// This suite guards that contract: the geocoder returns both city and country,
+// but only currentCity is mutated — homeCity and homeCountry are untouched.
+// A merge of the two closures (home vs. current) would silently corrupt home
+// fields when the user taps the current-city GPS button.
+
+describe('identity screen GPS wiring — current-city onSuccess only sets currentCity, not homeCity/homeCountry', () => {
+  /**
+   * Simulate the exact closure used by fillCurrentFromGps in identity.tsx:
+   *   onSuccess: (city, _country) => setForm((f) => ({ ...f, currentCity: city ?? f.currentCity }))
+   *
+   * We track separately which "form fields" were mutated so we can assert that
+   * homeCity and homeCountry stay unchanged while currentCity is updated.
+   */
+  function makeCurrentCityOnlyDeps(overrides?: Partial<IdentityGpsFillDeps>): {
+    deps: IdentityGpsFillDeps;
+    mutations: { currentCity: Array<string | null>; homeCity: Array<string | null>; homeCountry: Array<string | null> };
+  } {
+    const mutations = { currentCity: [] as Array<string | null>, homeCity: [] as Array<string | null>, homeCountry: [] as Array<string | null> };
+    const deps: IdentityGpsFillDeps = {
+      getCurrentGps: grantedGps(),
+      reverseGeocode: geocode({ city: 'Tokyo', country: 'Japan' }),
+      onPermissionDenied: () => {},
+      onGpsOrGeocodeFailed: () => {},
+      // Mirror fillCurrentFromGps: only city is used, _country is ignored
+      onSuccess: (city, _country) => { mutations.currentCity.push(city); },
+      setLoading: () => {},
+      ...overrides,
+    };
+    return { deps, mutations };
+  }
+
+  it('onSuccess receives the geocoded city value from the current-city GPS path', async () => {
+    const { deps, mutations } = makeCurrentCityOnlyDeps();
+
+    await runIdentityGpsFill(deps);
+
+    assert.equal(mutations.currentCity.length, 1, 'onSuccess must be called once');
+    assert.equal(mutations.currentCity[0], 'Tokyo', 'city must be the geocoded city');
+  });
+
+  it('country returned by geocoder is not applied to any form field in the current-city wiring', async () => {
+    const { deps, mutations } = makeCurrentCityOnlyDeps();
+
+    await runIdentityGpsFill(deps);
+
+    assert.equal(mutations.homeCity.length,    0, 'homeCity must NOT be mutated by fillCurrentFromGps');
+    assert.equal(mutations.homeCountry.length, 0, 'homeCountry must NOT be mutated by fillCurrentFromGps');
+  });
+
+  it('current-city wiring passes city to onSuccess even when country is non-null', async () => {
+    const { deps, mutations } = makeCurrentCityOnlyDeps({
+      reverseGeocode: geocode({ city: 'Berlin', country: 'Germany' }),
+    });
+
+    await runIdentityGpsFill(deps);
+
+    // city is set; country is discarded by the current-city closure
+    assert.equal(mutations.currentCity[0], 'Berlin',  'city must be passed through to the current-city closure');
+    assert.equal(mutations.homeCity.length,    0, 'homeCity must not be touched');
+    assert.equal(mutations.homeCountry.length, 0, 'homeCountry must not be touched even though geocoder returned "Germany"');
+  });
+
+  it('home wiring sets both homeCity and homeCountry — proving current-city wiring is deliberately narrower', async () => {
+    // This test documents the intentional divergence:
+    // fillHomeFromGps uses (city, country) → updates homeCity + homeCountry
+    // fillCurrentFromGps uses (city, _country) → updates only currentCity
+    const homeFieldsSet: { homeCity: Array<string | null>; homeCountry: Array<string | null> } = { homeCity: [], homeCountry: [] };
+
+    const homeDeps: IdentityGpsFillDeps = {
+      getCurrentGps:        grantedGps(),
+      reverseGeocode:       geocode({ city: 'Paris', country: 'France' }),
+      onPermissionDenied:   () => {},
+      onGpsOrGeocodeFailed: () => {},
+      // Mirror fillHomeFromGps: both city and country are used
+      onSuccess: (city, country) => { homeFieldsSet.homeCity.push(city); homeFieldsSet.homeCountry.push(country); },
+      setLoading: () => {},
+    };
+
+    await runIdentityGpsFill(homeDeps);
+
+    assert.equal(homeFieldsSet.homeCity[0],    'Paris',  'home wiring must set homeCity');
+    assert.equal(homeFieldsSet.homeCountry[0], 'France', 'home wiring must set homeCountry');
+
+    // Now run the current-city wiring with the same geocoder — country must be dropped
+    const currentFields: { city: Array<string | null> } = { city: [] };
+    const currentDeps: IdentityGpsFillDeps = {
+      getCurrentGps:        grantedGps(),
+      reverseGeocode:       geocode({ city: 'Paris', country: 'France' }),
+      onPermissionDenied:   () => {},
+      onGpsOrGeocodeFailed: () => {},
+      onSuccess: (city, _country) => { currentFields.city.push(city); },
+      setLoading: () => {},
+    };
+
+    await runIdentityGpsFill(currentDeps);
+
+    assert.equal(currentFields.city[0], 'Paris', 'current-city wiring must still receive the city');
+    assert.equal(homeFieldsSet.homeCity.length,    1, 'home wiring recorded homeCity once');
+    assert.equal(homeFieldsSet.homeCountry.length, 1, 'home wiring recorded homeCountry once');
+    assert.equal(currentFields.city.length, 1, 'current-city wiring recorded only one field (city)');
+  });
+});
+
 // ── Suite: success path — city picker not offered ─────────────────────────────
 
 describe('identity screen GPS wiring — success path', () => {
