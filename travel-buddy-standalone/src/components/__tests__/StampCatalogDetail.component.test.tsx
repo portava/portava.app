@@ -1,7 +1,7 @@
 /**
- * StampCatalogDetail — error-banner tests (standalone fork).
+ * StampCatalogDetail — error-banner tests.
  *
- * Run with: pnpm test:component  (from travel-buddy-standalone/)
+ * Run with: pnpm test:component
  *
  * ## What's covered
  *
