@@ -603,6 +603,187 @@ describe("Audit log entry appears on detail page after admin regenerates a stamp
     );
   });
 
+  it("cross-admin: second admin triggering regenerate on the same entry does not add a second audit entry", async () => {
+    // ADMIN_A triggers first; ADMIN_B triggers second on the same catalog_id.
+    // The queue unique constraint (catalog_id) fires 23505 on ADMIN_B's insert.
+    // The guard must rely on the 23505 + hadFailedReset, NOT on admin_id equality,
+    // so exactly one audit row (from ADMIN_A) must exist after both calls.
+
+    const ADMIN_A = "aaaaaaaa-0000-4000-8000-aaaaaaaaaaaa";
+    const ADMIN_B = "bbbbbbbb-0000-4000-8000-bbbbbbbbbbbb";
+
+    const localDb: DB = {
+      profiles: [
+        { id: ADMIN_A, role: "admin" },
+        { id: ADMIN_B, role: "admin" },
+      ],
+      universal_stamp_catalog: [
+        {
+          id:                     CATALOG_ID,
+          canonical_location_key: "city:osaka:japan",
+          stamp_type:             "location",
+          display_name:           "Osaka",
+          country:                "Japan",
+          country_code:           "JP",
+          status:                 "review_required",
+          active_version_id:      null,
+          earn_count:             0,
+          created_at:             "2024-01-01T00:00:00Z",
+          updated_at:             "2024-01-01T00:00:00Z",
+        },
+      ],
+      stamp_generation_queue: [
+        {
+          id:            JOB_ID,
+          catalog_id:    CATALOG_ID,
+          status:        "review_required",
+          last_error:    "candidate_shortfall: only 1 of 3 required",
+          attempts:      3,
+          requeue_count: 0,
+        },
+      ],
+      stamp_artwork_versions: [],
+      stamp_admin_audit_log:  [],
+      user_stamps:            [],
+    };
+
+    // Track how many times getUser has been called to alternate admin IDs.
+    let getUserCallCount = 0;
+    // Track queue inserts to simulate 23505 on the second attempt.
+    let queueInsertCount = 0;
+
+    function makeCrossAdminClient(dbArg: DB) {
+      function chain(tableName: string) {
+        let updateValues: Record<string, any> | null = null;
+        let insertRow: Record<string, any> | null    = null;
+        const filters: Array<(r: any) => boolean>    = [];
+        let _headOnly    = false;
+        let _selectCount = false;
+
+        const b: any = {
+          select(_cols?: any, opts?: any) {
+            if (opts?.count === "exact") _selectCount = true;
+            if (opts?.head  === true)    _headOnly    = true;
+            return b;
+          },
+          eq(col: string, val: any)    { filters.push((r) => r[col] === val); return b; },
+          in(col: string, vals: any[]) { filters.push((r) => (vals as any[]).includes(r[col])); return b; },
+          not(col: string, op: string, val: any) {
+            if (op === "in") {
+              const excluded = val.replace(/^\(|\)$/g, "").split(",").map((s: string) => s.trim().replace(/^"|"$/g, ""));
+              filters.push((r) => !excluded.includes(r[col]));
+            }
+            return b;
+          },
+          order()  { return b; },
+          range()  { return b; },
+          limit()  { return b; },
+          update(vals: Record<string, any>) { updateValues = vals; return b; },
+          insert(row: Record<string, any>)  { insertRow    = row;  return b; },
+
+          maybeSingle() {
+            const rows = dbArg[tableName] ?? [];
+            if (updateValues !== null) {
+              const matched = rows.filter((r: any) => filters.every((f) => f(r)));
+              matched.forEach((r: any) => Object.assign(r, updateValues));
+              return Promise.resolve({ data: matched[0] ? { ...matched[0] } : null, error: null });
+            }
+            const matched = rows.filter((r: any) => filters.every((f) => f(r)));
+            return Promise.resolve({ data: matched[0] ? { ...matched[0] } : null, error: null });
+          },
+
+          single() {
+            const rows    = dbArg[tableName] ?? [];
+            const matched = rows.filter((r: any) => filters.every((f) => f(r)));
+            if (matched.length === 1)
+              return Promise.resolve({ data: matched[0], error: null });
+            return Promise.resolve({ data: null, error: { message: "No rows" } });
+          },
+
+          then(resolve: any, reject: any) {
+            return Promise.resolve()
+              .then(() => {
+                const rows = dbArg[tableName] ?? [];
+                if (insertRow !== null) {
+                  if (tableName === "stamp_generation_queue") {
+                    queueInsertCount++;
+                    if (queueInsertCount > 1) {
+                      // Second admin's insert hits the unique constraint on catalog_id.
+                      return { data: null, error: { code: "23505", message: "duplicate key value" } };
+                    }
+                  }
+                  rows.push(insertRow);
+                  return { data: { ...insertRow }, error: null };
+                }
+                if (updateValues !== null) {
+                  const matched = rows.filter((r: any) => filters.every((f) => f(r)));
+                  matched.forEach((r: any) => Object.assign(r, updateValues));
+                  return { data: matched.map((r: any) => ({ ...r })), error: null };
+                }
+                const matched = rows.filter((r: any) => filters.every((f) => f(r)));
+                if (_headOnly) return { data: null, error: null, count: matched.length };
+                return {
+                  data:  matched.map((r: any) => ({ ...r })),
+                  error: null,
+                  count: _selectCount ? matched.length : undefined,
+                };
+              })
+              .then(resolve, reject);
+          },
+        };
+        return b;
+      }
+
+      return {
+        from: (tableName: string) => chain(tableName),
+        auth: {
+          getUser: () => {
+            // First request → ADMIN_A; second request → ADMIN_B.
+            getUserCallCount++;
+            const userId = getUserCallCount <= 1 ? ADMIN_A : ADMIN_B;
+            return Promise.resolve({ data: { user: { id: userId } }, error: null });
+          },
+        },
+      };
+    }
+
+    const crossClient = makeCrossAdminClient(localDb);
+    _setTestClient(crossClient as any, true);
+    _setTestServiceClient(crossClient as any);
+
+    // ── ADMIN_A triggers regenerate first ────────────────────────────────────
+    const regen1 = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      regen1.status, 200,
+      `ADMIN_A regenerate must return 200, got ${regen1.status}: ${JSON.stringify(regen1.body)}`,
+    );
+    assert.deepEqual(regen1.body, { ok: true });
+
+    // ── ADMIN_B triggers regenerate on the same catalog entry ────────────────
+    const regen2 = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      regen2.status, 200,
+      `ADMIN_B regenerate must return 200 (not an error), got ${regen2.status}: ${JSON.stringify(regen2.body)}`,
+    );
+    assert.deepEqual(regen2.body, { ok: true });
+
+    // ── Exactly one audit row — from ADMIN_A; ADMIN_B's call was a no-op ─────
+    assert.equal(
+      localDb.stamp_admin_audit_log.length,
+      1,
+      `stamp_admin_audit_log must have exactly one row after cross-admin regenerates, got ${localDb.stamp_admin_audit_log.length}: ${JSON.stringify(localDb.stamp_admin_audit_log)}`,
+    );
+    const logRow = localDb.stamp_admin_audit_log[0];
+    assert.equal(logRow.action,     "regenerate", "audit row action must be 'regenerate'");
+    assert.equal(logRow.admin_id,   ADMIN_A,      "audit row admin_id must be ADMIN_A — the first caller");
+    assert.equal(logRow.catalog_id, CATALOG_ID,   "audit row catalog_id must match the regenerated catalog");
+    assert.notEqual(
+      logRow.admin_id,
+      ADMIN_B,
+      "ADMIN_B must NOT have written an audit row — guard must rely on 23505, not admin_id equality",
+    );
+  });
+
   it("after POST regenerate: detail audit has exactly one entry — action=regenerate, admin_id=ADMIN_ID", async () => {
     // ── Pre-condition: audit is empty ────────────────────────────────────────
     const before = await get(`/admin/stamps/catalog/${CATALOG_ID}`);
