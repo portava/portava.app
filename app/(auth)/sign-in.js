@@ -64,6 +64,7 @@ function SignIn() {
     var _b = (0, react_1.useState)(''), name = _b[0], setName = _b[1];
     var _c = (0, react_1.useState)(''), email = _c[0], setEmail = _c[1];
     var _d = (0, react_1.useState)(''), password = _d[0], setPassword = _d[1];
+    var _sp = (0, react_1.useState)(false), showPassword = _sp[0], setShowPassword = _sp[1];
     var _e = (0, react_1.useState)(false), busy = _e[0], setBusy = _e[1];
     var _f = (0, react_1.useState)(null), error = _f[0], setError = _f[1];
     var _g = (0, react_1.useState)(null), notice = _g[0], setNotice = _g[1];
@@ -161,7 +162,10 @@ function SignIn() {
 
           <react_native_1.View style={s.field}>
             <lucide_react_native_1.Lock size={17} color={tokens_1.color.faint}/>
-            <react_native_1.TextInput style={s.input} placeholder="Password" placeholderTextColor={tokens_1.color.faint} value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none"/>
+            <react_native_1.TextInput style={s.input} placeholder="Password" placeholderTextColor={tokens_1.color.faint} value={password} onChangeText={setPassword} secureTextEntry={!showPassword} autoCapitalize="none"/>
+            <react_native_1.Pressable onPress={function () { setShowPassword(!showPassword); }} hitSlop={8} accessibilityRole="button" accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}>
+              {showPassword ? <lucide_react_native_1.EyeOff size={17} color={tokens_1.color.mute}/> : <lucide_react_native_1.Eye size={17} color={tokens_1.color.faint}/>}
+            </react_native_1.Pressable>
           </react_native_1.View>
 
           {error ? <react_native_1.Text style={s.error}>{error}</react_native_1.Text> : null}

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Image } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Mail, Lock, User as UserIcon, ArrowLeft } from 'lucide-react-native';
+import { Mail, Lock, User as UserIcon, ArrowLeft, Eye, EyeOff } from 'lucide-react-native';
 import { signIn, signUp, requestPasswordReset, lookupUsernameByEmail } from '../../src/services/auth';
 import { getMyProfile } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
@@ -18,6 +18,7 @@ export default function SignIn() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -165,7 +166,12 @@ export default function SignIn() {
               <View style={s.field}>
                 <Lock size={17} color={color.faint} />
                 <TextInput style={s.input} placeholder="Password" placeholderTextColor={color.faint}
-                  value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" />
+                  value={password} onChangeText={setPassword} secureTextEntry={!showPassword} autoCapitalize="none" />
+                <Pressable onPress={() => setShowPassword(v => !v)} hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}>
+                  {showPassword ? <EyeOff size={17} color={color.mute} /> : <Eye size={17} color={color.faint} />}
+                </Pressable>
               </View>
             )}
 
