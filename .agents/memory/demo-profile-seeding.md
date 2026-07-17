@@ -25,6 +25,18 @@ When seeding production-like data for a profile, always query the **live** schem
 
 8. **Demo memories were seeded but not demo-ready.** The original 20 demo memories had mixed visibility (`only_me`/`friends_only`/`public`) and null `location_city`/`location_country`. The Memories tab and map viewers need those fields. We updated the seed to make them all public, fill in locations, and link matching public events by city. The `fix:demo-memories` script applies the same upgrade to already-seeded rows.
 
+## Social graph + engagement seeding gotchas
+
+1. **`auth.admin.getUserById` for a missing user returns `{ data: { user: null }, error: ... }`, not `{ data: null }`.** Checking `if (!data)` is therefore truthy even when the user does not exist; always inspect `data.user` before deciding to call `createUser`.
+
+2. **`friend_requests` and `user_friendships` are not in the generated `database.types.ts`.** Live `friend_requests` columns are `id, requester_id, recipient_id, status, created_at` (no `updated_at`). Live `user_friendships` columns are `user_a, user_b, created_at` (no `accepted_request_id`). Use live queries or the REST API to verify these tables before inserting.
+
+3. **`memory_likes` and `memory_saves` have no `id` column; the primary key is the composite `(memory_id, user_id)`.** Deduplication must be keyed on that composite pair, not on a single `id` field.
+
+4. **`passport_postcards` has no `media_type` column, but the public postcard wall (`/users/:username/passport/postcards`) requires a matching `post_media` row.** The wall filters `post_media.processing_status = 'ready'` and `moderation_status != 'rejected'`. Seeding a postcard alone renders nothing; you must also seed a `post_media` row (or upload through the real media pipeline). The `post_media` table itself is also absent from `database.types.ts`; required live columns include `post_id, user_id, media_type, storage_bucket, storage_path, public_url, mime_type, processing_status, moderation_status, sort_order` (no `expires_at`).
+
+5. **External sample video URLs (e.g., Google Storage `gtv-videos-bucket`) may return 403 from the server and from the app**, even though they play in some browsers. Use a consistently reachable URL (e.g., `w3schools.com/html/mov_bbb.mp4`) for demo assets that must actually load in `expo-av`.
+
 ## Idempotency
 
 Use deterministic UUIDs (e.g., UUIDv5 keyed by the target profile id and a seed string) so reruns skip already-inserted rows instead of duplicating content.
@@ -34,4 +46,5 @@ Use deterministic UUIDs (e.g., UUIDv5 keyed by the target profile id and a seed 
 **How to apply:**
 - Generate every primary key with a stable function of `profileId + table + index`.
 - Query existing ids before each insert batch and skip those that are already present.
+- For composite-key tables, dedupe on the actual primary key, not an `id` column that may not exist.
 - Log inserted vs. skipped counts per table so the operator can see partial states.
