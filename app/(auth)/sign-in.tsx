@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, TextInput, Pressable, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Image } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Plane, Mail, Lock, User as UserIcon } from 'lucide-react-native';
+import { Mail, Lock, User as UserIcon } from 'lucide-react-native';
 import { signIn, signUp } from '../../src/services/auth';
 import { useSession } from '../../src/context/SessionContext';
 import { isSupabaseConfigured } from '../../src/lib/supabase';
@@ -54,9 +54,9 @@ export default function SignIn() {
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: color.paper }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={[s.wrap, { paddingTop: insets.top + space.xxxl, paddingBottom: insets.bottom + space.xl }]} keyboardShouldPersistTaps="handled">
         <View style={s.brand}>
-          <View style={s.logo}><Plane size={26} color={color.onInk} /></View>
-          <Text style={s.title}>Travel Buddy</Text>
-          <Text style={s.tagline}>Your social travel passport</Text>
+          <Image source={require('../../assets/images/portava-icon.png')} style={s.logo} accessibilityLabel="Portava" />
+          <Text style={s.title}>Portava</Text>
+          <Text style={s.tagline}>Explore. Connect. Belong.</Text>
         </View>
 
         <View style={s.card}>
@@ -110,7 +110,7 @@ export default function SignIn() {
 const s = StyleSheet.create({
   wrap: { flexGrow: 1, paddingHorizontal: space.lg, justifyContent: 'center', gap: space.xl },
   brand: { alignItems: 'center', gap: space.sm },
-  logo: { width: 56, height: 56, borderRadius: 28, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center', ...shadow.float },
+  logo:         { width: 76, height: 76, borderRadius: 17 },
   title: { ...t.hero, color: color.ink, fontSize: 28 },
   tagline: { ...t.small, color: color.mute },
   card: { backgroundColor: color.paperRaised, borderRadius: radius.lg, borderWidth: 1, borderColor: color.haze, padding: space.lg, gap: space.md, ...shadow.card },

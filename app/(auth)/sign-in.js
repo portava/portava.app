@@ -134,9 +134,9 @@ function SignIn() {
     return (<react_native_1.KeyboardAvoidingView style={{ flex: 1, backgroundColor: tokens_1.color.paper }} behavior={react_native_1.Platform.OS === 'ios' ? 'padding' : undefined}>
       <react_native_1.ScrollView contentContainerStyle={[s.wrap, { paddingTop: insets.top + tokens_1.space.xxxl, paddingBottom: insets.bottom + tokens_1.space.xl }]} keyboardShouldPersistTaps="handled">
         <react_native_1.View style={s.brand}>
-          <react_native_1.View style={s.logo}><lucide_react_native_1.Plane size={26} color={tokens_1.color.onInk}/></react_native_1.View>
-          <react_native_1.Text style={s.title}>Travel Buddy</react_native_1.Text>
-          <react_native_1.Text style={s.tagline}>Your social travel passport</react_native_1.Text>
+          <react_native_1.Image source={require('../../assets/images/portava-icon.png')} style={s.logo} accessibilityLabel="Portava"/>
+          <react_native_1.Text style={s.title}>Portava</react_native_1.Text>
+          <react_native_1.Text style={s.tagline}>Explore. Connect. Belong.</react_native_1.Text>
         </react_native_1.View>
 
         <react_native_1.View style={s.card}>
@@ -183,7 +183,7 @@ function SignIn() {
 var s = react_native_1.StyleSheet.create({
     wrap: { flexGrow: 1, paddingHorizontal: tokens_1.space.lg, justifyContent: 'center', gap: tokens_1.space.xl },
     brand: { alignItems: 'center', gap: tokens_1.space.sm },
-    logo: __assign({ width: 56, height: 56, borderRadius: 28, backgroundColor: tokens_1.color.signal, alignItems: 'center', justifyContent: 'center' }, tokens_1.shadow.float),
+    logo: { width: 76, height: 76, borderRadius: 17 },
     title: __assign(__assign({}, tokens_1.type.hero), { color: tokens_1.color.ink, fontSize: 28 }),
     tagline: __assign(__assign({}, tokens_1.type.small), { color: tokens_1.color.mute }),
     card: __assign({ backgroundColor: tokens_1.color.paperRaised, borderRadius: tokens_1.radius.lg, borderWidth: 1, borderColor: tokens_1.color.haze, padding: tokens_1.space.lg, gap: tokens_1.space.md }, tokens_1.shadow.card),
