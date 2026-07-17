@@ -559,6 +559,37 @@ describe("PATCH activate-version called twice does not double-write the audit lo
     assert.ok(second.body.version, "second response must still include version");
   });
 
+  it("idempotent second call returns current catalog and version data — not null or stale values", async () => {
+    const first = await patch(
+      `/admin/stamps/catalog/${CATALOG_ID}/activate-version`,
+      { versionId: VERSION_ID },
+    );
+    assert.equal(first.status, 200, `first activate-version failed: ${JSON.stringify(first.body)}`);
+
+    const second = await patch(
+      `/admin/stamps/catalog/${CATALOG_ID}/activate-version`,
+      { versionId: VERSION_ID },
+    );
+    assert.equal(second.status, 200, `second activate-version failed: ${JSON.stringify(second.body)}`);
+
+    assert.notEqual(second.body.entry,   null, "idempotent response entry must not be null");
+    assert.notEqual(second.body.version, null, "idempotent response version must not be null");
+
+    assert.equal(
+      second.body.entry.status, "approved",
+      `idempotent entry.status must reflect live DB state 'approved', got ${JSON.stringify(second.body.entry.status)}`,
+    );
+    assert.equal(
+      second.body.entry.active_version_id, VERSION_ID,
+      `idempotent entry.active_version_id must be the activated version, got ${JSON.stringify(second.body.entry.active_version_id)}`,
+    );
+    assert.equal(
+      second.body.version.public_url, "https://cdn.example.com/stamp.png",
+      `idempotent version.public_url must match the seeded value, got ${JSON.stringify(second.body.version.public_url)}`,
+    );
+    assert.equal(second.body.version.id, VERSION_ID, "idempotent version.id must match the requested versionId");
+  });
+
   it("after two activate-version calls audit log has exactly one activate_version entry", async () => {
     const first = await patch(
       `/admin/stamps/catalog/${CATALOG_ID}/activate-version`,
