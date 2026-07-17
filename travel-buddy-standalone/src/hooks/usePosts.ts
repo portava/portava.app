@@ -15,36 +15,97 @@ import {
   type PostRow,
   type PostResult,
 } from '../services/posts.ts';
+import { sanitizeFeedRows, splitPendingPosts } from '../lib/feedSanitize.ts';
 
 const PAGE_SIZE = 20;
+
+/**
+ * How long feed data stays "fresh" after a load. Focus-driven refreshes are
+ * skipped while fresh so re-entering the tab never resets the list (and the
+ * user's scroll position) needlessly.
+ */
+export const FEED_FOCUS_TTL_MS = 5 * 60 * 1000;
 
 /** Global social feed (public standalone posts). */
 export function useGlobalFeed() {
   const [data, setData] = useState<PostRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Newer posts fetched by a background/focus refresh while the user is
+  // mid-feed — buffered here (behind a "N new posts" pill) instead of being
+  // prepended immediately, which would jump the scroll position.
+  const [pending, setPending] = useState<PostRow[]>([]);
   // IDs deleted this session — excluded from every reload so they never reappear
   const deletedIds = useRef(new Set<string>());
+  // Timestamp of the last successful load — drives the focus TTL.
+  const lastLoadedAt = useRef(0);
+  // Guard against overlapping background refreshes.
+  const refreshing = useRef(false);
 
   const markDeleted = useCallback((id: string) => {
     deletedIds.current.add(id);
     setData((prev) => prev.filter((p) => !deletedIds.current.has(p.id)));
+    setPending((prev) => prev.filter((p) => !deletedIds.current.has(p.id)));
   }, []);
 
+  /** Full replace — explicit pull-to-refresh / initial load. */
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
     const res = await listGlobalPosts({ limit: PAGE_SIZE });
-    if (res.ok) setData((res.data ?? []).filter((p) => !deletedIds.current.has(p.id)));
-    else setError(res.message ?? res.errorKind ?? 'Failed to load feed');
+    if (res.ok) {
+      setData(sanitizeFeedRows(res.data ?? []).filter((p) => !deletedIds.current.has(p.id)));
+      setPending([]);
+      lastLoadedAt.current = Date.now();
+    } else {
+      setError(res.message ?? res.errorKind ?? 'Failed to load feed');
+    }
     setLoading(false);
+  }, []);
+
+  /**
+   * Focus-driven refresh: no-op while the data is fresh (TTL); otherwise
+   * fetch in the background WITHOUT clearing the current list. New posts are
+   * buffered into `pending` instead of replacing the list mid-scroll.
+   */
+  const refreshIfStale = useCallback(async (ttlMs: number = FEED_FOCUS_TTL_MS) => {
+    if (refreshing.current) return;
+    if (Date.now() - lastLoadedAt.current < ttlMs) return;
+    refreshing.current = true;
+    try {
+      const res = await listGlobalPosts({ limit: PAGE_SIZE });
+      if (!res.ok) return; // background refresh: keep showing the current list
+      const fetched = (res.data ?? []).filter((p) => !deletedIds.current.has(p.id));
+      lastLoadedAt.current = Date.now();
+      setData((prev) => {
+        const { pending: fresh, replace } = splitPendingPosts(prev, fetched);
+        if (replace) {
+          setPending([]);
+          return replace;
+        }
+        setPending(fresh);
+        return prev;
+      });
+    } finally {
+      refreshing.current = false;
+    }
+  }, []);
+
+  /** Prepend the buffered new posts (user tapped the "new posts" pill). */
+  const applyPending = useCallback(() => {
+    setPending((buffered) => {
+      if (buffered.length > 0) {
+        setData((prev) => sanitizeFeedRows([...buffered, ...prev]));
+      }
+      return [];
+    });
   }, []);
 
   useEffect(() => {
     reload();
   }, [reload]);
 
-  return { data, loading, error, reload, markDeleted };
+  return { data, loading, error, reload, refreshIfStale, pending, applyPending, markDeleted };
 }
 
 /** Following feed — public posts from followed users only, with cursor pagination. */
@@ -58,6 +119,8 @@ export function useFollowingFeed() {
   const [cursor, setCursor] = useState<string | null>(null);
   // IDs deleted this session — excluded from every reload so they never reappear
   const deletedIds = useRef(new Set<string>());
+  // Timestamp of the last successful load — drives the focus TTL.
+  const lastLoadedAt = useRef(0);
 
   const markDeleted = useCallback((id: string) => {
     deletedIds.current.add(id);
@@ -78,12 +141,19 @@ export function useFollowingFeed() {
         setCursor(raw[raw.length - 1]?.createdAt ?? null);
         setHasMore(true);
       }
-      setData(raw.filter((p) => !deletedIds.current.has(p.id)));
+      setData(sanitizeFeedRows(raw).filter((p) => !deletedIds.current.has(p.id)));
+      lastLoadedAt.current = Date.now();
     } else {
       setError(res.message ?? res.errorKind ?? 'Failed to load following feed');
     }
     setLoading(false);
   }, []);
+
+  /** Focus-driven refresh: only reload when the data is older than the TTL. */
+  const refreshIfStale = useCallback(async (ttlMs: number = FEED_FOCUS_TTL_MS) => {
+    if (Date.now() - lastLoadedAt.current < ttlMs) return;
+    await reload();
+  }, [reload]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore || !cursor) return;
@@ -94,7 +164,7 @@ export function useFollowingFeed() {
       // De-dupe by id and exclude locally-deleted posts
       setData((prev) => {
         const seen = new Set(prev.map((p) => p.id));
-        const fresh = rows.filter((p) => !seen.has(p.id) && !deletedIds.current.has(p.id));
+        const fresh = sanitizeFeedRows(rows).filter((p) => !seen.has(p.id) && !deletedIds.current.has(p.id));
         return [...prev, ...fresh];
       });
       if (rows.length === PAGE_SIZE) {
@@ -108,7 +178,7 @@ export function useFollowingFeed() {
     setLoadingMore(false);
   }, [loadingMore, hasMore, cursor]);
 
-  return { data, loading, loadingMore, hasMore, error, reload, loadMore, markDeleted };
+  return { data, loading, loadingMore, hasMore, error, reload, refreshIfStale, loadMore, markDeleted };
 }
 
 /** A trip's feed. isMember reflects whether the viewer is an accepted member. */

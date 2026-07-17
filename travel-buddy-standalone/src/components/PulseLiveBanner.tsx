@@ -24,7 +24,13 @@ const HOUR = 60 * 60 * 1000;
 const DEFAULT_DURATION = 2 * HOUR;
 const ENDS_SOON_WINDOW = 0.5 * HOUR;
 
-export function PulseLiveBanner({
+/**
+ * Memoized: the banner sits in the FlatList header, so without memo it would
+ * re-render (and re-measure) on every list render during scroll, causing the
+ * header strip to visibly resize/jitter. Callers must pass a stable `events`
+ * array reference.
+ */
+export const PulseLiveBanner = React.memo(function PulseLiveBanner({
   city,
   events,
   availabilityLabel,
@@ -85,7 +91,7 @@ export function PulseLiveBanner({
       </ScrollView>
     </View>
   );
-}
+});
 
 const s = StyleSheet.create({
   card: {
