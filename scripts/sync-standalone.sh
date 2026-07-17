@@ -63,6 +63,15 @@
 #   Config files: app.json  eas.json  expo-env.d.ts
 #   (babel.config.js and metro.config.js are NOT overwritten — structural drift checks run instead)
 #
+# Perspective guard:
+#   Files whose content contains tree-specific relative paths (monorepo-
+#   perspective '../../../../travel-buddy-standalone/...' / '../../../../pnpm-lock.yaml'
+#   or standalone-perspective '../../../artifacts/travel-buddy/...' /
+#   '../../pnpm-lock.yaml') are REFUSED instead of copied — a blind copy would
+#   land paths that resolve outside the workspace in the destination tree.
+#   Mirrors findPerspectiveViolations in scripts/src/cross-tree-paths.test.ts.
+#   Port such changes manually using the destination tree's perspective.
+#
 # What it preserves (standalone-only — never overwritten):
 #   package.json        — different name + scripts (no monorepo dev script)
 #   tsconfig.json       — references removed (no ../../lib/api-client-react)
@@ -221,6 +230,54 @@ is_standalone_owned() {
 }
 
 # ---------------------------------------------------------------------------
+# Perspective guard — mirrors findPerspectiveViolations in
+# scripts/src/cross-tree-paths.test.ts.
+#
+# Some files (e.g. src/services/sdk54-downgrade-compat.test.ts) exist in BOTH
+# trees but use tree-specific relative paths. Blindly copying the monorepo
+# copy into travel-buddy-standalone/ makes those paths resolve OUTSIDE the
+# workspace and fail with ENOENT at test run time. The sync must refuse such
+# copies instead of letting the cross-tree-paths guard catch the breakage
+# later.
+#
+# The regexes anchor on the opening quote/backtick so '../../pnpm-lock.yaml'
+# does not match inside '../../../../pnpm-lock.yaml' (same trick as the guard).
+# ---------------------------------------------------------------------------
+MONO_PERSPECTIVE_RE="['\"\`]\.\./\.\./\.\./\.\./(travel-buddy-standalone/|pnpm-lock\.yaml)"
+SA_PERSPECTIVE_RE="['\"\`](\.\./\.\./\.\./artifacts/travel-buddy/|\.\./\.\./pnpm-lock\.yaml|\.\./\.\./\.\./pnpm-lock\.yaml)"
+
+TOTAL_PERSPECTIVE_BLOCKED=0
+
+# Prints "monorepo" or "standalone" when the file's content contains
+# tree-specific relative paths; prints nothing when the file is neutral.
+detect_path_perspective() {
+  local file="$1"
+  if grep -Eq "$MONO_PERSPECTIVE_RE" "$file" 2>/dev/null; then
+    echo "monorepo"
+  elif grep -Eq "$SA_PERSPECTIVE_RE" "$file" 2>/dev/null; then
+    echo "standalone"
+  fi
+  return 0
+}
+
+# Prints the refusal message for a perspective-divergent file.
+# $1 = mode ("dry" | "apply"), $2 = tree-relative path, $3 = detected perspective
+report_perspective_refusal() {
+  local mode="$1" rel="$2" persp="$3"
+  local prefix=""
+  [[ "$mode" == "dry" ]] && prefix="[dry] "
+  echo "    ${prefix}[perspective-divergent] $rel — REFUSED (not overwritten)"
+  if [[ "$persp" == "monorepo" ]]; then
+    echo "        Source copy contains monorepo-perspective relative paths (e.g. '../../../../travel-buddy-standalone/' or '../../../../pnpm-lock.yaml')."
+    echo "        Copying it into travel-buddy-standalone/ would make those paths resolve OUTSIDE the workspace and fail with ENOENT at test run time."
+  else
+    echo "        Source copy contains standalone-perspective relative paths (e.g. '../../../artifacts/travel-buddy/' or '../../pnpm-lock.yaml')."
+    echo "        The monorepo copy looks like it was itself overwritten by a bad reverse sync — fix the artifacts/travel-buddy/ copy first."
+  fi
+  echo "        Port the change manually using the destination tree's perspective (guard: scripts/src/cross-tree-paths.test.ts)."
+}
+
+# ---------------------------------------------------------------------------
 # Helper: sync a directory — file-by-file, respecting STANDALONE_OWNED_FILES.
 # Defined early so both --fix-source and the main sync path can call it.
 # ---------------------------------------------------------------------------
@@ -245,6 +302,15 @@ sync_dir() {
         echo "    [dry] [protected] $name/$rel (standalone-owned — would skip)"
         continue
       fi
+      # Only files that would actually be written need the perspective check.
+      if [[ ! -f "$dst_file" ]] || ! diff -q "$f" "$dst_file" &>/dev/null; then
+        persp="$(detect_path_perspective "$f")"
+        if [[ -n "$persp" ]]; then
+          report_perspective_refusal "dry" "$name/$rel" "$persp"
+          TOTAL_PERSPECTIVE_BLOCKED=$(( TOTAL_PERSPECTIVE_BLOCKED + 1 ))
+          continue
+        fi
+      fi
       if [[ ! -f "$dst_file" ]]; then
         echo "    [dry] + $name/$rel (new)"
       elif ! diff -q "$f" "$dst_file" &>/dev/null; then
@@ -266,7 +332,7 @@ sync_dir() {
       done < <(find "$to" -type f -not -path "*/node_modules/*" -print0)
     fi
   else
-    local added=0 updated=0 removed=0 protected=0
+    local added=0 updated=0 removed=0 protected=0 blocked=0
 
     # ── Copy source → destination, file-by-file, skipping protected files ────
     mkdir -p "$to"
@@ -278,6 +344,18 @@ sync_dir() {
         echo "    [protected] $name/$rel (standalone-owned — not overwritten)"
         protected=$(( protected + 1 ))
         continue
+      fi
+
+      # Refuse to write perspective-divergent files into the standalone tree.
+      if [[ ! -f "$dst_file" ]] || ! diff -q "$f" "$dst_file" &>/dev/null; then
+        local persp
+        persp="$(detect_path_perspective "$f")"
+        if [[ -n "$persp" ]]; then
+          report_perspective_refusal "apply" "$name/$rel" "$persp"
+          blocked=$(( blocked + 1 ))
+          TOTAL_PERSPECTIVE_BLOCKED=$(( TOTAL_PERSPECTIVE_BLOCKED + 1 ))
+          continue
+        fi
       fi
 
       if [[ ! -f "$dst_file" ]]; then
@@ -305,11 +383,14 @@ sync_dir() {
       done < <(find "$to" -type f -not -path "*/node_modules/*" -print0)
     fi
 
+    local suffix=""
     if [[ $protected -gt 0 ]]; then
-      echo "    ${added} added, ${updated} updated, ${removed} removed (${protected} standalone-owned file(s) protected)"
-    else
-      echo "    ${added} added, ${updated} updated, ${removed} removed"
+      suffix=" (${protected} standalone-owned file(s) protected)"
     fi
+    if [[ $blocked -gt 0 ]]; then
+      suffix="${suffix} (${blocked} perspective-divergent file(s) REFUSED — port manually)"
+    fi
+    echo "    ${added} added, ${updated} updated, ${removed} removed${suffix}"
 
     TOTAL_ADDED=$(( TOTAL_ADDED + added ))
     TOTAL_UPDATED=$(( TOTAL_UPDATED + updated ))
@@ -811,6 +892,10 @@ if $FIX_SOURCE; then
   else
     echo "=== Fix-source complete ==="
     echo "    Total: ${TOTAL_ADDED} added, ${TOTAL_UPDATED} updated, ${TOTAL_REMOVED} removed"
+    if [[ $TOTAL_PERSPECTIVE_BLOCKED -gt 0 ]]; then
+      echo "    REFUSED: ${TOTAL_PERSPECTIVE_BLOCKED} perspective-divergent file(s) were NOT overwritten (see messages above)."
+      echo "    Port those changes manually using the destination tree's perspective."
+    fi
     echo ""
     echo "Next: run typecheck to verify the standalone is healthy:"
     echo "  cd travel-buddy-standalone && pnpm typecheck"
@@ -1297,6 +1382,12 @@ manage_package_json_deps "$APPLY_DEPS" "$DRY_RUN" || DIFF_EXIT=$?
 
 echo ""
 echo "=== Sync complete ==="
+if [[ $TOTAL_PERSPECTIVE_BLOCKED -gt 0 ]]; then
+  echo ""
+  echo "REFUSED: ${TOTAL_PERSPECTIVE_BLOCKED} perspective-divergent file(s) were NOT overwritten (see messages above)."
+  echo "Port those changes manually using the destination tree's perspective"
+  echo "(guard: scripts/src/cross-tree-paths.test.ts)."
+fi
 echo ""
 echo "Next steps:"
 if [[ $DIFF_EXIT -ne 0 ]]; then

@@ -835,6 +835,128 @@ fi
 rm -rf "$T20"
 
 # ---------------------------------------------------------------------------
+# Test 21: perspective guard — sync refuses to overwrite a standalone copy
+# with a monorepo-perspective source file (sdk54-compat scenario)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 21: sync refuses monorepo-perspective overwrite of standalone copy ==="
+
+T21="$(setup_workspace)"
+src21="$T21/artifacts/travel-buddy"
+dst21="$T21/travel-buddy-standalone"
+
+mkdir -p "$src21/src/services" "$dst21/src/services"
+cat > "$src21/src/services/sdk54-downgrade-compat.test.ts" <<'EOF'
+// monorepo copy — monorepo-perspective cross-tree paths
+const saPkg = readPkg('../../../../travel-buddy-standalone/package.json');
+const rootLock = readFileSync(`${__dir}/../../../../pnpm-lock.yaml`, 'utf8');
+EOF
+cat > "$dst21/src/services/sdk54-downgrade-compat.test.ts" <<'EOF'
+// standalone copy — standalone-perspective cross-tree paths
+const monoPkg = readPkg('../../../artifacts/travel-buddy/package.json');
+const ownLock = readFileSync(`${__dir}/../../pnpm-lock.yaml`, 'utf8');
+EOF
+# A neutral changed file in the same dir must still sync normally
+echo "v2" > "$src21/src/services/neutral.ts"
+echo "v1" > "$dst21/src/services/neutral.ts"
+
+out21="$(SOURCE_DRIFT_DIRS="src" run_sync "$T21" --fix-source 2>&1)" || true
+
+assert_contains         "21a: refusal reported"                     "[perspective-divergent] src/services/sdk54-downgrade-compat.test.ts" "$out21"
+assert_contains         "21b: monorepo-perspective reason shown"    "monorepo-perspective relative paths" "$out21"
+assert_contains         "21c: manual-port guidance shown"           "Port the change manually" "$out21"
+assert_contains         "21d: refusal counted in summary"           "1 perspective-divergent file(s) REFUSED" "$out21"
+assert_file_content     "21e: standalone copy NOT overwritten"      "$dst21/src/services/sdk54-downgrade-compat.test.ts" "../../../artifacts/travel-buddy/package.json"
+assert_file_not_content "21f: no monorepo path landed in standalone" "$dst21/src/services/sdk54-downgrade-compat.test.ts" "travel-buddy-standalone/package.json"
+assert_file_content     "21g: neutral file still synced"            "$dst21/src/services/neutral.ts" "v2"
+
+rm -rf "$T21"
+
+# ---------------------------------------------------------------------------
+# Test 22: perspective guard — dry-run reports the refusal without writing,
+# and a NEW monorepo-perspective file is also refused (not just overwrites)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 22: dry-run reports perspective refusal; new divergent files blocked ==="
+
+T22="$(setup_workspace)"
+src22="$T22/artifacts/travel-buddy"
+dst22="$T22/travel-buddy-standalone"
+
+mkdir -p "$src22/src/services" "$dst22/src/services"
+# New in source (no standalone counterpart) but monorepo-perspective
+cat > "$src22/src/services/new-compat.test.ts" <<'EOF'
+const saPkg = readPkg('../../../../travel-buddy-standalone/package.json');
+EOF
+
+out22a="$(SOURCE_DRIFT_DIRS="src" run_sync "$T22" --fix-source --dry-run 2>&1)" || true
+assert_contains     "22a: dry-run refusal reported"        "[dry] [perspective-divergent] src/services/new-compat.test.ts" "$out22a"
+assert_file_missing "22b: dry-run wrote nothing"           "$dst22/src/services/new-compat.test.ts"
+
+out22b="$(SOURCE_DRIFT_DIRS="src" run_sync "$T22" --fix-source 2>&1)" || true
+assert_contains     "22c: apply refusal reported"          "[perspective-divergent] src/services/new-compat.test.ts" "$out22b"
+assert_file_missing "22d: new divergent file NOT created in standalone" "$dst22/src/services/new-compat.test.ts"
+
+rm -rf "$T22"
+
+# ---------------------------------------------------------------------------
+# Test 23: perspective guard — vice versa: a source file that already carries
+# standalone-perspective paths (corrupted monorepo copy) is also refused
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 23: standalone-perspective source (corrupted monorepo copy) refused ==="
+
+T23="$(setup_workspace)"
+src23="$T23/artifacts/travel-buddy"
+dst23="$T23/travel-buddy-standalone"
+
+mkdir -p "$src23/src/services" "$dst23/src/services"
+cat > "$src23/src/services/sdk54-downgrade-compat.test.ts" <<'EOF'
+// corrupted monorepo copy — carries standalone-perspective paths
+const monoPkg = readPkg('../../../artifacts/travel-buddy/package.json');
+EOF
+echo "good standalone copy" > "$dst23/src/services/sdk54-downgrade-compat.test.ts"
+
+out23="$(SOURCE_DRIFT_DIRS="src" run_sync "$T23" --fix-source 2>&1)" || true
+
+assert_contains     "23a: refusal reported"                   "[perspective-divergent] src/services/sdk54-downgrade-compat.test.ts" "$out23"
+assert_contains     "23b: reverse-sync corruption hinted"     "standalone-perspective relative paths" "$out23"
+assert_file_content "23c: standalone copy NOT overwritten"    "$dst23/src/services/sdk54-downgrade-compat.test.ts" "good standalone copy"
+
+rm -rf "$T23"
+
+# ---------------------------------------------------------------------------
+# Test 24: perspective guard — full sync (no flags) also refuses, and an
+# identical divergent file on both sides is left alone silently (no copy needed)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 24: full sync refuses divergent overwrite; identical files untouched ==="
+
+T24="$(setup_workspace)"
+src24="$T24/artifacts/travel-buddy"
+dst24="$T24/travel-buddy-standalone"
+
+mkdir -p "$src24/src/services" "$dst24/src/services"
+cat > "$src24/src/services/sdk54-downgrade-compat.test.ts" <<'EOF'
+const saPkg = readPkg('../../../../travel-buddy-standalone/package.json');
+EOF
+echo "standalone version" > "$dst24/src/services/sdk54-downgrade-compat.test.ts"
+# Identical monorepo-perspective file on both sides — no write needed, no refusal noise
+cat > "$src24/src/services/identical.helper.test.ts" <<'EOF'
+const saPkg = readPkg('../../../../travel-buddy-standalone/package.json');
+EOF
+cp "$src24/src/services/identical.helper.test.ts" "$dst24/src/services/identical.helper.test.ts"
+
+out24="$(run_sync "$T24" 2>&1)" || true
+
+assert_contains     "24a: full sync refusal reported"      "[perspective-divergent] src/services/sdk54-downgrade-compat.test.ts" "$out24"
+assert_contains     "24b: end-of-run REFUSED summary shown" "REFUSED: 1 perspective-divergent file(s)" "$out24"
+assert_file_content "24c: standalone copy NOT overwritten" "$dst24/src/services/sdk54-downgrade-compat.test.ts" "standalone version"
+assert_not_contains "24d: identical divergent file not flagged" "identical.helper.test.ts" "$out24"
+
+rm -rf "$T24"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

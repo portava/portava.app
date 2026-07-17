@@ -593,8 +593,18 @@ describe('SDK 54 compat test copies — perspective-mismatch guard', () => {
 });
 
 describe('findPerspectiveViolations — swapped-copy detection', () => {
-  const monoContent = fs.readFileSync(SDK54_COPIES[0]!.file, 'utf8');
-  const saContent = fs.readFileSync(SDK54_COPIES[1]!.file, 'utf8');
+  // Synthetic perspective-specific content. The live sdk54 copies may be
+  // perspective-neutral (they can compute the workspace root dynamically), so
+  // the detector is exercised against representative content instead.
+  const monoContent = [
+    "const saPkg = readPkg('../../../../travel-buddy-standalone/package.json');",
+    'const rootLock = readFileSync(`${__dir}/../../../../pnpm-lock.yaml`, "utf8");',
+  ].join('\n');
+  const saContent = [
+    "const monoPkg = readPkg('../../../artifacts/travel-buddy/package.json');",
+    'const ownLock = readFileSync(`${__dir}/../../pnpm-lock.yaml`, "utf8");',
+    'const rootLock = readFileSync(`${__dir}/../../../pnpm-lock.yaml`, "utf8");',
+  ].join('\n');
 
   it('flags the monorepo copy content when checked as the standalone copy (bad sync direction 1)', () => {
     const violations = findPerspectiveViolations(monoContent, 'standalone');
