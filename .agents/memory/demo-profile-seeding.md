@@ -23,6 +23,8 @@ When seeding production-like data for a profile, always query the **live** schem
 
 7. **`/api/users/:userId/events` in `events.ts` shadowed the public `/users/:username/events` profile tab.** Both routes were mounted at the same path; the auth-gated one won, so unauthenticated profile viewers got 401. We removed the duplicate route and made `profileTabs.ts` resolve by UUID as well as handle/username.
 
+8. **Demo memories were seeded but not demo-ready.** The original 20 demo memories had mixed visibility (`only_me`/`friends_only`/`public`) and null `location_city`/`location_country`. The Memories tab and map viewers need those fields. We updated the seed to make them all public, fill in locations, and link matching public events by city. The `fix:demo-memories` script applies the same upgrade to already-seeded rows.
+
 ## Idempotency
 
 Use deterministic UUIDs (e.g., UUIDv5 keyed by the target profile id and a seed string) so reruns skip already-inserted rows instead of duplicating content.

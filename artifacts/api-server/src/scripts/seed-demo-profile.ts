@@ -133,6 +133,30 @@ const CAPTIONS = [
   "Traveled far, laughed hard, slept little.",
 ];
 
+// Travel-memory content aligned with the requested demo destinations.
+const MEMORY_CONTENTS = [
+  { city: "Tokyo", country: "Japan", title: "Tokyo after dark", caption: "Neon alleys, late-night ramen, and the hum of a city that never really sleeps." },
+  { city: "Ubud", country: "Bali", title: "Bali sunrise", caption: "Rice terraces at dawn, the quiet before the town wakes up." },
+  { city: "Cebu City", country: "Philippines", title: "Cebu energy", caption: "Island warmth, street food, and a city that feels like a welcome-home hug." },
+  { city: "Bangkok", country: "Thailand", title: "Bangkok flavors", caption: "Markets, temples, and midnight snacks — every corner has a story." },
+  { city: "Seoul", country: "South Korea", title: "Seoul lights", caption: "Han River breeze, rooftop coffee, and neighborhoods that blend old and new." },
+  { city: "Paris", country: "France", title: "Parisian afternoon", caption: "Cobblestones, café windows, and that golden hour light over the Seine." },
+  { city: "Rome", country: "Italy", title: "Rome in a day", caption: "Ancient stone, espresso stops, and getting wonderfully lost." },
+  { city: "Oia", country: "Santorini", title: "Santorini blues", caption: "White walls, blue domes, and a sunset that really does live up to the hype." },
+  { city: "Interlaken", country: "Switzerland", title: "Swiss Alps escape", caption: "Fresh air, mountain peaks, and a lake so clear it looks painted." },
+  { city: "New York City", country: "USA", title: "New York moments", caption: "Skyline walks, deli coffee, and the city that always has another neighborhood to explore." },
+  { city: "Miami", country: "USA", title: "Miami heat", caption: "Beach mornings, pastel streets, and nights that start late." },
+  { city: "Mexico City", country: "Mexico", title: "Mexico City soul", caption: "Museums, tacos, and plazas full of music and color." },
+  { city: "Dubai", country: "UAE", title: "Dubai contrasts", caption: "Desert dunes one hour, futuristic skyline the next." },
+  { city: "Singapore", country: "Singapore", title: "Singapore gardens", caption: "Greens wrapped around steel, hawker stalls, and humid evenings." },
+  { city: "Hong Kong", country: "Hong Kong", title: "Hong Kong pulse", caption: "Ferry rides, neon signs, and mountains rising right behind the towers." },
+  { city: "Taipei", country: "Taiwan", title: "Taipei nights", caption: "Night markets, bubble tea, and friendly chaos around every stall." },
+  { city: "Hanoi", country: "Vietnam", title: "Vietnam mornings", caption: "Old Quarter scooters, egg coffee, and a lake that slows the whole city down." },
+  { city: "El Nido", country: "Philippines", title: "Palawan paradise", caption: "Limestone cliffs, turquoise water, and island hopping that felt like a dream." },
+  { city: "General Luna", country: "Philippines", title: "Siargao sessions", caption: "Palm roads, surf breaks, and sunset beers with new friends." },
+  { city: "Sydney", country: "Australia", title: "Australia coast", caption: "Harbor walks, coastal pools, and that laid-back energy." },
+];
+
 const TRIP_TITLES = [
   "Solo escape to",
   "Backpacking",
@@ -426,42 +450,60 @@ async function seedUserStamps(profileId: string, definitions: { id: string }[]) 
 async function seedMemories(profileId: string) {
   const { data: trips } = await sc
     .from("trips")
-    .select("id")
+    .select("id, destination_city")
     .eq("owner_id", profileId)
     .order("created_at", { ascending: false });
   const tripIds = (trips ?? []).map((t) => t.id);
+  const tripByCity = new Map((trips ?? []).map((t: any) => [t.destination_city, t.id]));
 
-  const memories = DESTINATIONS.map((dest, i) => {
+  const { data: events } = await sc
+    .from("events")
+    .select("id, city, starts_at")
+    .eq("host_id", profileId)
+    .eq("visibility", "public")
+    .not("state", "in", '("draft","cancelled","archived")')
+    .order("starts_at", { ascending: true });
+  const eventByCity = new Map((events ?? []).map((e: any) => [e.city, e.id]));
+
+  const memories = MEMORY_CONTENTS.map((content, i) => {
     const id = uuidv5(`memory:${profileId}:${i}`, SEED_NS);
-    const visibility = i % 5 === 0 ? "only_me" : i % 4 === 0 ? "friends_only" : "public";
     const state = "published";
+    const startAt = dateDaysAgo(600 - i * 28);
+    const endAt = dateDaysAgo(600 - i * 28 - 1);
+    const tripId = tripByCity.get(content.city) ?? tripIds[i % tripIds.length] ?? null;
+    const eventId = eventByCity.get(content.city) ?? null;
     return {
       id,
       owner_id: profileId,
-      trip_id: tripIds[i % tripIds.length] ?? null,
-      title: `Memory from ${dest.city}`,
-      caption: CAPTIONS[(i + 5) % CAPTIONS.length],
-      visibility,
+      trip_id: tripId,
+      event_id: eventId,
+      title: content.title,
+      caption: content.caption,
+      visibility: "public" as const,
       state,
-      starts_at: dateDaysAgo(600 - i * 28),
-      ends_at: dateDaysAgo(600 - i * 28 - 1),
+      starts_at: startAt,
+      ends_at: endAt,
+      location_city: content.city,
+      location_country: content.country,
+      location_lat: DESTINATIONS[i].lat,
+      location_lng: DESTINATIONS[i].lng,
       allowed_user_ids: [],
       hidden_user_ids: [],
-      created_at: dateDaysAgo(600 - i * 28),
-      updated_at: dateDaysAgo(600 - i * 28),
+      created_at: startAt,
+      updated_at: endAt,
     };
   });
   const memoryResult = await upsertRows("memories", memories);
 
   const items = memories.map((m, i) => {
     const id = uuidv5(`memoryitem:${profileId}:${i}`, SEED_NS);
-    const dest = DESTINATIONS[i];
+    const content = MEMORY_CONTENTS[i];
     return {
       id,
       memory_id: m.id,
       media_url: mediaUrl(`memory-${i}`, 800, 600),
       media_type: "image",
-      caption: `${dest.city} moment`,
+      caption: `${content.city} moment`,
       position: 0,
       created_at: m.created_at,
     };
