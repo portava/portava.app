@@ -464,6 +464,20 @@ describe("profile data-leak prevention", () => {
     });
   });
 
+  // ── PATCH /api/me/profile — clearing travelStyle (null) must be accepted ────
+
+  describe("PATCH /api/me/profile — travelStyle: null (clear)", () => {
+    it("returns HTTP 200 when clearing travelStyle to null", async () => {
+      const { status, body } = await apiReqWithBody(
+        "PATCH",
+        "/api/me/profile",
+        { travelStyle: null },
+        USER_TOKEN,
+      );
+      assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    });
+  });
+
   // ── PATCH /api/me/profile — clearing avatarUrl / coverUrl must be accepted ──
 
   describe("PATCH /api/me/profile — clearing media URLs", () => {

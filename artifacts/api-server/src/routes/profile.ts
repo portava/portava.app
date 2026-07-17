@@ -316,7 +316,7 @@ const patchProfileSchema = z.object({
   passportVisibility: z.enum(["public", "followers_only", "private"]).optional(),
   avatarUrl: z.string().url().nullish(),
   coverUrl: z.string().url().nullish(),
-  travelStyle: z.string().max(50).optional(),
+  travelStyle: z.string().max(50).nullish(),
   openToMeet: z.boolean().optional(),
   spokenLanguages: z.array(z.string().max(50)).max(20).optional(),
   defaultLanguage: z.string().max(50).nullish(),
