@@ -53,7 +53,7 @@ import { useAvailabilityStore } from '../../src/context/AvailabilityStore';
 import { resolveAvailabilityChip } from '../../src/lib/availabilityChip';
 
 export default function PassportScreen() {
-  const { profile, postcards, stamps, memories, suggestions, loading, error, reload } = usePassport();
+  const { profile, postcards, stamps, memories, suggestions, loading, error, reload, lastLoadedAt } = usePassport();
   const { userId: ownUserId } = useSession();
   const [tab, setTab] = useState<PassportTabKey>('postcards');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -241,6 +241,7 @@ export default function PassportScreen() {
         handleEditProfile={handleEditProfile}
         handleViewAsPublic={handleViewAsPublic}
         reload={reload}
+        lastLoadedAt={lastLoadedAt}
         insets={insets}
         hasHighlights={hasOwnHighlights}
         allHighlightsViewed={allOwnHighlightsViewed}
@@ -311,7 +312,7 @@ function PassportContent({
   profile, postcards, stamps, memories, trips, tab, setTab,
   menuOpen, setMenuOpen,
   openSettings, actions, handleEditProfile, handleViewAsPublic,
-  reload, insets, hasHighlights, allHighlightsViewed, highlights,
+  reload, lastLoadedAt, insets, hasHighlights, allHighlightsViewed, highlights,
   onHighlightRingPress, onNewHighlightPress, onHighlightBubblePress, onAddPostcard,
   stampsViewOpen, setStampsViewOpen, verificationLevels, noSafetyFlags, cardRef, share, sharing,
   sectionOrder, onArrangeSections, tabOrder, onArrangeTabs,
@@ -329,6 +330,8 @@ function PassportContent({
   handleEditProfile: () => void;
   handleViewAsPublic: () => void;
   reload: () => void;
+  /** Ref from usePassport stamped only on successful fetch — used for focus TTL. */
+  lastLoadedAt: React.MutableRefObject<number>;
   insets: { top: number; bottom: number };
   hasHighlights?: boolean;
   allHighlightsViewed?: boolean;
@@ -367,12 +370,6 @@ function PassportContent({
     showHomeCity: !!(profile.homeCity),
   });
 
-  // Track the last time we triggered a passport reload for the focus TTL.
-  // Initialised to Date.now() because PassportContent only mounts after the
-  // initial load has already completed, so the first focus event should be a
-  // no-op unless the data has aged past the TTL.
-  const lastPassportLoadedAt = useRef(Date.now());
-
   const handleChangeCover = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
@@ -399,9 +396,10 @@ function PassportContent({
   useFocusEffect(useCallback(() => {
     // Only re-fetch passport data when it's older than the feed TTL — avoids
     // scroll-position resets caused by unconditional reloads on every tab re-entry.
-    if (Date.now() - lastPassportLoadedAt.current >= FEED_FOCUS_TTL_MS) {
+    // lastLoadedAt is stamped inside usePassport only on a successful fetch, so a
+    // failed reload never silences the next focus retry.
+    if (Date.now() - lastLoadedAt.current >= FEED_FOCUS_TTL_MS) {
       reload();
-      lastPassportLoadedAt.current = Date.now();
     }
     // These three fetches are lightweight and don't affect scroll position, so
     // they stay unconditional.

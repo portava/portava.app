@@ -206,9 +206,13 @@ export default function EventsTabScreen() {
     }
 
     if (!mainRes.ok && !weekendRes.ok) setError('Failed to load events');
-    // Stamp successful load time and the filter key so focus TTL works correctly.
-    lastLoadedAt.current = Date.now();
-    lastFiltersKey.current = currentFiltersKeyRef.current;
+    // Advance TTL stamp only when the PRIMARY fetch (mainRes) succeeded.
+    // weekendRes being ok while mainRes failed is not a successful load —
+    // allowing that to stamp would suppress retries for the full TTL window.
+    if (mainRes.ok) {
+      lastLoadedAt.current = Date.now();
+      lastFiltersKey.current = currentFiltersKeyRef.current;
+    }
     setLoading(false);
     setRefreshing(false);
   }, [configured, isAuthed, category, datePreset, cityFilter, freeOnly, verifiedHostOnly, capacityAvailable]);

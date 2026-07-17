@@ -4,7 +4,7 @@
  * + GET /api/me/passport/memories + GET /api/me/passport/suggestions in parallel.
  * Falls back to mock data if backend is not configured.
  */
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, type MutableRefObject } from 'react';
 import type { OwnProfile, PassportPostcard, PassportStamp } from '../types/models.ts';
 import type { PassportMemory } from '../services/passportStamps.ts';
 import { getMyProfile, getMyPassportPostcards, getMyStamps } from '../services/profile.ts';
@@ -21,6 +21,10 @@ export interface PassportState {
   loading: boolean;
   error: string | null;
   reload: () => void;
+  /** Ref stamped with Date.now() only after a successful fetch. Stays 0 until
+   *  the first successful load. Screens use this for focus-TTL guards so that
+   *  a failed reload does NOT silence subsequent retry attempts. */
+  lastLoadedAt: MutableRefObject<number>;
 }
 
 export function usePassport(): PassportState {
@@ -40,6 +44,9 @@ export function usePassport(): PassportState {
   // the error-branch PassportContent stays mounted so useFocusEffect cannot
   // trigger an unmount→mount→focus cycle that would create an infinite loop.
   const hadErrorRef = useRef(false);
+  // Stamped with Date.now() only after a successful profile fetch so focus-TTL
+  // guards can't be silenced by a failed reload.
+  const lastLoadedAt = useRef(0);
 
   const reload = useCallback(() => setTick((t) => t + 1), []);
 
@@ -110,6 +117,7 @@ export function usePassport(): PassportState {
           setStamps(mock.stamps ?? []);
           setMemories([]);
           setSuggestions([]);
+          lastLoadedAt.current = Date.now();
           setLoading(false);
         }
       }, 0);
@@ -126,6 +134,7 @@ export function usePassport(): PassportState {
       if (!alive) return;
       if (pRes.ok && pRes.data) {
         hadErrorRef.current = false;
+        lastLoadedAt.current = Date.now();
         setProfile(pRes.data as OwnProfile);
       } else {
         hadErrorRef.current = true;
@@ -146,5 +155,5 @@ export function usePassport(): PassportState {
     return () => { alive = false; };
   }, [tick]);
 
-  return { profile, postcards, stamps, memories, suggestions, loading, error, reload };
+  return { profile, postcards, stamps, memories, suggestions, loading, error, reload, lastLoadedAt };
 }
