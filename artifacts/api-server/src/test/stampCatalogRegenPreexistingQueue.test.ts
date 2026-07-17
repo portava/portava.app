@@ -342,6 +342,39 @@ describe("POST regenerate when a 'queued' job already exists", () => {
     );
   });
 
+  it("a mid-flight 'processing' row's lock fields are completely untouched by regenerate", async () => {
+    // Seed a processing row with worker lock fields set (locked_by /
+    // locked_until), simulating a job a worker is actively generating.
+    // The handler's archive UPDATE targets status='review_required' and the
+    // reset UPDATE targets failed statuses — neither may touch this row, and
+    // the 23505 guard must block the insert.
+    const LOCKED_BY    = "worker-77";
+    const LOCKED_UNTIL = "2026-07-17T12:34:56Z";
+    Object.assign(db.stamp_generation_queue[0], {
+      status:       "processing",
+      locked_by:    LOCKED_BY,
+      locked_until: LOCKED_UNTIL,
+      attempts:     1,
+    });
+
+    const res = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(res.status, 200, `regenerate failed: ${JSON.stringify(res.body)}`);
+
+    // No new row inserted
+    assert.equal(
+      db.stamp_generation_queue.length,
+      1,
+      `expected exactly 1 queue row after regenerate, found ${db.stamp_generation_queue.length}: ${JSON.stringify(db.stamp_generation_queue)}`,
+    );
+
+    const row = db.stamp_generation_queue[0];
+    assert.equal(row.id, EXISTING_JOB_ID, "the surviving row must be the original processing job");
+    assert.equal(row.status, "processing", `processing status must be untouched, got '${row.status}'`);
+    assert.equal(row.locked_by, LOCKED_BY, `locked_by must be untouched, got '${row.locked_by}'`);
+    assert.equal(row.locked_until, LOCKED_UNTIL, `locked_until must be untouched, got '${row.locked_until}'`);
+    assert.equal(row.attempts, 1, "attempts must not be reset on a processing row");
+  });
+
   it("the 23505 guard also applies when the pre-existing job is in 'processing' status", async () => {
     // Advance the pre-seeded job to processing (simulates the worker having
     // picked it up), then call regenerate.  The unique-constraint guard covers
