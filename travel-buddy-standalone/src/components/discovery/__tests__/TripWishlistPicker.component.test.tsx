@@ -24,10 +24,10 @@ jest.mock('../../../services/trips', () => ({
   listMyTrips: jest.fn(),
 }));
 
-// NOTE: intentionally an exhaustive object literal — NOT a requireActual spread.
-// The real module imports @react-native-async-storage/async-storage, whose
-// native module is null under jest, so requiring the actual module crashes.
+// AsyncStorage is mocked globally in jest.setup.ts, so requiring the actual
+// module is safe here.
 jest.mock('../../../services/discoveryBookmarks', () => ({
+  ...jest.requireActual('../../../services/discoveryBookmarks'),
   toggleSave:      jest.fn(),
   getSavedListIds: jest.fn(),
 }));

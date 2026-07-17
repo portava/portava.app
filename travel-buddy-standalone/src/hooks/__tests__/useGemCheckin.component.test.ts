@@ -23,20 +23,8 @@ import { useGemCheckin } from '../useHiddenGems.ts';
 // NOTE: intentionally exhaustive — requireActual would pull the module's
 // native/supabase dependency chain under jest.
 jest.mock('../../services/hiddenGems.ts', () => ({
-  verifyGemVisit:      jest.fn(),
-  listGems:            jest.fn(),
-  getGem:              jest.fn(),
-  submitGem:           jest.fn(),
-  getTripcityGems:     jest.fn(),
-  getLayoverGems:      jest.fn(),
-  getSavedGems:        jest.fn(),
-  saveGem:             jest.fn(),
-  unsaveGem:           jest.fn(),
-  reportGem:           jest.fn(),
-  shareGemToTelegraph: jest.fn(),
-  addGemToPlan:        jest.fn(),
-  verificationBadge:   () => '',
-  sensitivityLabel:    () => '',
+  ...jest.requireActual('../../services/hiddenGems.ts'),
+  verifyGemVisit: jest.fn(),
 }));
 
 import { verifyGemVisit } from '../../services/hiddenGems.ts';

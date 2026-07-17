@@ -43,6 +43,11 @@ beforeEach(() => {
   _realDateNow = Date.now;
   Date.now = () => (_fakeNow !== null ? _fakeNow : _realDateNow());
   _clearCountryGeocodeCache();
+  // _setGeocodeFetchForTests no longer resets the DB override (the setters
+  // are independent now) — explicitly disable the real DB client so tests
+  // never read/write the live city_country_geocode_cache table. Tests that
+  // need a fake DB install one via _setGeocodeDbClientForTests themselves.
+  _setGeocodeDbClientForTests(null);
 });
 
 afterEach(() => {
