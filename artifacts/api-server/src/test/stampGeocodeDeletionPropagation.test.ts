@@ -3310,6 +3310,67 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "writeDbCache not called again on the follow-up cache hit");
   });
 
+  // ── correctionCheckedAt bump on DB-error probe ────────────────────────────
+
+  it("bumps correctionCheckedAt even when the probe returns a DB error — preventing a retry storm on the next call", async () => {
+    // If correctionCheckedAt is NOT updated after a DB-error probe, every
+    // subsequent call within the correction-check interval would re-fire the
+    // probe because Date.now() - lastCheck is still >= CORRECTION_CHECK_INTERVAL_MS.
+    // This test verifies the bump happens even on error so only the call that
+    // crossed the interval fires the probe, and the window resets from there.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "de", country: "Germany" } }],
+    }));
+
+    // Phase 1: warm the in-memory cache via a DB load.
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({
+        country: "Germany",
+        country_code: "DE",
+        corrected_at: null,
+        deleted_at: null,
+      }),
+    );
+    const first = await geocodeCityCountry("Berlin");
+    assert.equal(first?.countryCode, "DE", "pre-condition: initial DB cache load returns DE");
+
+    // Phase 2: switch to an error-returning client and advance past the interval.
+    let probeCallCount = 0;
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient(null, {
+        isError: true,
+        onCall: () => { probeCallCount++; },
+      }),
+    );
+
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000);
+    const afterError = await geocodeCityCountry("Berlin");
+    assert.equal(afterError?.countryCode, "DE",
+      "cached value is kept when the probe hits a DB error");
+    assert.equal(probeCallCount, 1, "probe fired exactly once when the interval elapsed");
+
+    // Phase 3: advance by less than one more interval — correctionCheckedAt was
+    // bumped after the error, so the probe must NOT fire again yet.
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000 + CORRECTION_CHECK_INTERVAL_MS - 2_000);
+    const withinSecondInterval = await geocodeCityCountry("Berlin");
+    assert.equal(withinSecondInterval?.countryCode, "DE",
+      "cached value still served within the second interval window");
+    assert.equal(probeCallCount, 1,
+      "probe NOT called again within the second interval — correctionCheckedAt was bumped on error");
+
+    // Phase 4: advance past the second interval — the probe fires a second time.
+    mockNow(T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000 + CORRECTION_CHECK_INTERVAL_MS + 1_000);
+    const afterSecondInterval = await geocodeCityCountry("Berlin");
+    assert.equal(afterSecondInterval?.countryCode, "DE",
+      "cached value still served after the second probe (DB still erroring)");
+    assert.equal(probeCallCount, 2,
+      "probe fired a second time once the full interval elapsed again");
+  });
+
   // ── Negative-TTL re-seeding on repeat failure ─────────────────────────────
 
   it("a Nominatim failure at TTL expiry re-seeds another 6-hour window — not a retry storm on every call", async () => {
