@@ -1019,6 +1019,104 @@ describe("correction-sweep eviction: negative entry retries after sweep removes 
     assert.equal(second?.country, "Japan");
   });
 
+  it("sweep with corrected_at == writtenAt does not evict the freshly re-cached null entry (strict-less-than boundary)", async () => {
+    // Regression guard for an off-by-one in the sweep condition.
+    // The sweep evicts entries where entry.writtenAt < correctedMs (strictly less than).
+    // When writtenAt == correctedMs the entry must be kept — an off-by-one (≤) would
+    // silently drop a fresh null entry that was written at the exact same millisecond
+    // as the correction timestamp.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Step 1 — seed a null (negative) cache entry at T0.
+    // No DB (getServiceClient throws in tests) so readDbCache returns null and
+    // the code falls through to forwardGeocodeCity (returns empty → null).
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    const first = await geocodeCityCountry("SweepBoundaryCity");
+    assert.equal(first, null, "pre-condition: city should be cached as null at T0");
+
+    // Step 2 — advance to T1 (past NEGATIVE_TTL_MS) so the T0 entry is stale,
+    // then trigger a network-error retry so the catch block re-caches null with
+    // writtenAt = T1.
+    const T1 = T0 + NEGATIVE_TTL_MS + 1_000;
+    mockNow(T1);
+
+    _setGeocodeFetchForTests(async () => { throw new Error("network_timeout"); });
+    const retry = await geocodeCityCountry("SweepBoundaryCity");
+    assert.equal(retry, null, "network error during retry should return null");
+
+    // Confirm the re-cached entry has writtenAt ≈ T1.
+    const entryBeforeSweep = _getGeocodeCacheEntryForTests("sweepboundarycity");
+    assert.ok(entryBeforeSweep, "pre-condition: re-cached null entry must exist before sweep");
+    assert.ok(
+      Math.abs(entryBeforeSweep.writtenAt - T1) < 50,
+      `pre-condition: writtenAt (${entryBeforeSweep.writtenAt}) must be ≈ T1 (${T1})`,
+    );
+
+    // Step 3 — run the correction sweep with corrected_at == T1 (exactly equal).
+    // The condition is entry.writtenAt < correctedMs so equal should NOT evict.
+    const correctedAtIso = new Date(T1).toISOString();
+    const cityKey = "sweepboundarycity"; // normCity("SweepBoundaryCity")
+    const sweepDb = makeSweepDbClient([{ city_key: cityKey, corrected_at: correctedAtIso }]);
+    _setGeocodeDbClientForTests(sweepDb);
+
+    await _runCorrectionSweepForTests();
+
+    // The entry must still be present — writtenAt == correctedMs is not evicted.
+    const entryAfterSweep = _getGeocodeCacheEntryForTests(cityKey);
+    assert.ok(
+      entryAfterSweep !== undefined,
+      "sweep must NOT evict a null entry whose writtenAt equals corrected_at — boundary is strictly less than",
+    );
+    assert.equal(entryAfterSweep!.result, null,
+      "the surviving entry must still carry result: null");
+  });
+
+  it("sweep with corrected_at == writtenAt + 1 evicts the freshly re-cached null entry", async () => {
+    // Complementary to the boundary test above: one millisecond past the boundary
+    // (corrected_at = writtenAt + 1) must evict, confirming the comparison is < not ≤.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Step 1 — seed a null cache entry at T0.
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+    const first = await geocodeCityCountry("SweepBoundaryPlusOneCity");
+    assert.equal(first, null, "pre-condition: city should be cached as null at T0");
+
+    // Step 2 — advance to T1, trigger a network-error retry → writtenAt = T1.
+    const T1 = T0 + NEGATIVE_TTL_MS + 1_000;
+    mockNow(T1);
+
+    _setGeocodeFetchForTests(async () => { throw new Error("network_timeout"); });
+    const retry = await geocodeCityCountry("SweepBoundaryPlusOneCity");
+    assert.equal(retry, null, "network error during retry should return null");
+
+    // Confirm the re-cached entry has writtenAt ≈ T1.
+    const entryBeforeSweep = _getGeocodeCacheEntryForTests("sweepboundaryplusonecity");
+    assert.ok(entryBeforeSweep, "pre-condition: re-cached null entry must exist before sweep");
+    assert.ok(
+      Math.abs(entryBeforeSweep.writtenAt - T1) < 50,
+      `pre-condition: writtenAt (${entryBeforeSweep.writtenAt}) must be ≈ T1 (${T1})`,
+    );
+
+    // Step 3 — run the correction sweep with corrected_at = T1 + 1.
+    // writtenAt (≈ T1) < correctedMs (T1 + 1) is true → entry must be evicted.
+    const correctedAtIso = new Date(T1 + 1).toISOString();
+    const cityKey = "sweepboundaryplusonecity"; // normCity("SweepBoundaryPlusOneCity")
+    const sweepDb = makeSweepDbClient([{ city_key: cityKey, corrected_at: correctedAtIso }]);
+    _setGeocodeDbClientForTests(sweepDb);
+
+    await _runCorrectionSweepForTests();
+
+    // The entry must be absent — writtenAt < correctedMs is satisfied.
+    const entryAfterSweep = _getGeocodeCacheEntryForTests(cityKey);
+    assert.equal(
+      entryAfterSweep,
+      undefined,
+      "sweep MUST evict a null entry whose writtenAt is strictly less than corrected_at",
+    );
+  });
+
   it("two simultaneous calls after a sweep-evicted null entry share one Nominatim fetch — not two", async () => {
     const T0 = 1_700_000_000_000;
     mockNow(T0);
