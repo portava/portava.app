@@ -107,6 +107,13 @@ export async function sweepStaleArtwork(scOverride?: any): Promise<number> {
   // enqueued before the next page is fetched, so a crash mid-sweep still
   // leaves every completed page fully enqueued.
   const SWEEP_PAGE_SIZE = 500;
+  // Safety cap on pages per invocation. A pathological backend that ignores
+  // the range offset (returning the same full page forever) would otherwise
+  // spin the loop indefinitely — the cap guarantees termination
+  // unconditionally, without risking early aborts on legitimate
+  // duplicate-heavy pages (cross-page dedup already makes repeats no-ops).
+  // 2000 pages × 500 rows = 1M stale rows per sweep, far beyond realistic data.
+  const MAX_SWEEP_PAGES = 2_000;
   // Catalog IDs already handled in this invocation (across pages) — the same
   // catalog can have stale rows spanning a page boundary.
   const seenCatalogIds = new Set<string>();
@@ -144,8 +151,24 @@ export async function sweepStaleArtwork(scOverride?: any): Promise<number> {
       if (enqueued === null) return totalEnqueued; // query/insert error — stop paging
       totalEnqueued += enqueued;
     }
+    // Note: a full page yielding zero NEW catalog IDs is NOT treated as an
+    // abort signal — a catalog with heavy version churn can legitimately fill
+    // one or more whole pages with rows for already-seen catalogs before
+    // unseen catalogs appear on later pages. Termination against a
+    // misbehaving backend is guaranteed solely by the MAX_SWEEP_PAGES cap.
 
     if (!pageFull) break;
+
+    if (pageIndex + 1 >= MAX_SWEEP_PAGES) {
+      // Hard safety cap — remaining stale rows (if any) are picked up by the
+      // next scheduled sweep.
+      console.error(JSON.stringify({
+        event:     "stamp.sweep.page_cap_reached",
+        max_pages: MAX_SWEEP_PAGES,
+        note:      "sweep page cap reached; remaining stale rows deferred to the next sweep",
+      }));
+      return totalEnqueued;
+    }
 
     // Debug-level progress log: the page was full, so more stale rows may
     // exist beyond it — the loop continues with the next page immediately.

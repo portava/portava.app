@@ -3874,6 +3874,12 @@ interface SweepFakeClientConfig {
   activeJobsQueryError?: boolean;
   /** When true, the queue insert resolves with an error. */
   insertError?: boolean;
+  /**
+   * When true, the stale-version .range() query ignores the requested offset
+   * and always returns the first page — simulating a misbehaving client/DB
+   * that keeps serving the same full page forever.
+   */
+  ignoreRangeOffset?: boolean;
 }
 
 function makeSweepFakeClient(config: SweepFakeClientConfig) {
@@ -3901,6 +3907,10 @@ function makeSweepFakeClient(config: SweepFakeClientConfig) {
             // sweep's pagination loop sees successive pages.
             if (config.artworkQueryError) {
               return Promise.resolve({ data: null, error: { message: "artwork query error" } });
+            }
+            if (config.ignoreRangeOffset) {
+              // Always return the first page regardless of the offset.
+              return Promise.resolve({ data: config.staleVersionRows.slice(0, to - from + 1), error: null });
             }
             return Promise.resolve({ data: config.staleVersionRows.slice(from, to + 1), error: null });
           },
@@ -4048,6 +4058,56 @@ describe("sweepStaleArtwork — enqueues catalog entries with stale versions", (
     assert.equal(rows.length, 2, "must insert exactly 2 jobs (one per unique catalog entry)");
     const ids = rows.map((r: any) => r.catalog_id).sort();
     assert.deepEqual(ids, ["cat-dup", "cat-other"]);
+  });
+
+  it("terminates when a misbehaving client ignores the range offset and keeps returning the same full page", async () => {
+    // 500 distinct catalog IDs — exactly one full page (SWEEP_PAGE_SIZE=500).
+    // With ignoreRangeOffset the fake returns this same full page for every
+    // offset. Every page is full forever, so only the MAX_SWEEP_PAGES safety
+    // cap can stop the loop — without it the sweep would spin indefinitely.
+    const staleVersionRows = Array.from({ length: 500 }, (_, i) => ({
+      catalog_id: `cat-loop-${i}`,
+    }));
+
+    const { sc, inserts } = makeSweepFakeClient({
+      staleVersionRows,
+      activeJobRows: [],
+      ignoreRangeOffset: true,
+    });
+
+    const count = await sweepStaleArtwork(sc);
+
+    // The first page's 500 catalogs are enqueued once; every repeated page is
+    // fully deduplicated (no new IDs → no insert) until the page cap fires
+    // and the sweep returns instead of spinning forever.
+    assert.equal(count, 500, "must enqueue each catalog exactly once");
+    assert.equal(inserts.length, 1, "must issue exactly one batch insert — no duplicate pages");
+    assert.equal(inserts[0].rows.length, 500);
+    const uniqueIds = new Set(inserts[0].rows.map((r: any) => r.catalog_id));
+    assert.equal(uniqueIds.size, 500, "no catalog may be enqueued twice");
+  });
+
+  it("keeps paginating past full pages of already-seen catalogs — later catalogs are still enqueued", async () => {
+    // Legitimate duplicate-heavy history: cat-churn has 1,000 stale rows
+    // spanning pages 0 and 1 entirely (page 1 is full but yields zero NEW
+    // catalog IDs), then cat-late appears on partial page 2. The sweep must
+    // NOT abort on the zero-new-IDs page — cat-late must still be enqueued.
+    const staleVersionRows = [
+      ...Array.from({ length: 1000 }, () => ({ catalog_id: "cat-churn" })),
+      { catalog_id: "cat-late" },
+    ];
+
+    const { sc, inserts } = makeSweepFakeClient({
+      staleVersionRows,
+      activeJobRows: [],
+    });
+
+    const count = await sweepStaleArtwork(sc);
+
+    assert.equal(count, 2, "both catalogs must be enqueued despite the no-new-IDs middle page");
+    const allRows = inserts.flatMap((i) => i.rows);
+    const ids = allRows.map((r: any) => r.catalog_id).sort();
+    assert.deepEqual(ids, ["cat-churn", "cat-late"], "cat-late must not be dropped and cat-churn must not be duplicated");
   });
 });
 
