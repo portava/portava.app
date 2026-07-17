@@ -437,23 +437,53 @@ export async function persistCleanupError(
   newPaths: string[],
 ): Promise<void> {
   try {
-    const { data: existing, error: readErr } = await sc
+    const readOnce = () => sc
       .from("stamp_generation_queue")
       .select("cleanup_error_paths")
       .eq("id", jobId)
       .maybeSingle();
 
+    let { data: existing, error: readErr } = await readOnce();
+
+    if (readErr) {
+      // Transient read blips are common during a DB outage — retry once
+      // before falling back, so most read failures still take the normal
+      // read-merge-write path.
+      ({ data: existing, error: readErr } = await readOnce());
+    }
+
     if (readErr) {
       // If the read failed we cannot know what paths are already stored.
       // Writing with an empty fallback would replace the accumulated list
       // with only the new paths — silently losing earlier orphaned files.
-      // Skip the destructive write; a later retry will merge properly.
-      console.error(JSON.stringify({
-        event:  "stamp.generation.cleanup_error_persist_read_failed",
-        job_id: jobId,
-        error:  readErr.message,
-        skipped_paths: newPaths,
-      }));
+      // Instead, append the new paths atomically server-side via an
+      // append-only SQL function that needs no client-side merge base.
+      // This survives a worker restart between the failed read and the
+      // next cleanup attempt — the paths land in the DB, not just in logs.
+      const { error: rpcErr } = await sc.rpc("append_stamp_cleanup_error_paths", {
+        p_job_id: jobId,
+        p_error:  errorMsg,
+        p_paths:  newPaths,
+      });
+      if (rpcErr) {
+        // Last resort: the paths exist only in this structured log. Ops can
+        // recover them by searching for this event and the skipped_paths
+        // field (see migration 0146 header for the recovery story).
+        console.error(JSON.stringify({
+          event:  "stamp.generation.cleanup_error_persist_read_failed",
+          job_id: jobId,
+          error:  readErr.message,
+          rpc_error: rpcErr.message,
+          skipped_paths: newPaths,
+        }));
+      } else {
+        console.error(JSON.stringify({
+          event:  "stamp.generation.cleanup_error_persist_appended_after_read_failure",
+          job_id: jobId,
+          error:  readErr.message,
+          appended_paths: newPaths,
+        }));
+      }
       return;
     }
 

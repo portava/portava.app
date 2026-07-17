@@ -1816,15 +1816,37 @@ describe("persistCleanupError — repeated failures on the same job do not dupli
    * update() persists them — so a second persistCleanupError call reads back
    * what the first one wrote, exactly like a worker retry against the real DB.
    */
-  function makeStatefulQueueClient(opts: { failUpdateOnCall?: number; failReadOnCall?: number } = {}) {
+  function makeStatefulQueueClient(opts: {
+    failUpdateOnCall?: number;
+    failReadOnCall?: number;
+    failReadOnCalls?: number[];
+    failRpc?: boolean;
+  } = {}) {
     const row: { cleanup_error: string | null; cleanup_error_paths: string[] | null } = {
       cleanup_error: null,
       cleanup_error_paths: null,
     };
     const updatePayloads: any[] = [];
+    const rpcCalls: any[] = [];
     let updateCall = 0;
     let readCall = 0;
     const sc: any = {
+      rpc(fnName: string, args: any) {
+        rpcCalls.push({ fnName, args });
+        if (opts.failRpc) {
+          return Promise.resolve({ data: null, error: { message: "simulated rpc failure" } });
+        }
+        if (fnName === "append_stamp_cleanup_error_paths") {
+          // Mirror the SQL function: atomic server-side append + dedup,
+          // no client-side merge base needed.
+          row.cleanup_error = args.p_error;
+          row.cleanup_error_paths = [
+            ...new Set([...(row.cleanup_error_paths ?? []), ...(args.p_paths ?? [])]),
+          ];
+          return Promise.resolve({ data: null, error: null });
+        }
+        return Promise.resolve({ data: null, error: { message: `unknown rpc ${fnName}` } });
+      },
       from(_table: string) {
         return {
           select(_cols: string) {
@@ -1832,7 +1854,7 @@ describe("persistCleanupError — repeated failures on the same job do not dupli
               eq() { return b; },
               maybeSingle() {
                 readCall++;
-                if (opts.failReadOnCall === readCall) {
+                if (opts.failReadOnCall === readCall || opts.failReadOnCalls?.includes(readCall)) {
                   return Promise.resolve({
                     data: null,
                     error: { message: "simulated read failure" },
@@ -1869,7 +1891,7 @@ describe("persistCleanupError — repeated failures on the same job do not dupli
         };
       },
     };
-    return { sc, row, updatePayloads };
+    return { sc, row, updatePayloads, rpcCalls };
   }
 
   it("stores each path exactly once when called twice with the same paths array", async () => {
@@ -1934,28 +1956,92 @@ describe("persistCleanupError — repeated failures on the same job do not dupli
     );
   });
 
-  it("does not wipe previously stored paths when the read fails but the write would succeed", async () => {
-    // Call 1 stores a path normally. Call 2's read errors (data: null) — the
-    // merge base is unknown, so persistCleanupError must NOT write a list
-    // containing only the new paths, which would discard call 1's path.
-    const { sc, row, updatePayloads } = makeStatefulQueueClient({ failReadOnCall: 2 });
+  it("retries a transient read failure once and takes the normal merge path", async () => {
+    // Call 1 stores a path normally. Call 2's first read errors but the
+    // immediate retry succeeds — so the paths are merged and written normally,
+    // with no data loss and no append fallback needed.
+    const { sc, row, updatePayloads, rpcCalls } = makeStatefulQueueClient({ failReadOnCall: 2 });
 
     await persistCleanupError(sc, "job-1", "err-1", ["catalog/cat-1/a.png"]);
-    await persistCleanupError(sc, "job-1", "err-2", ["catalog/cat-1/b.png"]); // read fails
+    await persistCleanupError(sc, "job-1", "err-2", ["catalog/cat-1/b.png"]); // read fails once, retry succeeds
 
-    assert.equal(updatePayloads.length, 1, "the write must be skipped when the read errored");
-    assert.deepEqual(
-      row.cleanup_error_paths,
-      ["catalog/cat-1/a.png"],
-      `previously stored paths must survive a failed read, got: ${JSON.stringify(row.cleanup_error_paths)}`,
-    );
-
-    // A later call with a healthy read merges everything back together.
-    await persistCleanupError(sc, "job-1", "err-3", ["catalog/cat-1/c.png"]);
+    assert.equal(updatePayloads.length, 2, "the retried read must let the normal write proceed");
+    assert.equal(rpcCalls.length, 0, "no append fallback when the retry succeeds");
     assert.deepEqual(
       [...(row.cleanup_error_paths ?? [])].sort(),
-      ["catalog/cat-1/a.png", "catalog/cat-1/c.png"],
+      ["catalog/cat-1/a.png", "catalog/cat-1/b.png"],
+      `both paths must be stored after a retried read, got: ${JSON.stringify(row.cleanup_error_paths)}`,
     );
+  });
+
+  it("appends paths server-side when the read AND retry both fail — nothing is lost to logs", async () => {
+    // Call 1 stores a path normally. Call 2's read fails twice (read #2 and
+    // the retry #3) — the merge base is unknown, so persistCleanupError must
+    // NOT write a client-merged list. Instead it appends via the atomic SQL
+    // function so the paths land in the DB even during a read outage.
+    const { sc, row, updatePayloads, rpcCalls } = makeStatefulQueueClient({
+      failReadOnCalls: [2, 3],
+    });
+
+    await persistCleanupError(sc, "job-1", "err-1", ["catalog/cat-1/a.png"]);
+    await persistCleanupError(sc, "job-1", "err-2", ["catalog/cat-1/b.png"]); // read + retry fail
+
+    assert.equal(updatePayloads.length, 1, "the destructive client-merged write must be skipped");
+    assert.equal(rpcCalls.length, 1, "the append-only RPC must be used instead");
+    assert.equal(rpcCalls[0].fnName, "append_stamp_cleanup_error_paths");
+    assert.deepEqual(rpcCalls[0].args.p_paths, ["catalog/cat-1/b.png"]);
+    assert.deepEqual(
+      [...(row.cleanup_error_paths ?? [])].sort(),
+      ["catalog/cat-1/a.png", "catalog/cat-1/b.png"],
+      `paths from the read-outage call must be persisted, got: ${JSON.stringify(row.cleanup_error_paths)}`,
+    );
+  });
+
+  it("survives a worker restart between the failed read and the next cleanup attempt", async () => {
+    // Read outage: call 1's read fails twice → paths appended via RPC. The
+    // worker then restarts (persistCleanupError holds no in-process state, so
+    // a restart is just... the next call). The next cleanup attempt with a
+    // healthy read must see the appended paths in its merge base — proving
+    // they were durably stored, not buffered in memory or only logged.
+    const { sc, row, rpcCalls } = makeStatefulQueueClient({ failReadOnCalls: [1, 2] });
+
+    await persistCleanupError(sc, "job-1", "err-1", ["catalog/cat-1/a.png"]); // read + retry fail → RPC append
+    assert.equal(rpcCalls.length, 1);
+    assert.deepEqual(row.cleanup_error_paths, ["catalog/cat-1/a.png"], "paths must be in the DB before the restart");
+
+    // ── worker restart happens here: no module/in-memory state carries over ──
+
+    await persistCleanupError(sc, "job-1", "err-2", ["catalog/cat-1/b.png"]); // healthy read, normal merge
+    assert.deepEqual(
+      [...(row.cleanup_error_paths ?? [])].sort(),
+      ["catalog/cat-1/a.png", "catalog/cat-1/b.png"],
+      `paths appended during the outage must survive the restart and merge, got: ${JSON.stringify(row.cleanup_error_paths)}`,
+    );
+  });
+
+  it("falls back to the structured log with skipped_paths when read, retry, AND the append RPC all fail", async () => {
+    const { sc, row, updatePayloads, rpcCalls } = makeStatefulQueueClient({
+      failReadOnCalls: [1, 2],
+      failRpc: true,
+    });
+
+    const errors: string[] = [];
+    const origError = console.error;
+    console.error = (msg: any) => { errors.push(String(msg)); };
+    try {
+      await persistCleanupError(sc, "job-1", "err-1", ["catalog/cat-1/a.png"]);
+    } finally {
+      console.error = origError;
+    }
+
+    assert.equal(updatePayloads.length, 0, "no destructive write");
+    assert.equal(rpcCalls.length, 1, "the append RPC must still be attempted");
+    assert.equal(row.cleanup_error_paths, null, "nothing stored — DB fully down");
+    const logged = errors.map((e) => { try { return JSON.parse(e); } catch { return null; } })
+      .find((e) => e?.event === "stamp.generation.cleanup_error_persist_read_failed");
+    assert.ok(logged, "last-resort structured log must fire");
+    assert.deepEqual(logged.skipped_paths, ["catalog/cat-1/a.png"]);
+    assert.ok(logged.rpc_error, "log must include the rpc failure for ops triage");
   });
 });
 
