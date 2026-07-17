@@ -20,6 +20,8 @@ import { useGemCheckin } from '../useHiddenGems.ts';
 
 // ── hiddenGems service mock ───────────────────────────────────────────────────
 
+// NOTE: intentionally exhaustive — requireActual would pull the module's
+// native/supabase dependency chain under jest.
 jest.mock('../../services/hiddenGems.ts', () => ({
   verifyGemVisit:      jest.fn(),
   listGems:            jest.fn(),

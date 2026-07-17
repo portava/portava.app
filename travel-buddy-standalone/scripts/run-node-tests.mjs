@@ -26,6 +26,18 @@ if ((guard.status ?? 1) !== 0) {
   process.exit(guard.status ?? 1);
 }
 
+// Pre-flight: reject crash-prone jest.mock stand-ins in component tests
+// (bare object-literal factories without requireActual/NOTE, per-file lucide
+// mocks) before jest ever runs them.
+const mockGuard = spawnSync(
+  process.execPath,
+  ['scripts/check-test-mocks.mjs'],
+  { stdio: 'inherit' },
+);
+if ((mockGuard.status ?? 1) !== 0) {
+  process.exit(mockGuard.status ?? 1);
+}
+
 // Known-broken node:test files, excluded from the run. Fix and remove.
 const KNOWN_BROKEN = [];
 

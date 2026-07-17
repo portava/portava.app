@@ -39,6 +39,8 @@ import { getCurrentGps } from '../location.ts';
 
 // ── expo-location mock ────────────────────────────────────────────────────────
 
+// NOTE: intentionally exhaustive — requireActual pulls native-module internals
+// that are not safe under jest.
 jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn(),
   getCurrentPositionAsync:           jest.fn(),

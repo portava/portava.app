@@ -33,12 +33,16 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 
 // ── Safe-area mock ────────────────────────────────────────────────────────────
 
+// NOTE: intentionally exhaustive — requireActual pulls native-module internals
+// that are not safe under jest.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
 // ── expo-router mock ──────────────────────────────────────────────────────────
 
+// NOTE: intentionally exhaustive — requireActual pulls native-module internals
+// that are not safe under jest.
 jest.mock('expo-router', () => ({
   router:               { back: jest.fn() },
   useLocalSearchParams: jest.fn(),

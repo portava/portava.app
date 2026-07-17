@@ -31,6 +31,8 @@ jest.mock('../../services/discoveryBookmarks.ts', () => ({
   clearAllSaved: jest.fn(),
   removeSavedFromList: jest.fn(),
 }));
+// NOTE: intentionally exhaustive — requireActual would pull the module's
+// native/supabase dependency chain under jest.
 jest.mock('../useTripSavedPlaces.ts', () => ({
   useTripSavedPlaces: jest.fn(),
 }));
@@ -52,6 +54,8 @@ jest.mock('expo-router', () => {
 
 // The remaining mocks prevent native-module imports inside TripPage.tsx's
 // other exported functions from blowing up when jest loads the module.
+// NOTE: intentionally an exhaustive stub — requiring the actual component module
+// would execute its heavy/native dependency imports under jest.
 jest.mock('../../components/AttachController.tsx', () => ({
   useAttach: () => ({ open: jest.fn() }),
 }));
@@ -59,18 +63,28 @@ jest.mock('../../context/AttachmentStore.tsx', () => ({
   ...jest.requireActual('../../context/AttachmentStore.tsx'),
   useAttachments: () => ({ listAttachmentsByTarget: jest.fn().mockReturnValue([]) }),
 }));
+// NOTE: intentionally an exhaustive stub — requiring the actual component module
+// would execute its heavy/native dependency imports under jest.
 jest.mock('../../components/HighlightRing.tsx', () => ({
   HighlightRing: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
+// NOTE: intentionally an exhaustive stub — requiring the actual component module
+// would execute its heavy/native dependency imports under jest.
 jest.mock('../../components/HighlightViewer.tsx', () => ({
   HighlightViewer: () => null,
 }));
+// NOTE: intentionally exhaustive — requireActual would pull the module's
+// native/supabase dependency chain under jest.
 jest.mock('../useHighlightRingState.ts', () => ({
   useHighlightRingState: () => ({ allViewed: true }),
 }));
+// NOTE: intentionally an exhaustive stub — requiring the actual component module
+// would execute its heavy/native dependency imports under jest.
 jest.mock('../../components/PassportStampCard.tsx', () => ({
   PassportStampCard: () => null,
 }));
+// NOTE: intentionally an exhaustive stub — requiring the actual component module
+// would execute its heavy/native dependency imports under jest.
 jest.mock('../../components/primitives.tsx', () => ({
   TravelSectionHeader: ({ title }: { title: string }) => <>{title}</>,
   TravelEmptyState: () => null,

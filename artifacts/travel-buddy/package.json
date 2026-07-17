@@ -17,8 +17,9 @@
     "test": "node scripts/run-node-tests.mjs",
     "test:event-rab-cta": "node --import tsx/esm --test src/services/__tests__/event.rabCta.test.ts",
     "test:stamps": "node --import tsx --test src/test/stampGracefulDegradation.test.ts",
-    "test:component": "jest --forceExit",
-    "lint:imports": "node scripts/check-import-extensions.mjs"
+    "test:component": "node scripts/check-test-mocks.mjs && jest --forceExit",
+    "lint:imports": "node scripts/check-import-extensions.mjs",
+    "lint:mocks": "node scripts/check-test-mocks.mjs"
   },
   "dependencies": {
     "@maplibre/maplibre-react-native": "11.3.6",
