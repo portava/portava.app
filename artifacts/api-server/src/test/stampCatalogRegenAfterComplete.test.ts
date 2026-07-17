@@ -236,7 +236,7 @@ function makeQueueRow(status: string): Record<string, any> {
     status,
     attempts:            3,
     requeue_count:       1,
-    last_error:          status === "completed" ? null : "generation failed",
+    last_error:          status === "archived" ? null : "generation failed",
     triggered_by_action: "worker",
     priority:            0,
     created_at:          "2024-01-01T00:00:00Z",
@@ -270,7 +270,7 @@ function setupDb(existingStatus: string) {
 
 describe("POST regenerate after a completed job", () => {
 
-  beforeEach(() => setupDb("completed"));
+  beforeEach(() => setupDb("archived"));
 
   it("returns 200 with { ok: true }", async () => {
     const res = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
@@ -303,7 +303,7 @@ describe("POST regenerate after a completed job", () => {
     await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
 
     const completedRows = db.stamp_generation_queue.filter(
-      (r) => r.catalog_id === CATALOG_ID && r.status === "completed",
+      (r) => r.catalog_id === CATALOG_ID && r.status === "archived",
     );
     const queuedRows = db.stamp_generation_queue.filter(
       (r) => r.catalog_id === CATALOG_ID && r.status === "queued",
@@ -438,7 +438,7 @@ function makeDbBothRows(): DB {
       {
         id:                  "qqqqqqqq-0000-4000-8000-000000000010",
         catalog_id:          CATALOG_ID,
-        status:              "completed",
+        status:              "archived",
         attempts:            3,
         requeue_count:       1,
         last_error:          null,
@@ -504,7 +504,7 @@ describe("POST regenerate when both a completed and a permanently_failed row exi
     await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
 
     const completedRows = db.stamp_generation_queue.filter(
-      (r) => r.catalog_id === CATALOG_ID && r.status === "completed",
+      (r) => r.catalog_id === CATALOG_ID && r.status === "archived",
     );
     assert.equal(
       completedRows.length,
@@ -590,7 +590,7 @@ function makeDbCompletedAndRetryableFailed(): DB {
       {
         id:                  "qqqqqqqq-0000-4000-8000-000000000020",
         catalog_id:          CATALOG_ID,
-        status:              "completed",
+        status:              "archived",
         attempts:            2,
         requeue_count:       0,
         last_error:          null,
@@ -656,7 +656,7 @@ describe("POST regenerate when both a completed and a retryable_failed row exist
     await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
 
     const completedRows = db.stamp_generation_queue.filter(
-      (r) => r.catalog_id === CATALOG_ID && r.status === "completed",
+      (r) => r.catalog_id === CATALOG_ID && r.status === "archived",
     );
     assert.equal(
       completedRows.length,
@@ -734,7 +734,7 @@ describe("POST regenerate when both a completed and a retryable_failed row exist
 describe("POST regenerate duplicate click — queued row already present", () => {
 
   beforeEach(() => {
-    db = makeDb("completed");   // start with completed (so first call succeeds)
+    db = makeDb("archived");   // start with completed (so first call succeeds)
     const client = makeClient(db);
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
@@ -799,7 +799,7 @@ function makeDbThreeRows(): DB {
       {
         id:                  COMPLETED_ID_3,
         catalog_id:          CATALOG_ID,
-        status:              "completed",
+        status:              "archived",
         attempts:            3,
         requeue_count:       1,
         last_error:          null,
@@ -876,19 +876,17 @@ describe("POST regenerate when completed, retryable_failed, and permanently_fail
   it("the original completed row is untouched", async () => {
     await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
 
-    const completedRows = db.stamp_generation_queue.filter(
-      (r) => r.catalog_id === CATALOG_ID && r.status === "completed",
+    // The original archived row must still be present by its known ID.
+    // We look it up by ID rather than by status because the regen also
+    // archives the older failed rows, so there will be multiple 'archived' rows.
+    const originalRow = db.stamp_generation_queue.find(
+      (r) => r.id === COMPLETED_ID_3,
     );
-    assert.equal(
-      completedRows.length,
-      1,
-      `expected the completed row to remain, found ${completedRows.length}: ${JSON.stringify(db.stamp_generation_queue)}`,
+    assert.ok(
+      originalRow !== undefined,
+      `expected the original row (${COMPLETED_ID_3}) to still be present: ${JSON.stringify(db.stamp_generation_queue)}`,
     );
-    assert.equal(
-      completedRows[0].id,
-      COMPLETED_ID_3,
-      "completed row id must not change",
-    );
+    assert.equal(originalRow.status, "archived", "original row status must remain 'archived'");
   });
 
   it("writes exactly one audit log entry", async () => {
@@ -983,11 +981,13 @@ describe("second POST regenerate after the three-status case (failed rows alread
     await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
     await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
 
-    const completedRows = db.stamp_generation_queue.filter(
-      (r) => r.catalog_id === CATALOG_ID && r.status === "completed",
+    // Look up by ID: after two regens there will be multiple 'archived' rows
+    // (the original one + failed rows archived during the first regen).
+    const originalRow = db.stamp_generation_queue.find(
+      (r) => r.id === COMPLETED_ID_3,
     );
-    assert.equal(completedRows.length, 1, `expected the completed row to remain, found ${completedRows.length}`);
-    assert.equal(completedRows[0].id, COMPLETED_ID_3, "completed row id must not change");
+    assert.ok(originalRow !== undefined, `expected the original row (${COMPLETED_ID_3}) to still be present`);
+    assert.equal(originalRow.status, "archived", "original row status must remain 'archived'");
   });
 
   it("does NOT write a second audit log entry (duplicate-click guard)", async () => {

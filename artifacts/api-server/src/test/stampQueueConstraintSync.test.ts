@@ -23,6 +23,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   QUEUE_INDEX_EXCLUDED_STATUSES,
+  isActiveQueueStatus,
   insertWouldViolateQueuedUnique,
   wouldCreateDuplicateQueued,
 } from "./stampQueueConstraint.js";
@@ -58,6 +59,48 @@ describe("stampQueueConstraint schema-audit", () => {
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // isActiveQueueStatus — mirrors QUEUE_INDEX_EXCLUDED_STATUSES exactly
+  // ---------------------------------------------------------------------------
+
+  it("isActiveQueueStatus returns false for every excluded status", () => {
+    for (const status of QUEUE_INDEX_EXCLUDED_STATUSES) {
+      assert.equal(
+        isActiveQueueStatus(status),
+        false,
+        `isActiveQueueStatus('${status}') should be false — it is in QUEUE_INDEX_EXCLUDED_STATUSES`,
+      );
+    }
+  });
+
+  it("isActiveQueueStatus returns true for known active statuses", () => {
+    // These are not in the exclusion list, so the index sees them.
+    const knownActive = ["queued", "generating", "review_required"];
+    for (const status of knownActive) {
+      assert.equal(
+        isActiveQueueStatus(status),
+        true,
+        `isActiveQueueStatus('${status}') should be true — it is not excluded from the index`,
+      );
+    }
+  });
+
+  it("isActiveQueueStatus mirrors QUEUE_INDEX_EXCLUDED_STATUSES for all listed statuses", () => {
+    // Every entry in the exclusion list must make isActiveQueueStatus return false,
+    // so the set of active statuses is exactly the complement of the exclusion list.
+    for (const excluded of QUEUE_INDEX_EXCLUDED_STATUSES) {
+      assert.equal(
+        isActiveQueueStatus(excluded),
+        false,
+        `'${excluded}' is in QUEUE_INDEX_EXCLUDED_STATUSES but isActiveQueueStatus returned true`,
+      );
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // insertWouldViolateQueuedUnique — default ('queued') predicate
+  // ---------------------------------------------------------------------------
+
   it("the excluded statuses are all invisible to insertWouldViolateQueuedUnique by default", () => {
     // An existing row with a terminal status must never block a new 'queued' insert.
     for (const terminalStatus of QUEUE_INDEX_EXCLUDED_STATUSES) {
@@ -77,21 +120,17 @@ describe("stampQueueConstraint schema-audit", () => {
     assert.equal(insertWouldViolateQueuedUnique(existingRows, newRow), true);
   });
 
+  // ---------------------------------------------------------------------------
+  // wouldCreateDuplicateQueued — uses isActiveQueueStatus for conflict detection
+  // ---------------------------------------------------------------------------
+
   it("the excluded statuses are invisible to wouldCreateDuplicateQueued", () => {
-    // Updating a terminal row to 'queued' when no other 'queued' row exists
+    // Updating a terminal row to 'queued' when no other active row exists
     // for that catalog_id should not be flagged as a duplicate.
     for (const terminalStatus of QUEUE_INDEX_EXCLUDED_STATUSES) {
-      const rows = [
-        { id: "r1", catalog_id: "cat-1", status: terminalStatus },
-        { id: "r2", catalog_id: "cat-1", status: "generating" },
-      ];
-      const matched = [rows[0]!];
-      // Promoting only the terminal row to 'queued' — generating is still active,
-      // but the test is checking that the terminal row itself isn't double-counted.
-      const singleQueued = [{ id: "r3", catalog_id: "cat-2", status: terminalStatus }];
-      const matchedSingle = [singleQueued[0]!];
+      const singleRow = [{ id: "r1", catalog_id: "cat-1", status: terminalStatus }];
       assert.equal(
-        wouldCreateDuplicateQueued(singleQueued, matchedSingle, { status: "queued" }),
+        wouldCreateDuplicateQueued(singleRow, singleRow, { status: "queued" }),
         false,
         `updating a lone '${terminalStatus}' row to 'queued' should not be flagged as duplicate`,
       );
@@ -106,6 +145,52 @@ describe("stampQueueConstraint schema-audit", () => {
     assert.equal(
       wouldCreateDuplicateQueued(rows, rows, { status: "queued" }),
       true,
+    );
+  });
+
+  it("updating to a terminal status is never flagged by wouldCreateDuplicateQueued", () => {
+    // Archiving two rows for the same catalog is fine — terminal rows are invisible
+    // to the index, so no constraint fires.
+    for (const terminalStatus of QUEUE_INDEX_EXCLUDED_STATUSES) {
+      const rows = [
+        { id: "r1", catalog_id: "cat-1", status: "queued" },
+        { id: "r2", catalog_id: "cat-1", status: "queued" },
+      ];
+      assert.equal(
+        wouldCreateDuplicateQueued(rows, rows, { status: terminalStatus }),
+        false,
+        `updating to terminal status '${terminalStatus}' should never trigger the constraint`,
+      );
+    }
+  });
+
+  it("wouldCreateDuplicateQueued catches a mixed-status conflict on UPDATE", () => {
+    // The real index fires on any two active rows for the same catalog_id,
+    // regardless of whether their statuses are equal.
+    // Scenario: one 'generating' row already exists; updating a terminal row
+    // to 'queued' for the same catalog_id produces two active rows → conflict.
+    const rows = [
+      { id: "r1", catalog_id: "cat-1", status: "generating" },
+      { id: "r2", catalog_id: "cat-1", status: "retryable_failed" },
+    ];
+    const matched = [rows[1]!]; // only the terminal row is being updated
+    assert.equal(
+      wouldCreateDuplicateQueued(rows, matched, { status: "queued" }),
+      true,
+      "updating a terminal row to 'queued' when a 'generating' row already exists should be flagged",
+    );
+  });
+
+  it("wouldCreateDuplicateQueued does not flag an UPDATE when the only other active row is for a different catalog_id", () => {
+    const rows = [
+      { id: "r1", catalog_id: "cat-2", status: "generating" },   // different catalog
+      { id: "r2", catalog_id: "cat-1", status: "retryable_failed" },
+    ];
+    const matched = [rows[1]!];
+    assert.equal(
+      wouldCreateDuplicateQueued(rows, matched, { status: "queued" }),
+      false,
+      "active row for a different catalog_id should not block the update",
     );
   });
 });
