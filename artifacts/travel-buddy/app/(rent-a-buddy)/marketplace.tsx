@@ -12,7 +12,7 @@ import { BuddyCard } from '../../src/components/BuddyCard';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import type { Place } from '../../src/lib/location/placeTypes';
 import {
-  searchBuddies, type BuddyProfile, type BuddyCategory, type BuddySortBy,
+  searchBuddies, type BuddyProfile, type BuddyCategory, type BuddySortBy, type CoordPair,
 } from '../../src/services/rentABuddy';
 
 type SessionMode = 'any' | 'in_person' | 'remote';
@@ -98,8 +98,9 @@ export default function Marketplace() {
     }
     const res = await searchBuddies({
       city: city.trim(),
-      ...(cityLat != null ? { lat: cityLat } : {}),
-      ...(cityLng != null ? { lng: cityLng } : {}),
+      ...((cityLat != null && cityLng != null
+        ? { lat: cityLat, lng: cityLng }
+        : {}) as CoordPair),
       ...(category !== 'all' ? { category: category as BuddyCategory } : {}),
       sortBy,
       verifiedOnly: verifiedOnly || undefined,
