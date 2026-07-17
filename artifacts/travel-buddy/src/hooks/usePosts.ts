@@ -227,6 +227,8 @@ export function useTripPosts(tripId: string | undefined) {
   const [isMember, setIsMember] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Timestamp of the last successful load — drives the focus TTL.
+  const lastLoadedAt = useRef(0);
 
   const reload = useCallback(async () => {
     if (!tripId) {
@@ -239,17 +241,24 @@ export function useTripPosts(tripId: string | undefined) {
     if (res.ok) {
       setData(res.data ?? []);
       setIsMember(Boolean(res.isMember));
+      lastLoadedAt.current = Date.now();
     } else {
       setError(res.message ?? res.errorKind ?? 'Failed to load trip posts');
     }
     setLoading(false);
   }, [tripId]);
 
+  /** Focus-driven refresh: only reload when the data is older than the TTL. */
+  const refreshIfStale = useCallback(async (ttlMs: number = FEED_FOCUS_TTL_MS) => {
+    if (Date.now() - lastLoadedAt.current < ttlMs) return;
+    await reload();
+  }, [reload]);
+
   useEffect(() => {
     reload();
   }, [reload]);
 
-  return { data, isMember, loading, error, reload };
+  return { data, isMember, loading, error, reload, refreshIfStale };
 }
 
 /**

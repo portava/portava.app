@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
@@ -7,6 +7,7 @@ import { Share2, Clock } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { uploadAvatar, uploadCover } from '../../src/services/profile';
 import { getPendingPosts } from '../../src/services/posts';
+import { FEED_FOCUS_TTL_MS } from '../../src/hooks/usePosts';
 import { usePassport } from '../../src/hooks/usePassport';
 import { usePostcardActions } from '../../src/hooks/usePostcardActions';
 import { NotificationBell } from '../../src/components/NotificationBell';
@@ -365,6 +366,12 @@ function PassportContent({
     showHomeCity: !!(profile.homeCity),
   });
 
+  // Track the last time we triggered a passport reload for the focus TTL.
+  // Initialised to Date.now() because PassportContent only mounts after the
+  // initial load has already completed, so the first focus event should be a
+  // no-op unless the data has aged past the TTL.
+  const lastPassportLoadedAt = useRef(Date.now());
+
   const handleChangeCover = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
@@ -389,7 +396,14 @@ function PassportContent({
   }, [reload]);
 
   useFocusEffect(useCallback(() => {
-    reload();
+    // Only re-fetch passport data when it's older than the feed TTL — avoids
+    // scroll-position resets caused by unconditional reloads on every tab re-entry.
+    if (Date.now() - lastPassportLoadedAt.current >= FEED_FOCUS_TTL_MS) {
+      reload();
+      lastPassportLoadedAt.current = Date.now();
+    }
+    // These two fetches are lightweight and don't affect scroll position, so
+    // they stay unconditional.
     getPendingPosts().then((r) => {
       if (r.ok && r.data) setPendingCount(r.data.length);
     }).catch(() => {});

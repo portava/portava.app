@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 import { router, useFocusEffect } from 'expo-router';
+import { FEED_FOCUS_TTL_MS } from '../../src/hooks/usePosts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Plus, CalendarX, MapPin, Navigation, ChevronRight,
@@ -121,6 +122,14 @@ export default function EventsTabScreen() {
   // Per-event in-flight lock — Set so different events can be saved concurrently
   const savingLockRef = useRef(new Set<string>());
 
+  // ── Focus TTL — prevents scroll-position resets on tab re-entry ────────────
+  // Timestamp of the last successful load.
+  const lastLoadedAt = useRef(0);
+  // Filter key of the last successful load — if filters changed, bypass TTL.
+  const lastFiltersKey = useRef('');
+  // Always-current filter key, kept in sync on every render via ref assignment.
+  const currentFiltersKeyRef = useRef('');
+
   const activeFilters =
     (category !== 'All' ? 1 : 0) +
     (freeOnly ? 1 : 0) +
@@ -128,6 +137,10 @@ export default function EventsTabScreen() {
     (capacityAvailable ? 1 : 0) +
     (datePreset !== 'all' ? 1 : 0) +
     (cityFilter ? 1 : 0);
+
+  // Keep the always-current filter key in sync on every render so the focus
+  // callback can read it via ref without needing all filter values in its closure.
+  currentFiltersKeyRef.current = [configured, isAuthed, category, datePreset, cityFilter, freeOnly, verifiedHostOnly, capacityAvailable].join('|');
 
   const load = useCallback(async (isRefresh = false) => {
     if (!configured || !isAuthed) { setLoading(false); return; }
@@ -193,11 +206,23 @@ export default function EventsTabScreen() {
     }
 
     if (!mainRes.ok && !weekendRes.ok) setError('Failed to load events');
+    // Stamp successful load time and the filter key so focus TTL works correctly.
+    lastLoadedAt.current = Date.now();
+    lastFiltersKey.current = currentFiltersKeyRef.current;
     setLoading(false);
     setRefreshing(false);
   }, [configured, isAuthed, category, datePreset, cityFilter, freeOnly, verifiedHostOnly, capacityAvailable]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  // Focus-driven refresh: skip when data is still fresh AND filters haven't
+  // changed since the last load. Filter changes always bypass the TTL so the
+  // list updates immediately when the user tweaks a chip. Pull-to-refresh
+  // calls load(true) directly and is never gated by the TTL.
+  useFocusEffect(useCallback(() => {
+    const filtersChanged = currentFiltersKeyRef.current !== lastFiltersKey.current;
+    if (filtersChanged || Date.now() - lastLoadedAt.current >= FEED_FOCUS_TTL_MS) {
+      load();
+    }
+  }, [load]));
 
   // ── Near-me load ───────────────────────────────────────────────────────────
   async function handleNearMeRequest() {
