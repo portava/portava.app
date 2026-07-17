@@ -1898,6 +1898,108 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     assert.equal(third?.countryCode, "PT", "third call still resolves PT");
   });
 
+  it("re-fired probe that finds the row live and uncorrected keeps the cached result — no needless re-geocode", async () => {
+    // Happy-path complement of the "re-armed fresh entry probes again after a
+    // full interval" test above.  There, the second probe finds the row deleted
+    // again and evicts.  Here, the second probe finds the DB row LIVE and
+    // uncorrected (deleted_at null, corrected_at null) — the probe must fire
+    // (maybeSingle called) but KEEP the cached in-memory entry: no eviction,
+    // no second Nominatim call.
+    //
+    // A regression that evicted on every probe (e.g. an inverted corrected_at
+    // comparison, or treating a live row like a tombstone) would pass the
+    // existing tests but fail this one.
+    //
+    // Timeline:
+    //   T0             — cache seeded from DB (live row)
+    //   T1 = T0+I+1s   — probe fires, finds deleted_at set, evicts; Nominatim
+    //                    re-resolves a fresh entry (nominatimCalls = 1)
+    //     (DB switched back to a live, uncorrected row here)
+    //   T2 = T1+I+1s   — full interval elapsed: probe fires again, finds the
+    //                    row live → cached result kept, Nominatim NOT called
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "es", country: "Spain" } }],
+      };
+    });
+
+    // Mutable-row client: maybeSingle returns whatever `currentRow` holds.
+    let currentRow: Record<string, unknown> | null = {
+      country: "Spain",
+      country_code: "ES",
+      corrected_at: null,
+      deleted_at: null,
+    };
+    let maybeSingleCallCount = 0;
+    _setGeocodeDbClientForTests({
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() {
+            maybeSingleCallCount++;
+            return { data: currentRow, error: null };
+          },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            resolve({ data: [], error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient);
+
+    // ── Phase 1: seed from DB (live row) ──────────────────────────────────────
+    const first = await geocodeCityCountry("Madrid");
+    assert.equal(first?.countryCode, "ES", "pre-condition: DB cache seed returns ES");
+    assert.equal(nominatimCalls, 0, "no Nominatim call on DB cache seed");
+
+    // ── Phase 2: tombstone → evict-and-re-resolve cycle ───────────────────────
+    currentRow = null; // row deleted on another instance
+    const T1 = T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000;
+    mockNow(T1);
+
+    const reResolved = await geocodeCityCountry("Madrid");
+    assert.equal(reResolved?.countryCode, "ES",
+      "fresh Nominatim resolve after eviction returns ES");
+    assert.equal(nominatimCalls, 1, "Nominatim called once during the re-resolve");
+
+    // ── Phase 3: switch the DB back to a live, uncorrected row ────────────────
+    // (e.g. the writeDbCache upsert from the re-resolve landed, or an admin
+    // PUT revived the row).  corrected_at stays null — nothing to propagate.
+    currentRow = {
+      country: "Spain",
+      country_code: "ES",
+      corrected_at: null,
+      deleted_at: null,
+    };
+
+    // Advance a FULL interval past the re-resolve time so the probe re-fires.
+    const callsBeforeThird = maybeSingleCallCount;
+    const T2 = T1 + CORRECTION_CHECK_INTERVAL_MS + 1_000;
+    mockNow(T2);
+
+    const third = await geocodeCityCountry("Madrid");
+
+    assert.ok(
+      maybeSingleCallCount > callsBeforeThird,
+      "probe fired on the third call — maybeSingle was called after the interval elapsed",
+    );
+    assert.equal(nominatimCalls, 1,
+      "Nominatim NOT called again — the live, uncorrected row keeps the cached entry");
+    assert.equal(third?.countryCode, "ES",
+      "cached result is returned unchanged after the keep-probe");
+  });
+
   it("Pass 1 throw does not block Pass 2 — tombstoned entry is evicted and cleanup delete fires", async () => {
     // Regression guard: each pass of runCorrectionSweep is wrapped in its own
     // try/catch.  If Pass 1 (corrected_at query) throws — not just returns an
