@@ -74,4 +74,47 @@ describe('Gems admin merge modal', () => {
       expect(JSON.parse((call![1] as any).body)).toEqual({ canonicalGemId: 'gem-canonical' });
     });
   });
+
+  it('double-tapping the modal confirm merges exactly once', async () => {
+    await act(async () => { render(<AdminModerationScreen />); });
+
+    await act(async () => { fireEvent.press(screen.getByText('Duplicates')); });
+    await waitFor(() => expect(screen.getByText('Merge…')).toBeTruthy());
+
+    await act(async () => { fireEvent.press(screen.getByText('Merge…')); });
+    await act(async () => { fireEvent.changeText(screen.getByTestId('reason-input'), 'gem-canonical'); });
+
+    // Fast double-tap before the modal closes.
+    await act(async () => {
+      const btn = screen.getByTestId('reason-confirm-btn');
+      fireEvent.press(btn);
+      fireEvent.press(btn);
+    });
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter(([u]) => String(u).includes('/merge')).length).toBe(1));
+  });
+
+  it('a second merge after the first completes is allowed — the guard is in-flight only, not a one-shot lock', async () => {
+    await act(async () => { render(<AdminModerationScreen />); });
+
+    await act(async () => { fireEvent.press(screen.getByText('Duplicates')); });
+    await waitFor(() => expect(screen.getByText('Merge…')).toBeTruthy());
+
+    // First merge completes.
+    await act(async () => { fireEvent.press(screen.getByText('Merge…')); });
+    await act(async () => { fireEvent.changeText(screen.getByTestId('reason-input'), 'gem-canonical'); });
+    await act(async () => { fireEvent.press(screen.getByTestId('reason-confirm-btn')); });
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter(([u]) => String(u).includes('/merge')).length).toBe(1));
+
+    // Second merge in the same session must still work.
+    await waitFor(() => expect(screen.getByText('Merge…')).toBeTruthy());
+    await act(async () => { fireEvent.press(screen.getByText('Merge…')); });
+    await act(async () => { fireEvent.changeText(screen.getByTestId('reason-input'), 'gem-canonical-2'); });
+    await act(async () => { fireEvent.press(screen.getByTestId('reason-confirm-btn')); });
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter(([u]) => String(u).includes('/merge')).length).toBe(2));
+  });
 });

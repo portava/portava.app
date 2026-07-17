@@ -98,4 +98,29 @@ describe('Gem detail share modal', () => {
     await waitFor(() => expect(mockShare).toHaveBeenCalledWith('gem-1', 'thread-42'));
     expect(screen.queryByTestId('reason-modal')).toBeNull();
   });
+
+  it('double-tapping the modal confirm shares exactly once', async () => {
+    mockShare.mockClear();
+    (useGemDetail as jest.Mock).mockReturnValue({
+      gem, savedByMe: false, guideProfile: null,
+      loading: false, error: null, refresh: jest.fn(), toggleSave: jest.fn(),
+    });
+    mockShare.mockResolvedValue({});
+
+    await act(async () => { render(<GemDetailScreen />); });
+    await waitFor(() => expect(screen.getByText('Share')).toBeTruthy());
+
+    await act(async () => { fireEvent.press(screen.getByText('Share')); });
+    await act(async () => { fireEvent.changeText(screen.getByTestId('reason-input'), 'thread-42'); });
+
+    // Fast double-tap before the modal closes.
+    await act(async () => {
+      const btn = screen.getByTestId('reason-confirm-btn');
+      fireEvent.press(btn);
+      fireEvent.press(btn);
+    });
+
+    await waitFor(() => expect(mockShare).toHaveBeenCalledTimes(1));
+    expect(mockShare).toHaveBeenCalledWith('gem-1', 'thread-42');
+  });
 });

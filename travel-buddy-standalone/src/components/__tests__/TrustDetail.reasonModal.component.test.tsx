@@ -78,4 +78,26 @@ describe('TrustDetail reason modal', () => {
     // Modal closed after submit
     expect(screen.queryByTestId('reason-modal')).toBeNull();
   });
+
+  it('double-tapping the modal confirm submits the event confirmation exactly once', async () => {
+    mockConfirm.mockClear();
+    mockFetch.mockResolvedValue(detail);
+    mockConfirm.mockResolvedValue({});
+
+    await act(async () => { render(<TrustDetailScreen />); });
+    await waitFor(() => expect(screen.getByText('Confirm')).toBeTruthy());
+
+    await act(async () => { fireEvent.press(screen.getByText('Confirm')); });
+    await act(async () => { fireEvent.changeText(screen.getByTestId('reason-input'), 'verified'); });
+
+    // Fast double-tap before the modal closes.
+    await act(async () => {
+      const btn = screen.getByTestId('reason-confirm-btn');
+      fireEvent.press(btn);
+      fireEvent.press(btn);
+    });
+
+    await waitFor(() => expect(mockConfirm).toHaveBeenCalledTimes(1));
+    expect(mockConfirm).toHaveBeenCalledWith('ev-1', 'verified');
+  });
 });
