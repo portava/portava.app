@@ -77,6 +77,9 @@ function versionContains(field: string | undefined, ver: string): boolean {
 // ── 1. Package version pins ───────────────────────────────────────────────────
 
 describe('SDK 54 downgrade — package version pins', () => {
+  // This file lives in the monorepo tree, so ../../package.json (2 levels up
+  // from src/services) is artifacts/travel-buddy/package.json — the monorepo
+  // copy whose pins are asserted below.
   const pkg = readPkg('../../package.json');
   const deps: Record<string, string> = {
     ...pkg.dependencies,
@@ -119,6 +122,8 @@ describe('SDK 54 downgrade — package version pins', () => {
   });
 
   it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
+    // travel-buddy-standalone/package.json is 4 levels up from src/services
+    // (artifacts/travel-buddy/src/services → workspace root → travel-buddy-standalone).
     const standalone = readPkg('../../../../travel-buddy-standalone/package.json');
     const saDeps: Record<string, string> = {
       ...standalone.dependencies,
