@@ -665,6 +665,74 @@ describe('StampQueueScreen — orphaned-files badge', () => {
   });
 });
 
+// ── Error-banner clear on filter change suite ──────────────────────────────────
+
+/**
+ * Verifies that the error banner (`testID="catalog-queue-error"`) is removed
+ * from the screen once a fresh load triggered by a filter interaction succeeds.
+ *
+ * ## Why these tests exist
+ *
+ * `setError(null)` sits inside the `if (res.ok)` branch of `load()`. A future
+ * refactor that moves or duplicates the load call (e.g. adding a separate
+ * chip-change handler that bypasses the shared `load` callback) could
+ * accidentally skip that branch — leaving the banner stuck on screen even
+ * after data loads fine. These tests pin the clear contract for both the
+ * status-chip path and the search-field path so that regression is caught
+ * immediately rather than discovered by an admin who sees a stale red banner
+ * alongside a fully populated list.
+ */
+
+describe('StampQueueScreen — error banner clears on filter change', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('clears the error banner when a status chip change triggers a successful load', async () => {
+    // First call (initial mount) fails — error banner appears.
+    // Second call (triggered by chip press) succeeds — banner must disappear.
+    mockGetCatalog
+      .mockResolvedValueOnce({ ok: false })
+      .mockResolvedValue(catalogOk([ENTRY_B]));
+
+    render(<StampQueueScreen />);
+    await waitFor(() => screen.getByTestId('catalog-queue-error'));
+    expect(screen.getByTestId('catalog-queue-error')).toBeTruthy();
+
+    // Press the "approved" status chip — changes `status` state, which updates
+    // the `load` useCallback dep and triggers the useEffect → load().
+    const approvedChip = screen.getByText('approved');
+    await act(async () => { fireEvent.press(approvedChip); });
+
+    // The successful reload must clear the banner and show the new entry.
+    await waitFor(() => screen.getByText('Tokyo Tower'));
+    expect(screen.queryByTestId('catalog-queue-error')).toBeNull();
+    expect(screen.getByText('Tokyo Tower')).toBeTruthy();
+  });
+
+  it('clears the error banner when typing in the search field triggers a successful load', async () => {
+    // First call (initial mount) fails — error banner appears.
+    // Second call (triggered by debounced search) succeeds — banner must disappear.
+    mockGetCatalog
+      .mockResolvedValueOnce({ ok: false })
+      .mockResolvedValue(catalogOk([ENTRY_B]));
+
+    render(<StampQueueScreen />);
+    await waitFor(() => screen.getByTestId('catalog-queue-error'));
+    expect(screen.getByTestId('catalog-queue-error')).toBeTruthy();
+
+    // Type into the search field — after the 350 ms debounce the new
+    // `debouncedSearch` value updates the `load` dep and triggers load().
+    const input = screen.getByPlaceholderText('Search by name…');
+    await act(async () => { fireEvent.changeText(input, 'Tokyo'); });
+
+    // The successful reload must clear the banner and show the matching entry.
+    await waitFor(() => screen.getByText('Tokyo Tower'));
+    expect(screen.queryByTestId('catalog-queue-error')).toBeNull();
+    expect(screen.getByText('Tokyo Tower')).toBeTruthy();
+  });
+});
+
 // ── Search debounce suite ──────────────────────────────────────────────────────
 
 describe('StampQueueScreen — search debounce', () => {
