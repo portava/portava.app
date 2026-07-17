@@ -105,11 +105,14 @@ export default function GamingFlagsScreen() {
   // Android/web), backed by a modal with a TextInput.
   const [reviewTarget, setReviewTarget] = useState<TrustReview | null>(null);
 
-  const onDismiss = (item: TrustReview) => setReviewTarget(item);
+  const onDismiss = (item: TrustReview) => {
+    if (dismissingId) return; // in-flight guard: don't reopen the prompt mid-request
+    setReviewTarget(item);
+  };
 
   const submitReview = async (notes: string) => {
     const item = reviewTarget;
-    if (!item) return;
+    if (!item || dismissingId) return;
     setReviewTarget(null);
     setDismissingId(item.id);
     try {

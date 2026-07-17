@@ -255,13 +255,13 @@ export default function GemDetailScreen() {
   const [showShare, setShowShare] = useState(false);
 
   const handleShare = useCallback(() => {
-    if (!gem) return;
+    if (!gem || sharing) return; // in-flight guard: don't reopen the prompt mid-request
     setShowShare(true);
-  }, [gem]);
+  }, [gem, sharing]);
 
   const submitShare = useCallback(async (threadId: string) => {
     setShowShare(false);
-    if (!gem || !threadId) return;
+    if (!gem || !threadId || sharing) return;
     setSharing(true);
     try {
       await shareGemToTelegraph(gem.id, threadId);

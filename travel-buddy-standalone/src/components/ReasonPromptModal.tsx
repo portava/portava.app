@@ -5,7 +5,7 @@
  * that needs a free-text reason must use this modal instead. Pattern mirrors
  * the reject-reason modal in app/admin/stamps/[catalogId].tsx.
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 export function ReasonPromptModal({
@@ -31,10 +31,16 @@ export function ReasonPromptModal({
   onSubmit: (value: string) => void;
 }) {
   const [value, setValue] = useState('');
+  // Guards against a fast double-tap on the confirm button firing onSubmit
+  // twice before the parent closes the modal.
+  const submittedRef = useRef(false);
 
-  // Reset the input each time the modal opens.
+  // Reset the input (and the submit-once guard) each time the modal opens.
   useEffect(() => {
-    if (visible) setValue('');
+    if (visible) {
+      setValue('');
+      submittedRef.current = false;
+    }
   }, [visible]);
 
   const trimmed = value.trim();
@@ -62,7 +68,11 @@ export function ReasonPromptModal({
             </Pressable>
             <Pressable
               style={[styles.btn, destructive ? styles.btnDestructive : styles.btnConfirm, disabled && styles.btnDisabled]}
-              onPress={() => { if (!disabled) onSubmit(trimmed); }}
+              onPress={() => {
+                if (disabled || submittedRef.current) return;
+                submittedRef.current = true;
+                onSubmit(trimmed);
+              }}
               disabled={disabled}
               testID="reason-confirm-btn"
             >

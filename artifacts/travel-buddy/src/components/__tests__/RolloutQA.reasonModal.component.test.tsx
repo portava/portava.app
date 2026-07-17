@@ -73,4 +73,24 @@ describe('Rollout QA reason modal', () => {
       expect(JSON.parse((call![1] as any).body)).toEqual({ reason: 'payment flow broken' });
     });
   });
+
+  it('double-tapping the modal confirm posts mark-failed exactly once', async () => {
+    await act(async () => { render(<AdminRolloutDashboard />); });
+
+    await act(async () => { fireEvent.press(screen.getByText('QA')); });
+    await waitFor(() => expect(screen.getByText('Mark Failed')).toBeTruthy());
+
+    await act(async () => { fireEvent.press(screen.getByText('Mark Failed')); });
+    await act(async () => { fireEvent.changeText(screen.getByTestId('reason-input'), 'safety flow broken'); });
+
+    // Fast double-tap before the modal closes.
+    await act(async () => {
+      const btn = screen.getByTestId('reason-confirm-btn');
+      fireEvent.press(btn);
+      fireEvent.press(btn);
+    });
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter(([u]) => String(u).includes('mark-failed')).length).toBe(1));
+  });
 });

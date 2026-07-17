@@ -74,4 +74,26 @@ describe('GamingFlags reason modal', () => {
 
     await waitFor(() => expect(mockReview).toHaveBeenCalledWith('flag-1', undefined));
   });
+
+  it('double-tapping the modal confirm marks the flag reviewed exactly once', async () => {
+    mockReview.mockClear();
+    mockFlags.mockResolvedValue({ flags: [flag], total: 1 });
+    mockReview.mockResolvedValue({});
+
+    await act(async () => { render(<GamingFlagsScreen />); });
+    await waitFor(() => expect(screen.getByText('Mark Reviewed')).toBeTruthy());
+
+    await act(async () => { fireEvent.press(screen.getByText('Mark Reviewed')); });
+    await act(async () => { fireEvent.changeText(screen.getByTestId('reason-input'), 'note'); });
+
+    // Fast double-tap before the modal closes.
+    await act(async () => {
+      const btn = screen.getByTestId('reason-confirm-btn');
+      fireEvent.press(btn);
+      fireEvent.press(btn);
+    });
+
+    await waitFor(() => expect(mockReview).toHaveBeenCalledTimes(1));
+    expect(mockReview).toHaveBeenCalledWith('flag-1', 'note');
+  });
 });

@@ -4,7 +4,7 @@
  * Screens: city rollout board, QA checklist, beta access manager,
  * global pause controls, metrics, and audit log.
  */
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet,
   Switch, Alert, ActivityIndicator, RefreshControl, TextInput,
@@ -535,14 +535,24 @@ function QAPanel() {
     load();
   };
 
-  const markFailed = (id: string) => setFailTarget(id);
+  const failInFlight = useRef(false);
+
+  const markFailed = (id: string) => {
+    if (failInFlight.current) return; // in-flight guard: don't reopen the prompt mid-request
+    setFailTarget(id);
+  };
 
   const submitFailure = async (reason: string) => {
     const id = failTarget;
     setFailTarget(null);
-    if (!id || !reason) return;
-    await apiFetch(`/api/admin/rent-buddy/qa/checklists/${id}/mark-failed`, { method: 'POST', body: JSON.stringify({ reason }) });
-    load();
+    if (!id || !reason || failInFlight.current) return;
+    failInFlight.current = true;
+    try {
+      await apiFetch(`/api/admin/rent-buddy/qa/checklists/${id}/mark-failed`, { method: 'POST', body: JSON.stringify({ reason }) });
+      load();
+    } finally {
+      failInFlight.current = false;
+    }
   };
 
   if (loading) return <ActivityIndicator color={color.signal} style={{ marginTop: space.xl }} />;

@@ -5,7 +5,7 @@
  * All API calls use the same apiFetch helper (bearer token from Supabase session).
  * Route: /gems/admin
  */
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, Alert,
   TouchableOpacity, ActivityIndicator,
@@ -287,14 +287,18 @@ function DuplicatesTab() {
   // no-op on Android/web).
   const [mergeTarget, setMergeTarget] = useState<{ id: string; refresh: () => void } | null>(null);
 
+  const mergeInFlight = useRef(false);
+
   const merge = useCallback((id: string, refresh: () => void) => {
+    if (mergeInFlight.current) return; // in-flight guard: don't reopen the prompt mid-request
     setMergeTarget({ id, refresh });
   }, []);
 
   const submitMerge = useCallback(async (targetId: string) => {
     const pending = mergeTarget;
     setMergeTarget(null);
-    if (!pending || !targetId) return;
+    if (!pending || !targetId || mergeInFlight.current) return;
+    mergeInFlight.current = true;
     try {
       await adminFetch(`/api/admin/hidden-gems/${pending.id}/merge`, {
         method: 'POST',
@@ -303,6 +307,8 @@ function DuplicatesTab() {
       pending.refresh();
     } catch (e: any) {
       Alert.alert('Error', e.message);
+    } finally {
+      mergeInFlight.current = false;
     }
   }, [mergeTarget]);
 

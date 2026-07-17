@@ -234,6 +234,7 @@ export default function TrustDetailScreen() {
     });
 
   const onConfirmEvent = async (event: TrustEvent) => {
+    if (actioning) return; // in-flight guard: don't reopen the prompt mid-request
     const reason = await promptReason('Confirm Event', 'Enter reason for confirming this event:');
     if (!reason) return;
     setActioning(event.id);
@@ -248,6 +249,7 @@ export default function TrustDetailScreen() {
   };
 
   const onDismissEvent = async (event: TrustEvent) => {
+    if (actioning) return; // in-flight guard: don't reopen the prompt mid-request
     const reason = await promptReason('Dismiss Event', 'Enter reason for dismissing this event:');
     if (!reason) return;
     setActioning(event.id);
@@ -262,6 +264,7 @@ export default function TrustDetailScreen() {
   };
 
   const onLiftCap = async (cap: TrustCap) => {
+    if (actioning) return; // in-flight guard: don't reopen the prompt mid-request
     const reason = await promptReason('Lift Cap', `Remove the ${cap.category} cap (ceiling: ${cap.ceilingScore})?`);
     if (!reason) return;
     if (!userId) return;
@@ -277,6 +280,7 @@ export default function TrustDetailScreen() {
   };
 
   const onLiftRestriction = async (restriction: TrustRestriction) => {
+    if (actioning) return; // in-flight guard: don't reopen the prompt mid-request
     const reason = await promptReason('Lift Restriction', `Lift ${restriction.restriction_type} restriction?`);
     if (!reason) return;
     if (!userId) return;
