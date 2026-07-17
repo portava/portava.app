@@ -92,6 +92,9 @@ function CityBoard() {
   const [cityMetrics, setCityMetrics] = useState<Record<string, any>>({});
   const [metricsLoading, setMetricsLoading] = useState<string | null>(null);
   const [metricsExpanded, setMetricsExpanded] = useState<string | null>(null);
+  // Ref-based guard: prevents a second Alert confirm from firing a duplicate
+  // POST while the first pause request is already in flight.
+  const pausingRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -127,13 +130,23 @@ function CityBoard() {
     }
   };
 
-  const pause = async (id: string) => {
+  const pause = (id: string) => {
+    // Ignore the call entirely while a pause POST is already in flight.
+    if (pausingRef.current) return;
     Alert.alert('Pause city?', 'New bookings will be blocked. Existing confirmed bookings remain accessible.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Pause', style: 'destructive',
         onPress: async () => {
-          await apiFetch(`/api/admin/rent-buddy/rollout/cities/${id}/pause`, { method: 'POST', body: '{}' });
+          // Guard against two stacked alerts both confirming before the first
+          // POST completes.
+          if (pausingRef.current) return;
+          pausingRef.current = true;
+          try {
+            await apiFetch(`/api/admin/rent-buddy/rollout/cities/${id}/pause`, { method: 'POST', body: '{}' });
+          } finally {
+            pausingRef.current = false;
+          }
           load();
         },
       },
