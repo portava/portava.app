@@ -17,7 +17,7 @@ import {
   Briefcase, Users, Stamp, PenLine, Bookmark,
 } from 'lucide-react-native';
 import type { OwnProfile, PublicProfile } from '../../types/models';
-import { resolveAvatarUrl, fallbackInitials } from '../../utils/identity';
+import { resolveAvatarUrl, fallbackInitials, truncateDisplayName } from '../../utils/identity';
 import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity';
 import { isTravelBuddyVerified } from '../../lib/verification';
 import { HighlightRing } from '../HighlightRing';
@@ -220,7 +220,9 @@ export function PassportIdentityCard({
     name:        'name'        in profile ? profile.name        : null,
     username,
   };
-  const resolvedName  = primaryIdentityText(identity);
+  // Cap at the 40-char display-name limit — legacy accounts created before
+  // the limit may still have longer names stored in the DB.
+  const resolvedName  = truncateDisplayName(primaryIdentityText(identity));
   const handleSubline = secondaryIdentityText(identity);
   const avatarUrl     = resolveAvatarUrl(profile.avatarUrl);
   const initials      = fallbackInitials(profile);
