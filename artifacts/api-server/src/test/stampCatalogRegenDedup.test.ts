@@ -553,3 +553,123 @@ describe("POST regenerate — catalog status reset fails after queue insert succ
   });
 
 });
+
+// ── Catalog-status scoping: only "rejected" is reset ─────────────────────────
+//
+// The regenerate handler resets the catalog status to "pending_artwork" only
+// when the current status is "rejected" (via .eq("status", "rejected")). An
+// entry that is already "pending_artwork" or "active" must not be touched by
+// this update — the filter correctly scopes it out.
+
+function makeDbWithStatus(status: string): DB {
+  return {
+    profiles: [{ id: ADMIN_ID, role: "admin" }],
+    universal_stamp_catalog: [
+      {
+        id:                     CATALOG_ID,
+        canonical_location_key: "city:paris:france",
+        stamp_type:             "location",
+        display_name:           "Paris",
+        country:                "France",
+        country_code:           "FR",
+        status,
+        active_version_id:      null,
+        earn_count:             0,
+        created_at:             "2024-01-01T00:00:00Z",
+        updated_at:             "2024-01-01T00:00:00Z",
+      },
+    ],
+    stamp_generation_queue: [],
+    stamp_artwork_versions: [],
+    stamp_admin_audit_log:  [],
+  };
+}
+
+describe("POST regenerate — catalog status is not reset when entry is not 'rejected'", () => {
+
+  it("a 'pending_artwork' entry stays 'pending_artwork' after regenerate", async () => {
+    db = makeDbWithStatus("pending_artwork");
+    const client = makeClient(db);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+
+    const res = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      res.status,
+      200,
+      `regenerate must return 200, got ${res.status}: ${JSON.stringify(res.body)}`,
+    );
+    assert.deepEqual(res.body, { ok: true });
+
+    const catalogEntry = db.universal_stamp_catalog.find((r) => r.id === CATALOG_ID);
+    assert.equal(
+      catalogEntry?.status,
+      "pending_artwork",
+      `catalog status must remain 'pending_artwork', got '${catalogEntry?.status}'`,
+    );
+  });
+
+  it("an 'active' entry stays 'active' after regenerate", async () => {
+    db = makeDbWithStatus("active");
+    const client = makeClient(db);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+
+    const res = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      res.status,
+      200,
+      `regenerate must return 200, got ${res.status}: ${JSON.stringify(res.body)}`,
+    );
+    assert.deepEqual(res.body, { ok: true });
+
+    const catalogEntry = db.universal_stamp_catalog.find((r) => r.id === CATALOG_ID);
+    assert.equal(
+      catalogEntry?.status,
+      "active",
+      `catalog status must remain 'active', got '${catalogEntry?.status}'`,
+    );
+  });
+
+  it("a 'rejected' entry IS reset to 'pending_artwork' after regenerate", async () => {
+    // Sanity-check the positive case: the filter does fire when status is 'rejected'.
+    db = makeDbWithStatus("rejected");
+    const client = makeClient(db);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+
+    const res = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      res.status,
+      200,
+      `regenerate must return 200, got ${res.status}: ${JSON.stringify(res.body)}`,
+    );
+
+    const catalogEntry = db.universal_stamp_catalog.find((r) => r.id === CATALOG_ID);
+    assert.equal(
+      catalogEntry?.status,
+      "pending_artwork",
+      `catalog status must be reset to 'pending_artwork' for a rejected entry, got '${catalogEntry?.status}'`,
+    );
+  });
+
+  it("regenerate still queues a job and returns 200 even when catalog status is 'pending_artwork'", async () => {
+    db = makeDbWithStatus("pending_artwork");
+    const client = makeClient(db);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+
+    const res = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(res.status, 200, `expected 200, got ${res.status}: ${JSON.stringify(res.body)}`);
+
+    const queued = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.status === "queued",
+    );
+    assert.equal(
+      queued.length,
+      1,
+      `expected 1 queued row even when catalog is pending_artwork, found ${queued.length}`,
+    );
+  });
+
+});
