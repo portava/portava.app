@@ -97,7 +97,7 @@ function makeStampQueueClient() {
   const db: Record<string, any[]> = {
     profiles: [{ id: ADMIN_USER_ID, role: "admin" }],
     stamp_generation_queue: [
-      { id: JOB_RETRYABLE, catalog_id: CATALOG_ID, status: "retryable_failed",   attempts: 3, requeue_count: 2, last_error: "boom" },
+      { id: JOB_RETRYABLE, catalog_id: CATALOG_ID, status: "retryable_failed",   attempts: 3, requeue_count: 2, last_error: "boom", priority: 0, triggered_by_action: "system_auto" },
       { id: JOB_PERMANENT, catalog_id: CATALOG_ID, status: "permanently_failed", attempts: 3, requeue_count: 3, last_error: "boom" },
       { id: JOB_QUEUED,    catalog_id: CATALOG_ID_B, status: "queued",           attempts: 0, requeue_count: 0, last_error: null },
     ],
@@ -258,6 +258,26 @@ describe("POST /admin/stamps/queue/:jobId/requeue — retry-cap reset", () => {
     assert.equal(client._db.stamp_admin_audit_log.length, 0);
     const row = client._db.stamp_generation_queue.find((r) => r.id === JOB_QUEUED)!;
     assert.equal(row.status, "queued");
+  });
+
+  it("applies priority=1 and an admin triggered_by_action — the re-queued job jumps the queue like admin regenerate", async () => {
+    // Seed sanity: the failed job starts at auto-queue priority 0.
+    const before = client._db.stamp_generation_queue.find((r) => r.id === JOB_RETRYABLE)!;
+    assert.equal(before.priority, 0, "test setup: failed job must start with priority=0");
+
+    const { status } = await req("POST", `/admin/stamps/queue/${JOB_RETRYABLE}/requeue`);
+    assert.equal(status, 200);
+
+    const call = client._updateCalls.find((c) => c.table === "stamp_generation_queue")!;
+    assert.equal(call.payload.priority, 1,
+      "admin requeue must set priority=1 so the job jumps ahead of auto-queued work");
+    assert.equal(call.payload.triggered_by_action, `admin_requeue:${ADMIN_USER_ID}`,
+      "requeue must record the admin trigger");
+
+    const row = client._db.stamp_generation_queue.find((r) => r.id === JOB_RETRYABLE)!;
+    assert.equal(row.status, "queued");
+    assert.equal(row.priority, 1, "re-queued row must carry priority=1");
+    assert.equal(row.triggered_by_action, `admin_requeue:${ADMIN_USER_ID}`);
   });
 
   it("writes an audit log entry on successful requeue", async () => {

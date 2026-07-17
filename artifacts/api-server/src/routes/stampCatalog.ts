@@ -873,6 +873,8 @@ router.post("/admin/stamps/queue/:jobId/requeue", async (req, res) => {
     .from("stamp_generation_queue")
     .update({
       status:              "queued",
+      priority:            1, // Admin re-queue jumps the queue, matching admin regenerate
+      triggered_by_action: `admin_requeue:${adminId}`,
       attempts:            0,
       requeue_count:       0, // Manual admin re-queue resets the auto-requeue cap
       last_error:          null,
