@@ -12,7 +12,8 @@ import {
 import { color, space, radius, type as t, shadow, layout } from '../../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState, TravelCard } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
-import { getBooking, cancelBooking, getOrCreateBookingThread, addExtraTime, optInStayConnected, reportBooking, rebookBooking, getBuddyBlockedDates, type BuddyBooking, type BuddyBlockedRange } from '../../../src/services/rentABuddy';
+import { getBooking, cancelBooking, getOrCreateBookingThread, addExtraTime, optInStayConnected, reportBooking, rebookBooking, getBuddyBlockedDates, openDispute, type BuddyBooking, type BuddyBlockedRange, type DisputeReason } from '../../../src/services/rentABuddy';
+import { disputeErrorMessage } from '../../../src/lib/disputeErrorMessage';
 import { GlobalCalendarPicker } from '../../../src/components/selectors/GlobalCalendarPicker';
 import { GlobalTimePicker } from '../../../src/components/selectors/GlobalTimePicker';
 import { formatDisplayDate, fromISODate, fromHHmm, formatDisplayTime, toISODate } from '../../../src/lib/dateTime/formatters';
@@ -290,6 +291,71 @@ function CancelModal({ visible, onClose, onConfirm }: { visible: boolean; onClos
   );
 }
 
+const DISPUTE_REASONS: { value: DisputeReason; label: string }[] = [
+  { value: 'cash_balance_disagreement', label: 'Cash balance disagreement' },
+  { value: 'no_show', label: 'Buddy did not show up' },
+  { value: 'harassment', label: 'Harassment' },
+  { value: 'policy_violation', label: 'Policy violation' },
+  { value: 'route_violation', label: 'Route violation' },
+  { value: 'other', label: 'Other' },
+];
+
+function DisputeModal({ visible, submitting, onClose, onConfirm }: {
+  visible: boolean;
+  submitting: boolean;
+  onClose: () => void;
+  onConfirm: (reason: DisputeReason) => void;
+}) {
+  const [reason, setReason] = useState<DisputeReason | null>(null);
+  return (
+    <Modal visible={visible} transparent animationType="slide">
+      <View style={modal.overlay}>
+        <View style={modal.sheet}>
+          <Text style={modal.title}>Open a dispute?</Text>
+          <Text style={modal.sub}>Our team will review the booking. Pick the reason that fits best.</Text>
+          {DISPUTE_REASONS.map(opt => (
+            <Pressable
+              key={opt.value}
+              style={[disputeStyles.reasonRow, reason === opt.value && disputeStyles.reasonRowActive]}
+              onPress={() => setReason(opt.value)}
+            >
+              <View style={[disputeStyles.radio, reason === opt.value && disputeStyles.radioActive]} />
+              <Text style={disputeStyles.reasonLabel}>{opt.label}</Text>
+            </Pressable>
+          ))}
+          <View style={modal.actions}>
+            <Pressable style={modal.cancelBtn} onPress={onClose} disabled={submitting}>
+              <Text style={modal.cancelBtnText}>Never mind</Text>
+            </Pressable>
+            <Pressable
+              style={[modal.confirmBtn, (!reason || submitting) && { opacity: 0.4 }]}
+              disabled={!reason || submitting}
+              onPress={() => { if (reason) onConfirm(reason); }}
+            >
+              <Text style={modal.confirmBtnText}>{submitting ? 'Submitting…' : 'Open dispute'}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const disputeStyles = StyleSheet.create({
+  reasonRow: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    paddingVertical: space.sm, paddingHorizontal: space.sm,
+    borderRadius: radius.md,
+  },
+  reasonRowActive: { backgroundColor: color.paper },
+  radio: {
+    width: 16, height: 16, borderRadius: 8,
+    borderWidth: 2, borderColor: color.haze,
+  },
+  radioActive: { borderColor: color.signal, backgroundColor: color.signal },
+  reasonLabel: { ...t.body, color: color.ink },
+});
+
 export default function BookingDetail() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -301,6 +367,8 @@ export default function BookingDetail() {
   const [addTimeVisible, setAddTimeVisible] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [rebookVisible, setRebookVisible] = useState(false);
+  const [disputeVisible, setDisputeVisible] = useState(false);
+  const [disputeSubmitting, setDisputeSubmitting] = useState(false);
   const [blockedRanges, setBlockedRanges] = useState<BuddyBlockedRange[]>([]);
 
   const load = useCallback(async () => {
@@ -337,6 +405,25 @@ export default function BookingDetail() {
       Alert.alert('Booking cancelled', 'Your booking has been cancelled.');
     } else {
       Alert.alert('Error', res.error);
+    }
+  };
+
+  const handleDispute = async (reason: DisputeReason) => {
+    if (!booking) return;
+    setDisputeSubmitting(true);
+    const res = await openDispute(booking.id, reason);
+    setDisputeSubmitting(false);
+    setDisputeVisible(false);
+    if (res.ok) {
+      setBooking(prev => prev ? { ...prev, status: 'disputed' } : prev);
+      Alert.alert('Dispute opened', 'Our team will review this booking and follow up with you.');
+    } else if (res.error === 'no_show_in_progress') {
+      Alert.alert(
+        'No-show report already open',
+        'A no-show report is already open — it will escalate to a dispute automatically.',
+      );
+    } else {
+      Alert.alert('Could not open dispute', disputeErrorMessage(res.error));
     }
   };
 
@@ -555,6 +642,16 @@ export default function BookingDetail() {
             </>
           )}
 
+          {(isActive || booking.status === 'no_show_pending') && (
+            <Pressable
+              style={({ pressed }) => [styles.actionBtn, pressed && { opacity: layout.pressedOpacity }]}
+              onPress={() => setDisputeVisible(true)}
+            >
+              <Flag size={16} color={color.signal} />
+              <Text style={[styles.actionBtnText, { color: color.signal }]}>Open a dispute</Text>
+            </Pressable>
+          )}
+
           {isCancellable && (
             <Pressable
               style={({ pressed }) => [styles.actionBtn, pressed && { opacity: layout.pressedOpacity }]}
@@ -579,6 +676,13 @@ export default function BookingDetail() {
             Alert.alert('Error', res.error ?? 'Could not add time');
           }
         }}
+      />
+
+      <DisputeModal
+        visible={disputeVisible}
+        submitting={disputeSubmitting}
+        onClose={() => setDisputeVisible(false)}
+        onConfirm={handleDispute}
       />
 
       <CancelModal
