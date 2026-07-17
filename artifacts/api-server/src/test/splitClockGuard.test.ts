@@ -1,11 +1,15 @@
 /**
- * Guard: no function body in src/lib (including stamps/) may mix
+ * Guard: no function body anywhere under src/ may mix
  * Date.now() and no-arg new Date(). Mixing them takes two independent
  * clock reads, producing subtly inconsistent timestamps in schedulers,
  * queues, and sweepers.
  *
  * Fix pattern (see pushRetryQueue.ts): capture a single
  * `const nowMs = Date.now()` and derive `new Date(nowMs)` from it.
+ *
+ * The scan covers ALL .ts files under src/ recursively, excluding
+ * src/test and *.test.ts / *.d.ts files. New subdirectories are
+ * automatically included — no allowlist to update.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -18,36 +22,18 @@ const SRC_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
-const SCAN_DIRS = [
-  path.join(SRC_DIR, "lib"),
-  path.join(SRC_DIR, "routes"),
-  path.join(SRC_DIR, "services"),
-  path.join(SRC_DIR, "middlewares"),
-  path.join(SRC_DIR, "compass"),
-  path.join(SRC_DIR, "scripts"),
-];
+const TEST_DIR = path.join(SRC_DIR, "test");
 
-/** Top-level src files (non-recursive), e.g. src/app.ts, src/index.ts */
-function collectTopLevelTsFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (
-      entry.isFile() &&
-      entry.name.endsWith(".ts") &&
-      !entry.name.endsWith(".test.ts") &&
-      !entry.name.endsWith(".d.ts")
-    ) {
-      out.push(path.join(dir, entry.name));
-    }
-  }
-  return out;
-}
-
+/**
+ * Recursively collect all .ts files under `dir`, excluding the
+ * src/test directory, *.test.ts files, and *.d.ts declaration files.
+ */
 function collectTsFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
+      if (full === TEST_DIR) continue; // skip src/test entirely
       out.push(...collectTsFiles(full));
     } else if (
       entry.isFile() &&
@@ -148,12 +134,9 @@ function scanBody(fn: FunctionLikeNode): {
   return { hasDateNow, hasNewDate };
 }
 
-test("no function in src/lib, src/routes, src/services, src/middlewares, src/compass, src/scripts, or top-level src files mixes Date.now() with no-arg new Date()", () => {
+test("no function anywhere under src/ (excluding src/test) mixes Date.now() with no-arg new Date()", () => {
   const offenders: string[] = [];
-  const files = [
-    ...SCAN_DIRS.flatMap((dir) => collectTsFiles(dir)),
-    ...collectTopLevelTsFiles(SRC_DIR),
-  ];
+  const files = collectTsFiles(SRC_DIR);
   for (const file of files) {
     const sf = ts.createSourceFile(
       file,
