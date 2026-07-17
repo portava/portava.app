@@ -22,6 +22,7 @@ import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { GemMapPreview } from '../../src/components/discovery/GemMapPreview';
 import { useSession } from '../../src/context/SessionContext';
 import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { ReasonPromptModal } from '../../src/components/ReasonPromptModal';
 
 // ── Privacy section ────────────────────────────────────────────────────────────
 
@@ -249,25 +250,27 @@ export default function GemDetailScreen() {
     setPickerVisible(true);
   }, [gem]);
 
-  const handleShare = useCallback(async () => {
+  // Cross-platform Thread-ID prompt (Alert.prompt is iOS-only — a silent
+  // no-op on Android/web).
+  const [showShare, setShowShare] = useState(false);
+
+  const handleShare = useCallback(() => {
     if (!gem) return;
-    Alert.prompt(
-      'Share to Telegraph',
-      'Enter the Thread ID to share this gem into:',
-      async (threadId) => {
-        if (!threadId) return;
-        setSharing(true);
-        try {
-          await shareGemToTelegraph(gem.id, threadId);
-          Alert.alert('Shared!', `${gem.name} shared to your Telegraph thread.`);
-        } catch (e: any) {
-          Alert.alert('Error', e.message ?? 'Failed to share');
-        } finally {
-          setSharing(false);
-        }
-      },
-      'plain-text',
-    );
+    setShowShare(true);
+  }, [gem]);
+
+  const submitShare = useCallback(async (threadId: string) => {
+    setShowShare(false);
+    if (!gem || !threadId) return;
+    setSharing(true);
+    try {
+      await shareGemToTelegraph(gem.id, threadId);
+      Alert.alert('Shared!', `${gem.name} shared to your Telegraph thread.`);
+    } catch (e: any) {
+      Alert.alert('Error', e.message ?? 'Failed to share');
+    } finally {
+      setSharing(false);
+    }
   }, [gem]);
 
   if (loading) {
@@ -485,6 +488,15 @@ export default function GemDetailScreen() {
         visible={showReport}
         gemId={gem.id}
         onClose={() => setShowReport(false)}
+      />
+      <ReasonPromptModal
+        visible={showShare}
+        title="Share to Telegraph"
+        message="Enter the Thread ID to share this gem into:"
+        placeholder="Thread ID"
+        confirmLabel="Share"
+        onCancel={() => setShowShare(false)}
+        onSubmit={submitShare}
       />
 
       {/* Route builder — pre-seeds this gem as the first stop */}

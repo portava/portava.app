@@ -12,12 +12,13 @@ import {
 import { router } from 'expo-router';
 import { ArrowLeft, Shield, Globe, Users, Settings, FileText, ChevronRight, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertCircle, Pause, Play, BarChart3 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../../src/theme/tokens';
+import { ReasonPromptModal } from '../../../src/components/ReasonPromptModal';
+import { supabase } from '../../../src/lib/supabase';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
 async function authHeaders(): Promise<Record<string, string>> {
-  const { supabase } = await import('../../../src/lib/supabase');
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   return {
@@ -516,6 +517,9 @@ const gcStyles = StyleSheet.create({
 function QAPanel() {
   const [checklists, setChecklists] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  // Cross-platform failure-reason prompt (Alert.prompt is iOS-only — a
+  // silent no-op on Android/web).
+  const [failTarget, setFailTarget] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -531,12 +535,14 @@ function QAPanel() {
     load();
   };
 
-  const markFailed = async (id: string) => {
-    Alert.prompt('Reason', 'Enter failure reason:', async (reason) => {
-      if (!reason) return;
-      await apiFetch(`/api/admin/rent-buddy/qa/checklists/${id}/mark-failed`, { method: 'POST', body: JSON.stringify({ reason }) });
-      load();
-    });
+  const markFailed = (id: string) => setFailTarget(id);
+
+  const submitFailure = async (reason: string) => {
+    const id = failTarget;
+    setFailTarget(null);
+    if (!id || !reason) return;
+    await apiFetch(`/api/admin/rent-buddy/qa/checklists/${id}/mark-failed`, { method: 'POST', body: JSON.stringify({ reason }) });
+    load();
   };
 
   if (loading) return <ActivityIndicator color={color.signal} style={{ marginTop: space.xl }} />;
@@ -584,6 +590,16 @@ function QAPanel() {
       {checklists.length === 0 && (
         <Text style={{ ...t.body, color: color.mute, textAlign: 'center', marginTop: space.xl }}>No QA checklists yet. Create city rollouts first.</Text>
       )}
+
+      <ReasonPromptModal
+        visible={failTarget != null}
+        title="Mark Failed"
+        message="Enter failure reason:"
+        confirmLabel="Mark Failed"
+        destructive
+        onCancel={() => setFailTarget(null)}
+        onSubmit={submitFailure}
+      />
     </View>
   );
 }

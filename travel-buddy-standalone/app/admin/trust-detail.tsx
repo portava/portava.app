@@ -27,6 +27,7 @@ import {
   type TrustCap,
   type TrustRestriction,
 } from '../../src/services/trustAdmin';
+import { ReasonPromptModal } from '../../src/components/ReasonPromptModal';
 
 const LEVEL_COLORS: Record<string, string> = {
   new_traveler:      '#9CA3AF',
@@ -219,9 +220,17 @@ export default function TrustDetailScreen() {
     load().finally(() => setLoading(false));
   }, [load]);
 
+  // Cross-platform reason prompt (Alert.prompt is iOS-only — a silent no-op
+  // on Android/web), backed by a modal with a TextInput.
+  const [reasonPrompt, setReasonPrompt] = useState<{
+    title: string;
+    message: string;
+    resolve: (value: string | null) => void;
+  } | null>(null);
+
   const promptReason = (title: string, message: string): Promise<string | null> =>
     new Promise((resolve) => {
-      Alert.prompt(title, message, (text) => resolve(text ?? null), 'plain-text');
+      setReasonPrompt({ title, message, resolve });
     });
 
   const onConfirmEvent = async (event: TrustEvent) => {
@@ -432,6 +441,14 @@ export default function TrustDetailScreen() {
         userId={userId ?? ''}
         onClose={() => setRestrictModal(false)}
         onApplied={load}
+      />
+
+      <ReasonPromptModal
+        visible={reasonPrompt != null}
+        title={reasonPrompt?.title ?? ''}
+        message={reasonPrompt?.message ?? ''}
+        onCancel={() => { reasonPrompt?.resolve(null); setReasonPrompt(null); }}
+        onSubmit={(value) => { reasonPrompt?.resolve(value); setReasonPrompt(null); }}
       />
     </>
   );
