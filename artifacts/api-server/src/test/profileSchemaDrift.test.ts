@@ -873,6 +873,76 @@ function makeGetFallbackErrorClient() {
   return client;
 }
 
+/**
+ * Fake client where:
+ *   - the first profiles.maybeSingle() returns PGRST204 (schema-drift)
+ *   - the second profiles.maybeSingle() (fallback with PROFILE_COLUMNS_FALLBACK)
+ *     succeeds with a valid profile row
+ * Used to guard the happy fallback path: GET /me/profile must return 200 with
+ * the mapped profile when the fallback select recovers valid data.
+ */
+function makeGetFallbackSuccessClient() {
+  let maybeSingleCallCount = 0;
+  const fallbackRow: any = {
+    id: ME, handle: "me_user", username: "me_user", name: "Me",
+    bio: "old bio", avatar_url: null, home_city: "Lisbon", home_country: "Portugal",
+    current_city: null, travel_style: null, interests: ["food"],
+    verified: false, verification_status: "unverified", verified_at: null,
+    open_to_meet: true, is_private: false, passport_visibility: "public",
+    username_updated_at: null, created_at: new Date("2026-01-01").toISOString(),
+  };
+
+  function makeBuilder(table: string) {
+    const builder: any = {
+      select() { return builder; },
+      eq() { return builder; },
+      neq() { return builder; },
+      limit() { return builder; },
+      gte() { return builder; },
+      update(patch: any) { void patch; return builder; },
+      insert() { return builder; },
+      maybeSingle() {
+        if (table === "profiles") {
+          maybeSingleCallCount++;
+          if (maybeSingleCallCount === 1) {
+            // First attempt (full PROFILE_COLUMNS): schema-drift error
+            return Promise.resolve({
+              data: null,
+              error: {
+                code: "PGRST204",
+                message: "Could not find the 'passport_tab_order' column of 'profiles' in the schema cache",
+              },
+            });
+          }
+          // Second attempt (PROFILE_COLUMNS_FALLBACK): valid row
+          return Promise.resolve({ data: { ...fallbackRow }, error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      },
+      single() {
+        return Promise.resolve({ data: null, error: null });
+      },
+      then(onF: any, onR: any) {
+        return Promise.resolve({ data: [], error: null, count: 0 }).then(onF, onR);
+      },
+    };
+    return builder;
+  }
+
+  const client: any = {
+    auth: {
+      getUser: async (tok: string) =>
+        tok === ME_TOK
+          ? { data: { user: { id: ME } }, error: null }
+          : { data: { user: null }, error: { message: "invalid token" } },
+    },
+    from: (table: string) => makeBuilder(table),
+    storage: { from: () => ({ remove: async () => ({ error: null }) }) },
+    __getMaybeSingleCallCount: () => maybeSingleCallCount,
+  };
+  return client;
+}
+
 describe("GET /api/me/profile under schema drift — fallback retry error is surfaced", () => {
   function getProfile() {
     return fetch(`${base}/me/profile`, {
@@ -897,6 +967,34 @@ describe("GET /api/me/profile under schema drift — fallback retry error is sur
         JSON.stringify(body).includes("42P01") ||
         JSON.stringify(body).includes("does not exist"),
       `response body should surface the DB error — got: ${JSON.stringify(body)}`,
+    );
+  });
+
+  it("returns 200 with the profile when the fallback select recovers valid data", async () => {
+    // First maybeSingle(): PGRST204 (triggers fallback)
+    // Second maybeSingle() (PROFILE_COLUMNS_FALLBACK): valid profile row
+    // Expected: 200 with the mapped profile fields
+    const client = makeGetFallbackSuccessClient();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await getProfile();
+    assert.equal(r.status, 200, "a successful fallback select must return 200");
+    const body = await r.json() as any;
+    assert.equal(body.id, ME);
+    assert.equal(body.handle, "me_user");
+    assert.equal(body.username, "me_user");
+    assert.equal(body.name, "Me");
+    assert.equal(body.bio, "old bio");
+    assert.equal(body.homeCity, "Lisbon");
+    assert.equal(body.homeCountry, "Portugal");
+    assert.deepEqual(body.interests, ["food"]);
+    assert.equal(body.openToMeet, true);
+    assert.equal(body.passportVisibility, "public");
+    assert.ok(body.completeness && typeof body.completeness.score === "number", "completeness score present");
+    assert.equal(
+      client.__getMaybeSingleCallCount(), 2,
+      "exactly two profile selects: drifted attempt + fallback",
     );
   });
 });
