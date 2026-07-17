@@ -5708,3 +5708,177 @@ describe("pre-check SELECT error + mid-flight tombstone — documented split-bra
       "persist_precheck_errored must NOT fire when the pre-check read succeeded");
   });
 });
+
+describe("re-issued admin DELETE after a residual-window revival", () => {
+  /**
+   * writeDbCache's pre-upsert tombstone re-check leaves a documented residual
+   * window: a tombstone written between the pre-check SELECT and the upsert is
+   * still clobbered (revived). The operator recovery path is a repeated admin
+   * DELETE. These tests simulate the exact race — pre-check passes, tombstone
+   * lands, upsert revives — then confirm the re-issued DELETE's tombstone
+   * sticks and is cleaned up by BOTH propagation mechanisms:
+   *   1. the on-request probe evicts the revived warm entry, and
+   *   2. the background sweep evicts it and hard-deletes the tombstone row.
+   */
+  function makeResidualWindowDb() {
+    const state = {
+      tombstonedAt: null as string | null,
+      // When set, the next maybeSingle() plants this tombstone AFTER returning
+      // its result — i.e. inside the pre-check→upsert window.
+      raceTombstoneAt: null as string | null,
+    };
+    const upsertPayloads: any[] = [];
+    const hardDeletedKeys: string[][] = [];
+    const client = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        let isDelete = false;
+        let notCalled = false;
+        let deleteKeys: string[] = [];
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { notCalled = true; return chain; },
+          delete() { isDelete = true; return chain; },
+          in(_col: string, keys: string[]) { deleteKeys = keys; return chain; },
+          async maybeSingle() {
+            const data = state.tombstonedAt
+              ? { country: "France", country_code: "FR", corrected_at: null, deleted_at: state.tombstonedAt }
+              : null;
+            if (state.raceTombstoneAt) {
+              // The admin DELETE lands in the millisecond window right after
+              // this SELECT returned — the caller saw no tombstone.
+              state.tombstonedAt = state.raceTombstoneAt;
+              state.raceTombstoneAt = null;
+            }
+            return { data, error: null };
+          },
+          upsert(payload: any) {
+            upsertPayloads.push(payload);
+            if (payload.deleted_at === null) state.tombstonedAt = null; // revival
+            return Promise.resolve({ error: null });
+          },
+          then(resolve: (v: any) => void) {
+            if (isDelete) {
+              // Guarded hard-delete: only removes rows still tombstoned.
+              if (state.tombstonedAt !== null) {
+                hardDeletedKeys.push(deleteKeys);
+                state.tombstonedAt = null;
+              }
+              resolve({ error: null });
+            } else if (notCalled) {
+              // Sweep pass 2 — deleted_at query.
+              resolve({
+                data: state.tombstonedAt ? [{ city_key: "lyon" }] : [],
+                error: null,
+              });
+            } else {
+              // Sweep pass 1 — corrected_at query: nothing corrected.
+              resolve({ data: [], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    return { client, state, upsertPayloads, hardDeletedKeys };
+  }
+
+  /**
+   * Drives one geocode through the residual window: readDbCache misses, the
+   * pre-check SELECT sees no tombstone, the admin DELETE lands, and the upsert
+   * revives the row. Asserts the clobber genuinely happened.
+   */
+  async function reviveThroughResidualWindow(
+    db: ReturnType<typeof makeResidualWindowDb>,
+    T0: number,
+  ): Promise<void> {
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((r) => { releaseFetch = r; });
+    _setGeocodeFetchForTests(async () => {
+      await fetchGate;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "fr", country: "France" } }],
+      };
+    });
+    const inflight = geocodeCityCountry("Lyon");
+    await new Promise((r) => setImmediate(r)); // readDbCache miss has settled
+    // Arm the race: the tombstone lands between the pre-check and the upsert.
+    db.state.raceTombstoneAt = new Date(T0 + 500).toISOString();
+    releaseFetch();
+    const result = await inflight;
+    assert.equal(result?.countryCode, "FR");
+    // Pre-conditions: the residual window really clobbered the tombstone.
+    assert.equal(db.upsertPayloads.length, 1, "upsert fired — the pre-check saw no tombstone");
+    assert.equal(db.state.tombstonedAt, null, "revival happened: tombstone clobbered by the upsert");
+    assert.ok(_getGeocodeCacheEntryForTests("lyon"), "revived entry is warm in memory");
+  }
+
+  it("on-request probe: a re-issued DELETE tombstones the revived row again and the probe evicts the warm entry", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+    const db = makeResidualWindowDb();
+    _setGeocodeDbClientForTests(db.client);
+    await reviveThroughResidualWindow(db, T0);
+
+    // Admin re-issues the DELETE on another instance — the tombstone is
+    // written straight to the shared DB; no local eviction call here.
+    mockNow(T0 + 10_000);
+    db.state.tombstonedAt = new Date(T0 + 10_000).toISOString();
+
+    // Force the next warm hit to fire the correction probe immediately.
+    _backdateGeocodeCacheEntryForTests("lyon");
+
+    // Nominatim now has no answer for the re-resolve — so a successful
+    // re-geocode can't legitimately revive the row a second time and the
+    // second tombstone's survival is unambiguous.
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return { ok: true, json: async () => [] };
+    });
+
+    mockNow(T0 + 11_000);
+    const after = await geocodeCityCountry("Lyon");
+
+    // Probe found the second tombstone and evicted the revived warm entry:
+    // the call fell through to a fresh re-resolve instead of serving FR warm.
+    assert.equal(nominatimCalls, 1, "revived entry evicted — fresh re-resolve fired");
+    assert.equal(after, null, "stale revived result is NOT served after the re-issued DELETE");
+    // The second tombstone survives: readDbCache treated the row as a miss and
+    // the null result is never persisted, so no upsert clobbered it.
+    assert.equal(db.upsertPayloads.length, 1, "no second upsert — the re-issued tombstone is not clobbered");
+    assert.equal(db.state.tombstonedAt, new Date(T0 + 10_000).toISOString(),
+      "re-issued tombstone still present in the shared DB");
+    const entry = _getGeocodeCacheEntryForTests("lyon") as any;
+    assert.equal(entry?.result, null, "in-memory entry no longer holds the deleted FR result");
+  });
+
+  it("background sweep: a re-issued DELETE is picked up by the sweep — warm entry evicted and tombstone row hard-deleted", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+    const db = makeResidualWindowDb();
+    _setGeocodeDbClientForTests(db.client);
+    await reviveThroughResidualWindow(db, T0);
+
+    // Admin re-issues the DELETE (cross-instance — this instance's warm entry
+    // for the revived row is untouched until the sweep runs).
+    mockNow(T0 + 10_000);
+    db.state.tombstonedAt = new Date(T0 + 10_000).toISOString();
+
+    mockNow(T0 + 11_000);
+    await _runCorrectionSweepForTests();
+
+    // Sweep pass 2 found the re-issued tombstone: warm entry evicted…
+    assert.equal(_getGeocodeCacheEntryForTests("lyon"), undefined,
+      "sweep evicted the revived warm entry after the re-issued DELETE");
+    // …and the tombstone row hard-deleted so it doesn't accumulate.
+    assert.deepEqual(db.hardDeletedKeys, [["lyon"]],
+      "sweep hard-deleted exactly the re-issued tombstone row");
+    assert.equal(db.state.tombstonedAt, null, "tombstone row cleaned up by the sweep");
+    // No upsert beyond the original revival — the sweep never revives rows.
+    assert.equal(db.upsertPayloads.length, 1, "sweep issued no upsert");
+  });
+});
