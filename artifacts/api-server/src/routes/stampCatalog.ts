@@ -69,7 +69,7 @@ async function writeAuditLog(
     notes?: string;
   } = {}
 ): Promise<void> {
-  await sc.from("stamp_admin_audit_log").insert({
+  const { error } = await sc.from("stamp_admin_audit_log").insert({
     admin_id:          adminId,
     action,
     catalog_id:        opts.catalogId ?? null,
@@ -77,6 +77,17 @@ async function writeAuditLog(
     target_catalog_id: opts.targetCatalogId ?? null,
     notes:             opts.notes ?? null,
   });
+  if (error) {
+    console.error(
+      "[stamp-admin-audit] failed to write audit log entry",
+      JSON.stringify({
+        action,
+        catalog_id: opts.catalogId ?? null,
+        admin_id:   adminId,
+        error:      error.message ?? String(error),
+      })
+    );
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
