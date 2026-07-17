@@ -1562,10 +1562,20 @@ describe("runGenerationCycle — DB insert failure after all uploads succeed", (
     _setTestStampImageProvider(makeFakeHttpProvider(CANDIDATE_COUNT));
     installFetch(successFetch());
 
-    const result = await runGenerationCycle();
+    // Capture console.error lines so we can inspect the orphan_cleanup_error log.
+    const loggedErrors: string[] = [];
+    const origError = console.error.bind(console);
+    console.error = (...args: any[]) => { loggedErrors.push(args.join(" ")); origError(...args); };
+
+    let result: Awaited<ReturnType<typeof runGenerationCycle>>;
+    try {
+      result = await runGenerationCycle();
+    } finally {
+      console.error = origError;
+    }
 
     // The cycle must report failure.
-    assert.equal(result.processed, false, "processed must be false when the insert fails");
+    assert.equal(result!.processed, false, "processed must be false when the insert fails");
 
     // All uploads completed before the insert was attempted.
     assert.equal(storageCalls.length, CANDIDATE_COUNT, "all uploads must complete before the insert");
@@ -1602,6 +1612,34 @@ describe("runGenerationCycle — DB insert failure after all uploads succeed", (
     );
     assert.equal(fail!.payload.locked_until, null, "lock must be cleared even when cleanup silently errors");
     assert.equal(fail!.payload.locked_by, null);
+
+    // The orphan_cleanup_error log emitted for the silent remove error must
+    // include a non-empty `paths` array so ops know which files need manual
+    // deletion even when they cannot query the bucket directly.
+    const cleanupErrorLog = loggedErrors
+      .map((line) => { try { return JSON.parse(line); } catch { return null; } })
+      .find((obj) => obj?.event === "stamp.generation.orphan_cleanup_error");
+    assert.ok(
+      cleanupErrorLog,
+      "must emit an orphan_cleanup_error log entry when remove() silently returns an error",
+    );
+    assert.ok(
+      Array.isArray(cleanupErrorLog.paths) && cleanupErrorLog.paths.length > 0,
+      `orphan_cleanup_error log must include a non-empty paths array; got: ${JSON.stringify(cleanupErrorLog.paths)}`,
+    );
+    // Every uploaded storage path must appear in the logged paths array so
+    // ops can enumerate the full cleanup scope without bucket access.
+    for (const call of storageCalls) {
+      assert.ok(
+        cleanupErrorLog.paths.includes(call.path),
+        `uploaded path ${call.path} must appear in the orphan_cleanup_error log paths`,
+      );
+    }
+    assert.equal(
+      cleanupErrorLog.paths.length,
+      storageCalls.length,
+      "logged paths count must match the number of uploaded storage paths",
+    );
   });
 
   it("still deletes orphaned files when the insert failure follows all uploads", async () => {
