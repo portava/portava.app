@@ -4,9 +4,9 @@ import {
   KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { X, ChevronDown } from 'lucide-react-native';
-import type { TripPlanItem, TripPlanCategory } from '../types/models';
-import { createPlanItem } from '../services/tripPlan';
-import { color, space, radius, type as t } from '../theme/tokens';
+import type { TripPlanItem, TripPlanCategory } from '../types/models.ts';
+import { createPlanItem } from '../services/tripPlan.ts';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { DatePickerField } from './DateTimePickerField';
 
 // ── Category options ──────────────────────────────────────────────────────────

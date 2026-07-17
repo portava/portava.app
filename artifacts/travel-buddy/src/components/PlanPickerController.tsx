@@ -16,11 +16,11 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Check, MapPin, ChevronLeft } from 'lucide-react-native';
-import { color, space, radius, type as t, shadow, layout } from '../theme/tokens';
-import { fetchPlanEditableTrips, createPlanItem, addMeetupToPlan, addPlaceToPlan } from '../services/tripPlan';
-import type { EditableTripRow } from '../services/tripPlan';
-import type { TripPlanCategory } from '../types/models';
-import { useSession } from '../context/SessionContext';
+import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
+import { fetchPlanEditableTrips, createPlanItem, addMeetupToPlan, addPlaceToPlan } from '../services/tripPlan.ts';
+import type { EditableTripRow } from '../services/tripPlan.ts';
+import type { TripPlanCategory } from '../types/models.ts';
+import { useSession } from '../context/SessionContext.tsx';
 import { DatePickerField } from './DateTimePickerField';
 
 // ── Source descriptor ─────────────────────────────────────────────────────────

@@ -12,9 +12,9 @@ import { View, Text, Image, StyleSheet } from 'react-native';
 import {
   Shield, MapPin, Navigation, Eye, EyeOff, Clock, CheckCircle2,
 } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import type { CrewMemberCard as CrewMemberCardType, CrewStatusLabel } from '../../services/tripCrewLocation';
-import { UserOverflowMenu } from '../interaction/UserOverflowMenu';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import type { CrewMemberCard as CrewMemberCardType, CrewStatusLabel } from '../../services/tripCrewLocation.ts';
+import { UserOverflowMenu } from '../interaction/UserOverflowMenu.tsx';
 
 interface Props {
   member: CrewMemberCardType;

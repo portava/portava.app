@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { router } from 'expo-router';
-import { useSession } from '../context/SessionContext';
+import { useSession } from '../context/SessionContext.tsx';
 import { resolveAdminGate } from '../screens/admin/featureFlags.machine';
 
 /**

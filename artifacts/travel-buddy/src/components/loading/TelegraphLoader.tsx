@@ -23,7 +23,7 @@ import {
   AccessibilityInfo,
   type ViewStyle,
 } from 'react-native';
-import { color, space, type as t, font } from '../../theme/tokens';
+import { color, space, type as t, font } from '../../theme/tokens.ts';
 
 const DEFAULT_MESSAGES = [
   'Opening Telegraph…',

@@ -19,9 +19,9 @@ import {
   View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { getCurrentGps, reverseGeocodeToPlace } from '../../services/location';
+import { getCurrentGps, reverseGeocodeToPlace } from '../../services/location.ts';
 import { MapLocationPicker } from './MapLocationPicker';
-import type { Place } from '../../lib/location/placeTypes';
+import type { Place } from '../../lib/location/placeTypes.ts';
 
 // Keep GpsCaptureResult exported for backward compat with machines/tests.
 export type { GpsCaptureResult } from './GpsLocationCapture.machine';

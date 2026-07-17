@@ -6,8 +6,8 @@
  */
 import React from 'react';
 import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
-import GemDetailScreen from '../../../app/gems/[id]';
-import { shareGemToTelegraph } from '../../services/hiddenGems';
+import GemDetailScreen from '../../../app/gems/[id].tsx';
+import { shareGemToTelegraph } from '../../services/hiddenGems.ts';
 
 jest.mock('expo-router', () => ({
   useRouter: () => ({ back: jest.fn(), push: jest.fn() }),
@@ -44,7 +44,7 @@ jest.mock('../../services/hiddenGems', () => ({
   shareGemToTelegraph: jest.fn(),
 }));
 
-const { useGemDetail } = require('../../hooks/useHiddenGems');
+const { useGemDetail } = require('../../hooks/useHiddenGems.ts');
 const mockShare = shareGemToTelegraph as jest.Mock;
 
 const gem = {

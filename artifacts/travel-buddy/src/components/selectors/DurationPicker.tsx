@@ -21,8 +21,8 @@ import {
 } from 'react-native';
 import { X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import { formatDuration } from '../../lib/dateTime/formatters';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { formatDuration } from '../../lib/dateTime/formatters.ts';
 
 export interface DurationOption {
   label: string;

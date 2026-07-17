@@ -8,8 +8,8 @@
  */
 import React from 'react';
 import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
-import GamingFlagsScreen from '../../../app/admin/gaming-flags';
-import { fetchGamingFlags, markGamingFlagReviewed } from '../../services/trustAdmin';
+import GamingFlagsScreen from '../../../app/admin/gaming-flags.tsx';
+import { fetchGamingFlags, markGamingFlagReviewed } from '../../services/trustAdmin.ts';
 
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn(), replace: jest.fn() },

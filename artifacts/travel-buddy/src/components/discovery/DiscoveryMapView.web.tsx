@@ -17,8 +17,8 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { MapPin } from 'lucide-react-native';
-import type { DiscoveryPlace } from '../../services/discovery';
-import { color, space, radius, type as t } from '../../theme/tokens';
+import type { DiscoveryPlace } from '../../services/discovery.ts';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
 export interface DiscoveryMapViewProps {
   places: DiscoveryPlace[];

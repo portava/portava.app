@@ -17,7 +17,7 @@
 
 import React from 'react';
 import { render, waitFor } from '@testing-library/react-native';
-import { PostEngagementBar } from '../PostEngagementBar';
+import { PostEngagementBar } from '../PostEngagementBar.tsx';
 
 // ── Sub-component stubs ───────────────────────────────────────────────────────
 // Return null so the test tree stays shallow and unrelated modals don't

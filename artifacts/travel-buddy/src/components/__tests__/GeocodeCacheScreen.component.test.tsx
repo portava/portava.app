@@ -32,12 +32,12 @@
 import React from 'react';
 import { Alert } from 'react-native';
 import { render, waitFor, screen, fireEvent, act } from '@testing-library/react-native';
-import AdminGeocodeCacheScreen from '../../../app/admin/geocode-cache';
+import AdminGeocodeCacheScreen from '../../../app/admin/geocode-cache.tsx';
 import {
   getGeocodeCacheRows,
   deleteGeocodeCacheRow,
   putGeocodeCacheRow,
-} from '../../services/adminGeocode';
+} from '../../services/adminGeocode.ts';
 
 // Ensure React always uses synchronous scheduling for state updates.
 //

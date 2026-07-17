@@ -15,7 +15,7 @@
 
 import React from 'react';
 import { act, render } from '@testing-library/react-native';
-import { ReviewsSection } from '../ReviewsSection';
+import { ReviewsSection } from '../ReviewsSection.tsx';
 
 // ── No expo-router override — file-level mock is used ─────────────────────────
 
@@ -65,7 +65,7 @@ describe('ReviewsSection — file-level useFocusEffect stub (no double-fetch)', 
 
   beforeEach(() => {
     jest.clearAllMocks();
-    const reviews = require('../../services/reviews');
+    const reviews = require('../../services/reviews.ts');
     getTripReviews = reviews.getTripReviews;
   });
 
@@ -121,7 +121,7 @@ describe('ReviewsSection — file-level useFocusEffect stub (place entity type)'
 
   beforeEach(() => {
     jest.clearAllMocks();
-    const reviews = require('../../services/reviews');
+    const reviews = require('../../services/reviews.ts');
     getPlaceReviews = reviews.getPlaceReviews;
   });
 
@@ -193,7 +193,7 @@ describe('ReviewsSection — file-level useFocusEffect stub (event entity type)'
 
   beforeEach(() => {
     jest.clearAllMocks();
-    const reviews = require('../../services/reviews');
+    const reviews = require('../../services/reviews.ts');
     getEventReviews = reviews.getEventReviews;
   });
 

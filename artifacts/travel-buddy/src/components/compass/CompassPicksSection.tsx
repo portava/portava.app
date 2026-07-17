@@ -20,12 +20,12 @@ import {
 } from 'react-native';
 import { Sparkles, CheckCircle, Navigation, Settings2 } from 'lucide-react-native';
 import { router } from 'expo-router';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import { useCompassFeed } from '../../hooks/compass/useCompassFeed';
-import { CompassWhySheet } from './CompassWhySheet';
-import { CompassFeedbackMenu } from './CompassFeedbackMenu';
-import { postCompassAnalyticsEvent, COMPASS_ENGINE_VERSION } from '../../services/compass';
-import type { CompassFeedItem } from '../../services/compass';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { useCompassFeed } from '../../hooks/compass/useCompassFeed.ts';
+import { CompassWhySheet } from './CompassWhySheet.tsx';
+import { CompassFeedbackMenu } from './CompassFeedbackMenu.tsx';
+import { postCompassAnalyticsEvent, COMPASS_ENGINE_VERSION } from '../../services/compass.ts';
+import type { CompassFeedItem } from '../../services/compass.ts';
 
 // ── Action label mapping ──────────────────────────────────────────────────────
 

@@ -11,8 +11,8 @@
  *   isLoading              — true while the first fetch is in flight
  */
 import { useState, useEffect, useCallback } from 'react';
-import { useSession } from '../context/SessionContext';
-import { freshToken } from '../services/apiToken';
+import { useSession } from '../context/SessionContext.tsx';
+import { freshToken } from '../services/apiToken.ts';
 
 export type LocationMode =
   | 'off'

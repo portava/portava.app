@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { fetchTripPlan, type TripPlanResult } from '../services/tripPlan';
+import { fetchTripPlan, type TripPlanResult } from '../services/tripPlan.ts';
 
 export interface UsePlanSyncOptions {
   /** When false, polling is disabled (e.g. access denied). Defaults to true. */

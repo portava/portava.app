@@ -21,11 +21,11 @@ import {
   MoreHorizontal, HelpCircle, ThumbsUp, XCircle, EyeOff,
   MapPin, CheckCircle, ShieldOff, DollarSign, Meh, Flag, Clock,
 } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import { useCompassFeedback } from '../../hooks/compass/useCompassFeedback';
-import { postCompassAnalyticsEvent, COMPASS_ENGINE_VERSION } from '../../services/compass';
-import { reportContent } from '../../services/reports';
-import type { CompassFeedbackAction } from '../../services/compass';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { useCompassFeedback } from '../../hooks/compass/useCompassFeedback.ts';
+import { postCompassAnalyticsEvent, COMPASS_ENGINE_VERSION } from '../../services/compass.ts';
+import { reportContent } from '../../services/reports.ts';
+import type { CompassFeedbackAction } from '../../services/compass.ts';
 
 interface Props {
   recommendationId: string;

@@ -3,15 +3,15 @@ import {
   View, Text, FlatList, Pressable, StyleSheet, RefreshControl, Switch,
 } from 'react-native';
 import { Search } from 'lucide-react-native';
-import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace } from '../../services/discovery';
-import { getDiscoveryPlaces } from '../../services/discovery';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import PlaceCard from './PlaceCard';
-import { PlaceSkeletonList } from './PlaceSkeleton';
+import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace } from '../../services/discovery.ts';
+import { getDiscoveryPlaces } from '../../services/discovery.ts';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import PlaceCard from './PlaceCard.tsx';
+import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
 import { DiscoveryMapView } from './DiscoveryMapView';
-import { usePopularCities } from '../../hooks/usePopularCities';
-import { POPULAR } from '../selectors/GlobalPlacePicker';
-import type { Place } from '../../lib/location/placeTypes';
+import { usePopularCities } from '../../hooks/usePopularCities.ts';
+import { POPULAR } from '../selectors/GlobalPlacePicker.tsx';
+import type { Place } from '../../lib/location/placeTypes.ts';
 
 // ── Radius chips ──────────────────────────────────────────────────────────────
 

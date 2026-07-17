@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { fetchCompassWhy } from '../../services/compass';
+import { fetchCompassWhy } from '../../services/compass.ts';
 
 interface UseCompassWhyExplanationResult {
   explanation: string | null;

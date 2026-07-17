@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
-import AdminRolloutDashboard from '../../../app/(rent-a-buddy)/admin/rollout';
+import AdminRolloutDashboard from '../../../app/(rent-a-buddy)/admin/rollout.tsx';
 
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn(), canGoBack: () => true },

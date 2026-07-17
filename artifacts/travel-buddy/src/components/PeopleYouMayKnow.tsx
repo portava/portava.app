@@ -18,10 +18,10 @@ import {
   followUser,
   clearSuggestionsSeen,
   type TravelerSearchResult,
-} from '../services/follows';
-import { useSession } from '../context/SessionContext';
-import { color, space, radius, type as t } from '../theme/tokens';
-import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity';
+} from '../services/follows.ts';
+import { useSession } from '../context/SessionContext.tsx';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
 
 const FOLLOWING_THRESHOLD = 10;
 const STRIP_LIMIT = 5;

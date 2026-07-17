@@ -21,8 +21,8 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Users, MapPin, CheckCircle } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens';
-import { TG } from '../theme/telegraphTokens';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { TG } from '../theme/telegraphTokens.ts';
 import { resolveCardRenderFromProps } from './CircleStatusCardMessage.logic';
 
 // ── Component ──────────────────────────────────────────────────────────────

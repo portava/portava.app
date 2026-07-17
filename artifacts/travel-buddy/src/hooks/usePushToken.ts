@@ -14,13 +14,13 @@
 import { useEffect } from 'react';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
-import { useSession } from '../context/SessionContext';
-import { savePushToken, saveDeviceTimezone } from '../services/pushTokenService';
+import { useSession } from '../context/SessionContext.tsx';
+import { savePushToken, saveDeviceTimezone } from '../services/pushTokenService.ts';
 import {
   getPermissionsAsync,
   requestPermissionsAsync,
   getExpoPushTokenAsync,
-} from '../lib/safeNotifications';
+} from '../lib/safeNotifications.ts';
 
 export function usePushToken(): void {
   const { isAuthed } = useSession();

@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { getBlockList, getBlockerIds } from '../services/blocks';
-import { useSession } from './SessionContext';
+import { getBlockList, getBlockerIds } from '../services/blocks.ts';
+import { useSession } from './SessionContext.tsx';
 
 interface BlockedIdsCtx {
   blockedIds: Set<string>;

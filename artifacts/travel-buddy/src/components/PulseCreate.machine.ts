@@ -29,7 +29,7 @@
  * Tests import these functions directly and exercise the production code path
  * that the component depends on. If either contract changes, the tests catch it.
  */
-import type { PostCategory } from '../types/models';
+import type { PostCategory } from '../types/models.ts';
 
 // ── Submit lock ───────────────────────────────────────────────────────────────
 

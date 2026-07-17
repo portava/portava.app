@@ -16,9 +16,9 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Sparkles, UserPlus, UserCheck, MapPin, Calendar } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import { fetchCompassRecommendations, type CompassRecommendation } from '../../services/compass';
-import { getFollowStatus, followUser } from '../../services/follows';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { fetchCompassRecommendations, type CompassRecommendation } from '../../services/compass.ts';
+import { getFollowStatus, followUser } from '../../services/follows.ts';
 
 type FollowState = 'none' | 'following' | 'requested' | 'loading';
 

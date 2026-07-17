@@ -8,8 +8,8 @@
  */
 import React from 'react';
 import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
-import TrustDetailScreen from '../../../app/admin/trust-detail';
-import { fetchUserTrustDetail, confirmTrustEvent } from '../../services/trustAdmin';
+import TrustDetailScreen from '../../../app/admin/trust-detail.tsx';
+import { fetchUserTrustDetail, confirmTrustEvent } from '../../services/trustAdmin.ts';
 
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn(), replace: jest.fn() },

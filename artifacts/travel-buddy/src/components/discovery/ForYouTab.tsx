@@ -10,24 +10,24 @@ import {
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Sparkles, Info, Share2 } from 'lucide-react-native';
-import { DiscoveryShareSheet } from '../DiscoveryShareSheet';
-import type { DiscoverySharePayload } from '../DiscoveryShareSheet';
-import type { DiscoveryPlace } from '../../services/discovery';
-import { getDiscoveryPlaces, getSavedPlaceIds } from '../../services/discovery';
-import { PlaceSkeletonList } from './PlaceSkeleton';
-import PlaceCard from './PlaceCard';
-import { PlaceDetailSheet } from './PlaceDetailSheet';
+import { DiscoveryShareSheet } from '../DiscoveryShareSheet.tsx';
+import type { DiscoverySharePayload } from '../DiscoveryShareSheet.tsx';
+import type { DiscoveryPlace } from '../../services/discovery.ts';
+import { getDiscoveryPlaces, getSavedPlaceIds } from '../../services/discovery.ts';
+import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
+import PlaceCard from './PlaceCard.tsx';
+import { PlaceDetailSheet } from './PlaceDetailSheet.tsx';
 import { DiscoveryMapView } from './DiscoveryMapView';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import { useSession } from '../../context/SessionContext';
-import { useCommunityDiscovery } from '../../hooks/useCommunityDiscovery';
-import { HiddenGemsSection, TravelerPicksSection, prefillSavedPlaceIds } from '../DiscoveryWall';
-import type { RouteStopDraft } from '../RouteBuilderSheet';
-import { useCompassFeed } from '../../hooks/compass/useCompassFeed';
-import { CompassFeedbackMenu } from '../compass/CompassFeedbackMenu';
-import { CompassWhySheet } from '../compass/CompassWhySheet';
-import { postCompassFrontloadEvent } from '../../services/compass';
-import { CompassTravelerRow } from '../compass/CompassTravelerRow';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { useSession } from '../../context/SessionContext.tsx';
+import { useCommunityDiscovery } from '../../hooks/useCommunityDiscovery.ts';
+import { HiddenGemsSection, TravelerPicksSection, prefillSavedPlaceIds } from '../DiscoveryWall.tsx';
+import type { RouteStopDraft } from '../RouteBuilderSheet.tsx';
+import { useCompassFeed } from '../../hooks/compass/useCompassFeed.ts';
+import { CompassFeedbackMenu } from '../compass/CompassFeedbackMenu.tsx';
+import { CompassWhySheet } from '../compass/CompassWhySheet.tsx';
+import { postCompassFrontloadEvent } from '../../services/compass.ts';
+import { CompassTravelerRow } from '../compass/CompassTravelerRow.tsx';
 
 // ── Main component ────────────────────────────────────────────────────────────
 

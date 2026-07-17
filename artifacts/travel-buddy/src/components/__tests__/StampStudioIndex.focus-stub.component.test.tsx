@@ -29,11 +29,11 @@
 
 import React from 'react';
 import { act, render } from '@testing-library/react-native';
-import StampStudioIndex from '../../../app/admin/stamps/index';
+import StampStudioIndex from '../../../app/admin/stamps/index.tsx';
 import {
   getAdminStampCatalog,
   getStampWorkerHealth,
-} from '../../services/adminStamps';
+} from '../../services/adminStamps.ts';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 // expo-router is intentionally NOT mocked here — the file-level stub from

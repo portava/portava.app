@@ -5,9 +5,9 @@ import {
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X } from 'lucide-react-native';
-import { getPublicProfile, type PublicProfileCard } from '../services/profile';
-import { color, space, radius, type as t, shadow } from '../theme/tokens';
-import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity';
+import { getPublicProfile, type PublicProfileCard } from '../services/profile.ts';
+import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
 
 interface Props {
   username: string | null;

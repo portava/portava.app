@@ -15,12 +15,12 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Sparkles, Star, CheckCircle, MapPin, Globe } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import {
   fetchCompassSettings,
   fetchCompassBuddyMatches,
   type CompassBuddyResult,
-} from '../../services/compass';
+} from '../../services/compass.ts';
 
 interface Props {
   city?: string | null;

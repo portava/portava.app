@@ -19,14 +19,14 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Users, Sparkles, CheckCircle, MapPin } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens';
-import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIdentity.ts';
 import {
   fetchCompassSettings,
   fetchCompassTravelerMatches,
   type CompassTravelerResult,
-} from '../../services/compass';
-import { followUser } from '../../services/follows';
+} from '../../services/compass.ts';
+import { followUser } from '../../services/follows.ts';
 
 interface Props {
   city?: string | null;
