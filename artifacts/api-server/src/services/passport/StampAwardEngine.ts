@@ -476,11 +476,12 @@ export async function revokeStamp(
   adminId: string,
   reason: string,
 ): Promise<{ revoked: boolean; reason: string }> {
+  const nowMs = Date.now();
   const { data, error } = await sc
     .from("user_stamps")
     .update({
       is_revoked:     true,
-      revoked_at:     new Date().toISOString(),
+      revoked_at:     new Date(nowMs).toISOString(),
       revoked_reason: reason,
     })
     .eq("id", userStampId)
@@ -501,7 +502,7 @@ export async function revokeStamp(
     source_type:         "admin",
     source_id:           null,
     award_reason:        reason,
-    idempotency_key:     `revoke:${userStampId}:${Date.now()}`,
+    idempotency_key:     `revoke:${userStampId}:${nowMs}`,
     status:              "revoked",
     admin_id:            adminId,
   });
@@ -527,6 +528,7 @@ export async function restoreStamp(
   adminId: string,
   reason: string,
 ): Promise<{ restored: boolean; reason: string }> {
+  const nowMs = Date.now();
   const { data, error } = await sc
     .from("user_stamps")
     .update({
@@ -551,7 +553,7 @@ export async function restoreStamp(
     source_type:         "admin",
     source_id:           null,
     award_reason:        reason,
-    idempotency_key:     `restore:${userStampId}:${Date.now()}`,
+    idempotency_key:     `restore:${userStampId}:${nowMs}`,
     status:              "restored",
     admin_id:            adminId,
   });
@@ -562,7 +564,7 @@ export async function restoreStamp(
       .from("user_stamps")
       .update({
         is_revoked:     true,
-        revoked_at:     new Date().toISOString(),
+        revoked_at:     new Date(nowMs).toISOString(),
         revoked_reason: "auto-rollback: audit write failed during restore",
       })
       .eq("id", userStampId);

@@ -126,8 +126,9 @@ function assignSections(
   profile: CompassProfile,
   context: CompassContext,
 ): Map<SectionName, PipelineResult[]> {
-  const now = new Date();
-  const twelveHoursLater = new Date(now.getTime() + 12 * 60 * 60 * 1_000);
+  const nowMs = Date.now();
+  const now = new Date(nowMs);
+  const twelveHoursLater = new Date(nowMs + 12 * 60 * 60 * 1_000);
 
   const sections = new Map<SectionName, PipelineResult[]>(
     SECTION_NAMES.map((n) => [n, []]),
@@ -179,7 +180,7 @@ function assignSections(
 
     if (item.authorJoinedAt) {
       const ageDays =
-        (Date.now() - new Date(item.authorJoinedAt as string).getTime()) /
+        (nowMs - new Date(item.authorJoinedAt as string).getTime()) /
         (1000 * 60 * 60 * 24);
       if (ageDays < 30) push("new_in_this_city", r);
     }

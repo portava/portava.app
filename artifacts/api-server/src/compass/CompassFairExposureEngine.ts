@@ -86,7 +86,8 @@ function recordAppearance(
   newCount: number,
 ): void {
   if (!db) return;
-  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
   const boostType = result.item.type === "buddy" ? "new_buddy" : "new_verified_user";
 
   db.from("compass_visibility_boosts")
@@ -107,7 +108,7 @@ function recordAppearance(
 
   // If cap hit → create cooldown record
   if (newCount >= APPEARANCE_CAP && result.item.authorId) {
-    const endsAt = new Date(Date.now() + COOLDOWN_DAYS * 24 * 60 * 60 * 1_000).toISOString();
+    const endsAt = new Date(nowMs + COOLDOWN_DAYS * 24 * 60 * 60 * 1_000).toISOString();
     db.from("compass_visibility_cooldowns")
       .upsert(
         {
@@ -203,7 +204,8 @@ export function endFairExposure(
   reason:   "report" | "no_show",
 ): void {
   if (!db) return;
-  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
   db.from("compass_visibility_boosts")
     .update({ report_ended_at: now })
     .eq("author_id", authorId)
@@ -212,7 +214,7 @@ export function endFairExposure(
 
   // Immediately create a cooldown (much shorter for no_show, standard for report)
   const cooldownDays = reason === "report" ? COOLDOWN_DAYS : Math.ceil(COOLDOWN_DAYS / 2);
-  const endsAt = new Date(Date.now() + cooldownDays * 24 * 60 * 60 * 1_000).toISOString();
+  const endsAt = new Date(nowMs + cooldownDays * 24 * 60 * 60 * 1_000).toISOString();
   db.from("compass_visibility_cooldowns")
     .upsert(
       {

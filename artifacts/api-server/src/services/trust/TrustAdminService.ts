@@ -58,9 +58,10 @@ export async function confirmEvent(
   const e = evt as any;
   if (e.status !== "pending_review") throw new Error("Event is not pending review");
 
+  const nowMs = Date.now();
   // Mark confirmed
   await db.from("trust_events")
-    .update({ status: "confirmed", reviewed_by: adminId, reviewed_at: new Date().toISOString() })
+    .update({ status: "confirmed", reviewed_by: adminId, reviewed_at: new Date(nowMs).toISOString() })
     .eq("id", eventId);
 
   // Apply standard caps for this event type
@@ -69,7 +70,7 @@ export async function confirmEvent(
 
   // For severe events, set probation
   if (e.severity === "severe") {
-    const probationEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const probationEnd = new Date(nowMs + 30 * 24 * 60 * 60 * 1000).toISOString();
     await setProbation(db, e.user_id, true, probationEnd).catch(() => {});
   }
 
@@ -78,7 +79,7 @@ export async function confirmEvent(
 
   // Close any review for this event
   await db.from("trust_reviews")
-    .update({ status: "resolved", resolved_by: adminId, resolved_at: new Date().toISOString() })
+    .update({ status: "resolved", resolved_by: adminId, resolved_at: new Date(nowMs).toISOString() })
     .eq("source_event_id", eventId)
     .eq("status", "open");
 

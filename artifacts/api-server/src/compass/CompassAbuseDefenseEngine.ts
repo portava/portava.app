@@ -80,7 +80,8 @@ async function applyReachReduction(
   const hours = durationHours[severity];
   if (hours === 0) return;
 
-  const endsAt = new Date(Date.now() + hours * 60 * 60 * 1_000).toISOString();
+  const nowMs = Date.now();
+  const endsAt = new Date(nowMs + hours * 60 * 60 * 1_000).toISOString();
   try {
     await db.from("compass_visibility_cooldowns").upsert(
       {
@@ -88,7 +89,7 @@ async function applyReachReduction(
         cooldown_type: "reach_reduction",
         reason:       `abuse_defense:${severity}`,
         ends_at:      endsAt,
-        updated_at:   new Date().toISOString(),
+        updated_at:   new Date(nowMs).toISOString(),
       },
       { onConflict: "author_id,cooldown_type" },
     );

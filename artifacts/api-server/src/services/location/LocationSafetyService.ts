@@ -74,19 +74,20 @@ export async function checkAndRecordSnapshot(
   lat: number,
   lng: number,
 ): Promise<{ trusted: boolean; suspicionReason?: string }> {
+  const nowMs = Date.now();
   // Fetch latest snapshot for this user
   const { data: prev } = await db
     .from("location_snapshots")
     .select("lat, lng, captured_at")
     .eq("user_id", userId)
-    .gt("expires_at", new Date().toISOString())
+    .gt("expires_at", new Date(nowMs).toISOString())
     .order("captured_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
   if (prev && prev.lat != null && prev.lng != null) {
     const km = haversineKm(prev.lat, prev.lng, lat, lng);
-    const elapsedMs = Date.now() - new Date(prev.captured_at).getTime();
+    const elapsedMs = nowMs - new Date(prev.captured_at).getTime();
     const elapsedHours = elapsedMs / (1000 * 60 * 60);
 
     // Coordinate jump: instant teleport > 500 km
@@ -122,7 +123,7 @@ export async function checkAndRecordSnapshot(
       lat,
       lng,
       source:      "gps",
-      captured_at: new Date().toISOString(),
+      captured_at: new Date(nowMs).toISOString(),
     });
   } catch (err) {
     logger.warn({ err }, "snapshot insert failed — non-fatal");

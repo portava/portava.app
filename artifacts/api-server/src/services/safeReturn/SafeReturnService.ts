@@ -241,9 +241,10 @@ export async function extendTimer(
     if (!cur) return null;
     if (cur.status !== "active" && cur.status !== "missed") return null;
 
-    const base = cur.timer_end_at ? new Date(cur.timer_end_at) : new Date();
-    const newEnd = new Date(Math.max(base.getTime(), Date.now()) + minutes * 60_000).toISOString();
-    const now = new Date().toISOString();
+    const nowMs = Date.now();
+    const base = cur.timer_end_at ? new Date(cur.timer_end_at) : new Date(nowMs);
+    const newEnd = new Date(Math.max(base.getTime(), nowMs) + minutes * 60_000).toISOString();
+    const now = new Date(nowMs).toISOString();
 
     const { data, error } = await db
       .from("safe_return_sessions")

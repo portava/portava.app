@@ -132,8 +132,9 @@ async function fetchEvents(
   profile: CompassProfile,
 ): Promise<CompassItem[]> {
   try {
-    const now        = new Date().toISOString();
-    const windowEnd  = new Date(Date.now() + EVENTS_WINDOW_DAYS * 86_400_000).toISOString();
+    const nowMs      = Date.now();
+    const now        = new Date(nowMs).toISOString();
+    const windowEnd  = new Date(nowMs + EVENTS_WINDOW_DAYS * 86_400_000).toISOString();
 
     // Fetch upcoming public events (city-biased when city is known)
     const baseQuery = () =>

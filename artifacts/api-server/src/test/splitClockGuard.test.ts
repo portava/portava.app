@@ -21,6 +21,9 @@ const SRC_DIR = path.resolve(
 const SCAN_DIRS = [
   path.join(SRC_DIR, "lib"),
   path.join(SRC_DIR, "routes"),
+  path.join(SRC_DIR, "services"),
+  path.join(SRC_DIR, "middlewares"),
+  path.join(SRC_DIR, "compass"),
 ];
 
 function collectTsFiles(dir: string): string[] {
@@ -128,7 +131,7 @@ function scanBody(fn: FunctionLikeNode): {
   return { hasDateNow, hasNewDate };
 }
 
-test("no function in src/lib or src/routes mixes Date.now() with no-arg new Date()", () => {
+test("no function in src/lib, src/routes, src/services, src/middlewares, or src/compass mixes Date.now() with no-arg new Date()", () => {
   const offenders: string[] = [];
   for (const file of SCAN_DIRS.flatMap((dir) => collectTsFiles(dir))) {
     const sf = ts.createSourceFile(

@@ -198,6 +198,7 @@ export async function getRecipientView(
   callerUserId: string,
 ): Promise<{ view: RecipientLiveShareView } | { error: "not_found" | "forbidden" | "expired" | "stopped" }> {
   try {
+    const nowMs = Date.now();
     const { data: share } = await db
       .from("safe_return_live_shares")
       .select("*")
@@ -209,7 +210,7 @@ export async function getRecipientView(
     const s = mapShare(share as any);
 
     // Hard expiry check (code-level, before DB status)
-    if (s.expiresAt && new Date(s.expiresAt) < new Date()) {
+    if (s.expiresAt && new Date(s.expiresAt) < new Date(nowMs)) {
       // Opportunistically expire in DB (fire-and-forget)
       expireShare(db, shareId).catch(() => {});
       return { error: "expired" };
@@ -260,7 +261,7 @@ export async function getRecipientView(
     } catch { /* non-fatal */ }
 
     const secondsRemaining = s.expiresAt
-      ? Math.max(0, Math.floor((new Date(s.expiresAt).getTime() - Date.now()) / 1000))
+      ? Math.max(0, Math.floor((new Date(s.expiresAt).getTime() - nowMs) / 1000))
       : null;
 
     return {
