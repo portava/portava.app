@@ -35,6 +35,42 @@ export function wouldCreateDuplicateQueued(
   return false;
 }
 
+/**
+ * INSERT-side counterpart: given the current table rows and the row(s) being
+ * inserted, return true when the insert would create a second row in the set
+ * of conflicting statuses for the same catalog_id (violating the unique index
+ * or a broader application-level guard). The default conflicting status is
+ * 'queued' to match the partial unique index on
+ * stamp_generation_queue(catalog_id) WHERE status = 'queued'. Tests that model
+ * a broader active-job guard (e.g. queued + processing) can pass a custom list.
+ *
+ * Fake clients should call this before pushing inserted rows for
+ * stamp_generation_queue and return DUPLICATE_QUEUED_ERROR without inserting
+ * anything.
+ */
+export function insertWouldViolateQueuedUnique(
+  rows: any[],
+  inserted: any | any[],
+  conflictingStatuses: string[] = ["queued"],
+): boolean {
+  const newRows = Array.isArray(inserted) ? inserted : [inserted];
+  const isConflicting = (status: string) => conflictingStatuses.includes(status);
+
+  const counts: Record<string, number> = {};
+  for (const r of rows) {
+    if (isConflicting(r.status) && r.catalog_id) {
+      counts[r.catalog_id] = (counts[r.catalog_id] ?? 0) + 1;
+    }
+  }
+  for (const r of newRows) {
+    if (isConflicting(r.status) && r.catalog_id) {
+      counts[r.catalog_id] = (counts[r.catalog_id] ?? 0) + 1;
+      if (counts[r.catalog_id] > 1) return true;
+    }
+  }
+  return false;
+}
+
 /** Standard 23505 error object returned when the constraint would be violated. */
 export const DUPLICATE_QUEUED_ERROR = {
   code:    "23505",

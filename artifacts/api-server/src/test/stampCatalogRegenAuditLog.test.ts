@@ -23,7 +23,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import stampCatalogRouter from "../routes/stampCatalog.js";
-import { wouldCreateDuplicateQueued, DUPLICATE_QUEUED_ERROR } from "./stampQueueConstraint.js";
+import { wouldCreateDuplicateQueued, insertWouldViolateQueuedUnique, DUPLICATE_QUEUED_ERROR } from "./stampQueueConstraint.js";
 
 // ── Fixed IDs ─────────────────────────────────────────────────────────────────
 
@@ -191,6 +191,12 @@ function makeClient(db: DB) {
           .then(() => {
             const rows = db[tableName] ?? [];
             if (insertRow !== null) {
+              if (
+                tableName === "stamp_generation_queue" &&
+                insertWouldViolateQueuedUnique(rows, insertRow)
+              ) {
+                return { data: null, error: { ...DUPLICATE_QUEUED_ERROR } };
+              }
               rows.push(insertRow);
               return { data: { ...insertRow }, error: null };
             }
@@ -296,7 +302,6 @@ describe("Audit log entry appears on detail page after admin regenerates a stamp
     // The first insert succeeds and a job row is appended; the second insert
     // (rapid duplicate click) finds the unique constraint already satisfied and
     // returns the 23505 code — the handler must skip writeAuditLog in that branch.
-    let queueInsertCount = 0;
     const localDb = makeDb();
 
     function makeClientWithDup(dbArg: DB) {
@@ -358,12 +363,12 @@ describe("Audit log entry appears on detail page after admin regenerates a stamp
               .then(() => {
                 const rows = dbArg[tableName] ?? [];
                 if (insertRow !== null) {
-                  // Simulate 23505 on second insert into the queue table
-                  if (tableName === "stamp_generation_queue") {
-                    queueInsertCount++;
-                    if (queueInsertCount > 1) {
-                      return { data: null, error: { code: "23505", message: "duplicate key value" } };
-                    }
+                  // Simulate the partial unique index on (catalog_id) WHERE status = 'queued'.
+                  if (
+                    tableName === "stamp_generation_queue" &&
+                    insertWouldViolateQueuedUnique(rows, insertRow)
+                  ) {
+                    return { data: null, error: { ...DUPLICATE_QUEUED_ERROR } };
                   }
                   rows.push(insertRow);
                   return { data: { ...insertRow }, error: null };
@@ -452,7 +457,6 @@ describe("Audit log entry appears on detail page after admin regenerates a stamp
     // succeeds; this test verifies the audit-log guard follows that same
     // constraint — i.e. the second and third calls receive 23505 and must NOT
     // write a duplicate audit row.
-    let queueInsertCount = 0;
     const localDb = makeDb();
 
     function makeClientWithTripleDup(dbArg: DB) {
@@ -514,13 +518,12 @@ describe("Audit log entry appears on detail page after admin regenerates a stamp
               .then(() => {
                 const rows = dbArg[tableName] ?? [];
                 if (insertRow !== null) {
-                  // Simulate 23505 on 2nd and 3rd inserts into the queue table —
-                  // the DB unique constraint allows only one active queued row.
-                  if (tableName === "stamp_generation_queue") {
-                    queueInsertCount++;
-                    if (queueInsertCount > 1) {
-                      return { data: null, error: { code: "23505", message: "duplicate key value" } };
-                    }
+                  // Simulate the partial unique index on (catalog_id) WHERE status = 'queued'.
+                  if (
+                    tableName === "stamp_generation_queue" &&
+                    insertWouldViolateQueuedUnique(rows, insertRow)
+                  ) {
+                    return { data: null, error: { ...DUPLICATE_QUEUED_ERROR } };
                   }
                   rows.push(insertRow);
                   return { data: { ...insertRow }, error: null };
@@ -687,7 +690,6 @@ describe("Audit log entry appears on detail page after admin regenerates a stamp
     // Track how many times getUser has been called to alternate admin IDs.
     let getUserCallCount = 0;
     // Track queue inserts to simulate 23505 on the second attempt.
-    let queueInsertCount = 0;
 
     function makeCrossAdminClient(dbArg: DB) {
       function chain(tableName: string) {
@@ -748,12 +750,12 @@ describe("Audit log entry appears on detail page after admin regenerates a stamp
               .then(() => {
                 const rows = dbArg[tableName] ?? [];
                 if (insertRow !== null) {
-                  if (tableName === "stamp_generation_queue") {
-                    queueInsertCount++;
-                    if (queueInsertCount > 1) {
-                      // Second admin's insert hits the unique constraint on catalog_id.
-                      return { data: null, error: { code: "23505", message: "duplicate key value" } };
-                    }
+                  // Simulate the partial unique index on (catalog_id) WHERE status = 'queued'.
+                  if (
+                    tableName === "stamp_generation_queue" &&
+                    insertWouldViolateQueuedUnique(rows, insertRow)
+                  ) {
+                    return { data: null, error: { ...DUPLICATE_QUEUED_ERROR } };
                   }
                   rows.push(insertRow);
                   return { data: { ...insertRow }, error: null };

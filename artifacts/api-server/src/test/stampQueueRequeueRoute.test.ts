@@ -23,7 +23,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import stampCatalogRouter from "../routes/stampCatalog.js";
-import { wouldCreateDuplicateQueued, DUPLICATE_QUEUED_ERROR } from "./stampQueueConstraint.js";
+import { wouldCreateDuplicateQueued, insertWouldViolateQueuedUnique, DUPLICATE_QUEUED_ERROR } from "./stampQueueConstraint.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const ADMIN_USER_ID   = "aaaaaaaa-0000-0000-0002-000000000001";
@@ -138,16 +138,13 @@ function makeStampQueueClient() {
         const newRows = Array.isArray(data) ? data : [data];
         // Partial unique index: an insert of a 'queued' row hits 23505 when a
         // queued row for the same catalog_id already exists.
-        if (tableName === "stamp_generation_queue") {
-          const dup = newRows.some((n: any) =>
-            n.status === "queued" &&
-            (db[tableName] ?? []).some((r: any) => r.catalog_id === n.catalog_id && r.status === "queued"),
-          );
-          if (dup) {
-            insertError = { ...DUPLICATE_QUEUED_ERROR };
-            filtered = [];
-            return b;
-          }
+        if (
+          tableName === "stamp_generation_queue" &&
+          insertWouldViolateQueuedUnique(db[tableName] ?? [], newRows)
+        ) {
+          insertError = { ...DUPLICATE_QUEUED_ERROR };
+          filtered = [];
+          return b;
         }
         db[tableName] = [...(db[tableName] ?? []), ...newRows];
         filtered = newRows;
@@ -345,16 +342,13 @@ function makeStampQueueClientWithCleanupError() {
         const newRows = Array.isArray(data) ? data : [data];
         // Partial unique index: an insert of a 'queued' row hits 23505 when a
         // queued row for the same catalog_id already exists.
-        if (tableName === "stamp_generation_queue") {
-          const dup = newRows.some((n: any) =>
-            n.status === "queued" &&
-            (db[tableName] ?? []).some((r: any) => r.catalog_id === n.catalog_id && r.status === "queued"),
-          );
-          if (dup) {
-            insertError = { ...DUPLICATE_QUEUED_ERROR };
-            filtered = [];
-            return b;
-          }
+        if (
+          tableName === "stamp_generation_queue" &&
+          insertWouldViolateQueuedUnique(db[tableName] ?? [], newRows)
+        ) {
+          insertError = { ...DUPLICATE_QUEUED_ERROR };
+          filtered = [];
+          return b;
         }
         db[tableName] = [...(db[tableName] ?? []), ...newRows];
         filtered = newRows;

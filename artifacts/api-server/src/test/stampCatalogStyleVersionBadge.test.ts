@@ -24,6 +24,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
+import { insertWouldViolateQueuedUnique, DUPLICATE_QUEUED_ERROR } from "./stampQueueConstraint.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import { STYLE_VERSION, isArtworkStale } from "../lib/stamps/artDirection.js";
 import stampCatalogRouter from "../routes/stampCatalog.js";
@@ -87,6 +88,7 @@ function makeClient(db: DB) {
     const filters: Array<(r: any) => boolean> = [];
     let _headOnly    = false;
     let _selectCount = false;
+    let _insertError: { code: string; message: string } | null = null;
 
     const b: any = {
       select(_cols?: any, opts?: any) {
@@ -111,16 +113,25 @@ function makeClient(db: DB) {
       limit() { return b; },
       update() { return b; },
       insert(row: any) {
+        if (
+          tableName === "stamp_generation_queue" &&
+          insertWouldViolateQueuedUnique(db[tableName] ?? [], row)
+        ) {
+          _insertError = { ...DUPLICATE_QUEUED_ERROR };
+          return b;
+        }
         (db[tableName] ??= []).push(row);
         return b;
       },
 
       maybeSingle() {
+        if (_insertError) return Promise.resolve({ data: null, error: _insertError });
         const matched = (db[tableName] ?? []).filter((r) => filters.every((f) => f(r)));
         return Promise.resolve({ data: matched[0] ?? null, error: null });
       },
 
       single() {
+        if (_insertError) return Promise.resolve({ data: null, error: _insertError });
         const matched = (db[tableName] ?? []).filter((r) => filters.every((f) => f(r)));
         if (matched.length === 1) return Promise.resolve({ data: matched[0], error: null });
         return Promise.resolve({ data: null, error: { message: "No rows" } });
@@ -129,6 +140,7 @@ function makeClient(db: DB) {
       then(resolve: any, reject: any) {
         return Promise.resolve()
           .then(() => {
+            if (_insertError) return { data: null, error: _insertError };
             const rows    = db[tableName] ?? [];
             const matched = rows.filter((r) => filters.every((f) => f(r)));
             if (_headOnly) return { data: null, error: null, count: matched.length };

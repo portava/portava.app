@@ -23,7 +23,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import stampCatalogRouter from "../routes/stampCatalog.js";
-import { wouldCreateDuplicateQueued, DUPLICATE_QUEUED_ERROR } from "./stampQueueConstraint.js";
+import { wouldCreateDuplicateQueued, insertWouldViolateQueuedUnique, DUPLICATE_QUEUED_ERROR } from "./stampQueueConstraint.js";
 
 // ── Fixed IDs ─────────────────────────────────────────────────────────────────
 
@@ -148,24 +148,14 @@ function makeClient(db: DB) {
 
             if (insertRow !== null) {
               // Simulate the unique constraint on (catalog_id) for active jobs.
-              // A real DB partial unique index covers status IN ('queued','processing').
-              // Any attempt to insert another queued row for the same catalog_id
-              // returns 23505.
-              if (tableName === "stamp_generation_queue" && insertRow.status === "queued") {
-                const duplicate = rows.find(
-                  (r) =>
-                    r.catalog_id === insertRow!.catalog_id &&
-                    (r.status === "queued" || r.status === "processing"),
-                );
-                if (duplicate) {
-                  return {
-                    data:  null,
-                    error: {
-                      code:    "23505",
-                      message: "duplicate key value violates unique constraint",
-                    },
-                  };
-                }
+              // A real DB partial unique index covers status = 'queued', but the
+              // application also blocks inserting a queued job when a 'processing'
+              // one is already in flight for the same catalog_id.
+              if (
+                tableName === "stamp_generation_queue" &&
+                insertWouldViolateQueuedUnique(rows, insertRow, ["queued", "processing"])
+              ) {
+                return { data: null, error: { ...DUPLICATE_QUEUED_ERROR } };
               }
               rows.push(insertRow);
               db[tableName] = rows;

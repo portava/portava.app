@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
+import { insertWouldViolateQueuedUnique, DUPLICATE_QUEUED_ERROR } from "./stampQueueConstraint.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import stampCatalogRouter from "../routes/stampCatalog.js";
 
@@ -101,6 +102,7 @@ function makeClient() {
     // updates mutate the live rows; reads work on the live array too
     let filtered: any[] = db[tableName] ?? [];
     let pendingUpdate: Record<string, any> | null = null;
+    let insertError: { code: string; message: string } | null = null;
 
     const applyUpdate = () => {
       if (pendingUpdate !== null) {
@@ -113,6 +115,13 @@ function makeClient() {
       select: () => b,
       insert: (data: any) => {
         const newRows = Array.isArray(data) ? data : [data];
+        if (
+          tableName === "stamp_generation_queue" &&
+          insertWouldViolateQueuedUnique(db[tableName] ?? [], newRows)
+        ) {
+          insertError = { ...DUPLICATE_QUEUED_ERROR };
+          return b;
+        }
         db[tableName] = [...(db[tableName] ?? []), ...newRows];
         filtered = newRows;
         return b;
@@ -139,16 +148,19 @@ function makeClient() {
       limit: () => b,
       range: () => b,
       maybeSingle: () => {
+        if (insertError) return Promise.resolve({ data: null, error: insertError });
         applyUpdate();
         return Promise.resolve({ data: filtered[0] ?? null, error: null });
       },
       single: () => {
+        if (insertError) return Promise.resolve({ data: null, error: insertError });
         applyUpdate();
         return Promise.resolve(
           filtered[0] ? { data: filtered[0], error: null } : { data: null, error: { message: "No rows" } },
         );
       },
       then: (resolve: any, reject: any) => {
+        if (insertError) return Promise.resolve({ data: null, error: insertError }).then(resolve, reject);
         applyUpdate();
         return Promise.resolve({ data: filtered, error: null, count: filtered.length }).then(resolve, reject);
       },

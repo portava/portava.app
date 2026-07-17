@@ -25,7 +25,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import stampCatalogRouter from "../routes/stampCatalog.js";
-import { wouldCreateDuplicateQueued, DUPLICATE_QUEUED_ERROR } from "./stampQueueConstraint.js";
+import { wouldCreateDuplicateQueued, insertWouldViolateQueuedUnique, DUPLICATE_QUEUED_ERROR } from "./stampQueueConstraint.js";
 
 // ── Fixed IDs ─────────────────────────────────────────────────────────────────
 
@@ -152,24 +152,12 @@ function makeClient(db: DB) {
             const rows = db[tableName] ?? [];
 
             if (insertRow !== null) {
-              // Simulate the unique constraint on (catalog_id, status='queued').
-              // Only 'queued' rows block a new insert — completed/failed rows do not.
+              // Simulate the partial unique index on (catalog_id) WHERE status = 'queued'.
               if (
                 tableName === "stamp_generation_queue" &&
-                insertRow.status === "queued"
+                insertWouldViolateQueuedUnique(rows, insertRow)
               ) {
-                const duplicate = rows.find(
-                  (r) => r.catalog_id === insertRow!.catalog_id && r.status === "queued",
-                );
-                if (duplicate) {
-                  return {
-                    data:  null,
-                    error: {
-                      code:    "23505",
-                      message: "duplicate key value violates unique constraint",
-                    },
-                  };
-                }
+                return { data: null, error: { ...DUPLICATE_QUEUED_ERROR } };
               }
               rows.push(insertRow);
               db[tableName] = rows;

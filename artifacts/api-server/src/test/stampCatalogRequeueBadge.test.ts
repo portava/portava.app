@@ -30,7 +30,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import stampCatalogRouter from "../routes/stampCatalog.js";
-import { wouldCreateDuplicateQueued, DUPLICATE_QUEUED_ERROR } from "./stampQueueConstraint.js";
+import { wouldCreateDuplicateQueued, insertWouldViolateQueuedUnique, DUPLICATE_QUEUED_ERROR } from "./stampQueueConstraint.js";
 
 // ── Fixed IDs ─────────────────────────────────────────────────────────────────
 
@@ -178,6 +178,12 @@ function makeClient(db: DB) {
           .then(() => {
             const rows = db[tableName] ?? [];
             if (insertRow !== null) {
+              if (
+                tableName === "stamp_generation_queue" &&
+                insertWouldViolateQueuedUnique(rows, insertRow)
+              ) {
+                return { data: null, error: { ...DUPLICATE_QUEUED_ERROR } };
+              }
               rows.push(insertRow);
               return { data: { ...insertRow }, error: null };
             }
