@@ -516,12 +516,12 @@ describe("Per-item authz — blocked users excluded from city_pulse_preview", ()
     const SAFE_USER    = "00000000-0000-0000-8888-000000000088";
 
     const fakePost_fromBlocked = {
-      id: "post-blocked", body: "blocked post", created_at: new Date().toISOString(),
-      user_id: BLOCKED_USER, post_status: null, status: "active",
+      id: "post-blocked", content: "blocked post", created_at: new Date().toISOString(),
+      author_id: BLOCKED_USER, post_status: null, status: "active", location_city: "Bangkok",
     };
     const fakePost_fromSafe = {
-      id: "post-safe", body: "safe post", created_at: new Date().toISOString(),
-      user_id: SAFE_USER, post_status: null, status: "active",
+      id: "post-safe", content: "safe post", created_at: new Date().toISOString(),
+      author_id: SAFE_USER, post_status: null, status: "active", location_city: "Bangkok",
     };
 
     const { db } = makeFakeDb({
@@ -550,12 +550,12 @@ describe("Per-item authz — blocked users excluded from city_pulse_preview", ()
   it("delayed/unpublished posts never appear in city_pulse_preview", async () => {
     clearL1Cache();   // isolate from previous test's L1 back-fill (same user, same cache key)
     const fakeDelayedPost = {
-      id: "post-delayed", body: "not yet!", created_at: new Date().toISOString(),
-      user_id: USER_B, post_status: "delayed", status: "active",
+      id: "post-delayed", content: "not yet!", created_at: new Date().toISOString(),
+      author_id: USER_B, post_status: "pending_delay", status: "active", location_city: "Bangkok",
     };
     const fakePublishedPost = {
-      id: "post-published", body: "live", created_at: new Date().toISOString(),
-      user_id: USER_B, post_status: null, status: "active",
+      id: "post-published", content: "live", created_at: new Date().toISOString(),
+      author_id: USER_B, post_status: null, status: "active", location_city: "Tokyo",
     };
 
     const { db } = makeFakeDb({
@@ -587,12 +587,12 @@ describe("Cellular mode — no video previews in city_pulse_preview", () => {
   it("video posts are stripped from city_pulse_preview when networkHint=cellular", async () => {
     const VIDEO_USER = "00000000-0000-0000-7777-000000000077";
     const fakeVideoPost = {
-      id: "post-video", body: "watch this!", created_at: new Date().toISOString(),
-      user_id: VIDEO_USER, post_status: null, status: "active", post_type: "video",
+      id: "post-video", content: "watch this!", created_at: new Date().toISOString(),
+      author_id: VIDEO_USER, post_status: null, status: "active", has_video: true, location_city: "Barcelona",
     };
     const fakeTextPost = {
-      id: "post-text", body: "hello world", created_at: new Date().toISOString(),
-      user_id: VIDEO_USER, post_status: null, status: "active", post_type: "text",
+      id: "post-text", content: "hello world", created_at: new Date().toISOString(),
+      author_id: VIDEO_USER, post_status: null, status: "active", has_video: false, location_city: "Barcelona",
     };
 
     const { db } = makeFakeDb({ posts: [fakeVideoPost, fakeTextPost] });
@@ -617,8 +617,8 @@ describe("Cellular mode — no video previews in city_pulse_preview", () => {
     clearL1Cache();   // isolate from the previous cellular test's L1 back-fill
     const VIDEO_USER = "00000000-0000-0000-7777-000000000077";
     const fakeVideoPost = {
-      id: "post-video-wifi", body: "watch this!", created_at: new Date().toISOString(),
-      user_id: VIDEO_USER, post_status: null, status: "active", post_type: "video",
+      id: "post-video-wifi", content: "watch this!", created_at: new Date().toISOString(),
+      author_id: VIDEO_USER, post_status: null, status: "active", has_video: true, location_city: "Barcelona",
     };
 
     const { db } = makeFakeDb({ posts: [fakeVideoPost] });
@@ -655,8 +655,8 @@ describe("Cache-backed tier 1–3 assembly", () => {
       compass_feed_cache: [],
       compass_cache_invalidations: [],
       // Only this post exists in DB — it must NOT appear in tier1 on cache hit
-      posts: [{ id: 'fresh-post', body: 'should not appear', user_id: USER_B,
-                post_status: null, status: 'active', created_at: new Date().toISOString() }],
+      posts: [{ id: 'fresh-post', content: 'should not appear', author_id: USER_B,
+                post_status: null, status: 'active', location_city: 'Rome', created_at: new Date().toISOString() }],
     };
     const { db } = makeFakeDb(tableData);
 

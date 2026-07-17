@@ -42,7 +42,7 @@ export function identityRealName(id: DisplayIdentity | null | undefined): string
 /** The one line every surface should render for a user reference. */
 export function primaryIdentityText(id: DisplayIdentity | null | undefined): string {
   const real = identityRealName(id);
-  // Legacy accounts predating the 40-char limit can still have longer names
+  // Legacy accounts predating the 30-char limit can still have longer names
   // stored; cap at render time so no surface overflows or wraps badly.
   if (real) return truncateDisplayName(real);
   const h = identityHandle(id);

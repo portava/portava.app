@@ -350,22 +350,22 @@ async function loadTier1(
       const blockedSet = new Set(profile.blockedUserIds ?? []);
       const { data: raw } = await db
         .from("posts")
-        .select("id, body, created_at, user_id, post_status, status, post_type")
-        .eq("city", profile.currentCity)
+        .select("id, content, created_at, author_id, post_status, status, has_video")
+        .eq("location_city", profile.currentCity)
         .eq("status", "active")
         .order("created_at", { ascending: false })
         .limit(20);
       pulsePreview = ((raw as any[]) ?? [])
         .filter((p: any) =>
           // Authorization: exclude posts from blocked users
-          !blockedSet.has(p.user_id as string) &&
+          !blockedSet.has(p.author_id as string) &&
           // Privacy: exclude posts pending delayed-publish
           (!p.post_status || p.post_status === "published") &&
           // Cellular: no video previews (bandwidth-sensitive)
-          !(isCellular && p.post_type === "video"),
+          !(isCellular && p.has_video === true),
         )
         .slice(0, 5)
-        .map(({ post_status: _ps, status: _s, post_type: _pt, ...rest }: any) => rest);
+        .map(({ post_status: _ps, status: _s, has_video: _hv, ...rest }: any) => rest);
     } catch { /* non-fatal */ }
   }
   items.push({ type: 'city_pulse_preview', tier: 1, cachedAt: now, data: pulsePreview });
@@ -412,21 +412,20 @@ async function loadTier2(
     try {
       const blockedSet = new Set(profile.blockedUserIds ?? []);
       const { data: raw } = await db
-        .from("posts")
-        .select("id, body, event_starts_at, city, created_at, user_id, status, post_status")
+        .from("events")
+        .select("id, title, description, starts_at, city, created_at, host_id, state")
         .eq("city", profile.currentCity)
-        .eq("post_type", "event")
-        .eq("status", "active")
-        .gt("event_starts_at", now)
-        .order("event_starts_at", { ascending: true })
+        .in("state", ["open", "full", "waitlist"])
+        .gt("starts_at", now)
+        .order("starts_at", { ascending: true })
         .limit(10);
       topEvents = ((raw as any[]) ?? [])
         .filter((e: any) =>
-          !blockedSet.has(e.user_id as string) &&
-          (!e.post_status || e.post_status === "published"),
+          !blockedSet.has(e.host_id as string) &&
+          ["open", "full", "waitlist"].includes(e.state as string),
         )
         .slice(0, 3)
-        .map(({ user_id: _u, status: _s, post_status: _ps, ...rest }: any) => rest);
+        .map(({ host_id: _h, state: _st, ...rest }: any) => rest);
     } catch { /* non-fatal */ }
   }
   items.push({ type: 'top_events', tier: 2, cachedAt: now, data: topEvents });

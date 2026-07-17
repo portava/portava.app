@@ -220,7 +220,7 @@ export function PassportIdentityCard({
     name:        'name'        in profile ? profile.name        : null,
     username,
   };
-  // Cap at the 40-char display-name limit — legacy accounts created before
+  // Cap at the 30-char display-name limit — legacy accounts created before
   // the limit may still have longer names stored in the DB.
   const resolvedName  = truncateDisplayName(primaryIdentityText(identity));
   const handleSubline = secondaryIdentityText(identity);

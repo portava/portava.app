@@ -16,5 +16,6 @@ description: How to run api-server tests without timeouts, and fake-client pitfa
 - Some test files (e.g. the geofence suite) leak open handles (unclosed servers/sockets), so their child process never exits and the runner — which uses process isolation — waits forever on the next file. The `test` script must keep `--test-force-exit`; without it the full suite deterministically stalls partway with no error.
 
 # Fake-client pitfalls
+- The geocoder's fetch-swap test hook does NOT null its DB-client override — suites must explicitly set the DB override to null (e.g. in beforeEach) or their "no DB" tests silently read the live geocode cache table and return real rows.
 - Code that calls `getServiceClient()` gets a REAL Supabase client during tests (workspace env has live secrets) unless the suite stubs it via `_setTestServiceClient` (hook in the supabase lib). Unstubbed suites make live network calls.
 - Test fakes that override `from(table)` with strict per-table builders break when production code adds a new query or chain step. A `TypeError: ... is not a function` inside `requireUser` usually means the fake's `profiles` builder is missing part of the account-status chain — not a product bug.
