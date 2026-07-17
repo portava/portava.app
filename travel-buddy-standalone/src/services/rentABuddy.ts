@@ -146,12 +146,8 @@ export type BuddySortBy =
   | 'response_time'
   | 'newest';
 
-export interface BuddySearchParams {
+export type BuddySearchParams = {
   city: string;
-  /** Latitude of the user's current location — enables proximity-based ranking on the server. */
-  lat?: number;
-  /** Longitude of the user's current location — enables proximity-based ranking on the server. */
-  lng?: number;
   category?: BuddyCategory;
   date?: string;
   groupSize?: number;
@@ -163,7 +159,13 @@ export interface BuddySearchParams {
   sessionMode?: 'any' | 'in_person' | 'remote';
   page?: number;
   perPage?: number;
-}
+} & CoordPair;
+
+/** Either both coordinates or neither — prevents half-provided location pairs.
+ *  When present, enables proximity-based ranking on the server. */
+export type CoordPair =
+  | { lat: number; lng: number }
+  | { lat?: never; lng?: never };
 
 export interface BuddySearchResult {
   buddies: BuddyProfile[];
