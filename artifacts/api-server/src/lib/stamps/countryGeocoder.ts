@@ -484,14 +484,24 @@ export async function geocodeCityCountry(city: string): Promise<GeocodedCountry 
         });
       }
       if (result) {
-        const persisted = await writeDbCache(key, result);
-        if (!persisted) {
-          // Mark the entry so the next warm hit re-attempts the persist —
-          // otherwise the result lives only in memory and is lost on restart.
-          const entry = _cache.get(key);
-          if (entry && entry.result === result) {
-            _cache.set(key, { ...entry, persistFailed: true });
+        // Guard: skip the DB persist when evictGeocodeCacheKey ran while the
+        // geocode was in flight (e.g. an admin DELETE tombstoned the row and
+        // evicted the key).  writeDbCache upserts deleted_at: null, so writing
+        // here would silently REVIVE the row the admin just deleted — on every
+        // instance, since the DB cache is shared.  The in-memory guard above
+        // only protects this instance's memory cache; this one protects the DB.
+        if (_pending.get(key) === p) {
+          const persisted = await writeDbCache(key, result);
+          if (!persisted) {
+            // Mark the entry so the next warm hit re-attempts the persist —
+            // otherwise the result lives only in memory and is lost on restart.
+            const entry = _cache.get(key);
+            if (entry && entry.result === result) {
+              _cache.set(key, { ...entry, persistFailed: true });
+            }
           }
+        } else {
+          logEvent("stamp.country_geocode.persist_skipped_evicted", { city_key: key });
         }
         logEvent("stamp.country_geocode.resolved", { city, country_code: result.countryCode });
       } else {

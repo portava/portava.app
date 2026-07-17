@@ -5036,3 +5036,100 @@ describe("DB-cache re-resolve path re-arms the correction check", () => {
       "one unrelated entry trimmed + in-place replace of the target's expired entry");
   });
 });
+
+describe("in-flight geocode must not revive a row the admin just deleted", () => {
+  it("skips the DB upsert when evictGeocodeCacheKey ran while the geocode was in flight — the tombstoned row is not revived", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Deferred Nominatim response so we control exactly when the geocode resolves.
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((r) => { releaseFetch = r; });
+    _setGeocodeFetchForTests(async () => {
+      await fetchGate;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "fr", country: "France" } }],
+      };
+    });
+
+    // Shared-DB fake: readDbCache misses (row was tombstoned → treated as not
+    // found), and every upsert is recorded so we can assert none fired.
+    const upsertPayloads: any[] = [];
+    _setGeocodeDbClientForTests({
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() { return { data: null, error: null }; },
+          upsert(payload: any) {
+            upsertPayloads.push(payload);
+            return Promise.resolve({ error: null });
+          },
+          then(resolve: (v: any) => void) { resolve({ data: [], error: null }); },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient);
+
+    // 1. Geocode starts (Nominatim request in flight, gated).
+    const inflight = geocodeCityCountry("Lyon");
+    // Let the readDbCache miss settle so the fetch is genuinely in flight.
+    await new Promise((r) => setImmediate(r));
+
+    // 2. Admin DELETE lands: tombstones the DB row and evicts the local key.
+    evictGeocodeCacheKey("lyon");
+
+    // 3. Geocode resolves.
+    releaseFetch();
+    const result = await inflight;
+
+    // The in-flight caller still receives the resolved value…
+    assert.equal(result?.countryCode, "FR", "in-flight caller still gets the resolved result");
+    // …but no DB upsert fired — the tombstoned row was NOT revived.
+    assert.equal(upsertPayloads.length, 0,
+      "writeDbCache skipped after eviction — no deleted_at:null upsert revives the tombstone");
+    // The in-memory cache write was also skipped (existing guard).
+    assert.equal(_getGeocodeCacheEntryForTests("lyon"), undefined,
+      "no in-memory entry written for the evicted key");
+  });
+
+  it("still persists normally when no eviction happens while the geocode is in flight", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "pt", country: "Portugal" } }],
+    }));
+
+    const upsertPayloads: any[] = [];
+    _setGeocodeDbClientForTests({
+      from(table: string) {
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() { return { data: null, error: null }; },
+          upsert(payload: any) {
+            upsertPayloads.push(payload);
+            return Promise.resolve({ error: null });
+          },
+          then(resolve: (v: any) => void) { resolve({ data: [], error: null }); },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient);
+
+    const result = await geocodeCityCountry("Porto");
+    assert.equal(result?.countryCode, "PT");
+    assert.equal(upsertPayloads.length, 1, "normal resolve persists exactly once");
+    assert.equal(upsertPayloads[0].city_key, "porto");
+    assert.equal(upsertPayloads[0].deleted_at, null,
+      "normal persist still clears tombstones (PUT-revival path unaffected)");
+  });
+});
