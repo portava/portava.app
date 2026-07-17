@@ -1030,3 +1030,65 @@ describe("top_buddies — live-schema column check", () => {
     );
   });
 });
+
+// ── saved_places — live-schema column check ───────────────────────────────────
+//
+// Verified 2026-07-17 via Supabase Management API (information_schema.columns):
+//   discovery_places: id (uuid), name (text), category (text|null), city (text),
+//                     submitted_by (uuid|null), created_at (timestamptz)
+// A wrong column name in .select("id, name, category, city") causes PostgREST to
+// fail the whole query; the catch block silently returns [] — emptying saved_places
+// (the wishlist section) on every app open.
+
+describe("saved_places — live-schema column check", () => {
+  before(() => clearL1Cache());
+
+  it("discovery_places seeded with live-shaped columns appear in saved_places tier2 item", async () => {
+    clearL1Cache();
+
+    const fakePlace = {
+      id:           "place-live-col-1",
+      name:         "Miradouro da Graça",
+      category:     "viewpoint",
+      city:         "Lisbon",
+      submitted_by: USER_A,
+      created_at:   new Date().toISOString(),
+    };
+
+    const { db } = makeFakeDb({ discovery_places: [fakePlace] });
+
+    const payload = await buildFrontLoadPayload(db, USER_A, baseProfile(), { networkHint: "wifi" });
+
+    const savedItem = [...payload.tier2].find((i) => i.type === "saved_places");
+    assert.ok(savedItem, "saved_places must be present in tier2");
+
+    const savedData = savedItem!.data as Array<Record<string, unknown>>;
+    assert.ok(
+      savedData.length >= 1,
+      "saved_places data must contain the seeded row — a drifted column name would silently empty this array",
+    );
+
+    const row = savedData.find((p) => p["id"] === "place-live-col-1");
+    assert.ok(row, "seeded discovery_places id must be present in saved_places data");
+    assert.strictEqual(row["name"],     "Miradouro da Graça",
+      "name (live column name) must be returned");
+    assert.strictEqual(row["category"], "viewpoint",
+      "category (live column name) must be returned");
+    assert.strictEqual(row["city"],     "Lisbon",
+      "city (live column name) must be returned");
+  });
+
+  it("saved_places data is empty when discovery_places table has no rows", async () => {
+    clearL1Cache();
+
+    const { db } = makeFakeDb({ discovery_places: [] });
+
+    const payload = await buildFrontLoadPayload(db, USER_A, baseProfile(), { networkHint: "wifi" });
+
+    const savedItem = [...payload.tier2].find((i) => i.type === "saved_places");
+    assert.ok(savedItem, "saved_places item must still be present in tier2 even with no rows");
+
+    const savedData = savedItem!.data as Array<Record<string, unknown>>;
+    assert.strictEqual(savedData.length, 0, "saved_places data must be empty when no places exist");
+  });
+});
