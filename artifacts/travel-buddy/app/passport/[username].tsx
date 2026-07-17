@@ -112,8 +112,14 @@ export default function PassportDeepLinkScreen() {
   const ringState = useHighlightRingState(profile?.id ?? null);
   const [highlightViewerOpen, setHighlightViewerOpen] = useState(false);
   const [tab, setTab] = useState<PassportTabKey>('postcards');
+  const [statsIconOnly, setStatsIconOnly] = useState(false);
   const insets = useSafeAreaInsets();
   const navBarScrollHandler = useNavBarScrollHandler();
+
+  const handleScroll = useCallback((e: any) => {
+    navBarScrollHandler(e);
+    setStatsIconOnly(e.nativeEvent.contentOffset.y > 60);
+  }, [navBarScrollHandler]);
 
   const handleMorePress = useCallback(() => {
     if (!profile) return;
@@ -283,7 +289,7 @@ export default function PassportDeepLinkScreen() {
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: 80 }}
         showsVerticalScrollIndicator={false}
-        onScroll={navBarScrollHandler}
+        onScroll={handleScroll}
         scrollEventThrottle={16}
       >
         {/* ── Passport Identity Card ── */}
@@ -304,6 +310,7 @@ export default function PassportDeepLinkScreen() {
           onStatPress={(label) => {
             if (label === 'Countries') setTab('map');
           }}
+          iconOnly={statsIconOnly}
         />
 
         {/* ── Document-style tab bar — order from owner's saved preference ── */}
