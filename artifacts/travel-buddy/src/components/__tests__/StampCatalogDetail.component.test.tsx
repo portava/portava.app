@@ -39,9 +39,9 @@
  */
 
 import React from 'react';
-import { render, act, waitFor, screen } from '@testing-library/react-native';
+import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
 import StampCatalogDetail from '../../../app/admin/stamps/[catalogId]';
-import { getAdminCatalogEntry } from '../../services/adminStamps';
+import { getAdminCatalogEntry, activateStampVersion } from '../../services/adminStamps';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
@@ -76,7 +76,8 @@ jest.mock('lucide-react-native', () => ({
 
 // ── Typed mock ref ─────────────────────────────────────────────────────────────
 
-const mockGetEntry = getAdminCatalogEntry as jest.Mock;
+const mockGetEntry  = getAdminCatalogEntry as jest.Mock;
+const mockActivate  = activateStampVersion as jest.Mock;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -99,6 +100,25 @@ function detailOk() {
       queue:      null,
       audit:      [],
       earnSample: [],
+    },
+  };
+}
+
+function detailOkWithCandidate() {
+  const base = detailOk();
+  return {
+    ...base,
+    data: {
+      ...base.data,
+      versions: [
+        {
+          id: 'ver-1',
+          status: 'candidate',
+          public_url: 'https://example.com/candidate.png',
+          provider: 'ai',
+          prompt_template_version: 'v1',
+        },
+      ],
     },
   };
 }
@@ -141,5 +161,35 @@ describe('StampCatalogDetail — API error banner', () => {
     await waitFor(() => screen.getByText('Paris Eiffel'));
     expect(screen.getByText('Paris Eiffel')).toBeTruthy();
     expect(screen.queryByTestId('catalog-detail-error')).toBeNull();
+  });
+
+  it('clears the error banner when an action-triggered reload succeeds after a refresh error', async () => {
+    // Initial load succeeds (with a candidate), refresh fails, then all
+    // subsequent loads succeed again.
+    mockGetEntry
+      .mockResolvedValueOnce(detailOkWithCandidate()) // initial load
+      .mockResolvedValueOnce({ ok: false })           // pull-to-refresh fails
+      .mockResolvedValue(detailOkWithCandidate());    // reload after action
+
+    mockActivate.mockResolvedValue({ ok: true });
+
+    await act(async () => { render(<StampCatalogDetail />); });
+
+    // Content is visible, no error banner.
+    expect(screen.getByText('Paris Eiffel')).toBeTruthy();
+    expect(screen.queryByTestId('catalog-detail-error')).toBeNull();
+
+    // Pull-to-refresh fails → banner appears over the (stale) content.
+    const scroll = screen.getByTestId('catalog-detail-scroll');
+    await act(async () => { scroll.props.refreshControl.props.onRefresh(); });
+    expect(screen.getByTestId('catalog-detail-error')).toBeTruthy();
+
+    // Trigger an action: activating a candidate calls load() again on success.
+    await act(async () => { fireEvent.press(screen.getByText('Set as Active')); });
+
+    // The successful action-triggered reload must clear the error banner.
+    await waitFor(() => expect(screen.queryByTestId('catalog-detail-error')).toBeNull());
+    expect(screen.getByText('Paris Eiffel')).toBeTruthy();
+    expect(mockActivate).toHaveBeenCalledWith('cat-abc', 'ver-1', expect.any(String));
   });
 });
