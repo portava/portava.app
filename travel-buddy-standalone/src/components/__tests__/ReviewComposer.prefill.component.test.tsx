@@ -24,12 +24,8 @@ import React from 'react';
 import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
 import ReviewComposerScreen from '../../../app/review/[entityType]/[entityId].tsx';
 
-// ── AsyncStorage mock ─────────────────────────────────────────────────────────
-// The native module is unavailable under jest; use the official in-memory mock.
-
-jest.mock('@react-native-async-storage/async-storage', () =>
-  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
-);
+// AsyncStorage is mapped to the official jest mock globally via
+// moduleNameMapper in jest.config.js — no per-file mock needed.
 
 // ── Safe-area mock ────────────────────────────────────────────────────────────
 

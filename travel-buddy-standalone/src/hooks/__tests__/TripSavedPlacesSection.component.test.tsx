@@ -22,12 +22,8 @@ import type { BookmarkedPlace } from '../../services/discoveryBookmarks.ts';
 // Mock useTripSavedPlaces so we control returned state without async effects.
 // discoveryBookmarks is also mocked so the real hook can be used in the
 // integrated describe block below without touching real AsyncStorage.
-// AsyncStorage's native module is null under jest, so it must be mocked with
-// the official jest mock BEFORE requireActual pulls discoveryBookmarks' import
-// chain — otherwise the integrated describe block's requireMock crashes.
-jest.mock('@react-native-async-storage/async-storage', () =>
-  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
-);
+// AsyncStorage is mapped to the official jest mock globally via
+// moduleNameMapper in jest.config.js — no per-file mock needed.
 jest.mock('../../services/discoveryBookmarks.ts', () => ({
   ...jest.requireActual('../../services/discoveryBookmarks.ts'),
   listSaved: jest.fn(),

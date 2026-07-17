@@ -20,3 +20,4 @@
 - [Stale partial jest.mock factories](stale-partial-jest-mocks.md) — "not a function"/"Element type undefined" render crashes usually mean a hand-written mock object drifted behind the component's imports.
 - [Geocode tests and live DB](geocode-tests-live-db.md) — geocode tests must null the DB client override in beforeEach or they silently hit the real Supabase cache table.
 - [Alert onPress act() poison](rn-alert-onpress-act-poison.md) — awaiting an Alert button's async onPress inside act() kills effects for all later renders in the file; await outside, then flush with empty act().
+- [Jest moduleNameMapper vs per-file mocks](jest-mapper-vs-perfile-mocks.md) — mapping a module globally while a test file still has a jest.mock factory requiring the mock path causes infinite recursion; remove per-file mocks when adding a mapper entry.
