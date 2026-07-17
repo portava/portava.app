@@ -10,3 +10,5 @@ description: React 19 + RNTL — awaiting an async Alert-button onPress inside a
 **How to apply:** In any pressAlertButton-style helper, await the onPress bare, then flush. Prefer `jest.spyOn(Alert, 'alert').mockImplementation(() => {})`. If a shared file is already poisoned and can't be fixed yet, put new suites in a separate `.component.test.tsx` file for a fresh renderer.
 
 The jest setup (loaded via setupFilesAfterEnv in both trees) sets IS_REACT_ACT_ENVIRONMENT=true globally, so new test files don't need module-level workarounds — only the bare-onPress rule still applies.
+
+**Also:** RNTL `render()` and `unmount()` are async in this setup (React 19 concurrent). An unawaited `unmount()` leaves a dangling act scope — "overlapping act()" warnings and every later render in the file never flushes its initial async load. Always `await render(...)` and `await unmount()`.
