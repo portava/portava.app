@@ -24,6 +24,19 @@ import React from 'react';
 import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
 import ReviewComposerScreen from '../../../app/review/[entityType]/[entityId].tsx';
 
+// ── AsyncStorage mock ─────────────────────────────────────────────────────────
+// The native module is unavailable under jest; use the official in-memory mock.
+
+jest.mock('@react-native-async-storage/async-storage', () =>
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
+
+// ── Safe-area mock ────────────────────────────────────────────────────────────
+
+jest.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+}));
+
 // ── expo-router mock ──────────────────────────────────────────────────────────
 
 jest.mock('expo-router', () => ({
