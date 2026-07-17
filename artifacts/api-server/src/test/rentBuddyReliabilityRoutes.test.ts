@@ -1643,6 +1643,114 @@ describe("top-buddies-in-city display cards — completed_count takes precedence
   });
 });
 
+// ── offers endpoint buddy card counter precedence ─────────────────────────────
+//
+// GET /api/rent-a-buddy/requests/:requestId/offers builds each offer's buddy
+// card via mapProfile(o.buddy). mapProfile reads completed_count ??
+// completed_bookings. When the two counters disagree, completed_count must win
+// so the "sessions completed" shown on the traveler's offer list is accurate.
+
+const REQUEST_ID = "11111111-0000-0000-0000-000000000010";
+
+function makeOffersFakeClient(buddyRow: Record<string, any>) {
+  const offerRow = {
+    id:                  "22222222-0000-0000-0000-000000000020",
+    request_id:          REQUEST_ID,
+    buddy_profile_id:    BP_ID,
+    buddy_user_id:       BUDDY_USER_ID,
+    proposed_price_usd:  20,
+    deposit_amount_usd:  0,
+    cash_balance_usd:    0,
+    proposed_start:      null,
+    proposed_end:        null,
+    meetup_location:     null,
+    message:             null,
+    included_services:   [],
+    addons_offered:      [],
+    payment_mode:        "cash",
+    expires_at:          null,
+    status:              "pending",
+    accepted_booking_id: null,
+    created_at:          new Date().toISOString(),
+    buddy:               buddyRow,
+  };
+
+  function makeBuilder(table: string): any {
+    const b: any = {
+      select:      () => b,
+      eq:          () => b,
+      neq:         () => b,
+      order:       () => b,
+      limit:       () => b,
+      maybeSingle: () => {
+        if (table === "rent_buddy_requests") {
+          return Promise.resolve({ data: { traveler_id: TRAVELER_ID }, error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      },
+      then: (resolve: any, reject: any) => {
+        const data = table === "rent_buddy_offers" ? [offerRow] : [];
+        return Promise.resolve({ data, error: null }).then(resolve, reject);
+      },
+    };
+    return b;
+  }
+
+  return {
+    client: {
+      auth: { getUser: () => Promise.resolve({ data: { user: { id: TRAVELER_ID } }, error: null }) },
+      from: (table: string) => makeBuilder(table),
+    },
+  };
+}
+
+describe("offers endpoint buddy card — completed_count takes precedence over completed_bookings", () => {
+  it("returns offer.buddy.completedBookings=7 (not 3) when completed_count=7 and completed_bookings=3", async () => {
+    // Buddy row has the two counters out of sync. mapProfile must prefer
+    // completed_count (the canonical counter written by the completion route)
+    // over the legacy completed_bookings column.
+    const buddyRow = {
+      id: BP_ID, user_id: BUDDY_USER_ID,
+      status: "active", admin_status: "active",
+      city: "Manila", country: "Philippines",
+      display_name: "Test Buddy", tagline: null,
+      languages: ["English"], categories: ["city"],
+      hourly_rate_usd: 20, half_day_rate_usd: null,
+      full_day_rate_usd: null, nightlife_rate_usd: null, arrival_rate_usd: null,
+      average_rating: null, review_count: 0,
+      completed_bookings: 3,  // legacy counter — must be ignored
+      completed_count: 7,     // canonical counter — must win
+      response_time_h: null, cover_photo_url: null, gallery_urls: [],
+      vibe_tags: [], safety_badges: [], buddy_level: "experienced",
+      verified: false, featured: false, city_ambassador: false,
+      available_now: false, female_only_service: false, public_meetup_only: false,
+      group_approved: false, nightlife_approved: false,
+      energy_type: null, max_group_size: 4,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    };
+
+    const fake = makeOffersFakeClient(buddyRow);
+    const res = await call(
+      "GET",
+      `/api/rent-a-buddy/requests/${REQUEST_ID}/offers`,
+      fake as any,
+    );
+
+    assert.equal(res.status, 200, "offers endpoint should return 200");
+    const body = (await res.json()) as any;
+    assert.ok(Array.isArray(body.offers), "response.offers should be an array");
+    assert.equal(body.offers.length, 1, "should return the one offer");
+
+    const buddy = body.offers[0].buddy;
+    assert.ok(buddy, "offer.buddy should be present");
+    assert.equal(
+      buddy.completedBookings,
+      7,
+      `offers buddy card must use completed_count=7, not completed_bookings=3; got ${buddy.completedBookings}`,
+    );
+  });
+});
+
 describe("toBuddyScoringData — completed_count takes precedence over completed_bookings", () => {
   it("uses completed_count=7 (not completed_bookings=3) when ranking via POST /api/rent-a-buddy/match", async () => {
     // Buddy row deliberately has the two counters out of sync.
