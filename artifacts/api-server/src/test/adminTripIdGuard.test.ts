@@ -91,6 +91,59 @@ function makeGuardingClient() {
   return client;
 }
 
+/**
+ * Admin client where plan_geofences lookups find no row —
+ * maybeSingle() resolves { data: null, error: null }.
+ */
+function makeNoGeofenceClient() {
+  const profileRow = {
+    id: USER_ID,
+    role: "admin",
+    account_status: "active",
+    handle: "testuser",
+    display_name: null,
+    username: null,
+  };
+
+  const client: any = {
+    auth: {
+      getUser: async (token: string) => {
+        if (!token || token === "bad") {
+          return { data: { user: null }, error: { message: "invalid token" } };
+        }
+        return { data: { user: { id: USER_ID } }, error: null };
+      },
+    },
+    from: (table: string) => {
+      const isGeofence = table === "plan_geofences";
+      const b: any = {
+        select:      () => b,
+        eq:          () => b,
+        neq:         () => b,
+        is:          () => b,
+        in:          () => b,
+        update:      () => b,
+        insert:      () => b,
+        upsert:      () => b,
+        delete:      () => b,
+        order:       () => b,
+        limit:       () => b,
+        maybeSingle: () =>
+          isGeofence
+            ? Promise.resolve({ data: null, error: null })
+            : Promise.resolve({ data: profileRow, error: null }),
+        single:      () => Promise.resolve({ data: profileRow, error: null }),
+        then:        (resolve: any) =>
+          Promise.resolve({ data: [profileRow], error: null }).then(resolve),
+        get count() { return 1; },
+      };
+      return b;
+    },
+    rpc: async () => ({ data: [], error: null }),
+  };
+  return client;
+}
+
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
 function request(
@@ -230,6 +283,31 @@ describe("POST /admin/geofence/:tripId/override-reveal — malformed tripId guar
         `[tripId="${malformed}"] expected error "invalid_payload", got "${r.body?.error}"`,
       );
     }
+  });
+});
+
+describe("POST /admin/geofence/:tripId/override-reveal — valid UUID, no matching geofence", () => {
+  it("returns 404 with not_found when no plan_geofences row matches", async () => {
+    const fc = makeNoGeofenceClient();
+    _setTestClient(fc, true);
+    _setTestServiceClient(fc);
+
+    const validUuid = "bbbbbbbb-2222-2222-2222-000000000002";
+    const r = await request(
+      "POST",
+      `/admin/geofence/${validUuid}/override-reveal`,
+      FAKE_TOKEN,
+    );
+    assert.equal(
+      r.status,
+      404,
+      `expected 404, got ${r.status}: ${JSON.stringify(r.body)}`,
+    );
+    assert.equal(
+      r.body?.error,
+      "not_found",
+      `expected error "not_found", got "${r.body?.error}"`,
+    );
   });
 });
 
