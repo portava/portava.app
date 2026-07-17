@@ -539,6 +539,65 @@ describe("Candidate artwork versions are archived after regenerate", () => {
   });
 });
 
+// ── review_required archive isolation ────────────────────────────────────────
+//
+// Regenerate also archives review_required queue jobs (a separate update
+// path from the failed-job reset). That archive step must be scoped to the
+// regenerated entry's catalog_id: regenerating entry A must not archive
+// entry B's review_required row.
+
+describe("Entry B's review_required job is not archived when regenerating entry A", () => {
+
+  it("regenerating CATALOG_ID archives only its own review_required job — MULTI_ID's stays review_required", async () => {
+    // ── Pre-condition: both entries have a review_required queue row ─────────
+    const jobABefore = db.stamp_generation_queue.find((r) => r.id === QUEUE_JOB);
+    const jobBBefore = db.stamp_generation_queue.find((r) => r.id === MULTI_JOB);
+    assert.equal(jobABefore?.status, "review_required", "entry A's job must start review_required");
+    assert.equal(jobBBefore?.status, "review_required", "entry B's job must start review_required");
+
+    // ── Action: regenerate only CATALOG_ID ────────────────────────────────────
+    const regen = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      regen.status, 200,
+      `regenerate must return 200, got ${regen.status}: ${JSON.stringify(regen.body)}`,
+    );
+    assert.deepEqual(regen.body, { ok: true });
+
+    // ── Entry A's review_required job must be archived ────────────────────────
+    const jobAAfter = db.stamp_generation_queue.find((r) => r.id === QUEUE_JOB);
+    assert.ok(jobAAfter, "entry A's queue job must still exist after regenerate");
+    assert.equal(
+      jobAAfter.status,
+      "archived",
+      "entry A's review_required job must be archived by its own regenerate",
+    );
+
+    // ── Entry B's review_required job must be completely unchanged ────────────
+    const jobBAfter = db.stamp_generation_queue.find((r) => r.id === MULTI_JOB);
+    assert.ok(jobBAfter, "entry B's queue job must still exist after regenerating entry A");
+    assert.equal(
+      jobBAfter.status,
+      "review_required",
+      "entry B's job must remain 'review_required' — regenerating entry A must not archive it",
+    );
+    assert.equal(
+      jobBAfter.attempts,
+      2,
+      "entry B's attempts must remain at 2",
+    );
+    assert.equal(
+      jobBAfter.last_error,
+      "candidate_shortfall: only 0 of 3 required",
+      "entry B's last_error must not be cleared",
+    );
+    assert.equal(
+      jobBAfter.requeue_count,
+      0,
+      "entry B's requeue_count must remain 0",
+    );
+  });
+});
+
 // ── Queue job isolation ────────────────────────────────────────────────────────
 //
 // Regenerating catalog entry A must only reset failed queue jobs whose
