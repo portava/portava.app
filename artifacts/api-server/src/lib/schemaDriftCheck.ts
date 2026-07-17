@@ -97,6 +97,12 @@ export const CRITICAL_COLUMNS: ColumnProbe[] = [
     migration: "0133_rent_buddy_availability_alignment.sql",
     impact: "bookings are not blocked on vacation/blocked dates",
   },
+  {
+    table: "trips",
+    column: "reminder_retry_count",
+    migration: "0140_trips_reminder_retry_count.sql",
+    impact: "trip reminder crash-recovery retries fail silently",
+  },
 ];
 
 /** SQL functions routes hard-depend on. */
