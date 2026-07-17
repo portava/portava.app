@@ -172,6 +172,28 @@ describe('StampCatalogDetail — API error banner', () => {
     expect(screen.queryByText('Entry not found')).toBeNull();
   });
 
+  it('stays on the refreshable not-found state when a refresh finds the entry still missing', async () => {
+    // Both the initial load and the refresh succeed but return no data.
+    mockGetEntry.mockResolvedValue({ ok: true, data: null });
+
+    await act(async () => { render(<StampCatalogDetail />); });
+
+    expect(screen.getByText('Entry not found')).toBeTruthy();
+    const scroll = screen.getByTestId('catalog-detail-scroll');
+    expect(scroll.props.refreshControl.props.refreshing).toBe(false);
+
+    // Pull-to-refresh returns not-found again.
+    await act(async () => { scroll.props.refreshControl.props.onRefresh(); });
+
+    // Still the not-found state — no error banner, no stuck spinner — and
+    // the ScrollView remains refreshable for another attempt.
+    expect(screen.getByText('Entry not found')).toBeTruthy();
+    expect(screen.queryByTestId('catalog-detail-error')).toBeNull();
+    const scrollAfter = screen.getByTestId('catalog-detail-scroll');
+    expect(scrollAfter.props.refreshControl).toBeTruthy();
+    expect(scrollAfter.props.refreshControl.props.refreshing).toBe(false);
+  });
+
   it('clears the error and shows entry content when a subsequent load succeeds', async () => {
     mockGetEntry
       .mockResolvedValueOnce({ ok: false })
