@@ -30,6 +30,11 @@ module.exports = {
   transformIgnorePatterns: [
     'node_modules/(?!(?:.+/node_modules/)?(?:' + TRANSFORM_ALLOW + '))',
   ],
+  // React 19 + RNTL v14: sets globalThis.IS_REACT_ACT_ENVIRONMENT = true so
+  // RNTL's act() saves/restores true instead of undefined between tests.
+  // Companion rule: never wrap an Alert button's onPress in act() — see
+  // src/components/__tests__/TESTING.md for both rules and the reasoning.
+  setupFilesAfterEnv: ['<rootDir>/src/jest.setup.ts'],
   moduleNameMapper: {
     'lucide-react-native': '<rootDir>/src/__mocks__/lucide-react-native.tsx',
     'expo-router': '<rootDir>/src/__mocks__/expo-router.tsx',

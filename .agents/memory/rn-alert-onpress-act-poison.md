@@ -8,3 +8,5 @@ description: React 19 + RNTL — awaiting an async Alert-button onPress inside a
 **Why:** Under React 19 + RNTL 14, awaiting the async onPress inside act() leaves the renderer in a state where every later `render()` in the same file mounts but never runs its effects — async loads never fire, so `findByText` times out with an empty tree. The symptom looks like a mock/setup bug but is renderer poisoning from the earlier test.
 
 **How to apply:** In any pressAlertButton-style helper, await the onPress bare, then flush. Prefer `jest.spyOn(Alert, 'alert').mockImplementation(() => {})`. If a shared file is already poisoned and can't be fixed yet, put new suites in a separate `.component.test.tsx` file for a fresh renderer.
+
+**Update (2026-07-17):** codified project-wide — `artifacts/travel-buddy/src/jest.setup.ts` (via setupFilesAfterEnv) sets IS_REACT_ACT_ENVIRONMENT=true globally, and the bare-onPress rule is documented in `src/components/__tests__/TESTING.md`. New test files no longer need module-level workarounds.
