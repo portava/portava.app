@@ -38,6 +38,7 @@ jest.mock('react-native-svg', () => {
 jest.mock('../../../utils/identity', () => ({
   resolveAvatarUrl:  (_url: unknown) => null,
   fallbackInitials:  (_profile: unknown) => 'TU',
+  truncateDisplayName: (name: string) => name,
 }));
 
 jest.mock('../../../lib/displayIdentity', () => ({

@@ -16,4 +16,5 @@
 - [RNTL Alert act() overlap](rntl-alert-act-overlap.md) — never wrap async Alert onPress in awaited act(); it corrupts later renders in the file. Call onPress bare + waitFor.
 - [Mobile test import extensions](mobile-test-ts-extensions.md) — travel-buddy node:test files need explicit .ts import extensions and manual registration in the package.json test list.
 - [Dynamic import() breaks under Jest](jest-dynamic-import.md) — `await import(...)` in app code throws under jest-expo and can be silently swallowed; use static imports for testable paths.
+- [Stale partial jest.mock factories](stale-partial-jest-mocks.md) — "not a function"/"Element type undefined" render crashes usually mean a hand-written mock object drifted behind the component's imports.
 - [Alert onPress act() poison](rn-alert-onpress-act-poison.md) — awaiting an Alert button's async onPress inside act() kills effects for all later renders in the file; await outside, then flush with empty act().

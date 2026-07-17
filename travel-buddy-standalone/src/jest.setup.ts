@@ -19,11 +19,25 @@
  * See src/components/__tests__/TESTING.md for the companion rule: never wrap
  * an Alert button's onPress handler in act().
  */
+import { jest } from '@jest/globals';
+
 declare global {
   // eslint-disable-next-line no-var
   var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
 }
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+// Global default mocks for native modules that have no implementation under
+// jest-expo. Per-file jest.mock() calls still override these (Jest gives the
+// closest mock precedence), but suites that forget to mock them no longer
+// crash with "NativeModule is null" / "No safe area value available" errors.
+jest.mock('@react-native-async-storage/async-storage', () =>
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
+
+jest.mock('react-native-safe-area-context', () =>
+  require('react-native-safe-area-context/jest/mock'),
+);
 
 export {};
