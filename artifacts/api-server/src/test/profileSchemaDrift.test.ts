@@ -971,6 +971,77 @@ describe("PATCH /api/me/profile under schema drift (missing newer columns)", () 
     assert.equal(soloCoverClearClient.__updates.length, 0, "no fallback write should have been committed");
   });
 
+  it("clearing preferredLanguage alone under drift errors — no silent no-op 200", async () => {
+    // { preferredLanguage: null } is the ONLY field in the PATCH and
+    // preferred_language is drifted. preferredLanguage maps only to
+    // preferred_language (no base fallback column), so every requested field
+    // would be stripped by the fallback — the route must hit the all-stripped
+    // error path naming preferredLanguage, not return a no-op 200 that
+    // silently pretends the clear succeeded.
+    const driftedColsPrefLangOnly = new Set(["preferred_language"]);
+    const soloPrefLangClearUpdates: UpdateRecord[] = [];
+    const soloPrefLangClearRow: any = {
+      id: ME, username: "me_user", handle: "me_user", name: "Me",
+      bio: "old bio", is_private: false, passport_visibility: "public",
+      avatar_url: null, created_at: new Date("2026-01-01").toISOString(),
+    };
+    function makeBuilder8(table: string) {
+      let pendingUpdate: any = null;
+      const builder: any = {
+        select() { return builder; },
+        eq() { return builder; },
+        neq() { return builder; },
+        limit() { return builder; },
+        update(patch: any) { pendingUpdate = patch; return builder; },
+        insert() { return builder; },
+        maybeSingle() {
+          return Promise.resolve({ data: table === "profiles" ? { ...soloPrefLangClearRow } : null, error: null });
+        },
+        single() {
+          if (pendingUpdate && table === "profiles") {
+            const bad = Object.keys(pendingUpdate).find((k) => driftedColsPrefLangOnly.has(k));
+            if (bad) {
+              return Promise.resolve({
+                data: null,
+                error: { code: "PGRST204", message: `Could not find the '${bad}' column of 'profiles' in the schema cache` },
+              });
+            }
+            soloPrefLangClearUpdates.push({ table, patch: pendingUpdate });
+            return Promise.resolve({ data: { ...soloPrefLangClearRow, ...pendingUpdate }, error: null });
+          }
+          return Promise.resolve({ data: table === "profiles" ? { ...soloPrefLangClearRow } : null, error: null });
+        },
+        then(onF: any, onR: any) {
+          return Promise.resolve({ data: [], error: null }).then(onF, onR);
+        },
+      };
+      return builder;
+    }
+    const soloPrefLangClearClient: any = {
+      auth: {
+        getUser: async (tok: string) =>
+          tok === ME_TOK
+            ? { data: { user: { id: ME } }, error: null }
+            : { data: { user: null }, error: { message: "invalid token" } },
+      },
+      from: (table: string) => makeBuilder8(table),
+      storage: { from: () => ({ remove: async () => ({ error: null }) }) },
+      __updates: soloPrefLangClearUpdates,
+    };
+
+    _setTestClient(soloPrefLangClearClient, true);
+    _setTestServiceClient(soloPrefLangClearClient);
+
+    const r = await patchProfile({ preferredLanguage: null });
+    assert.notEqual(r.status, 200, "a null-clear that saves nothing must not return 200");
+    const body = await r.json() as any;
+    assert.ok(
+      JSON.stringify(body).includes("preferredLanguage"),
+      `error body must mention "preferredLanguage" — got: ${JSON.stringify(body)}`,
+    );
+    assert.equal(soloPrefLangClearClient.__updates.length, 0, "no fallback write should have been committed");
+  });
+
   // ── Fallback retry DB error ────────────────────────────────────────────────
   // After the schema-drift fallback strips newer columns and retries, the
   // retry itself can fail (e.g. a constraint violation or transient DB error).

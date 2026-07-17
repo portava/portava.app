@@ -556,6 +556,7 @@ router.patch("/me/profile", async (req, res) => {
       planning_style: "planningStyle",
       public_social_links: "publicSocialLinks",
       cover_photo_url: "coverUrl",
+      preferred_language: "preferredLanguage",
       passport_section_order: "passportSectionOrder",
       passport_tab_order: "passportTabOrder",
     };
