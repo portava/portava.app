@@ -3416,6 +3416,98 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "writeDbCache not called again on the follow-up cache hit");
   });
 
+  it("DB write-back updated_at is 'now' — not the stale timestamp from the old negative-cache entry", async () => {
+    // Scenario: a negative-cache entry was written 6+ hours ago (writtenAt = T0).
+    // After the negative TTL expires, the re-geocode succeeds and writeDbCache
+    // upserts the row.  A bug that captured the timestamp from the old
+    // negative-cache entry (its writtenAt) instead of the current clock would
+    // persist a stale updated_at, mis-ordering admin correction-check interval
+    // logic.  This test pins updated_at to the moment of the write.
+    //
+    // Note on clocks: mockNow() only overrides Date.now — `new Date()` (used by
+    // writeDbCache for updated_at) still reads the REAL system clock.  So we
+    // bracket the re-geocode call with real-clock readings and assert the
+    // upserted updated_at falls inside that window, and is nowhere near the
+    // mocked T0 epoch used for the old negative entry.
+    const T0 = 1_700_000_000_000;
+    const NEGATIVE_TTL_MS = 6 * 60 * 60 * 1_000;
+    mockNow(T0);
+
+    let upsertCalls = 0;
+    const upsertPayloads: Array<Record<string, unknown>> = [];
+
+    _setGeocodeDbClientForTests({
+      from(_table: string) {
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() {
+            return { data: null, error: null };
+          },
+          upsert(payload: Record<string, unknown>) {
+            upsertCalls++;
+            upsertPayloads.push({ ...payload });
+            return Promise.resolve({ error: null });
+          },
+          then(resolve: (v: any) => void) {
+            resolve({ data: [], error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient);
+
+    // First attempt fails (empty result) → negative-cache entry written at T0.
+    let nominatimShouldSucceed = false;
+    _setGeocodeFetchForTests(async () => {
+      if (nominatimShouldSucceed) {
+        return {
+          ok: true,
+          json: async () => [{ address: { country_code: "pt", country: "Portugal" } }],
+        };
+      }
+      return { ok: true, json: async () => [] };
+    });
+
+    const firstResult = await geocodeCityCountry("Braga");
+    assert.equal(firstResult, null, "pre-condition: first call caches null");
+    const negEntry = _getGeocodeCacheEntryForTests("braga");
+    assert.equal(negEntry?.writtenAt, T0,
+      "pre-condition: negative-cache entry writtenAt is the (mocked) T0");
+    assert.equal(upsertCalls, 0, "no DB write for the negative result");
+
+    // Advance the mocked clock past the 6-hour negative TTL.
+    nominatimShouldSucceed = true;
+    mockNow(T0 + NEGATIVE_TTL_MS + 1_000);
+
+    // Bracket the re-geocode with REAL clock readings (new Date() is unmocked).
+    const realBefore = new Date().getTime();
+    const afterTtl = await geocodeCityCountry("Braga");
+    const realAfter = new Date().getTime();
+
+    assert.equal(afterTtl?.countryCode, "PT", "TTL-expiry re-geocode succeeds");
+    assert.equal(upsertCalls, 1, "writeDbCache called exactly once");
+
+    const updatedAtRaw = upsertPayloads[0]["updated_at"];
+    assert.ok(typeof updatedAtRaw === "string", "updated_at is a string");
+    const updatedAtMs = new Date(updatedAtRaw as string).getTime();
+    assert.ok(Number.isFinite(updatedAtMs), "updated_at parses to a valid timestamp");
+
+    // Must be captured at the moment of the write — within the real-clock window.
+    assert.ok(updatedAtMs >= realBefore && updatedAtMs <= realAfter,
+      `updated_at (${updatedAtRaw}) must fall within the re-geocode call window ` +
+      `[${new Date(realBefore).toISOString()} .. ${new Date(realAfter).toISOString()}]`);
+
+    // Must NOT equal the old negative-cache entry's writtenAt (T0) — that would
+    // indicate the payload captured the stale timestamp from the expired entry.
+    assert.notEqual(updatedAtMs, T0,
+      "updated_at must not equal the old negative-cache writtenAt");
+    assert.notEqual(updatedAtRaw, new Date(T0).toISOString(),
+      "updated_at ISO string must not be the old negative-cache writtenAt ISO string");
+  });
+
   // ── correctionCheckedAt bump on DB-error probe ────────────────────────────
 
   it("bumps correctionCheckedAt even when the probe returns a DB error — preventing a retry storm on the next call", async () => {
