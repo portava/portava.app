@@ -30,6 +30,7 @@ const {
   CANDIDATE_SHORTFALL_PREFIX,
   sweepStaleArtwork,
   resetStaleArtworkSweepState,
+  evaluateCandidateShortfall,
 } = await import("../lib/stamps/generationWorker.js");
 const { _setTestStampImageProvider, _resetProviderCache } = await import(
   "../lib/stamps/imageProvider.js"
@@ -3957,6 +3958,25 @@ describe("runGenerationCycle — calls sweepStaleArtwork when the sweep interval
     assert.equal(cycleInserts[0].rows[0].catalog_id, "cat-sweep-from-cycle");
     assert.equal(cycleInserts[0].rows[0].status, "queued");
     assert.equal(cycleInserts[0].rows[0].triggered_by_action, "style_version_sweep");
+  });
+});
+
+// ── evaluateCandidateShortfall — zero-produced run ────────────────────────────
+
+describe("evaluateCandidateShortfall — zero produced", () => {
+  it("classifies produced=0 as failed, not degraded or ok", () => {
+    const result = evaluateCandidateShortfall(0, CANDIDATE_COUNT);
+
+    assert.equal(
+      result.outcome,
+      "failed",
+      `expected outcome "failed" for produced=0, got "${result.outcome}"`,
+    );
+    assert.ok(
+      result.shortfallMessage !== null &&
+        result.shortfallMessage.startsWith(CANDIDATE_SHORTFALL_PREFIX),
+      `expected shortfallMessage to start with "${CANDIDATE_SHORTFALL_PREFIX}", got: ${result.shortfallMessage}`,
+    );
   });
 });
 
