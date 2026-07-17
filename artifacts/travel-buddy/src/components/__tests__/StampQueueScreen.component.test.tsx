@@ -104,7 +104,7 @@ describe('StampQueueScreen — pull-to-refresh', () => {
 
   it('renders the initial entry from the first fetch', async () => {
     await render(<StampQueueScreen />);
-    await screen.findByText('Paris Eiffel');
+    await waitFor(() => screen.getByText('Paris Eiffel'));
     expect(screen.getByText('Paris Eiffel')).toBeTruthy();
   });
 
