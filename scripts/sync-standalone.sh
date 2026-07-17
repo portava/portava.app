@@ -482,8 +482,21 @@ if $CHECK_SOURCE; then
         continue
       fi
       if [[ ! -f "$dst_file" ]]; then
-        echo "    + $dir/$rel (new in source — missing from standalone)"
-        dir_drift=$(( dir_drift + 1 ))
+        persp="$(detect_path_perspective "$f")"
+        if [[ -n "$persp" ]]; then
+          echo "    ! $dir/$rel [perspective-divergent] (new in source — --fix-source will REFUSE this file; port manually)"
+          if [[ "$persp" == "monorepo" ]]; then
+            echo "        Source copy contains monorepo-perspective relative paths — copying it would break the standalone tree."
+          else
+            echo "        Source copy contains standalone-perspective relative paths — fix the artifacts/travel-buddy/ copy first."
+          fi
+          echo "        Port the change manually using the destination tree's perspective (guard: scripts/src/cross-tree-paths.test.ts)."
+          dir_drift=$(( dir_drift + 1 ))
+          PERSPECTIVE_DRIFT_COUNT=$(( PERSPECTIVE_DRIFT_COUNT + 1 ))
+        else
+          echo "    + $dir/$rel (new in source — missing from standalone)"
+          dir_drift=$(( dir_drift + 1 ))
+        fi
       elif ! diff -q "$f" "$dst_file" &>/dev/null; then
         persp="$(detect_path_perspective "$f")"
         if [[ -n "$persp" ]]; then

@@ -1017,6 +1017,43 @@ assert_not_contains "26c: no perspective summary line"        "Perspective-diver
 rm -rf "$T26"
 
 # ---------------------------------------------------------------------------
+# Test 27: --check-source labels a NEW-in-source perspective-divergent file
+# with the [perspective-divergent] label and manual-port guidance, not as a
+# plain "+ (new in source — missing from standalone)" entry.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 27: --check-source labels new-in-source perspective-divergent file ==="
+
+T27="$(setup_workspace)"
+src27="$T27/artifacts/travel-buddy"
+dst27="$T27/travel-buddy-standalone"
+
+mkdir -p "$src27/src/services" "$dst27/src/services"
+
+# Brand-new file in source that carries monorepo-perspective paths.
+# The standalone counterpart does not exist at all.
+cat > "$src27/src/services/newfile.test.ts" <<'EOF'
+const saPkg = readPkg('../../../../travel-buddy-standalone/package.json');
+EOF
+
+# Ordinary new file (neutral — no perspective paths) for contrast
+echo "export const x = 1;" > "$src27/src/services/neutral-new.ts"
+
+ec27=0
+out27="$(SOURCE_DRIFT_DIRS="src" run_sync "$T27" --check-source 2>&1)" || ec27=$?
+
+assert_exit         "27a: exits 1 (divergent new file counts as drift)"       1 "$ec27"
+assert_contains     "27b: divergent new file gets [perspective-divergent] label" \
+                    "! src/services/newfile.test.ts [perspective-divergent]" "$out27"
+assert_contains     "27c: fix-source refusal warning shown for new file"      "fix-source will REFUSE" "$out27"
+assert_contains     "27d: manual-port guidance shown for new file"            "Port the change manually" "$out27"
+assert_contains     "27e: perspective count includes the new divergent file"  "Perspective-divergent: 1 file(s)" "$out27"
+assert_not_contains "27f: divergent new file NOT labelled as plain new"       "+ src/services/newfile.test.ts (new in source" "$out27"
+assert_contains     "27g: neutral new file still gets plain new label"        "+ src/services/neutral-new.ts (new in source" "$out27"
+
+rm -rf "$T27"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
