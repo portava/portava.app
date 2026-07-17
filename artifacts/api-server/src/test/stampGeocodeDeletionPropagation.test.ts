@@ -3155,15 +3155,6 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     const NEGATIVE_TTL_MS = 6 * 60 * 60 * 1_000;
     mockNow(T0);
 
-    let nominatimCalls = 0;
-    _setGeocodeFetchForTests(async () => {
-      nominatimCalls++;
-      return {
-        ok: true,
-        json: async () => [{ address: { country_code: "gr", country: "Greece" } }],
-      };
-    });
-
     // Track upsert calls and capture the payload(s) passed to writeDbCache.
     let upsertCalls = 0;
     const upsertPayloads: Array<Record<string, unknown>> = [];
@@ -3192,13 +3183,9 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       },
     } as unknown as SupabaseClient);
 
-    // ── Phase 1: first call — Nominatim succeeds but we simulate a cached-null seed
-    //   by setting up the entry directly.  Actually: just call with a Nominatim result
-    //   that starts as a failure, then succeeds after TTL.  Use a flag.
-    // Simpler: seed the negative-cache entry by making the first call return null.
     // Toggle the Nominatim stub — first call fails, then succeeds.
     let nominatimShouldSucceed = false;
-    nominatimCalls = 0;
+    let nominatimCalls = 0;
     _setGeocodeFetchForTests(async () => {
       nominatimCalls++;
       if (nominatimShouldSucceed) {
@@ -3252,5 +3239,65 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "Nominatim not called again — positive result is now in the in-memory cache");
     assert.equal(upsertCalls, 1,
       "writeDbCache not called again on the follow-up cache hit");
+  });
+
+  // ── Negative-TTL re-seeding on repeat failure ─────────────────────────────
+
+  it("a Nominatim failure at TTL expiry re-seeds another 6-hour window — not a retry storm on every call", async () => {
+    // Scenario: Nominatim is down.  The first call caches null for 6 hours.
+    // After the 6-hour TTL expires a second call retries Nominatim (which is
+    // still down) and must re-seed the in-memory null entry for another 6 hours.
+    // A third call immediately after must be served from the fresh negative
+    // cache without hitting Nominatim a third time.
+    //
+    // Total Nominatim calls must be exactly 2 (once per TTL expiry), not 3+.
+    // No DB is involved — both the null seed and the re-seed happen entirely
+    // through the catch block in geocodeCityCountry.
+    const T0 = 1_700_000_000_000;
+    const NEGATIVE_TTL_MS = 6 * 60 * 60 * 1_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      throw new Error("nominatim_down");
+    });
+
+    // No DB row for this city — readDbCache returns null, Nominatim is tried.
+    _setGeocodeDbClientForTests(makeFixedDbClient(null));
+
+    // First call: cache miss → DB miss → Nominatim fails → null cached for 6h.
+    const first = await geocodeCityCountry("Nowhere");
+    assert.equal(first, null, "first call returns null when Nominatim is down");
+    assert.equal(nominatimCalls, 1, "Nominatim called once on cold cache miss");
+
+    // Within the 6-hour TTL — null must be served from cache, no second Nominatim call.
+    mockNow(T0 + NEGATIVE_TTL_MS - 1_000);
+    const withinTtl = await geocodeCityCountry("Nowhere");
+    assert.equal(withinTtl, null, "null served from in-memory cache within 6-hour window");
+    assert.equal(nominatimCalls, 1, "Nominatim NOT called again within the first 6-hour window");
+
+    // Advance past the 6-hour TTL — the negative cache entry is now expired.
+    // Nominatim is still down.
+    mockNow(T0 + NEGATIVE_TTL_MS + 1_000);
+    const atExpiry = await geocodeCityCountry("Nowhere");
+    assert.equal(atExpiry, null, "null returned after TTL expiry — Nominatim still down");
+    assert.equal(nominatimCalls, 2, "Nominatim called exactly once more at TTL expiry (total 2)");
+
+    // The re-seeded 6-hour window is now live.  A call immediately after must
+    // be served from the fresh negative cache — no third Nominatim round-trip.
+    const withinNewTtl = await geocodeCityCountry("Nowhere");
+    assert.equal(withinNewTtl, null, "null served from newly re-seeded 6-hour window");
+    assert.equal(nominatimCalls, 2,
+      "Nominatim called exactly twice total — once per TTL expiry, not on every call");
+
+    // Verify the cache entry has a fresh expiry (writtenAt ≈ T0 + NEGATIVE_TTL_MS + 1_000).
+    const entry = _getGeocodeCacheEntryForTests("nowhere");
+    assert.ok(entry !== undefined, "re-seeded null entry exists in the cache");
+    assert.equal(entry!.result, null, "cached result is null");
+    assert.ok(
+      entry!.expiresAt >= T0 + NEGATIVE_TTL_MS + 1_000 + NEGATIVE_TTL_MS - 5_000,
+      "fresh entry expires ~6 hours after the re-seed time — not the original seed time",
+    );
   });
 });
