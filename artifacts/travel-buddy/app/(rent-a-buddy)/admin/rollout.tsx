@@ -445,6 +445,9 @@ function GlobalControlsPanel() {
   const [controls, setControls] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Ref-based guard: prevents a second toggle (or a stacked Alert confirm)
+  // from firing a duplicate PATCH while one is already in flight.
+  const savingRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -455,7 +458,9 @@ function GlobalControlsPanel() {
 
   useEffect(() => { load(); }, [load]);
 
-  const toggle = async (field: string, val: boolean) => {
+  const toggle = (field: string, val: boolean) => {
+    // Ignore the flip entirely while a save is already in flight.
+    if (savingRef.current) return;
     const msg = val ? `Enable "${field.replace(/_/g, ' ')}"?` : `Disable "${field.replace(/_/g, ' ')}"?`;
     Alert.alert('Confirm', msg, [
       { text: 'Cancel', style: 'cancel' },
@@ -463,9 +468,17 @@ function GlobalControlsPanel() {
         text: 'Confirm',
         style: val ? 'destructive' : 'default',
         onPress: async () => {
+          // Guard against two stacked alerts both confirming before the first
+          // PATCH completes.
+          if (savingRef.current) return;
+          savingRef.current = true;
           setSaving(true);
-          await apiFetch('/api/admin/rent-buddy/global-controls', { method: 'PATCH', body: JSON.stringify({ [field]: val }) });
-          setSaving(false);
+          try {
+            await apiFetch('/api/admin/rent-buddy/global-controls', { method: 'PATCH', body: JSON.stringify({ [field]: val }) });
+          } finally {
+            savingRef.current = false;
+            setSaving(false);
+          }
           load();
         },
       },
@@ -498,6 +511,7 @@ function GlobalControlsPanel() {
             onValueChange={(val) => toggle(c.field, val)}
             trackColor={{ true: '#EF4444', false: color.haze }}
             thumbColor="#fff"
+            disabled={saving}
           />
         </View>
       ))}
