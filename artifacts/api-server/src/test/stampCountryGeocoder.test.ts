@@ -1222,6 +1222,86 @@ describe("background correction sweep", () => {
     assert.equal(r2!.country, "United Kingdom", "in-memory cache must hold the fresh country name");
   });
 
+  it("persist_failed log event fires (with correct city_key) when the writeDbCache upsert returns an error", async () => {
+    // Step 1: seed in-memory cache with an initial positive result.
+    _setGeocodeFetchForTests(fakeNominatim({
+      "banff": { country_code: "ca", country: "Canada" },
+    }));
+    await geocodeCityCountry("Banff");
+
+    // Step 2: backdate so the correction-check interval has elapsed and
+    // evictIfDbCorrected runs on the very next geocodeCityCountry call.
+    _backdateGeocodeCacheEntryForTests("banff");
+
+    // Step 3: build a DB client where:
+    //   • the correction probe (maybeSingle / then) sees a deleted row → deletion eviction
+    //   • readDbCache (second maybeSingle) also returns null
+    //   • upsert returns an error to simulate a transient DB outage
+    let maybeSingleCalls = 0;
+    const failingWriteDb = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache");
+        const chain: any = {
+          select()      { return chain; },
+          eq()          { return chain; },
+          maybeSingle() { maybeSingleCalls += 1; return chain; },
+          async upsert(_row: any) {
+            return { error: { message: "transient DB write failure" } };
+          },
+          then(resolve: (v: any) => void) {
+            resolve({ data: null, error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    // Step 4: inject a fresh Nominatim result (GB) and the failing DB client.
+    fetchCalls = [];
+    _setGeocodeFetchForTests(fakeNominatim({
+      "banff": { country_code: "gb", country: "United Kingdom" },
+    }));
+    _setGeocodeDbClientForTests(failingWriteDb);
+
+    // Step 5: capture stdout to intercept logEvent output.
+    const logged: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk: any, ...rest: any[]) => {
+      logged.push(typeof chunk === "string" ? chunk : chunk.toString());
+      return (origWrite as any)(chunk, ...rest);
+    };
+
+    let r: any;
+    try {
+      r = await geocodeCityCountry("Banff");
+    } finally {
+      process.stdout.write = origWrite;
+    }
+
+    // Step 6: assert the fresh result is still returned despite the DB failure.
+    assert.ok(r !== null, "should return the fresh geocode result even when writeDbCache errors");
+    assert.equal(r!.countryCode, "GB", "should carry the fresh Nominatim country code");
+    assert.equal(r!.country, "United Kingdom", "should carry the fresh Nominatim country name");
+
+    // Step 7: assert persist_failed was logged with the correct city_key.
+    const persistFailedLines = logged
+      .flatMap((chunk) => chunk.split("\n"))
+      .filter((line) => line.trim().startsWith("{"))
+      .map((line) => { try { return JSON.parse(line); } catch { return null; } })
+      .filter(Boolean)
+      .filter((obj: any) => obj.event === "stamp.country_geocode.persist_failed");
+
+    assert.ok(
+      persistFailedLines.length >= 1,
+      `expected at least one 'stamp.country_geocode.persist_failed' log line, got: ${JSON.stringify(logged)}`,
+    );
+    assert.equal(
+      persistFailedLines[0].city_key,
+      "banff",
+      "persist_failed must include the normalised city_key",
+    );
+  });
+
   it("bumps correctionCheckedAt after a no-op probe (corrected_at pre-dates writtenAt) — second call skips the probe", async () => {
     // Step 1: seed the in-memory cache with a valid entry.
     _setGeocodeFetchForTests(fakeNominatim({ "oslo": { country_code: "no", country: "Norway" } }));
