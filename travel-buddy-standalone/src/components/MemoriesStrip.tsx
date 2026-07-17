@@ -3,7 +3,7 @@ import {
   View, Text, ScrollView, Pressable, Image, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
-import { BookImage } from 'lucide-react-native';
+import { BookImage, MapPin } from 'lucide-react-native';
 import { getMemoryFeed, type Memory } from '../services/memories.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 
@@ -69,6 +69,14 @@ export function MemoriesStrip({ limit = 8 }: MemoriesStripProps) {
                 <Text style={styles.cardOwner} numberOfLines={1}>
                   {m.owner.name}
                 </Text>
+              ) : null}
+              {(m.locationCity || m.locationCountry) ? (
+                <View style={styles.cardLocation}>
+                  <MapPin size={9} color={color.mute} />
+                  <Text style={styles.cardLocationText} numberOfLines={1}>
+                    {[m.locationCity, m.locationCountry].filter(Boolean).join(', ')}
+                  </Text>
+                </View>
               ) : null}
               {m.likeCount != null && m.likeCount > 0 ? (
                 <Text style={styles.cardLikes}>♥ {m.likeCount}</Text>
@@ -140,6 +148,15 @@ const styles = StyleSheet.create({
   },
   cardOwner: {
     fontSize: 11,
+    color: color.mute,
+  },
+  cardLocation: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  cardLocationText: {
+    fontSize: 10,
     color: color.mute,
   },
   cardLikes: {

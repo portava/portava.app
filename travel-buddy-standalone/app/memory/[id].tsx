@@ -14,7 +14,7 @@ import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, Trash2, Heart, Globe, Users, Lock, Eye,
-  MoreHorizontal, Plus, CalendarDays,
+  MoreHorizontal, Plus, CalendarDays, MapPin,
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import {
@@ -318,6 +318,16 @@ export default function MemoryDetailScreen() {
             <Text style={s.captionText}>{memory.caption}</Text>
           )}
 
+          {/* Location */}
+          {(memory.locationCity || memory.locationCountry) && (
+            <View style={s.locationRow}>
+              <MapPin size={13} color={color.mute} />
+              <Text style={s.locationText}>
+                {[memory.locationCity, memory.locationCountry].filter(Boolean).join(', ')}
+              </Text>
+            </View>
+          )}
+
           {/* Metadata row */}
           <View style={s.metaRow}>
             <VisibilityIcon v={memory.visibility} />
@@ -436,6 +446,9 @@ const s = StyleSheet.create({
   ownerText: { ...(t.small as object), color: color.mute, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
   titleText: { ...(t.title as object), color: color.ink },
   captionText: { ...(t.body as object), color: color.ink, lineHeight: 22 },
+
+  locationRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  locationText: { ...(t.small as object), color: color.mute },
 
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: space.xs },
   metaChip: { ...(t.small as object), color: color.mute },
