@@ -15,7 +15,7 @@
  */
 
 import React from 'react';
-import { render } from '@testing-library/react-native';
+import { render, act } from '@testing-library/react-native';
 import { ReviewsSection } from '../ReviewsSection.tsx';
 
 // ── expo-router mock ──────────────────────────────────────────────────────────
@@ -137,7 +137,9 @@ describe('ReviewsSection — avgRating focus-refetch lifecycle', () => {
     expect(getTripReviews).toHaveBeenCalledTimes(1);
 
     // Simulate user navigating away to write a review
-    unmount();
+    // Wrap in act() so React processes cleanup effects synchronously
+    // and doesn't overlap with any subsequent act() scope.
+    await act(async () => { unmount(); });
 
     // ── User returns (re-mount → useFocusEffect fires again) ─────────────────
     const { findByText: findByText2 } = await mountSection();

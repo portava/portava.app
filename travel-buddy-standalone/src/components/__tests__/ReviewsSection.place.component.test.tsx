@@ -23,7 +23,7 @@
  */
 
 import React from 'react';
-import { render } from '@testing-library/react-native';
+import { render, act } from '@testing-library/react-native';
 import { ReviewsSection } from '../ReviewsSection.tsx';
 
 // ── expo-router mock ──────────────────────────────────────────────────────────
@@ -166,7 +166,7 @@ describe('ReviewsSection — place entity (gem detail screen)', () => {
     expect(getPlaceReviews).toHaveBeenCalledTimes(1);
 
     // User navigates to the review composer then comes back
-    unmount();
+    await act(async () => { unmount(); });
 
     // ── User returns — useFocusEffect fires again via re-mount ────────────────
     const { findByText: findByText2 } = await mountPlaceSection();

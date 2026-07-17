@@ -84,7 +84,7 @@ describe('ReviewsSection — file-level useFocusEffect stub (no double-fetch)', 
     expect(getTripReviews).toHaveBeenCalledTimes(1);
     expect(getTripReviews).toHaveBeenCalledWith(TRIP_ID, 1, 5);
 
-    await unmount();
+    await act(async () => { unmount(); });
   });
 
   it('calls getTripReviews exactly once per mount — no double-fetch across two mount cycles', async () => {
@@ -103,7 +103,7 @@ describe('ReviewsSection — file-level useFocusEffect stub (no double-fetch)', 
     expect(getTripReviews).toHaveBeenCalledTimes(1);
 
     // Simulate navigating away
-    await unmount();
+    await act(async () => { unmount(); });
 
     // ── Second mount (simulates screen re-focus) ──────────────────────────────
     const { findByText: find2 } = await render(
@@ -128,7 +128,7 @@ describe('ReviewsSection — file-level useFocusEffect stub (place entity type)'
   });
 
   it('calls getPlaceReviews exactly once on a single mount', async () => {
-    getPlaceReviews.mockResolvedValueOnce(EMPTY_RESPONSE);
+    getPlaceReviews.mockResolvedValue(EMPTY_RESPONSE);
 
     const { findByText, unmount } = await render(
       <ReviewsSection entityType="place" entityId="stub-place-1" canReview={false} />,
@@ -139,7 +139,7 @@ describe('ReviewsSection — file-level useFocusEffect stub (place entity type)'
     expect(getPlaceReviews).toHaveBeenCalledTimes(1);
     expect(getPlaceReviews).toHaveBeenCalledWith('stub-place-1', 1, 5);
 
-    await unmount();
+    await act(async () => { unmount(); });
   });
 
   it('calls getPlaceReviews exactly once per mount — no double-fetch across two mount cycles', async () => {
@@ -158,7 +158,7 @@ describe('ReviewsSection — file-level useFocusEffect stub (place entity type)'
     expect(getPlaceReviews).toHaveBeenCalledTimes(1);
 
     // Simulate navigating away
-    await unmount();
+    await act(async () => { unmount(); });
 
     // ── Second mount (simulates screen re-focus) ──────────────────────────────
     const { findByText: find2 } = await render(
@@ -200,7 +200,7 @@ describe('ReviewsSection — file-level useFocusEffect stub (event entity type)'
   });
 
   it('calls getEventReviews exactly once on a single mount', async () => {
-    getEventReviews.mockResolvedValueOnce(EVENT_EMPTY_RESPONSE);
+    getEventReviews.mockResolvedValue(EVENT_EMPTY_RESPONSE);
 
     const { findByText, unmount } = await render(
       <ReviewsSection entityType="event" entityId="stub-event-1" canReview={false} />,
@@ -211,7 +211,7 @@ describe('ReviewsSection — file-level useFocusEffect stub (event entity type)'
     expect(getEventReviews).toHaveBeenCalledTimes(1);
     expect(getEventReviews).toHaveBeenCalledWith('stub-event-1', 1, 5);
 
-    await unmount();
+    await act(async () => { unmount(); });
   });
 
   it('calls getEventReviews exactly once per mount — no double-fetch across two mount cycles', async () => {
@@ -230,7 +230,7 @@ describe('ReviewsSection — file-level useFocusEffect stub (event entity type)'
     expect(getEventReviews).toHaveBeenCalledTimes(1);
 
     // Simulate navigating away
-    await unmount();
+    await act(async () => { unmount(); });
 
     // ── Second mount (simulates screen re-focus) ──────────────────────────────
     const { findByText: find2 } = await render(

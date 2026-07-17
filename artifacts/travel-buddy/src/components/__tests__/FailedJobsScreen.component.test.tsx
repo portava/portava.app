@@ -256,9 +256,13 @@ describe('FailedJobsScreen — re-queue flow', () => {
   afterEach(() => {
     alertSpy.mockRestore();
     jest.clearAllMocks();
+    cleanup();
   });
 
   it('calls requeueFailedJob with the correct job id when the admin confirms', async () => {
+    // Use a success response so the async continuation (setBusyId(null) + setJobs)
+    // commits before the test ends, preventing overlapping act() warnings during
+    // RNTL's afterEach cleanup.
     mockRequeue.mockResolvedValueOnce({ ok: true });
 
     await render(<FailedJobsScreen />);
@@ -534,9 +538,7 @@ describe('FailedJobsScreen — orphaned-files badge', () => {
     await pressAlertButton(alertSpy, 'Re-queue');
 
     // The row (and therefore the badge) must be gone after a successful requeue.
-    await waitFor(() =>
-      expect(screen.queryByText('2 orphaned files need manual removal')).toBeNull(),
-    );
+    await waitFor(() => expect(screen.queryByText('2 orphaned files need manual removal')).toBeNull());
     expect(screen.queryByText('Rome Colosseum')).toBeNull();
   });
 
