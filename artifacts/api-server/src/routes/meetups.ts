@@ -30,6 +30,7 @@ import {
   validateAgeRange,
 } from "../lib/ageEligibility.js";
 import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
+import { truncateDisplayName } from "../lib/displayName.js";
 
 const router = Router();
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -1073,10 +1074,10 @@ async function pushMeetupTimeConfirmed(
   // when they opted in; otherwise fall back to their @handle.
   const confirmerNameAllowed = await nameVisibleFor(sc, confirmerId);
   const confirmerHandle = (confirmerProfile as any)?.handle;
-  const confirmerName =
+  const confirmerName = truncateDisplayName(
     (confirmerNameAllowed ? (confirmerProfile as any)?.name : null) ??
     (confirmerHandle ? `@${confirmerHandle}` : null) ??
-    "The organizer";
+    "The organizer");
 
   const when = formatMeetupWhen(startsAt);
 
@@ -1135,7 +1136,7 @@ async function postCancelSystemMessage(
   // text when they opted in; otherwise fall back to their @handle.
   const nameAllowed = await nameVisibleFor(client, creatorId);
   const cHandle = (profile as any)?.handle;
-  const creatorName: string = (nameAllowed ? (profile as any)?.name : null) ?? (cHandle ? `@${cHandle}` : null) ?? "Someone";
+  const creatorName: string = truncateDisplayName((nameAllowed ? (profile as any)?.name : null) ?? (cHandle ? `@${cHandle}` : null) ?? "Someone");
   const text = `${creatorName} cancelled the meetup: ${title}`;
   const body = JSON.stringify({ type: "meetup_cancelled", meetupId, title, creatorName, text });
 
@@ -1202,7 +1203,7 @@ async function postConfirmTimeSystemMessage(
   // Universal display-name rule: only use the creator's real name when opted in.
   const nameAllowed = await nameVisibleFor(client, creatorId);
   const cHandle = (profile as any)?.handle;
-  const creatorName: string = (nameAllowed ? (profile as any)?.name : null) ?? (cHandle ? `@${cHandle}` : null) ?? "Someone";
+  const creatorName: string = truncateDisplayName((nameAllowed ? (profile as any)?.name : null) ?? (cHandle ? `@${cHandle}` : null) ?? "Someone");
 
   const confirmedDate = new Date(startsAt).toLocaleDateString("en-US", {
     weekday: "short", month: "short", day: "numeric",

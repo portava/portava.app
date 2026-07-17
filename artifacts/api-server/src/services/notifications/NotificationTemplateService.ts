@@ -996,12 +996,30 @@ export function getTemplate(eventType: string): NotificationTemplate | null {
   return TEMPLATE_MAP.get(eventType) ?? null;
 }
 
+import { DISPLAY_NAME_MAX_LENGTH, truncateDisplayName } from '../../lib/displayName';
+
+/** Param keys that carry a user's display name and must be length-capped. */
+const NAME_PARAM_KEYS = ['actor', 'travelerName'] as const;
+
+function capNameParams(params: Record<string, string>): Record<string, string> {
+  let out = params;
+  for (const key of NAME_PARAM_KEYS) {
+    const val = out[key];
+    if (typeof val === 'string' && val.length > DISPLAY_NAME_MAX_LENGTH) {
+      if (out === params) out = { ...params };
+      out[key] = truncateDisplayName(val);
+    }
+  }
+  return out;
+}
+
 export function renderTemplate(
   eventType: string,
-  params: Record<string, string> = {},
+  rawParams: Record<string, string> = {},
 ): { title: string; body: string; category: NotificationCategory; priority: NotificationPriority; channels: NotificationChannel[]; actionUrl?: string } | null {
   const tpl = getTemplate(eventType);
   if (!tpl) return null;
+  const params = capNameParams(rawParams);
   return {
     title: tpl.title(params),
     body: tpl.body(params),

@@ -19,6 +19,7 @@ import {
 } from "../lib/http.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity.js";
+import { truncateDisplayName } from "../lib/displayName.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -762,9 +763,9 @@ router.post("/trips/:tripId/join-request", async (req, res) => {
         sc2.from("profiles").select("display_name, handle").eq("id", user.id).maybeSingle(),
       ]);
       const requesterNameAllowed = await nameVisibleFor(sc2, user.id);
-      const requesterName = requesterNameAllowed
+      const requesterName = truncateDisplayName(requesterNameAllowed
         ? ((requesterRow as any)?.display_name ?? ((requesterRow as any)?.handle ? `@${(requesterRow as any).handle}` : "Someone"))
-        : ((requesterRow as any)?.handle ? `@${(requesterRow as any).handle}` : "Someone");
+        : ((requesterRow as any)?.handle ? `@${(requesterRow as any).handle}` : "Someone"));
       await sendPushWithRetry(sc2, { userId: ownerId, tokens: [(ownerRow as any)?.expo_push_token] }, {
         title: "New join request",
         body:  `${requesterName} wants to join ${(tripRow as any)?.title ?? "your trip"}`,

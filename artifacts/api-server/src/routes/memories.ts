@@ -32,6 +32,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
+import { truncateDisplayName } from "../lib/displayName.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -189,9 +190,9 @@ async function notifyTagged(sc: any, memory: any, taggedUserId: string): Promise
 
     if (tagged?.expo_push_token) {
       const ownerNameAllowed = await nameVisibleFor(sc, memory.owner_id);
-      const ownerName = ownerNameAllowed
+      const ownerName = truncateDisplayName(ownerNameAllowed
         ? (owner?.name ?? (owner?.handle ? `@${owner.handle}` : "Someone"))
-        : (owner?.handle ? `@${owner.handle}` : "Someone");
+        : (owner?.handle ? `@${owner.handle}` : "Someone"));
       await sendPushWithRetry(sc, { userId: taggedUserId, tokens: [tagged.expo_push_token] }, {
         title: "You were tagged in a Memory",
         body: `${ownerName} tagged you in a memory. Tap to approve or remove.`,
@@ -226,9 +227,9 @@ async function notifyLike(sc: any, memoryId: string, ownerId: string, likerId: s
       .maybeSingle();
     if (owner?.expo_push_token) {
       const likerNameAllowed = await nameVisibleFor(sc, likerId);
-      const likerName = likerNameAllowed
+      const likerName = truncateDisplayName(likerNameAllowed
         ? (liker?.name ?? (liker?.handle ? `@${liker.handle}` : "Someone"))
-        : (liker?.handle ? `@${liker.handle}` : "Someone");
+        : (liker?.handle ? `@${liker.handle}` : "Someone"));
       await sendPushWithRetry(sc, { userId: ownerId, tokens: [owner.expo_push_token] }, {
         title: "New like on your Memory",
         body: `${likerName} liked your memory.`,

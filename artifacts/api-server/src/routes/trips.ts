@@ -9,6 +9,7 @@ import { getRestrictionState } from "../services/trust/TrustRestrictionService.j
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity";
+import { truncateDisplayName } from "../lib/displayName.js";
 
 const router = Router();
 
@@ -841,9 +842,9 @@ router.post("/trips/:tripId/invite", async (req, res) => {
       ]);
       const tripTitle   = (tripRow as any)?.title   ?? "a trip";
       const inviterNameAllowed = await nameVisibleFor(sc2, user.id);
-      const inviterName = inviterNameAllowed
+      const inviterName = truncateDisplayName(inviterNameAllowed
         ? ((inviterRow as any)?.display_name ?? ((inviterRow as any)?.handle ? `@${(inviterRow as any).handle}` : "Someone"))
-        : ((inviterRow as any)?.handle ? `@${(inviterRow as any).handle}` : "Someone");
+        : ((inviterRow as any)?.handle ? `@${(inviterRow as any).handle}` : "Someone"));
       await sendPushWithRetry(sc2, { userId, tokens: [(inviteeRow as any)?.expo_push_token] }, {
         title: "Trip invitation",
         body:  `${inviterName} invited you to join ${tripTitle}`,
@@ -895,9 +896,9 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
         sc2.from("profiles").select("display_name, handle").eq("id", user.id).maybeSingle(),
       ]);
       const acceptorNameAllowed = await nameVisibleFor(sc2, user.id);
-      const acceptorName = acceptorNameAllowed
+      const acceptorName = truncateDisplayName(acceptorNameAllowed
         ? ((acceptorRow as any)?.display_name ?? ((acceptorRow as any)?.handle ? `@${(acceptorRow as any).handle}` : "Someone"))
-        : ((acceptorRow as any)?.handle ? `@${(acceptorRow as any).handle}` : "Someone");
+        : ((acceptorRow as any)?.handle ? `@${(acceptorRow as any).handle}` : "Someone"));
       await sendPushWithRetry(sc2, { userId: (tripRow as any).owner_id as string, tokens: [(ownerRow as any)?.expo_push_token] }, {
         title: (tripRow as any).title ?? "Your trip",
         body: `${acceptorName} joined your trip!`,
@@ -947,9 +948,9 @@ router.post("/trips/:tripId/decline-invite", async (req, res) => {
       if (!ownerId || ownerId === user.id) return;
       const { data: ownerRow } = await sc2.from("profiles").select("expo_push_token").eq("id", ownerId).maybeSingle();
       const declinerNameAllowed = await nameVisibleFor(sc2, user.id);
-      const declinerName = declinerNameAllowed
+      const declinerName = truncateDisplayName(declinerNameAllowed
         ? ((declinerRow as any)?.display_name ?? ((declinerRow as any)?.handle ? `@${(declinerRow as any).handle}` : "Someone"))
-        : ((declinerRow as any)?.handle ? `@${(declinerRow as any).handle}` : "Someone");
+        : ((declinerRow as any)?.handle ? `@${(declinerRow as any).handle}` : "Someone"));
       await sendPushWithRetry(sc2, { userId: ownerId, tokens: [(ownerRow as any)?.expo_push_token] }, {
         title: "Invite declined",
         body:  `${declinerName} declined your invitation to ${(tripRow as any)?.title ?? "your trip"}`,

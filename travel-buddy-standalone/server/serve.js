@@ -83,6 +83,16 @@ function serveLandingPage(req, res, landingPageTemplate, appName) {
 
 // ── /u/<username> share page with server-rendered Open Graph tags ────────────
 
+// Legacy accounts created before the 40-char display-name limit may still
+// have longer names stored; cap them so they can't bloat share previews.
+// Mirrors truncateDisplayName in src/utils/identity.ts.
+const DISPLAY_NAME_MAX_LENGTH = 40;
+function truncateDisplayName(name, max = DISPLAY_NAME_MAX_LENGTH) {
+  const s = String(name);
+  if (s.length <= max) return s;
+  return s.slice(0, max).trimEnd() + "\u2026";
+}
+
 function escapeHtml(s) {
   return String(s)
     .replace(/&/g, "&amp;")
@@ -173,14 +183,14 @@ async function serveProfileSharePage(req, res, username, appName, stampId) {
     // Stamp share variant — the API already enforced visibility for the
     // stamp itself; a missing/locked/private stamp yields stampCard=null and
     // falls into the regular passport branch below.
-    const name = card.displayName || (card.username ? `@${card.username}` : username);
+    const name = truncateDisplayName(card.displayName || (card.username ? `@${card.username}` : username));
     const label = String(stampCard.label).slice(0, 80);
     title = `"${label}" Stamp · ${appName}`;
     const place = stampCard.city || stampCard.country || null;
     description = `${name} earned the "${label}" passport stamp${place ? ` in ${place}` : ""} on ${appName}.`;
     imageUrl = `${apiOrigin}/api/users/${encodeURIComponent(username)}/og-image.png?stamp=${encodeURIComponent(validStampId)}`;
   } else if (isPublic) {
-    const name = card.displayName || (card.username ? `@${card.username}` : username);
+    const name = truncateDisplayName(card.displayName || (card.username ? `@${card.username}` : username));
     title = `${name} · ${appName} Passport`;
     const trips = Number(card.tripCount) || 0;
     const stamps = Number(card.stampCount) || 0;

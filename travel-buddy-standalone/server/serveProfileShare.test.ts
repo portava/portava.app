@@ -116,6 +116,27 @@ function assertGeneric(html: string, username: string) {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("serveProfileSharePage OG metadata visibility", () => {
+  it("legacy long display name is capped at 40 chars + ellipsis in title/description", async () => {
+    const longName =
+      "Bartholomew Maximilian Constantine von Hohenzollern-Sigmaringen III";
+    stubFetch(async () => ({
+      ok: true,
+      json: {
+        username: "barty",
+        displayName: longName,
+        tripCount: 1,
+        stampCount: 0,
+        visibility: "public",
+      },
+    }));
+    const { html } = await render("barty");
+    const title = metaContent(html, "og:title");
+    assert.ok(title, "og:title present");
+    assert.ok(!html.includes(longName), "raw legacy name must not appear");
+    const capped = longName.slice(0, 40).trimEnd() + "\u2026";
+    assert.equal(title, `${capped} \u00b7 ${APP_NAME} Passport`);
+  });
+
   it("public profile → personalized title, description, and og-image URL", async () => {
     stubFetch(async () => ({
       ok: true,

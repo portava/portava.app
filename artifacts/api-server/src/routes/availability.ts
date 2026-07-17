@@ -18,6 +18,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
+import { truncateDisplayName } from "../lib/displayName.js";
 
 const router = Router();
 
@@ -415,9 +416,9 @@ async function sendAvailabilityNudges(
   ]);
 
   const senderHandle = (senderProfile as any)?.handle as string | null;
-  const senderName = senderNameAllowed
+  const senderName = truncateDisplayName(senderNameAllowed
     ? ((senderProfile as any)?.name ?? (senderHandle ? `@${senderHandle}` : "A trip member"))
-    : (senderHandle ? `@${senderHandle}` : "A trip member");
+    : (senderHandle ? `@${senderHandle}` : "A trip member"));
 
   const tripTitle = (tripRow as any)?.title ?? "your trip";
 
