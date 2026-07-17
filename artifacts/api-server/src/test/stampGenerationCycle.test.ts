@@ -1815,12 +1815,13 @@ describe("persistCleanupError — repeated failures on the same job do not dupli
    * update() persists them — so a second persistCleanupError call reads back
    * what the first one wrote, exactly like a worker retry against the real DB.
    */
-  function makeStatefulQueueClient() {
+  function makeStatefulQueueClient(opts: { failUpdateOnCall?: number } = {}) {
     const row: { cleanup_error: string | null; cleanup_error_paths: string[] | null } = {
       cleanup_error: null,
       cleanup_error_paths: null,
     };
     const updatePayloads: any[] = [];
+    let updateCall = 0;
     const sc: any = {
       from(_table: string) {
         return {
@@ -1840,6 +1841,15 @@ describe("persistCleanupError — repeated failures on the same job do not dupli
             updatePayloads.push(payload);
             const b: any = {
               eq() {
+                updateCall++;
+                if (opts.failUpdateOnCall === updateCall) {
+                  // Failed write: the row is NOT mutated — exactly like a
+                  // rejected DB update. persistCleanupError logs and swallows.
+                  return Promise.resolve({
+                    data: null,
+                    error: { message: "simulated write failure" },
+                  });
+                }
                 row.cleanup_error = payload.cleanup_error;
                 row.cleanup_error_paths = payload.cleanup_error_paths;
                 return Promise.resolve({ data: null, error: null });
@@ -1880,6 +1890,38 @@ describe("persistCleanupError — repeated failures on the same job do not dupli
     assert.deepEqual(
       [...(row.cleanup_error_paths ?? [])].sort(),
       ["catalog/cat-1/a.png", "catalog/cat-1/b.png", "catalog/cat-1/c.png"],
+    );
+  });
+
+  it("keeps all unique paths when the middle write of three fails", async () => {
+    // Write 2 of 3 fails at the DB layer. persistCleanupError swallows the
+    // error, so call 3 must read back the state from call 1 and merge — the
+    // final stored list must contain every unique path from calls 1 and 3
+    // (call 2's paths are lost only for the failed write itself, but here we
+    // assert paths from the successful writes are never dropped).
+    const { sc, row, updatePayloads } = makeStatefulQueueClient({ failUpdateOnCall: 2 });
+
+    await persistCleanupError(sc, "job-1", "err-1", ["catalog/cat-1/a.png"]);
+    await persistCleanupError(sc, "job-1", "err-2", ["catalog/cat-1/b.png"]); // write fails
+    await persistCleanupError(sc, "job-1", "err-3", ["catalog/cat-1/c.png"]);
+
+    assert.equal(updatePayloads.length, 3, "all three calls must attempt a write");
+
+    const stored = [...(row.cleanup_error_paths ?? [])].sort();
+    assert.ok(
+      stored.includes("catalog/cat-1/a.png"),
+      `path from call 1 must survive the failed middle write, got: ${JSON.stringify(stored)}`,
+    );
+    assert.ok(
+      stored.includes("catalog/cat-1/c.png"),
+      `path from call 3 must be present, got: ${JSON.stringify(stored)}`,
+    );
+    // Call 3 must have merged against the last SUCCESSFULLY stored state
+    // (call 1) — not against the failed-write payload from call 2.
+    assert.deepEqual(
+      updatePayloads[2].cleanup_error_paths.sort(),
+      ["catalog/cat-1/a.png", "catalog/cat-1/c.png"],
+      "third write must merge call 1's stored path with call 3's new path",
     );
   });
 });
