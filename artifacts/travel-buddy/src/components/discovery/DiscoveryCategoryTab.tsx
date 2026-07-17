@@ -271,7 +271,17 @@ export function DiscoveryCategoryTab({
   const loadingMore                 = useRef(false);
 
   // Notify parent whenever the filter strip changes so it can refresh count badges.
-  useEffect(() => { onFiltersChange?.(filters); }, [filters, onFiltersChange]);
+  // prevFiltersRef suppresses the mount-time call (and any re-run where filters
+  // didn't actually change, e.g. a new onFiltersChange identity) — the parent
+  // updates its own state in response, which would otherwise re-render this
+  // component and risk a render loop.
+  const prevFiltersRef = useRef<DiscoveryFilters | null>(null);
+  useEffect(() => {
+    const prev = prevFiltersRef.current;
+    prevFiltersRef.current = filters;
+    if (prev === null || prev === filters) return;
+    onFiltersChange?.(filters);
+  }, [filters, onFiltersChange]);
 
   const applyClientFilters = (raw: DiscoveryPlace[]): DiscoveryPlace[] => {
     let result = raw;
@@ -303,8 +313,10 @@ export function DiscoveryCategoryTab({
       return;
     }
 
-    const filtered = applyClientFilters(res.data.places);
-    setTotal(res.data.total);
+    // Normalize at the boundary: missing/invalid array → [], missing total → 0.
+    const rawPlaces = Array.isArray(res.data?.places) ? res.data.places : [];
+    const filtered = applyClientFilters(rawPlaces);
+    setTotal(Number.isFinite(res.data?.total) ? res.data.total : 0);
     setPlaces((prev) => reset ? filtered : [...prev, ...filtered]);
     setPage(nextPage);
   }, [destination, category, filters, ageFilter, customMinAge, customMaxAge]); // eslint-disable-line react-hooks/exhaustive-deps

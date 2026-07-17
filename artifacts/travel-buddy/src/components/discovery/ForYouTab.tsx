@@ -136,8 +136,16 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   // When the Compass feed resolves with enabled items, silently upgrade the feed
   // to Compass source — runs independently of load() so it never wipes existing
   // OSM/Telegraph content; only upgrades when Compass data is present and enabled.
+  //
+  // lastCompassDataRef guards against re-processing the same feed object: the
+  // effect's setItems/setSource/setLoading calls re-render this component, and
+  // without the ref an unstable compassEnabled toggle could re-fire the effect
+  // in a loop. Only a materially new compass.data reference triggers an upgrade.
+  const lastCompassDataRef = useRef<typeof compass.data>(null);
   useEffect(() => {
     if (!compass.data || !compass.compassEnabled) return;
+    if (lastCompassDataRef.current === compass.data) return;
+    lastCompassDataRef.current = compass.data;
     const compassItems = (compass.data.sections ?? []).flatMap((s) => s.items ?? []);
     const safeItems = compass.data.safeItems ?? [];
     const all = compassItems.length > 0 ? compassItems : safeItems;
@@ -171,9 +179,11 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
       setItems((prev) => {
         // Don't overwrite if Compass has already upgraded the feed.
         if (prev.some((i) => i.kind === 'compass')) return prev;
-        if (osm.ok && osm.data.places.length > 0) {
+        // Normalize at the boundary: missing/invalid array → [].
+        const places = osm.ok && Array.isArray(osm.data?.places) ? osm.data.places : [];
+        if (places.length > 0) {
           setSource('osm');
-          return osm.data.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p }));
+          return places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p }));
         }
         setSource('none');
         return [];

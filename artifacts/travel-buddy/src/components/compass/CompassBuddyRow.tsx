@@ -38,9 +38,16 @@ function BuddySkeleton() {
 }
 
 function BuddyCard({ item }: { item: CompassBuddyResult }) {
-  const d = item.data;
+  // Normalize at the boundary — a malformed record without `data` renders a
+  // defaulted card instead of throwing on property access.
+  const d = (item.data ?? {}) as CompassBuddyResult['data'];
   const topCat = item.category ?? 'city';
-  const rating = d.averageRating != null ? d.averageRating.toFixed(1) : null;
+  const rating = typeof d.averageRating === 'number' && Number.isFinite(d.averageRating)
+    ? d.averageRating.toFixed(1)
+    : null;
+  const coverUri = typeof d.coverPhotoUrl === 'string' && d.coverPhotoUrl.length > 0
+    ? d.coverPhotoUrl
+    : null;
 
   return (
     <Pressable
@@ -49,8 +56,8 @@ function BuddyCard({ item }: { item: CompassBuddyResult }) {
     >
       {/* Avatar / cover photo */}
       <View style={s.avatarWrap}>
-        {d.coverPhotoUrl ? (
-          <Image source={{ uri: d.coverPhotoUrl }} style={s.avatar} />
+        {coverUri ? (
+          <Image source={{ uri: coverUri }} style={s.avatar} />
         ) : (
           <View style={[s.avatar, s.avatarPlaceholder]}>
             <Text style={s.avatarInitial}>
@@ -90,7 +97,7 @@ function BuddyCard({ item }: { item: CompassBuddyResult }) {
         <View style={s.ratingRow}>
           <Star size={9} color={color.warn} fill={color.warn} />
           <Text style={s.ratingText}>{rating}</Text>
-          {d.reviewCount > 0 && (
+          {(d.reviewCount ?? 0) > 0 && (
             <Text style={s.reviewCount}>({d.reviewCount})</Text>
           )}
         </View>
@@ -140,10 +147,18 @@ export function CompassBuddyRow({ city }: Props) {
 
       const res = await fetchCompassBuddyMatches({ city, limit: 4 });
       if (!cancelled) {
-        setItems((res.ok && !res.disabled) ? (res.data ?? []) : []);
+        // Normalize at the boundary: keep only records with a usable id.
+        const list = (res.ok && !res.disabled && Array.isArray(res.data)) ? res.data : [];
+        setItems(list.filter((it) => it && typeof it.id === 'string' && it.id.length > 0));
         setLoading(false);
       }
-    })();
+    })().catch((err) => {
+      if (!cancelled) {
+        setItems([]);
+        setLoading(false);
+        if (__DEV__) console.error('[Discovery] CompassBuddyRow load failed:', err);
+      }
+    });
     return () => { cancelled = true; };
   }, [city]);
 

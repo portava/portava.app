@@ -21,4 +21,5 @@
 - [Demo profile seeding gotchas](demo-profile-seeding.md) — live DB constraints and stale code paths that broke idempotent seeding attempts.
 - [Geocode tests and live DB](geocode-tests-live-db.md) — geocode tests must null the DB client override in beforeEach or they silently hit the real Supabase cache table.
 - [Alert onPress act() poison](rn-alert-onpress-act-poison.md) — awaiting an Alert button's async onPress inside act() kills effects for all later renders in the file; await outside, then flush with empty act().
+- [RNTL render must be awaited](rntl-async-render.md) — travel-buddy component tests: `await render(...)` or screen stays unbound ("render function has not been called").
 - [Jest moduleNameMapper vs per-file mocks](jest-mapper-vs-perfile-mocks.md) — mapping a module globally while a test file still has a jest.mock factory requiring the mock path causes infinite recursion; remove per-file mocks when adding a mapper entry.

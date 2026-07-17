@@ -33,6 +33,12 @@ import { useFollowingHighlights } from '../../src/hooks/useFollowingHighlights';
 import { RouteBuilderSheet } from '../../src/components/RouteBuilderSheet';
 import type { RouteStopDraft } from '../../src/components/RouteBuilderSheet';
 import { SubmitPlaceSheet } from '../../src/components/discovery/SubmitPlaceSheet';
+import { SectionErrorBoundary } from '../../src/components/discovery/SectionErrorBoundary';
+
+/** Returns the value only when it is a real, finite number — otherwise null. */
+function finiteOrNull(v: number | null | undefined): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
 
 // ── Tab definitions ───────────────────────────────────────────────────────────
 
@@ -84,9 +90,15 @@ export default function DiscoveryHub() {
 
   const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([]);
   useEffect(() => {
+    let cancelled = false;
     getTrendingHashtags('city', currentCity).then((res) => {
-      if (res.ok && res.data) setTrendingHashtags(res.data.trending.slice(0, 12));
-    }).catch(() => {});
+      if (cancelled) return;
+      // Normalize at the boundary: missing/invalid array → [].
+      if (res.ok && res.data) setTrendingHashtags((res.data.trending ?? []).slice(0, 12));
+    }).catch((err) => {
+      if (!cancelled && __DEV__) console.error('[Discovery] trending hashtags failed:', err);
+    });
+    return () => { cancelled = true; };
   }, [currentCity]);
 
   // Deep-link: ?category=food navigates to that tab on mount
@@ -103,10 +115,10 @@ export default function DiscoveryHub() {
     () => locationState.place.city ?? null
   );
   const [destinationLat, setDestinationLat] = useState<number | null>(
-    () => locationState.coords?.lat ?? null
+    () => finiteOrNull(locationState.coords?.lat)
   );
   const [destinationLng, setDestinationLng] = useState<number | null>(
-    () => locationState.coords?.lng ?? null
+    () => finiteOrNull(locationState.coords?.lng)
   );
   const [destinationZoom, setDestinationZoom] = useState<number>(11);
   const [contextMode, setContextMode] = useState<DiscoveryContextMode>('in_city');
@@ -142,24 +154,32 @@ export default function DiscoveryHub() {
   useEffect(() => {
     if (locationState.place.city) {
       setDestination(locationState.place.city);
-      setDestinationLat(locationState.coords?.lat ?? null);
-      setDestinationLng(locationState.coords?.lng ?? null);
+      setDestinationLat(finiteOrNull(locationState.coords?.lat));
+      setDestinationLng(finiteOrNull(locationState.coords?.lng));
     }
   }, [locationState.place.city]);
 
   // Load available buddies for the current city (for_you buddy strip).
   useEffect(() => {
     if (!currentCity) return;
+    let cancelled = false;
     setBuddyStripLoading(true);
     setBuddyCityNotAvailable(false);
     getAvailableNow(currentCity).then(res => {
+      if (cancelled) return;
       setBuddyStripLoading(false);
       if (!res.ok) {
         if (res.error?.includes('city_not_available')) setBuddyCityNotAvailable(true);
         return;
       }
-      setAvailableBuddies(res.data.buddies.slice(0, 8));
-    }).catch(() => setBuddyStripLoading(false));
+      // Normalize at the boundary: missing/invalid array → [].
+      setAvailableBuddies((res.data?.buddies ?? []).slice(0, 8));
+    }).catch((err) => {
+      if (cancelled) return;
+      setBuddyStripLoading(false);
+      if (__DEV__) console.error('[Discovery] available-now buddies failed:', err);
+    });
+    return () => { cancelled = true; };
   }, [currentCity]);
 
   // Debounce custom age inputs (500 ms) so that each keystroke while the user
@@ -209,8 +229,8 @@ export default function DiscoveryHub() {
     // Capture coords at effect-run time (not as deps) — lets the server skip
     // Nominatim when we already know the lat/lng, without retriggering on
     // every MapTiler geocode resolution.
-    const latSnap = destinationLat;
-    const lngSnap = destinationLng;
+    const latSnap = finiteOrNull(destinationLat);
+    const lngSnap = finiteOrNull(destinationLng);
 
     const usesBatch = ageFilter === 'any';
     const fetchCounts = usesBatch
@@ -230,12 +250,16 @@ export default function DiscoveryHub() {
   // Only overrides if the user hasn't set a location yet.
   useEffect(() => {
     if (!isAuthed) return;
+    let cancelled = false;
     listMyTrips().then((rows) => {
-      const active = rows.find((r) => r.status === 'planning' || r.status === 'active') ?? rows[0];
+      if (cancelled) return;
+      const list = Array.isArray(rows) ? rows : [];
+      const active = list.find((r) => r.status === 'planning' || r.status === 'active') ?? list[0];
       if (active?.destinationCity && !locationState.place.city) {
         setDestination(active.destinationCity);
       }
     }).catch(() => {});
+    return () => { cancelled = true; };
   }, [isAuthed, locationState.place.city]);
 
   // Re-apply deep-link category if params change (e.g. in-app navigation)
@@ -308,7 +332,7 @@ export default function DiscoveryHub() {
       .then((data) => {
         if (cancelled) return;
         const c = data?.features?.[0]?.center;
-        if (Array.isArray(c) && c.length === 2) {
+        if (Array.isArray(c) && c.length === 2 && Number.isFinite(c[0]) && Number.isFinite(c[1])) {
           setDestinationLng(c[0]);
           setDestinationLat(c[1]);
           setDestinationZoom(isCountryView ? 4 : 11);
@@ -325,7 +349,17 @@ export default function DiscoveryHub() {
     setManualCity(place).catch(() => {});
   }, [setManualCity]);
 
+  // Explicit top-level screen status. 'error' is handled by the surrounding
+  // SectionErrorBoundary (fullScreen) and per-tab empty states cover 'empty'.
+  const screenStatus: 'loading' | 'location-required' | 'loaded' =
+    isLoading && !destination
+      ? 'loading'
+      : !destination
+        ? 'location-required'
+        : 'loaded';
+
   return (
+    <SectionErrorBoundary label="DiscoveryHub" fullScreen>
     <View style={[styles.root, { paddingTop: insets.top }]}>
       {/* ── Header ── */}
       <View style={styles.header}>
@@ -474,7 +508,7 @@ export default function DiscoveryHub() {
       </Modal>
 
       {/* ── Location nudge — shown when no destination is set ── */}
-      {!destination && !isLoading && (
+      {screenStatus === 'location-required' && (
         <Pressable
           style={styles.locationNudge}
           onPress={openCityPicker}
@@ -544,15 +578,18 @@ export default function DiscoveryHub() {
 
       {/* ── Following highlights strip ── */}
       {isAuthed && (
-        <FollowingHighlightsStrip
-          users={highlightUsers}
-          sessionViewedIds={sessionViewedIds}
-          onMarkViewed={markSessionViewed}
-        />
+        <SectionErrorBoundary label="FollowingHighlights">
+          <FollowingHighlightsStrip
+            users={highlightUsers}
+            sessionViewedIds={sessionViewedIds}
+            onMarkViewed={markSessionViewed}
+          />
+        </SectionErrorBoundary>
       )}
 
       {/* ── Trending hashtags strip ── */}
       {trendingHashtags.length > 0 && (
+        <SectionErrorBoundary label="TrendingHashtags">
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -575,14 +612,20 @@ export default function DiscoveryHub() {
             </Pressable>
           ))}
         </ScrollView>
+        </SectionErrorBoundary>
       )}
 
       {/* ── Active tab content ── */}
       <View style={{ flex: 1 }}>
-        {activeTab === 'for_you' ? (
+        {screenStatus === 'loading' ? (
+          <View style={styles.loadingState}>
+            <Text style={styles.loadingStateText}>Finding your location…</Text>
+          </View>
+        ) : activeTab === 'for_you' ? (
           <View style={{ flex: 1 }}>
             {/* Buddy strip — available-now Buddies in the current city */}
             {(availableBuddies.length > 0 || buddyCityNotAvailable) && (
+              <SectionErrorBoundary label="AvailableNow">
               <View style={buddyStrip.wrap}>
                 <View style={buddyStrip.header}>
                   <Users size={13} color={color.signal} />
@@ -612,7 +655,7 @@ export default function DiscoveryHub() {
                           <View style={buddyStrip.liveDot} />
                         </View>
                         <Text style={buddyStrip.chipName} numberOfLines={1}>{b.displayName ?? 'Buddy'}</Text>
-                        {b.categories[0] && (
+                        {b.categories?.[0] && (
                           <Text style={buddyStrip.chipCat} numberOfLines={1}>{b.categories[0]}</Text>
                         )}
                       </Pressable>
@@ -626,9 +669,13 @@ export default function DiscoveryHub() {
                   </ScrollView>
                 )}
               </View>
+              </SectionErrorBoundary>
             )}
             {/* Compass buddy recommendations — privacy-safe, city-matched */}
-            <CompassBuddyRow city={currentCity} />
+            <SectionErrorBoundary label="CompassPicks">
+              <CompassBuddyRow city={currentCity} />
+            </SectionErrorBoundary>
+            <SectionErrorBoundary label="ForYou">
             <ForYouTab
               key={`${destination}-${contextMode}-${communityRefreshKey}`}
               destination={destination ?? ''}
@@ -645,8 +692,10 @@ export default function DiscoveryHub() {
               bottomInset={NAV_BAR_FILLER_HEIGHT + insets.bottom}
               onScroll={navScrollHandler}
             />
+            </SectionErrorBoundary>
           </View>
         ) : (
+          <SectionErrorBoundary label="CategoryTab">
           <DiscoveryCategoryTab
             key={`${activeTab}-${destination}-${contextMode}`}
             category={activeTab}
@@ -669,6 +718,7 @@ export default function DiscoveryHub() {
             bottomInset={NAV_BAR_FILLER_HEIGHT + insets.bottom}
             onScroll={navScrollHandler}
           />
+          </SectionErrorBoundary>
         )}
       </View>
 
@@ -722,6 +772,7 @@ export default function DiscoveryHub() {
         }}
       />
     </View>
+    </SectionErrorBoundary>
   );
 }
 
@@ -729,6 +780,15 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: color.paper,
+  },
+  loadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingStateText: {
+    ...t.small,
+    color: color.mute,
   },
   header: {
     flexDirection: 'row',
