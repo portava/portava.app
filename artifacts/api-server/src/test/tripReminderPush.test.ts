@@ -555,6 +555,67 @@ describe("TripReminderScheduler push", () => {
       "reminder_delivered_at is set after re-delivery");
   });
 
+  it("normal sweep skips the trip when clearReminderDedup fires but the push never succeeded", async () => {
+    // Edge case: clearReminderDedup evicts the trip from the in-memory `reminded` set
+    // (e.g. a partial admin action that evicts the dedup entry without clearing the DB
+    // columns, or a code path that calls clearReminderDedup before confirming delivery).
+    // The trip now has:
+    //   reminder_sent_at     IS SET   (claimed)
+    //   reminder_delivered_at IS NULL  (push failed mid-flight)
+    //
+    // Expected behaviour
+    //   Normal sweep  — must SKIP the trip because the DB gate filters on
+    //                   reminder_sent_at IS NULL, which is FALSE.
+    //   Recovery sweep — must SKIP the trip while the claim is fresh (< STALE_CLAIM_MINUTES),
+    //                   then PICK IT UP once the claim goes stale.
+    const STALE_CLAIM_MINUTES = 10;
+    const tomorrowStr = new Date(Date.now() + 24 * 3_600_000).toISOString().slice(0, 10);
+
+    const tripId = "trip-dedup-cleared-push-never-succeeded";
+    const state  = baseState(tripId);
+    state.trips![0].start_date = tomorrowStr;
+
+    // Simulate the state where claim succeeded but send never did:
+    // reminder_sent_at is recent (just set), reminder_delivered_at is null.
+    const recentClaimTime = new Date(Date.now() - 30_000).toISOString(); // 30 s ago — fresh, not stale
+    state.trips![0].reminder_sent_at      = recentClaimTime;
+    state.trips![0].reminder_delivered_at = null;
+
+    // clearReminderDedup removes the trip from the in-memory `reminded` set so
+    // the normal sweep would re-consider it — but the DB gate must still block it.
+    clearReminderDedup(tripId);
+
+    const svc = makeFakeClient(state);
+    _setTestServiceClient(svc);
+
+    // Poll 1: claim is fresh AND reminder_sent_at IS NOT NULL.
+    // Normal sweep DB gate (IS NULL) blocks it; recovery sweep STALE_CLAIM_MINUTES threshold blocks it.
+    await runOnce();
+    assert.equal(pushCalls.length, 0,
+      "normal sweep must skip the trip — DB gate (reminder_sent_at IS NULL) is false");
+    assert.equal(state.trips![0].reminder_delivered_at ?? null, null,
+      "reminder_delivered_at must stay null — no send occurred");
+
+    // Age the claim past STALE_CLAIM_MINUTES so the recovery sweep picks it up.
+    const staleTime = new Date(Date.now() - (STALE_CLAIM_MINUTES + 1) * 60_000).toISOString();
+    state.trips![0].reminder_sent_at = staleTime;
+
+    // Poll 2: recovery sweep finds a stale undelivered claim and re-sends.
+    pushCalls = [];
+    const svc2 = makeFakeClient(state);
+    _setTestServiceClient(svc2);
+    await runOnce();
+
+    assert.equal(pushCalls.length, 1,
+      "recovery sweep must fire once the claim goes stale");
+    assert.deepEqual(
+      pushCalls[0].map((m: any) => m.to).sort(),
+      [OWNER_TOKEN, MEMBER_TOKEN].sort(),
+    );
+    assert.ok(state.trips![0].reminder_delivered_at,
+      "reminder_delivered_at must be set after recovery re-send");
+  });
+
   it("recovers a stale claim when start_date is ~27 h away — inside the upper drift buffer", async () => {
     // 27 h from now is within the 20-28 h recovery window (22-26 h ± 2 h drift).
     // The scheduler should detect the orphaned claim and re-send the reminder.
