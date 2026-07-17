@@ -108,6 +108,7 @@ function makeFakeClient(config: FakeClientConfig = {}) {
             lt() { return b; },
             order() { return b; },
             limit() { return b; },
+            range() { return b; },
             maybeSingle() {
               if (table === "stamp_generation_queue") {
                 return Promise.resolve({ data: { ...queueJob }, error: null });
@@ -3795,10 +3796,10 @@ function makeSweepFakeClient(config: SweepFakeClientConfig) {
   const sc: any = {
     from(table: string) {
       // ── stamp_artwork_versions ──────────────────────────────────────────────
-      // The sweep now issues two queries against this table in this order:
-      //   Pass 1 (stale): .select().or(filter).limit()  → staleVersionRows
+      // The sweep now issues two queries against this table (per page):
+      //   Pass 1 (stale): .select().or(filter).range(from,to) → staleVersionRows slice
       //   Pass 2 (current scoped): .select().eq().in()  → currentVersionRows
-      //                            (no .limit(); resolved via .then())
+      //                            (no .range(); resolved via .then())
       // We distinguish them by whether .or() or .in() was called.
       if (table === "stamp_artwork_versions") {
         let usedOr = false;
@@ -3808,12 +3809,14 @@ function makeSweepFakeClient(config: SweepFakeClientConfig) {
           or(_filter: string)   { usedOr = true; return b; },   // Pass 1
           eq(_col: string, _val: string) { return b; },          // Pass 2 prefix
           in(_col: string, _vals: any[]) { usedIn = true; return b; }, // Pass 2
-          limit(_n: number) {
-            // Pass 1: stale-version query (reached via .or().limit())
+          range(from: number, to: number) {
+            // Pass 1: stale-version query (reached via .or().range()).
+            // Slices staleVersionRows like PostgREST offset paging so the
+            // sweep's pagination loop sees successive pages.
             if (config.artworkQueryError) {
               return Promise.resolve({ data: null, error: { message: "artwork query error" } });
             }
-            return Promise.resolve({ data: config.staleVersionRows, error: null });
+            return Promise.resolve({ data: config.staleVersionRows.slice(from, to + 1), error: null });
           },
           then(resolve: any, reject: any) {
             // Pass 2: current-version scoped query (reached via .eq().in(), awaited directly)
@@ -4151,105 +4154,155 @@ describe("sweepStaleArtwork — produces no jobs when all artwork is current", (
   });
 });
 
-describe("sweepStaleArtwork — logs a warning when the stale page hits the size limit", () => {
-  function captureWarn(): { get: () => string[]; restore: () => void } {
-    const captured: string[] = [];
-    const orig = console.warn;
-    console.warn = (...args: any[]) => { captured.push(...args.map(String)); };
-    return { get: () => captured, restore: () => { console.warn = orig; } };
+describe("sweepStaleArtwork — paginates through all stale rows in a single invocation", () => {
+  function captureLogs(): { warns: string[]; logs: string[]; restore: () => void } {
+    const warns: string[] = [];
+    const logs: string[] = [];
+    const origWarn = console.warn;
+    const origLog = console.log;
+    console.warn = (...args: any[]) => { warns.push(...args.map(String)); };
+    console.log = (...args: any[]) => { logs.push(...args.map(String)); };
+    return { warns, logs, restore: () => { console.warn = origWarn; console.log = origLog; } };
   }
-  function parseWarnEvents(captured: string[]) {
+  function parseEvents(captured: string[]) {
     return captured
       .map((a) => { try { return JSON.parse(a); } catch { return null; } })
       .filter(Boolean);
   }
 
-  it("emits a stamp.sweep.page_limit_reached warning when the stale query returns exactly 500 rows and jobs are enqueued", async () => {
+  it("enqueues two full pages plus a partial third page in one invocation, with a separate insert per page", async () => {
     const PAGE_SIZE = 500;
-    const staleVersionRows = Array.from({ length: PAGE_SIZE }, (_, i) => ({ catalog_id: `cat-limit-${i}` }));
+    const TOTAL = PAGE_SIZE * 2 + 50; // 2 full pages + 1 partial page
+    const staleVersionRows = Array.from({ length: TOTAL }, (_, i) => ({ catalog_id: `cat-pg-${i}` }));
 
-    const { sc } = makeSweepFakeClient({
+    const { sc, inserts } = makeSweepFakeClient({
       staleVersionRows,
       currentVersionRows: [],
       activeJobRows: [],
     });
 
-    const { get, restore } = captureWarn();
+    const { logs, warns, restore } = captureLogs();
+    let count: number;
     try {
-      await sweepStaleArtwork(sc);
+      count = await sweepStaleArtwork(sc);
     } finally {
       restore();
     }
 
-    const limitWarn = parseWarnEvents(get()).find((e: any) => e.event === "stamp.sweep.page_limit_reached");
-    assert.ok(limitWarn, "must emit a stamp.sweep.page_limit_reached warning when the stale query hits the page limit");
-    assert.equal(limitWarn.page_size, PAGE_SIZE, "warning must include the page_size");
+    assert.equal(count, TOTAL, "must enqueue every stale catalog across all pages in one invocation");
+    assert.equal(inserts.length, 3, "must issue one insert per page (2 full + 1 partial)");
+    assert.equal(inserts[0].rows.length, PAGE_SIZE);
+    assert.equal(inserts[1].rows.length, PAGE_SIZE);
+    assert.equal(inserts[2].rows.length, 50);
+
+    // Every catalog is enqueued exactly once across all pages.
+    const enqueued = inserts.flatMap((i) => i.rows.map((r: any) => r.catalog_id));
+    assert.equal(new Set(enqueued).size, TOTAL, "no catalog may be enqueued twice across pages");
+
+    // One stale_artwork_enqueued log per page.
+    const enqueueLogs = parseEvents(logs).filter((e: any) => e.event === "stamp.sweep.stale_artwork_enqueued");
+    assert.equal(enqueueLogs.length, 3, "must emit a stale_artwork_enqueued log per page");
+    assert.equal(enqueueLogs.reduce((s: number, e: any) => s + e.count, 0), TOTAL);
+
+    // The old warning is gone — full pages now produce a debug progress log instead.
+    assert.equal(
+      parseEvents(warns).some((e: any) => e.event === "stamp.sweep.page_limit_reached"),
+      false,
+      "page_limit_reached warning must no longer be emitted",
+    );
+    const progress = parseEvents(logs).filter((e: any) => e.event === "stamp.sweep.page_complete");
+    assert.equal(progress.length, 2, "must emit a progress log for each full page");
   });
 
-  it("emits a page_limit_reached warning even when all 500 stale rows already have active jobs (toEnqueue=0)", async () => {
+  it("two pages of results each produce a separate insert call with the right rows", async () => {
     const PAGE_SIZE = 500;
-    const staleVersionRows = Array.from({ length: PAGE_SIZE }, (_, i) => ({ catalog_id: `cat-active-${i}` }));
-    // All stale catalog IDs already have active jobs — nothing is enqueued.
-    const activeJobRows = staleVersionRows.map((r) => ({ catalog_id: r.catalog_id }));
+    const TOTAL = PAGE_SIZE + 200;
+    const staleVersionRows = Array.from({ length: TOTAL }, (_, i) => ({ catalog_id: `cat-two-${i}` }));
 
-    const { sc } = makeSweepFakeClient({
+    const { sc, inserts } = makeSweepFakeClient({
       staleVersionRows,
       currentVersionRows: [],
-      activeJobRows,
-    });
-
-    const { get, restore } = captureWarn();
-    try {
-      await sweepStaleArtwork(sc);
-    } finally {
-      restore();
-    }
-
-    const limitWarn = parseWarnEvents(get()).find((e: any) => e.event === "stamp.sweep.page_limit_reached");
-    assert.ok(limitWarn, "must emit a page_limit_reached warning even when no new jobs are enqueued (all rows already active)");
-    assert.equal(limitWarn.page_size, PAGE_SIZE, "warning must include the page_size");
-  });
-
-  it("emits a page_limit_reached warning even when all 500 stale rows are actually current-version (trulyStale=0)", async () => {
-    const PAGE_SIZE = 500;
-    const staleVersionRows = Array.from({ length: PAGE_SIZE }, (_, i) => ({ catalog_id: `cat-current-${i}` }));
-    // All entries in the stale page also have a current-version row — truly stale set is empty.
-    const currentVersionRows = staleVersionRows.map((r) => ({ catalog_id: r.catalog_id }));
-
-    const { sc } = makeSweepFakeClient({
-      staleVersionRows,
-      currentVersionRows,
       activeJobRows: [],
     });
 
-    const { get, restore } = captureWarn();
-    try {
-      await sweepStaleArtwork(sc);
-    } finally {
-      restore();
-    }
+    const count = await sweepStaleArtwork(sc);
 
-    const limitWarn = parseWarnEvents(get()).find((e: any) => e.event === "stamp.sweep.page_limit_reached");
-    assert.ok(limitWarn, "must emit a page_limit_reached warning even when no catalogs are truly stale (all have current-version rows)");
-    assert.equal(limitWarn.page_size, PAGE_SIZE, "warning must include the page_size");
+    assert.equal(count, TOTAL);
+    assert.equal(inserts.length, 2, "each page must produce a separate insert call");
+    assert.equal(inserts[0].rows.length, PAGE_SIZE);
+    assert.equal(inserts[1].rows.length, 200);
+    assert.equal(inserts[1].rows[0].catalog_id, `cat-two-${PAGE_SIZE}`);
   });
 
-  it("does not emit a page_limit_reached warning when fewer rows than the page size are returned", async () => {
-    const { sc } = makeSweepFakeClient({
+  it("continues paginating past a full page whose rows all already have active jobs", async () => {
+    const PAGE_SIZE = 500;
+    // Page 1: all 500 already active. Page 2: 10 genuinely enqueueable.
+    const activeIds = Array.from({ length: PAGE_SIZE }, (_, i) => `cat-act-${i}`);
+    const freshIds  = Array.from({ length: 10 }, (_, i) => `cat-fresh-${i}`);
+    const staleVersionRows = [...activeIds, ...freshIds].map((id) => ({ catalog_id: id }));
+
+    const { sc, inserts } = makeSweepFakeClient({
+      staleVersionRows,
+      currentVersionRows: [],
+      activeJobRows: activeIds.map((id) => ({ catalog_id: id })),
+    });
+
+    const count = await sweepStaleArtwork(sc);
+
+    assert.equal(count, 10, "must reach and enqueue the second page even when page 1 enqueues nothing");
+    assert.equal(inserts.length, 1);
+    assert.deepEqual(
+      inserts[0].rows.map((r: any) => r.catalog_id).sort(),
+      freshIds.slice().sort(),
+    );
+  });
+
+  it("deduplicates a catalog whose stale rows span a page boundary", async () => {
+    const PAGE_SIZE = 500;
+    // The last row of page 1 and the first row of page 2 share a catalog_id.
+    const staleVersionRows = [
+      ...Array.from({ length: PAGE_SIZE - 1 }, (_, i) => ({ catalog_id: `cat-span-${i}` })),
+      { catalog_id: "cat-boundary" }, // last row of page 1
+      { catalog_id: "cat-boundary" }, // first row of page 2
+      { catalog_id: "cat-tail" },
+    ];
+
+    const { sc, inserts } = makeSweepFakeClient({
+      staleVersionRows,
+      currentVersionRows: [],
+      activeJobRows: [],
+    });
+
+    const count = await sweepStaleArtwork(sc);
+
+    assert.equal(count, PAGE_SIZE + 1, "cat-boundary must be counted once across the page boundary");
+    const enqueued = inserts.flatMap((i) => i.rows.map((r: any) => r.catalog_id));
+    assert.equal(enqueued.filter((id) => id === "cat-boundary").length, 1,
+      "cat-boundary must be enqueued exactly once despite appearing on both pages");
+  });
+
+  it("does not paginate further when the first page is not full", async () => {
+    const { sc, inserts } = makeSweepFakeClient({
       staleVersionRows: [{ catalog_id: "cat-a" }, { catalog_id: "cat-b" }],
       currentVersionRows: [],
       activeJobRows: [],
     });
 
-    const { get, restore } = captureWarn();
+    const { logs, restore } = captureLogs();
+    let count: number;
     try {
-      await sweepStaleArtwork(sc);
+      count = await sweepStaleArtwork(sc);
     } finally {
       restore();
     }
 
-    const limitWarn = parseWarnEvents(get()).find((e: any) => e.event === "stamp.sweep.page_limit_reached");
-    assert.equal(limitWarn, undefined, "must NOT emit a page_limit_reached warning when the page is not full");
+    assert.equal(count, 2);
+    assert.equal(inserts.length, 1, "a single partial page must produce exactly one insert");
+    assert.equal(
+      parseEvents(logs).some((e: any) => e.event === "stamp.sweep.page_complete"),
+      false,
+      "no progress log when the page is not full",
+    );
   });
 });
 
@@ -4275,10 +4328,12 @@ describe("runGenerationCycle — calls sweepStaleArtwork when the sweep interval
             or()     { return b; },
             eq()     { return b; },
             in()     { usedIn = true; return b; },
-            limit()  {
-              // Pass 1: stale rows — one catalog needs regeneration
+            range(from: number, to: number) {
+              // Pass 1: stale rows — one catalog needs regeneration.
+              // Slice like PostgREST so the pagination loop terminates after
+              // the first (partial) page.
               return Promise.resolve({
-                data: [{ catalog_id: "cat-sweep-from-cycle" }],
+                data: [{ catalog_id: "cat-sweep-from-cycle" }].slice(from, to + 1),
                 error: null,
               });
             },

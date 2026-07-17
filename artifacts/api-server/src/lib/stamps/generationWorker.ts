@@ -101,44 +101,80 @@ export async function sweepStaleArtwork(scOverride?: any): Promise<number> {
   const sc = scOverride ?? getServiceClient();
   if (!sc) return 0;
 
-  // Pass 1: fetch one page of catalog_ids that have at least one stale or
-  // null prompt_template_version.  The OR covers rows pre-dating the versioning
-  // scheme (null) and rows from a previous STYLE_VERSION.
-  // Capped at 500 per sweep — subsequent sweeps process the remainder so each
-  // run makes deterministic forward progress without risk of a false positive.
+  // The sweep paginates through ALL stale rows in a single invocation:
+  // pages of SWEEP_PAGE_SIZE are fetched via .range() until a page returns
+  // fewer rows than the limit.  Each page is deduplicated, checked, and
+  // enqueued before the next page is fetched, so a crash mid-sweep still
+  // leaves every completed page fully enqueued.
   const SWEEP_PAGE_SIZE = 500;
-  const { data: staleRows, error: staleErr } = await sc
-    .from("stamp_artwork_versions")
-    .select("catalog_id")
-    .or(`prompt_template_version.is.null,prompt_template_version.neq.${STYLE_VERSION}`)
-    .limit(SWEEP_PAGE_SIZE);
+  // Catalog IDs already handled in this invocation (across pages) — the same
+  // catalog can have stale rows spanning a page boundary.
+  const seenCatalogIds = new Set<string>();
+  let totalEnqueued = 0;
+  let offset = 0;
+  let pageIndex = 0;
 
-  if (staleErr) {
-    console.error(JSON.stringify({ event: "stamp.sweep.stale_query_error", error: staleErr.message }));
-    return 0;
-  }
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    // Pass 1: fetch one page of catalog_ids that have at least one stale or
+    // null prompt_template_version.  The OR covers rows pre-dating the
+    // versioning scheme (null) and rows from a previous STYLE_VERSION.
+    const { data: staleRows, error: staleErr } = await sc
+      .from("stamp_artwork_versions")
+      .select("catalog_id")
+      .or(`prompt_template_version.is.null,prompt_template_version.neq.${STYLE_VERSION}`)
+      .range(offset, offset + SWEEP_PAGE_SIZE - 1);
 
-  const staleCatalogIds = [
-    ...new Set(
-      ((staleRows ?? []) as Array<{ catalog_id: string }>).map((r) => r.catalog_id),
-    ),
-  ];
+    if (staleErr) {
+      console.error(JSON.stringify({ event: "stamp.sweep.stale_query_error", error: staleErr.message, page: pageIndex }));
+      return totalEnqueued;
+    }
 
-  if (staleCatalogIds.length === 0) return 0;
+    const pageRows = (staleRows ?? []) as Array<{ catalog_id: string }>;
+    const pageFull = pageRows.length >= SWEEP_PAGE_SIZE;
 
-  // Warn immediately when the stale query hit the page limit — more stale rows
-  // may exist beyond this page.  Emit unconditionally here so the warning is
-  // never suppressed by downstream early-returns (all-active-jobs, all-current,
-  // or insert-error).
-  if (staleRows && staleRows.length >= SWEEP_PAGE_SIZE) {
-    console.warn(JSON.stringify({
-      event:         "stamp.sweep.page_limit_reached",
+    // Deduplicate within the page and against catalogs already handled on
+    // earlier pages of this invocation.
+    const staleCatalogIds = [...new Set(pageRows.map((r) => r.catalog_id))]
+      .filter((id) => !seenCatalogIds.has(id));
+    for (const id of staleCatalogIds) seenCatalogIds.add(id);
+
+    if (staleCatalogIds.length > 0) {
+      const enqueued = await processSweepPage(sc, staleCatalogIds, pageIndex);
+      if (enqueued === null) return totalEnqueued; // query/insert error — stop paging
+      totalEnqueued += enqueued;
+    }
+
+    if (!pageFull) break;
+
+    // Debug-level progress log: the page was full, so more stale rows may
+    // exist beyond it — the loop continues with the next page immediately.
+    console.log(JSON.stringify({
+      event:         "stamp.sweep.page_complete",
+      page:          pageIndex,
       page_size:     SWEEP_PAGE_SIZE,
       style_version: STYLE_VERSION,
-      note:          "stale artwork query hit the page limit; more stale entries may remain — next sweep will process the next page",
+      note:          "stale artwork page was full; fetching the next page in the same sweep",
     }));
+
+    offset += SWEEP_PAGE_SIZE;
+    pageIndex++;
   }
 
+  return totalEnqueued;
+}
+
+/**
+ * Process a single page of stale catalog IDs: exclude catalogs that already
+ * have a current-version row or an active job, then insert generation jobs
+ * for the remainder. Returns the number of jobs enqueued for this page, or
+ * null when a query/insert error should abort the pagination loop.
+ */
+async function processSweepPage(
+  sc: any,
+  staleCatalogIds: string[],
+  pageIndex: number,
+): Promise<number | null> {
   // Pass 2: scoped current-version check — query only within the stale batch.
   // By scoping to staleCatalogIds, this query is always bounded (≤ page size)
   // and cannot be truncated regardless of total catalog size.  A catalog that
@@ -151,8 +187,8 @@ export async function sweepStaleArtwork(scOverride?: any): Promise<number> {
     .in("catalog_id", staleCatalogIds);
 
   if (currentErr) {
-    console.error(JSON.stringify({ event: "stamp.sweep.current_query_error", error: currentErr.message }));
-    return 0;
+    console.error(JSON.stringify({ event: "stamp.sweep.current_query_error", error: currentErr.message, page: pageIndex }));
+    return null;
   }
 
   const currentCatalogIds = new Set<string>(
@@ -161,17 +197,7 @@ export async function sweepStaleArtwork(scOverride?: any): Promise<number> {
 
   // A catalog is truly stale only if it has no current-version row in the batch.
   const trulyStale = staleCatalogIds.filter((id) => !currentCatalogIds.has(id));
-  if (trulyStale.length === 0) {
-    if (staleRows && staleRows.length >= SWEEP_PAGE_SIZE) {
-      console.log(JSON.stringify({
-        event:         "stamp.sweep.page_all_current",
-        page_size:     SWEEP_PAGE_SIZE,
-        style_version: STYLE_VERSION,
-        note:          "all catalogs in this page already have current-version artwork; next sweep will process the next page",
-      }));
-    }
-    return 0;
-  }
+  if (trulyStale.length === 0) return 0;
 
   // Check which truly-stale catalog IDs already have an active (non-terminal)
   // job so we don't create duplicate queue entries.
@@ -182,8 +208,8 @@ export async function sweepStaleArtwork(scOverride?: any): Promise<number> {
     .in("status", ["queued", "generating", "review_required"]);
 
   if (jobsErr) {
-    console.error(JSON.stringify({ event: "stamp.sweep.existing_jobs_query_error", error: jobsErr.message }));
-    return 0;
+    console.error(JSON.stringify({ event: "stamp.sweep.existing_jobs_query_error", error: jobsErr.message, page: pageIndex }));
+    return null;
   }
 
   const alreadyActive = new Set<string>(
@@ -212,8 +238,8 @@ export async function sweepStaleArtwork(scOverride?: any): Promise<number> {
     .insert(newJobs);
 
   if (insertErr) {
-    console.error(JSON.stringify({ event: "stamp.sweep.enqueue_error", error: insertErr.message }));
-    return 0;
+    console.error(JSON.stringify({ event: "stamp.sweep.enqueue_error", error: insertErr.message, page: pageIndex }));
+    return null;
   }
 
   console.log(JSON.stringify({
@@ -221,6 +247,7 @@ export async function sweepStaleArtwork(scOverride?: any): Promise<number> {
     count:         toEnqueue.length,
     catalog_ids:   toEnqueue,
     style_version: STYLE_VERSION,
+    page:          pageIndex,
   }));
 
   return toEnqueue.length;
