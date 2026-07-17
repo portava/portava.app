@@ -495,6 +495,7 @@ router.patch("/admin/geofence-settings", async (req, res) => {
     .maybeSingle();
 
   if (error) { sendError(res, "db_error", error.message); return; }
+  if (!data) { sendError(res, "not_found", "Geofence settings row not found"); return; }
   res.json({ settings: data });
 });
 
