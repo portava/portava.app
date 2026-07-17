@@ -3413,6 +3413,123 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     );
   });
 
+  it("cache-size cap (2000 entries) evicts the oldest entry when the DB-cache path (not Nominatim) writes the re-geocoded result", async () => {
+    // Sibling of the previous test: the MAX_CACHE_SIZE trim exists in TWO
+    // branches of the async IIFE — after readDbCache returns a hit, and after
+    // forwardGeocodeCity (Nominatim) returns.  The previous test covers the
+    // Nominatim branch; this one covers the readDbCache branch: the deletion-
+    // eviction re-geocode is satisfied by a positive DB-cache row, no Nominatim
+    // call is made, and the trim must still fire so the cache never exceeds
+    // 2 000 entries.
+    const MAX_CACHE_SIZE = 2_000;
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Keyed DB client: returns a positive row ONLY for "targetcity"; every
+    // other city misses the DB cache and falls through to the Nominatim mock.
+    let dbReadsForTarget = 0;
+    _setGeocodeDbClientForTests({
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        let queriedKey: string | undefined;
+        const chain: any = {
+          select() { return chain; },
+          eq(_col: string, val: string) { queriedKey = val; return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() {
+            if (queriedKey === "targetcity") {
+              dbReadsForTarget++;
+              return {
+                data: {
+                  country: "Japan",
+                  country_code: "JP",
+                  corrected_at: null,
+                  deleted_at: null,
+                },
+                error: null,
+              };
+            }
+            return { data: null, error: null };
+          },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            resolve({ data: [], error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "de", country: "Germany" } }],
+      };
+    });
+
+    // Step 1: fill cache with 1 999 synthetic entries (DB miss → Nominatim).
+    for (let i = 0; i < MAX_CACHE_SIZE - 1; i++) {
+      await geocodeCityCountry(`synth-city-${i}`);
+    }
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE - 1,
+      "pre-condition: cache has 1 999 entries");
+    const oldestKey = "synth-city-0";
+    assert.ok(_getGeocodeCacheEntryForTests(oldestKey) !== undefined,
+      "pre-condition: oldest entry (synth-city-0) present");
+
+    // Step 2: first geocode of targetcity — served by the DB cache (no
+    // Nominatim), bringing the cache to exactly MAX_CACHE_SIZE.
+    const nominatimAfterFill = nominatimCalls;
+    const first = await geocodeCityCountry("targetcity");
+    assert.equal(first?.countryCode, "JP", "targetcity resolved from the DB cache");
+    assert.equal(nominatimCalls, nominatimAfterFill,
+      "no Nominatim call — DB cache hit for targetcity");
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE,
+      "cache is now at the cap after adding targetcity");
+
+    // Step 3: simulate an admin DELETE on another instance.
+    evictGeocodeCacheKey("targetcity");
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE - 1,
+      "cache dropped by one after deletion-eviction of targetcity");
+
+    // Step 4: top the cache back up to exactly MAX_CACHE_SIZE.
+    await geocodeCityCountry(`synth-city-${MAX_CACHE_SIZE - 1}`);
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE,
+      "cache is back at the cap");
+
+    // Step 5: deletion-eviction re-geocode of targetcity.  The in-memory entry
+    // is gone so the IIFE runs; readDbCache returns the positive row, so the
+    // DB-cache branch (not the Nominatim branch) performs the write-back and
+    // must fire the MAX_CACHE_SIZE trim.
+    const dbReadsBefore = dbReadsForTarget;
+    const nominatimBefore = nominatimCalls;
+    const result = await geocodeCityCountry("targetcity");
+
+    assert.equal(result?.countryCode, "JP",
+      "re-geocode returns the DB-cache result for targetcity");
+    assert.ok(dbReadsForTarget > dbReadsBefore,
+      "the DB cache was read during the re-geocode — write-back came from the DB-cache path");
+    assert.equal(nominatimCalls, nominatimBefore,
+      "Nominatim was NOT called — the re-geocode was satisfied entirely by the DB cache");
+
+    // The trim fired in the DB-cache branch: cache never exceeds the cap.
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE,
+      "cache size did not exceed MAX_CACHE_SIZE after the DB-cache-path re-geocode");
+
+    // The re-geocoded city is present with the DB result.
+    const targetEntry = _getGeocodeCacheEntryForTests("targetcity");
+    assert.ok(targetEntry !== undefined, "targetcity is present in the cache after re-geocode");
+    assert.equal(targetEntry?.result?.countryCode, "JP",
+      "targetcity cache entry holds the DB-cache result");
+
+    // The oldest entry was evicted by the trim in the readDbCache branch.
+    assert.ok(_getGeocodeCacheEntryForTests(oldestKey) === undefined,
+      "oldest entry (synth-city-0) was evicted by the cache-size trim in the DB-cache branch");
+  });
+
   it("positive DB write-back fires after TTL-expiry re-geocode succeeds — recovered entry survives a restart", async () => {
     // Scenario: a prior Nominatim failure cached null for 6 hours (NEGATIVE_TTL_MS).
     // After the TTL expires, Nominatim succeeds.  writeDbCache must be called with
