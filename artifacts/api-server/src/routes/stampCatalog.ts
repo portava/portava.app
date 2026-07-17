@@ -675,12 +675,25 @@ router.post("/admin/stamps/catalog/:id/regenerate", async (req, res) => {
   if (!admin) return;
   const { userId: adminId, sc } = admin;
 
-  // Archive existing candidate versions
-  await sc
+  // Archive existing candidate versions.
+  // Non-fatal on failure: the regenerate still proceeds, but the failure must
+  // be observable in server logs — otherwise stale candidate versions silently
+  // remain visible to the generation worker.
+  const { error: versionArchiveErr } = await sc
     .from("stamp_artwork_versions")
     .update({ status: "archived" })
     .eq("catalog_id", id)
     .eq("status", "candidate");
+
+  if (versionArchiveErr) {
+    console.error(
+      "[stamp-regenerate] failed to archive candidate artwork versions",
+      JSON.stringify({
+        catalog_id: id,
+        error: versionArchiveErr.message ?? String(versionArchiveErr),
+      })
+    );
+  }
 
   // Archive existing active queue job (if review_required).
   // Must check the error: if this fails and we proceed to insert a new queued
