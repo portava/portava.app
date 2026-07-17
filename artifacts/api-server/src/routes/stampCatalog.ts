@@ -729,17 +729,57 @@ router.post("/admin/stamps/catalog/:id/regenerate", async (req, res) => {
   }
 
   // Reset failed jobs to queued (admin action also resets the auto-requeue cap).
-  // Chain .select() so PostgREST returns the affected rows — without it the
-  // data field is null even when rows were updated. We need the count to know
-  // whether a state change happened (used for audit-log gating below).
-  const { data: resetRows } = await sc
+  //
+  // An entry can accumulate multiple failed rows (e.g. one retryable_failed AND
+  // one permanently_failed, from a race). The partial unique index
+  // uix_queue_catalog_active permits only one active row per catalog entry, so
+  // a single UPDATE promoting every failed row to "queued" would violate the
+  // index — Postgres raises 23505 and rolls the whole statement back, leaving
+  // ALL rows still failed while the handler reports ok. To reset both failed
+  // statuses in one regenerate: archive all but the most recent failed row
+  // first, then reset the survivor to queued.
+  const { data: failedRows } = await sc
     .from("stamp_generation_queue")
-    .update({ status: "queued", attempts: 0, requeue_count: 0, last_error: null, cleanup_error: null, cleanup_error_paths: null, updated_at: new Date().toISOString() })
+    .select("id, status, created_at")
     .eq("catalog_id", id)
-    .in("status", ["retryable_failed", "permanently_failed"])
-    .select();
+    .in("status", ["retryable_failed", "permanently_failed"]);
 
-  const hadFailedReset = Array.isArray(resetRows) && resetRows.length > 0;
+  let hadFailedReset = false;
+
+  if (Array.isArray(failedRows) && failedRows.length > 0) {
+    const sorted = [...failedRows].sort((a: any, b: any) =>
+      String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")),
+    );
+    const survivor = sorted[sorted.length - 1] as any;
+    const extraIds = sorted.slice(0, -1).map((r: any) => r.id);
+
+    if (extraIds.length > 0) {
+      // Archive the older failed rows so resetting the survivor cannot trip
+      // the unique index. Must check the error: if this fails and we still
+      // reset the survivor, the reset would violate the index and roll back.
+      const { error: archiveExtrasErr } = await sc
+        .from("stamp_generation_queue")
+        .update({ status: "archived", updated_at: new Date().toISOString() })
+        .in("id", extraIds);
+
+      if (archiveExtrasErr) {
+        sendError(res, "db_error", archiveExtrasErr.message);
+        return;
+      }
+    }
+
+    // Chain .select() so PostgREST returns the affected rows — without it the
+    // data field is null even when rows were updated. We need the count to know
+    // whether a state change happened (used for audit-log gating below).
+    const { data: resetRows } = await sc
+      .from("stamp_generation_queue")
+      .update({ status: "queued", attempts: 0, requeue_count: 0, last_error: null, cleanup_error: null, cleanup_error_paths: null, updated_at: new Date().toISOString() })
+      .eq("id", survivor.id)
+      .in("status", ["retryable_failed", "permanently_failed"])
+      .select();
+
+    hadFailedReset = Array.isArray(resetRows) && resetRows.length > 0;
+  }
 
   // Enqueue a new job
   const { error: queueErr } = await sc

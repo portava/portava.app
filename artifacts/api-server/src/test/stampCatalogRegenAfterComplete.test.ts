@@ -789,12 +789,12 @@ describe("POST regenerate duplicate click — queued row already present", () =>
 // The most complex edge case: completed + retryable_failed + permanently_failed
 // all exist for the same catalog_id.
 //
-// The .in("status", ["retryable_failed", "permanently_failed"]) UPDATE targets
-// TWO rows simultaneously. In the real DB a partial unique index on
-// (catalog_id) WHERE status = 'queued' prevents the batch from landing —
-// PostgreSQL raises 23505 and rolls back the entire UPDATE statement. The
-// route therefore falls through to the INSERT, which succeeds and creates
-// exactly one fresh queued row. The completed row is left untouched.
+// TWO failed rows exist simultaneously. A single batch UPDATE promoting both
+// to 'queued' would violate the partial unique index (PostgreSQL raises 23505
+// and rolls the whole statement back), so the route archives the older failed
+// row first, then resets the most recent one to queued. The subsequent INSERT
+// hits 23505 (a queued row now exists) and is silently swallowed. The
+// completed row is left untouched.
 //
 // The fake client's wouldCreateDuplicateQueued helper reproduces this
 // constraint so the in-process tests match real DB behaviour.
@@ -921,18 +921,15 @@ describe("POST regenerate when completed, retryable_failed, and permanently_fail
 // ── Tests: second regenerate after the three-status case ─────────────────────
 //
 // Chained-call edge case. After the first regenerate in the three-status
-// scenario, the batch UPDATE was rolled back by the partial unique index
-// (both failed rows would have become 'queued'), so the failed rows LINGER in
-// their original states and only the fresh INSERT created the queued row.
+// scenario, the older failed row was archived and the most recent failed row
+// was reset to queued — no failed rows remain.
 //
-// State before the SECOND regenerate: completed + queued + retryable_failed +
-// permanently_failed. The reset UPDATE again targets both failed rows — but a
-// 'queued' row already exists, so the constraint fires again (statement rolled
-// back, resetRows null → hadFailedReset false). The INSERT then hits 23505 as
-// well. Net result must be exactly one queued row, and NO second audit entry
+// State before the SECOND regenerate: completed + archived + queued. There is
+// nothing left to reset (hadFailedReset false) and the INSERT hits 23505.
+// Net result must be exactly one queued row, and NO second audit entry
 // (duplicate-click guard: queueErr set + no failed reset → skip the write).
 
-describe("second POST regenerate after the three-status case (lingering failed rows)", () => {
+describe("second POST regenerate after the three-status case (failed rows already cleared)", () => {
 
   beforeEach(() => {
     db = makeDbThreeRows();
@@ -941,27 +938,31 @@ describe("second POST regenerate after the three-status case (lingering failed r
     _setTestServiceClient(client as any);
   });
 
-  it("first regenerate leaves the failed rows lingering (UPDATE rolled back, INSERT created the queued row)", async () => {
+  it("first regenerate clears BOTH failed rows (older archived, newest reset to queued)", async () => {
     const first = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
     assert.equal(
       first.status, 200,
       `first regenerate must return 200, got ${first.status}: ${JSON.stringify(first.body)}`,
     );
 
-    // The constraint rolled back the batch UPDATE — both failed rows keep
-    // their original statuses. Only the INSERT created the queued row.
-    const retryable = db.stamp_generation_queue.filter(
-      (r) => r.catalog_id === CATALOG_ID && r.status === "retryable_failed",
-    );
-    const permFailed = db.stamp_generation_queue.filter(
-      (r) => r.catalog_id === CATALOG_ID && r.status === "permanently_failed",
+    // The handler archives the older failed row and resets the most recent
+    // failed row (the permanently_failed one, created later) to queued.
+    const stillFailed = db.stamp_generation_queue.filter(
+      (r) =>
+        r.catalog_id === CATALOG_ID &&
+        (r.status === "retryable_failed" || r.status === "permanently_failed"),
     );
     const queued = db.stamp_generation_queue.filter(
       (r) => r.catalog_id === CATALOG_ID && r.status === "queued",
     );
-    assert.equal(retryable.length,  1, `retryable_failed row must linger after first call, found ${retryable.length}`);
-    assert.equal(permFailed.length, 1, `permanently_failed row must linger after first call, found ${permFailed.length}`);
-    assert.equal(queued.length,     1, `expected exactly 1 queued row after first call, found ${queued.length}`);
+    assert.equal(stillFailed.length, 0, `no failed rows may remain after first call, found: ${JSON.stringify(stillFailed)}`);
+    assert.equal(queued.length,      1, `expected exactly 1 queued row after first call, found ${queued.length}`);
+    assert.equal(queued[0].id, PERM_FAILED_ID, "the most recent failed row must be the one reset to queued");
+    assert.equal(
+      db.stamp_generation_queue.find((r) => r.id === RETRYABLE_ID)?.status,
+      "archived",
+      "the older failed row must be archived",
+    );
   });
 
   it("second regenerate returns 200 with { ok: true }", async () => {

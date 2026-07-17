@@ -459,23 +459,24 @@ describe("POST /admin/stamps/catalog/:id/regenerate — failed-job reset", () =>
     assert.equal(resetCall!.payload.last_error, null);
     assert.deepEqual(resetCall!.inFilter, ["status", ["retryable_failed", "permanently_failed"]],
       "reset guard must cover retryable_failed AND permanently_failed");
-    assert.deepEqual(resetCall!.eqFilters, [["catalog_id", CATALOG_ID]]);
+    assert.deepEqual(resetCall!.eqFilters, [["id", JOB_PERMANENT]],
+      "reset must target the most recent failed row by id (a batch update would trip the unique index)");
 
-    // Real-DB semantics: the single UPDATE would promote BOTH failed rows to
-    // 'queued' for the same catalog_id, violating the partial unique index —
-    // PostgreSQL raises 23505 and rolls the whole statement back, so the
-    // failed rows keep their statuses. The subsequent insert then succeeds
-    // (no queued row exists after the rollback), leaving exactly one queued
-    // row for the catalog.
+    // Real-DB semantics: a single UPDATE promoting BOTH failed rows to
+    // 'queued' would violate the partial unique index (23505, full rollback).
+    // The handler therefore archives the older failed row first, then resets
+    // the most recent failed row to queued — clearing both failed statuses in
+    // one regenerate while keeping exactly one active row.
     const retryRow = client._db.stamp_generation_queue.find((r) => r.id === JOB_RETRYABLE)!;
     const permRow  = client._db.stamp_generation_queue.find((r) => r.id === JOB_PERMANENT)!;
-    assert.equal(retryRow.status, "retryable_failed", "rolled-back UPDATE must leave the retryable row unchanged");
-    assert.equal(permRow.status, "permanently_failed", "rolled-back UPDATE must leave the permanent row unchanged");
+    assert.equal(retryRow.status, "archived", "older failed row must be archived");
+    assert.equal(permRow.status, "queued", "most recent failed row must be reset to queued");
 
     const queuedRows = client._db.stamp_generation_queue.filter(
       (r) => r.catalog_id === CATALOG_ID && r.status === "queued",
     );
     assert.equal(queuedRows.length, 1, "exactly one queued row must exist after regenerate");
-    assert.equal(queuedRows[0].triggered_by_action, `admin_regenerate:${ADMIN_USER_ID}`);
+    assert.equal(queuedRows[0].id, JOB_PERMANENT,
+      "the queued row is the reset survivor (the fresh insert hits 23505 and is swallowed)");
   });
 });
