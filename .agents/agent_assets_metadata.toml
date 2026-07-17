@@ -6,3 +6,9 @@ id = "-1Q0urBf2v4uIA2_Rfbez"
 uri = "file://docs/app-audit.md"
 type = "text"
 title = "Portava App Audit — Full 15-Phase Report"
+
+[[outputs]]
+id = "n0TL5hgF6MQwdko7ft5nB"
+uri = "file://portava-current.zip"
+type = "unspecified"
+title = "portava-current.zip"
