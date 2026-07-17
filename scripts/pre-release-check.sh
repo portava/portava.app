@@ -334,7 +334,20 @@ run_check "engagement-indexes" \
   "Engagement index presence (migration 0106 — five pg_indexes)" \
   bash scripts/check-engagement-indexes.sh
 
-# ── 10. Version / build-number floor guard ────────────────────────────────────
+# ── 10. Migrations-vs-live schema audit ──────────────────────────────────────
+# Diffs every migration file's claimed objects (tables, columns, functions,
+# indexes, policies, enums, triggers, views) against the LIVE Supabase schema
+# via the Management API, catching never-applied migrations before a release.
+#
+# Soft-skips (warning only, exit 0) when SUPABASE_ACCESS_TOKEN / SUPABASE_URL
+# are unavailable or the Management API is unreachable, so a network blip or
+# a developer without credentials is not blocked on unrelated work.
+# Fails hard only on real drift (audit exit 1).
+run_check "schema-audit" \
+  "Migrations-vs-live schema audit (auditMigrationsVsLive.ts)" \
+  bash scripts/check-schema-audit.sh
+
+# ── 11. Version / build-number floor guard ────────────────────────────────────
 # Fails if ios.buildNumber or android.versionCode still equal 1, which is the
 # first-submission default that Apple and Google have already seen.  Both
 # stores reject a binary whose build number is not strictly greater than the
@@ -421,6 +434,17 @@ for entry in "${results[@]}"; do
         printf '          (0106 creates five pg_indexes for cursor-based pagination on like tables;\n'
         printf '           without them GET /api/engagement/likes degrades to sequential scans)\n'
         printf '          To enable the check locally:\n'
+        printf '            export SUPABASE_ACCESS_TOKEN=sbp_...\n'
+        printf '            Generate at: https://supabase.com/dashboard/account/tokens\n'
+        ;;
+      schema-audit)
+        printf '     fix: review the missing objects printed above, apply the never-applied\n'
+        printf '          migrations via the Supabase Management API, then re-run:\n'
+        printf '            cd artifacts/api-server && pnpm run audit:schema\n'
+        printf '          Known-drifted files/columns belong in the SKIP_FILES / ALLOWLIST\n'
+        printf '          sets in artifacts/api-server/src/scripts/auditMigrationsVsLive.ts\n'
+        printf '          (document the drift in docs/migrations.md).\n'
+        printf '          Token required to query the Supabase Management API:\n'
         printf '            export SUPABASE_ACCESS_TOKEN=sbp_...\n'
         printf '            Generate at: https://supabase.com/dashboard/account/tokens\n'
         ;;

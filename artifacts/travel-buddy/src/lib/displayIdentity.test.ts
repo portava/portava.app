@@ -50,10 +50,10 @@ describe('displayIdentity', () => {
     it('does not double the @ for handles stored with one', () => {
       assert.equal(primaryIdentityText({ handle: '@kai' }), '@kai');
     });
-    it('truncates legacy over-limit real names to 40 chars with an ellipsis', () => {
+    it('truncates legacy over-limit real names to 30 chars with an ellipsis', () => {
       const long = 'A'.repeat(60);
       const out = primaryIdentityText({ displayName: long, handle: 'kai' });
-      assert.equal(out, 'A'.repeat(40) + '…');
+      assert.equal(out, 'A'.repeat(30) + '…');
     });
     it('falls back to Traveler when nothing is available', () => {
       assert.equal(primaryIdentityText({}), 'Traveler');

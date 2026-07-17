@@ -9,23 +9,23 @@ import assert from 'node:assert/strict';
 import { truncateDisplayName, DISPLAY_NAME_MAX_LENGTH } from './identity.ts';
 
 describe('truncateDisplayName', () => {
-  it('leaves names at or under 40 chars untouched', () => {
-    const exact = 'a'.repeat(40);
+  it('leaves names at or under the 30-char limit untouched', () => {
+    const exact = 'a'.repeat(30);
     assert.equal(truncateDisplayName(exact), exact);
     assert.equal(truncateDisplayName('Maria Santos'), 'Maria Santos');
     assert.equal(truncateDisplayName(''), '');
   });
 
-  it('truncates a legacy >40-char name to 40 chars plus ellipsis', () => {
+  it('truncates a legacy over-limit name to 30 chars plus ellipsis', () => {
     const long = 'x'.repeat(55);
     const out = truncateDisplayName(long);
-    assert.equal(out, `${'x'.repeat(40)}…`);
+    assert.equal(out, `${'x'.repeat(30)}…`);
     assert.ok(out.length <= DISPLAY_NAME_MAX_LENGTH + 1);
   });
 
   it('trims trailing whitespace before adding the ellipsis', () => {
-    const name = `${'a'.repeat(39)} bcdef`; // char 40 is a space
-    assert.equal(truncateDisplayName(name), `${'a'.repeat(39)}…`);
+    const name = `${'a'.repeat(29)} bcdef`; // char 30 is a space
+    assert.equal(truncateDisplayName(name), `${'a'.repeat(29)}…`);
   });
 
   it('respects a custom max length', () => {
