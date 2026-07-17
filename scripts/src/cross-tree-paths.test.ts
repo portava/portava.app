@@ -480,6 +480,152 @@ export function extractCrossTreePaths(testFile: string): ExtractedPath[] {
   return found;
 }
 
+// ── Perspective-mismatch guard for the SDK 54 compat test copies ─────────────
+//
+// The sdk54-downgrade-compat.test.ts file exists in BOTH trees, but its
+// cross-tree relative paths differ by perspective:
+//   - monorepo copy   (artifacts/travel-buddy/src/services): the standalone
+//     tree is reached via '../../../../travel-buddy-standalone/...' and the
+//     root lockfile via '../../../../pnpm-lock.yaml'.
+//   - standalone copy (travel-buddy-standalone/src/services): the monorepo
+//     tree is reached via '../../../artifacts/travel-buddy/...', its own
+//     lockfile via '../../pnpm-lock.yaml', and the root lockfile via
+//     '../../../pnpm-lock.yaml'.
+//
+// A cross-tree sync that blindly copies one file over the other produces paths
+// that resolve OUTSIDE the workspace and fail with ENOENT at test run time.
+// This guard rejects perspective-mismatched paths in either copy with a clear
+// message, so a bad sync is caught here instead of in a downstream task.
+
+interface PerspectiveViolation {
+  line: number;
+  text: string;
+  marker: string;
+}
+
+/**
+ * Scan file content for path strings that belong to the OTHER tree's
+ * perspective. `perspective` is the tree the file lives in.
+ */
+export function findPerspectiveViolations(
+  content: string,
+  perspective: 'monorepo' | 'standalone',
+): PerspectiveViolation[] {
+  // Markers include the opening quote/backtick so '../../pnpm-lock.yaml' does
+  // not match inside '../../../../pnpm-lock.yaml'.
+  const FORBIDDEN: Record<'monorepo' | 'standalone', Array<{ re: RegExp; marker: string }>> = {
+    // In the standalone copy, monorepo-perspective paths are forbidden.
+    standalone: [
+      {
+        re: /['"`]\.\.\/\.\.\/\.\.\/\.\.\/travel-buddy-standalone\//,
+        marker: "'../../../../travel-buddy-standalone/...' (monorepo-perspective)",
+      },
+      {
+        re: /['"`]\.\.\/\.\.\/\.\.\/\.\.\/pnpm-lock\.yaml/,
+        marker: "'../../../../pnpm-lock.yaml' (monorepo-perspective)",
+      },
+    ],
+    // In the monorepo copy, standalone-perspective paths are forbidden.
+    monorepo: [
+      {
+        re: /['"`]\.\.\/\.\.\/\.\.\/artifacts\/travel-buddy\//,
+        marker: "'../../../artifacts/travel-buddy/...' (standalone-perspective)",
+      },
+      {
+        re: /['"`]\.\.\/\.\.\/pnpm-lock\.yaml/,
+        marker: "'../../pnpm-lock.yaml' (standalone-perspective)",
+      },
+      {
+        re: /['"`]\.\.\/\.\.\/\.\.\/pnpm-lock\.yaml/,
+        marker: "'../../../pnpm-lock.yaml' (standalone-perspective)",
+      },
+    ],
+  };
+
+  const violations: PerspectiveViolation[] = [];
+  const lines = content.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    for (const { re, marker } of FORBIDDEN[perspective]) {
+      if (re.test(line)) {
+        violations.push({ line: i + 1, text: line.trim(), marker });
+      }
+    }
+  }
+  return violations;
+}
+
+const SDK54_COPIES: Array<{ file: string; perspective: 'monorepo' | 'standalone' }> = [
+  {
+    file: path.join(WORKSPACE_ROOT, 'artifacts', 'travel-buddy', 'src', 'services', 'sdk54-downgrade-compat.test.ts'),
+    perspective: 'monorepo',
+  },
+  {
+    file: path.join(WORKSPACE_ROOT, 'travel-buddy-standalone', 'src', 'services', 'sdk54-downgrade-compat.test.ts'),
+    perspective: 'standalone',
+  },
+];
+
+describe('SDK 54 compat test copies — perspective-mismatch guard', () => {
+  for (const { file, perspective } of SDK54_COPIES) {
+    const relFile = path.relative(WORKSPACE_ROOT, file);
+
+    it(`${relFile} exists (update SDK54_COPIES if it moved)`, () => {
+      assert.ok(fs.existsSync(file), `${relFile} not found — update SDK54_COPIES in cross-tree-paths.test.ts`);
+    });
+
+    it(`${relFile} contains no ${perspective === 'standalone' ? 'monorepo' : 'standalone'}-perspective paths`, () => {
+      const content = fs.readFileSync(file, 'utf8');
+      const violations = findPerspectiveViolations(content, perspective);
+      if (violations.length > 0) {
+        assert.fail(
+          `${violations.length} perspective-mismatched path(s) in ${relFile}.\n` +
+          `This usually means a cross-tree sync overwrote the ${perspective} copy with the other tree's copy —\n` +
+          `its relative paths resolve OUTSIDE the workspace when run from the ${perspective} tree and fail with ENOENT.\n` +
+          `Re-port the change into the ${perspective} copy using ${perspective}-perspective paths instead of copying the file verbatim.\n\n` +
+          violations
+            .map((v) => `  line ${v.line}: found ${v.marker}\n    ${v.text}`)
+            .join('\n\n'),
+        );
+      }
+    });
+  }
+});
+
+describe('findPerspectiveViolations — swapped-copy detection', () => {
+  const monoContent = fs.readFileSync(SDK54_COPIES[0]!.file, 'utf8');
+  const saContent = fs.readFileSync(SDK54_COPIES[1]!.file, 'utf8');
+
+  it('flags the monorepo copy content when checked as the standalone copy (bad sync direction 1)', () => {
+    const violations = findPerspectiveViolations(monoContent, 'standalone');
+    assert.ok(
+      violations.length > 0,
+      'a monorepo-perspective file placed in the standalone tree must be rejected — the guard would miss a bad sync',
+    );
+    assert.ok(
+      violations.some((v) => v.marker.includes('travel-buddy-standalone')),
+      `expected a '../../../../travel-buddy-standalone/...' violation; got: ${JSON.stringify(violations)}`,
+    );
+  });
+
+  it('flags the standalone copy content when checked as the monorepo copy (bad sync direction 2)', () => {
+    const violations = findPerspectiveViolations(saContent, 'monorepo');
+    assert.ok(
+      violations.length > 0,
+      'a standalone-perspective file placed in the monorepo tree must be rejected — the guard would miss a bad sync',
+    );
+    assert.ok(
+      violations.some((v) => v.marker.includes('artifacts/travel-buddy')),
+      `expected a '../../../artifacts/travel-buddy/...' violation; got: ${JSON.stringify(violations)}`,
+    );
+  });
+
+  it('accepts each copy under its own perspective', () => {
+    assert.deepEqual(findPerspectiveViolations(monoContent, 'monorepo'), []);
+    assert.deepEqual(findPerspectiveViolations(saContent, 'standalone'), []);
+  });
+});
+
 // ── Tests: live tree scan ─────────────────────────────────────────────────────
 
 describe('cross-tree path existence guard', () => {
