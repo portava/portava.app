@@ -5503,7 +5503,15 @@ describe("pre-check SELECT error + mid-flight tombstone — documented split-bra
       },
     } as unknown as SupabaseClient);
 
-    const result = await geocodeCityCountry("Lisbon");
+    const logLines: string[] = [];
+    const origLog = console.log;
+    console.log = (msg: string) => { logLines.push(String(msg)); };
+    let result: any;
+    try {
+      result = await geocodeCityCountry("Lisbon");
+    } finally {
+      console.log = origLog;
+    }
     assert.equal(result?.countryCode, "PT", "geocode still resolves");
     assert.equal(nominatimCalls, 1);
     assert.equal(erroredReads, 1, "pre-check SELECT was attempted and errored");
@@ -5519,6 +5527,16 @@ describe("pre-check SELECT error + mid-flight tombstone — documented split-bra
     const entry = _getGeocodeCacheEntryForTests("lisbon") as any;
     assert.ok(entry, "in-memory entry kept (outcome was ok, not tombstoned)");
     assert.ok(!entry.persistFailed, "not flagged for retry — the upsert succeeded");
+
+    // Observability: the accepted split-brain revival must emit a structured
+    // event so operators know a mid-flight DELETE may have been undone.
+    const precheckEvents = logLines
+      .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+      .filter((e: any) => e?.event === "stamp.country_geocode.persist_precheck_errored");
+    assert.equal(precheckEvents.length, 1,
+      "persist_precheck_errored fires exactly once when the pre-check errors but the upsert succeeds");
+    assert.equal((precheckEvents[0] as any).city_key, "lisbon");
+    assert.equal((precheckEvents[0] as any).error, "connection refused");
   });
 
   it("behaves the same when the pre-check SELECT throws (rejects) instead of returning an error object", async () => {
@@ -5557,7 +5575,15 @@ describe("pre-check SELECT error + mid-flight tombstone — documented split-bra
       },
     } as unknown as SupabaseClient);
 
-    const result = await geocodeCityCountry("Athens");
+    const logLines: string[] = [];
+    const origLog = console.log;
+    console.log = (msg: string) => { logLines.push(String(msg)); };
+    let result: any;
+    try {
+      result = await geocodeCityCountry("Athens");
+    } finally {
+      console.log = origLog;
+    }
     assert.equal(result?.countryCode, "GR", "geocode still resolves when the pre-check throws");
     assert.equal(upsertPayloads.length, 1,
       "a thrown pre-check is swallowed and the upsert still fires");
@@ -5565,6 +5591,14 @@ describe("pre-check SELECT error + mid-flight tombstone — documented split-bra
       "tombstone revival also applies on the thrown-pre-check path (accepted)");
     const entry = _getGeocodeCacheEntryForTests("athens") as any;
     assert.ok(entry && !entry.persistFailed, "successful upsert — no retry flag");
+
+    const precheckEvents = logLines
+      .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+      .filter((e: any) => e?.event === "stamp.country_geocode.persist_precheck_errored");
+    assert.equal(precheckEvents.length, 1,
+      "persist_precheck_errored also fires on the thrown-pre-check path");
+    assert.equal((precheckEvents[0] as any).city_key, "athens");
+    assert.equal((precheckEvents[0] as any).error, "socket hang up");
   });
 
   it("does NOT revive when the pre-check errors AND the upsert also fails (the common full-outage case)", async () => {
@@ -5607,11 +5641,70 @@ describe("pre-check SELECT error + mid-flight tombstone — documented split-bra
       },
     } as unknown as SupabaseClient);
 
-    const result = await geocodeCityCountry("Dublin");
+    const logLines: string[] = [];
+    const origLog = console.log;
+    console.log = (msg: string) => { logLines.push(String(msg)); };
+    let result: any;
+    try {
+      result = await geocodeCityCountry("Dublin");
+    } finally {
+      console.log = origLog;
+    }
     assert.equal(result?.countryCode, "IE");
     assert.equal(upsertCalls, 1, "upsert attempted once and failed");
     const entry = _getGeocodeCacheEntryForTests("dublin") as any;
     assert.equal(entry?.persistFailed, true,
       "flagged for retry — the retry's pre-check will see the tombstone once reads recover");
+    assert.ok(
+      !logLines.some((l) => l.includes("persist_precheck_errored")),
+      "no persist_precheck_errored when the upsert also fails — nothing was revived");
+  });
+
+  it("does NOT emit persist_precheck_errored on an ordinary successful persist (pre-check succeeds)", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "no", country: "Norway" } }],
+    }));
+
+    let upsertCalls = 0;
+    _setGeocodeDbClientForTests({
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() {
+            // Both the initial readDbCache miss and the pre-check succeed cleanly.
+            return { data: null, error: null };
+          },
+          upsert() {
+            upsertCalls++;
+            return Promise.resolve({ error: null });
+          },
+          then(resolve: (v: any) => void) { resolve({ data: [], error: null }); },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient);
+
+    const logLines: string[] = [];
+    const origLog = console.log;
+    console.log = (msg: string) => { logLines.push(String(msg)); };
+    let result: any;
+    try {
+      result = await geocodeCityCountry("Oslo");
+    } finally {
+      console.log = origLog;
+    }
+    assert.equal(result?.countryCode, "NO");
+    assert.equal(upsertCalls, 1, "ordinary persist fired");
+    assert.ok(
+      !logLines.some((l) => l.includes("persist_precheck_errored")),
+      "persist_precheck_errored must NOT fire when the pre-check read succeeded");
   });
 });

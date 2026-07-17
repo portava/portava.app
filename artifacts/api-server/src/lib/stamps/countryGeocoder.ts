@@ -333,6 +333,10 @@ async function writeDbCache(key: string, result: GeocodedCountry, startedAtMs: n
   const sc = dbClient();
   if (!sc) return "failed";
   try {
+    // Set when the pre-upsert tombstone re-check errors/throws: if the upsert
+    // then succeeds, a mid-flight tombstone may have been silently revived —
+    // emit a structured event so operators know to re-issue the DELETE.
+    let precheckError: string | null = null;
     // Pre-upsert tombstone re-check (see doc comment above).
     try {
       const { data: existing, error: checkErr } = await sc
@@ -350,6 +354,7 @@ async function writeDbCache(key: string, result: GeocodedCountry, startedAtMs: n
           return "tombstoned";
         }
       }
+      if (checkErr) precheckError = checkErr.message ?? String(checkErr);
       // Pre-check DB error: fall through to the upsert (best-effort — a
       // transient read failure must not block persistence; the upsert itself
       // will surface any real outage).
@@ -361,8 +366,9 @@ async function writeDbCache(key: string, result: GeocodedCountry, startedAtMs: n
       // retry's pre-check sees the tombstone once reads recover. Pinned by
       // stampGeocodeDeletionPropagation.test.ts ("pre-check SELECT error"
       // suite) — flip those assertions deliberately if this is ever tightened.
-    } catch {
+    } catch (precheckEx: any) {
       // Same: best-effort pre-check only.
+      precheckError = precheckEx?.message ?? String(precheckEx);
     }
     const { error } = await sc.from(DB_CACHE_TABLE).upsert(
       {
@@ -385,6 +391,15 @@ async function writeDbCache(key: string, result: GeocodedCountry, startedAtMs: n
     if (error) {
       logEvent("stamp.country_geocode.persist_failed", { city_key: key, error: error.message });
       return "failed";
+    }
+    if (precheckError !== null) {
+      // The pre-check couldn't verify tombstone state but the upsert succeeded:
+      // a mid-flight admin deletion may have been revived (deleted_at cleared).
+      // Surface it so operators know to re-issue the DELETE if one was in flight.
+      logEvent("stamp.country_geocode.persist_precheck_errored", {
+        city_key: key,
+        error: precheckError,
+      });
     }
     return "ok";
   } catch (e: any) {
