@@ -1801,6 +1801,103 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     );
   });
 
+  it("re-armed fresh entry probes again after a full interval — not locked out indefinitely", async () => {
+    // Complement of the re-arm test above: after the evict-and-re-resolve cycle
+    // arms the fresh entry (suppressing probes within the interval), the probe
+    // must fire AGAIN once a full CORRECTION_CHECK_INTERVAL_MS has elapsed from
+    // the re-resolve time.  A bug that set correctionCheckedAt to
+    // Date.now() + <large offset> would suppress probes forever and still pass
+    // the re-arm test — this test catches that.
+    //
+    // Timeline:
+    //   T0             — cache seeded from DB (maybeSingle call #1)
+    //   T1 = T0+I+1s   — probe fires, finds deleted_at, evicts; Nominatim
+    //                    re-resolves a fresh entry
+    //   T2 = T1+I+1s   — full interval elapsed since re-resolve: probe MUST
+    //                    fire again (maybeSingle called)
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "pt", country: "Portugal" } }],
+      };
+    });
+
+    // Phased client: live row initially, then tombstoned (maybeSingle → null).
+    const { client, switchToDeleted } = makePhasedDbClient({
+      country: "Portugal",
+      country_code: "PT",
+      corrected_at: null,
+      deleted_at: null,
+    });
+
+    let maybeSingleCallCount = 0;
+    const trackingClient: SupabaseClient = {
+      from(table: string) {
+        const inner = (client as any).from(table);
+        return {
+          ...inner,
+          select() { return this; },
+          eq() { return this; },
+          gte() { return this; },
+          not() { return this; },
+          async maybeSingle() {
+            maybeSingleCallCount++;
+            return inner.maybeSingle();
+          },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            resolve({ data: [], error: null });
+          },
+        };
+      },
+    } as unknown as SupabaseClient;
+
+    _setGeocodeDbClientForTests(trackingClient);
+
+    // ── Phase 1: seed from DB ─────────────────────────────────────────────────
+    const first = await geocodeCityCountry("Lisbon");
+    assert.equal(first?.countryCode, "PT", "pre-condition: DB cache seed returns PT");
+    assert.equal(nominatimCalls, 0, "no Nominatim call on DB cache seed");
+
+    // ── Phase 2: tombstone + evict-and-re-resolve cycle ───────────────────────
+    switchToDeleted();
+    const T1 = T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000;
+    mockNow(T1);
+
+    const reResolved = await geocodeCityCountry("Lisbon");
+    assert.equal(reResolved?.countryCode, "PT",
+      "fresh Nominatim resolve after eviction returns PT");
+    assert.equal(nominatimCalls, 1, "Nominatim called once during the re-resolve");
+
+    // Sanity: immediately after the re-resolve the entry is armed — no probe.
+    const callsAfterResolve = maybeSingleCallCount;
+    const withinInterval = await geocodeCityCountry("Lisbon");
+    assert.equal(withinInterval?.countryCode, "PT");
+    assert.equal(maybeSingleCallCount, callsAfterResolve,
+      "no probe fires within the interval after the re-resolve (armed)");
+
+    // ── Phase 3: advance a FULL interval past the re-resolve time ─────────────
+    const T2 = T1 + CORRECTION_CHECK_INTERVAL_MS + 1_000;
+    mockNow(T2);
+
+    const third = await geocodeCityCountry("Lisbon");
+    assert.ok(
+      maybeSingleCallCount > callsAfterResolve,
+      "maybeSingle called again after a full interval elapsed from the re-resolve — the re-armed entry is not locked out indefinitely",
+    );
+    // The phased client still reports the row as deleted, so the probe evicts
+    // again and Nominatim re-resolves a second time — confirming the probe's
+    // outcome was acted upon, not just fired.
+    assert.equal(nominatimCalls, 2,
+      "second Nominatim re-resolve after the re-fired probe evicted again");
+    assert.equal(third?.countryCode, "PT", "third call still resolves PT");
+  });
+
   it("Pass 1 throw does not block Pass 2 — tombstoned entry is evicted and cleanup delete fires", async () => {
     // Regression guard: each pass of runCorrectionSweep is wrapped in its own
     // try/catch.  If Pass 1 (corrected_at query) throws — not just returns an
