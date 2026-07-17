@@ -26,6 +26,8 @@ const NOTE_LOOKBEHIND_LINES = 4;
 const OBJECT_LITERAL_MOCK =
   /jest\.mock\(\s*['"]([^'"]+)['"]\s*,\s*(?:async\s*)?\(\s*\)\s*=>\s*\(\{/;
 const LUCIDE_MOCK = /jest\.mock\(\s*['"]lucide-react-native['"]/;
+const ASYNC_STORAGE_MOCK =
+  /jest\.mock\(\s*['"]@react-native-async-storage\/async-storage['"]/;
 
 function collectComponentTests(dir, out = []) {
   let entries;
@@ -83,6 +85,13 @@ for (const root of SCAN_ROOTS) {
       if (LUCIDE_MOCK.test(line)) {
         violations.push(
           `${file}:${idx + 1}: per-file lucide-react-native mock — remove it; the global Proxy mock (jest.config moduleNameMapper) already covers every icon.`,
+        );
+        return;
+      }
+
+      if (ASYNC_STORAGE_MOCK.test(line)) {
+        violations.push(
+          `${file}:${idx + 1}: per-file @react-native-async-storage/async-storage mock — remove it; jest.config moduleNameMapper already maps every import to the official jest mock and a per-file mock causes "Maximum call stack size exceeded" at load.`,
         );
         return;
       }
