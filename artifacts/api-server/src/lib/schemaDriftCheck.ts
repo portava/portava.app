@@ -99,6 +99,12 @@ export const CRITICAL_COLUMNS: ColumnProbe[] = [
   },
   {
     table: "trips",
+    column: "reminder_delivered_at",
+    migration: "0139_trips_reminder_delivered_at.sql",
+    impact: "trip reminder crash-recovery cannot mark delivery complete",
+  },
+  {
+    table: "trips",
     column: "reminder_retry_count",
     migration: "0140_trips_reminder_retry_count.sql",
     impact: "trip reminder crash-recovery retries fail silently",

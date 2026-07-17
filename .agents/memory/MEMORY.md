@@ -1,3 +1,4 @@
+- [Expo Router tests as routes](expo-router-tests-as-routes.md) — Jest component tests under `app/` are discovered and bundled as routes unless Metro's `blockList` excludes `__tests__` and `*.test.*` files.
 - [Env/secrets audit gotchas](env-secrets-gotchas.md) — shared env vars can shadow same-name secrets with corrupted values; user-typed secret names often have typos the app can't see.
 - [Supabase migration access](supabase-migration-access.md) — apply migrations via the Supabase Management API query endpoint; direct psql/pooler connections are unreachable from this workspace.
 - [Explore page performance fixes](explore-perf-fixes.md) — 6 targeted fixes for Discover tab cold-start; geocode dedup, batch counts endpoint, client cache, FlatList virtualisation, community cache, deferred PlaceCard fetches.
