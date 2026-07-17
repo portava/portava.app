@@ -3141,4 +3141,116 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "oldest entry (synth-city-0) was evicted by the cache-size trim during the re-geocode",
     );
   });
+
+  it("positive DB write-back fires after TTL-expiry re-geocode succeeds — recovered entry survives a restart", async () => {
+    // Scenario: a prior Nominatim failure cached null for 6 hours (NEGATIVE_TTL_MS).
+    // After the TTL expires, Nominatim succeeds.  writeDbCache must be called with
+    // the correct country fields so the positive result persists across server restarts.
+    //
+    // This test confirms:
+    //   1. upsert() is called exactly once with city_key / country / country_code / deleted_at: null.
+    //   2. The positive result is re-cached in memory — the follow-up call is served
+    //      from the in-memory cache without a second Nominatim call.
+    const T0 = 1_700_000_000_000;
+    const NEGATIVE_TTL_MS = 6 * 60 * 60 * 1_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "gr", country: "Greece" } }],
+      };
+    });
+
+    // Track upsert calls and capture the payload(s) passed to writeDbCache.
+    let upsertCalls = 0;
+    const upsertPayloads: Array<Record<string, unknown>> = [];
+
+    _setGeocodeDbClientForTests({
+      from(_table: string) {
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() {
+            // No DB row: negative-cache entries are never persisted.
+            return { data: null, error: null };
+          },
+          upsert(payload: Record<string, unknown>) {
+            upsertCalls++;
+            upsertPayloads.push({ ...payload });
+            return Promise.resolve({ error: null });
+          },
+          then(resolve: (v: any) => void) {
+            resolve({ data: [], error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient);
+
+    // ── Phase 1: first call — Nominatim succeeds but we simulate a cached-null seed
+    //   by setting up the entry directly.  Actually: just call with a Nominatim result
+    //   that starts as a failure, then succeeds after TTL.  Use a flag.
+    // Simpler: seed the negative-cache entry by making the first call return null.
+    // Toggle the Nominatim stub — first call fails, then succeeds.
+    let nominatimShouldSucceed = false;
+    nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      if (nominatimShouldSucceed) {
+        return {
+          ok: true,
+          json: async () => [{ address: { country_code: "gr", country: "Greece" } }],
+        };
+      }
+      // First attempt: city temporarily unresolvable.
+      return { ok: true, json: async () => [] };
+    });
+
+    // Phase 1: cache miss → Nominatim fails → null cached for 6 hours, no DB write.
+    const firstResult = await geocodeCityCountry("Seville");
+    assert.equal(firstResult, null, "first call returns null — Nominatim found nothing");
+    assert.equal(nominatimCalls, 1, "Nominatim called once on the initial miss");
+    assert.equal(upsertCalls, 0,
+      "writeDbCache must NOT be called for a null (negative) result");
+
+    // ── Phase 2: advance past the 6-hour negative TTL — Nominatim is now up ──────
+    nominatimShouldSucceed = true;
+    mockNow(T0 + NEGATIVE_TTL_MS + 1_000);
+
+    const afterTtl = await geocodeCityCountry("Seville");
+    assert.equal(afterTtl?.countryCode, "GR",
+      "TTL-expiry re-geocode succeeds and returns GR");
+    assert.equal(nominatimCalls, 2, "Nominatim called a second time after the TTL expired");
+
+    // ── Phase 3: assert upsert() was called exactly once with correct fields ──────
+    assert.equal(upsertCalls, 1,
+      "writeDbCache called exactly once after a successful TTL-expiry re-geocode");
+    const payload = upsertPayloads[0];
+    assert.equal(payload["city_key"], "seville",
+      "upsert city_key is the normalised city key");
+    assert.equal(payload["country_code"], "GR",
+      "upsert country_code matches the Nominatim result");
+    assert.equal(typeof payload["country"], "string",
+      "upsert country is a non-empty string");
+    assert.ok((payload["country"] as string).length > 0,
+      "upsert country field is not empty");
+    assert.equal(payload["deleted_at"], null,
+      "upsert deleted_at is null — clears any prior soft-delete tombstone");
+    assert.ok(typeof payload["updated_at"] === "string",
+      "upsert updated_at is an ISO timestamp string");
+
+    // ── Phase 4: follow-up call served from in-memory cache — no extra Nominatim ──
+    const followUp = await geocodeCityCountry("Seville");
+    assert.equal(followUp?.countryCode, "GR",
+      "follow-up call returns the re-cached positive result (GR)");
+    assert.equal(nominatimCalls, 2,
+      "Nominatim not called again — positive result is now in the in-memory cache");
+    assert.equal(upsertCalls, 1,
+      "writeDbCache not called again on the follow-up cache hit");
+  });
 });
