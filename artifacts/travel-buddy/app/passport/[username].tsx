@@ -24,7 +24,7 @@ import { TripsTab } from '../../src/components/TripsTab';
 import { MapTab } from '../../src/components/MapTab';
 import type { PublicProfile, PassportPostcard } from '../../src/types/models';
 import { resolveTabOrder, type PassportTabKey, TAB_LABELS } from '../../src/components/passport/passportTabs';
-import { resolveDisplayName, formatHandle } from '../../src/utils/identity';
+import { resolveDisplayName, formatHandle, truncateDisplayName } from '../../src/utils/identity';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { PP, PP_LABEL } from '../../src/theme/passportTokens';
 
@@ -123,7 +123,7 @@ export default function PassportDeepLinkScreen() {
 
   const handleMorePress = useCallback(() => {
     if (!profile) return;
-    const displayName = resolveDisplayName(profile);
+    const displayName = truncateDisplayName(resolveDisplayName(profile));
     Alert.alert(displayName, undefined, [
       {
         text: 'Report',
@@ -271,7 +271,7 @@ export default function PassportDeepLinkScreen() {
           <ArrowLeft size={20} color={PP.ink} />
         </Pressable>
         <Text style={vs.headerTitle} numberOfLines={1}>
-          {resolveDisplayName(profile)}
+          {truncateDisplayName(resolveDisplayName(profile))}
         </Text>
         {isAuthed && !isOwner ? (
           <Pressable style={vs.moreBtn} onPress={handleMorePress} hitSlop={8} accessibilityLabel="More options">

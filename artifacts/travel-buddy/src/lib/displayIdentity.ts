@@ -12,6 +12,8 @@
  *                           the primary text is already the handle (no dupes)
  */
 
+import { truncateDisplayName } from '../utils/identity.ts';
+
 export interface DisplayIdentity {
   displayName?: string | null;
   name?: string | null;
@@ -40,7 +42,9 @@ export function identityRealName(id: DisplayIdentity | null | undefined): string
 /** The one line every surface should render for a user reference. */
 export function primaryIdentityText(id: DisplayIdentity | null | undefined): string {
   const real = identityRealName(id);
-  if (real) return real;
+  // Legacy accounts predating the 40-char limit can still have longer names
+  // stored; cap at render time so no surface overflows or wraps badly.
+  if (real) return truncateDisplayName(real);
   const h = identityHandle(id);
   return h ? `@${h}` : 'Traveler';
 }

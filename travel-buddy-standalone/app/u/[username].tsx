@@ -36,7 +36,7 @@ import { getBuddyProfileByUserId, type BuddyProfile } from '../../src/services/r
 import type { PublicProfile } from '../../src/types/models';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { PROFILE_NOT_FOUND_TITLE, PROFILE_NOT_FOUND_SUB } from '../../src/constants/profileScreenCopy';
-import { resolveDisplayName, formatHandle } from '../../src/utils/identity';
+import { resolveDisplayName, formatHandle, truncateDisplayName } from '../../src/utils/identity';
 import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 type Tab = 'postcards' | 'stamps' | 'map' | 'about';
@@ -264,7 +264,7 @@ function KebabMenu({
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [reportDone, setReportDone] = useState(false);
 
-  const displayName = resolveDisplayName({ name, handle });
+  const displayName = truncateDisplayName(resolveDisplayName({ name, handle }));
 
   useEffect(() => {
     if (!open) return;
