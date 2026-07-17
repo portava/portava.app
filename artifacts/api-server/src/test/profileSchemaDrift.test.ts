@@ -672,6 +672,86 @@ describe("PATCH /api/me/profile under schema drift (missing newer columns)", () 
     );
   });
 
+  it("partial save reports defaultLanguage in unsavedFields when it is the only drifted column", async () => {
+    // Build a client where only default_language is drifted.  The request sends
+    // bio (base column) and defaultLanguage (drifted), so the fallback path must
+    // strip default_language, save bio, and report defaultLanguage as the sole
+    // unsaved field.
+    const driftedColsDefaultLangOnly = new Set(["default_language"]);
+    const defaultLangUpdates: UpdateRecord[] = [];
+    const defaultLangRow: any = {
+      id: ME, username: "me_user", handle: "me_user", name: "Me",
+      bio: "old bio", is_private: false, passport_visibility: "public",
+      avatar_url: null, created_at: new Date("2026-01-01").toISOString(),
+    };
+    function makeBuilder4(table: string) {
+      let pendingUpdate: any = null;
+      const builder: any = {
+        select() { return builder; },
+        eq() { return builder; },
+        neq() { return builder; },
+        limit() { return builder; },
+        update(patch: any) { pendingUpdate = patch; return builder; },
+        insert() { return builder; },
+        maybeSingle() {
+          return Promise.resolve({ data: table === "profiles" ? { ...defaultLangRow } : null, error: null });
+        },
+        single() {
+          if (pendingUpdate && table === "profiles") {
+            const bad = Object.keys(pendingUpdate).find((k) => driftedColsDefaultLangOnly.has(k));
+            if (bad) {
+              return Promise.resolve({
+                data: null,
+                error: { code: "PGRST204", message: `Could not find the '${bad}' column of 'profiles' in the schema cache` },
+              });
+            }
+            defaultLangUpdates.push({ table, patch: pendingUpdate });
+            return Promise.resolve({ data: { ...defaultLangRow, ...pendingUpdate }, error: null });
+          }
+          return Promise.resolve({ data: table === "profiles" ? { ...defaultLangRow } : null, error: null });
+        },
+        then(onF: any, onR: any) {
+          return Promise.resolve({ data: [], error: null }).then(onF, onR);
+        },
+      };
+      return builder;
+    }
+    const defaultLanguageDriftClient: any = {
+      auth: {
+        getUser: async (tok: string) =>
+          tok === ME_TOK
+            ? { data: { user: { id: ME } }, error: null }
+            : { data: { user: null }, error: { message: "invalid token" } },
+      },
+      from: (table: string) => makeBuilder4(table),
+      storage: { from: () => ({ remove: async () => ({ error: null }) }) },
+      __updates: defaultLangUpdates,
+    };
+
+    _setTestClient(defaultLanguageDriftClient, true);
+    _setTestServiceClient(defaultLanguageDriftClient);
+
+    const r = await patchProfile({ bio: "bio", defaultLanguage: "fr" });
+    assert.equal(r.status, 200, "base-column bio should still be saved");
+    const body = await r.json() as any;
+    assert.deepEqual(
+      body.unsavedFields,
+      ["defaultLanguage"],
+      `defaultLanguage must be the sole unsaved field — got: ${JSON.stringify(body.unsavedFields)}`,
+    );
+    assert.ok(typeof body.warning === "string", "warning must be a string");
+    assert.ok(
+      (body.warning as string).includes("defaultLanguage"),
+      `warning must mention "defaultLanguage" — got: ${JSON.stringify(body.warning)}`,
+    );
+    assert.equal(defaultLanguageDriftClient.__updates.length, 1, "exactly one fallback write should occur");
+    assert.equal(defaultLanguageDriftClient.__updates[0].patch.bio, "bio");
+    assert.ok(
+      !("default_language" in defaultLanguageDriftClient.__updates[0].patch),
+      "drifted default_language must be stripped from the fallback write",
+    );
+  });
+
   // ── Fallback retry DB error ────────────────────────────────────────────────
   // After the schema-drift fallback strips newer columns and retries, the
   // retry itself can fail (e.g. a constraint violation or transient DB error).
