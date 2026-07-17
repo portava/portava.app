@@ -504,10 +504,15 @@ router.post("/admin/geofence/:tripId/override-reveal", async (req, res) => {
   if (!admin) return;
   const { sc } = admin;
 
+  const { tripId } = req.params;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tripId)) {
+    sendError(res, "invalid_payload", "tripId must be a valid UUID"); return;
+  }
+
   const { data, error } = await sc
     .from("plan_geofences")
     .update({ host_revealed: true, updated_at: new Date().toISOString() })
-    .eq("trip_id", req.params.tripId)
+    .eq("trip_id", tripId)
     .select("id, trip_id, host_revealed")
     .maybeSingle();
 
@@ -522,10 +527,15 @@ router.get("/admin/geofence/:tripId/suspicious-checkins", async (req, res) => {
   if (!admin) return;
   const { sc } = admin;
 
+  const { tripId } = req.params;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tripId)) {
+    sendError(res, "invalid_payload", "tripId must be a valid UUID"); return;
+  }
+
   const { data, error } = await sc
     .from("plan_attendance_events")
     .select("id, user_id, event_type, metadata, created_at")
-    .eq("trip_id", req.params.tripId)
+    .eq("trip_id", tripId)
     .eq("event_type", "suspicious_check_in")
     .order("created_at", { ascending: false })
     .limit(100);
