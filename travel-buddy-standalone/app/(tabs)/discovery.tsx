@@ -31,6 +31,7 @@ import { useFollowingHighlights } from '../../src/hooks/useFollowingHighlights';
 import { RouteBuilderSheet } from '../../src/components/RouteBuilderSheet';
 import type { RouteStopDraft } from '../../src/components/RouteBuilderSheet';
 import { SubmitPlaceSheet } from '../../src/components/discovery/SubmitPlaceSheet';
+import { SectionErrorBoundary } from '../../src/components/discovery/SectionErrorBoundary';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   loadDiscoveryFilters,
@@ -42,6 +43,11 @@ import {
   getCachedSortForCategory,
   hasCachedSortForCategory,
 } from '../../src/components/discovery/discoveryFilterStorage';
+
+/** Returns the value only when it is a real, finite number — otherwise null. */
+function finiteOrNull(v: number | null | undefined): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
 
 // ── Tab definitions ───────────────────────────────────────────────────────────
 
@@ -92,9 +98,15 @@ function DiscoveryHubScreen() {
 
   const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([]);
   useEffect(() => {
+    let cancelled = false;
     getTrendingHashtags('city', currentCity).then((res) => {
-      if (res.ok && res.data) setTrendingHashtags(res.data.trending.slice(0, 12));
-    }).catch(() => {});
+      if (cancelled) return;
+      // Normalize at the boundary: missing/invalid array → [].
+      if (res.ok && res.data) setTrendingHashtags((res.data.trending ?? []).slice(0, 12));
+    }).catch((err) => {
+      if (!cancelled && __DEV__) console.error('[Discovery] trending hashtags failed:', err);
+    });
+    return () => { cancelled = true; };
   }, [currentCity]);
 
   // Deep-link: ?category=food navigates to that tab on mount
@@ -118,10 +130,10 @@ function DiscoveryHubScreen() {
     () => locationState.place.city ?? 'Paris'
   );
   const [destinationLat, setDestinationLat] = useState<number | null>(
-    () => locationState.coords?.lat ?? null
+    () => finiteOrNull(locationState.coords?.lat)
   );
   const [destinationLng, setDestinationLng] = useState<number | null>(
-    () => locationState.coords?.lng ?? null
+    () => finiteOrNull(locationState.coords?.lng)
   );
   const [destinationZoom, setDestinationZoom] = useState<number>(11);
   const [contextMode, setContextMode] = useState<DiscoveryContextMode>('in_city');
@@ -300,8 +312,8 @@ function DiscoveryHubScreen() {
   useEffect(() => {
     if (locationState.place.city) {
       setDestination(locationState.place.city);
-      setDestinationLat(locationState.coords?.lat ?? null);
-      setDestinationLng(locationState.coords?.lng ?? null);
+      setDestinationLat(finiteOrNull(locationState.coords?.lat));
+      setDestinationLng(finiteOrNull(locationState.coords?.lng));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationState.place.city, locationState.coords?.lat, locationState.coords?.lng]);
@@ -353,12 +365,16 @@ function DiscoveryHubScreen() {
   // Only overrides if the user hasn't set a location yet.
   useEffect(() => {
     if (!isAuthed) return;
+    let cancelled = false;
     listMyTrips().then((rows) => {
-      const active = rows.find((r) => r.status === 'planning' || r.status === 'active') ?? rows[0];
+      if (cancelled) return;
+      const list = Array.isArray(rows) ? rows : [];
+      const active = list.find((r) => r.status === 'planning' || r.status === 'active') ?? list[0];
       if (active?.destinationCity && !locationState.place.city) {
         setDestination(active.destinationCity);
       }
     }).catch(() => {});
+    return () => { cancelled = true; };
   }, [isAuthed, locationState.place.city]);
 
   // Re-apply deep-link category if params change (e.g. in-app navigation).
@@ -436,7 +452,7 @@ function DiscoveryHubScreen() {
       .then((data) => {
         if (cancelled) return;
         const c = data?.features?.[0]?.center;
-        if (Array.isArray(c) && c.length === 2) {
+        if (Array.isArray(c) && c.length === 2 && Number.isFinite(c[0]) && Number.isFinite(c[1])) {
           setDestinationLng(c[0]);
           setDestinationLat(c[1]);
           setDestinationZoom(isCountryView ? 4 : 11);
@@ -468,6 +484,7 @@ function DiscoveryHubScreen() {
   const hasNonDefaultFilters = totalActiveFilters > 0;
 
   return (
+    <SectionErrorBoundary label="DiscoveryHub" fullScreen>
     <View style={[styles.root, { paddingTop: insets.top }]}>
       {/* ── Search entry bar ── */}
       <Pressable
@@ -505,42 +522,46 @@ function DiscoveryHubScreen() {
 
         {/* Tab content fills the full content area */}
         {activeTab === 'for_you' ? (
-          <ForYouTab
-            key={`${destination}-${contextMode}-${communityRefreshKey}`}
-            destination={destination}
-            onAddToPlan={handleAddToPlan}
-            onAddToRoute={handleAddToRoute}
-            contextMode={contextMode}
-            lat={destinationLat}
-            lng={destinationLng}
-            userLat={locationState.coords?.lat ?? null}
-            userLng={locationState.coords?.lng ?? null}
-            viewMode={viewMode}
-            fallbackZoom={destinationZoom}
-            sortBy={activeFilters.sortBy ?? null}
-          />
+          <SectionErrorBoundary label="ForYouTab">
+            <ForYouTab
+              key={`${destination}-${contextMode}-${communityRefreshKey}`}
+              destination={destination}
+              onAddToPlan={handleAddToPlan}
+              onAddToRoute={handleAddToRoute}
+              contextMode={contextMode}
+              lat={destinationLat}
+              lng={destinationLng}
+              userLat={locationState.coords?.lat ?? null}
+              userLng={locationState.coords?.lng ?? null}
+              viewMode={viewMode}
+              fallbackZoom={destinationZoom}
+              sortBy={activeFilters.sortBy ?? null}
+            />
+          </SectionErrorBoundary>
         ) : (
-          <DiscoveryCategoryTab
-            key={`${activeTab}-${destination}-${contextMode}-${activeFilters.sortBy ?? ''}`}
-            category={activeTab}
-            destination={destination}
-            onSelectPlace={handleSelectPlace}
-            onAddToPlan={handleAddToPlanFromPlace}
-            onAddToRoute={handleAddToRoute}
-            onPickDestination={handlePickDestination}
-            contextMode={contextMode}
-            viewMode={viewMode}
-            ageFilter={ageFilter}
-            customMinAge={debouncedAgeRange.min}
-            customMaxAge={debouncedAgeRange.max}
-            lat={destinationLat}
-            lng={destinationLng}
-            userLat={locationState.coords?.lat ?? null}
-            userLng={locationState.coords?.lng ?? null}
-            filters={activeFilters}
-            fallbackZoom={destinationZoom}
-            listTopInset={tabRowHeight}
-          />
+          <SectionErrorBoundary label={`DiscoveryCategoryTab-${activeTab}`}>
+            <DiscoveryCategoryTab
+              key={`${activeTab}-${destination}-${contextMode}-${activeFilters.sortBy ?? ''}`}
+              category={activeTab}
+              destination={destination}
+              onSelectPlace={handleSelectPlace}
+              onAddToPlan={handleAddToPlanFromPlace}
+              onAddToRoute={handleAddToRoute}
+              onPickDestination={handlePickDestination}
+              contextMode={contextMode}
+              viewMode={viewMode}
+              ageFilter={ageFilter}
+              customMinAge={debouncedAgeRange.min}
+              customMaxAge={debouncedAgeRange.max}
+              lat={destinationLat}
+              lng={destinationLng}
+              userLat={locationState.coords?.lat ?? null}
+              userLng={locationState.coords?.lng ?? null}
+              filters={activeFilters}
+              fallbackZoom={destinationZoom}
+              listTopInset={tabRowHeight}
+            />
+          </SectionErrorBoundary>
         )}
 
         {/* Floating chrome: tab bar + filter panel + highlights/trending overlay */}
@@ -797,6 +818,7 @@ function DiscoveryHubScreen() {
         }}
       />
     </View>
+    </SectionErrorBoundary>
   );
 }
 
