@@ -17,6 +17,7 @@ import { ArrowLeft } from 'lucide-react-native';
 import { fetchGamingFlags, markGamingFlagReviewed, type TrustReview } from '../../src/services/trustAdmin';
 import { useSession } from '../../src/context/SessionContext';
 import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
+import { ReasonPromptModal } from '../../src/components/ReasonPromptModal';
 
 const PATTERN_LABELS: Record<string, string> = {
   rapid_jump:      '📈 Rapid Score Jump',
@@ -100,24 +101,26 @@ export default function GamingFlagsScreen() {
     setRefreshing(false);
   };
 
-  const onDismiss = (item: TrustReview) => {
-    Alert.prompt(
-      'Mark as Reviewed',
-      'Add an optional note for this decision:',
-      async (notes) => {
-        setDismissingId(item.id);
-        try {
-          await markGamingFlagReviewed(item.id, notes || undefined);
-          setFlags((prev) => prev.filter((f) => f.id !== item.id));
-          setTotal((t) => t - 1);
-        } catch (e: any) {
-          Alert.alert('Error', e?.message ?? 'Could not mark as reviewed');
-        } finally {
-          setDismissingId(null);
-        }
-      },
-      'plain-text',
-    );
+  // Cross-platform note prompt (Alert.prompt is iOS-only — a silent no-op on
+  // Android/web), backed by a modal with a TextInput.
+  const [reviewTarget, setReviewTarget] = useState<TrustReview | null>(null);
+
+  const onDismiss = (item: TrustReview) => setReviewTarget(item);
+
+  const submitReview = async (notes: string) => {
+    const item = reviewTarget;
+    if (!item) return;
+    setReviewTarget(null);
+    setDismissingId(item.id);
+    try {
+      await markGamingFlagReviewed(item.id, notes || undefined);
+      setFlags((prev) => prev.filter((f) => f.id !== item.id));
+      setTotal((t) => t - 1);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Could not mark as reviewed');
+    } finally {
+      setDismissingId(null);
+    }
   };
 
   const onView = (item: TrustReview) => {
@@ -166,6 +169,17 @@ export default function GamingFlagsScreen() {
           contentContainerStyle={{ paddingBottom: 32 }}
         />
       )}
+
+      <ReasonPromptModal
+        visible={reviewTarget != null}
+        title="Mark as Reviewed"
+        message="Add an optional note for this decision:"
+        placeholder="Optional note"
+        confirmLabel="Mark Reviewed"
+        requireValue={false}
+        onCancel={() => setReviewTarget(null)}
+        onSubmit={submitReview}
+      />
     </View>
   );
 }

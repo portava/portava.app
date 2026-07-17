@@ -15,6 +15,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../src/lib/supabase';
 import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { ReasonPromptModal } from '../../src/components/ReasonPromptModal';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -282,27 +283,28 @@ function SensitiveTab() {
 // ── Duplicate candidates tab ──────────────────────────────────────────────────
 
 function DuplicatesTab() {
-  const [canonicalId, setCanonicalId] = useState<string>('');
+  // Cross-platform canonical-ID prompt (Alert.prompt is iOS-only — a silent
+  // no-op on Android/web).
+  const [mergeTarget, setMergeTarget] = useState<{ id: string; refresh: () => void } | null>(null);
 
-  const merge = useCallback(async (id: string, refresh: () => void) => {
-    Alert.prompt(
-      'Merge Duplicate',
-      'Enter the canonical gem ID to merge into:',
-      async (targetId) => {
-        if (!targetId) return;
-        try {
-          await adminFetch(`/api/admin/hidden-gems/${id}/merge`, {
-            method: 'POST',
-            body: JSON.stringify({ canonicalGemId: targetId }),
-          });
-          refresh();
-        } catch (e: any) {
-          Alert.alert('Error', e.message);
-        }
-      },
-      'plain-text',
-    );
+  const merge = useCallback((id: string, refresh: () => void) => {
+    setMergeTarget({ id, refresh });
   }, []);
+
+  const submitMerge = useCallback(async (targetId: string) => {
+    const pending = mergeTarget;
+    setMergeTarget(null);
+    if (!pending || !targetId) return;
+    try {
+      await adminFetch(`/api/admin/hidden-gems/${pending.id}/merge`, {
+        method: 'POST',
+        body: JSON.stringify({ canonicalGemId: targetId }),
+      });
+      pending.refresh();
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
+  }, [mergeTarget]);
 
   const approve = useCallback(async (id: string, refresh: () => void) => {
     try {
@@ -317,6 +319,7 @@ function DuplicatesTab() {
   }, []);
 
   return (
+    <>
     <AdminQueue<any>
       endpoint="/api/admin/hidden-gems/duplicate-candidates"
       responseKey="gems"
@@ -331,6 +334,16 @@ function DuplicatesTab() {
         />
       )}
     />
+    <ReasonPromptModal
+      visible={mergeTarget != null}
+      title="Merge Duplicate"
+      message="Enter the canonical gem ID to merge into:"
+      placeholder="Canonical gem ID"
+      confirmLabel="Merge"
+      onCancel={() => setMergeTarget(null)}
+      onSubmit={submitMerge}
+    />
+    </>
   );
 }
 
