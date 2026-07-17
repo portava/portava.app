@@ -245,4 +245,25 @@ describe('StampCatalogDetail — API error banner', () => {
     expect(screen.getByText('Paris Eiffel')).toBeTruthy();
     expect(screen.getByText('Catalog Metadata')).toBeTruthy();
   });
+
+  it('stops the pull-to-refresh spinner after a failed refresh', async () => {
+    mockGetEntry
+      .mockResolvedValueOnce(detailOk())
+      .mockResolvedValue({ ok: false });
+
+    await act(async () => { render(<StampCatalogDetail />); });
+
+    // Successful initial load: spinner is not active.
+    const scroll = screen.getByTestId('catalog-detail-scroll');
+    expect(scroll.props.refreshControl.props.refreshing).toBe(false);
+
+    // Trigger a pull-to-refresh that fails and let it settle.
+    await act(async () => { scroll.props.refreshControl.props.onRefresh(); });
+
+    // The failure path must still reset refreshing — otherwise the spinner
+    // would spin forever after a failed refresh.
+    await waitFor(() => screen.getByTestId('catalog-detail-error'));
+    const scrollAfter = screen.getByTestId('catalog-detail-scroll');
+    expect(scrollAfter.props.refreshControl.props.refreshing).toBe(false);
+  });
 });
