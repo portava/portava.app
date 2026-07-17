@@ -4104,3 +4104,117 @@ describe("concurrent callers coalesce onto one pending promise when the entry is
     assert.equal(entry?.result?.countryCode, "JP", "fresh result cached after re-resolve");
   });
 });
+
+// ── DB-cache re-resolve path re-arms the correction check ─────────────────────
+//
+// Task: after an eviction, the re-resolve can complete via the DB cache
+// (readDbCache returns a freshly-restored live row) rather than Nominatim.
+// The readDbCache branch explicitly sets correctionCheckedAt: now on the new
+// in-memory entry. If a regression set it to 0 or omitted it, the very next
+// call would immediately re-probe the DB (correctionCheckedAt ?? writtenAt
+// would still guard when omitted — but a 0 value would re-probe instantly).
+// This suite verifies the fresh entry is re-armed: an immediate follow-up call
+// makes NO DB round-trip at all.
+
+describe("DB-cache re-resolve path re-arms the correction check", () => {
+  it("does not re-probe the DB on the call immediately after a DB-cache re-resolve", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "pt", country: "Portugal" } }],
+      };
+    });
+
+    // Three-phase DB client:
+    //   Phase 1 (warm-up readDbCache): live row.
+    //   Phase 2 (eviction probe evictIfDbCorrected): tombstoned row.
+    //   Phase 3 (readDbCache during re-resolve): freshly-restored live row —
+    //     e.g. an admin PUT revived the entry between the probe and re-resolve.
+    let phase: 1 | 2 | 3 = 1;
+    let maybeSingleCalls = 0;
+    const liveRow = { country: "Portugal", country_code: "PT", corrected_at: null, deleted_at: null };
+    const client: SupabaseClient = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() {
+            maybeSingleCalls++;
+            if (phase === 1) return { data: liveRow, error: null };
+            if (phase === 2) {
+              return {
+                data: { ...liveRow, deleted_at: new Date(T0 + 1_000).toISOString() },
+                error: null,
+              };
+            }
+            return { data: liveRow, error: null };
+          },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            resolve({ data: [], error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(client);
+
+    // Phase 1: warm up the in-memory cache from the DB row.
+    const first = await geocodeCityCountry("Lisbon");
+    assert.equal(first?.countryCode, "PT", "pre-condition: warm-up loads PT from DB cache");
+    assert.equal(nominatimCalls, 0, "no Nominatim call on warm-up");
+    assert.equal(maybeSingleCalls, 1, "one readDbCache call during warm-up");
+
+    // Phase 2 + 3: advance past the interval so the probe fires, finds the
+    // tombstone, evicts — then the re-resolve's readDbCache finds a restored
+    // live row and completes via the DB-cache path (no Nominatim).
+    phase = 2;
+    const T1 = T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000;
+    mockNow(T1);
+    // The probe (phase 2) and the re-resolve readDbCache (phase 3) are two
+    // separate maybeSingle calls; flip the phase after the probe fires by
+    // wrapping the phase switch into the call counter.
+    const probeCallIndex = maybeSingleCalls + 1;
+    const origFrom = (client as any).from.bind(client);
+    (client as any).from = (table: string) => {
+      const chain = origFrom(table);
+      const origMaybeSingle = chain.maybeSingle;
+      chain.maybeSingle = async () => {
+        const res = await origMaybeSingle();
+        if (maybeSingleCalls === probeCallIndex) phase = 3; // after the probe, restore the row
+        return res;
+      };
+      return chain;
+    };
+
+    const reResolved = await geocodeCityCountry("Lisbon");
+    assert.equal(reResolved?.countryCode, "PT", "re-resolve returns PT from the restored DB row");
+    assert.equal(nominatimCalls, 0,
+      "re-resolve completed via the DB-cache path — Nominatim never called");
+    assert.equal(maybeSingleCalls, 3,
+      "exactly two DB calls at T1: eviction probe + readDbCache re-resolve (plus 1 warm-up)");
+
+    // The fresh entry must be re-armed: correctionCheckedAt set to now (T1).
+    const entry = _getGeocodeCacheEntryForTests("lisbon");
+    assert.ok(entry, "in-memory entry exists after the DB-cache re-resolve");
+    assert.equal(entry!.correctionCheckedAt, T1,
+      "correctionCheckedAt was re-armed to now by the readDbCache branch");
+
+    // Immediate second call — interval has NOT elapsed since T1, so no probe
+    // and no readDbCache: zero additional maybeSingle calls.
+    const callsBefore = maybeSingleCalls;
+    const second = await geocodeCityCountry("Lisbon");
+    assert.equal(second?.countryCode, "PT", "immediate second call serves the cached result");
+    assert.equal(maybeSingleCalls, callsBefore,
+      "no DB round-trip on the immediate second call — the correction check was re-armed");
+    assert.equal(nominatimCalls, 0, "Nominatim still never called");
+  });
+});
