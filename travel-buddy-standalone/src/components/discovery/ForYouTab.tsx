@@ -7,8 +7,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, RefreshControl, Pressable,
-  TextInput, Modal, KeyboardAvoidingView, Platform,
+  TextInput, Modal, Platform,
 } from 'react-native';
+import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 import { useFocusEffect } from 'expo-router';
 import { Sparkles, Info, Share2, Navigation, X } from 'lucide-react-native';
 import { DiscoveryShareSheet } from '../DiscoveryShareSheet.tsx';
@@ -426,10 +427,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         animationType={Platform.OS === 'android' ? 'fade' : 'slide'}
         onRequestClose={() => setCitySwitcherOpen(false)}
       >
-        <KeyboardAvoidingView
-          style={styles.citySwitcherBackdrop}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
+        <KeyboardSafeScrollView style={styles.citySwitcherBackdrop}>
           <Pressable style={{ flex: 1 }} onPress={() => setCitySwitcherOpen(false)} />
           <View style={styles.citySwitcherSheet}>
             <View style={styles.citySwitcherHandle} />
@@ -465,7 +463,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
               <Text style={styles.citySwitcherConfirmText}>Show Compass Picks</Text>
             </Pressable>
           </View>
-        </KeyboardAvoidingView>
+        </KeyboardSafeScrollView>
       </Modal>
     </>
   );
