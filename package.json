@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm -r --filter !@workspace/travel-buddy run typecheck",
+    "typecheck": "pnpm -r run typecheck",
     "lint": "eslint artifacts/api-server/src scripts/src travel-buddy-standalone/app travel-buddy-standalone/src"
   },
   "devDependencies": {

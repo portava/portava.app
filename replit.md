@@ -48,7 +48,7 @@ Every location selection in the app flows through `GlobalPlacePicker` (`src/comp
 ## Run & Operate
 
 - API server auto-starts: port 8080
-- `pnpm run typecheck` — full typecheck across all packages
+- `pnpm run typecheck` — full typecheck across all packages, including `@workspace/travel-buddy` (whose script also runs the import-extension guard `scripts/check-import-extensions.mjs`). The old `--filter !@workspace/travel-buddy` exclusion was removed in July 2026: the package's tsc passes cleanly and quickly (~4 s warm), so the exclusion only served to silently skip the guard.
 - `pnpm --filter @workspace/api-server run dev` — run API server manually
 - Standalone typecheck: `cd travel-buddy-standalone && pnpm typecheck`
 
