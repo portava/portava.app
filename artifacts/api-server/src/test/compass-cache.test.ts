@@ -841,3 +841,192 @@ describe("Invalidation timing — await semantics", () => {
     assert.strictEqual(after, null, "L1 must be evicted when invalidate() resolves");
   });
 });
+
+// ── top_events — live-schema column check ─────────────────────────────────────
+//
+// Verified 2026-07-17 via Supabase Management API (information_schema.columns):
+//   events: id (uuid), title (text), description (text), starts_at (timestamptz),
+//           city (text), created_at (timestamptz), host_id (uuid), state (USER-DEFINED)
+// A wrong column name in .select() causes PostgREST to fail the whole query;
+// the catch block silently returns [] — emptying top_events on every app open.
+
+describe("top_events — live-schema column check", () => {
+  before(() => clearL1Cache());
+
+  it("events seeded with live-shaped columns appear in top_events tier2 item", async () => {
+    clearL1Cache();
+
+    const FUTURE    = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const HOST_USER = "00000000-0000-0000-aaaa-000000000001";
+
+    const fakeEvent = {
+      id:          "evt-live-col-1",
+      title:       "Sunset Rooftop Meetup",
+      description: "A casual evening with fellow travelers",
+      starts_at:   FUTURE,
+      city:        "Lisbon",
+      created_at:  new Date().toISOString(),
+      host_id:     HOST_USER,
+      state:       "open",
+    };
+
+    const { db } = makeFakeDb({ events: [fakeEvent] });
+
+    const profile = baseProfile({ currentCity: "Lisbon" });
+    const payload = await buildFrontLoadPayload(db, USER_A, profile, { networkHint: "wifi" });
+
+    const eventsItem = [...payload.tier2].find((i) => i.type === "top_events");
+    assert.ok(eventsItem, "top_events must be present in tier2");
+
+    const eventsData = eventsItem!.data as Array<Record<string, unknown>>;
+    assert.ok(
+      eventsData.length >= 1,
+      "top_events data must contain the seeded row — a drifted column name would silently empty this array",
+    );
+
+    const row = eventsData.find((e) => e["id"] === "evt-live-col-1");
+    assert.ok(row, "seeded event id must be present in top_events data");
+    assert.strictEqual(row["title"],       "Sunset Rooftop Meetup",
+      "title (live column name) must be returned");
+    assert.strictEqual(row["description"], "A casual evening with fellow travelers",
+      "description (live column name) must be returned");
+    assert.strictEqual(row["starts_at"],   FUTURE,
+      "starts_at (live column name) must be returned");
+    assert.strictEqual(row["city"],        "Lisbon",
+      "city (live column name) must be returned");
+    assert.ok(!("host_id" in row),
+      "host_id must be stripped from top_events output (authz-only field, not exposed to client)");
+    assert.ok(!("state" in row),
+      "state must be stripped from top_events output (authz-only field, not exposed to client)");
+  });
+
+  it("events from blocked hosts do not appear in top_events", async () => {
+    clearL1Cache();
+
+    const BLOCKED_HOST = "00000000-0000-0000-bbbb-000000000001";
+    const SAFE_HOST    = "00000000-0000-0000-bbbb-000000000002";
+    const FUTURE       = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+    const { db } = makeFakeDb({
+      events: [
+        {
+          id: "evt-blocked", title: "Blocked Event", description: "hidden",
+          starts_at: FUTURE, city: "Lisbon", created_at: new Date().toISOString(),
+          host_id: BLOCKED_HOST, state: "open",
+        },
+        {
+          id: "evt-safe", title: "Safe Event", description: "visible",
+          starts_at: FUTURE, city: "Lisbon", created_at: new Date().toISOString(),
+          host_id: SAFE_HOST, state: "open",
+        },
+      ],
+    });
+
+    const profile = baseProfile({ currentCity: "Lisbon", blockedUserIds: [BLOCKED_HOST] });
+    const payload = await buildFrontLoadPayload(db, USER_A, profile, { networkHint: "wifi" });
+
+    const eventsItem = [...payload.tier2].find((i) => i.type === "top_events");
+    const eventsData = (eventsItem?.data ?? []) as Array<Record<string, unknown>>;
+
+    assert.ok(
+      !eventsData.find((e) => e["id"] === "evt-blocked"),
+      "events from blocked hosts must not appear in top_events",
+    );
+    assert.ok(
+      eventsData.find((e) => e["id"] === "evt-safe"),
+      "events from non-blocked hosts must appear in top_events",
+    );
+  });
+});
+
+// ── top_buddies — live-schema column check ────────────────────────────────────
+//
+// Verified 2026-07-17 via Supabase Management API (information_schema.columns):
+//   buddy_profiles: user_id (uuid), display_name (text), tagline (text),
+//                   city (text), hourly_rate_usd (numeric), average_rating (numeric)
+// A wrong column name in .select() causes PostgREST to fail the whole query;
+// the catch block silently returns [] — emptying top_buddies on every app open.
+
+describe("top_buddies — live-schema column check", () => {
+  before(() => clearL1Cache());
+
+  it("buddy_profiles seeded with live-shaped columns appear in top_buddies tier2 item", async () => {
+    clearL1Cache();
+
+    const BUDDY_USER = "00000000-0000-0000-cccc-000000000001";
+
+    const fakeBuddy = {
+      user_id:        BUDDY_USER,
+      display_name:   "Sofia T.",
+      tagline:        "Your local guide to hidden gems",
+      city:           "Porto",
+      hourly_rate_usd: 25,
+      average_rating: 4.9,
+      status:         "active",
+      verified:       true,
+    };
+
+    const { db } = makeFakeDb({ buddy_profiles: [fakeBuddy] });
+
+    const payload = await buildFrontLoadPayload(db, USER_A, baseProfile(), { networkHint: "wifi" });
+
+    const buddiesItem = [...payload.tier2].find((i) => i.type === "top_buddies");
+    assert.ok(buddiesItem, "top_buddies must be present in tier2");
+
+    const buddiesData = buddiesItem!.data as Array<Record<string, unknown>>;
+    assert.ok(
+      buddiesData.length >= 1,
+      "top_buddies data must contain the seeded row — a drifted column name would silently empty this array",
+    );
+
+    const row = buddiesData.find((b) => b["user_id"] === BUDDY_USER);
+    assert.ok(row, "seeded buddy user_id must be present in top_buddies data");
+    assert.strictEqual(row["display_name"],    "Sofia T.",
+      "display_name (live column name) must be returned");
+    assert.strictEqual(row["tagline"],         "Your local guide to hidden gems",
+      "tagline (live column name) must be returned");
+    assert.strictEqual(row["city"],            "Porto",
+      "city (live column name) must be returned");
+    assert.strictEqual(row["hourly_rate_usd"], 25,
+      "hourly_rate_usd (live column name) must be returned");
+    assert.strictEqual(row["average_rating"],  4.9,
+      "average_rating (live column name) must be returned");
+  });
+
+  it("buddy profiles from blocked users do not appear in top_buddies", async () => {
+    clearL1Cache();
+
+    const BLOCKED_BUDDY = "00000000-0000-0000-dddd-000000000001";
+    const SAFE_BUDDY    = "00000000-0000-0000-dddd-000000000002";
+
+    const { db } = makeFakeDb({
+      buddy_profiles: [
+        {
+          user_id: BLOCKED_BUDDY, display_name: "Blocked Buddy", tagline: "hidden",
+          city: "Madrid", hourly_rate_usd: 20, average_rating: 4.5,
+          status: "active", verified: true,
+        },
+        {
+          user_id: SAFE_BUDDY, display_name: "Safe Buddy", tagline: "visible",
+          city: "Madrid", hourly_rate_usd: 30, average_rating: 4.8,
+          status: "active", verified: true,
+        },
+      ],
+    });
+
+    const profile = baseProfile({ blockedUserIds: [BLOCKED_BUDDY] });
+    const payload = await buildFrontLoadPayload(db, USER_A, profile, { networkHint: "wifi" });
+
+    const buddiesItem = [...payload.tier2].find((i) => i.type === "top_buddies");
+    const buddiesData = (buddiesItem?.data ?? []) as Array<Record<string, unknown>>;
+
+    assert.ok(
+      !buddiesData.find((b) => b["user_id"] === BLOCKED_BUDDY),
+      "buddy profiles from blocked users must not appear in top_buddies",
+    );
+    assert.ok(
+      buddiesData.find((b) => b["user_id"] === SAFE_BUDDY),
+      "buddy profiles from non-blocked users must appear in top_buddies",
+    );
+  });
+});
