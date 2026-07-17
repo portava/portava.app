@@ -175,10 +175,20 @@ export default function Pulse() {
     }
   }, [realFeed.pending, realFeed.applyPending]);
 
+  useEffect(() => {
+    if (followingFeed.pending.length > 0 && scrollOffsetRef.current < AT_TOP_THRESHOLD) {
+      followingFeed.applyPending();
+    }
+  }, [followingFeed.pending, followingFeed.applyPending]);
+
   const handleNewPostsPress = useCallback(() => {
-    realFeed.applyPending();
+    if (feedMode === 'following') {
+      followingFeed.applyPending();
+    } else {
+      realFeed.applyPending();
+    }
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
-  }, [realFeed.applyPending]);
+  }, [feedMode, realFeed.applyPending, followingFeed.applyPending]);
 
   // When switching to Following, load it on first activation.
   const handleFeedMode = useCallback((mode: FeedMode) => {
@@ -450,18 +460,22 @@ export default function Pulse() {
       </View>
 
       {/* New-posts pill — buffered fresh posts are one tap away, never a scroll jump */}
-      {feedMode === 'forYou' && realFeed.pending.length > 0 && (
-        <View style={styles.newPostsWrap} pointerEvents="box-none">
-          <Pressable
-            style={styles.newPostsPill}
-            onPress={handleNewPostsPress}
-            accessibilityRole="button"
-            accessibilityLabel={`${realFeed.pending.length} new posts. Tap to show`}
-          >
-            <Text style={styles.newPostsText}>↑ {realFeed.pending.length} new post{realFeed.pending.length === 1 ? '' : 's'}</Text>
-          </Pressable>
-        </View>
-      )}
+      {(() => {
+        const pendingCount = feedMode === 'following' ? followingFeed.pending.length : realFeed.pending.length;
+        if (pendingCount === 0) return null;
+        return (
+          <View style={styles.newPostsWrap} pointerEvents="box-none">
+            <Pressable
+              style={styles.newPostsPill}
+              onPress={handleNewPostsPress}
+              accessibilityRole="button"
+              accessibilityLabel={`${pendingCount} new posts. Tap to show`}
+            >
+              <Text style={styles.newPostsText}>↑ {pendingCount} new post{pendingCount === 1 ? '' : 's'}</Text>
+            </Pressable>
+          </View>
+        );
+      })()}
 
       <FlatList
         ref={listRef}

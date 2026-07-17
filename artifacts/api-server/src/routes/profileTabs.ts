@@ -321,28 +321,37 @@ router.get("/users/:username/events", async (req, res) => {
   if (!guard.allowed) return;
 
   const limit = parseLimit(req.query.limit);
+  const cursor = req.query.cursor as string | undefined;
   const isOwner = viewerId === target.id;
 
-  // Events hosted by this user.
-  const { data: hostedRowsRaw, error: hostedErr } = await sc
+  // Events hosted by this user — cursor applied server-side on starts_at.
+  let hostedQuery = sc
     .from("events")
     .select("id, title, starts_at, ends_at, city, country, cover_url, visibility, created_at")
     .eq("host_id", target.id)
     .eq("visibility", "public")
-    .order("starts_at", { ascending: false })
-    .limit(limit + 1);
+    .order("starts_at", { ascending: false });
+  if (cursor) hostedQuery = hostedQuery.lt("starts_at", cursor);
+  const { data: hostedRowsRaw, error: hostedErr } = await hostedQuery.limit(limit + 1);
   const hostedRows = (hostedRowsRaw ?? []) as any[];
 
   // Events this user is RSVP'd as going to.
   // Visibility is filtered in JS so the fake client in tests still works.
+  // Fetch extra rows so client-side cursor filtering doesn't under-fill the page.
   const { data: rsvpRowsRaw, error: rsvpErr } = await sc
     .from("event_rsvps")
     .select("event_id, created_at, event:events!inner(id, title, starts_at, ends_at, city, country, cover_url, visibility)")
     .eq("user_id", target.id)
     .eq("status", "going")
+    .eq("event.visibility", "public")
     .order("created_at", { ascending: false })
-    .limit(limit + 1);
-  const rsvpRows = ((rsvpRowsRaw ?? []) as any[]).filter((r: any) => (r.event?.visibility ?? r.visibility) === "public");
+    .limit(limit * 2 + 1);
+  const rsvpRows = ((rsvpRowsRaw ?? []) as any[]).filter((r: any) => {
+    if ((r.event?.visibility ?? r.visibility) !== "public") return false;
+    if (!cursor) return true;
+    const startsAt = (r.event ?? r).starts_at;
+    return startsAt ? startsAt < cursor : true;
+  });
 
   // Events this user has been added to as an attendee (legacy/test data uses this shape).
   const { data: attendeeRowsRaw, error: attendeeErr } = await sc
@@ -350,8 +359,13 @@ router.get("/users/:username/events", async (req, res) => {
     .select("event_id, added_at, event:events!inner(id, title, starts_at, ends_at, city, country, cover_url, visibility)")
     .eq("user_id", target.id)
     .order("added_at", { ascending: false })
-    .limit(limit + 1);
-  const attendeeRows = ((attendeeRowsRaw ?? []) as any[]).filter((r: any) => (r.event?.visibility ?? r.visibility) === "public");
+    .limit(limit * 2 + 1);
+  const attendeeRows = ((attendeeRowsRaw ?? []) as any[]).filter((r: any) => {
+    if ((r.event?.visibility ?? r.visibility) !== "public") return false;
+    if (!cursor) return true;
+    const startsAt = (r.event ?? r).starts_at;
+    return startsAt ? startsAt < cursor : true;
+  });
 
   const queryError = hostedErr || rsvpErr || attendeeErr;
   if (queryError) {
@@ -389,7 +403,7 @@ router.get("/users/:username/events", async (req, res) => {
 
   const seen = new Set<string>();
   const items: any[] = [];
-  for (const r of hostedRows ?? []) {
+  for (const r of hostedRows) {
     if (seen.has(r.id)) continue;
     seen.add(r.id);
     items.push(mapRow(r, true));
@@ -409,14 +423,15 @@ router.get("/users/:username/events", async (req, res) => {
     items.push(mapRow(r, false));
   }
 
-  // Sort by start time descending, then cap at limit.
+  // Sort merged set by start time descending, then apply limit + cursor.
   items.sort((a, b) => {
     const ta = a.startTime ? new Date(a.startTime).getTime() : 0;
     const tb = b.startTime ? new Date(b.startTime).getTime() : 0;
     return tb - ta;
   });
+  const nextCursor = items.length > limit ? items[limit - 1]?.startTime ?? null : null;
   const result = items.slice(0, limit);
-  res.status(200).json({ items: result, nextCursor: null });
+  res.status(200).json({ items: result, nextCursor });
 });
 
 /* ===========================================================================

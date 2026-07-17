@@ -956,11 +956,14 @@ describe("GET /api/users/:username/events — profile tab", () => {
 
   it("returns public event memberships for a public profile", async () => {
     const state = baseState();
-    (state as any).event_attendees = [
+    (state as any).event_rsvps = [
       {
         event_id: "ev-1", user_id: ALICE, status: "going", created_at: "2025-01-01T00:00:00Z",
-        event: { id: "ev-1", title: "Travel Meetup", start_time: "2025-03-01T18:00:00Z", end_time: null,
-                 location_city: "Paris", location_country: "France", cover_image_url: null, visibility: "public" },
+        // "event.visibility" as a flat key lets the fake client's eq() filter match PostgREST
+        // dot-notation filters (r["event.visibility"]) without traversing nested objects.
+        "event.visibility": "public",
+        event: { id: "ev-1", title: "Travel Meetup", starts_at: "2025-03-01T18:00:00Z", ends_at: null,
+                 city: "Paris", country: "France", cover_url: null, visibility: "public" },
       },
     ];
     setup(state);
