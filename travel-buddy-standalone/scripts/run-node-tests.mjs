@@ -38,6 +38,18 @@ if ((mockGuard.status ?? 1) !== 0) {
   process.exit(mockGuard.status ?? 1);
 }
 
+// Pre-flight: reject raw <KeyboardAvoidingView usage in app/ and
+// src/components/ — all screens must go through KeyboardSafeView or
+// KeyboardSafeScrollView so Android keyboard avoidance is never skipped.
+const kavGuard = spawnSync(
+  process.execPath,
+  ['scripts/check-keyboard-avoiding-view.mjs'],
+  { stdio: 'inherit' },
+);
+if ((kavGuard.status ?? 1) !== 0) {
+  process.exit(kavGuard.status ?? 1);
+}
+
 // Known-broken node:test files, excluded from the run. Fix and remove.
 const KNOWN_BROKEN = [];
 
