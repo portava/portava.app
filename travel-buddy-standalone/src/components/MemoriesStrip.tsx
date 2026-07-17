@@ -71,12 +71,27 @@ export function MemoriesStrip({ limit = 8 }: MemoriesStripProps) {
                 </Text>
               ) : null}
               {(m.locationCity || m.locationCountry) ? (
-                <View style={styles.cardLocation}>
-                  <MapPin size={9} color={color.mute} />
+                <Pressable
+                  style={styles.cardLocation}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    router.push({
+                      pathname: '/memory/location' as any,
+                      params: {
+                        label: [m.locationCity, m.locationCountry].filter(Boolean).join(', '),
+                        ...(m.canonicalLocationId ? { canonicalLocationId: m.canonicalLocationId } : {}),
+                        ...(m.locationCity    ? { city: m.locationCity }       : {}),
+                        ...(m.locationCountry ? { country: m.locationCountry } : {}),
+                      },
+                    });
+                  }}
+                  hitSlop={4}
+                >
+                  <MapPin size={9} color={color.signal} />
                   <Text style={styles.cardLocationText} numberOfLines={1}>
                     {[m.locationCity, m.locationCountry].filter(Boolean).join(', ')}
                   </Text>
-                </View>
+                </Pressable>
               ) : null}
               {m.likeCount != null && m.likeCount > 0 ? (
                 <Text style={styles.cardLikes}>♥ {m.likeCount}</Text>
