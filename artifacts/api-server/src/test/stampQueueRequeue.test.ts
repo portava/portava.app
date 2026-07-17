@@ -126,6 +126,33 @@ describe("requeueStaleFailedJobs", () => {
     assert.equal(updateCalls[0].payload.status, "permanently_failed");
   });
 
+  it("preserves cleanup_error_paths across auto-requeue — does not null-clear orphaned paths", async () => {
+    // Task 433 removed `cleanup_error_paths: null` from the requeue payload so
+    // that orphaned storage files accumulated across retries remain visible to
+    // ops on the admin UI.  This test guards against that null-clear being
+    // accidentally re-added.
+    const { sc, updateCalls } = makeFakeClient({
+      data: [{ id: "job-with-orphans", requeue_count: 0 }],
+      error: null,
+    });
+
+    await requeueStaleFailedJobs(sc);
+
+    const requeueCall = updateCalls.find((c) => c.payload.status === "queued");
+    assert.ok(requeueCall, "must have a requeue update call");
+
+    assert.equal(
+      "cleanup_error_paths" in requeueCall!.payload,
+      false,
+      "cleanup_error_paths must NOT appear in the requeue payload — null-clearing it would wipe accumulated orphaned paths",
+    );
+    assert.equal(
+      "cleanup_error" in requeueCall!.payload,
+      false,
+      "cleanup_error must NOT appear in the requeue payload — it must be preserved until ops manually clear it",
+    );
+  });
+
   it("returns 0 when no rows match", async () => {
     const { sc, updateCalls } = makeFakeClient({ data: [], error: null });
     assert.equal(await requeueStaleFailedJobs(sc), 0);
