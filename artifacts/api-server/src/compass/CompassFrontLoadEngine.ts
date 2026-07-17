@@ -377,7 +377,7 @@ async function loadTier1(
     try {
       const { data } = await db
         .from("notifications")
-        .select("id, type, body, created_at, read_at")
+        .select("id, event_type, body, created_at, read_at")
         .eq("user_id", userId)
         .is("read_at", null)
         .order("created_at", { ascending: false })
