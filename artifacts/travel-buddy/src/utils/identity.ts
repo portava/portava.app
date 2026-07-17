@@ -29,6 +29,20 @@ export function resolveDisplayName(user: IdentityInput): string {
   );
 }
 
+/** Maximum display-name length enforced by onboarding and the identity editor. */
+export const DISPLAY_NAME_MAX_LENGTH = 40;
+
+/**
+ * Truncate a display name to the 40-character limit with an ellipsis.
+ * Legacy accounts created before the limit was introduced may still have
+ * longer names stored in the DB; cap them at render time so they can't
+ * overflow layouts such as the passport identity card.
+ */
+export function truncateDisplayName(name: string, max: number = DISPLAY_NAME_MAX_LENGTH): string {
+  if (name.length <= max) return name;
+  return `${name.slice(0, max).trimEnd()}…`;
+}
+
 /**
  * Format a username/handle as a @-prefixed string.
  * Returns null when there is no username.
