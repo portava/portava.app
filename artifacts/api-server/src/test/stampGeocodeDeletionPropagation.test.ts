@@ -4018,3 +4018,89 @@ describe("optimistic correctionCheckedAt bump vs. mid-probe eviction", () => {
     assert.equal(nominatimCalls, 0, "Nominatim never called anywhere in this scenario");
   });
 });
+
+// ── Concurrent-caller dedup across the eviction-and-re-resolve path ───────────
+
+describe("concurrent callers coalesce onto one pending promise when the entry is evicted mid-flight", () => {
+  it("calls Nominatim exactly once when a second caller arrives while the first is re-resolving after a deletion-eviction", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // Deferred Nominatim: the fetch promise is held open so we can inject the
+    // second caller while the first caller's re-resolve is in-flight (i.e.
+    // after the eviction but before the _pending promise settles).
+    let nominatimCalls = 0;
+    let releaseNominatim!: () => void;
+    const nominatimGate = new Promise<void>((r) => { releaseNominatim = r; });
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      await nominatimGate;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "jp", country: "Japan" } }],
+      };
+    });
+
+    // Phase 1: warm the in-memory cache from a live DB row.
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient({ country: "Japan", country_code: "JP", corrected_at: null, deleted_at: null }),
+    );
+    const warm = await geocodeCityCountry("Tokyo");
+    assert.equal(warm?.countryCode, "JP", "pre-condition: cache warmed with JP");
+    assert.equal(nominatimCalls, 0, "no Nominatim call during warm-up");
+
+    // Phase 2: backdate correctionCheckedAt so the next call fires the probe
+    // immediately, and switch the DB so the probe finds a tombstoned row.
+    // readDbCache treats deleted_at as "not found", forcing the Nominatim path.
+    _backdateGeocodeCacheEntryForTests("tokyo");
+    let probeCalls = 0;
+    _setGeocodeDbClientForTests(
+      makeFixedDbClient(
+        {
+          country: "Japan",
+          country_code: "JP",
+          corrected_at: null,
+          deleted_at: new Date(T0 - 1_000).toISOString(),
+        },
+        { onCall: () => { probeCalls++; } },
+      ),
+    );
+
+    // Phase 3: first caller — bumps correctionCheckedAt, probe finds deleted_at,
+    // evicts, falls through, sets _pending, then blocks on the gated Nominatim fetch.
+    const firstCall = geocodeCityCountry("Tokyo");
+
+    // Wait until the Nominatim fetch has actually been entered. At that point
+    // the cache entry is evicted AND _pending holds the first caller's promise.
+    while (nominatimCalls === 0) {
+      await new Promise<void>((r) => setImmediate(r));
+    }
+    assert.equal(
+      _getGeocodeCacheEntryForTests("tokyo"),
+      undefined,
+      "cache entry was evicted before the second caller arrives",
+    );
+
+    // Phase 4: second caller arrives mid-flight — no cache entry exists, so it
+    // must find and reuse the first caller's _pending promise, not start its own.
+    const secondCall = geocodeCityCountry("Tokyo");
+
+    // Give the second caller's synchronous prologue a chance to run, then
+    // release the gated Nominatim response.
+    await new Promise<void>((r) => setImmediate(r));
+    releaseNominatim();
+
+    const [first, second] = await Promise.all([firstCall, secondCall]);
+
+    assert.equal(nominatimCalls, 1,
+      "Nominatim called exactly once — both callers shared the single pending promise");
+    assert.equal(first?.countryCode, "JP", "first caller resolved to JP");
+    assert.equal(second?.countryCode, "JP", "second caller resolved to JP");
+    assert.deepEqual(second, first, "both callers received the same result object");
+    assert.ok(probeCalls >= 1, "the correction probe fired at least once");
+
+    // The re-resolved result was committed back to the in-memory cache.
+    const entry = _getGeocodeCacheEntryForTests("tokyo");
+    assert.equal(entry?.result?.countryCode, "JP", "fresh result cached after re-resolve");
+  });
+});
