@@ -145,7 +145,8 @@ describe('SDK 54 downgrade — package version pins', () => {
   });
 
   it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-    // travel-buddy-standalone/package.json is resolved from the workspace root.
+    // travel-buddy-standalone/package.json is 4 levels up from src/services
+    // (artifacts/travel-buddy/src/services → workspace root → travel-buddy-standalone).
     const standalone = readPkg('travel-buddy-standalone/package.json');
     const saDeps: Record<string, string> = {
       ...standalone.dependencies,
@@ -184,14 +185,14 @@ describe('SDK 54 downgrade — package version pins', () => {
 //   react-native-view-shot → react-native, react
 
 describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-  // artifacts/travel-buddy/package.json is resolved from the workspace root.
+  // artifacts/travel-buddy/package.json is 2 levels up from src/services.
   const tb = readPkg('artifacts/travel-buddy/package.json');
   const tbAll: Record<string, string> = {
     ...tb.dependencies,
     ...tb.devDependencies,
   };
 
-  // travel-buddy-standalone/package.json is resolved from the workspace root.
+  // travel-buddy-standalone/package.json is 4 levels up from src/services.
   const sa = readPkg('travel-buddy-standalone/package.json');
   const saAll: Record<string, string> = {
     ...sa.dependencies,
@@ -259,14 +260,16 @@ describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and 
 // version strings so the divergence is immediately obvious.
 
 describe('SDK 54 — other explicitly pinned Expo packages sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-  // artifacts/travel-buddy/package.json is resolved from the workspace root.
+  // artifacts/travel-buddy/package.json is 2 levels up from src/services.
   const tb = readPkg('artifacts/travel-buddy/package.json');
   const tbAll: Record<string, string> = {
     ...tb.dependencies,
     ...tb.devDependencies,
   };
 
-  // travel-buddy-standalone/package.json is resolved from the workspace root.
+  // travel-buddy-standalone/package.json is 4 levels up from src/services in
+  // the artifacts tree (artifacts/travel-buddy/src/services → workspace root →
+  // travel-buddy-standalone).
   const sa = readPkg('travel-buddy-standalone/package.json');
   const saAll: Record<string, string> = {
     ...sa.dependencies,
@@ -682,9 +685,9 @@ describe('expo-clipboard ~8.0.8 — setStringAsync call contract (mirrors GroupC
 // exactly one version and that version is identical in both trees.
 
 describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/config-plugins, expo-modules-core, and metro bundler family', () => {
-  // travel-buddy-standalone/pnpm-lock.yaml is resolved from the workspace root.
+  // travel-buddy-standalone/pnpm-lock.yaml is 4 levels up from src/services/ in artifacts/travel-buddy/
   const standaloneLockText = readFileSync(pathResolve(WORKSPACE_ROOT, 'travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
-  // monorepo root pnpm-lock.yaml is resolved from the workspace root.
+  // monorepo root pnpm-lock.yaml is also 4 levels up from src/services/ in artifacts/travel-buddy/
   const monoLockText = readFileSync(pathResolve(WORKSPACE_ROOT, 'pnpm-lock.yaml'), 'utf8');
 
   /**

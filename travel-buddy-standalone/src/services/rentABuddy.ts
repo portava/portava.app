@@ -236,10 +236,9 @@ async function apiFetch<T>(
 // ── Search ────────────────────────────────────────────────────────────────────
 
 export async function searchBuddies(params: BuddySearchParams): Promise<ApiResult<BuddySearchResult>> {
-  const { lat, lng, ...rest } = params;
   return apiFetch<BuddySearchResult>('/api/rent-a-buddy/search', {
     method: 'POST',
-    body: JSON.stringify({ ...rest, ...cityCoordSpread({ lat, lng }) }),
+    body: JSON.stringify(params),
   });
 }
 
@@ -974,8 +973,7 @@ export async function createRequest(payload: {
   languageNeeded?: string; energyType?: string; safetyPrefs?: Record<string, boolean>;
   paymentModePref?: string; notes?: string;
 }): Promise<ApiResult<{ request: BuddyRequest }>> {
-  const { lat, lng, ...rest } = payload;
-  return apiFetch('/api/rent-a-buddy/requests', { method: 'POST', body: JSON.stringify({ ...rest, ...cityCoordSpread({ lat, lng }) }) });
+  return apiFetch('/api/rent-a-buddy/requests', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export async function getRequest(requestId: string): Promise<ApiResult<{ request: BuddyRequest }>> {
@@ -1095,8 +1093,7 @@ export async function joinWaitlistV2(payload: {
   city: string; category?: string; language?: string; budgetMaxUsd?: number;
   desiredDate?: string; desiredTime?: string; notes?: string; groupSize?: number; expiryDays?: number;
 } & ({ lat: number; lng: number } | { lat?: never; lng?: never })): Promise<ApiResult<{ entry: WaitlistEntry }>> {
-  const { lat, lng, ...rest } = payload;
-  return apiFetch('/api/rent-a-buddy/waitlist/v2', { method: 'POST', body: JSON.stringify({ ...rest, ...cityCoordSpread({ lat, lng }) }) });
+  return apiFetch('/api/rent-a-buddy/waitlist/v2', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export async function getWaitlistV2(): Promise<ApiResult<{ waitlist: WaitlistEntry[] }>> {
