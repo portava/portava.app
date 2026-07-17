@@ -744,6 +744,12 @@ router.post("/admin/stamps/catalog/:id/regenerate", async (req, res) => {
       `(code: ${(catalogResetErr as any).code ?? "unknown"})`,
       "— catalog status may be stale; operator review required",
     );
+    // Also surface the partial failure in the admin audit trail so operators
+    // don't need server-log access to discover the stale catalog status.
+    await writeAuditLog(sc, adminId, "regenerate_catalog_reset_failed", {
+      catalogId: id,
+      notes:     `Catalog status reset failed: ${catalogResetErr.message ?? String(catalogResetErr)} — catalog status may be stale`,
+    });
   }
 
   // Write the audit log whenever state actually changed:

@@ -557,6 +557,25 @@ describe("POST regenerate — catalog status reset fails after queue insert succ
     );
   });
 
+  it("writes a supplementary audit entry when the catalog status reset fails", async () => {
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+
+    const failEntries = db.stamp_admin_audit_log.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.action === "regenerate_catalog_reset_failed",
+    );
+
+    assert.equal(
+      failEntries.length,
+      1,
+      `expected exactly 1 regenerate_catalog_reset_failed audit entry, found ${failEntries.length}: ${JSON.stringify(db.stamp_admin_audit_log)}`,
+    );
+    assert.equal(failEntries[0].admin_id, ADMIN_ID);
+    assert.ok(
+      typeof failEntries[0].notes === "string" && failEntries[0].notes.includes("network error"),
+      `expected the failure audit entry notes to include the reset error message, got: ${JSON.stringify(failEntries[0].notes)}`,
+    );
+  });
+
   it("audit log is not doubled when catalog reset fails and a second regenerate is called", async () => {
     // First call: queue insert succeeds, catalog reset fails, audit log written
     const first = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
