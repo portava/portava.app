@@ -10,6 +10,7 @@ import GemDetailScreen from '../../../app/gems/[id].tsx';
 import { shareGemToTelegraph } from '../../services/hiddenGems.ts';
 
 jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
   useRouter: () => ({ back: jest.fn(), push: jest.fn() }),
   useLocalSearchParams: () => ({ id: 'gem-1' }),
 }));
@@ -20,25 +21,39 @@ jest.mock('react-native-safe-area-context', () => {
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
   };
 });
+// NOTE: intentionally exhaustive — requireActual pulls native-module internals
+// that are not safe under jest.
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('expo-location', () => ({}));
 jest.mock('../../hooks/useNavBarCollapse', () => ({
+  ...jest.requireActual('../../hooks/useNavBarCollapse'),
   NavBarFiller: () => null,
   useNavBarScrollHandler: () => () => {},
 }));
 jest.mock('../../context/SessionContext', () => ({
+  ...jest.requireActual('../../context/SessionContext'),
   useSession: () => ({ isAuthed: true, loading: false }),
 }));
+// NOTE: intentionally an exhaustive stub — requiring the actual component module
+// would execute its heavy/native dependency imports under jest.
 jest.mock('../RouteBuilderSheet', () => ({ RouteBuilderSheet: () => null }));
+// NOTE: intentionally an exhaustive stub — requiring the actual component module
+// would execute its heavy/native dependency imports under jest.
 jest.mock('../discovery/TripWishlistPicker', () => ({ TripWishlistPicker: () => null }));
+// NOTE: intentionally an exhaustive stub — requiring the actual component module
+// would execute its heavy/native dependency imports under jest.
 jest.mock('../ReviewsSection', () => ({ ReviewsSection: () => null }));
+// NOTE: intentionally an exhaustive stub — requiring the actual component module
+// would execute its heavy/native dependency imports under jest.
 jest.mock('../discovery/GemMapPreview', () => ({ GemMapPreview: () => null }));
 jest.mock('../../hooks/useHiddenGems', () => ({
+  ...jest.requireActual('../../hooks/useHiddenGems'),
   useGemDetail: jest.fn(),
   useGemCheckin: () => ({ checkin: jest.fn(), loading: false, result: null }),
   useGemReport: () => ({ report: jest.fn(), loading: false, done: false }),
 }));
 jest.mock('../../services/hiddenGems', () => ({
+  ...jest.requireActual('../../services/hiddenGems'),
   verificationBadge: () => 'Community verified',
   sensitivityLabel: () => 'Public',
   shareGemToTelegraph: jest.fn(),

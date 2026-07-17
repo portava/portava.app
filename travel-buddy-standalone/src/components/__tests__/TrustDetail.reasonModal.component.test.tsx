@@ -12,15 +12,18 @@ import TrustDetailScreen from '../../../app/admin/trust-detail.tsx';
 import { fetchUserTrustDetail, confirmTrustEvent } from '../../services/trustAdmin.ts';
 
 jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
   router: { push: jest.fn(), back: jest.fn(), replace: jest.fn() },
   useLocalSearchParams: jest.fn(() => ({ userId: 'user-1' })),
 }));
+// NOTE: intentionally exhaustive — requireActual pulls native-module internals
+// that are not safe under jest.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-jest.mock('../../hooks/useRequireAdmin', () => ({ useRequireAdmin: jest.fn() }));
-jest.mock('lucide-react-native', () => new Proxy({}, { get: () => () => null }));
+jest.mock('../../hooks/useRequireAdmin', () => ({ ...jest.requireActual('../../hooks/useRequireAdmin'), useRequireAdmin: jest.fn() }));
 jest.mock('../../services/trustAdmin', () => ({
+  ...jest.requireActual('../../services/trustAdmin'),
   fetchUserTrustDetail:  jest.fn(),
   confirmTrustEvent:     jest.fn(),
   dismissTrustEvent:     jest.fn(),

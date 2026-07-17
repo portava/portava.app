@@ -36,21 +36,26 @@ jest.mock('react-native-svg', () => {
 // ── Identity / verification helpers ──────────────────────────────────────────
 
 jest.mock('../../../utils/identity', () => ({
+  ...jest.requireActual('../../../utils/identity'),
   resolveAvatarUrl:  (_url: unknown) => null,
   fallbackInitials:  (_profile: unknown) => 'TU',
 }));
 
 jest.mock('../../../lib/displayIdentity', () => ({
+  ...jest.requireActual('../../../lib/displayIdentity'),
   primaryIdentityText:   (_identity: unknown) => 'Test User',
   secondaryIdentityText: (_identity: unknown) => '@testuser',
 }));
 
 jest.mock('../../../lib/verification', () => ({
+  ...jest.requireActual('../../../lib/verification'),
   isTravelBuddyVerified: (_profile: unknown) => false,
 }));
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
+// NOTE: intentionally an exhaustive stub — requiring the actual component module
+// would execute its heavy/native dependency imports under jest.
 jest.mock('../../HighlightRing', () => ({
   HighlightRing: ({ children }: { children: React.ReactNode }) => children,
 }));
@@ -58,12 +63,14 @@ jest.mock('../../HighlightRing', () => ({
 // ── Services ─────────────────────────────────────────────────────────────────
 
 jest.mock('../../../services/passportStamps', () => ({
+  ...jest.requireActual('../../../services/passportStamps'),
   getPassportStats: jest.fn().mockResolvedValue({ ok: false }),
 }));
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 
 jest.mock('../../../theme/passportTokens', () => ({
+  ...jest.requireActual('../../../theme/passportTokens'),
   PP: {
     paper:       '#FFFFFF',
     inkMuted:    '#8A7E6E',

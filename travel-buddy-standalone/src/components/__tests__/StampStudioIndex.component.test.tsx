@@ -52,34 +52,29 @@ import {
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
 jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
   useFocusEffect: jest.fn(),
   router: { push: jest.fn(), back: jest.fn(), replace: jest.fn() },
 }));
 
+// NOTE: intentionally exhaustive — requireActual pulls native-module internals
+// that are not safe under jest.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
 jest.mock('../../hooks/useRequireAdmin', () => ({
+  ...jest.requireActual('../../hooks/useRequireAdmin'),
   useRequireAdmin: jest.fn(),
 }));
 
 jest.mock('../../services/adminStamps', () => ({
+  ...jest.requireActual('../../services/adminStamps'),
   getAdminStampCatalog: jest.fn(),
   getStampWorkerHealth: jest.fn(),
 }));
 
 // Override the global lucide mock with every icon the screen imports.
-jest.mock('lucide-react-native', () => ({
-  ArrowLeft: () => null,
-  Image: () => null,
-  Clock: () => null,
-  CheckCircle: () => null,
-  AlertTriangle: () => null,
-  XCircle: () => null,
-  Activity: () => null,
-  MapPin: () => null,
-}));
 
 // ── Typed mock refs ────────────────────────────────────────────────────────────
 
@@ -1213,7 +1208,6 @@ describe('StampStudioIndex — non-admin users are redirected away by useRequire
     });
   });
 });
-
 
 describe('StampStudioIndex — health warning banners are announced to screen readers', () => {
   let spy: ReturnType<typeof makeIntervalSpy>;

@@ -35,15 +35,19 @@ import {
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
+// NOTE: intentionally exhaustive — requireActual pulls native-module internals
+// that are not safe under jest.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
 jest.mock('../../../../src/hooks/useRequireAdmin', () => ({
+  ...jest.requireActual('../../../../src/hooks/useRequireAdmin'),
   useRequireAdmin: jest.fn(),
 }));
 
 jest.mock('../../../../src/services/adminStamps', () => ({
+  ...jest.requireActual('../../../../src/services/adminStamps'),
   getAdminStampQueue: jest.fn(),
   requeueFailedJob: jest.fn(),
   clearCleanupError: jest.fn(),
@@ -172,7 +176,6 @@ describe('FailedJobsScreen — Mark cleaned badge dismissal', () => {
     expect(screen.getByText('Rome Colosseum')).toBeTruthy();
   });
 });
-
 
 describe('FailedJobsScreen — cleanup warning badge is announced to screen readers', () => {
   beforeEach(() => {

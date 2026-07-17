@@ -20,15 +20,20 @@ import { TripWishlistPicker } from '../TripWishlistPicker.tsx';
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
 jest.mock('../../../services/trips', () => ({
+  ...jest.requireActual('../../../services/trips'),
   listMyTrips: jest.fn(),
 }));
 
+// NOTE: intentionally an exhaustive object literal — NOT a requireActual spread.
+// The real module imports @react-native-async-storage/async-storage, whose
+// native module is null under jest, so requiring the actual module crashes.
 jest.mock('../../../services/discoveryBookmarks', () => ({
   toggleSave:      jest.fn(),
   getSavedListIds: jest.fn(),
 }));
 
 jest.mock('../../../theme/tokens', () => ({
+  ...jest.requireActual('../../../theme/tokens'),
   color: {
     deep:        '#2A7F8F',
     ink:         '#1A1A2E',

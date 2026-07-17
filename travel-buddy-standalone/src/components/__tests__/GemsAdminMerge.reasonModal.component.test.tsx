@@ -9,6 +9,7 @@ import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-
 import AdminModerationScreen from '../../../app/gems/admin.tsx';
 
 jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
   useRouter: () => ({ back: jest.fn(), push: jest.fn() }),
 }));
 jest.mock('react-native-safe-area-context', () => {
@@ -18,11 +19,15 @@ jest.mock('react-native-safe-area-context', () => {
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
   };
 });
+// NOTE: intentionally exhaustive — requireActual pulls native-module internals
+// that are not safe under jest.
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('../../lib/supabase', () => ({
+  ...jest.requireActual('../../lib/supabase'),
   supabase: { auth: { getSession: jest.fn(async () => ({ data: { session: { access_token: 'tok' } } })) } },
 }));
 jest.mock('../../hooks/useNavBarCollapse', () => ({
+  ...jest.requireActual('../../hooks/useNavBarCollapse'),
   NavBarFiller: () => null,
   useNavBarScrollHandler: () => () => {},
 }));
