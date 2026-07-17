@@ -5440,3 +5440,178 @@ describe("cross-instance tombstone during in-flight geocode (no local eviction)"
     assert.equal(nominatimCalls, 1, "no extra geocode fired by the skipped retry");
   });
 });
+
+describe("pre-check SELECT error + mid-flight tombstone — documented split-brain behavior", () => {
+  // These tests pin down the DELIBERATE behavior of writeDbCache when the
+  // pre-upsert tombstone re-check itself hits a DB error: the persist falls
+  // through to the upsert (best-effort — a transient read failure must not
+  // block persistence).  In the rare split-brain where the pre-check read
+  // errors but the upsert still SUCCEEDS, a tombstone written mid-flight IS
+  // revived (deleted_at cleared by the upsert payload).  This is an accepted
+  // trade-off, mirroring the documented residual window in countryGeocoder.ts:
+  // the pre-check is best-effort only, the window requires a reader/writer
+  // split-brain in the DB layer, and the admin can re-issue the DELETE.  If
+  // this behavior is ever tightened (e.g. skip the upsert on pre-check error),
+  // these assertions must be flipped intentionally — not by accident.
+
+  it("revives a mid-flight tombstone when the pre-check SELECT returns a DB error but the upsert succeeds (accepted split-brain)", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // State machine: readDbCache miss → Nominatim (tombstone lands mid-flight,
+    // reads start erroring) → pre-check SELECT errors → upsert succeeds.
+    const state = { tombstoned: false };
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      // Cross-instance admin DELETE lands while the geocode is in flight, and
+      // the DB read path starts erroring at the same time (reader outage).
+      state.tombstoned = true;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "pt", country: "Portugal" } }],
+      };
+    });
+
+    const upsertPayloads: any[] = [];
+    let erroredReads = 0;
+    _setGeocodeDbClientForTests({
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() {
+            if (state.tombstoned) {
+              // The row IS tombstoned in the DB, but the SELECT can't see it —
+              // reads error out. This is the pre-check error branch.
+              erroredReads++;
+              return { data: null, error: { message: "connection refused" } };
+            }
+            return { data: null, error: null }; // initial readDbCache miss
+          },
+          upsert(payload: any) {
+            upsertPayloads.push(payload);
+            // Split-brain: writes still succeed while reads error.
+            return Promise.resolve({ error: null });
+          },
+          then(resolve: (v: any) => void) { resolve({ data: [], error: null }); },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient);
+
+    const result = await geocodeCityCountry("Lisbon");
+    assert.equal(result?.countryCode, "PT", "geocode still resolves");
+    assert.equal(nominatimCalls, 1);
+    assert.equal(erroredReads, 1, "pre-check SELECT was attempted and errored");
+
+    // Documented behavior: the pre-check error falls through to the upsert,
+    // which succeeds — reviving the mid-flight tombstone (deleted_at: null).
+    assert.equal(upsertPayloads.length, 1,
+      "upsert still fires when the pre-check read errors (best-effort fall-through)");
+    assert.equal(upsertPayloads[0].deleted_at, null,
+      "the upsert clears deleted_at — the mid-flight tombstone IS revived in this split-brain (accepted)");
+
+    // Outcome is "ok": no retry flag, entry stays warm in memory.
+    const entry = _getGeocodeCacheEntryForTests("lisbon") as any;
+    assert.ok(entry, "in-memory entry kept (outcome was ok, not tombstoned)");
+    assert.ok(!entry.persistFailed, "not flagged for retry — the upsert succeeded");
+  });
+
+  it("behaves the same when the pre-check SELECT throws (rejects) instead of returning an error object", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    const state = { tombstoned: false };
+    _setGeocodeFetchForTests(async () => {
+      state.tombstoned = true;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "gr", country: "Greece" } }],
+      };
+    });
+
+    const upsertPayloads: any[] = [];
+    _setGeocodeDbClientForTests({
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() {
+            if (state.tombstoned) throw new Error("socket hang up");
+            return { data: null, error: null };
+          },
+          upsert(payload: any) {
+            upsertPayloads.push(payload);
+            return Promise.resolve({ error: null });
+          },
+          then(resolve: (v: any) => void) { resolve({ data: [], error: null }); },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient);
+
+    const result = await geocodeCityCountry("Athens");
+    assert.equal(result?.countryCode, "GR", "geocode still resolves when the pre-check throws");
+    assert.equal(upsertPayloads.length, 1,
+      "a thrown pre-check is swallowed and the upsert still fires");
+    assert.equal(upsertPayloads[0].deleted_at, null,
+      "tombstone revival also applies on the thrown-pre-check path (accepted)");
+    const entry = _getGeocodeCacheEntryForTests("athens") as any;
+    assert.ok(entry && !entry.persistFailed, "successful upsert — no retry flag");
+  });
+
+  it("does NOT revive when the pre-check errors AND the upsert also fails (the common full-outage case)", async () => {
+    // Sanity companion: when the DB is genuinely down, both the pre-check and
+    // the upsert fail — nothing is written, the entry is flagged for retry,
+    // and the later retry re-runs the pre-check (which will see the tombstone
+    // once reads recover). The split-brain revival above is the ONLY gap.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    const state = { tombstoned: false };
+    _setGeocodeFetchForTests(async () => {
+      state.tombstoned = true;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "ie", country: "Ireland" } }],
+      };
+    });
+
+    let upsertCalls = 0;
+    _setGeocodeDbClientForTests({
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() {
+            if (state.tombstoned) return { data: null, error: { message: "connection refused" } };
+            return { data: null, error: null };
+          },
+          upsert() {
+            upsertCalls++;
+            return Promise.resolve({ error: { message: "connection refused" } });
+          },
+          then(resolve: (v: any) => void) { resolve({ data: [], error: null }); },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient);
+
+    const result = await geocodeCityCountry("Dublin");
+    assert.equal(result?.countryCode, "IE");
+    assert.equal(upsertCalls, 1, "upsert attempted once and failed");
+    const entry = _getGeocodeCacheEntryForTests("dublin") as any;
+    assert.equal(entry?.persistFailed, true,
+      "flagged for retry — the retry's pre-check will see the tombstone once reads recover");
+  });
+});

@@ -353,6 +353,14 @@ async function writeDbCache(key: string, result: GeocodedCountry, startedAtMs: n
       // Pre-check DB error: fall through to the upsert (best-effort — a
       // transient read failure must not block persistence; the upsert itself
       // will surface any real outage).
+      //
+      // Accepted trade-off: in the rare reader/writer split-brain where this
+      // SELECT errors but the upsert still succeeds, a tombstone written
+      // mid-flight IS revived (deleted_at cleared). In the common full-outage
+      // case the upsert fails too, the entry is flagged persistFailed, and the
+      // retry's pre-check sees the tombstone once reads recover. Pinned by
+      // stampGeocodeDeletionPropagation.test.ts ("pre-check SELECT error"
+      // suite) — flip those assertions deliberately if this is ever tightened.
     } catch {
       // Same: best-effort pre-check only.
     }
