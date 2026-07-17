@@ -505,6 +505,30 @@ router.patch("/me/profile", async (req, res) => {
     return;
   }
 
+  // Fire-and-forget: delete old storage files once the profile row is
+  // confirmed saved. Shared by both success paths (normal and schema-drift
+  // fallback) so replaced avatars/covers never orphan the old file.
+  // `savedRow` is the row actually written — a field's old file is only
+  // deleted if its column was persisted (the schema-drift fallback strips
+  // cover_photo_url, in which case the old cover is still live).
+  const cleanupOldMedia = (savedRow: Record<string, unknown>) => {
+    setImmediate(() => {
+      const sc = getServiceClient();
+      if (!sc) return;
+      const marker = `/object/public/${AVATAR_BUCKET}/`;
+      for (const [newUrl, oldUrl] of [
+        ["avatar_url" in savedRow ? p.avatarUrl : undefined, oldAvatarUrl],
+        ["cover_photo_url" in savedRow ? p.coverUrl : undefined, oldCoverUrl],
+      ] as Array<[string | undefined, string | null]>) {
+        if (newUrl === undefined || !oldUrl || oldUrl === newUrl) continue;
+        const idx = oldUrl.indexOf(marker);
+        if (idx === -1) continue;
+        const oldPath = oldUrl.slice(idx + marker.length);
+        sc.storage.from(AVATAR_BUCKET).remove([oldPath]).catch(() => {});
+      }
+    });
+  };
+
   let { data: updated, error: updateError } = await client
     .from("profiles")
     .update(row)
@@ -607,6 +631,7 @@ router.patch("/me/profile", async (req, res) => {
     if (!updateError && unsavedFields.length > 0) {
       // Partial success: base columns saved, but some requested fields were
       // dropped by the fallback. Tell the client exactly which ones.
+      cleanupOldMedia(safeRow);
       res.status(200).json({
         ...mapProfile(updated),
         unsavedFields,
@@ -635,21 +660,7 @@ router.patch("/me/profile", async (req, res) => {
   }
 
   // Fire-and-forget: delete old storage files now that the profile row is confirmed saved.
-  setImmediate(() => {
-    const sc = getServiceClient();
-    if (!sc) return;
-    const marker = `/object/public/${AVATAR_BUCKET}/`;
-    for (const [newUrl, oldUrl] of [
-      [p.avatarUrl, oldAvatarUrl],
-      [p.coverUrl,  oldCoverUrl],
-    ] as Array<[string | undefined, string | null]>) {
-      if (newUrl === undefined || !oldUrl || oldUrl === newUrl) continue;
-      const idx = oldUrl.indexOf(marker);
-      if (idx === -1) continue;
-      const oldPath = oldUrl.slice(idx + marker.length);
-      sc.storage.from(AVATAR_BUCKET).remove([oldPath]).catch(() => {});
-    }
-  });
+  cleanupOldMedia(row);
 
   res.status(200).json(mapProfile(updated));
 });

@@ -1347,11 +1347,15 @@ describe("PATCH /api/me/profile — old storage file cleanup on clear", () => {
   let removedPaths: string[];
   // Mutable current row so each test can control old avatar/cover state.
   let profileRow: any;
+  // When set, the NEXT profiles update fails once with this error (schema-drift
+  // simulation); the retry then succeeds. Cleared after being consumed.
+  let failFirstUpdate: { code: string; message: string } | null = null;
 
   function makeStorageClient() {
     function builder(table: string) {
       const filters: Array<(r: any) => boolean> = [];
       let isMaybeSingle = false;
+      let isUpdate = false;
 
       const allRows = (): any[] => (table === "profiles" ? [profileRow] : []);
 
@@ -1362,13 +1366,18 @@ describe("PATCH /api/me/profile — old storage file cleanup on clear", () => {
         order()    { return b; },
         limit()    { return b; },
         insert()   { return b; },
-        update()   { return b; },
+        update()   { isUpdate = true; return b; },
         upsert()   { return b; },
         delete()   { return b; },
         maybeSingle() { isMaybeSingle = true; return b; },
         single()      { isMaybeSingle = true; return b; },
 
         then(onF: (v: any) => any, onR?: (e: any) => any) {
+          if (isUpdate && table === "profiles" && failFirstUpdate) {
+            const err = failFirstUpdate;
+            failFirstUpdate = null; // fail only the first attempt; the retry succeeds
+            return Promise.resolve({ data: null, error: err }).then(onF, onR);
+          }
           const rows = allRows().filter((r) => filters.every((f) => f(r)));
           const result: any = isMaybeSingle
             ? { data: rows[0] ?? null, error: null }
@@ -1414,6 +1423,8 @@ describe("PATCH /api/me/profile — old storage file cleanup on clear", () => {
 
     const app = express();
     app.use(express.json());
+    // The fallback path logs via req.log — stub it (pino is not wired in tests).
+    app.use((req, _res, next) => { (req as any).log = { warn() {}, error() {}, info() {} }; next(); });
     app.use("/api", profileRouter);
 
     srv = http.createServer(app);
@@ -1636,6 +1647,60 @@ describe("PATCH /api/me/profile — old storage file cleanup on clear", () => {
       removedPaths,
       [],
       `no removal expected when new URL equals old URL — got: ${JSON.stringify(removedPaths)}`,
+    );
+  });
+
+  // ── Schema-drift fallback path (first update fails PGRST204, retry succeeds) ──
+  // The fallback early-returns a 200 with `unsavedFields`; the old-file cleanup
+  // must still run for fields that were actually persisted (avatar_url is a
+  // base column). cover_photo_url is stripped by the fallback, so the old
+  // cover must NOT be deleted — it's still live.
+
+  it("still removes the old avatar file when the update takes the schema-drift fallback path", async () => {
+    removedPaths = [];
+    profileRow = {
+      ...PROFILE_ROW_WITH_SENSITIVE,
+      avatar_url: STORAGE_BASE + OLD_AVATAR_PATH,
+      cover_photo_url: null,
+    };
+    failFirstUpdate = { code: "PGRST204", message: "column profiles.travel_pace does not exist" };
+
+    const { status, body } = await patchProfile({
+      avatarUrl: STORAGE_BASE + `avatars/${USER_ID}/new-avatar.jpg`,
+      travelPace: "slow", // stripped by fallback → forces the unsavedFields 200 early return
+    });
+    assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    assert.deepEqual(body.unsavedFields, ["travelPace"], "expected the fallback partial-success response");
+    await flushCleanup();
+
+    assert.deepEqual(
+      removedPaths,
+      [OLD_AVATAR_PATH],
+      `expected old avatar path to be removed on the fallback path — got: ${JSON.stringify(removedPaths)}`,
+    );
+  });
+
+  it("does NOT remove the old cover file on the fallback path — cover_photo_url is stripped, so the old cover is still live", async () => {
+    removedPaths = [];
+    profileRow = {
+      ...PROFILE_ROW_WITH_SENSITIVE,
+      avatar_url: null,
+      cover_photo_url: STORAGE_BASE + OLD_COVER_PATH,
+    };
+    failFirstUpdate = { code: "PGRST204", message: "column profiles.cover_photo_url does not exist" };
+
+    const { status, body } = await patchProfile({
+      coverUrl: STORAGE_BASE + `covers/${USER_ID}/new-cover.jpg`,
+      bio: "still saved", // base column keeps the fallback write non-empty
+    });
+    assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    assert.deepEqual(body.unsavedFields, ["coverUrl"], "expected coverUrl to be reported unsaved");
+    await flushCleanup();
+
+    assert.deepEqual(
+      removedPaths,
+      [],
+      `old cover must NOT be removed when its column was not persisted — got: ${JSON.stringify(removedPaths)}`,
     );
   });
 
