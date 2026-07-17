@@ -1177,6 +1177,80 @@ describe("background correction sweep", () => {
     );
   });
 
+  it("tombstone-sweep eviction: repopulates the in-memory cache so the next call is served instantly", async () => {
+    // Step 1: populate the in-memory cache with a stale entry (CA for Banff).
+    _setGeocodeFetchForTests(fakeNominatim({
+      "banff": { country_code: "ca", country: "Canada" },
+    }));
+    await geocodeCityCountry("Banff");
+    assert.equal(fetchCalls.length, 1, "first resolve should hit Nominatim once");
+
+    // Step 2: build a DB client that simulates the tombstone-sweep (Pass 2) path:
+    //   • Pass 1 (corrected_at gte): no recently-corrected rows
+    //   • Pass 2 (deleted_at gte + not null): "banff" row is tombstoned
+    //   • delete(): hard-deletes the tombstone row
+    //   • readDbCache (maybeSingle): returns null — row was hard-deleted
+    //   • writeDbCache (upsert): succeeds silently
+    const deletedAt = new Date(Date.now() + 1_000).toISOString();
+    const tombstoneDb = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache");
+        let _isMaybeSingle = false;
+        let _isDelete = false;
+        let _gteColumn = "";
+        const chain: any = {
+          select()       { return chain; },
+          eq()           { return chain; },
+          gte(col: string) { _gteColumn = col; return chain; },
+          not()          { return chain; },
+          in()           { return chain; },
+          delete()       { _isDelete = true; return chain; },
+          maybeSingle()  { _isMaybeSingle = true; return chain; },
+          async upsert(_row: any) { return { error: null }; },
+          then(resolve: (v: any) => void) {
+            if (_isDelete) {
+              // Hard-delete of tombstone rows — succeeds silently.
+              resolve({ error: null });
+            } else if (_isMaybeSingle) {
+              // readDbCache path: row was hard-deleted — return null.
+              resolve({ data: null, error: null });
+            } else if (_gteColumn === "deleted_at") {
+              // Pass 2 (tombstone sweep): "banff" has deleted_at set.
+              resolve({ data: [{ city_key: "banff", deleted_at: deletedAt }], error: null });
+            } else {
+              // Pass 1 (corrected_at sweep): no recently-corrected rows.
+              resolve({ data: [], error: null });
+            }
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+
+    // Step 3: run the sweep — Pass 2 should evict the in-memory "banff" entry.
+    _setGeocodeDbClientForTests(tombstoneDb);
+    await _runCorrectionSweepForTests();
+
+    // Step 4: set up Nominatim to return a fresh result (GB for illustration).
+    fetchCalls = [];
+    _setGeocodeFetchForTests(fakeNominatim({
+      "banff": { country_code: "gb", country: "United Kingdom" },
+    }));
+
+    // Step 5: first call after eviction re-geocodes and repopulates the cache.
+    const r1 = await geocodeCityCountry("Banff");
+    assert.equal(fetchCalls.length, 1, "exactly one Nominatim call should be made after tombstone eviction");
+    assert.ok(r1 !== null, "should return a resolved result");
+    assert.equal(r1!.countryCode, "GB", "should return the fresh Nominatim country code");
+    assert.equal(r1!.country, "United Kingdom", "should return the fresh Nominatim country name");
+
+    // Step 6: second call must be served directly from the in-memory cache —
+    // no extra Nominatim fetch, no DB read, and the same result as the first call.
+    const r2 = await geocodeCityCountry("Banff");
+    assert.equal(fetchCalls.length, 1, "second call must not trigger another Nominatim fetch");
+    assert.deepEqual(r2, r1, "second call must return the same result as the first");
+  });
+
   it("after deletion-eviction re-geocode, a writeDbCache failure still returns the fresh result and caches it in-memory", async () => {
     // Step 1: populate the in-memory cache with an initial positive entry (CA for Banff).
     _setGeocodeFetchForTests(fakeNominatim({
