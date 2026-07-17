@@ -17,6 +17,12 @@ When seeding production-like data for a profile, always query the **live** schem
 
 4. **`profileTabs.ts` `/users/:username/stamps` endpoint queries a non-existent `stamps` table.** The app actually fetches profile stamps via `/stamps/profile/:username` (in `routes/stamps.ts`), which reads `user_stamps`. So the demo data needed to be in `user_stamps` to render on the profile; `passport_stamps` alone is not surfaced there.
 
+5. **`event_roles` has no `id` column.** The live table uses a composite key on `(event_id, user_id)`, while `database.types.ts` shows a single `id`. Upserts must target the composite key.
+
+6. **`events` discovery code referenced `profiles.is_verified`.** The live `profiles` column is `verified`, not `is_verified`. This caused the gate queries to fail and the event feed to return zero rows for users with age/verified-only gates. We aligned the events route to the live column.
+
+7. **`/api/users/:userId/events` in `events.ts` shadowed the public `/users/:username/events` profile tab.** Both routes were mounted at the same path; the auth-gated one won, so unauthenticated profile viewers got 401. We removed the duplicate route and made `profileTabs.ts` resolve by UUID as well as handle/username.
+
 ## Idempotency
 
 Use deterministic UUIDs (e.g., UUIDv5 keyed by the target profile id and a seed string) so reruns skip already-inserted rows instead of duplicating content.

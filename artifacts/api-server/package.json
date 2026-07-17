@@ -25,6 +25,8 @@
     "test:trip-completion": "node --import tsx/esm --test src/test/tripCompletion.test.ts",
     "seed:demo-profile": "node --env-file-if-exists=.env --import tsx/esm src/scripts/seed-demo-profile.ts",
     "verify:demo-profile": "node --env-file-if-exists=.env --import tsx/esm src/scripts/verify-demo-profile.ts",
+    "verify:events-discovery": "node --env-file-if-exists=.env --import tsx/esm src/scripts/verify-events-discovery.ts",
+    "fix:demo-events-city": "node --env-file-if-exists=.env --import tsx/esm src/scripts/fix-demo-events-city.ts",
     "smoke:stamps": "node --import tsx/esm src/scripts/stamp-smoke-check.ts",
     "test:trip-members": "node --import tsx/esm --test src/test/tripMembers.test.ts",
     "test:trip-invite-respond": "node --import tsx/esm --test src/test/tripInviteRespond.test.ts",

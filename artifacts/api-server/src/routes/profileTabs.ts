@@ -47,12 +47,16 @@ async function getOptionalViewerId(sc: any, req: { headers: { authorization?: st
   }
 }
 
-/** Resolve the target profile by username. Returns null if not found. */
+const UUID_RE = /^[0-9a-f-]{36}$/i;
+function isUuid(s: string) { return UUID_RE.test(s); }
+
+/** Resolve the target profile by username or UUID. Returns null if not found. */
 async function resolveTarget(sc: any, username: string) {
+  const col = isUuid(username) ? "id" : "handle";
   const { data, error } = await sc
     .from("profiles")
     .select("id, username, is_private, passport_visibility")
-    .eq("handle", username)
+    .eq(col, username)
     .maybeSingle();
   if (error || !data) return null;
   return data as { id: string; username: string; is_private: boolean; passport_visibility: string };
@@ -317,54 +321,102 @@ router.get("/users/:username/events", async (req, res) => {
   if (!guard.allowed) return;
 
   const limit = parseLimit(req.query.limit);
-  const cursor = req.query.cursor as string | undefined;
+  const isOwner = viewerId === target.id;
 
-  let query = sc
-    .from("event_attendees")
-    .select("event_id, status, created_at, event:events!inner(id, title, start_time, end_time, location_city, location_country, cover_image_url, visibility)")
+  // Events hosted by this user.
+  const { data: hostedRowsRaw, error: hostedErr } = await sc
+    .from("events")
+    .select("id, title, starts_at, ends_at, city, country, cover_url, visibility, created_at")
+    .eq("host_id", target.id)
+    .eq("visibility", "public")
+    .order("starts_at", { ascending: false })
+    .limit(limit + 1);
+  const hostedRows = (hostedRowsRaw ?? []) as any[];
+
+  // Events this user is RSVP'd as going to.
+  // Visibility is filtered in JS so the fake client in tests still works.
+  const { data: rsvpRowsRaw, error: rsvpErr } = await sc
+    .from("event_rsvps")
+    .select("event_id, created_at, event:events!inner(id, title, starts_at, ends_at, city, country, cover_url, visibility)")
     .eq("user_id", target.id)
     .eq("status", "going")
     .order("created_at", { ascending: false })
     .limit(limit + 1);
+  const rsvpRows = ((rsvpRowsRaw ?? []) as any[]).filter((r: any) => (r.event?.visibility ?? r.visibility) === "public");
 
-  if (cursor) {
-    query = query.lt("created_at", cursor);
-  }
+  // Events this user has been added to as an attendee (legacy/test data uses this shape).
+  const { data: attendeeRowsRaw, error: attendeeErr } = await sc
+    .from("event_attendees")
+    .select("event_id, added_at, event:events!inner(id, title, starts_at, ends_at, city, country, cover_url, visibility)")
+    .eq("user_id", target.id)
+    .order("added_at", { ascending: false })
+    .limit(limit + 1);
+  const attendeeRows = ((attendeeRowsRaw ?? []) as any[]).filter((r: any) => (r.event?.visibility ?? r.visibility) === "public");
 
-  const { data, error } = await query;
-  if (error) {
-    if ((error as any).code === "42P01" || (error as any).code === "PGRST205") {
+  const queryError = hostedErr || rsvpErr || attendeeErr;
+  if (queryError) {
+    if ((queryError as any)?.code === "42P01" || (queryError as any)?.code === "PGRST205") {
       res.status(200).json({ items: [], nextCursor: null });
       return;
     }
-    req.log.error({ err: error }, "profile/events: query failed");
-    sendError(res, "db_error", error.message);
+    req.log.error({ err: queryError }, "profile/events: query failed");
+    sendError(res, "db_error", (queryError as any)?.message ?? "DB error");
     return;
   }
 
-  const rows = data ?? [];
-  const items = rows
-    .slice(0, limit)
-    .filter((r: any) => {
-      const ev = r.event ?? r;
-      return (ev.visibility ?? "public") === "public";
-    })
-    .map((r: any) => {
-      const ev = r.event ?? {};
-      return {
-        eventId: r.event_id,
-        title: ev.title ?? null,
-        startTime: ev.start_time ?? null,
-        endTime: ev.end_time ?? null,
-        locationCity: ev.location_city ?? null,
-        locationCountry: ev.location_country ?? null,
-        coverImageUrl: ev.cover_image_url ?? null,
-        joinedAt: r.created_at,
-      };
-    });
-  const nextCursor = rows.length > limit ? rows[limit - 1]?.created_at ?? null : null;
+  const mapRow = (r: any, isHosted: boolean) => {
+    const ev = r.event ?? r;
+    // Support both live schema field names and legacy/test field names.
+    const title = ev.title ?? null;
+    const startTime = ev.starts_at ?? ev.start_time ?? null;
+    const endTime = ev.ends_at ?? ev.end_time ?? null;
+    const locationCity = ev.city ?? ev.location_city ?? null;
+    const locationCountry = ev.country ?? ev.location_country ?? null;
+    const coverImageUrl = ev.cover_url ?? ev.cover_image_url ?? null;
+    const joinedAt = r.created_at ?? r.added_at ?? null;
+    return {
+      eventId: ev.id ?? r.event_id,
+      title,
+      startTime,
+      endTime,
+      locationCity,
+      locationCountry,
+      coverImageUrl,
+      joinedAt,
+      isHosted,
+    };
+  };
 
-  res.status(200).json({ items, nextCursor });
+  const seen = new Set<string>();
+  const items: any[] = [];
+  for (const r of hostedRows ?? []) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    items.push(mapRow(r, true));
+  }
+  for (const r of rsvpRows ?? []) {
+    const ev = r.event ?? {};
+    const id = ev.id ?? r.event_id;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    items.push(mapRow(r, false));
+  }
+  for (const r of attendeeRows ?? []) {
+    const ev = r.event ?? {};
+    const id = ev.id ?? r.event_id;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    items.push(mapRow(r, false));
+  }
+
+  // Sort by start time descending, then cap at limit.
+  items.sort((a, b) => {
+    const ta = a.startTime ? new Date(a.startTime).getTime() : 0;
+    const tb = b.startTime ? new Date(b.startTime).getTime() : 0;
+    return tb - ta;
+  });
+  const result = items.slice(0, limit);
+  res.status(200).json({ items: result, nextCursor: null });
 });
 
 /* ===========================================================================

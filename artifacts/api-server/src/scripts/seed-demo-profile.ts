@@ -46,6 +46,46 @@ function uuidv5(name: string, namespace: string): string {
 
 const SEED_NS = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"; // deterministic seed namespace
 
+// ── Generic demo events ───────────────────────────────────────────────────────
+const EVENT_CITIES = [
+  { city: "Cebu", country: "Philippines", lat: 10.3157, lng: 123.8854 },
+  { city: "Manila", country: "Philippines", lat: 14.5995, lng: 120.9842 },
+  { city: "Siargao", country: "Philippines", lat: 9.8482, lng: 126.0454 },
+  { city: "Palawan", country: "Philippines", lat: 9.834, lng: 118.7365 },
+  { city: "Tokyo", country: "Japan", lat: 35.6762, lng: 139.6503 },
+  { city: "Bangkok", country: "Thailand", lat: 13.7563, lng: 100.5018 },
+  { city: "Seoul", country: "South Korea", lat: 37.5665, lng: 126.978 },
+  { city: "Miami", country: "USA", lat: 25.7617, lng: -80.1918 },
+  { city: "Fort Lauderdale", country: "USA", lat: 26.1224, lng: -80.1373 },
+  { city: "Singapore", country: "Singapore", lat: 1.3521, lng: 103.8198 },
+  { city: "Hong Kong", country: "Hong Kong", lat: 22.3193, lng: 114.1694 },
+  { city: "Taipei", country: "Taiwan", lat: 25.033, lng: 121.5654 },
+  { city: "Hanoi", country: "Vietnam", lat: 21.0278, lng: 105.8342 },
+];
+
+const EVENT_TITLES = [
+  { title: "Sunset rooftop drinks", category: "nightlife", duration: 3, max: 24 },
+  { title: "Local food crawl", category: "food crawl", duration: 4, max: 12 },
+  { title: "Beach day & island hopping", category: "beach day", duration: 6, max: 16 },
+  { title: "Hidden waterfall hike", category: "hiking", duration: 5, max: 10 },
+  { title: "Live indie concert night", category: "concert", duration: 4, max: 40 },
+  { title: "Morning coffee meetup", category: "coffee meetup", duration: 2, max: 8 },
+  { title: "Old town walking tour", category: "city walk", duration: 3, max: 15 },
+  { title: "Rooftop bar hop", category: "rooftop drinks", duration: 4, max: 20 },
+  { title: "Museum & culture visit", category: "museum visit", duration: 3, max: 14 },
+  { title: "Language exchange dinner", category: "language exchange", duration: 3, max: 12 },
+  { title: "Night market shopping run", category: "shopping", duration: 3, max: 18 },
+  { title: "Golden hour photography walk", category: "photography walk", duration: 2, max: 10 },
+  { title: "Beach yoga & wellness", category: "wellness", duration: 2, max: 20 },
+  { title: "Island hopping boat trip", category: "island hopping", duration: 7, max: 22 },
+  { title: "Hidden gem neighborhood tour", category: "local hidden-gem", duration: 3, max: 12 },
+  { title: "Sunrise temple visit", category: "city walk", duration: 3, max: 16 },
+  { title: "Beach bonfire & music", category: "nightlife", duration: 4, max: 30 },
+  { title: "Cooking class & market tour", category: "food crawl", duration: 4, max: 10 },
+  { title: "Coastal cliff hike", category: "hiking", duration: 5, max: 14 },
+  { title: "Sunset sailing trip", category: "island hopping", duration: 4, max: 12 },
+];
+
 // ── Generic demo destinations ───────────────────────────────────────────────
 const DESTINATIONS = [
   { city: "Tokyo", country: "Japan", lat: 35.6762, lng: 139.6503 },
@@ -453,6 +493,127 @@ async function seedHighlights(profileId: string) {
   return upsertRows("highlights", rows);
 }
 
+async function seedEvents(profileId: string) {
+  const now = new Date();
+  const events = EVENT_TITLES.map((template, i) => {
+    const id = uuidv5(`event:${profileId}:${i}`, SEED_NS);
+    const loc = EVENT_CITIES[i % EVENT_CITIES.length];
+    const isPast = i < 7;
+    const isSoon = i >= 7 && i < 13;
+    const start = new Date(now);
+    if (isPast) {
+      start.setUTCDate(start.getUTCDate() - (14 + i * 3));
+    } else if (isSoon) {
+      start.setUTCDate(start.getUTCDate() + (i - 7));
+      start.setUTCHours(18 + (i % 3), 0, 0, 0);
+    } else {
+      start.setUTCDate(start.getUTCDate() + (7 + (i - 13) * 5));
+      start.setUTCHours(10 + (i % 8), 0, 0, 0);
+    }
+    const end = new Date(start);
+    end.setUTCHours(start.getUTCHours() + template.duration);
+
+    const state = isPast ? "completed" : isSoon ? "open" : "open";
+    const visibility = i % 5 === 0 ? "friends_only" : i % 7 === 0 ? "invite_only" : "public";
+    const maxAttendees = template.max;
+    const goingCount = Math.min(1 + (i % 5), maxAttendees);
+    const createdAt = isPast ? dateDaysAgo(20 + i * 2) : dateDaysAgo(2);
+
+    return {
+      id,
+      host_id: profileId,
+      title: template.title,
+      description: `A ${template.category} experience in ${loc.city}. Open to travelers who want to connect, explore, and share the moment.`,
+      city: loc.city,
+      country: loc.country,
+      location_name: `${loc.city}, ${loc.country}`,
+      location_lat: loc.lat,
+      location_lng: loc.lng,
+      starts_at: start.toISOString(),
+      ends_at: end.toISOString(),
+      cover_url: mediaUrl(`event-cover-${i}`, 1200, 800),
+      max_attendees: maxAttendees,
+      going_count: goingCount,
+      waitlist_count: 0,
+      state,
+      visibility,
+      category: template.category,
+      tags: [template.category, "demo", loc.city.toLowerCase().replace(/\s+/g, "-")],
+      rsvp_options: ["going", "maybe", "interested", "cant_go"],
+      rsvp_closed: false,
+      price_type: i % 3 === 0 ? "free" : "external",
+      price_url: i % 3 === 0 ? null : "https://example.com/tickets",
+      ticket_url: i % 3 === 0 ? null : "https://example.com/tickets",
+      age_min: 18,
+      age_max: 65,
+      trust_score_min: 0,
+      verified_only: i % 4 === 0,
+      waitlist_enabled: true,
+      chat_enabled: true,
+      attendee_comments_enabled: true,
+      show_exact_location: true,
+      safety_notes: i % 4 === 0 ? "Please bring ID and arrive 15 minutes early." : null,
+      is_recurring: false,
+      recurring_config: null,
+      trip_id: null,
+      circle_id: null,
+      chat_thread_id: null,
+      created_at: createdAt,
+      updated_at: createdAt,
+    };
+  });
+  const eventResult = await upsertRows("events", events);
+
+  // Insert host role, RSVP, and attendee rows for each seeded event.
+  const hostRoleRows = events.map((ev) => ({
+    event_id: ev.id,
+    user_id: profileId,
+    role: "host",
+    created_at: ev.created_at,
+  }));
+  const hostRoleResult = await upsertCompositeRows("event_roles", hostRoleRows, "event_id,user_id");
+
+  const rsvpRows = events.map((ev) => ({
+    event_id: ev.id,
+    user_id: profileId,
+    status: "going",
+    created_at: ev.created_at,
+    updated_at: ev.created_at,
+  }));
+  const rsvpResult = await upsertCompositeRows("event_rsvps", rsvpRows, "event_id,user_id");
+
+  const attendeeRows = events.map((ev) => ({
+    event_id: ev.id,
+    user_id: profileId,
+    added_at: ev.created_at,
+  }));
+  const attendeeResult = await upsertCompositeRows("event_attendees", attendeeRows, "event_id,user_id");
+
+  return { eventResult, hostRoleResult, rsvpResult, attendeeResult };
+}
+
+async function upsertCompositeRows(table: string, rows: any[], conflictFields: string) {
+  if (rows.length === 0) return { inserted: 0, skipped: 0 };
+  if (DRY_RUN) {
+    console.log(`[DRY-RUN] would insert ${rows.length} rows into ${table}`);
+    return { inserted: 0, skipped: rows.length };
+  }
+  const eventIds = [...new Set(rows.map((r) => r.event_id))];
+  const { data: existing } = await sc
+    .from(table)
+    .select(`event_id,user_id`)
+    .in("event_id", eventIds);
+  const existingSet = new Set((existing ?? []).map((r: any) => `${r.event_id}:${r.user_id}`));
+  const toInsert = rows.filter((r) => !existingSet.has(`${r.event_id}:${r.user_id}`));
+  if (toInsert.length === 0) return { inserted: 0, skipped: rows.length };
+  const { error } = await sc.from(table).upsert(toInsert, { onConflict: conflictFields });
+  if (error) {
+    console.error(`Insert into ${table} failed:`, error.message);
+    throw error;
+  }
+  return { inserted: toInsert.length, skipped: rows.length - toInsert.length };
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────────
 async function main() {
   console.log(`Seeding demo content for ${EMAIL} (dry-run=${DRY_RUN})…`);
@@ -480,6 +641,7 @@ async function main() {
   const userStampResult = await seedUserStamps(profile.id, definitions);
   const { memoryResult, itemResult } = await seedMemories(profile.id);
   const highlightResult = await seedHighlights(profile.id);
+  const { eventResult, hostRoleResult, rsvpResult, attendeeResult } = await seedEvents(profile.id);
 
   console.log("\nSeeding summary:");
   console.log(`  Trips:          ${tripResult.inserted} inserted, ${tripResult.skipped} skipped`);
@@ -491,6 +653,10 @@ async function main() {
   console.log(`  Memories:       ${memoryResult.inserted} inserted, ${memoryResult.skipped} skipped`);
   console.log(`  Memory Items:   ${itemResult.inserted} inserted, ${itemResult.skipped} skipped`);
   console.log(`  Highlights:     ${highlightResult.inserted} inserted, ${highlightResult.skipped} skipped`);
+  console.log(`  Events:         ${eventResult.inserted} inserted, ${eventResult.skipped} skipped`);
+  console.log(`  Event Host Roles: ${hostRoleResult.inserted} inserted, ${hostRoleResult.skipped} skipped`);
+  console.log(`  Event RSVPs:    ${rsvpResult.inserted} inserted, ${rsvpResult.skipped} skipped`);
+  console.log(`  Event Attendees: ${attendeeResult.inserted} inserted, ${attendeeResult.skipped} skipped`);
 
   console.log("\nDone. Re-run the script anytime; it will skip rows that already exist.");
 }

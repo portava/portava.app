@@ -376,8 +376,8 @@ async function checkEventEligibility(
   const trustGatesEnabled = await isFlagEnabled(sc, "events_trust_gates_enabled");
   if (trustGatesEnabled) {
     if (ev.verified_only) {
-      const { data: profile } = await sc.from("profiles").select("is_verified").eq("id", userId).maybeSingle();
-      if (!(profile as any)?.is_verified) {
+      const { data: profile } = await sc.from("profiles").select("verified").eq("id", userId).maybeSingle();
+      if (!(profile as any)?.verified) {
         return { ok: false, errorCode: "forbidden", message: "This event is for verified users only" };
       }
     }
@@ -689,11 +689,11 @@ router.get("/events", async (req, res) => {
     trustGatesEnabled = await isFlagEnabled(sc, "events_trust_gates_enabled");
     if (trustGatesEnabled) {
       const [profileRes, tpRes] = await Promise.all([
-        sc.from("profiles").select("is_verified, date_of_birth").eq("id", user.id).maybeSingle(),
+        sc.from("profiles").select("verified, date_of_birth").eq("id", user.id).maybeSingle(),
         sc.from("trust_profiles").select("overall_score").eq("user_id", user.id).maybeSingle(),
       ]);
       const profile = (profileRes as any).data;
-      viewerVerified = !!profile?.is_verified;
+      viewerVerified = !!profile?.verified;
       viewerTrust = ((tpRes as any).data)?.overall_score ?? 50;
       viewerAge = profile?.date_of_birth
         ? Math.floor((Date.now() - new Date(profile.date_of_birth).getTime()) / (1000 * 60 * 60 * 24 * 365.25))
@@ -2274,8 +2274,8 @@ router.post("/events/:id/waitlist", async (req, res) => {
   const trustGatesEnabledWl = await isFlagEnabled(sc, "events_trust_gates_enabled");
   if (trustGatesEnabledWl) {
     if ((ev as any).verified_only) {
-      const { data: profileWl } = await sc.from("profiles").select("is_verified").eq("id", user.id).maybeSingle();
-      if (!(profileWl as any)?.is_verified) {
+      const { data: profileWl } = await sc.from("profiles").select("verified").eq("id", user.id).maybeSingle();
+      if (!(profileWl as any)?.verified) {
         sendError(res, "forbidden", "This event is for verified users only"); return;
       }
     }
@@ -3136,79 +3136,6 @@ router.post("/events/:id/updates", async (req, res) => {
   }
 
   res.status(201).json(update);
-});
-
-// ── GET /api/users/:userId/events ─────────────────────────────────────────────
-
-router.get("/users/:userId/events", async (req, res) => {
-  const ctx = await requireUser(req, res);
-  if (!ctx) return;
-  const { user } = ctx;
-
-  const { userId } = req.params;
-  if (!isUuid(userId)) { sendError(res, "invalid_payload", "Invalid userId"); return; }
-
-  const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
-
-  const isOwnProfile = userId === user.id;
-
-  // Events hosted by this user
-  let query = sc
-    .from("events")
-    .select("*")
-    .eq("host_id", userId)
-    .order("starts_at", { ascending: false })
-    .limit(20);
-
-  if (!isOwnProfile) {
-    query = query.not("state", "in", '("draft","cancelled","archived")');
-  }
-
-  const { data: hostedEvents } = await query;
-
-  // Events they RSVPd to (Going only)
-  const { data: rsvps } = await sc
-    .from("event_rsvps")
-    .select("event_id")
-    .eq("user_id", userId)
-    .eq("status", "going");
-
-  const rsvpIds = ((rsvps as any[]) ?? []).map((r: any) => r.event_id as string);
-  let attendedEvents: any[] = [];
-  if (rsvpIds.length > 0) {
-    const { data: ev } = await sc
-      .from("events")
-      .select("*")
-      .in("id", rsvpIds)
-      .not("state", "in", '("draft","cancelled")')
-      .order("starts_at", { ascending: false })
-      .limit(20);
-    attendedEvents = (ev as any[]) ?? [];
-  }
-
-  // Determine which events the viewer (not the profile owner) is an RSVP'd participant of
-  const allProfileEventIds = [
-    ...((hostedEvents as any[]) ?? []).map((e: any) => e.id as string),
-    ...attendedEvents.map((e: any) => e.id as string),
-  ];
-  const viewerRsvpSet = new Set<string>();
-  if (allProfileEventIds.length > 0) {
-    const { data: vRsvps } = await sc.from("event_rsvps").select("event_id, status")
-      .eq("user_id", user.id).in("event_id", allProfileEventIds);
-    for (const r of (vRsvps as any[]) ?? []) {
-      if (r.status === "going" || r.status === "maybe") viewerRsvpSet.add(r.event_id as string);
-    }
-  }
-
-  res.json({
-    hosted: ((hostedEvents as any[]) ?? []).map((e: any) =>
-      formatEvent(e, user.id, { goingRsvp: viewerRsvpSet.has(e.id as string) }),
-    ),
-    attending: attendedEvents.map((e: any) =>
-      formatEvent(e, user.id, { goingRsvp: viewerRsvpSet.has(e.id as string) }),
-    ),
-  });
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
