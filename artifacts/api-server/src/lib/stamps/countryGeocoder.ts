@@ -193,6 +193,11 @@ export function _getGeocodeCacheEntryForTests(cityKey: string): CacheEntry | und
   return _cache.get(cityKey);
 }
 
+/** Test-only: return the current number of entries in the in-memory cache. */
+export function _getCacheSizeForTests(): number {
+  return _cache.size;
+}
+
 /**
  * Test-only: set correctionCheckedAt to 0 for a given key so the next
  * geocodeCityCountry call immediately re-probes the DB for corrected_at,

@@ -38,6 +38,7 @@ import {
   _clearCountryGeocodeCache,
   _runCorrectionSweepForTests,
   _getGeocodeCacheEntryForTests,
+  _getCacheSizeForTests,
 } from "../lib/stamps/countryGeocoder.js";
 
 // ── Timing control ────────────────────────────────────────────────────────────
@@ -3041,5 +3042,103 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     await geocodeCityCountry("Berlin");
     assert.equal(nominatimCalls, 2,
       "Nominatim called for berlin after cycle 2 eviction — Pass 2 correctly evicted the entry");
+  });
+
+  it("cache-size cap (2000 entries) evicts the oldest entry after a deletion-eviction re-geocode", async () => {
+    // This test confirms that a re-geocode triggered by a deletion-eviction
+    // (evictGeocodeCacheKey + subsequent geocodeCityCountry call) goes through
+    // the pending-promise path and still triggers the MAX_CACHE_SIZE trim —
+    // the oldest entry is removed and the cache never exceeds 2 000 entries.
+    const MAX_CACHE_SIZE = 2_000;
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // No DB cache — every geocode falls through to the Nominatim mock.
+    _setGeocodeDbClientForTests(makeFixedDbClient(null));
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async (url: string) => {
+      nominatimCalls++;
+      const q = decodeURIComponent(new URL(url).searchParams.get("q") ?? "");
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "de", country: "Germany" } }],
+      };
+    });
+
+    // Step 1: fill cache with 1 999 synthetic entries (city0 … city1998).
+    // The throttle is disabled when a fetch mock is installed, so this is fast.
+    for (let i = 0; i < MAX_CACHE_SIZE - 1; i++) {
+      await geocodeCityCountry(`synth-city-${i}`);
+    }
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE - 1,
+      "pre-condition: cache has 1 999 entries");
+
+    // The oldest entry in the Map is the very first one inserted ("synth-city-0").
+    const oldestKey = "synth-city-0";
+    assert.ok(
+      _getGeocodeCacheEntryForTests(oldestKey) !== undefined,
+      "pre-condition: oldest entry (synth-city-0) is present before cap fills",
+    );
+
+    // Step 2: geocode "targetcity" for the first time — this brings the cache
+    // to exactly MAX_CACHE_SIZE (2 000).
+    await geocodeCityCountry("targetcity");
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE,
+      "cache is now at the cap after adding targetcity");
+
+    // Step 3: simulate an admin DELETE on another instance by evicting the
+    // in-memory entry.  The cache drops to 1 999.
+    evictGeocodeCacheKey("targetcity");
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE - 1,
+      "cache dropped by one after deletion-eviction of targetcity");
+
+    // Step 4: add one more synthetic city to bring the cache back to exactly
+    // MAX_CACHE_SIZE — so the next write *must* trigger the trim.
+    await geocodeCityCountry(`synth-city-${MAX_CACHE_SIZE - 1}`);
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE,
+      "cache is back at the cap after adding the last synthetic entry");
+
+    // Step 5: re-geocode "targetcity" — this is the deletion-eviction re-geocode.
+    // Because the in-memory entry was evicted and the DB returns null, the async
+    // IIFE inside geocodeCityCountry runs the full pending-promise path (readDbCache
+    // → forwardGeocodeCity).  Just before writing the result it checks:
+    //   if (_cache.size >= MAX_CACHE_SIZE) evict oldest
+    // so the oldest entry must be removed and the cache must stay at MAX_CACHE_SIZE.
+    const nominatimCallsBefore = nominatimCalls;
+    const result = await geocodeCityCountry("targetcity");
+
+    assert.equal(result?.countryCode, "DE",
+      "re-geocode returns the Nominatim result for targetcity");
+    assert.ok(nominatimCalls > nominatimCallsBefore,
+      "Nominatim was called during the deletion-eviction re-geocode");
+
+    // The cache must not exceed the cap.
+    assert.equal(_getCacheSizeForTests(), MAX_CACHE_SIZE,
+      "cache size did not exceed MAX_CACHE_SIZE after the deletion-eviction re-geocode");
+
+    // The re-geocoded city must be present in the cache.
+    const targetEntry = _getGeocodeCacheEntryForTests("targetcity");
+    assert.ok(targetEntry !== undefined, "targetcity is present in the cache after re-geocode");
+    assert.equal(targetEntry?.result?.countryCode, "DE",
+      "targetcity cache entry holds the fresh Nominatim result");
+
+    // The oldest entry that was in the cache when the re-geocode ran must have
+    // been evicted.  After evictGeocodeCacheKey("targetcity") the new oldest
+    // entry in the Map is synth-city-1 (synth-city-0 was already the oldest
+    // when targetcity was first added, but is still present — the first eviction
+    // is triggered by the initial targetcity write to bring the cache above
+    // MAX_CACHE_SIZE for the first time in the loop, not yet; actually synth-city-0
+    // was never evicted up to this point because we only hit MAX_CACHE_SIZE at
+    // step 2, and the write check is _cache.size >= MAX_CACHE_SIZE BEFORE the
+    // set, so the cap fires at step 5 when the cache is at 2000 and we write
+    // targetcity again).
+    //
+    // At step 5 the cache is at 2000.  The trim in the IIFE deletes the current
+    // first key, which is synth-city-0 (inserted first and never evicted).
+    assert.ok(
+      _getGeocodeCacheEntryForTests(oldestKey) === undefined,
+      "oldest entry (synth-city-0) was evicted by the cache-size trim during the re-geocode",
+    );
   });
 });
