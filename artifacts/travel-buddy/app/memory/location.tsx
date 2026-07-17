@@ -115,6 +115,7 @@ export default function LocationMemoryFeedScreen() {
   const [error, setError] = useState<string | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
+  const [totalCount, setTotalCount] = useState<number | null>(null);
 
   const loadPage = useCallback(async (before?: string | null) => {
     if (before) setLoadingMore(true);
@@ -127,9 +128,14 @@ export default function LocationMemoryFeedScreen() {
 
     if (res.ok) {
       if (before) {
-        setMemories((prev) => [...prev, ...res.memories]);
+        setMemories((prev) => {
+          const next = [...prev, ...res.memories];
+          setTotalCount(next.length);
+          return next;
+        });
       } else {
         setMemories(res.memories);
+        setTotalCount(res.memories.length);
       }
       setCursor(res.nextCursor);
       setHasMore(!!res.nextCursor);
@@ -156,7 +162,13 @@ export default function LocationMemoryFeedScreen() {
           <MapPin size={14} color={color.signal} />
           <Text style={s.topTitle} numberOfLines={1}>{displayLabel}</Text>
         </View>
-        <Text style={s.topSub}>Memories from this place</Text>
+        <Text style={s.topSub}>
+          {totalCount === null
+            ? 'Memories from this place'
+            : totalCount === 1
+              ? '1 memory'
+              : `${totalCount} memories`}
+        </Text>
       </View>
       {/* right spacer to balance the back arrow */}
       <View style={{ width: 22 }} />
