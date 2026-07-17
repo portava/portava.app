@@ -231,6 +231,24 @@ router.get("/admin/stamps/catalog", async (req, res) => {
     }
   }
 
+  // Attach active queue status (queued/processing) to any entry that has a
+  // live job, regardless of catalog status. This surfaces partial-failure
+  // states (e.g. a stale "rejected" status after a regenerate whose catalog
+  // status reset failed) without requiring the operator to open each row.
+  if (entries.length > 0) {
+    const { data: activeRows } = await sc
+      .from("stamp_generation_queue")
+      .select("catalog_id, status")
+      .in("catalog_id", entries.map((e) => e.id))
+      .in("status", ["queued", "processing"]);
+    const activeByCatalog = new Map<string, string>(
+      ((activeRows ?? []) as any[]).map((r) => [r.catalog_id, r.status])
+    );
+    for (const e of entries) {
+      if (activeByCatalog.has(e.id)) e.queue_status = activeByCatalog.get(e.id);
+    }
+  }
+
   // Status counts
   const { data: counts } = await sc
     .from("universal_stamp_catalog")
