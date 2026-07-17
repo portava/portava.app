@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import type { NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, ActivityIndicator, RefreshControl } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated';
@@ -46,6 +47,45 @@ const CHIP_LABELS: Partial<Record<PulseFilter, string>> = {
 
 type FeedMode = 'forYou' | 'following';
 
+/** Scroll offsets below this count as "at the top" — new posts prepend automatically. */
+const AT_TOP_THRESHOLD = 80;
+
+/**
+ * Stable creation timestamp for the synthetic rent-a-buddy card so the feed
+ * memo doesn't produce a brand-new item object per render (which would defeat
+ * row memoization and re-render the whole list).
+ */
+const RENT_A_BUDDY_CREATED_AT = new Date(0).toISOString();
+
+/**
+ * Memoized feed row. The delete callback is derived from the stable
+ * (onPostDeleted, item.id) pair inside the row so the props passed to the
+ * memo boundary are themselves stable — inline closures in renderItem would
+ * defeat React.memo and re-render every visible card on each list render.
+ */
+const FeedRow = React.memo(function FeedRow({
+  item,
+  onPostDeleted,
+}: {
+  item: PulseFeedItem;
+  onPostDeleted: (id: string) => void;
+}) {
+  const handleDeleted = useCallback(() => onPostDeleted(item.id), [onPostDeleted, item.id]);
+  if (item.type === 'post') {
+    return <PulseFeedCard item={item} onDeleteSuccess={handleDeleted} />;
+  }
+  return (
+    <View style={{ paddingHorizontal: space.lg }}>
+      <PulseFeedCard item={item} onDeleteSuccess={handleDeleted} />
+    </View>
+  );
+});
+
+/** Module-level separator — a stable reference so FlatList never re-mounts separators. */
+function FeedSeparator({ leadingItem }: { leadingItem?: PulseFeedItem }) {
+  return <View style={{ height: leadingItem?.type === 'post' ? 8 : space.md }} />;
+}
+
 export default function Pulse() {
   const navScrollHandler = useNavBarScrollHandler();
 
@@ -87,11 +127,13 @@ export default function Pulse() {
   // Load learned category affinities from the preference engine so Pulse
   // ranking improves as the user interacts with recommendations.
   useEffect(() => {
+    let cancelled = false;
     fetchPreferences().then((res) => {
-      if (res.ok && res.data?.inferred?.categoryAffinities) {
+      if (!cancelled && res.ok && res.data?.inferred?.categoryAffinities) {
         setCategoryAffinities(res.data.inferred.categoryAffinities);
       }
     }).catch(() => { /* best-effort: silently ignore if not logged in yet */ });
+    return () => { cancelled = true; };
   }, []);
 
   const { buckets, status } = useCityPulse({ currentCitySlug: activeCitySlug, interests: [], categoryAffinities });
@@ -105,18 +147,44 @@ export default function Pulse() {
     followingFeed.markDeleted(id);
   }, [realFeed.markDeleted, followingFeed.markDeleted]);
 
+  // List ref + last-known scroll offset. The offset decides whether buffered
+  // new posts can be prepended silently (user at top) or must wait behind the
+  // "new posts" pill (user mid-feed).
+  const listRef = useRef<FlatList<PulseFeedItem>>(null);
+  const scrollOffsetRef = useRef(0);
+  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+    navScrollHandler(event);
+  }, [navScrollHandler]);
+
+  // On focus: only refresh when the data is stale (TTL), and do it in the
+  // background without replacing the list — so re-entering the tab never
+  // resets the scroll position. Pull-to-refresh still does a full reload.
   useFocusEffect(
     useCallback(() => {
-      realFeed.reload();
-      if (feedMode === 'following') followingFeed.reload();
-    }, [realFeed.reload, followingFeed.reload, feedMode]),
+      realFeed.refreshIfStale();
+      if (feedMode === 'following') followingFeed.refreshIfStale();
+    }, [realFeed.refreshIfStale, followingFeed.refreshIfStale, feedMode]),
   );
+
+  // If new posts arrive while the user is already at (or near) the top,
+  // prepend them automatically — no pill needed, no visible jump.
+  useEffect(() => {
+    if (realFeed.pending.length > 0 && scrollOffsetRef.current < AT_TOP_THRESHOLD) {
+      realFeed.applyPending();
+    }
+  }, [realFeed.pending, realFeed.applyPending]);
+
+  const handleNewPostsPress = useCallback(() => {
+    realFeed.applyPending();
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
+  }, [realFeed.applyPending]);
 
   // When switching to Following, load it on first activation.
   const handleFeedMode = useCallback((mode: FeedMode) => {
     setFeedMode(mode);
-    if (mode === 'following') followingFeed.reload();
-  }, [followingFeed.reload]);
+    if (mode === 'following') followingFeed.refreshIfStale();
+  }, [followingFeed.refreshIfStale]);
 
   const handleRefresh = useCallback(() => {
     setPeopleRefreshKey((k) => k + 1);
@@ -124,8 +192,18 @@ export default function Pulse() {
     else realFeed.reload();
   }, [feedMode, followingFeed.reload, realFeed.reload]);
 
-  const fits = [...buckets.fitsAvailability, ...buckets.openNearby];
+  const fits = useMemo(
+    () => [...buckets.fitsAvailability, ...buckets.openNearby],
+    [buckets.fitsAvailability, buckets.openNearby],
+  );
   const noFits = fits.length === 0;
+
+  // Stable events array for the live banner — a fresh array every render
+  // would defeat the banner's memo and re-measure it during scroll.
+  const bannerEvents = useMemo(
+    () => [...fits, ...buckets.flexible],
+    [fits, buckets.flexible],
+  );
 
   const realItems = useMemo<PulseFeedItem[]>(
     () => (realFeed.data ?? [])
@@ -154,7 +232,7 @@ export default function Pulse() {
       id: '__rent_a_buddy__',
       type: 'rent_a_buddy',
       city: activeCity,
-      createdAt: new Date().toISOString(),
+      createdAt: RENT_A_BUDDY_CREATED_AT,
       tags: [],
       source: 'editorial',
     };
@@ -163,6 +241,14 @@ export default function Pulse() {
   }, [baseFeed, rentBuddyEnabled, feedMode, activeCity]);
 
   const filterCount = active.filter((f) => f !== 'All').length;
+
+  // Stable renderItem/keyExtractor so the FlatList doesn't tear down and
+  // rebuild rows on every screen render (a major source of scroll jank).
+  const renderItem = useCallback(
+    ({ item }: { item: PulseFeedItem }) => <FeedRow item={item} onPostDeleted={handlePostDeleted} />,
+    [handlePostDeleted],
+  );
+  const keyExtractor = useCallback((it: PulseFeedItem) => String(it.id), []);
 
   function toggleQuick(f: PulseFilter) {
     if (f === 'All') { setActive(['All']); return; }
@@ -184,7 +270,7 @@ export default function Pulse() {
       {/* Live multi-status banner — computed from real event buckets + availability */}
       <PulseLiveBanner
         city={activeCity}
-        events={[...fits, ...buckets.flexible]}
+        events={bannerEvents}
         availabilityLabel={status === 'not_set' ? 'Set availability' : STATUS_LABEL[status]}
       />
 
@@ -363,26 +449,37 @@ export default function Pulse() {
         )}
       </View>
 
+      {/* New-posts pill — buffered fresh posts are one tap away, never a scroll jump */}
+      {feedMode === 'forYou' && realFeed.pending.length > 0 && (
+        <View style={styles.newPostsWrap} pointerEvents="box-none">
+          <Pressable
+            style={styles.newPostsPill}
+            onPress={handleNewPostsPress}
+            accessibilityRole="button"
+            accessibilityLabel={`${realFeed.pending.length} new posts. Tap to show`}
+          >
+            <Text style={styles.newPostsText}>↑ {realFeed.pending.length} new post{realFeed.pending.length === 1 ? '' : 's'}</Text>
+          </Pressable>
+        </View>
+      )}
+
       <FlatList
+        ref={listRef}
         data={feed}
-        keyExtractor={(it) => it.id}
+        keyExtractor={keyExtractor}
         ListHeaderComponent={Header}
-        ListFooterComponent={() => <>{Footer}<NavBarFiller /></>}
-        renderItem={({ item }) => (
-          item.type === 'post' ? (
-            <PulseFeedCard item={item} onDeleteSuccess={() => handlePostDeleted(item.id)} />
-          ) : (
-            <View style={{ paddingHorizontal: space.lg }}>
-              <PulseFeedCard item={item} onDeleteSuccess={() => handlePostDeleted(item.id)} />
-            </View>
-          )
-        )}
-        ItemSeparatorComponent={({ leadingItem }) => (
-          <View style={{ height: (leadingItem as any)?.type === 'post' ? 8 : space.md }} />
-        )}
+        ListFooterComponent={<>{Footer}<NavBarFiller /></>}
+        renderItem={renderItem}
+        ItemSeparatorComponent={FeedSeparator}
         showsVerticalScrollIndicator={false}
-        onScroll={navScrollHandler}
+        onScroll={handleScroll}
         scrollEventThrottle={16}
+        initialNumToRender={6}
+        maxToRenderPerBatch={6}
+        windowSize={7}
+        updateCellsBatchingPeriod={50}
+        removeClippedSubviews
+        overScrollMode="auto"
         refreshControl={
           <RefreshControl
             refreshing={feedMode === 'following' ? followingFeed.loading : realFeed.loading}
@@ -419,6 +516,13 @@ export default function Pulse() {
 }
 
 const styles = StyleSheet.create({
+  /* "N new posts" pill — floats just under the sticky controls */
+  newPostsWrap: { position: 'absolute', top: 190, left: 0, right: 0, alignItems: 'center', zIndex: 20 },
+  newPostsPill: {
+    backgroundColor: pv.teal, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 8,
+    shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 4,
+  },
+  newPostsText: { ...t.bodyStrong, color: pv.navy, fontSize: 13 },
   stickyControls: {
     backgroundColor: pv.navy,
     paddingTop: space.sm,
