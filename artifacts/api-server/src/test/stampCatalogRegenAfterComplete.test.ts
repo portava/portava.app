@@ -10,6 +10,10 @@
  *  1. Existing row is 'completed'  → insert creates a new 'queued' row
  *  2. Existing row is 'permanently_failed' → update resets it to 'queued';
  *     insert hits 23505 (silently ignored), leaving the reset row as 'queued'
+ *  3. All three terminal statuses coexist (completed + retryable_failed +
+ *     permanently_failed) → the .in() update targets both failed rows; the
+ *     partial unique index prevents a second queued row from being written;
+ *     the insert hits 23505 — net result is exactly one queued row.
  *
  * Run: node --import tsx/esm --test src/test/stampCatalogRegenAfterComplete.test.ts
  */
@@ -167,6 +171,22 @@ function makeClient(db: DB) {
 
             if (updateValues !== null) {
               const matched = rows.filter((r) => filters.every((f) => f(r)));
+              // Simulate the DB's partial unique index on (catalog_id) WHERE
+              // status = 'queued'. If this UPDATE would produce more than one
+              // 'queued' row for the same catalog_id, reject the whole statement
+              // (PostgreSQL raises 23505 and rolls back every updated row).
+              if (
+                tableName === "stamp_generation_queue" &&
+                wouldCreateDuplicateQueued(rows, matched, updateValues)
+              ) {
+                return {
+                  data:  null,
+                  error: {
+                    code:    "23505",
+                    message: "duplicate key value violates unique constraint",
+                  },
+                };
+              }
               matched.forEach((r) => Object.assign(r, updateValues));
               // Match Supabase semantics: data is null unless .select() was chained
               const data = _selectAfterUpdate ? matched.map((r) => ({ ...r })) : null;
@@ -194,6 +214,41 @@ function makeClient(db: DB) {
         Promise.resolve({ data: { user: { id: ADMIN_ID } }, error: null }),
     },
   };
+}
+
+// ── Shared helper: unique-constraint check for UPDATE ─────────────────────────
+//
+// The real DB has a partial unique index on stamp_generation_queue(catalog_id)
+// WHERE status = 'queued'. A single UPDATE that would promote multiple rows for
+// the same catalog_id to 'queued' violates the index. PostgreSQL raises 23505
+// and rolls the entire statement back, leaving all rows unchanged.
+//
+// The fake client simulates this: before committing an UPDATE that sets
+// status='queued', check whether the combined in-memory state (unchanged rows +
+// updated rows) would contain more than one 'queued' row for the same
+// catalog_id. If so, return a 23505 error without touching any row.
+function wouldCreateDuplicateQueued(
+  rows: any[],
+  matched: any[],
+  updateValues: Record<string, any>,
+): boolean {
+  if (updateValues.status !== "queued") return false;
+
+  // Project the table after the hypothetical update
+  const matchedIds = new Set(matched.map((r) => r.id));
+  const projected  = rows.map((r) =>
+    matchedIds.has(r.id) ? { ...r, ...updateValues } : { ...r },
+  );
+
+  // Count queued rows per catalog_id
+  const counts: Record<string, number> = {};
+  for (const r of projected) {
+    if (r.status === "queued" && r.catalog_id) {
+      counts[r.catalog_id] = (counts[r.catalog_id] ?? 0) + 1;
+      if (counts[r.catalog_id] > 1) return true;
+    }
+  }
+  return false;
 }
 
 // ── DB factory ────────────────────────────────────────────────────────────────
@@ -752,6 +807,140 @@ describe("POST regenerate duplicate click — queued row already present", () =>
       auditEntries.length,
       1,
       `expected exactly 1 audit entry after duplicate click, found ${auditEntries.length}: ${JSON.stringify(auditEntries)}`,
+    );
+  });
+
+});
+
+// ── Tests: all three terminal statuses coexist ────────────────────────────────
+//
+// The most complex edge case: completed + retryable_failed + permanently_failed
+// all exist for the same catalog_id.
+//
+// The .in("status", ["retryable_failed", "permanently_failed"]) UPDATE targets
+// TWO rows simultaneously. In the real DB a partial unique index on
+// (catalog_id) WHERE status = 'queued' prevents the batch from landing —
+// PostgreSQL raises 23505 and rolls back the entire UPDATE statement. The
+// route therefore falls through to the INSERT, which succeeds and creates
+// exactly one fresh queued row. The completed row is left untouched.
+//
+// The fake client's wouldCreateDuplicateQueued helper reproduces this
+// constraint so the in-process tests match real DB behaviour.
+
+const RETRYABLE_ID     = "qqqqqqqq-0000-4000-8000-000000000020";
+const PERM_FAILED_ID   = "qqqqqqqq-0000-4000-8000-000000000021";
+const COMPLETED_ID_3   = "qqqqqqqq-0000-4000-8000-000000000022";
+
+function makeDbThreeRows(): DB {
+  return {
+    profiles:                [{ id: ADMIN_ID, role: "admin" }],
+    universal_stamp_catalog: [makeCatalogRow()],
+    stamp_generation_queue: [
+      {
+        id:                  COMPLETED_ID_3,
+        catalog_id:          CATALOG_ID,
+        status:              "completed",
+        attempts:            3,
+        requeue_count:       1,
+        last_error:          null,
+        triggered_by_action: "worker",
+        priority:            0,
+        created_at:          "2024-01-01T00:00:00Z",
+        updated_at:          "2024-02-01T00:00:00Z",
+      },
+      {
+        id:                  RETRYABLE_ID,
+        catalog_id:          CATALOG_ID,
+        status:              "retryable_failed",
+        attempts:            3,
+        requeue_count:       2,
+        last_error:          "transient error",
+        triggered_by_action: "worker",
+        priority:            0,
+        created_at:          "2024-03-01T00:00:00Z",
+        updated_at:          "2024-03-15T00:00:00Z",
+      },
+      {
+        id:                  PERM_FAILED_ID,
+        catalog_id:          CATALOG_ID,
+        status:              "permanently_failed",
+        attempts:            5,
+        requeue_count:       3,
+        last_error:          "generation failed permanently",
+        triggered_by_action: "worker",
+        priority:            0,
+        created_at:          "2024-04-01T00:00:00Z",
+        updated_at:          "2024-04-01T00:00:00Z",
+      },
+    ],
+    stamp_artwork_versions: [],
+    stamp_admin_audit_log:  [],
+  };
+}
+
+describe("POST regenerate when completed, retryable_failed, and permanently_failed all coexist", () => {
+
+  beforeEach(() => {
+    db = makeDbThreeRows();
+    const client = makeClient(db);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  });
+
+  it("returns 200 with { ok: true }", async () => {
+    const res = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      res.status, 200,
+      `regenerate must return 200, got ${res.status}: ${JSON.stringify(res.body)}`,
+    );
+    assert.deepEqual(res.body, { ok: true });
+  });
+
+  it("produces exactly one queued row afterwards", async () => {
+    const res = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      res.status, 200,
+      `regenerate must return 200, got ${res.status}: ${JSON.stringify(res.body)}`,
+    );
+
+    const queuedRows = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.status === "queued",
+    );
+    assert.equal(
+      queuedRows.length,
+      1,
+      `expected exactly 1 queued row, found ${queuedRows.length}: ${JSON.stringify(db.stamp_generation_queue)}`,
+    );
+  });
+
+  it("the original completed row is untouched", async () => {
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+
+    const completedRows = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.status === "completed",
+    );
+    assert.equal(
+      completedRows.length,
+      1,
+      `expected the completed row to remain, found ${completedRows.length}: ${JSON.stringify(db.stamp_generation_queue)}`,
+    );
+    assert.equal(
+      completedRows[0].id,
+      COMPLETED_ID_3,
+      "completed row id must not change",
+    );
+  });
+
+  it("writes exactly one audit log entry", async () => {
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+
+    const auditEntries = db.stamp_admin_audit_log.filter(
+      (r) => r.catalog_id === CATALOG_ID,
+    );
+    assert.equal(
+      auditEntries.length,
+      1,
+      `expected exactly 1 audit log entry, found ${auditEntries.length}: ${JSON.stringify(auditEntries)}`,
     );
   });
 
