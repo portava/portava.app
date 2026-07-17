@@ -1,5 +1,5 @@
 /**
- * Catalog detail screen — null user_id in earn history (standalone)
+ * Catalog detail screen — null user_id in earn history
  *
  * The earn-history section of [catalogId].tsx renders each row as:
  *
@@ -23,7 +23,7 @@
  *     7. An earnSample with all rows having non-null user_id is returned correctly.
  *
  * Run:
- *   cd travel-buddy-standalone
+ *   cd artifacts/travel-buddy
  *   node --import tsx/esm --test \
  *     src/services/__tests__/catalogDetail.earnNullUserId.test.ts
  */
@@ -56,7 +56,7 @@ function makeFakeSupabase() {
         Promise.resolve({
           data: {
             session: {
-              access_token: 'test-token-earn-null-user-id-standalone',
+              access_token: 'test-token-earn-null-user-id',
               expires_at: FAR_FUTURE,
             },
           },
@@ -65,7 +65,7 @@ function makeFakeSupabase() {
         Promise.resolve({
           data: {
             session: {
-              access_token: 'test-token-earn-null-user-id-standalone',
+              access_token: 'test-token-earn-null-user-id',
               expires_at: FAR_FUTURE,
             },
           },
