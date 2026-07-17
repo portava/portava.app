@@ -10,6 +10,8 @@ const MUTED = "#8A7E6E";
 
 // ── Decorative SVGs ──────────────────────────────────────────────────────────
 
+const STAMP_NAVY = '#1A3A5C';
+
 function AdventureStamp() {
   return (
     <svg width="90" height="90" viewBox="0 0 90 90" fill="none">
@@ -23,6 +25,29 @@ function AdventureStamp() {
         <path d="M9 2l2 2-7 7-1-1z" fill="#3B82F6"/>
       </g>
       <circle cx="45" cy="45" r="1.5" fill="#3B82F6" opacity="0.3"/>
+    </svg>
+  );
+}
+
+function PassportVerifiedStamp({ size = 22 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 30 30"
+      fill="none"
+      aria-label="Verified traveler"
+      role="img"
+      style={{ marginLeft: 2, flexShrink: 0 }}
+    >
+      <circle cx="15" cy="15" r="13" stroke={STAMP_NAVY} strokeWidth="2" strokeDasharray="3 1.5" />
+      <circle cx="15" cy="15" r="9.5" stroke={STAMP_NAVY} strokeWidth="0.8" opacity="0.55" />
+      <path
+        d="M7.5 16.5 L12 9 L14 11.5 L10.5 14.5 L18 16.8 L16 19.2 L9.5 17 L10.5 21 L8.5 22 Z"
+        fill={STAMP_NAVY}
+        opacity="0.9"
+      />
+      <text x="15" y="27.5" textAnchor="middle" fill={STAMP_NAVY} fontSize="3.5" fontWeight="800" opacity="0.6">✦ ✦ ✦</text>
     </svg>
   );
 }
@@ -152,17 +177,12 @@ export function Owner() {
 
             <div className="traveler-label">TRAVELER ★</div>
             <div className="display-name-row">
-              <span className="display-name">DRAIE</span>
-              <CheckCircle2 size={20} color="#2563EB" fill="#2563EB" strokeWidth={0} className="verified-check" />
+              <span className="display-name">Anrole</span>
+              <PassportVerifiedStamp size={22} />
             </div>
-            <div className="handle">@draie</div>
+            <div className="handle">@anrole</div>
 
             <TrustScore score={87} />
-
-            <div className="verified-pill">
-              <CheckCircle2 size={12} color="#2563EB" fill="#2563EB" strokeWidth={0} />
-              <span>Verified</span>
-            </div>
 
             <div className="identity-tags">
               <Globe size={13} color={MUTED} strokeWidth={1.8} />

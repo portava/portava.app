@@ -429,7 +429,23 @@ async function main() {
   const mediaResult = await backfillPostMedia(profile.id);
   console.log(`Post-media backfill: ${mediaResult.inserted} inserted, ${mediaResult.skipped} skipped`);
 
+  const verifyResult = await verifyTargetProfile(profile.id);
+  console.log(`Target verified: ${verifyResult.verified ? 'yes' : 'no'} (updated=${verifyResult.updated})`);
+
   console.log("Done.");
+}
+
+async function verifyTargetProfile(profileId: string) {
+  if (DRY_RUN) return { verified: false, updated: false };
+  const { data: profile } = await sc.from("profiles").select("verified, verification_status").eq("id", profileId).maybeSingle();
+  const isVerified = profile?.verified === true && profile?.verification_status === "verified";
+  if (isVerified) return { verified: true, updated: false };
+  const now = new Date().toISOString();
+  const { error } = await sc.from("profiles")
+    .update({ verified: true, verification_status: "verified", verified_at: now })
+    .eq("id", profileId);
+  if (error) throw error;
+  return { verified: true, updated: true };
 }
 
 main().catch((err) => { console.error(err); process.exit(1); });

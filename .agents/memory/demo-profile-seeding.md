@@ -37,6 +37,8 @@ When seeding production-like data for a profile, always query the **live** schem
 
 5. **External sample video URLs (e.g., Google Storage `gtv-videos-bucket`) may return 403 from the server and from the app**, even though they play in some browsers. Use a consistently reachable URL (e.g., `w3schools.com/html/mov_bbb.mp4`) for demo assets that must actually load in `expo-av`.
 
+6. **The supported verification path for a demo account is the admin verify endpoint (or the equivalent service-role update).** `POST /admin/users/:userId/verify` sets `profiles.verified = true`, `verification_status = 'verified'`, and `verified_at`, and also awards a `verified_traveler` stamp. Do not set a UI-only fake badge; read the real `verified` / `verification_status` fields and use `isTravelBuddyVerified()`.
+
 ## Idempotency
 
 Use deterministic UUIDs (e.g., UUIDv5 keyed by the target profile id and a seed string) so reruns skip already-inserted rows instead of duplicating content.
