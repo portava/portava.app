@@ -208,14 +208,20 @@ describe("geocodeCityCountry persistent cache", () => {
         city_key: "banff",
         country: "Canada",
         country_code: "CA",
-        deleted_at: new Date().toISOString(),
+        // Backdated tombstone: it pre-dates the geocode start, so the fresh
+        // result legitimately revives the row (writeDbCache's pre-upsert
+        // re-check only protects tombstones written DURING the geocode).
+        deleted_at: new Date(Date.now() - 60_000).toISOString(),
       },
     ]);
     _setGeocodeDbClientForTests(db.client);
     const r = await geocodeCityCountry("Banff");
     assert.deepEqual(r, { country: "United States", countryCode: "US" });
     assert.equal(fetchCalls.length, 1);
-    assert.equal(db.calls.reads, 1);
+    // Two reads: readDbCache (tombstoned → miss) + writeDbCache's pre-upsert
+    // tombstone re-check before persisting the fresh result.
+    assert.equal(db.calls.reads, 2);
+    assert.equal(db.calls.upserts, 1, "old tombstone is cleared — legitimate revival persists");
   });
 });
 
@@ -1494,8 +1500,11 @@ describe("background correction sweep", () => {
   });
 
   it("bumps correctionCheckedAt after a no-op probe (corrected_at pre-dates writtenAt) — second call skips the probe", async () => {
-    // Step 1: seed the in-memory cache with a valid entry.
+    // Step 1: seed the in-memory cache with a valid entry. Use a working DB
+    // client so the seed persist succeeds — otherwise persistFailed retries
+    // on later warm hits would add extra maybeSingle calls to the probe count.
     _setGeocodeFetchForTests(fakeNominatim({ "oslo": { country_code: "no", country: "Norway" } }));
+    _setGeocodeDbClientForTests(makeFakeGeoCacheDb([]).client);
     await geocodeCityCountry("Oslo");
     assert.equal(fetchCalls.length, 1, "initial geocode should hit Nominatim once");
 
@@ -1617,8 +1626,11 @@ describe("background correction sweep", () => {
   });
 
   it("bumps correctionCheckedAt after a transient DB error — second call skips the probe", async () => {
-    // Step 1: seed the in-memory cache with a valid entry.
+    // Step 1: seed the in-memory cache with a valid entry. Use a working DB
+    // client so the seed persist succeeds — otherwise persistFailed retries
+    // on later warm hits would add extra maybeSingle calls to the probe count.
     _setGeocodeFetchForTests(fakeNominatim({ "reykjavik": { country_code: "is", country: "Iceland" } }));
+    _setGeocodeDbClientForTests(makeFakeGeoCacheDb([]).client);
     await geocodeCityCountry("Reykjavik");
     assert.equal(fetchCalls.length, 1, "initial geocode should hit Nominatim once");
 

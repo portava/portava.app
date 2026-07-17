@@ -301,13 +301,61 @@ async function readDbCache(key: string): Promise<GeocodedCountry | null> {
 
 /**
  * Persist a positive result to the DB cache. Best-effort — never throws.
- * Returns true when the upsert succeeded, false otherwise so callers can mark
- * the in-memory entry for a later retry.
+ *
+ * Outcomes:
+ *   - "ok":         the upsert succeeded.
+ *   - "failed":     the upsert (or its pre-check) hit a DB error — callers mark
+ *                   the in-memory entry for a later retry.
+ *   - "tombstoned": the row carries a tombstone (deleted_at) written AT or
+ *                   AFTER `startedAtMs` — i.e. an admin DELETE landed on
+ *                   another instance while this geocode was in flight. The
+ *                   persist is skipped entirely so the upsert (which clears
+ *                   deleted_at) cannot revive the freshly-deleted row. Callers
+ *                   should evict their local entry and must NOT schedule a
+ *                   retry.
+ *
+ * Cross-instance revival guard: the local _pending check in geocodeCityCountry
+ * only protects against a DELETE handled by the SAME instance (the handler
+ * calls evictGeocodeCacheKey locally). A DELETE on another instance writes the
+ * tombstone straight to the shared DB, so we re-check deleted_at here, just
+ * before the upsert. Tombstones OLDER than the geocode start are legitimately
+ * cleared — the fresh geocode supersedes a deletion that happened before it
+ * began (readDbCache already treated the tombstoned row as a miss).
+ *
+ * Residual window: a tombstone written between this pre-check SELECT and the
+ * upsert can still be clobbered. That window is a single network round-trip
+ * (milliseconds) — vs. the multi-second Nominatim flight it replaces — and is
+ * accepted as best-effort; the admin can re-issue the DELETE.
  */
-async function writeDbCache(key: string, result: GeocodedCountry): Promise<boolean> {
+type WriteDbCacheOutcome = "ok" | "failed" | "tombstoned";
+
+async function writeDbCache(key: string, result: GeocodedCountry, startedAtMs: number): Promise<WriteDbCacheOutcome> {
   const sc = dbClient();
-  if (!sc) return false;
+  if (!sc) return "failed";
   try {
+    // Pre-upsert tombstone re-check (see doc comment above).
+    try {
+      const { data: existing, error: checkErr } = await sc
+        .from(DB_CACHE_TABLE)
+        .select("deleted_at")
+        .eq("city_key", key)
+        .maybeSingle();
+      if (!checkErr && existing && (existing as any).deleted_at) {
+        const tombstonedAt = new Date((existing as any).deleted_at).getTime();
+        if (tombstonedAt >= startedAtMs) {
+          logEvent("stamp.country_geocode.persist_skipped_tombstoned", {
+            city_key: key,
+            deleted_at: (existing as any).deleted_at,
+          });
+          return "tombstoned";
+        }
+      }
+      // Pre-check DB error: fall through to the upsert (best-effort — a
+      // transient read failure must not block persistence; the upsert itself
+      // will surface any real outage).
+    } catch {
+      // Same: best-effort pre-check only.
+    }
     const { error } = await sc.from(DB_CACHE_TABLE).upsert(
       {
         city_key: key,
@@ -328,12 +376,12 @@ async function writeDbCache(key: string, result: GeocodedCountry): Promise<boole
     );
     if (error) {
       logEvent("stamp.country_geocode.persist_failed", { city_key: key, error: error.message });
-      return false;
+      return "failed";
     }
-    return true;
+    return "ok";
   } catch (e: any) {
     logEvent("stamp.country_geocode.persist_failed", { city_key: key, error: e?.message ?? String(e) });
-    return false;
+    return "failed";
   }
 }
 
@@ -349,12 +397,22 @@ async function retryPersist(key: string, cached: CacheEntry): Promise<void> {
   const current = _cache.get(key);
   if (!current || !current.persistFailed || current.result !== cached.result) return;
   _cache.set(key, { ...current, persistFailed: false });
-  const ok = await writeDbCache(key, cached.result);
-  if (!ok) {
+  // startedAtMs: the entry's writtenAt is when this result was resolved — any
+  // tombstone written after that point is a newer admin deletion and must win.
+  const outcome = await writeDbCache(key, cached.result, cached.writtenAt);
+  if (outcome === "failed") {
     const after = _cache.get(key);
     // Only re-flag if the entry is still the same result (not evicted/replaced).
     if (after && after.result === cached.result) {
       _cache.set(key, { ...after, persistFailed: true });
+    }
+  } else if (outcome === "tombstoned") {
+    // An admin deletion superseded this result — drop the local entry too and
+    // never retry the persist (retrying would only re-hit the tombstone).
+    const after = _cache.get(key);
+    if (after && after.result === cached.result) {
+      _cache.delete(key);
+      _pending.delete(key);
     }
   } else {
     logEvent("stamp.country_geocode.persist_retried", { city_key: key });
@@ -449,6 +507,11 @@ export async function geocodeCityCountry(city: string): Promise<GeocodedCountry 
   // async body.  At runtime `p` is always assigned before any `await` resolves,
   // so `_pending.get(key) === p` is safe.
   let p!: Promise<GeocodedCountry | null>;
+  // Captured before any await: writeDbCache uses this to distinguish tombstones
+  // written BEFORE the geocode began (legitimately superseded — clear them)
+  // from tombstones written WHILE it was in flight (a concurrent admin DELETE
+  // on another instance — never clobber those).
+  const startedAtMs = Date.now();
   p = (async () => {
     try {
       // Second-level persistent cache — positive results survive restarts.
@@ -493,13 +556,23 @@ export async function geocodeCityCountry(city: string): Promise<GeocodedCountry 
         // instance, since the DB cache is shared.  The in-memory guard above
         // only protects this instance's memory cache; this one protects the DB.
         if (_pending.get(key) === p) {
-          const persisted = await writeDbCache(key, result);
-          if (!persisted) {
+          const outcome = await writeDbCache(key, result, startedAtMs);
+          if (outcome === "failed") {
             // Mark the entry so the next warm hit re-attempts the persist —
             // otherwise the result lives only in memory and is lost on restart.
             const entry = _cache.get(key);
             if (entry && entry.result === result) {
               _cache.set(key, { ...entry, persistFailed: true });
+            }
+          } else if (outcome === "tombstoned") {
+            // A cross-instance admin DELETE landed while the geocode was in
+            // flight. The DB persist was skipped (tombstone preserved); also
+            // drop the local in-memory entry written above so this instance
+            // doesn't keep serving a result the admin just deleted. No retry:
+            // persistFailed stays unset.
+            const entry = _cache.get(key);
+            if (entry && entry.result === result) {
+              _cache.delete(key);
             }
           }
         } else {

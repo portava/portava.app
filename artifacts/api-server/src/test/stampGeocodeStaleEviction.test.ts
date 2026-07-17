@@ -1601,6 +1601,8 @@ describe("staleness-eviction: corrected_at probe (continued)", () => {
       [
         // call 0: readDbCache — no persisted row; falls through to Nominatim.
         null,
+        // call 1: writeDbCache's pre-upsert tombstone re-check — still no row.
+        null,
         // Any further call would be a correction probe — must NOT happen within the interval.
         { corrected_at: new Date(T0 + 500).toISOString() },
       ],
@@ -1612,8 +1614,8 @@ describe("staleness-eviction: corrected_at probe (continued)", () => {
     const first = await geocodeCityCountry("NominatimCity");
     assert.equal(first?.countryCode, "JP",
       "pre-condition: Nominatim-sourced entry should resolve to JP");
-    assert.equal(dbCallCount, 1,
-      "exactly one DB call for the initial readDbCache — no extra probe");
+    assert.equal(dbCallCount, 2,
+      "two DB calls on the initial resolve: readDbCache + the persist's tombstone pre-check — no correction probe");
 
     // Confirm the Nominatim path leaves correctionCheckedAt unset.
     const entry = _getGeocodeCacheEntryForTests("nominatimcity");
@@ -1629,7 +1631,7 @@ describe("staleness-eviction: corrected_at probe (continued)", () => {
     const second = await geocodeCityCountry("NominatimCity");
     assert.equal(second?.countryCode, "JP",
       "should return the cached Nominatim result without probing the DB");
-    assert.equal(dbCallCount, 1,
+    assert.equal(dbCallCount, 2,
       "the correctionCheckedAt ?? writtenAt fallback must prevent a DB probe before the interval elapses");
   });
 });

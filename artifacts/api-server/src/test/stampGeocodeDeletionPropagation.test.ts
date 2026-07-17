@@ -2394,11 +2394,13 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     assert.equal(afterTtl?.countryCode, "ES",
       "geocoder retries Nominatim after the 6-hour negative TTL expires and returns the successful result");
     assert.equal(nominatimCalls, 2, "Nominatim called a second time after the TTL expired");
-    // readDbCache fires once as part of the normal re-resolve flow (check DB before Nominatim).
+    // readDbCache fires once as part of the normal re-resolve flow (check DB before
+    // Nominatim), and writeDbCache's pre-upsert tombstone re-check fires once more
+    // when persisting the fresh positive result — two reads total.
     // The correction-check probe (evictIfDbCorrected) must NOT have fired — it is only
     // triggered for warm, non-expired positive cache entries.
-    assert.ok(maybeSingleCalls <= 1,
-      "maybeSingle called at most once during TTL-expiry re-resolve (readDbCache only — no correction-check probe)");
+    assert.ok(maybeSingleCalls <= 2,
+      "maybeSingle called at most twice during TTL-expiry re-resolve (readDbCache + persist pre-check — no correction-check probe)");
 
     // ── Phase 4: positive result re-cached — follow-up call does not re-hit Nominatim ──
     maybeSingleCalls = 0;
@@ -2871,8 +2873,8 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     // when readDbCache hits a DB error — not silently return null.
     const afterSweep = await geocodeCityCountry("Vienna");
 
-    assert.equal(readDbCalls, 1,
-      "readDbCache was attempted exactly once after the sweep eviction");
+    assert.equal(readDbCalls, 2,
+      "two DB reads after the sweep eviction: readDbCache (errored) + writeDbCache's pre-upsert tombstone re-check");
     assert.equal(nominatimCalls, 1,
       "Nominatim called once — DB error in readDbCache fell through to Nominatim, not null");
     assert.notEqual(afterSweep, null,
@@ -5252,5 +5254,189 @@ describe("in-flight geocode must not revive a row the admin just deleted", () =>
     assert.equal(upsertPayloads[0].city_key, "porto");
     assert.equal(upsertPayloads[0].deleted_at, null,
       "normal persist still clears tombstones (PUT-revival path unaffected)");
+  });
+});
+
+describe("cross-instance tombstone during in-flight geocode (no local eviction)", () => {
+  /**
+   * Shared-DB fake for the cross-instance scenario. The tombstone is written
+   * straight to the DB by "instance A" — this instance never sees an
+   * evictGeocodeCacheKey call, so only writeDbCache's pre-upsert re-check can
+   * protect the tombstone.
+   */
+  function makeSharedDb() {
+    const state = { tombstonedAt: null as string | null };
+    const upsertPayloads: any[] = [];
+    const client = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() {
+            if (state.tombstonedAt) {
+              return {
+                data: { country: "France", country_code: "FR", corrected_at: null, deleted_at: state.tombstonedAt },
+                error: null,
+              };
+            }
+            return { data: null, error: null };
+          },
+          upsert(payload: any) {
+            upsertPayloads.push(payload);
+            // A real upsert with deleted_at: null would revive the row.
+            if (payload.deleted_at === null) state.tombstonedAt = null;
+            return Promise.resolve({ error: null });
+          },
+          then(resolve: (v: any) => void) { resolve({ data: [], error: null }); },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    return { client, state, upsertPayloads };
+  }
+
+  it("a tombstone written on another instance WHILE the geocode is in flight is not clobbered — persist skipped, local entry dropped", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((r) => { releaseFetch = r; });
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      await fetchGate;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "fr", country: "France" } }],
+      };
+    });
+
+    const db = makeSharedDb();
+    _setGeocodeDbClientForTests(db.client);
+
+    // 1. Instance B starts a geocode (Nominatim in flight, gated).
+    const inflight = geocodeCityCountry("Lille");
+    await new Promise((r) => setImmediate(r)); // let readDbCache miss settle
+    assert.equal(nominatimCalls, 1, "geocode is genuinely in flight");
+
+    // 2. Instance A tombstones the row in the SHARED DB. Crucially, NO
+    //    evictGeocodeCacheKey call happens on this instance.
+    mockNow(T0 + 1_000);
+    db.state.tombstonedAt = new Date(T0 + 1_000).toISOString();
+
+    // 3. Geocode resolves on instance B.
+    releaseFetch();
+    const result = await inflight;
+
+    // The in-flight caller still receives the resolved value…
+    assert.equal(result?.countryCode, "FR", "in-flight caller still gets the resolved result");
+    // …but the persist was skipped: the tombstone survives in the shared DB.
+    assert.equal(db.upsertPayloads.length, 0,
+      "no upsert fired — the cross-instance tombstone was not clobbered");
+    assert.equal(db.state.tombstonedAt, new Date(T0 + 1_000).toISOString(),
+      "tombstone still present in the shared DB after the geocode resolved");
+    // The local in-memory entry is dropped too, so this instance doesn't keep
+    // serving a result the admin just deleted.
+    assert.equal(_getGeocodeCacheEntryForTests("lille"), undefined,
+      "local in-memory entry evicted when the persist found a fresh tombstone");
+
+    // 4. The next call re-resolves instead of serving the deleted result warm.
+    const entryAfter = _getGeocodeCacheEntryForTests("lille");
+    assert.equal(entryAfter, undefined);
+  });
+
+  it("a tombstone OLDER than the geocode start is still cleared — legitimate re-geocode revival is preserved", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "fr", country: "France" } }],
+    }));
+
+    const db = makeSharedDb();
+    // Tombstone written BEFORE the geocode starts (admin deleted, then a new
+    // request re-resolves the city — the fresh result supersedes the deletion,
+    // matching the pre-existing revival semantics).
+    db.state.tombstonedAt = new Date(T0 - 5_000).toISOString();
+    _setGeocodeDbClientForTests(db.client);
+
+    const result = await geocodeCityCountry("Nice");
+    assert.equal(result?.countryCode, "FR");
+    assert.equal(db.upsertPayloads.length, 1, "old tombstone does not block the persist");
+    assert.equal(db.upsertPayloads[0].deleted_at, null,
+      "upsert clears the pre-geocode tombstone (legitimate revival)");
+    assert.equal(db.state.tombstonedAt, null, "row revived in the shared DB");
+    assert.ok(_getGeocodeCacheEntryForTests("nice"), "in-memory entry kept for a legitimate revival");
+  });
+
+  it("a persist retry on a warm hit also respects a cross-instance tombstone — no retry loop, local entry dropped", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "de", country: "Germany" } }],
+      };
+    });
+
+    // Initial persist FAILS (upsert error) so the entry is flagged for retry.
+    let failUpserts = true;
+    const upsertPayloads: any[] = [];
+    const state = { tombstonedAt: null as string | null };
+    _setGeocodeDbClientForTests({
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() {
+            if (state.tombstonedAt) {
+              return {
+                data: { country: "Germany", country_code: "DE", corrected_at: null, deleted_at: state.tombstonedAt },
+                error: null,
+              };
+            }
+            return { data: null, error: null };
+          },
+          upsert(payload: any) {
+            upsertPayloads.push(payload);
+            if (failUpserts) return Promise.resolve({ error: { message: "disk full" } });
+            return Promise.resolve({ error: null });
+          },
+          then(resolve: (v: any) => void) { resolve({ data: [], error: null }); },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient);
+
+    const first = await geocodeCityCountry("Hamburg");
+    assert.equal(first?.countryCode, "DE");
+    assert.equal(upsertPayloads.length, 1, "initial (failed) persist attempted");
+    assert.equal((_getGeocodeCacheEntryForTests("hamburg") as any)?.persistFailed, true,
+      "entry flagged for retry after the failed persist");
+
+    // Instance A tombstones the row AFTER this result was resolved.
+    mockNow(T0 + 1_000);
+    state.tombstonedAt = new Date(T0 + 1_000).toISOString();
+    failUpserts = false; // an upsert would now succeed — and revive the row
+
+    // Warm hit triggers the retry; the pre-check must skip it.
+    mockNow(T0 + 2_000);
+    const second = await geocodeCityCountry("Hamburg");
+    assert.equal(second?.countryCode, "DE", "warm hit still returns the cached result");
+    assert.equal(upsertPayloads.length, 1,
+      "retry skipped — no upsert revives the cross-instance tombstone");
+    assert.equal(_getGeocodeCacheEntryForTests("hamburg"), undefined,
+      "local entry dropped so the deleted result isn't served warm again");
+    assert.equal(nominatimCalls, 1, "no extra geocode fired by the skipped retry");
   });
 });
