@@ -236,8 +236,17 @@ export default function StampStudioIndex() {
                 <Text style={styles.entryName}>{entry.display_name}</Text>
                 <Text style={styles.entrySub}>{entry.stamp_type} · {entry.country_code}</Text>
               </View>
-              <View style={[styles.statusBadge, { backgroundColor: statusBg(entry.status) }]}>
-                <Text style={styles.statusText}>{entry.status}</Text>
+              <View style={styles.badgeCol}>
+                {(entry.queue_status === 'queued' || entry.queue_status === 'processing') && (
+                  <View style={[styles.statusBadge, styles.regenBadge]} testID={`recent-regen-badge-${entry.id}`}>
+                    <Text style={[styles.statusText, styles.regenBadgeText]}>
+                      {entry.queue_status === 'processing' ? 'regenerating' : 'queued'}
+                    </Text>
+                  </View>
+                )}
+                <View style={[styles.statusBadge, { backgroundColor: statusBg(entry.status) }]}>
+                  <Text style={styles.statusText}>{entry.status}</Text>
+                </View>
               </View>
             </Pressable>
           ))}
@@ -305,6 +314,9 @@ const styles = StyleSheet.create({
   entryMeta:    { flex: 1 },
   entryName:    { ...t.body, color: color.ink, fontWeight: '600' },
   entrySub:     { ...t.small, color: color.mute },
+  badgeCol:     { alignItems: 'flex-end', gap: 4 },
   statusBadge:  { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
+  regenBadge:     { backgroundColor: '#EDE9FE', borderWidth: 1, borderColor: '#C4B5FD' },
+  regenBadgeText: { color: '#6D28D9' },
   statusText:   { fontSize: 10, fontWeight: '700', color: color.ink },
 });
