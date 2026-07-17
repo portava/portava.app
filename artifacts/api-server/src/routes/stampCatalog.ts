@@ -771,12 +771,20 @@ router.post("/admin/stamps/catalog/:id/regenerate", async (req, res) => {
     // Chain .select() so PostgREST returns the affected rows — without it the
     // data field is null even when rows were updated. We need the count to know
     // whether a state change happened (used for audit-log gating below).
-    const { data: resetRows } = await sc
+    const { data: resetRows, error: resetErr } = await sc
       .from("stamp_generation_queue")
       .update({ status: "queued", priority: 1, triggered_by_action: `admin_regenerate:${adminId}`, attempts: 0, requeue_count: 0, last_error: null, cleanup_error: null, cleanup_error_paths: null, updated_at: new Date().toISOString() })
       .eq("id", survivor.id)
       .in("status", ["retryable_failed", "permanently_failed"])
       .select();
+
+    // Must check the error: if the survivor reset fails, the row stays failed
+    // and the subsequent insert would hit the unique index (23505), so the
+    // handler could report a misleading result while the job remains stuck.
+    if (resetErr) {
+      sendError(res, "db_error", resetErr.message);
+      return;
+    }
 
     hadFailedReset = Array.isArray(resetRows) && resetRows.length > 0;
   }
