@@ -309,6 +309,12 @@ async function writeDbCache(key: string, result: GeocodedCountry): Promise<void>
         // Clear any soft-delete tombstone written by a prior admin deletion —
         // this row now has a fresh geocode result and must be treated as live.
         deleted_at: null,
+        // IMPORTANT: corrected_at is deliberately ABSENT from this payload.
+        // Do NOT add `corrected_at: null` here (even to mirror the
+        // deleted_at line above) — the upsert must leave any existing
+        // admin-correction timestamp untouched. Wiping it would silently
+        // erase admin corrections on the next re-geocode and break the
+        // on-request probe and the background sweep's ordering logic.
       },
       { onConflict: "city_key" },
     );

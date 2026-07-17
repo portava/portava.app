@@ -3722,6 +3722,69 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
       "updated_at ISO string must not be the old negative-cache writtenAt ISO string");
   });
 
+  it("re-geocode write-back payload omits corrected_at entirely — an admin correction timestamp can never be wiped", async () => {
+    // writeDbCache deliberately leaves corrected_at OUT of the upsert payload
+    // so an existing admin-correction timestamp on the row survives the next
+    // re-geocode.  If someone adds `corrected_at: null` (e.g. mirroring the
+    // deleted_at tombstone-clear line), corrections would be silently erased,
+    // breaking the on-request probe and the sweep's ordering logic.
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let upsertCalls = 0;
+    const upsertPayloads: Array<Record<string, unknown>> = [];
+
+    _setGeocodeDbClientForTests({
+      from(_table: string) {
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() {
+            // No persisted row — force the Nominatim path so writeDbCache runs.
+            return { data: null, error: null };
+          },
+          upsert(payload: Record<string, unknown>) {
+            upsertCalls++;
+            upsertPayloads.push({ ...payload });
+            return Promise.resolve({ error: null });
+          },
+          then(resolve: (v: any) => void) {
+            resolve({ data: [], error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient);
+
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "it", country: "Italy" } }],
+    }));
+
+    const result = await geocodeCityCountry("Florence");
+    assert.equal(result?.countryCode, "IT", "geocode succeeds and returns IT");
+    assert.equal(upsertCalls, 1, "writeDbCache called exactly once");
+
+    const payload = upsertPayloads[0];
+    // The critical assertion: corrected_at must not be a key AT ALL —
+    // neither null nor any other value.  An upsert that includes
+    // `corrected_at: null` would overwrite an existing admin correction.
+    assert.ok(!Object.prototype.hasOwnProperty.call(payload, "corrected_at"),
+      "corrected_at must NOT be a key in the upsert payload (not even null) — " +
+      "including it would wipe an existing admin-correction timestamp");
+    assert.ok(!("corrected_at" in payload),
+      "corrected_at absent via `in` check as well");
+
+    // Sanity: the payload still carries the expected fields.
+    assert.equal(payload["city_key"], "florence");
+    assert.equal(payload["country_code"], "IT");
+    assert.equal(payload["deleted_at"], null,
+      "deleted_at: null (tombstone clear) is present — corrected_at must not mirror it");
+    assert.ok(typeof payload["updated_at"] === "string");
+  });
+
   // ── correctionCheckedAt bump on DB-error probe ────────────────────────────
 
   it("bumps correctionCheckedAt even when the probe returns a DB error — preventing a retry storm on the next call", async () => {
