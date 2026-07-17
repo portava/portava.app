@@ -206,7 +206,34 @@ export async function mergeCatalogEntry(sourceId: string, targetId: string): Pro
 
 // ── Earners ───────────────────────────────────────────────────────────────────
 
-export async function getCatalogEarners(catalogId: string, page = 1): Promise<ApiResult<any>> {
+/**
+ * A single row returned by the catalog earners endpoint. The `profiles` join
+ * provides display info; it may be null when the user record has been deleted.
+ */
+export interface CatalogEarnerRow {
+  id: string;
+  user_id: string | null;
+  earned_at: string;
+  source_type: string;
+  profiles: {
+    username: string | null;
+    display_name: string | null;
+  } | null;
+}
+
+/**
+ * Shape returned by GET /admin/stamps/catalog/:id/earners.
+ * Using this type instead of `any` catches mismatched field names
+ * (e.g. wrong earner row fields or missing pagination keys) at compile time
+ * rather than silently at runtime.
+ */
+export interface CatalogEarnersResponse {
+  earners: CatalogEarnerRow[];
+  total: number;
+  page: number;
+}
+
+export async function getCatalogEarners(catalogId: string, page = 1): Promise<ApiResult<CatalogEarnersResponse>> {
   return adminGet(`/api/admin/stamps/catalog/${catalogId}/earners?page=${page}`);
 }
 
