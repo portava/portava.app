@@ -657,10 +657,10 @@ describe('expo-clipboard ~8.0.8 — setStringAsync call contract (mirrors GroupC
 // exactly one version and that version is identical in both trees.
 
 describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/config-plugins, expo-modules-core, and metro bundler family', () => {
-  // travel-buddy-standalone/pnpm-lock.yaml is 4 levels up from src/services/ in artifacts/travel-buddy/
-  const standaloneLockText = readFileSync(pathResolve(__dir, '../../../../travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
-  // monorepo root pnpm-lock.yaml is also 4 levels up from src/services/ in artifacts/travel-buddy/
-  const monoLockText = readFileSync(pathResolve(__dir, '../../../../pnpm-lock.yaml'), 'utf8');
+  // travel-buddy-standalone/pnpm-lock.yaml is 2 levels up from src/services/ in travel-buddy-standalone/
+  const standaloneLockText = readFileSync(pathResolve(__dir, '../../pnpm-lock.yaml'), 'utf8');
+  // monorepo root pnpm-lock.yaml is 3 levels up from src/services/ in travel-buddy-standalone/
+  const monoLockText = readFileSync(pathResolve(__dir, '../../../pnpm-lock.yaml'), 'utf8');
 
   /**
    * Scan a lockfile text for all resolved base versions of a given package.
@@ -745,9 +745,10 @@ describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/
 // version), so any drift between the two lockfiles fails with a clear diff.
 
 describe('Lockfile-resolved metro bundler family versions — metro, metro-resolver, @expo/metro-config', () => {
-  // Reuse the same lockfile texts read in section 7.
-  const standaloneLockText = readFileSync(pathResolve(__dir, '../../../../travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
-  const monoLockText = readFileSync(pathResolve(__dir, '../../../../pnpm-lock.yaml'), 'utf8');
+  // travel-buddy-standalone/pnpm-lock.yaml is 2 levels up from src/services/ in travel-buddy-standalone/
+  const standaloneLockText = readFileSync(pathResolve(__dir, '../../pnpm-lock.yaml'), 'utf8');
+  // monorepo root pnpm-lock.yaml is 3 levels up from src/services/ in travel-buddy-standalone/
+  const monoLockText = readFileSync(pathResolve(__dir, '../../../pnpm-lock.yaml'), 'utf8');
 
   function resolvedVersions(lockText: string, pkgName: string): string[] {
     const escaped = pkgName.replace(/[.*+?^${}()|[\]\\]/g, (c) => '\\' + c).replace(/\//g, (c) => '\\' + c);
