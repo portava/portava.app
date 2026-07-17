@@ -64,6 +64,8 @@ export interface KeyboardSafeViewProps extends KeyboardSafeScrollViewProps {
   contentContainerStyle?: ScrollViewProps['contentContainerStyle'];
   /** Extra props forwarded to the inner ScrollView. */
   scrollViewProps?: Omit<ScrollViewProps, 'children'>;
+  /** Ref forwarded to the inner ScrollView, for programmatic scrolling. */
+  scrollViewRef?: React.Ref<ScrollView>;
 }
 
 /**
@@ -76,6 +78,7 @@ export function KeyboardSafeView({
   style,
   contentContainerStyle,
   scrollViewProps,
+  scrollViewRef,
 }: KeyboardSafeViewProps) {
   return (
     <KeyboardAvoidingView
@@ -84,6 +87,7 @@ export function KeyboardSafeView({
       style={[{ flex: 1 }, style]}
     >
       <ScrollView
+        ref={scrollViewRef}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={contentContainerStyle}
