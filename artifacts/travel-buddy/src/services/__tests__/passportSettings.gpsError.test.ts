@@ -552,6 +552,236 @@ describe('identity screen GPS wiring — current-city onSuccess only sets curren
   });
 });
 
+// ── Suite: geocode-failure alert wiring — home-city path ─────────────────────
+//
+// Regression guard for the onGpsOrGeocodeFailed refactor: when GPS is granted
+// but reverse-geocoding fails, identity.tsx wires onGpsOrGeocodeFailed to show
+// an alert with a "Choose from list" button that must call setShowHomePicker(true).
+// These tests inject a mock alertFn so we can capture the buttons array and
+// invoke each button's onPress directly — no React, no native modules needed.
+
+/**
+ * Build an onGpsOrGeocodeFailed closure that mirrors fillHomeFromGps's wiring
+ * in identity.tsx, but with injectable spies instead of Alert + React setState.
+ */
+function buildGeoFailureHandler(opts: {
+  alertFn: (title: string, message: string, buttons: AlertButton[]) => void;
+  setShowPicker: (val: boolean) => void;
+}): () => void {
+  return () =>
+    opts.alertFn(
+      'Could not detect your location',
+      'There was a problem getting your location. You can choose a city from the list instead.',
+      [
+        { text: 'Choose from list', onPress: () => opts.setShowPicker(true) },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+    );
+}
+
+describe('identity screen geocode-failure alert wiring — home-city path: Choose from list reaches setShowHomePicker', () => {
+  it('"Choose from list" button reaches setShowHomePicker when geocoding fails', async () => {
+    let capturedButtons: AlertButton[] = [];
+    let pickerShown = false;
+
+    const onGpsOrGeocodeFailed = buildGeoFailureHandler({
+      alertFn: (_t, _m, buttons) => { capturedButtons = buttons; },
+      setShowPicker: (val) => { pickerShown = val; },
+    });
+
+    await runIdentityGpsFill({
+      getCurrentGps:      grantedGps(),
+      reverseGeocode:     () => Promise.reject(new Error('network_error')),
+      onPermissionDenied: () => {},
+      onGpsOrGeocodeFailed,
+      onSuccess:          () => {},
+      setLoading:         () => {},
+    });
+
+    assert.ok(capturedButtons.length > 0, 'geocode-failure alert must have been shown');
+
+    const btn = capturedButtons.find((b) => b.text === 'Choose from list');
+    assert.ok(btn, '"Choose from list" button must be present in the geocode-failure alert');
+    btn!.onPress?.();
+    assert.equal(pickerShown, true, '"Choose from list" onPress must call setShowHomePicker(true)');
+  });
+
+  it('"Cancel" button does not trigger setShowHomePicker', async () => {
+    let capturedButtons: AlertButton[] = [];
+    let pickerShown = false;
+
+    const onGpsOrGeocodeFailed = buildGeoFailureHandler({
+      alertFn: (_t, _m, buttons) => { capturedButtons = buttons; },
+      setShowPicker: (val) => { pickerShown = val; },
+    });
+
+    await runIdentityGpsFill({
+      getCurrentGps:      grantedGps(),
+      reverseGeocode:     () => Promise.reject(new Error('geocode_timeout')),
+      onPermissionDenied: () => {},
+      onGpsOrGeocodeFailed,
+      onSuccess:          () => {},
+      setLoading:         () => {},
+    });
+
+    const cancelBtn = capturedButtons.find((b) => b.text === 'Cancel');
+    assert.ok(cancelBtn, '"Cancel" button must be present in the geocode-failure alert');
+    cancelBtn!.onPress?.();
+    assert.equal(pickerShown, false, '"Cancel" must not trigger setShowHomePicker');
+  });
+
+  it('"Choose from list" and "Cancel" are independently reachable in the same geocode-failure alert', async () => {
+    let capturedButtons: AlertButton[] = [];
+    let pickerCount = 0;
+
+    const onGpsOrGeocodeFailed = buildGeoFailureHandler({
+      alertFn: (_t, _m, buttons) => { capturedButtons = buttons; },
+      setShowPicker: () => { pickerCount++; },
+    });
+
+    await runIdentityGpsFill({
+      getCurrentGps:      grantedGps(),
+      reverseGeocode:     () => Promise.reject(new Error('geocode_failed')),
+      onPermissionDenied: () => {},
+      onGpsOrGeocodeFailed,
+      onSuccess:          () => {},
+      setLoading:         () => {},
+    });
+
+    capturedButtons.find((b) => b.text === 'Cancel')?.onPress?.();
+    assert.equal(pickerCount, 0, '"Cancel" must not increment picker count');
+
+    capturedButtons.find((b) => b.text === 'Choose from list')?.onPress?.();
+    assert.equal(pickerCount, 1, '"Choose from list" must be independently callable');
+  });
+
+  it('geocode-failure alert is NOT shown when GPS fill succeeds', async () => {
+    let capturedButtons: AlertButton[] = [];
+    let pickerShown = false;
+
+    const onGpsOrGeocodeFailed = buildGeoFailureHandler({
+      alertFn: (_t, _m, buttons) => { capturedButtons = buttons; },
+      setShowPicker: (val) => { pickerShown = val; },
+    });
+
+    await runIdentityGpsFill({
+      getCurrentGps:      grantedGps(),
+      reverseGeocode:     geocode({ city: 'Paris', country: 'France' }),
+      onPermissionDenied: () => {},
+      onGpsOrGeocodeFailed,
+      onSuccess:          () => {},
+      setLoading:         () => {},
+    });
+
+    assert.equal(capturedButtons.length, 0, 'geocode-failure alert must NOT be shown on success');
+    assert.equal(pickerShown, false, 'setShowHomePicker must NOT be called on success');
+  });
+});
+
+// ── Suite: geocode-failure alert wiring — current-city path ──────────────────
+//
+// The current-city GPS button mirrors the home-city logic but wires "Choose
+// from list" to setShowCurrentPicker. These tests guard that contract
+// independently so a copy-paste mistake (home vs. current) is caught immediately.
+
+describe('identity screen geocode-failure alert wiring — current-city path: Choose from list reaches setShowCurrentPicker', () => {
+  it('"Choose from list" button reaches setShowCurrentPicker when geocoding fails for current city', async () => {
+    let capturedButtons: AlertButton[] = [];
+    let pickerShown = false;
+
+    // Mirrors fillCurrentFromGps: setShowPicker wires to setShowCurrentPicker
+    const onGpsOrGeocodeFailed = buildGeoFailureHandler({
+      alertFn: (_t, _m, buttons) => { capturedButtons = buttons; },
+      setShowPicker: (val) => { pickerShown = val; },
+    });
+
+    await runIdentityGpsFill({
+      getCurrentGps:      grantedGps(),
+      reverseGeocode:     () => Promise.reject(new Error('network_error')),
+      onPermissionDenied: () => {},
+      onGpsOrGeocodeFailed,
+      onSuccess:          () => {},
+      setLoading:         () => {},
+    });
+
+    assert.ok(capturedButtons.length > 0, 'geocode-failure alert must have been shown for current-city path');
+
+    const btn = capturedButtons.find((b) => b.text === 'Choose from list');
+    assert.ok(btn, '"Choose from list" button must be present in the current-city geocode-failure alert');
+    btn!.onPress?.();
+    assert.equal(pickerShown, true, '"Choose from list" onPress must call setShowCurrentPicker(true)');
+  });
+
+  it('"Cancel" button does not trigger setShowCurrentPicker', async () => {
+    let capturedButtons: AlertButton[] = [];
+    let pickerShown = false;
+
+    const onGpsOrGeocodeFailed = buildGeoFailureHandler({
+      alertFn: (_t, _m, buttons) => { capturedButtons = buttons; },
+      setShowPicker: (val) => { pickerShown = val; },
+    });
+
+    await runIdentityGpsFill({
+      getCurrentGps:      grantedGps(),
+      reverseGeocode:     () => Promise.reject(new Error('geocode_failed')),
+      onPermissionDenied: () => {},
+      onGpsOrGeocodeFailed,
+      onSuccess:          () => {},
+      setLoading:         () => {},
+    });
+
+    capturedButtons.find((b) => b.text === 'Cancel')?.onPress?.();
+    assert.equal(pickerShown, false, '"Cancel" must not trigger setShowCurrentPicker');
+  });
+
+  it('"Choose from list" and "Cancel" are independently reachable in the current-city geocode-failure alert', async () => {
+    let capturedButtons: AlertButton[] = [];
+    let pickerCount = 0;
+
+    const onGpsOrGeocodeFailed = buildGeoFailureHandler({
+      alertFn: (_t, _m, buttons) => { capturedButtons = buttons; },
+      setShowPicker: () => { pickerCount++; },
+    });
+
+    await runIdentityGpsFill({
+      getCurrentGps:      grantedGps(),
+      reverseGeocode:     () => Promise.reject(new Error('geocode_failed')),
+      onPermissionDenied: () => {},
+      onGpsOrGeocodeFailed,
+      onSuccess:          () => {},
+      setLoading:         () => {},
+    });
+
+    capturedButtons.find((b) => b.text === 'Cancel')?.onPress?.();
+    assert.equal(pickerCount, 0, '"Cancel" must not increment picker count for current-city path');
+
+    capturedButtons.find((b) => b.text === 'Choose from list')?.onPress?.();
+    assert.equal(pickerCount, 1, '"Choose from list" must be independently callable for current-city path');
+  });
+
+  it('geocode-failure alert is NOT shown when current-city GPS fill succeeds', async () => {
+    let capturedButtons: AlertButton[] = [];
+    let pickerShown = false;
+
+    const onGpsOrGeocodeFailed = buildGeoFailureHandler({
+      alertFn: (_t, _m, buttons) => { capturedButtons = buttons; },
+      setShowPicker: (val) => { pickerShown = val; },
+    });
+
+    await runIdentityGpsFill({
+      getCurrentGps:      grantedGps(),
+      reverseGeocode:     geocode({ city: 'Tokyo', country: 'Japan' }),
+      onPermissionDenied: () => {},
+      onGpsOrGeocodeFailed,
+      onSuccess:          () => {},
+      setLoading:         () => {},
+    });
+
+    assert.equal(capturedButtons.length, 0, 'geocode-failure alert must NOT be shown on success (current-city path)');
+    assert.equal(pickerShown, false, 'setShowCurrentPicker must NOT be called on success');
+  });
+});
+
 // ── Suite: success path — city picker not offered ─────────────────────────────
 
 describe('identity screen GPS wiring — success path', () => {
