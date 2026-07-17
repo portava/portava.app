@@ -3903,3 +3903,118 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     assert.equal(upsertCalls, 1, "no additional upsert attempt on the follow-up");
   });
 });
+
+// ── Probe race with cache eviction — correctionCheckedAt preservation ─────────
+
+describe("optimistic correctionCheckedAt bump vs. mid-probe eviction", () => {
+  it("re-establishes correctionCheckedAt on the fresh entry after a post-bump eviction — follow-up call does not re-probe", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "de", country: "Germany" } }],
+      };
+    });
+
+    // DB client:
+    //   - readDbCache calls (select includes country_code) resolve immediately
+    //     with the live row.
+    //   - probe calls (evictIfDbCorrected — select has corrected_at/deleted_at
+    //     only) return a DEFERRED promise so the test can fire the eviction
+    //     while the probe is in flight.
+    let probeCalls = 0;
+    let readCalls = 0;
+    let releaseProbe: (() => void) | null = null;
+    const liveRow = { country: "Germany", country_code: "DE", corrected_at: null, deleted_at: null };
+    _setGeocodeDbClientForTests({
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        let cols = "";
+        const chain: any = {
+          select(c: string) { cols = c; return chain; },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          maybeSingle() {
+            if (cols.includes("country_code")) {
+              readCalls++;
+              return Promise.resolve({ data: liveRow, error: null });
+            }
+            probeCalls++;
+            return new Promise((res) => {
+              releaseProbe = () => res({ data: { corrected_at: null, deleted_at: null }, error: null });
+            });
+          },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) { resolve({ data: [], error: null }); },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient);
+
+    // Phase 1: warm the cache from the DB row, then backdate correctionCheckedAt
+    // to 0 so the very next call re-probes without waiting out the interval.
+    const first = await geocodeCityCountry("Berlin");
+    assert.equal(first?.countryCode, "DE", "pre-condition: warm-up loads DE from the DB cache");
+    assert.equal(readCalls, 1, "warm-up used the DB cache read");
+    _backdateGeocodeCacheEntryForTests("berlin");
+
+    // Phase 2: fire a call that bumps correctionCheckedAt and awaits the probe.
+    const raced = geocodeCityCountry("Berlin");
+
+    // Wait until the probe's maybeSingle has actually been entered.
+    while (releaseProbe === null) {
+      await new Promise((r) => setImmediate(r));
+    }
+    assert.equal(probeCalls, 1, "probe is in flight");
+    // The optimistic bump landed before the await.
+    assert.equal(
+      _getGeocodeCacheEntryForTests("berlin")?.correctionCheckedAt,
+      T0,
+      "correctionCheckedAt was optimistically bumped before the probe resolved",
+    );
+
+    // Phase 3: an admin correction endpoint evicts the same key mid-probe.
+    evictGeocodeCacheKey("berlin");
+    assert.equal(_getGeocodeCacheEntryForTests("berlin"), undefined, "entry gone after eviction");
+
+    // Let the probe finish — row is live and uncorrected, so the raced call
+    // returns its (pre-eviction) cached result.
+    releaseProbe!();
+    const racedResult = await raced;
+    assert.equal(racedResult?.countryCode, "DE", "raced call still returns DE");
+    // The probe must NOT have resurrected the evicted entry.
+    assert.equal(
+      _getGeocodeCacheEntryForTests("berlin"),
+      undefined,
+      "completed probe does not resurrect the evicted entry",
+    );
+
+    // Phase 4: the next call re-resolves from the DB and MUST stamp a fresh
+    // correctionCheckedAt on the new entry — this is the guard under test.
+    const T1 = T0 + 10_000;
+    mockNow(T1);
+    const reResolved = await geocodeCityCountry("Berlin");
+    assert.equal(reResolved?.countryCode, "DE", "re-resolve returns DE from the DB row");
+    assert.equal(readCalls, 2, "re-resolve went through the DB cache read");
+    const fresh = _getGeocodeCacheEntryForTests("berlin");
+    assert.ok(fresh !== undefined, "fresh cache entry exists after re-resolve");
+    assert.equal(
+      fresh!.correctionCheckedAt,
+      T1,
+      "fresh entry carries a fresh correctionCheckedAt — the guard was not lost to the eviction race",
+    );
+
+    // Phase 5: a follow-up call within the interval must NOT re-probe.
+    mockNow(T1 + CORRECTION_CHECK_INTERVAL_MS - 1_000);
+    const followUp = await geocodeCityCountry("Berlin");
+    assert.equal(followUp?.countryCode, "DE", "follow-up call serves the warm entry");
+    assert.equal(probeCalls, 1, "no additional probe within the correction-check interval");
+    assert.equal(readCalls, 2, "no additional DB read — served from memory");
+    assert.equal(nominatimCalls, 0, "Nominatim never called anywhere in this scenario");
+  });
+});
