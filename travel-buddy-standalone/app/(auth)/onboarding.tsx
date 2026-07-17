@@ -278,7 +278,7 @@ export default function Onboarding() {
         >
           {saving
             ? <ActivityIndicator color={color.onInk} />
-            : <Text style={styles.nextBtnText}>{isLastStep ? 'Enter Travel Buddy' : 'Next →'}</Text>
+            : <Text style={styles.nextBtnText}>{isLastStep ? 'Enter Portava' : 'Next →'}</Text>
           }
         </Pressable>
       </View>

@@ -77,7 +77,7 @@ export function PassportBackdrop({ height = 150 }: { height?: number }) {
       {/* MRZ-style strip at the bottom edge for passport feel */}
       <View style={styles.mrz}>
         <Text style={styles.mrzText} numberOfLines={1}>
-          {'P<TRAVELBUDDY<<PASSPORT<<IDENTITY<<<<<<<<<<<<'}
+          {'P<PORTAVA<<PASSPORT<<IDENTITY<<<<<<<<<<<<<<<<'}
         </Text>
       </View>
     </View>

@@ -9,7 +9,7 @@ import { color, radius, type as t } from '../theme/tokens.ts';
  * security-print details, not decoration. Used ONLY inside the Passport hero.
  *
  * - PassportMonogramWatermark : large faint "TB" behind the photo (4–10%)
- * - PassportInkStamp          : rotated plane + TRAVEL BUDDY entry stamp
+ * - PassportInkStamp          : rotated plane + PORTAVA entry stamp
  * - PassportHeroBackdrop      : guilloche + faint bg stamps + paper grain
  */
 
@@ -35,13 +35,13 @@ export function PassportMonogramWatermark({ size = 200 }: { size?: number }) {
   );
 }
 
-/** Rotated entry-stamp: plane + TRAVEL BUDDY, muted ink. Top-right of hero. */
+/** Rotated entry-stamp: plane + PORTAVA, muted ink. Top-right of hero. */
 export function PassportInkStamp({ rotate = -8 }: { rotate?: number }) {
   return (
     <View pointerEvents="none" style={[ink.wrap, { transform: [{ rotate: `${rotate}deg` }] }]}>
       <View style={ink.ring}>
         <Plane size={14} color={color.deep} />
-        <Text style={ink.top}>TRAVEL BUDDY</Text>
+        <Text style={ink.top}>PORTAVA</Text>
         <View style={ink.divider} />
         <Text style={ink.bottom}>★ VERIFIED ★</Text>
       </View>
@@ -64,7 +64,7 @@ export function PassportHeroBackdrop() {
       </Defs>
       <Rect x="0" y="0" width="360" height="420" fill="url(#hg)" />
       <Rect x="0" y="0" width="360" height="420" fill="url(#grain)" />
-      {/* faint background TRAVEL BUDDY stamp marks (3-7%) */}
+      {/* faint background PORTAVA stamp marks (3-7%) */}
       <G opacity="0.05">
         <Circle cx="300" cy="300" r="42" stroke={color.deep} strokeWidth="1.5" fill="none" />
         <Circle cx="300" cy="300" r="33" stroke={color.deep} strokeWidth="0.6" fill="none" />

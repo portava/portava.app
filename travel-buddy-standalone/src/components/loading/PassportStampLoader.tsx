@@ -1,5 +1,5 @@
 /**
- * PassportStampLoader — Travel Buddy's primary full-screen loading animation
+ * PassportStampLoader — Portava's primary full-screen loading animation
  * ("Passport Stamp Journey").
  *
  * Motion sequence (looping):
@@ -176,7 +176,7 @@ export function PassportStampLoader({
   });
 
   const label = stampLabel ?? 'VISITED';
-  const subLabel = stampLabel ? '' : 'TRAVEL BUDDY';
+  const subLabel = stampLabel ? '' : 'PORTAVA';
 
   return (
     <View
@@ -191,7 +191,7 @@ export function PassportStampLoader({
           <Rect x={14} y={14} width={212} height={140} rx={9} fill={color.paperRaised} stroke={color.haze} strokeWidth={1} />
           <Line x1={14} y1={46} x2={226} y2={46} stroke={color.haze} strokeWidth={1} strokeDasharray="3 4" />
           <SvgText x={26} y={35} fontFamily={font.stamp} fontSize={9} letterSpacing={1.5} fill={color.faint}>
-            TRAVEL BUDDY · PASSPORT
+            PORTAVA · PASSPORT
           </SvgText>
 
           {/* Route glow underlay */}

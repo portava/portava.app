@@ -21,7 +21,7 @@ export const PassportShareCard = React.forwardRef<View, PassportShareCardProps>(
         <View style={styles.header}>
           <View style={styles.brandRow}>
             <Plane size={14} color={color.onInk} />
-            <Text style={styles.brand}>TRAVEL BUDDY PASSPORT</Text>
+            <Text style={styles.brand}>PORTAVA PASSPORT</Text>
           </View>
         </View>
 
@@ -64,7 +64,7 @@ export const PassportShareCard = React.forwardRef<View, PassportShareCardProps>(
 
         {/* MRZ footer */}
         <View style={styles.footer}>
-          <Text style={styles.mrzText}>TRAVEL BUDDY · SOCIAL PASSPORT</Text>
+          <Text style={styles.mrzText}>PORTAVA · SOCIAL PASSPORT</Text>
         </View>
       </View>
     );

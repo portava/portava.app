@@ -105,7 +105,7 @@ export function PassportHero({
       <View style={styles.topRow}>
         <View style={styles.brandRow}>
           <Plane size={16} color={color.ink} />
-          <Text style={styles.brand}>TRAVEL BUDDY PASSPORT</Text>
+          <Text style={styles.brand}>PORTAVA PASSPORT</Text>
         </View>
         {isOwner && onMenuPress ? (
           <Pressable
@@ -241,8 +241,8 @@ export function PassportHero({
         <Text style={styles.mrzChevron}>‹‹‹‹‹</Text>
         <Text style={styles.mrz} numberOfLines={1}>
           {isVerified
-            ? 'TRAVEL BUDDY · VERIFIED TRAVEL ID · SOCIAL PASSPORT'
-            : 'TRAVEL BUDDY · SOCIAL PASSPORT'}
+            ? 'PORTAVA · VERIFIED TRAVEL ID · SOCIAL PASSPORT'
+            : 'PORTAVA · SOCIAL PASSPORT'}
         </Text>
         <Text style={styles.mrzChevron}>›››››</Text>
       </View>

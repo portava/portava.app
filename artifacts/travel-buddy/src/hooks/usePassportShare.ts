@@ -5,7 +5,7 @@
  * Android (EXTRA_STREAM + EXTRA_TEXT on Android; UIActivityViewController on iOS).
  *
  * Share payload:
- *   - title:   "@<username>'s Travel Buddy Passport"
+ *   - title:   "@<username>'s Portava Passport"
  *   - message: human-readable text with deep-link + web fallback URL
  *   - url:     captured JPEG file URI (both platforms)
  *
@@ -44,13 +44,13 @@ export function usePassportShare(username: string | null) {
     const deepLink = makeDeepLink(username);
     const webFallback = makeWebFallback(username);
     const message = [
-      `Check out @${username}'s Travel Buddy Passport! ✈️`,
+      `Check out @${username}'s Portava Passport! ✈️`,
       '',
       `Open in app: ${deepLink}`,
       `View online: ${webFallback}`,
     ].join('\n');
 
-    const title = `@${username}'s Travel Buddy Passport`;
+    const title = `@${username}'s Portava Passport`;
 
     try {
       let imageUri: string | null = null;

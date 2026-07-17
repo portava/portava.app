@@ -95,7 +95,7 @@ export function StampShareCard({
 
       {/* App branding */}
       <View style={styles.brandRow}>
-        <Text style={styles.brandText}>TRAVEL BUDDY</Text>
+        <Text style={styles.brandText}>PORTAVA</Text>
         <Text style={styles.brandDivider}>·</Text>
         <Text style={styles.brandText}>PASSPORT STAMP</Text>
       </View>
