@@ -901,6 +901,76 @@ describe("PATCH /api/me/profile under schema drift (missing newer columns)", () 
     assert.equal(soloClearClient.__updates.length, 0, "no fallback write should have been committed");
   });
 
+  it("clearing coverUrl alone under drift errors — no silent no-op 200", async () => {
+    // { coverUrl: null } is the ONLY field in the PATCH and cover_photo_url is
+    // drifted. coverUrl maps only to cover_photo_url (no base fallback column),
+    // so every requested field would be stripped by the fallback — the route
+    // must hit the all-stripped error path naming coverUrl, not return a
+    // no-op 200 that silently pretends the clear succeeded.
+    const driftedColsCoverOnly = new Set(["cover_photo_url"]);
+    const soloCoverClearUpdates: UpdateRecord[] = [];
+    const soloCoverClearRow: any = {
+      id: ME, username: "me_user", handle: "me_user", name: "Me",
+      bio: "old bio", is_private: false, passport_visibility: "public",
+      avatar_url: null, created_at: new Date("2026-01-01").toISOString(),
+    };
+    function makeBuilder7(table: string) {
+      let pendingUpdate: any = null;
+      const builder: any = {
+        select() { return builder; },
+        eq() { return builder; },
+        neq() { return builder; },
+        limit() { return builder; },
+        update(patch: any) { pendingUpdate = patch; return builder; },
+        insert() { return builder; },
+        maybeSingle() {
+          return Promise.resolve({ data: table === "profiles" ? { ...soloCoverClearRow } : null, error: null });
+        },
+        single() {
+          if (pendingUpdate && table === "profiles") {
+            const bad = Object.keys(pendingUpdate).find((k) => driftedColsCoverOnly.has(k));
+            if (bad) {
+              return Promise.resolve({
+                data: null,
+                error: { code: "PGRST204", message: `Could not find the '${bad}' column of 'profiles' in the schema cache` },
+              });
+            }
+            soloCoverClearUpdates.push({ table, patch: pendingUpdate });
+            return Promise.resolve({ data: { ...soloCoverClearRow, ...pendingUpdate }, error: null });
+          }
+          return Promise.resolve({ data: table === "profiles" ? { ...soloCoverClearRow } : null, error: null });
+        },
+        then(onF: any, onR: any) {
+          return Promise.resolve({ data: [], error: null }).then(onF, onR);
+        },
+      };
+      return builder;
+    }
+    const soloCoverClearClient: any = {
+      auth: {
+        getUser: async (tok: string) =>
+          tok === ME_TOK
+            ? { data: { user: { id: ME } }, error: null }
+            : { data: { user: null }, error: { message: "invalid token" } },
+      },
+      from: (table: string) => makeBuilder7(table),
+      storage: { from: () => ({ remove: async () => ({ error: null }) }) },
+      __updates: soloCoverClearUpdates,
+    };
+
+    _setTestClient(soloCoverClearClient, true);
+    _setTestServiceClient(soloCoverClearClient);
+
+    const r = await patchProfile({ coverUrl: null });
+    assert.notEqual(r.status, 200, "a null-clear that saves nothing must not return 200");
+    const body = await r.json() as any;
+    assert.ok(
+      JSON.stringify(body).includes("coverUrl"),
+      `error body must mention "coverUrl" — got: ${JSON.stringify(body)}`,
+    );
+    assert.equal(soloCoverClearClient.__updates.length, 0, "no fallback write should have been committed");
+  });
+
   // ── Fallback retry DB error ────────────────────────────────────────────────
   // After the schema-drift fallback strips newer columns and retries, the
   // retry itself can fail (e.g. a constraint violation or transient DB error).
