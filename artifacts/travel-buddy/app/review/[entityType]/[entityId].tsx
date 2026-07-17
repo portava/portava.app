@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { KeyboardSafeScrollView } from '../../../src/components/ui/KeyboardSafeView';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useLocalSearchParams } from 'expo-router';
 import {
@@ -264,6 +265,7 @@ export default function ReviewComposerScreen() {
   }
 
   return (
+    <KeyboardSafeScrollView>
     <ScrollView style={s.container} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" onScroll={navBarScrollHandler} scrollEventThrottle={16}>
 
       {/* Header */}
@@ -370,6 +372,7 @@ export default function ReviewComposerScreen() {
       <NavBarFiller />
 
     </ScrollView>
+    </KeyboardSafeScrollView>
   );
 }
 

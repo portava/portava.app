@@ -26,6 +26,7 @@ import {
   type UploadCancelRef,
 } from '../services/postcards.ts';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import type { Place } from '../lib/location/placeTypes.ts';
 import { placeToLocationFields } from '../lib/location/locationPayload.ts';
@@ -369,6 +370,7 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
         </View>
 
         {phase === 'pick' && (
+          <KeyboardSafeScrollView offset={insets.top}>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={s.scrollContent} keyboardShouldPersistTaps="handled">
             {/* Error */}
             {error && (
@@ -573,6 +575,7 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
               </View>
             )}
           </ScrollView>
+          </KeyboardSafeScrollView>
         )}
 
         {phase === 'uploading' && (

@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, Pressable, Modal, ScrollView, StyleSheet,
-  KeyboardAvoidingView, Platform,
 } from 'react-native';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { X, ChevronDown } from 'lucide-react-native';
 import type { TripPlanItem, TripPlanCategory } from '../types/models.ts';
 import { createPlanItem } from '../services/tripPlan.ts';
@@ -92,7 +92,7 @@ export function AddToPlanSheet({ visible, tripId, onClose, onAdded, prefill }: A
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={handleClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+      <KeyboardSafeScrollView>
         <Pressable style={sh.overlay} onPress={handleClose} />
         <View style={sh.sheet}>
           <View style={sh.handle} />
@@ -182,7 +182,7 @@ export function AddToPlanSheet({ visible, tripId, onClose, onAdded, prefill }: A
             </Pressable>
           </ScrollView>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

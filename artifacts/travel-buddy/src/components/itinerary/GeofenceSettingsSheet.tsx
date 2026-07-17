@@ -6,11 +6,12 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, Pressable, Modal, ScrollView, Switch,
-  KeyboardAvoidingView, Platform, Alert, StyleSheet, TextInput,
+  Alert, StyleSheet, TextInput,
 } from 'react-native';
 import { X, MapPin, Clock, Users, Eye, Shield } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { GpsLocationCapture } from '../location/GpsLocationCapture.tsx';
+import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 import {
   setGeofence, revealExactLocation,
   type PublicPreviewLevel, type ExactVisibility, type GeofenceData,
@@ -127,8 +128,8 @@ export function GeofenceSettingsSheet({
 
   return (
     <Modal visible animationType="slide" transparent onRequestClose={onClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <Pressable style={s.overlay} onPress={onClose} />
+      <KeyboardSafeScrollView style={{ justifyContent: 'flex-end' }}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={s.sheet}>
           <View style={s.handle} />
 
@@ -311,7 +312,7 @@ export function GeofenceSettingsSheet({
             </Pressable>
           </ScrollView>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

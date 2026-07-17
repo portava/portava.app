@@ -24,6 +24,7 @@ import {
 import { getTrip } from '../services/trips.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 
 interface Props {
   type: 'trip' | 'circle';
@@ -189,7 +190,8 @@ export function TripMembersSheet({ type, id, title, onDismiss }: Props) {
 
   return (
     <Modal visible animationType="slide" transparent onRequestClose={onDismiss}>
-      <Pressable style={s.overlay} onPress={onDismiss} />
+      <KeyboardSafeScrollView style={{ justifyContent: 'flex-end' }}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onDismiss} />
       <View style={s.sheet}>
         <View style={s.handle} />
 
@@ -291,6 +293,7 @@ export function TripMembersSheet({ type, id, title, onDismiss }: Props) {
           </ScrollView>
         )}
       </View>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

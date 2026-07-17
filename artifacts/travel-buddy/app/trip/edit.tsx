@@ -3,6 +3,7 @@ import {
   View, Text, TextInput, Pressable, ActivityIndicator,
   ScrollView, StyleSheet, Alert,
 } from 'react-native';
+import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { router, useLocalSearchParams } from 'expo-router';
 import { CalendarDays, MapPin, X } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
@@ -148,7 +149,7 @@ export default function EditTrip() {
   const endD = endDate ? fromISODate(endDate) : null;
 
   return (
-    <View style={{ flex: 1, backgroundColor: color.paper }}>
+    <KeyboardSafeScrollView style={{ backgroundColor: color.paper }}>
       <ScreenHeader title="Edit trip" back />
       <ScrollView
         contentContainerStyle={{ padding: space.lg, gap: space.lg }}
@@ -257,7 +258,7 @@ export default function EditTrip() {
         onSelect={(p) => setPlace(p)}
         onClose={() => setPlaceOpen(false)}
       />
-    </View>
+    </KeyboardSafeScrollView>
   );
 }
 

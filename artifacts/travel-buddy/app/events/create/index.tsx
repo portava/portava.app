@@ -18,9 +18,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
-  ScrollView, Switch, Alert, ActivityIndicator, Platform,
-  KeyboardAvoidingView, Image,
+  ScrollView, Switch, Alert, ActivityIndicator, Image,
 } from 'react-native';
+import { KeyboardSafeScrollView } from '../../../src/components/ui/KeyboardSafeView';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -541,10 +541,7 @@ export default function CreateEventScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+    <KeyboardSafeScrollView>
       <View style={[styles.container, { paddingTop: insets.top }]}>
         {/* Header */}
         <View style={styles.header}>
@@ -1371,7 +1368,7 @@ export default function CreateEventScreen() {
           )}
         </View>
       </View>
-    </KeyboardAvoidingView>
+    </KeyboardSafeScrollView>
   );
 }
 

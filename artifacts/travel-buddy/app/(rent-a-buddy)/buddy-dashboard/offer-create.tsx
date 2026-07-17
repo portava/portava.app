@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardSafeScrollView } from '../../../src/components/ui/KeyboardSafeView';
 import { ArrowLeft, Send, DollarSign } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import { TravelChip, TravelLoadingState } from '../../../src/components/primitives';
@@ -103,7 +104,7 @@ export default function OfferCreate() {
     : 0;
 
   return (
-    <View style={[s.root, { paddingTop: insets.top }]}>
+    <KeyboardSafeScrollView style={[s.root, { paddingTop: insets.top }]}>
       <View style={s.header}>
         <Pressable onPress={() => router.back()} style={s.backBtn}>
           <ArrowLeft size={20} color={color.ink} />
@@ -111,7 +112,7 @@ export default function OfferCreate() {
         <Text style={s.title}>Create Offer</Text>
       </View>
 
-      <ScrollView style={s.body} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
+      <ScrollView style={s.body} contentContainerStyle={s.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         {request ? (
           <View style={s.requestSummary}>
             <Text style={s.requestTitle}>{request.city} · {request.category} · {request.durationMinutes / 60}h</Text>
@@ -222,7 +223,7 @@ export default function OfferCreate() {
           <Text style={s.submitBtnLabel}>{submitting ? 'Sending…' : 'Send Offer'}</Text>
         </Pressable>
       </ScrollView>
-    </View>
+    </KeyboardSafeScrollView>
   );
 }
 

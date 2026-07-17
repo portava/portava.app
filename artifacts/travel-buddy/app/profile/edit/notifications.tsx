@@ -9,8 +9,9 @@
 import React, { useCallback, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ActivityIndicator, Switch,
-  Modal, TextInput, KeyboardAvoidingView, Platform,
+  Modal, TextInput,
 } from 'react-native';
+import { KeyboardSafeScrollView } from '../../../src/components/ui/KeyboardSafeView';
 import { PP } from '../../../src/theme/passportTokens';
 import { space, radius, type as t } from '../../../src/theme/tokens';
 import { useNotificationPreferences } from '../../../src/hooks/useNotifications';
@@ -75,7 +76,7 @@ function QuietTimePicker({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+      <KeyboardSafeScrollView>
         <Pressable style={pk.overlay} onPress={onClose}>
           <Pressable style={pk.sheet} onPress={() => {}}>
             <Text style={pk.label}>{label}</Text>
@@ -110,7 +111,7 @@ function QuietTimePicker({
             </View>
           </Pressable>
         </Pressable>
-      </KeyboardAvoidingView>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

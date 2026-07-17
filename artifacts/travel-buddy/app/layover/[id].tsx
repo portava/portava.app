@@ -41,6 +41,7 @@ import { LayoverRecsSection } from '../../src/components/layover/LayoverRecsSect
 import { LayoverMapCard } from '../../src/components/layover/LayoverMapCard';
 import { LayoverPeopleSection } from '../../src/components/layover/LayoverPeopleSection';
 import { fmtClock } from '../../src/components/layover/layoverFormat';
+import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 
 export default function LayoverDashboardScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -269,8 +270,10 @@ export default function LayoverDashboardScreen() {
         <View style={{ width: 36 }} />
       </View>
 
+      <KeyboardSafeScrollView>
       <ScrollView
         contentContainerStyle={[styles.body, { paddingBottom: canEdit ? 130 + insets.bottom : 40 + insets.bottom }]}
+        keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(true); }} tintColor={color.signal} />
         }
@@ -315,6 +318,7 @@ export default function LayoverDashboardScreen() {
           onOpenBuddy={(b) => router.push(`/buddy/${b.id}` as any)}
         />
       </ScrollView>
+      </KeyboardSafeScrollView>
 
       {/* Sticky footer */}
       {canEdit && (

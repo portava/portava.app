@@ -6,6 +6,7 @@ import {
 import { X } from 'lucide-react-native';
 import { reportContent, type ReasonCode } from '../services/reports.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import {
   INITIAL_REPORT_SHEET_STATE,
   canSubmitReport,
@@ -65,8 +66,8 @@ export function ReportPostSheet({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
-      <View style={rps.overlay}>
-        <Pressable testID="report-post-backdrop" style={{ flex: 1 }} onPress={handleClose} />
+      <KeyboardSafeScrollView style={rps.overlay}>
+        <Pressable testID="report-post-backdrop" style={StyleSheet.absoluteFill} onPress={handleClose} />
         <View style={rps.sheet}>
           <View style={rps.handle} />
           {done ? (
@@ -123,7 +124,7 @@ export function ReportPostSheet({
             </>
           )}
         </View>
-      </View>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

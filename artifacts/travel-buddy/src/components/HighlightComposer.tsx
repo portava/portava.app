@@ -8,7 +8,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, Pressable, Modal, ScrollView, StyleSheet,
-  Image, ActivityIndicator, KeyboardAvoidingView, Platform,
+  Image, ActivityIndicator,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Video, ResizeMode } from 'expo-av';
@@ -21,6 +21,7 @@ import { useSession } from '../context/SessionContext.tsx';
 import { router } from 'expo-router';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor.tsx';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 
 const MAX_VIDEO_DURATION_SECONDS = 10;
 
@@ -245,8 +246,8 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <Pressable style={s.backdrop} onPress={onClose} />
+      <KeyboardSafeScrollView style={{ justifyContent: 'flex-end' }}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
           <View style={s.grab} />
           <View style={s.head}>
@@ -390,7 +391,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
             </Pressable>
           </View>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeScrollView>
 
       {/* Place picker */}
       <GlobalPlacePicker

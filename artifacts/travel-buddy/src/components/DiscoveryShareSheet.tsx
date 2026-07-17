@@ -30,6 +30,7 @@ import {
 } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { getMyThreads, sendMessage } from '../services/messaging.ts';
 import type { ThreadSummary } from '../services/messaging.ts';
 
@@ -154,7 +155,8 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={s.overlay} onPress={onClose} />
+      <KeyboardSafeScrollView style={{ justifyContent: 'flex-end' }}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
       <View style={s.sheet}>
         <View style={s.handle} />
 
@@ -257,6 +259,7 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
           )}
         </Pressable>
       </View>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

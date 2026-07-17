@@ -10,6 +10,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Heart, Search } from 'lucide-react-native';
 import { color, radius, space, type as t } from '../theme/tokens.ts';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import {
   getCloseFriends, addCloseFriend, removeCloseFriend,
   type CloseFriend,
@@ -70,7 +71,8 @@ export function CloseFriendsSheet({ visible, onClose }: Props) {
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <Pressable style={s.overlay} onPress={onClose} />
+      <KeyboardSafeScrollView style={{ justifyContent: 'flex-end' }}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
       <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <View style={s.handle} />
 
@@ -135,6 +137,7 @@ export function CloseFriendsSheet({ visible, onClose }: Props) {
           />
         )}
       </View>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

@@ -9,8 +9,8 @@ import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, Pressable, TextInput,
   StyleSheet, ActivityIndicator, Alert, Image,
-  Platform, KeyboardAvoidingView,
 } from 'react-native';
+import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -197,10 +197,7 @@ export default function CreateMemoryScreen() {
   const canPublish = !uploading;
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: color.paper }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <KeyboardSafeScrollView style={{ backgroundColor: color.paper }}>
       {/* Header */}
       <View style={[s.header, { paddingTop: insets.top + space.sm }]}>
         <Pressable onPress={() => router.back()} hitSlop={8} style={s.headerClose}>
@@ -366,7 +363,7 @@ export default function CreateMemoryScreen() {
         mode="all"
         usedFor="memory"
       />
-    </KeyboardAvoidingView>
+    </KeyboardSafeScrollView>
   );
 }
 

@@ -8,8 +8,9 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, Pressable,
   TextInput, Alert, ActivityIndicator, Modal,
-  KeyboardAvoidingView, Platform,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardSafeScrollView } from '../../../src/components/ui/KeyboardSafeView';
 import { Phone, Mail, User, Plus, Trash2, Edit2, ShieldCheck, X } from 'lucide-react-native';
 import { ScreenHeader } from '../../../src/components/ScreenHeader';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
@@ -142,6 +143,7 @@ function EditModal({
   onClose: () => void;
   saving: boolean;
 }) {
+  const insets = useSafeAreaInsets();
   const [form, setForm] = useState<FormState>(BLANK_FORM);
 
   useEffect(() => {
@@ -162,10 +164,7 @@ function EditModal({
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={{ flex: 1, backgroundColor: color.paper }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <KeyboardSafeScrollView offset={insets.top} style={{ backgroundColor: color.paper }}>
         <View style={styles.modalHeader}>
           <Pressable onPress={onClose} hitSlop={8}>
             <X size={20} color={color.ink} />
@@ -255,7 +254,7 @@ function EditModal({
             </Text>
           </View>
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

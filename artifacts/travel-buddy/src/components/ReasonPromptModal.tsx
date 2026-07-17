@@ -7,6 +7,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 
 export function ReasonPromptModal({
   visible,
@@ -48,7 +49,7 @@ export function ReasonPromptModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <View style={styles.backdrop}>
+      <KeyboardSafeScrollView style={styles.backdrop}>
         <View style={styles.card} testID="reason-modal">
           <Text style={styles.title}>{title}</Text>
           {message ? <Text style={styles.subtitle}>{message}</Text> : null}
@@ -80,7 +81,7 @@ export function ReasonPromptModal({
             </Pressable>
           </View>
         </View>
-      </View>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

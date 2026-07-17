@@ -21,6 +21,7 @@ import { getStampOverlayOptions } from '../services/postcards.ts';
 import type { StampOverlayOption } from '../lib/stampOverlay.ts';
 import { ProceduralStamp } from './StampOverlayBadge.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 
 interface Props {
   visible: boolean;
@@ -72,7 +73,7 @@ export function StampPickerSheet({ visible, onClose, onSelect, city, country }: 
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={sp.backdropWrap}>
+      <KeyboardSafeScrollView style={sp.backdropWrap}>
         <Pressable style={sp.backdrop} onPress={onClose} />
         <View style={[sp.panel, { paddingBottom: Math.max(insets.bottom, space.lg) }]}>
           <View style={sp.header}>
@@ -137,7 +138,7 @@ export function StampPickerSheet({ visible, onClose, onSelect, city, country }: 
             </ScrollView>
           )}
         </View>
-      </View>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

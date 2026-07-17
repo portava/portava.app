@@ -11,7 +11,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
-  KeyboardAvoidingView, Platform, ScrollView, Switch,
+  ScrollView, Switch,
 } from 'react-native';
 import { X, ChevronRight, ChevronLeft, CalendarClock, MapPin, Settings2, Eye, Clock } from 'lucide-react-native';
 import { createEvent, type CreateEventInput, type EventSummary, type EventVisibility } from '../services/events.ts';
@@ -19,6 +19,7 @@ import { GlobalCalendarPicker } from './selectors/GlobalCalendarPicker.tsx';
 import { GlobalTimePicker } from './selectors/GlobalTimePicker.tsx';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 
 interface Props {
   onDismiss: () => void;
@@ -173,7 +174,7 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
   const todayISO = new Date().toISOString().slice(0, 10);
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.kav}>
+    <KeyboardSafeScrollView style={s.kav}>
       <View style={s.backdrop}>
         <View style={s.sheet}>
           {/* Header */}
@@ -556,7 +557,7 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
         onChange={(v) => { setEndTime(v); }}
         onClose={() => setTimePickerFor(null)}
       />
-    </KeyboardAvoidingView>
+    </KeyboardSafeScrollView>
   );
 }
 

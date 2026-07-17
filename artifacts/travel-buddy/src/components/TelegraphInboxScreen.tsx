@@ -17,6 +17,7 @@ import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { TG, TG_AVATAR } from '../theme/telegraphTokens.ts';
 import { TelegraphAvatar, TelegraphRow } from './telegraph/TelegraphPrimitives.tsx';
+import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import type { ThreadSummary, MessageRequest } from '../services/messaging.ts';
 import { circleCardInboxPreview } from './CircleStatusCardMessage.logic';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
@@ -351,6 +352,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
   const pt = Math.max(insets.top, topInset);
 
   return (
+    <KeyboardSafeScrollView>
     <View style={[s.screen, { paddingTop: pt }]}>
       <View style={s.header}>
         <View style={s.brandRow}>
@@ -458,6 +460,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
         </>
       )}
     </View>
+    </KeyboardSafeScrollView>
   );
 }
 
