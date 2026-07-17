@@ -208,7 +208,137 @@ function makeTombstoneSweepClient(
   } as unknown as SupabaseClient;
 }
 
+/**
+ * DB client whose readDbCache always misses and whose upsert fails the first
+ * `failCount` times, then succeeds. Tracks total upsert attempts.
+ */
+function makeFlakyUpsertClient(failCount: number) {
+  let upsertCalls = 0;
+  const client = {
+    from(table: string) {
+      assert.equal(table, "city_country_geocode_cache", "unexpected table");
+      const chain: any = {
+        select() { return chain; },
+        eq() { return chain; },
+        gte() { return chain; },
+        not() { return chain; },
+        async maybeSingle() { return { data: null, error: null }; },
+        upsert() {
+          upsertCalls++;
+          if (upsertCalls <= failCount) {
+            return Promise.resolve({ error: { message: "disk full" } });
+          }
+          return Promise.resolve({ error: null });
+        },
+        then(resolve: (v: any) => void) {
+          resolve({ data: [], error: null });
+        },
+      };
+      return chain;
+    },
+  } as unknown as SupabaseClient;
+  return { client, getUpsertCalls: () => upsertCalls };
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
+
+describe("failed DB persist retried on next warm hit", () => {
+  it("re-attempts the persist on the next warm hit after a failed writeDbCache, then stops once it succeeds", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "de", country: "Germany" } }],
+      };
+    });
+
+    // First upsert fails; subsequent upserts succeed.
+    const { client, getUpsertCalls } = makeFlakyUpsertClient(1);
+    _setGeocodeDbClientForTests(client);
+
+    // Initial resolve: DB miss → Nominatim → persist fails.
+    const first = await geocodeCityCountry("Berlin");
+    assert.equal(first?.countryCode, "DE");
+    assert.equal(nominatimCalls, 1);
+    assert.equal(getUpsertCalls(), 1, "one (failed) persist attempt on initial resolve");
+    const entry = _getGeocodeCacheEntryForTests("berlin") as any;
+    assert.equal(entry?.persistFailed, true, "entry marked not-persisted after failed upsert");
+
+    // Warm hit within the correction-check interval: persist retried, succeeds.
+    mockNow(T0 + 1_000);
+    const second = await geocodeCityCountry("Berlin");
+    assert.equal(second?.countryCode, "DE", "warm hit still returns the cached result");
+    assert.equal(nominatimCalls, 1, "no re-geocode on warm hit");
+    assert.equal(getUpsertCalls(), 2, "persist retried exactly once on the warm hit");
+    const entryAfter = _getGeocodeCacheEntryForTests("berlin") as any;
+    assert.equal(entryAfter?.persistFailed, false, "flag cleared after successful retry");
+
+    // Another warm hit: no further persist attempts.
+    mockNow(T0 + 2_000);
+    const third = await geocodeCityCountry("Berlin");
+    assert.equal(third?.countryCode, "DE");
+    assert.equal(getUpsertCalls(), 2, "no retry once a persist succeeds");
+  });
+
+  it("keeps retrying (once per warm hit) while the persist keeps failing — and never affects the returned result", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "it", country: "Italy" } }],
+    }));
+
+    // All upserts fail.
+    const { client, getUpsertCalls } = makeFlakyUpsertClient(Infinity);
+    _setGeocodeDbClientForTests(client);
+
+    const first = await geocodeCityCountry("Rome");
+    assert.equal(first?.countryCode, "IT");
+    assert.equal(getUpsertCalls(), 1);
+
+    mockNow(T0 + 1_000);
+    const second = await geocodeCityCountry("Rome");
+    assert.equal(second?.countryCode, "IT", "failed retry never affects the returned result");
+    assert.equal(getUpsertCalls(), 2, "retried on warm hit");
+    const entry = _getGeocodeCacheEntryForTests("rome") as any;
+    assert.equal(entry?.persistFailed, true, "still flagged after another failure");
+
+    mockNow(T0 + 2_000);
+    const third = await geocodeCityCountry("Rome");
+    assert.equal(third?.countryCode, "IT");
+    assert.equal(getUpsertCalls(), 3, "retried again on the next warm hit");
+  });
+
+  it("does not retry on warm hits when the initial persist succeeded", async () => {
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "es", country: "Spain" } }],
+    }));
+
+    const { client, getUpsertCalls } = makeFlakyUpsertClient(0); // always succeeds
+    _setGeocodeDbClientForTests(client);
+
+    const first = await geocodeCityCountry("Madrid");
+    assert.equal(first?.countryCode, "ES");
+    assert.equal(getUpsertCalls(), 1, "single successful persist on initial resolve");
+    const entry = _getGeocodeCacheEntryForTests("madrid") as any;
+    assert.ok(!entry?.persistFailed, "not flagged when the persist succeeded");
+
+    mockNow(T0 + 1_000);
+    await geocodeCityCountry("Madrid");
+    mockNow(T0 + 2_000);
+    await geocodeCityCountry("Madrid");
+    assert.equal(getUpsertCalls(), 1, "no extra upserts on warm hits after a successful persist");
+  });
+});
 
 describe("geocode DELETE cross-instance propagation", () => {
   it("evicts a stale entry when the on-request probe finds deleted_at set (tombstoned row)", async () => {
@@ -4341,11 +4471,13 @@ it("sweep does NOT evict a hard-deleted city — the on-request probe handles ro
     assert.equal(entry!.result?.countryCode, "PT",
       "in-memory cache holds the positive result despite the writeDbCache error");
 
-    // Follow-up call is served from memory — no extra Nominatim call, no extra upsert.
+    // Follow-up call is served from memory — no extra Nominatim call, but the
+    // failed persist is retried (best-effort) so the result survives a restart.
+    upsertThrows = false;
     const followUp = await geocodeCityCountry("Lisbon");
     assert.equal(followUp?.countryCode, "PT", "follow-up call returns the cached positive result");
     assert.equal(nominatimCalls, 2, "no additional Nominatim call on the follow-up");
-    assert.equal(upsertCalls, 1, "no additional upsert attempt on the follow-up");
+    assert.equal(upsertCalls, 2, "the failed persist is re-attempted on the warm follow-up hit");
   });
 });
 

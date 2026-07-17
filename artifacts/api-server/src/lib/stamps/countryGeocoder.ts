@@ -42,6 +42,7 @@ interface CacheEntry {
   expiresAt: number;
   writtenAt: number;           // epoch ms when this entry was placed in the cache
   correctionCheckedAt?: number; // epoch ms of the last corrected_at probe for this key
+  persistFailed?: boolean;      // true when the best-effort DB persist failed — retried on the next warm hit
 }
 
 const _cache = new Map<string, CacheEntry>();
@@ -296,9 +297,14 @@ async function readDbCache(key: string): Promise<GeocodedCountry | null> {
   }
 }
 
-async function writeDbCache(key: string, result: GeocodedCountry): Promise<void> {
+/**
+ * Persist a positive result to the DB cache. Best-effort — never throws.
+ * Returns true when the upsert succeeded, false otherwise so callers can mark
+ * the in-memory entry for a later retry.
+ */
+async function writeDbCache(key: string, result: GeocodedCountry): Promise<boolean> {
   const sc = dbClient();
-  if (!sc) return;
+  if (!sc) return false;
   try {
     const { error } = await sc.from(DB_CACHE_TABLE).upsert(
       {
@@ -320,9 +326,36 @@ async function writeDbCache(key: string, result: GeocodedCountry): Promise<void>
     );
     if (error) {
       logEvent("stamp.country_geocode.persist_failed", { city_key: key, error: error.message });
+      return false;
     }
+    return true;
   } catch (e: any) {
     logEvent("stamp.country_geocode.persist_failed", { city_key: key, error: e?.message ?? String(e) });
+    return false;
+  }
+}
+
+/**
+ * Retry a previously-failed DB persist for a warm in-memory entry.
+ * Best-effort: never throws and never affects the value returned to the caller.
+ * The persistFailed flag is cleared optimistically before awaiting so a
+ * concurrent warm hit doesn't fire a duplicate upsert; it is restored when the
+ * retry fails again so the next warm hit retries once more.
+ */
+async function retryPersist(key: string, cached: CacheEntry): Promise<void> {
+  if (!cached.result) return;
+  const current = _cache.get(key);
+  if (!current || !current.persistFailed || current.result !== cached.result) return;
+  _cache.set(key, { ...current, persistFailed: false });
+  const ok = await writeDbCache(key, cached.result);
+  if (!ok) {
+    const after = _cache.get(key);
+    // Only re-flag if the entry is still the same result (not evicted/replaced).
+    if (after && after.result === cached.result) {
+      _cache.set(key, { ...after, persistFailed: true });
+    }
+  } else {
+    logEvent("stamp.country_geocode.persist_retried", { city_key: key });
   }
 }
 
@@ -381,6 +414,12 @@ export async function geocodeCityCountry(city: string): Promise<GeocodedCountry 
     // Periodically probe the DB for admin corrections written on other instances.
     // Only positive entries are ever admin-corrected; skip the probe for null entries.
     if (cached.result != null) {
+      // A prior best-effort DB persist failed — retry it on this warm hit so
+      // the positive result isn't lost on restart. Never affects the returned
+      // result (retryPersist swallows all errors).
+      if (cached.persistFailed) {
+        await retryPersist(key, cached);
+      }
       const lastCheck = cached.correctionCheckedAt ?? cached.writtenAt;
       if (Date.now() - lastCheck >= CORRECTION_CHECK_INTERVAL_MS) {
         // Optimistically bump correctionCheckedAt BEFORE awaiting the probe.
@@ -445,7 +484,15 @@ export async function geocodeCityCountry(city: string): Promise<GeocodedCountry 
         });
       }
       if (result) {
-        await writeDbCache(key, result);
+        const persisted = await writeDbCache(key, result);
+        if (!persisted) {
+          // Mark the entry so the next warm hit re-attempts the persist —
+          // otherwise the result lives only in memory and is lost on restart.
+          const entry = _cache.get(key);
+          if (entry && entry.result === result) {
+            _cache.set(key, { ...entry, persistFailed: true });
+          }
+        }
         logEvent("stamp.country_geocode.resolved", { city, country_code: result.countryCode });
       } else {
         logEvent("stamp.country_geocode.unresolved", { city });
