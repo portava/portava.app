@@ -674,6 +674,62 @@ describe('StampQueueScreen — orphaned-files badge', () => {
   });
 });
 
+// ── Regenerating badge suite ───────────────────────────────────────────────────
+
+/**
+ * Verifies the live-job badge: entries with `queue_status` set (queued or
+ * processing) show a badge so operators can see a rejected/stale entry
+ * already has a job in flight and don't trigger a redundant regenerate.
+ */
+
+describe('StampQueueScreen — regenerating badge', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  const baseRejected = {
+    id: 'cat-regen',
+    display_name: 'Lisbon Tram',
+    stamp_type: 'landmark',
+    country_code: 'PT',
+    status: 'rejected' as const,
+  };
+
+  it('shows "regenerating" when a rejected entry has a processing job', async () => {
+    mockGetCatalog.mockResolvedValue(
+      catalogOk([{ ...baseRejected, queue_status: 'processing' } as any])
+    );
+
+    await render(<StampQueueScreen />);
+    await screen.findByText('Lisbon Tram');
+
+    expect(screen.getByTestId('regen-badge-cat-regen')).toBeTruthy();
+    expect(screen.getByText('regenerating')).toBeTruthy();
+  });
+
+  it('shows "queued" when the live job is still queued', async () => {
+    mockGetCatalog.mockResolvedValue(
+      catalogOk([{ ...baseRejected, queue_status: 'queued' } as any])
+    );
+
+    await render(<StampQueueScreen />);
+    await screen.findByText('Lisbon Tram');
+
+    expect(screen.getByTestId('regen-badge-cat-regen')).toBeTruthy();
+    expect(screen.getByText('queued')).toBeTruthy();
+  });
+
+  it('renders no live-job badge when queue_status is absent', async () => {
+    mockGetCatalog.mockResolvedValue(catalogOk([baseRejected as any]));
+
+    await render(<StampQueueScreen />);
+    await screen.findByText('Lisbon Tram');
+
+    expect(screen.queryByTestId('regen-badge-cat-regen')).toBeNull();
+    expect(screen.queryByText('regenerating')).toBeNull();
+  });
+});
+
 // ── Error-banner clear on filter change suite ──────────────────────────────────
 
 /**

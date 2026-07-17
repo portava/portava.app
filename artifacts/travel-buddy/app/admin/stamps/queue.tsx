@@ -99,6 +99,13 @@ export default function StampQueueScreen() {
         ) : null}
       </View>
       <View style={styles.badgeCol}>
+        {(item.queue_status === 'queued' || item.queue_status === 'processing') && (
+          <View style={[styles.badge, styles.regenBadge]} testID={`regen-badge-${item.id}`}>
+            <Text style={[styles.badgeText, styles.regenBadgeText]}>
+              {item.queue_status === 'processing' ? 'regenerating' : 'queued'}
+            </Text>
+          </View>
+        )}
         {item.status === 'review_required' && typeof item.last_error === 'string' && item.last_error.startsWith('candidate_shortfall') && (
           <View style={[styles.badge, styles.degradedBadge]}>
             <Text style={[styles.badgeText, styles.degradedBadgeText]}>degraded</Text>
@@ -209,6 +216,8 @@ const styles = StyleSheet.create({
   badgeCol:      { alignItems: 'flex-end', gap: 4 },
   badge:         { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
   degradedBadge: { backgroundColor: '#FEE2E2', borderWidth: 1, borderColor: '#FCA5A5' },
+  regenBadge:     { backgroundColor: '#EDE9FE', borderWidth: 1, borderColor: '#C4B5FD' },
+  regenBadgeText: { color: '#6D28D9' },
   degradedBadgeText: { color: '#B91C1C' },
   badgeText:         { fontSize: 10, fontWeight: '700', color: '#374151' },
   sep:               { height: 1, backgroundColor: color.haze, marginLeft: space.md },
