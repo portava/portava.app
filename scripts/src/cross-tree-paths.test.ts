@@ -53,6 +53,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  MONOREPO_PERSPECTIVE_MARKERS,
+  STANDALONE_PERSPECTIVE_MARKERS,
+  markerToRegExp,
+} from './perspective-markers.js';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -511,35 +516,23 @@ export function findPerspectiveViolations(
   content: string,
   perspective: 'monorepo' | 'standalone',
 ): PerspectiveViolation[] {
-  // Markers include the opening quote/backtick so '../../pnpm-lock.yaml' does
-  // not match inside '../../../../pnpm-lock.yaml'.
+  // The marker strings live in perspective-markers.ts — the SINGLE SOURCE OF
+  // TRUTH shared (via a parity test below) with scripts/sync-standalone.sh.
+  // Each regex includes the opening quote/backtick so '../../pnpm-lock.yaml'
+  // does not match inside '../../../../pnpm-lock.yaml'.
+  const describeMarker = (m: string, label: string) =>
+    m.endsWith('/') ? `'${m}...' (${label})` : `'${m}' (${label})`;
   const FORBIDDEN: Record<'monorepo' | 'standalone', Array<{ re: RegExp; marker: string }>> = {
     // In the standalone copy, monorepo-perspective paths are forbidden.
-    standalone: [
-      {
-        re: /['"`]\.\.\/\.\.\/\.\.\/\.\.\/travel-buddy-standalone\//,
-        marker: "'../../../../travel-buddy-standalone/...' (monorepo-perspective)",
-      },
-      {
-        re: /['"`]\.\.\/\.\.\/\.\.\/\.\.\/pnpm-lock\.yaml/,
-        marker: "'../../../../pnpm-lock.yaml' (monorepo-perspective)",
-      },
-    ],
+    standalone: MONOREPO_PERSPECTIVE_MARKERS.map((m) => ({
+      re: markerToRegExp(m),
+      marker: describeMarker(m, 'monorepo-perspective'),
+    })),
     // In the monorepo copy, standalone-perspective paths are forbidden.
-    monorepo: [
-      {
-        re: /['"`]\.\.\/\.\.\/\.\.\/artifacts\/travel-buddy\//,
-        marker: "'../../../artifacts/travel-buddy/...' (standalone-perspective)",
-      },
-      {
-        re: /['"`]\.\.\/\.\.\/pnpm-lock\.yaml/,
-        marker: "'../../pnpm-lock.yaml' (standalone-perspective)",
-      },
-      {
-        re: /['"`]\.\.\/\.\.\/\.\.\/pnpm-lock\.yaml/,
-        marker: "'../../../pnpm-lock.yaml' (standalone-perspective)",
-      },
-    ],
+    monorepo: STANDALONE_PERSPECTIVE_MARKERS.map((m) => ({
+      re: markerToRegExp(m),
+      marker: describeMarker(m, 'standalone-perspective'),
+    })),
   };
 
   const violations: PerspectiveViolation[] = [];
@@ -633,6 +626,107 @@ describe('findPerspectiveViolations — swapped-copy detection', () => {
   it('accepts each copy under its own perspective', () => {
     assert.deepEqual(findPerspectiveViolations(monoContent, 'monorepo'), []);
     assert.deepEqual(findPerspectiveViolations(saContent, 'standalone'), []);
+  });
+});
+
+// ── Parity guard: sync-standalone.sh bash regexes vs shared marker list ──────
+//
+// scripts/sync-standalone.sh refuses to copy perspective-divergent files using
+// two bash ERE patterns (MONO_PERSPECTIVE_RE / SA_PERSPECTIVE_RE). Those
+// patterns cannot import perspective-markers.ts, so this test parses them out
+// of the script and asserts they expand to EXACTLY the shared marker strings.
+// If someone adds a marker to one side and forgets the other, this fails.
+
+describe('sync-standalone.sh perspective-regex parity with perspective-markers.ts', () => {
+  const SYNC_SCRIPT = path.join(WORKSPACE_ROOT, 'scripts', 'sync-standalone.sh');
+
+  /** Extract the raw (bash-unescaped) value of VAR="..." from the script. */
+  function extractBashVar(scriptContent: string, varName: string): string {
+    const m = new RegExp('^' + varName + '="(.*)"\\s*$', 'm').exec(scriptContent);
+    assert.ok(m, `${varName}=... assignment not found in scripts/sync-standalone.sh`);
+    // Undo bash double-quote escaping: \" -> ", \` -> `, \\ -> \, \$ -> $
+    return m![1]!.replace(/\\(["`$\\])/g, '$1');
+  }
+
+  /**
+   * Expand a perspective ERE of the shape
+   *   ['"`]<prefix>(alt1|alt2|...)   or   ['"`](alt1|alt2|...)   or   ['"`]<literal>
+   * into the list of literal marker strings it matches after the opening
+   * quote/backtick. Regex escapes (\. \/) are unescaped. Fails loudly when the
+   * pattern does not start with the quote anchor or contains constructs this
+   * expander does not understand.
+   */
+  function expandPerspectiveRegex(source: string, varName: string): string[] {
+    const QUOTE_CLASS = "['\"`]";
+    assert.ok(
+      source.startsWith(QUOTE_CLASS),
+      `${varName} must anchor on the opening quote class ${QUOTE_CLASS} — got: ${source}`,
+    );
+    const body = source.slice(QUOTE_CLASS.length);
+    const unescape = (s: string) => s.replace(/\\(.)/g, '$1');
+
+    const groupMatch = /^(.*?)\(([^)]*)\)(.*)$/.exec(body);
+    if (!groupMatch) {
+      assert.ok(
+        !/[()|[\]+*?{}]/.test(body.replace(/\\./g, '')),
+        `${varName} contains regex constructs the parity expander does not understand: ${body}`,
+      );
+      return [unescape(body)];
+    }
+    const [, prefix, alternation, suffix] = groupMatch;
+    assert.equal(suffix, '', `${varName} has content after the alternation group — update the parity expander: ${body}`);
+    assert.ok(
+      !/[()|[\]+*?{}]/.test(prefix!.replace(/\\./g, '')),
+      `${varName} prefix contains regex constructs the parity expander does not understand: ${prefix}`,
+    );
+    return alternation!.split('|').map((alt) => {
+      assert.ok(
+        !/[()|[\]+*?{}]/.test(alt.replace(/\\./g, '')),
+        `${varName} alternative contains regex constructs the parity expander does not understand: ${alt}`,
+      );
+      return unescape(prefix!) + unescape(alt);
+    });
+  }
+
+  const scriptContent = fs.readFileSync(SYNC_SCRIPT, 'utf8');
+
+  it('MONO_PERSPECTIVE_RE covers exactly the monorepo-perspective markers', () => {
+    const bashMarkers = expandPerspectiveRegex(
+      extractBashVar(scriptContent, 'MONO_PERSPECTIVE_RE'),
+      'MONO_PERSPECTIVE_RE',
+    );
+    assert.deepEqual(
+      [...bashMarkers].sort(),
+      [...MONOREPO_PERSPECTIVE_MARKERS].sort(),
+      'MONO_PERSPECTIVE_RE in scripts/sync-standalone.sh and MONOREPO_PERSPECTIVE_MARKERS in scripts/src/perspective-markers.ts have drifted apart — update both sides together',
+    );
+  });
+
+  it('SA_PERSPECTIVE_RE covers exactly the standalone-perspective markers', () => {
+    const bashMarkers = expandPerspectiveRegex(
+      extractBashVar(scriptContent, 'SA_PERSPECTIVE_RE'),
+      'SA_PERSPECTIVE_RE',
+    );
+    assert.deepEqual(
+      [...bashMarkers].sort(),
+      [...STANDALONE_PERSPECTIVE_MARKERS].sort(),
+      'SA_PERSPECTIVE_RE in scripts/sync-standalone.sh and STANDALONE_PERSPECTIVE_MARKERS in scripts/src/perspective-markers.ts have drifted apart — update both sides together',
+    );
+  });
+
+  it('every shared marker string is actually matched by the corresponding bash regex', () => {
+    // Sanity: the ERE semantics bash grep -E uses agree with JS RegExp for
+    // these simple patterns — run each marker through the extracted pattern.
+    const mono = new RegExp(extractBashVar(scriptContent, 'MONO_PERSPECTIVE_RE'));
+    const sa = new RegExp(extractBashVar(scriptContent, 'SA_PERSPECTIVE_RE'));
+    for (const marker of MONOREPO_PERSPECTIVE_MARKERS) {
+      assert.ok(mono.test(`'${marker}`), `MONO_PERSPECTIVE_RE does not match quoted marker ${marker}`);
+      assert.ok(markerToRegExp(marker).test(`'${marker}`), `guard regex does not match its own marker ${marker}`);
+    }
+    for (const marker of STANDALONE_PERSPECTIVE_MARKERS) {
+      assert.ok(sa.test(`'${marker}`), `SA_PERSPECTIVE_RE does not match quoted marker ${marker}`);
+      assert.ok(markerToRegExp(marker).test(`'${marker}`), `guard regex does not match its own marker ${marker}`);
+    }
   });
 });
 

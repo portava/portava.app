@@ -242,6 +242,11 @@ is_standalone_owned() {
 #
 # The regexes anchor on the opening quote/backtick so '../../pnpm-lock.yaml'
 # does not match inside '../../../../pnpm-lock.yaml' (same trick as the guard).
+#
+# PARITY: the marker strings these regexes encode are defined in
+# scripts/src/perspective-markers.ts (the single source of truth for the guard
+# test). A parity test in scripts/src/cross-tree-paths.test.ts parses these two
+# variables and fails when they drift from that list — update both together.
 # ---------------------------------------------------------------------------
 MONO_PERSPECTIVE_RE="['\"\`]\.\./\.\./\.\./\.\./(travel-buddy-standalone/|pnpm-lock\.yaml)"
 SA_PERSPECTIVE_RE="['\"\`](\.\./\.\./\.\./artifacts/travel-buddy/|\.\./\.\./pnpm-lock\.yaml|\.\./\.\./\.\./pnpm-lock\.yaml)"
