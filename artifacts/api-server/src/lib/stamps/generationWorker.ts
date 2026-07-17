@@ -403,7 +403,7 @@ async function uploadToStorage(
  * Errors thrown by the DB read/write are caught and logged so a secondary
  * failure here never shadows the original generation error.
  */
-async function persistCleanupError(
+export async function persistCleanupError(
   sc: any,
   jobId: string,
   errorMsg: string,

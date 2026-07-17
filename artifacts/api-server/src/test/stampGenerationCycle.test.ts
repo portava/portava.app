@@ -31,6 +31,7 @@ const {
   sweepStaleArtwork,
   resetStaleArtworkSweepState,
   evaluateCandidateShortfall,
+  persistCleanupError,
 } = await import("../lib/stamps/generationWorker.js");
 const { _setTestStampImageProvider, _resetProviderCache } = await import(
   "../lib/stamps/imageProvider.js"
@@ -1807,6 +1808,81 @@ describe("runGenerationCycle — DB insert failure after all uploads succeed", (
 });
 
 // ── Orphan cleanup failure: original error must survive in last_error ──────────
+
+describe("persistCleanupError — repeated failures on the same job do not duplicate paths", () => {
+  /**
+   * Stateful fake queue row: select() returns the current cleanup_error_paths,
+   * update() persists them — so a second persistCleanupError call reads back
+   * what the first one wrote, exactly like a worker retry against the real DB.
+   */
+  function makeStatefulQueueClient() {
+    const row: { cleanup_error: string | null; cleanup_error_paths: string[] | null } = {
+      cleanup_error: null,
+      cleanup_error_paths: null,
+    };
+    const updatePayloads: any[] = [];
+    const sc: any = {
+      from(_table: string) {
+        return {
+          select(_cols: string) {
+            const b: any = {
+              eq() { return b; },
+              maybeSingle() {
+                return Promise.resolve({
+                  data: { cleanup_error_paths: row.cleanup_error_paths },
+                  error: null,
+                });
+              },
+            };
+            return b;
+          },
+          update(payload: any) {
+            updatePayloads.push(payload);
+            const b: any = {
+              eq() {
+                row.cleanup_error = payload.cleanup_error;
+                row.cleanup_error_paths = payload.cleanup_error_paths;
+                return Promise.resolve({ data: null, error: null });
+              },
+            };
+            return b;
+          },
+        };
+      },
+    };
+    return { sc, row, updatePayloads };
+  }
+
+  it("stores each path exactly once when called twice with the same paths array", async () => {
+    const { sc, row, updatePayloads } = makeStatefulQueueClient();
+    const paths = ["catalog/cat-1/v1.png", "catalog/cat-1/v2.png"];
+
+    await persistCleanupError(sc, "job-1", "cleanup failed: timeout", paths);
+    await persistCleanupError(sc, "job-1", "cleanup failed: timeout", paths);
+
+    assert.equal(updatePayloads.length, 2, "both calls must attempt a write");
+    // After the second call the stored list must contain each path exactly once —
+    // not 2× the paths.
+    assert.deepEqual(
+      [...(row.cleanup_error_paths ?? [])].sort(),
+      [...paths].sort(),
+      `cleanup_error_paths must not grow on a repeated failure, got: ${JSON.stringify(row.cleanup_error_paths)}`,
+    );
+    assert.equal(row.cleanup_error_paths!.length, paths.length);
+  });
+
+  it("merges genuinely new paths while still deduplicating overlap", async () => {
+    const { sc, row } = makeStatefulQueueClient();
+
+    await persistCleanupError(sc, "job-1", "err", ["catalog/cat-1/a.png", "catalog/cat-1/b.png"]);
+    await persistCleanupError(sc, "job-1", "err", ["catalog/cat-1/b.png", "catalog/cat-1/c.png"]);
+
+    assert.deepEqual(
+      [...(row.cleanup_error_paths ?? [])].sort(),
+      ["catalog/cat-1/a.png", "catalog/cat-1/b.png", "catalog/cat-1/c.png"],
+    );
+  });
+});
 
 describe("runGenerationCycle — orphan cleanup throws: original error preserved in last_error", () => {
   it("preserves the original upload error in last_error when cleanup remove() also throws", async () => {
