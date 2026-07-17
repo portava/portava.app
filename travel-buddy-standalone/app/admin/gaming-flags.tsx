@@ -142,7 +142,7 @@ export default function GamingFlagsScreen() {
           <ActivityIndicator size="large" color="#EF4444" />
         </View>
       ) : error ? (
-        <View style={styles.centered}>
+        <View style={styles.centered} testID="gaming-flags-error" accessibilityRole="alert" accessibilityLiveRegion="assertive">
           <Text style={styles.errorText}>{error}</Text>
           <TouchableOpacity style={styles.retryBtn} onPress={load}>
             <Text style={styles.retryText}>Retry</Text>

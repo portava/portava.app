@@ -184,7 +184,7 @@ export default function TrustSettingsScreen() {
 
   if (error) {
     return (
-      <View style={styles.centered}>
+      <View style={styles.centered} testID="trust-settings-error" accessibilityRole="alert" accessibilityLiveRegion="assertive">
         <Text style={styles.errorText}>{error}</Text>
       </View>
     );

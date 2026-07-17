@@ -163,7 +163,7 @@ export default function TrustReviewsScreen() {
           <ActivityIndicator size="large" color="#3B82F6" />
         </View>
       ) : error ? (
-        <View style={styles.centered}>
+        <View style={styles.centered} testID="trust-reviews-error" accessibilityRole="alert" accessibilityLiveRegion="assertive">
           <Text style={styles.errorText}>{error}</Text>
           <TouchableOpacity style={styles.retryBtn} onPress={() => load(1)}>
             <Text style={styles.retryText}>Retry</Text>
