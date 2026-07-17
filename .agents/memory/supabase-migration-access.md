@@ -25,3 +25,11 @@ Authorization: Bearer $SUPABASE_ACCESS_TOKEN
 - Apply each migration file as its own Management API request: `ALTER TYPE ... ADD VALUE` on a pre-existing enum cannot be *used* in the same transaction — split the file at first usage of the new value (error 55P04).
 - Bare `CREATE POLICY` collides when two migrations create the same policy name (0047 vs 0107 both made `rb_admin_actions_svc`); prepend `DROP POLICY IF EXISTS`.
 - docs/migrations.md "applied" rows lie; always verify against information_schema before trusting them.
+
+## Full-schema audit lessons (2026-07-17)
+- A mechanical diff of every migration file vs live schema found ~40 files with missing objects; whole feature table-groups (compass, hidden gems, safe_return, post_hides) were absent. Don't assume older migrations are safe.
+- Migration files themselves can be wrong vs live: `feature_flags` column is `flag` (several files say `key`); `highlights` uses `owner_id` not `user_id`; `highlight_replies` uses `replier_id`; `events` has `state` not `status`; `tags` has no `tagged_at`. Adapt statements to the live schema when applying old files.
+- `CREATE TYPE IF NOT EXISTS` is invalid Postgres — wrap in a DO block catching `duplicate_object`.
+- `information_schema.triggers` does NOT list TRUNCATE triggers — check `pg_trigger` before declaring one missing.
+- Legacy `buddy_*` relations live as `rent_buddy_*` tables + `buddy_*` compat views (0134 rebuild); `buddy_bookings` view was only added by src/migrations/0147.
+- There is a second legacy dir `artifacts/api-server/migrations/` (no `src/`) with its own chain (e.g. 0040_safe_return.sql creates `safe_return_sessions`).

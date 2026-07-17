@@ -225,7 +225,7 @@ CREATE POLICY lgc_insert ON local_guide_contributions
 
 -- ── Feature flag seeds ────────────────────────────────────────────────────────
 
-INSERT INTO feature_flags (key, enabled, description) VALUES
+INSERT INTO feature_flags (flag, enabled, description) VALUES
   ('hidden_gems_enabled',           TRUE,  'Main Hidden Gems discovery feature'),
   ('hidden_gem_verification_enabled', TRUE, 'GPS proximity check-in and verification'),
   ('local_guides_enabled',          TRUE,  'Local Guide profile and contributions'),
@@ -233,4 +233,4 @@ INSERT INTO feature_flags (key, enabled, description) VALUES
   ('hidden_gems_passport_enabled',  TRUE,  'Passport stamps/memories from gem visits'),
   ('hidden_gems_layover_enabled',   TRUE,  'Layover Mode gem filtering'),
   ('hidden_gems_pulse_enabled',     TRUE,  'City Pulse gems tab')
-ON CONFLICT (key) DO NOTHING;
+ON CONFLICT (flag) DO NOTHING;
