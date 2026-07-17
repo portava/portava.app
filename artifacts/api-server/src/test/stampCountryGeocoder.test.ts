@@ -110,7 +110,7 @@ describe("geocodeCityCountry", () => {
 
 // ── Persistent DB cache ───────────────────────────────────────────────────────
 
-interface GeoCacheRow { city_key: string; country: string; country_code: string; updated_at?: string }
+interface GeoCacheRow { city_key: string; country: string; country_code: string; updated_at?: string; deleted_at?: string | null; corrected_at?: string | null }
 
 function makeFakeGeoCacheDb(rows: GeoCacheRow[]) {
   const calls = { reads: 0, upserts: 0 };
@@ -196,6 +196,25 @@ describe("geocodeCityCountry persistent cache", () => {
     const r = await geocodeCityCountry("Banff");
     assert.deepEqual(r, { country: "Canada", countryCode: "CA" });
     assert.equal(fetchCalls.length, 1);
+  });
+
+  it("rejects a tombstoned persisted row and falls back to Nominatim", async () => {
+    _setGeocodeFetchForTests(fakeNominatim({
+      "banff": { country_code: "us", country: "United States of America" },
+    }));
+    const db = makeFakeGeoCacheDb([
+      {
+        city_key: "banff",
+        country: "Canada",
+        country_code: "CA",
+        deleted_at: new Date().toISOString(),
+      },
+    ]);
+    _setGeocodeDbClientForTests(db.client);
+    const r = await geocodeCityCountry("Banff");
+    assert.deepEqual(r, { country: "United States", countryCode: "US" });
+    assert.equal(fetchCalls.length, 1);
+    assert.equal(db.calls.reads, 1);
   });
 });
 
