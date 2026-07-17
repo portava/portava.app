@@ -295,6 +295,43 @@ describe('definesLocalTokenWrapper — expression-body arrow detection', () => {
     const src = `const add = (a: number, b: number) => a + b;`;
     assert.ok(!definesLocalTokenWrapper(src), 'Unrelated arrow should pass');
   });
+
+  it('flags a comma-operator expression-body arrow (multi-expression, parenthesized)', () => {
+    const src = `const getToken = () => (sideEffect(), supabase.auth.getSession().then((d) => d.data.session?.access_token));`;
+    assert.ok(
+      definesLocalTokenWrapper(src),
+      'Comma-operator expression-body arrow with getSession + access_token should be flagged',
+    );
+  });
+
+  it('flags a multi-line comma-operator expression-body arrow', () => {
+    const src = [
+      'const getToken = () => (',
+      '  sideEffect(),',
+      '  supabase.auth.getSession().then((d) => d.data.session?.access_token)',
+      ');',
+    ].join('\n');
+    assert.ok(
+      definesLocalTokenWrapper(src),
+      'Multi-line comma-operator expression-body arrow should be flagged',
+    );
+  });
+
+  it('flags an async comma-operator expression-body arrow', () => {
+    const src = `const getToken = async () => (log('x'), (await supabase.auth.getSession()).data.session?.access_token);`;
+    assert.ok(
+      definesLocalTokenWrapper(src),
+      'Async comma-operator expression-body arrow should be flagged',
+    );
+  });
+
+  it('does NOT flag a comma-operator arrow that never touches access_token', () => {
+    const src = `const HEADER = 'access_token';\nconst getUserId = () => (sideEffect(), supabase.auth.getSession().then((d) => d.data.session?.user?.id));`;
+    assert.ok(
+      !definesLocalTokenWrapper(src),
+      'Comma-operator arrow reading only user.id should pass',
+    );
+  });
 });
 
 // ── primary guard ─────────────────────────────────────────────────────────────
