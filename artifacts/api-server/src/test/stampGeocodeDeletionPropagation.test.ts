@@ -4663,6 +4663,119 @@ describe("DB-cache re-resolve path re-arms the correction check", () => {
     assert.equal(nominatimCalls, 0, "Nominatim still never called");
   });
 
+  it("a DB-cache re-resolve entry gets a fresh 30-day lifetime taken at re-resolve time — not inherited staleness", async () => {
+    const POSITIVE_TTL_MS = 30 * 24 * 60 * 60 * 1_000; // must match the private constant
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    let nominatimCalls = 0;
+    _setGeocodeFetchForTests(async () => {
+      nominatimCalls++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "it", country: "Italy" } }],
+      };
+    });
+
+    // DB client that distinguishes readDbCache from the eviction probe by the
+    // selected columns: readDbCache selects "country, ..." while the probe
+    // selects only "corrected_at, deleted_at".
+    //   - readDbCache always returns the live row.
+    //   - the probe returns a tombstoned row while `tombstoned` is true
+    //     (simulating an admin DELETE on another instance), otherwise live.
+    let tombstoned = false;
+    let readDbCacheCalls = 0;
+    let probeCalls = 0;
+    const liveRow = { country: "Italy", country_code: "IT", corrected_at: null, deleted_at: null };
+    const client: SupabaseClient = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        let isReadDbCache = false;
+        const chain: any = {
+          select(cols: string) {
+            isReadDbCache = typeof cols === "string" && cols.includes("country,");
+            return chain;
+          },
+          eq() { return chain; },
+          gte() { return chain; },
+          not() { return chain; },
+          async maybeSingle() {
+            if (isReadDbCache) {
+              readDbCacheCalls++;
+              return { data: liveRow, error: null };
+            }
+            probeCalls++;
+            if (tombstoned) {
+              return {
+                data: { ...liveRow, deleted_at: new Date(T0 + 1_000).toISOString() },
+                error: null,
+              };
+            }
+            return { data: liveRow, error: null };
+          },
+          upsert() { return Promise.resolve({ error: null }); },
+          then(resolve: (v: any) => void) {
+            resolve({ data: [], error: null });
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(client);
+
+    // Phase 1: warm up the in-memory cache from the DB row at T0.
+    const first = await geocodeCityCountry("Rome");
+    assert.equal(first?.countryCode, "IT", "pre-condition: warm-up loads IT from DB cache");
+    assert.equal(readDbCacheCalls, 1, "one readDbCache call during warm-up");
+    const warmEntry = _getGeocodeCacheEntryForTests("rome");
+    assert.ok(warmEntry, "warm-up entry exists");
+    assert.equal(warmEntry!.writtenAt, T0, "warm-up entry written at T0");
+    assert.equal(warmEntry!.expiresAt, T0 + POSITIVE_TTL_MS, "warm-up entry expires at T0 + 30 days");
+
+    // Phase 2: eviction + DB-cache re-resolve at T1.  The probe finds the
+    // tombstone and evicts; readDbCache then finds a restored live row (e.g.
+    // an admin PUT revived the entry) and re-resolves via the DB-cache path.
+    tombstoned = true;
+    const T1 = T0 + CORRECTION_CHECK_INTERVAL_MS + 1_000;
+    mockNow(T1);
+    const reResolved = await geocodeCityCountry("Rome");
+    assert.equal(reResolved?.countryCode, "IT", "re-resolve returns IT from the restored DB row");
+    assert.equal(nominatimCalls, 0, "re-resolve completed via the DB-cache path — no Nominatim");
+    assert.equal(probeCalls, 1, "eviction probe fired once at T1");
+    assert.equal(readDbCacheCalls, 2, "readDbCache fired once for the re-resolve at T1");
+
+    // Core assertion: the restored entry has a FRESH 30-day lifetime taken at
+    // re-resolve time — not the old entry's timestamps.
+    const restored = _getGeocodeCacheEntryForTests("rome");
+    assert.ok(restored, "restored entry exists after the DB-cache re-resolve");
+    assert.equal(restored!.writtenAt, T1,
+      "writtenAt is the re-resolve time T1 — not inherited from the evicted entry");
+    assert.equal(restored!.expiresAt, T1 + POSITIVE_TTL_MS,
+      "expiresAt is T1 + 30 days — a fresh full lifetime, not inherited staleness");
+
+    // Phase 3: a call just BEFORE T1 + 30 days serves from cache — no
+    // re-resolve (no readDbCache, no Nominatim).  The periodic correction
+    // probe may fire, but it finds the live row and keeps the entry.
+    tombstoned = false;
+    mockNow(T1 + POSITIVE_TTL_MS - 1_000);
+    const beforeExpiry = await geocodeCityCountry("Rome");
+    assert.equal(beforeExpiry?.countryCode, "IT", "served from cache just before expiry");
+    assert.equal(readDbCacheCalls, 2, "no readDbCache re-resolve just before T1 + 30 days");
+    assert.equal(nominatimCalls, 0, "no Nominatim call just before T1 + 30 days");
+    const beforeEntry = _getGeocodeCacheEntryForTests("rome");
+    assert.equal(beforeEntry!.writtenAt, T1, "entry untouched — still the T1 re-resolve entry");
+
+    // Phase 4: a call just AFTER T1 + 30 days re-resolves (entry expired).
+    const T2 = T1 + POSITIVE_TTL_MS + 1_000;
+    mockNow(T2);
+    const afterExpiry = await geocodeCityCountry("Rome");
+    assert.equal(afterExpiry?.countryCode, "IT", "re-resolved after expiry");
+    assert.equal(readDbCacheCalls, 3, "readDbCache fired again just after T1 + 30 days");
+    const renewed = _getGeocodeCacheEntryForTests("rome");
+    assert.equal(renewed!.writtenAt, T2, "renewed entry written at T2");
+    assert.equal(renewed!.expiresAt, T2 + POSITIVE_TTL_MS, "renewed entry gets its own fresh 30 days");
+  });
+
   // ── Mid-flight eviction at the cache-size cap ────────────────────────────────
 
   it("a mid-flight evictGeocodeCacheKey blocks the cap-trim write — cache stays at MAX_CACHE_SIZE and the oldest entry survives", async () => {
