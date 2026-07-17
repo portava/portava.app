@@ -2,13 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Image } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Mail, Lock, User as UserIcon, Eye, EyeOff } from 'lucide-react-native';
-import { signIn, signUp } from '../../src/services/auth';
+import { Mail, Lock, User as UserIcon, Eye, EyeOff, ArrowLeft } from 'lucide-react-native';
+import { signIn, signUp, requestPasswordReset, lookupUsernameByEmail } from '../../src/services/auth';
 import { useSession } from '../../src/context/SessionContext';
 import { isSupabaseConfigured } from '../../src/lib/supabase';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 
-type Mode = 'signin' | 'signup';
+type Mode = 'signin' | 'signup' | 'forgot-password' | 'forgot-username';
 
 export default function SignIn() {
   const insets = useSafeAreaInsets();
@@ -22,15 +22,45 @@ export default function SignIn() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  const isForgot = mode === 'forgot-password' || mode === 'forgot-username';
+
   // already signed in -> go to app
   useEffect(() => {
     if (isAuthed) router.replace('/(tabs)');
   }, [isAuthed]);
 
+  function switchMode(next: Mode) {
+    setMode(next);
+    setError(null);
+    setNotice(null);
+  }
+
   async function submit() {
     setError(null); setNotice(null);
     if (!isSupabaseConfigured) { setError('Backend not configured. Add your Supabase keys to .env.'); return; }
-    if (!email.trim() || !password) { setError('Enter your email and password.'); return; }
+    if (!email.trim()) { setError(isForgot ? 'Enter your email.' : 'Enter your email and password.'); return; }
+
+    if (isForgot) {
+      setBusy(true);
+      try {
+        if (mode === 'forgot-password') {
+          const res = await requestPasswordReset(email.trim());
+          if (res.error) { setError(res.error); return; }
+          setNotice('Password reset email sent — check your inbox (and spam folder).');
+        } else {
+          const res = await lookupUsernameByEmail(email.trim());
+          if (res.error) { setError(res.error); return; }
+          setNotice(`Your username is @${res.handle}.`);
+        }
+      } catch (e: any) {
+        setError(e?.message ?? 'Something went wrong.');
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    if (!password) { setError('Enter your email and password.'); return; }
     if (mode === 'signup' && password.length < 6) { setError('Password must be at least 6 characters.'); return; }
     setBusy(true);
     try {
@@ -51,6 +81,12 @@ export default function SignIn() {
     }
   }
 
+  const submitLabel =
+    mode === 'signin' ? 'Sign in'
+    : mode === 'signup' ? 'Create account'
+    : mode === 'forgot-password' ? 'Send reset link'
+    : 'Find my username';
+
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: color.paper }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={[s.wrap, { paddingTop: insets.top + space.xxxl, paddingBottom: insets.bottom + space.xl }]} keyboardShouldPersistTaps="handled">
@@ -61,14 +97,24 @@ export default function SignIn() {
         </View>
 
         <View style={s.card}>
-          <View style={s.tabs}>
-            <Pressable style={[s.tab, mode === 'signin' && s.tabOn]} onPress={() => { setMode('signin'); setError(null); }}>
-              <Text style={[s.tabText, mode === 'signin' && s.tabTextOn]}>Sign in</Text>
+          {!isForgot && (
+            <View style={s.tabs}>
+              <Pressable style={[s.tab, mode === 'signin' && s.tabOn]} onPress={() => switchMode('signin')}>
+                <Text style={[s.tabText, mode === 'signin' && s.tabTextOn]}>Sign in</Text>
+              </Pressable>
+              <Pressable style={[s.tab, mode === 'signup' && s.tabOn]} onPress={() => switchMode('signup')}>
+                <Text style={[s.tabText, mode === 'signup' && s.tabTextOn]}>Create account</Text>
+              </Pressable>
+            </View>
+          )}
+
+          {isForgot && (
+            <Pressable onPress={() => switchMode('signin')} style={s.backBtn} hitSlop={8}
+              accessibilityRole="button" accessibilityLabel="Back to sign in">
+              <ArrowLeft size={16} color={color.mute} />
+              <Text style={s.backText}>Back to sign in</Text>
             </Pressable>
-            <Pressable style={[s.tab, mode === 'signup' && s.tabOn]} onPress={() => { setMode('signup'); setError(null); }}>
-              <Text style={[s.tabText, mode === 'signup' && s.tabTextOn]}>Create account</Text>
-            </Pressable>
-          </View>
+          )}
 
           {mode === 'signup' ? (
             <View style={s.field}>
@@ -84,27 +130,51 @@ export default function SignIn() {
               value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email" />
           </View>
 
-          <View style={s.field}>
-            <Lock size={17} color={color.faint} />
-            <TextInput style={s.input} placeholder="Password" placeholderTextColor={color.faint}
-              value={password} onChangeText={setPassword} secureTextEntry={!showPassword} autoCapitalize="none" />
-            <Pressable onPress={() => setShowPassword(v => !v)} hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}>
-              {showPassword ? <EyeOff size={17} color={color.mute} /> : <Eye size={17} color={color.faint} />}
-            </Pressable>
-          </View>
+          {!isForgot && (
+            <View style={s.field}>
+              <Lock size={17} color={color.faint} />
+              <TextInput style={s.input} placeholder="Password" placeholderTextColor={color.faint}
+                value={password} onChangeText={setPassword} secureTextEntry={!showPassword} autoCapitalize="none" />
+              <Pressable onPress={() => setShowPassword(v => !v)} hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}>
+                {showPassword ? <EyeOff size={17} color={color.mute} /> : <Eye size={17} color={color.faint} />}
+              </Pressable>
+            </View>
+          )}
+
+          {mode === 'signin' && (
+            <View style={s.forgotRow}>
+              <Pressable onPress={() => switchMode('forgot-password')} hitSlop={6}>
+                <Text style={s.forgotLink}>Forgot password?</Text>
+              </Pressable>
+              <Text style={s.forgotSep}>·</Text>
+              <Pressable onPress={() => switchMode('forgot-username')} hitSlop={6}>
+                <Text style={s.forgotLink}>Forgot username?</Text>
+              </Pressable>
+            </View>
+          )}
+
+          {isForgot && !notice ? (
+            <Text style={s.forgotHint}>
+              {mode === 'forgot-password'
+                ? "Enter your email and we'll send you a link to set a new password."
+                : "Enter the email you signed up with and we'll show you your username."}
+            </Text>
+          ) : null}
 
           {error ? <Text style={s.error}>{error}</Text> : null}
           {notice ? <Text style={s.notice}>{notice}</Text> : null}
 
           <Pressable style={[s.submit, busy ? s.submitBusy : null]} onPress={submit} disabled={busy}>
-            {busy ? <ActivityIndicator color={color.onInk} /> : <Text style={s.submitText}>{mode === 'signin' ? 'Sign in' : 'Create account'}</Text>}
+            {busy ? <ActivityIndicator color={color.onInk} /> : <Text style={s.submitText}>{submitLabel}</Text>}
           </Pressable>
 
-          <Text style={s.switchHint} onPress={() => setMode(mode === 'signin' ? 'signup' : 'signin')}>
-            {mode === 'signin' ? "New here? Create an account" : 'Already have an account? Sign in'}
-          </Text>
+          {!isForgot && (
+            <Text style={s.switchHint} onPress={() => switchMode(mode === 'signin' ? 'signup' : 'signin')}>
+              {mode === 'signin' ? "New here? Create an account" : 'Already have an account? Sign in'}
+            </Text>
+          )}
         </View>
 
         <Text style={s.legal}>By continuing you agree to travel kindly and respect fellow travelers.</Text>
@@ -125,8 +195,14 @@ const s = StyleSheet.create({
   tabOn: { backgroundColor: color.signal },
   tabText: { ...t.small, fontWeight: '700', color: color.mute },
   tabTextOn: { color: color.onInk },
+  backBtn: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginBottom: space.xs },
+  backText: { ...t.small, color: color.mute, fontWeight: '600' },
   field: { flexDirection: 'row', alignItems: 'center', gap: space.sm, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingHorizontal: space.md, backgroundColor: color.paper },
   input: { flex: 1, paddingVertical: space.md, ...t.body, color: color.ink },
+  forgotRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: space.sm },
+  forgotLink: { ...t.small, color: color.deep, fontWeight: '600' },
+  forgotSep: { ...t.small, color: color.faint },
+  forgotHint: { ...t.small, color: color.mute, textAlign: 'center' },
   error: { ...t.small, color: color.signal, fontWeight: '600' },
   notice: { ...t.small, color: color.success, fontWeight: '600' },
   submit: { backgroundColor: color.ink, borderRadius: radius.md, paddingVertical: space.md, alignItems: 'center', marginTop: space.xs },

@@ -10,6 +10,39 @@ var __assign = (this && this.__assign) || function () {
     };
     return __assign.apply(this, arguments);
 };
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -48,7 +81,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = SignIn;
-var react_1 = require("react");
+var react_1 = __importStar(require("react"));
 var react_native_1 = require("react-native");
 var expo_router_1 = require("expo-router");
 var react_native_safe_area_context_1 = require("react-native-safe-area-context");
@@ -64,21 +97,27 @@ function SignIn() {
     var _b = (0, react_1.useState)(''), name = _b[0], setName = _b[1];
     var _c = (0, react_1.useState)(''), email = _c[0], setEmail = _c[1];
     var _d = (0, react_1.useState)(''), password = _d[0], setPassword = _d[1];
-    var _sp = (0, react_1.useState)(false), showPassword = _sp[0], setShowPassword = _sp[1];
-    var _e = (0, react_1.useState)(false), busy = _e[0], setBusy = _e[1];
-    var _f = (0, react_1.useState)(null), error = _f[0], setError = _f[1];
-    var _g = (0, react_1.useState)(null), notice = _g[0], setNotice = _g[1];
+    var _e = (0, react_1.useState)(false), showPassword = _e[0], setShowPassword = _e[1];
+    var _f = (0, react_1.useState)(false), busy = _f[0], setBusy = _f[1];
+    var _g = (0, react_1.useState)(null), error = _g[0], setError = _g[1];
+    var _h = (0, react_1.useState)(null), notice = _h[0], setNotice = _h[1];
+    var isForgot = mode === 'forgot-password' || mode === 'forgot-username';
     // already signed in -> go to app
     (0, react_1.useEffect)(function () {
         if (isAuthed)
             expo_router_1.router.replace('/(tabs)');
     }, [isAuthed]);
+    function switchMode(next) {
+        setMode(next);
+        setError(null);
+        setNotice(null);
+    }
     function submit() {
         return __awaiter(this, void 0, void 0, function () {
-            var res, _a, e_1;
-            var _b;
-            return __generator(this, function (_c) {
-                switch (_c.label) {
+            var res, res, e_1, res, _a, e_2;
+            var _b, _c;
+            return __generator(this, function (_d) {
+                switch (_d.label) {
                     case 0:
                         setError(null);
                         setNotice(null);
@@ -86,7 +125,45 @@ function SignIn() {
                             setError('Backend not configured. Add your Supabase keys to .env.');
                             return [2 /*return*/];
                         }
-                        if (!email.trim() || !password) {
+                        if (!email.trim()) {
+                            setError(isForgot ? 'Enter your email.' : 'Enter your email and password.');
+                            return [2 /*return*/];
+                        }
+                        if (!isForgot) return [3 /*break*/, 9];
+                        setBusy(true);
+                        _d.label = 1;
+                    case 1:
+                        _d.trys.push([1, 6, 7, 8]);
+                        if (!(mode === 'forgot-password')) return [3 /*break*/, 3];
+                        return [4 /*yield*/, (0, auth_1.requestPasswordReset)(email.trim())];
+                    case 2:
+                        res = _d.sent();
+                        if (res.error) {
+                            setError(res.error);
+                            return [2 /*return*/];
+                        }
+                        setNotice('Password reset email sent — check your inbox (and spam folder).');
+                        return [3 /*break*/, 5];
+                    case 3: return [4 /*yield*/, (0, auth_1.lookupUsernameByEmail)(email.trim())];
+                    case 4:
+                        res = _d.sent();
+                        if (res.error) {
+                            setError(res.error);
+                            return [2 /*return*/];
+                        }
+                        setNotice("Your username is @".concat(res.handle, "."));
+                        _d.label = 5;
+                    case 5: return [3 /*break*/, 8];
+                    case 6:
+                        e_1 = _d.sent();
+                        setError((_b = e_1 === null || e_1 === void 0 ? void 0 : e_1.message) !== null && _b !== void 0 ? _b : 'Something went wrong.');
+                        return [3 /*break*/, 8];
+                    case 7:
+                        setBusy(false);
+                        return [7 /*endfinally*/];
+                    case 8: return [2 /*return*/];
+                    case 9:
+                        if (!password) {
                             setError('Enter your email and password.');
                             return [2 /*return*/];
                         }
@@ -95,19 +172,19 @@ function SignIn() {
                             return [2 /*return*/];
                         }
                         setBusy(true);
-                        _c.label = 1;
-                    case 1:
-                        _c.trys.push([1, 6, 7, 8]);
-                        if (!(mode === 'signin')) return [3 /*break*/, 3];
+                        _d.label = 10;
+                    case 10:
+                        _d.trys.push([10, 15, 16, 17]);
+                        if (!(mode === 'signin')) return [3 /*break*/, 12];
                         return [4 /*yield*/, (0, auth_1.signIn)(email.trim(), password)];
-                    case 2:
-                        _a = _c.sent();
-                        return [3 /*break*/, 5];
-                    case 3: return [4 /*yield*/, (0, auth_1.signUp)(email.trim(), password, { name: name.trim() || email.split('@')[0] })];
-                    case 4:
-                        _a = _c.sent();
-                        _c.label = 5;
-                    case 5:
+                    case 11:
+                        _a = _d.sent();
+                        return [3 /*break*/, 14];
+                    case 12: return [4 /*yield*/, (0, auth_1.signUp)(email.trim(), password, { name: name.trim() || email.split('@')[0] })];
+                    case 13:
+                        _a = _d.sent();
+                        _d.label = 14;
+                    case 14:
                         res = _a;
                         if (res.error) {
                             setError(res.error);
@@ -119,19 +196,23 @@ function SignIn() {
                             return [2 /*return*/];
                         }
                         expo_router_1.router.replace('/(tabs)');
-                        return [3 /*break*/, 8];
-                    case 6:
-                        e_1 = _c.sent();
-                        setError((_b = e_1 === null || e_1 === void 0 ? void 0 : e_1.message) !== null && _b !== void 0 ? _b : 'Something went wrong.');
-                        return [3 /*break*/, 8];
-                    case 7:
+                        return [3 /*break*/, 17];
+                    case 15:
+                        e_2 = _d.sent();
+                        setError((_c = e_2 === null || e_2 === void 0 ? void 0 : e_2.message) !== null && _c !== void 0 ? _c : 'Something went wrong.');
+                        return [3 /*break*/, 17];
+                    case 16:
                         setBusy(false);
                         return [7 /*endfinally*/];
-                    case 8: return [2 /*return*/];
+                    case 17: return [2 /*return*/];
                 }
             });
         });
     }
+    var submitLabel = mode === 'signin' ? 'Sign in'
+        : mode === 'signup' ? 'Create account'
+            : mode === 'forgot-password' ? 'Send reset link'
+                : 'Find my username';
     return (<react_native_1.KeyboardAvoidingView style={{ flex: 1, backgroundColor: tokens_1.color.paper }} behavior={react_native_1.Platform.OS === 'ios' ? 'padding' : undefined}>
       <react_native_1.ScrollView contentContainerStyle={[s.wrap, { paddingTop: insets.top + tokens_1.space.xxxl, paddingBottom: insets.bottom + tokens_1.space.xl }]} keyboardShouldPersistTaps="handled">
         <react_native_1.View style={s.brand}>
@@ -141,14 +222,19 @@ function SignIn() {
         </react_native_1.View>
 
         <react_native_1.View style={s.card}>
-          <react_native_1.View style={s.tabs}>
-            <react_native_1.Pressable style={[s.tab, mode === 'signin' && s.tabOn]} onPress={function () { setMode('signin'); setError(null); }}>
-              <react_native_1.Text style={[s.tabText, mode === 'signin' && s.tabTextOn]}>Sign in</react_native_1.Text>
-            </react_native_1.Pressable>
-            <react_native_1.Pressable style={[s.tab, mode === 'signup' && s.tabOn]} onPress={function () { setMode('signup'); setError(null); }}>
-              <react_native_1.Text style={[s.tabText, mode === 'signup' && s.tabTextOn]}>Create account</react_native_1.Text>
-            </react_native_1.Pressable>
-          </react_native_1.View>
+          {!isForgot && (<react_native_1.View style={s.tabs}>
+              <react_native_1.Pressable style={[s.tab, mode === 'signin' && s.tabOn]} onPress={function () { return switchMode('signin'); }}>
+                <react_native_1.Text style={[s.tabText, mode === 'signin' && s.tabTextOn]}>Sign in</react_native_1.Text>
+              </react_native_1.Pressable>
+              <react_native_1.Pressable style={[s.tab, mode === 'signup' && s.tabOn]} onPress={function () { return switchMode('signup'); }}>
+                <react_native_1.Text style={[s.tabText, mode === 'signup' && s.tabTextOn]}>Create account</react_native_1.Text>
+              </react_native_1.Pressable>
+            </react_native_1.View>)}
+
+          {isForgot && (<react_native_1.Pressable onPress={function () { return switchMode('signin'); }} style={s.backBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel="Back to sign in">
+              <lucide_react_native_1.ArrowLeft size={16} color={tokens_1.color.mute}/>
+              <react_native_1.Text style={s.backText}>Back to sign in</react_native_1.Text>
+            </react_native_1.Pressable>)}
 
           {mode === 'signup' ? (<react_native_1.View style={s.field}>
               <lucide_react_native_1.User size={17} color={tokens_1.color.faint}/>
@@ -160,24 +246,40 @@ function SignIn() {
             <react_native_1.TextInput style={s.input} placeholder="Email" placeholderTextColor={tokens_1.color.faint} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email"/>
           </react_native_1.View>
 
-          <react_native_1.View style={s.field}>
-            <lucide_react_native_1.Lock size={17} color={tokens_1.color.faint}/>
-            <react_native_1.TextInput style={s.input} placeholder="Password" placeholderTextColor={tokens_1.color.faint} value={password} onChangeText={setPassword} secureTextEntry={!showPassword} autoCapitalize="none"/>
-            <react_native_1.Pressable onPress={function () { setShowPassword(!showPassword); }} hitSlop={8} accessibilityRole="button" accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}>
-              {showPassword ? <lucide_react_native_1.EyeOff size={17} color={tokens_1.color.mute}/> : <lucide_react_native_1.Eye size={17} color={tokens_1.color.faint}/>}
-            </react_native_1.Pressable>
-          </react_native_1.View>
+          {!isForgot && (<react_native_1.View style={s.field}>
+              <lucide_react_native_1.Lock size={17} color={tokens_1.color.faint}/>
+              <react_native_1.TextInput style={s.input} placeholder="Password" placeholderTextColor={tokens_1.color.faint} value={password} onChangeText={setPassword} secureTextEntry={!showPassword} autoCapitalize="none"/>
+              <react_native_1.Pressable onPress={function () { return setShowPassword(function (v) { return !v; }); }} hitSlop={8} accessibilityRole="button" accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}>
+                {showPassword ? <lucide_react_native_1.EyeOff size={17} color={tokens_1.color.mute}/> : <lucide_react_native_1.Eye size={17} color={tokens_1.color.faint}/>}
+              </react_native_1.Pressable>
+            </react_native_1.View>)}
+
+          {mode === 'signin' && (<react_native_1.View style={s.forgotRow}>
+              <react_native_1.Pressable onPress={function () { return switchMode('forgot-password'); }} hitSlop={6}>
+                <react_native_1.Text style={s.forgotLink}>Forgot password?</react_native_1.Text>
+              </react_native_1.Pressable>
+              <react_native_1.Text style={s.forgotSep}>·</react_native_1.Text>
+              <react_native_1.Pressable onPress={function () { return switchMode('forgot-username'); }} hitSlop={6}>
+                <react_native_1.Text style={s.forgotLink}>Forgot username?</react_native_1.Text>
+              </react_native_1.Pressable>
+            </react_native_1.View>)}
+
+          {isForgot && !notice ? (<react_native_1.Text style={s.forgotHint}>
+              {mode === 'forgot-password'
+                ? "Enter your email and we'll send you a link to set a new password."
+                : "Enter the email you signed up with and we'll show you your username."}
+            </react_native_1.Text>) : null}
 
           {error ? <react_native_1.Text style={s.error}>{error}</react_native_1.Text> : null}
           {notice ? <react_native_1.Text style={s.notice}>{notice}</react_native_1.Text> : null}
 
           <react_native_1.Pressable style={[s.submit, busy ? s.submitBusy : null]} onPress={submit} disabled={busy}>
-            {busy ? <react_native_1.ActivityIndicator color={tokens_1.color.onInk}/> : <react_native_1.Text style={s.submitText}>{mode === 'signin' ? 'Sign in' : 'Create account'}</react_native_1.Text>}
+            {busy ? <react_native_1.ActivityIndicator color={tokens_1.color.onInk}/> : <react_native_1.Text style={s.submitText}>{submitLabel}</react_native_1.Text>}
           </react_native_1.Pressable>
 
-          <react_native_1.Text style={s.switchHint} onPress={function () { return setMode(mode === 'signin' ? 'signup' : 'signin'); }}>
-            {mode === 'signin' ? "New here? Create an account" : 'Already have an account? Sign in'}
-          </react_native_1.Text>
+          {!isForgot && (<react_native_1.Text style={s.switchHint} onPress={function () { return switchMode(mode === 'signin' ? 'signup' : 'signin'); }}>
+              {mode === 'signin' ? "New here? Create an account" : 'Already have an account? Sign in'}
+            </react_native_1.Text>)}
         </react_native_1.View>
 
         <react_native_1.Text style={s.legal}>By continuing you agree to travel kindly and respect fellow travelers.</react_native_1.Text>
@@ -196,8 +298,14 @@ var s = react_native_1.StyleSheet.create({
     tabOn: { backgroundColor: tokens_1.color.signal },
     tabText: __assign(__assign({}, tokens_1.type.small), { fontWeight: '700', color: tokens_1.color.mute }),
     tabTextOn: { color: tokens_1.color.onInk },
+    backBtn: { flexDirection: 'row', alignItems: 'center', gap: tokens_1.space.xs, marginBottom: tokens_1.space.xs },
+    backText: __assign(__assign({}, tokens_1.type.small), { color: tokens_1.color.mute, fontWeight: '600' }),
     field: { flexDirection: 'row', alignItems: 'center', gap: tokens_1.space.sm, borderWidth: 1, borderColor: tokens_1.color.haze, borderRadius: tokens_1.radius.md, paddingHorizontal: tokens_1.space.md, backgroundColor: tokens_1.color.paper },
     input: __assign(__assign({ flex: 1, paddingVertical: tokens_1.space.md }, tokens_1.type.body), { color: tokens_1.color.ink }),
+    forgotRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: tokens_1.space.sm },
+    forgotLink: __assign(__assign({}, tokens_1.type.small), { color: tokens_1.color.deep, fontWeight: '600' }),
+    forgotSep: __assign(__assign({}, tokens_1.type.small), { color: tokens_1.color.faint }),
+    forgotHint: __assign(__assign({}, tokens_1.type.small), { color: tokens_1.color.mute, textAlign: 'center' }),
     error: __assign(__assign({}, tokens_1.type.small), { color: tokens_1.color.signal, fontWeight: '600' }),
     notice: __assign(__assign({}, tokens_1.type.small), { color: tokens_1.color.success, fontWeight: '600' }),
     submit: { backgroundColor: tokens_1.color.ink, borderRadius: tokens_1.radius.md, paddingVertical: tokens_1.space.md, alignItems: 'center', marginTop: tokens_1.space.xs },

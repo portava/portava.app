@@ -42,6 +42,8 @@ exports.signIn = signIn;
 exports.signOut = signOut;
 exports.getSessionUserId = getSessionUserId;
 exports.onAuthChange = onAuthChange;
+exports.requestPasswordReset = requestPasswordReset;
+exports.lookupUsernameByEmail = lookupUsernameByEmail;
 /**
  * Auth service — thin wrapper over supabase-js auth. UI calls these, never
  * supabase.auth directly, so the implementation can be swapped or mocked.
@@ -167,4 +169,66 @@ function onAuthChange(cb) {
     }
     var data = supabase_1.supabase.auth.onAuthStateChange(function (_event, session) { var _a, _b; return cb((_b = (_a = session === null || session === void 0 ? void 0 : session.user) === null || _a === void 0 ? void 0 : _a.id) !== null && _b !== void 0 ? _b : null); }).data;
     return function () { return data.subscription.unsubscribe(); };
+}
+/** Send a password-reset email via Supabase Auth. */
+function requestPasswordReset(email) {
+    return __awaiter(this, void 0, void 0, function () {
+        var error, e_1;
+        var _a;
+        return __generator(this, function (_b) {
+            switch (_b.label) {
+                case 0:
+                    if (!supabase_1.isSupabaseConfigured)
+                        return [2 /*return*/, { error: 'Backend not configured.' }];
+                    _b.label = 1;
+                case 1:
+                    _b.trys.push([1, 3, , 4]);
+                    return [4 /*yield*/, supabase_1.supabase.auth.resetPasswordForEmail(email.trim())];
+                case 2:
+                    error = (_b.sent()).error;
+                    if (error)
+                        return [2 /*return*/, { error: error.message }];
+                    return [2 /*return*/, {}];
+                case 3:
+                    e_1 = _b.sent();
+                    return [2 /*return*/, { error: (_a = e_1 === null || e_1 === void 0 ? void 0 : e_1.message) !== null && _a !== void 0 ? _a : 'Network error — check your connection.' }];
+                case 4: return [2 /*return*/];
+            }
+        });
+    });
+}
+/** Ask the API server for the @handle linked to an email (requires EXPO_PUBLIC_API_BASE_URL). */
+function lookupUsernameByEmail(email) {
+    return __awaiter(this, void 0, void 0, function () {
+        var apiBase, res, data, e_2;
+        var _a, _b, _c;
+        return __generator(this, function (_d) {
+            switch (_d.label) {
+                case 0:
+                    apiBase = (_a = process.env.EXPO_PUBLIC_API_BASE_URL) !== null && _a !== void 0 ? _a : '';
+                    if (!apiBase)
+                        return [2 /*return*/, { error: 'Backend not configured.' }];
+                    _d.label = 1;
+                case 1:
+                    _d.trys.push([1, 4, , 5]);
+                    return [4 /*yield*/, fetch("".concat(apiBase, "/api/auth/lookup-username"), {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ email: email.trim().toLowerCase() }),
+                        })];
+                case 2:
+                    res = _d.sent();
+                    return [4 /*yield*/, res.json()];
+                case 3:
+                    data = _d.sent();
+                    if (!res.ok)
+                        return [2 /*return*/, { error: (_b = data === null || data === void 0 ? void 0 : data.error) !== null && _b !== void 0 ? _b : 'Could not find an account with that email.' }];
+                    return [2 /*return*/, { handle: data.handle }];
+                case 4:
+                    e_2 = _d.sent();
+                    return [2 /*return*/, { error: (_c = e_2 === null || e_2 === void 0 ? void 0 : e_2.message) !== null && _c !== void 0 ? _c : 'Network error — check your connection.' }];
+                case 5: return [2 /*return*/];
+            }
+        });
+    });
 }

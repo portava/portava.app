@@ -70,3 +70,33 @@ export function onAuthChange(cb: (userId: string | null) => void): () => void {
   const { data } = supabase.auth.onAuthStateChange((_event, session) => cb(session?.user?.id ?? null));
   return () => data.subscription.unsubscribe();
 }
+
+/** Send a password-reset email via Supabase Auth. */
+export async function requestPasswordReset(email: string): Promise<{ error?: string }> {
+  if (!isSupabaseConfigured) return { error: 'Backend not configured.' };
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+    if (error) return { error: error.message };
+    return {};
+  } catch (e: any) {
+    return { error: e?.message ?? 'Network error — check your connection.' };
+  }
+}
+
+/** Ask the API server for the @handle linked to an email (requires EXPO_PUBLIC_API_BASE_URL). */
+export async function lookupUsernameByEmail(email: string): Promise<{ handle?: string; error?: string }> {
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  if (!apiBase) return { error: 'Backend not configured.' };
+  try {
+    const res = await fetch(`${apiBase}/api/auth/lookup-username`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.trim().toLowerCase() }),
+    });
+    const data = await res.json();
+    if (!res.ok) return { error: data?.error ?? 'Could not find an account with that email.' };
+    return { handle: data.handle };
+  } catch (e: any) {
+    return { error: e?.message ?? 'Network error — check your connection.' };
+  }
+}
