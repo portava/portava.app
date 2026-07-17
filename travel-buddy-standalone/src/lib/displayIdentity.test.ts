@@ -10,6 +10,7 @@ import {
   primaryIdentityText,
   secondaryIdentityText,
 } from './displayIdentity.ts';
+import { DISPLAY_NAME_MAX_LENGTH } from '../utils/identity.ts';
 
 describe('displayIdentity', () => {
   describe('identityHandle', () => {
@@ -50,10 +51,10 @@ describe('displayIdentity', () => {
     it('does not double the @ for handles stored with one', () => {
       assert.equal(primaryIdentityText({ handle: '@kai' }), '@kai');
     });
-    it('truncates legacy over-limit real names to 30 chars with an ellipsis', () => {
+    it('truncates legacy over-limit real names to the shared limit with an ellipsis', () => {
       const long = 'A'.repeat(60);
       const out = primaryIdentityText({ displayName: long, handle: 'kai' });
-      assert.equal(out, 'A'.repeat(30) + '…');
+      assert.equal(out, 'A'.repeat(DISPLAY_NAME_MAX_LENGTH) + '…');
     });
     it('falls back to Traveler when nothing is available', () => {
       assert.equal(primaryIdentityText({}), 'Traveler');
