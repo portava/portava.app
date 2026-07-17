@@ -1259,6 +1259,70 @@ describe("runGenerationCycle — placeholder data-URL candidates excluded from o
       "must not issue any delete when no real uploads preceded the failure",
     );
   });
+
+  it("degraded mixed run (1 placeholder + 1 real, below CANDIDATE_COUNT) stores data-URL correctly on the placeholder row", async () => {
+    // Provider: 1 data-URL placeholder + 1 real http URL = 2 candidates total.
+    // 2 < CANDIDATE_COUNT (3) but 2 >= STAMP_MIN_CANDIDATES (2) → degraded-but-reviewable.
+    // All fetches and uploads succeed.
+    // Asserts:
+    //   - result.processed === true and job reaches review_required with shortfall in last_error
+    //   - placeholder row: public_url starts with 'data:' and storage_path does NOT start with 'catalog/'
+    //   - real-http row: public_url starts with 'https://storage.fake/' and storage_path starts with 'catalog/'
+    const { sc, updates, inserts, storageCalls } = makeFakeClientWithStorage();
+    _setTestServiceClient(sc);
+    _setTestStampImageProvider(makeMixedProvider(1, 1));
+    installFetch(successFetch());
+
+    const result = await runGenerationCycle();
+
+    // Degraded but reviewable — must be processed.
+    assert.equal(result.processed, true);
+    assert.equal(result.catalogId, "cat-1");
+
+    // Job must reach review_required with the shortfall in last_error.
+    const review = updates.find((u) => u.payload.status === "review_required");
+    assert.ok(review, "must mark the job review_required");
+    assert.ok(
+      typeof review!.payload.last_error === "string" &&
+        review!.payload.last_error.startsWith(CANDIDATE_SHORTFALL_PREFIX),
+      `last_error must carry the shortfall prefix, got: ${review!.payload.last_error}`,
+    );
+    assert.ok(
+      review!.payload.last_error.includes("2 of"),
+      `last_error must describe the shortfall count, got: ${review!.payload.last_error}`,
+    );
+
+    // Exactly 1 storage upload — only the real http candidate (placeholder skipped).
+    assert.equal(storageCalls.length, 1, "must upload exactly the 1 real http candidate");
+
+    // One batch insert with both candidates (placeholder + 1 real).
+    assert.equal(inserts.length, 1, "must perform exactly one batch insert");
+    const { rows } = inserts[0];
+    assert.equal(rows.length, 2, "must insert a row for each candidate including the placeholder");
+
+    // First row = placeholder (provider emits it first).
+    const placeholderRow = rows[0];
+    assert.ok(
+      placeholderRow.public_url.startsWith("data:"),
+      `placeholder row public_url must be the original data-URL, got: ${placeholderRow.public_url}`,
+    );
+    assert.ok(
+      typeof placeholderRow.storage_path === "string" &&
+        !placeholderRow.storage_path.startsWith("catalog/"),
+      `placeholder row storage_path must not be a real catalog storage path, got: ${placeholderRow.storage_path}`,
+    );
+
+    // Second row = real-http candidate.
+    const realRow = rows[1];
+    assert.ok(
+      realRow.public_url.startsWith("https://storage.fake/"),
+      `real-http row public_url must be a storage URL, got: ${realRow.public_url}`,
+    );
+    assert.ok(
+      typeof realRow.storage_path === "string" && realRow.storage_path.startsWith("catalog/"),
+      `real-http row storage_path must be a catalog storage path, got: ${realRow.storage_path}`,
+    );
+  });
 });
 
   it("issues no storage deletes when a mixed run fully succeeds (data-URL + real http)", async () => {
