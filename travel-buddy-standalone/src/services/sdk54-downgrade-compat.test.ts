@@ -41,7 +41,7 @@
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve as pathResolve, dirname } from 'node:path';
 
@@ -66,8 +66,31 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dir = dirname(__filename);
 
-function readPkg(relPath: string): Record<string, any> {
-  return JSON.parse(readFileSync(pathResolve(__dir, relPath), 'utf8'));
+// Locate the workspace root regardless of which tree this file lives in
+// (artifacts/travel-buddy or travel-buddy-standalone — the file is kept in
+// sync between both).  Walk up from this file's directory until we find the
+// directory that contains both `artifacts` and `travel-buddy-standalone`.
+function findWorkspaceRoot(startDir: string): string {
+  let dir = startDir;
+  for (let i = 0; i < 10; i++) {
+    if (
+      existsSync(pathResolve(dir, 'travel-buddy-standalone')) &&
+      existsSync(pathResolve(dir, 'artifacts'))
+    ) {
+      return dir;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new Error(`Could not locate workspace root above ${startDir}`);
+}
+
+const WORKSPACE_ROOT = findWorkspaceRoot(__dir);
+
+// Resolve paths from the workspace root so the same file works from either tree.
+function readPkg(rootRelPath: string): Record<string, any> {
+  return JSON.parse(readFileSync(pathResolve(WORKSPACE_ROOT, rootRelPath), 'utf8'));
 }
 
 function versionContains(field: string | undefined, ver: string): boolean {
@@ -80,7 +103,7 @@ describe('SDK 54 downgrade — package version pins', () => {
   // This file lives in the monorepo tree, so ../../package.json (2 levels up
   // from src/services) is artifacts/travel-buddy/package.json — the monorepo
   // copy whose pins are asserted below.
-  const pkg = readPkg('../../package.json');
+  const pkg = readPkg('artifacts/travel-buddy/package.json');
   const deps: Record<string, string> = {
     ...pkg.dependencies,
     ...pkg.devDependencies,
@@ -124,7 +147,7 @@ describe('SDK 54 downgrade — package version pins', () => {
   it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
     // travel-buddy-standalone/package.json is 4 levels up from src/services
     // (artifacts/travel-buddy/src/services → workspace root → travel-buddy-standalone).
-    const standalone = readPkg('../../../../travel-buddy-standalone/package.json');
+    const standalone = readPkg('travel-buddy-standalone/package.json');
     const saDeps: Record<string, string> = {
       ...standalone.dependencies,
       ...standalone.devDependencies,
@@ -163,14 +186,14 @@ describe('SDK 54 downgrade — package version pins', () => {
 
 describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
   // artifacts/travel-buddy/package.json is 2 levels up from src/services.
-  const tb = readPkg('../../package.json');
+  const tb = readPkg('artifacts/travel-buddy/package.json');
   const tbAll: Record<string, string> = {
     ...tb.dependencies,
     ...tb.devDependencies,
   };
 
   // travel-buddy-standalone/package.json is 4 levels up from src/services.
-  const sa = readPkg('../../../../travel-buddy-standalone/package.json');
+  const sa = readPkg('travel-buddy-standalone/package.json');
   const saAll: Record<string, string> = {
     ...sa.dependencies,
     ...sa.devDependencies,
@@ -238,7 +261,7 @@ describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and 
 
 describe('SDK 54 — other explicitly pinned Expo packages sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
   // artifacts/travel-buddy/package.json is 2 levels up from src/services.
-  const tb = readPkg('../../package.json');
+  const tb = readPkg('artifacts/travel-buddy/package.json');
   const tbAll: Record<string, string> = {
     ...tb.dependencies,
     ...tb.devDependencies,
@@ -247,7 +270,7 @@ describe('SDK 54 — other explicitly pinned Expo packages sync between artifact
   // travel-buddy-standalone/package.json is 4 levels up from src/services in
   // the artifacts tree (artifacts/travel-buddy/src/services → workspace root →
   // travel-buddy-standalone).
-  const sa = readPkg('../../../../travel-buddy-standalone/package.json');
+  const sa = readPkg('travel-buddy-standalone/package.json');
   const saAll: Record<string, string> = {
     ...sa.dependencies,
     ...sa.devDependencies,
@@ -663,9 +686,9 @@ describe('expo-clipboard ~8.0.8 — setStringAsync call contract (mirrors GroupC
 
 describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/config-plugins, expo-modules-core, and metro bundler family', () => {
   // travel-buddy-standalone/pnpm-lock.yaml is 4 levels up from src/services/ in artifacts/travel-buddy/
-  const standaloneLockText = readFileSync(pathResolve(__dir, '../../../../travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
+  const standaloneLockText = readFileSync(pathResolve(WORKSPACE_ROOT, 'travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
   // monorepo root pnpm-lock.yaml is also 4 levels up from src/services/ in artifacts/travel-buddy/
-  const monoLockText = readFileSync(pathResolve(__dir, '../../../../pnpm-lock.yaml'), 'utf8');
+  const monoLockText = readFileSync(pathResolve(WORKSPACE_ROOT, 'pnpm-lock.yaml'), 'utf8');
 
   /**
    * Scan a lockfile text for all resolved base versions of a given package.
@@ -751,8 +774,8 @@ describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/
 
 describe('Lockfile-resolved metro bundler family versions — metro, metro-resolver, @expo/metro-config', () => {
   // Reuse the same lockfile texts read in section 7.
-  const standaloneLockText = readFileSync(pathResolve(__dir, '../../../../travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
-  const monoLockText = readFileSync(pathResolve(__dir, '../../../../pnpm-lock.yaml'), 'utf8');
+  const standaloneLockText = readFileSync(pathResolve(WORKSPACE_ROOT, 'travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
+  const monoLockText = readFileSync(pathResolve(WORKSPACE_ROOT, 'pnpm-lock.yaml'), 'utf8');
 
   function resolvedVersions(lockText: string, pkgName: string): string[] {
     const escaped = pkgName.replace(/[.*+?^${}()|[\]\\]/g, (c) => '\\' + c).replace(/\//g, (c) => '\\' + c);

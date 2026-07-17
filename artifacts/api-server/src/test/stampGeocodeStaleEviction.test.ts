@@ -481,6 +481,57 @@ describe("negative cache TTL expiry", () => {
     assert.equal(fetchCallCount, 3, "one fetch for the successful retry after the short TTL");
   });
 
+  it("applies the 30-day positive TTL after a DB-failing TTL-retry — not the 6-hour negative TTL", async () => {
+    const POSITIVE_TTL_MS = 30 * 24 * 60 * 60 * 1_000; // must match countryGeocoder.ts
+    const T0 = 1_700_000_000_000;
+    mockNow(T0);
+
+    // DB client: readDbCache finds nothing (so Nominatim is consulted) and the
+    // upsert in writeDbCache always fails.
+    const failingDb = {
+      from(table: string) {
+        assert.equal(table, "city_country_geocode_cache", "unexpected table");
+        const chain: any = {
+          select() { return chain; },
+          eq() { return chain; },
+          async maybeSingle() { return { data: null, error: null }; },
+          upsert() { return Promise.resolve({ error: { message: "db_write_failed" } }); },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    _setGeocodeDbClientForTests(failingDb);
+
+    // Seed the negative cache: first fetch returns empty → null geocode.
+    _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
+
+    const first = await geocodeCityCountry("TtlCity");
+    assert.equal(first, null, "pre-condition: city should cache as null");
+
+    // Advance past the NEGATIVE_TTL_MS window so the negative entry is stale.
+    const T1 = T0 + NEGATIVE_TTL_MS + 1_000;
+    mockNow(T1);
+
+    // Retry succeeds via Nominatim, but the DB upsert fails.
+    _setGeocodeFetchForTests(async () => ({
+      ok: true,
+      json: async () => [{ address: { country_code: "jp", country: "Japan" } }],
+    }));
+
+    const second = await geocodeCityCountry("TtlCity");
+    assert.equal(second?.countryCode, "JP",
+      "the retry should return the positive result even though the DB write fails");
+
+    // The in-memory entry must carry the 30-day positive TTL, not the 6-hour one.
+    const entry = _getGeocodeCacheEntryForTests("ttlcity");
+    assert.ok(entry, "in-memory cache entry must exist after the DB-failing retry");
+    assert.equal(entry!.writtenAt, T1, "entry should be written at the retry time");
+    assert.equal(entry!.expiresAt, T1 + POSITIVE_TTL_MS,
+      "expiresAt must be writtenAt + POSITIVE_TTL_MS (30 days) — not NEGATIVE_TTL_MS (6 hours)");
+    assert.notEqual(entry!.expiresAt, T1 + NEGATIVE_TTL_MS,
+      "expiresAt must not be the 6-hour negative TTL");
+  });
+
   it("keeps returning null while still inside the NEGATIVE_TTL_MS window", async () => {
     const T0 = 1_700_000_000_000;
     mockNow(T0);
