@@ -542,6 +542,49 @@ describe("runGenerationCycle — below-minimum run (1 of 3, STAMP_MIN_CANDIDATES
     assert.equal(fail!.payload.locked_by, null);
     assert.deepEqual(fail!.eqFilters, [["id", "job-1"]]);
   });
+
+  it("records shortfall prefix in last_error when provider returns 0 candidates and attempts are not exhausted", async () => {
+    // Non-exhausted zero-candidate path: provider returns nothing but the job
+    // still has remaining attempts, so it should re-queue as "queued" — and
+    // last_error must still carry the CANDIDATE_SHORTFALL_PREFIX so operators
+    // can see context even before exhaustion.
+    const { sc, updates, inserts } = makeFakeClient();
+    _setTestServiceClient(sc);
+    // Provider returns 0 candidates — zero-candidate shortfall path.
+    _setTestStampImageProvider(makeFakeProvider(0));
+
+    const result = await runGenerationCycle();
+
+    assert.equal(result.processed, false);
+
+    // No version rows must be inserted for a failed run.
+    assert.equal(inserts.length, 0);
+
+    // No review_required update at all.
+    assert.equal(
+      updates.some((u) => u.payload.status === "review_required"),
+      false,
+      "a zero-candidate run must never reach review_required",
+    );
+
+    // Default JOB has attempts=0 < max_attempts=3, so the job must re-queue.
+    const fail = updates.find(
+      (u) => u.payload.status === "queued" || u.payload.status === "retryable_failed",
+    );
+    assert.ok(fail, "must record a failure update");
+    assert.equal(
+      fail!.payload.status,
+      "queued",
+      "non-exhausted zero-candidate shortfall must re-queue, not reach retryable_failed",
+    );
+    assert.ok(
+      typeof fail!.payload.last_error === "string" &&
+        fail!.payload.last_error.startsWith(CANDIDATE_SHORTFALL_PREFIX),
+      `last_error must carry the shortfall prefix even on a non-exhausted zero-candidate run, got: ${fail!.payload.last_error}`,
+    );
+    assert.equal(fail!.payload.locked_until, null);
+    assert.deepEqual(fail!.eqFilters, [["id", "job-1"]]);
+  });
 });
 
 // ── Real-image path (http URLs): download + storage upload ────────────────────
