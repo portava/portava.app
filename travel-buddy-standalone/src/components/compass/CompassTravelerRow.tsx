@@ -53,7 +53,9 @@ function TravelerCard({ item }: { item: CompassTravelerResult }) {
   const [inFlight, setInFlight] = useState(false);
   const [hidden, setHidden] = useState(false);
 
-  const displayName = d.displayName ?? (d.isPrivate ? 'Private Traveler' : primaryIdentityText({ username: d.username }));
+  const displayName = d.displayName
+    ? primaryIdentityText({ displayName: d.displayName })
+    : (d.isPrivate ? 'Private Traveler' : primaryIdentityText({ username: d.username }));
   const usernameSubline = secondaryIdentityText({ displayName: d.displayName, username: d.username });
   const initials = displayName.replace(/^@/, '').slice(0, 2).toUpperCase();
 
