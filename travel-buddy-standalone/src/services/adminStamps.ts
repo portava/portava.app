@@ -39,6 +39,13 @@ export interface CatalogListEntry extends Omit<CatalogEntry, 'status'> {
   cleanup_error?: string | null;
   /** Storage paths that were uploaded but could not be deleted when cleanup failed. */
   cleanup_error_paths?: string[] | null;
+  /**
+   * Set when the entry has a live generation job (queued or processing),
+   * regardless of catalog status — e.g. a stale "rejected" entry whose
+   * regenerate already re-queued a job. Lets the list show a "regenerating"
+   * badge so operators don't trigger a redundant regenerate.
+   */
+  queue_status?: 'queued' | 'processing';
 }
 
 /**
