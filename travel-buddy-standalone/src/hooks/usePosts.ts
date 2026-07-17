@@ -117,14 +117,21 @@ export function useFollowingFeed() {
   const [error, setError] = useState<string | null>(null);
   // cursor = createdAt of oldest post on last page
   const [cursor, setCursor] = useState<string | null>(null);
+  // Newer posts fetched by a background/focus refresh while the user is
+  // mid-feed — buffered here (behind a "N new posts" pill) instead of being
+  // prepended immediately, which would jump the scroll position.
+  const [pending, setPending] = useState<PostRow[]>([]);
   // IDs deleted this session — excluded from every reload so they never reappear
   const deletedIds = useRef(new Set<string>());
   // Timestamp of the last successful load — drives the focus TTL.
   const lastLoadedAt = useRef(0);
+  // Guard against overlapping background refreshes.
+  const refreshing = useRef(false);
 
   const markDeleted = useCallback((id: string) => {
     deletedIds.current.add(id);
     setData((prev) => prev.filter((p) => !deletedIds.current.has(p.id)));
+    setPending((prev) => prev.filter((p) => !deletedIds.current.has(p.id)));
   }, []);
 
   const reload = useCallback(async () => {
@@ -142,6 +149,7 @@ export function useFollowingFeed() {
         setHasMore(true);
       }
       setData(sanitizeFeedRows(raw).filter((p) => !deletedIds.current.has(p.id)));
+      setPending([]);
       lastLoadedAt.current = Date.now();
     } else {
       setError(res.message ?? res.errorKind ?? 'Failed to load following feed');
@@ -149,11 +157,43 @@ export function useFollowingFeed() {
     setLoading(false);
   }, []);
 
-  /** Focus-driven refresh: only reload when the data is older than the TTL. */
+  /**
+   * Focus-driven refresh: no-op while the data is fresh (TTL); otherwise
+   * fetch in the background WITHOUT clearing the current list. New posts are
+   * buffered into `pending` instead of replacing the list mid-scroll.
+   */
   const refreshIfStale = useCallback(async (ttlMs: number = FEED_FOCUS_TTL_MS) => {
+    if (refreshing.current) return;
     if (Date.now() - lastLoadedAt.current < ttlMs) return;
-    await reload();
-  }, [reload]);
+    refreshing.current = true;
+    try {
+      const res = await listFollowingFeed({ limit: PAGE_SIZE });
+      if (!res.ok) return; // background refresh: keep showing the current list
+      const fetched = (res.data ?? []).filter((p) => !deletedIds.current.has(p.id));
+      lastLoadedAt.current = Date.now();
+      setData((prev) => {
+        const { pending: fresh, replace } = splitPendingPosts(prev, fetched);
+        if (replace) {
+          setPending([]);
+          return replace;
+        }
+        setPending(fresh);
+        return prev;
+      });
+    } finally {
+      refreshing.current = false;
+    }
+  }, []);
+
+  /** Prepend the buffered new posts (user tapped the "new posts" pill). */
+  const applyPending = useCallback(() => {
+    setPending((buffered) => {
+      if (buffered.length > 0) {
+        setData((prev) => sanitizeFeedRows([...buffered, ...prev]));
+      }
+      return [];
+    });
+  }, []);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore || !cursor) return;
@@ -178,7 +218,7 @@ export function useFollowingFeed() {
     setLoadingMore(false);
   }, [loadingMore, hasMore, cursor]);
 
-  return { data, loading, loadingMore, hasMore, error, reload, refreshIfStale, loadMore, markDeleted };
+  return { data, loading, loadingMore, hasMore, error, reload, refreshIfStale, loadMore, markDeleted, pending, applyPending };
 }
 
 /** A trip's feed. isMember reflects whether the viewer is an accepted member. */
