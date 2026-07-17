@@ -37,9 +37,9 @@ import {
   View, Text, TextInput, Pressable, FlatList, Modal,
   StyleSheet, ActivityIndicator,
 } from 'react-native';
+import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 import { X, MapPin, Search, Navigation, Clock, TrendingUp, RefreshCw } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 import * as ExpoLocation from 'expo-location';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { usePlaceSearch } from '../../hooks/usePlaceSearch.ts';

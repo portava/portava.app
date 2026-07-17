@@ -22,8 +22,8 @@ import {
   ActivityIndicator, Switch,
   type StyleProp, type ViewStyle, type TextInputProps,
 } from 'react-native';
-import { useNavigation, router } from 'expo-router';
 import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
+import { useNavigation, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, ChevronRight, Check, AlertCircle, RotateCcw } from 'lucide-react-native';
 import { PP } from '../../theme/passportTokens.ts';

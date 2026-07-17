@@ -12,8 +12,8 @@ import {
   View, Text, Pressable, StyleSheet, ScrollView,
   ActivityIndicator, Alert, TextInput,
 } from 'react-native';
-import { X, Check, X as XIcon, UserX, Crown, Shield, Clock } from 'lucide-react-native';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
+import { X, Check, X as XIcon, UserX, Crown, Shield, Clock } from 'lucide-react-native';
 import {
   getJoinRequests, reviewJoinRequest, assignEventRole, removeEventRole,
   postEventUpdate, updateEvent, getEventWaitlist,

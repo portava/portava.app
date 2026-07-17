@@ -1,9 +1,8 @@
 import React, { useState, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
-  ActivityIndicator,
+  ActivityIndicator, ScrollView,
 } from 'react-native';
-import { ScrollView } from 'react-native';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 import { Sparkles, Send, Plane, MessageCircle, Map, PlusCircle } from 'lucide-react-native';

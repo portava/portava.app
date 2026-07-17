@@ -3,8 +3,8 @@ import {
   View, Text, StyleSheet, Pressable, Image, ScrollView,
   ActivityIndicator, Modal, TextInput,
 } from 'react-native';
-import { MapPin, Lock, Globe, Users, Eye, EyeOff, Plus, X } from 'lucide-react-native';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
+import { MapPin, Lock, Globe, Users, Eye, EyeOff, Plus, X } from 'lucide-react-native';
 import type { PassportMemory, MemoryVisibility } from '../services/passportStamps.ts';
 import {
   createPassportMemory,

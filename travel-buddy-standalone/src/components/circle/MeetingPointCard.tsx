@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 import {
   View,
   Text,
@@ -12,6 +11,7 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
+import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 import { MapPin, ExternalLink, Edit2, X, Check, Search } from 'lucide-react-native';
 import type { MeetingPoint } from '../../services/circle.ts';
 import { postMeetingPoint, patchMeetingPoint } from '../../services/circle.ts';

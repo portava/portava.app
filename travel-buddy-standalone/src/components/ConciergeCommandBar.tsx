@@ -11,8 +11,8 @@ import {
   View, Text, TextInput, Pressable, ScrollView, StyleSheet, Modal,
   ActivityIndicator, Alert,
 } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
+import { useLocalSearchParams } from 'expo-router';
 import { Zap, Send, ChevronDown, ChevronUp, Sparkles, CheckCircle } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { sendConciergeCommand, confirmCommandAction, declineCommandAction } from '../services/intelligence.ts';

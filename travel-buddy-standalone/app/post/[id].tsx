@@ -4,8 +4,8 @@ import {
   Image, ActivityIndicator, useWindowDimensions,
   Keyboard,
 } from 'react-native';
-import { useLocalSearchParams, router } from 'expo-router';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
+import { useLocalSearchParams, router } from 'expo-router';
 import * as Linking from 'expo-linking';
 import {
   MoreVertical, Share2, Flag, Flag as FlagFill,
