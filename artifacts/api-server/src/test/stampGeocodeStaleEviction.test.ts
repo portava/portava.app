@@ -813,7 +813,7 @@ describe("negative cache TTL expiry", () => {
     mockNow(T0);
 
     // Step 1: seed a negative cache entry.
-    // _setGeocodeFetchForTests also sets _dbClientOverride = null (no DB).
+    // The beforeEach hook sets _dbClientOverride = null (no DB).
     _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
 
     const first = await geocodeCityCountry("PersistFailCity");
@@ -1108,7 +1108,7 @@ describe("correction-sweep eviction: negative entry retries after sweep removes 
     mockNow(T0);
 
     // Step 1 — seed a null (negative) cache entry.
-    // _setGeocodeFetchForTests also sets _dbClientOverride = null (no DB),
+    // The beforeEach hook sets _dbClientOverride = null (no DB).
     // so readDbCache returns null and the code falls through to Nominatim.
     _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
 
@@ -1246,7 +1246,7 @@ describe("correction-sweep eviction: negative entry retries after sweep removes 
     mockNow(T0);
 
     // Step 1 — seed a null (negative) cache entry.
-    // _setGeocodeFetchForTests also sets _dbClientOverride = null (no DB),
+    // The beforeEach hook sets _dbClientOverride = null (no DB).
     // so readDbCache returns null and the code falls through to Nominatim.
     let fetchCallCount = 0;
     _setGeocodeFetchForTests(async () => {
@@ -1370,7 +1370,7 @@ describe("tombstone-sweep eviction: negative entry retries after sweep removes i
     mockNow(T0);
 
     // Step 1 — seed a null (negative) cache entry.
-    // _setGeocodeFetchForTests also sets _dbClientOverride = null (no DB),
+    // The beforeEach hook sets _dbClientOverride = null (no DB).
     // so readDbCache returns null and the code falls through to Nominatim.
     _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
 
@@ -1727,10 +1727,10 @@ describe("PUT-revival race: in-flight null does not re-poison cache after evicti
       },
     };
 
-    // IMPORTANT: call _setGeocodeFetchForTests BEFORE _setGeocodeDbClientForTests.
-    // _setGeocodeFetchForTests resets _dbClientOverride to null; the subsequent
-    // _setGeocodeDbClientForTests call overwrites it with our fake DB client.
-    // Reversing this order would null out the DB client and break readDbCache.
+    // NOTE: the beforeEach hook defaults _dbClientOverride to null;
+    // the subsequent
+    // _setGeocodeDbClientForTests call overwrites that with our fake DB client.
+    
     _setGeocodeFetchForTests(async () => ({ ok: true, json: async () => [] }));
     _setGeocodeDbClientForTests(db);
 
@@ -1775,7 +1775,7 @@ describe("cold-start dedup: concurrent calls on a completely empty cache share o
       };
     });
 
-    // _setGeocodeFetchForTests sets _dbClientOverride = null (no DB),
+    // The beforeEach hook sets _dbClientOverride = null (no DB),
     // so readDbCache returns null and both callers fall through to forwardGeocodeCity.
     // The first caller creates the _pending promise synchronously (before any await);
     // the second caller finds that promise via _pending.get(key) and returns it —

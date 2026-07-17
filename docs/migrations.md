@@ -714,3 +714,24 @@ A signed-in smoke check (`artifacts/api-server/scripts/smoke-settings-saves.mjs`
 | `0144_universal_stamp_catalog_country_code_nullable.sql` | Drops NOT NULL from `universal_stamp_catalog.country_code` so country-less catalog entries (modeled as `string | null` in `CatalogEntryForPrompt`) insert cleanly instead of failing in production; existing "XX" sentinel rows unaffected. **Applied 2026-07-17 via Supabase Management API.** **Verify:** `SELECT is_nullable FROM information_schema.columns WHERE table_name='universal_stamp_catalog' AND column_name='country_code';` — `YES`. | applied 2026-07-17 |
 | `0145_event_first_stamp_definitions.sql` | Inserts `first_event_joined` and `first_event_hosted` rows into `stamp_definitions` (awarded by event RSVP/publish routes); idempotent via ON CONFLICT (slug) DO NOTHING. **Applied 2026-07-17 via Supabase Management API.** **Verify:** `SELECT slug FROM stamp_definitions WHERE slug IN ('first_event_joined','first_event_hosted');` — two rows. | applied 2026-07-17 |
 | `0146_append_cleanup_error_paths_fn.sql` | Adds SECURITY DEFINER SQL function `append_stamp_cleanup_error_paths(p_job_id, p_error, p_paths)` — atomic server-side append+dedup into `stamp_generation_queue.cleanup_error_paths`. Used by `persistCleanupError` as a fallback when the read of the existing paths fails (DB read outage) so orphaned-file paths survive a worker restart instead of living only in logs. Execute granted to `service_role` only. **Applied 2026-07-17 via Supabase Management API.** **Verify:** `SELECT proname FROM pg_proc WHERE proname='append_stamp_cleanup_error_paths';` — one row. | applied 2026-07-17 |
+
+### Legacy migrations dir reconciled — 2026-07-17
+
+The pre-`src/` dir `artifacts/api-server/migrations/` was fully classified so `pnpm run audit:schema -- --include-legacy` exits 0 and real drift can no longer hide among superseded noise.
+
+**Superseded (skipped/allowlisted in `auditMigrationsVsLive.ts`):**
+- `0041_notifications.sql` → SKIP_FILES (superseded by canonical `0062_notifications_schema.sql`; live has equivalently-named policies, `notification_category_preferences` intentionally has no `id`).
+- `0037_feature_flags.sql` policy `ff_select_all` → allowlisted (live `feature_flags_public_read` has the same predicate).
+- `0035` policy `pgf_select_member` → allowlisted (dropped by legacy `0038` RLS fix; replaced by `pgf_select_accepted`).
+
+**Applied 2026-07-17 via Supabase Management API** (each file one request; runner emitted explicit `ALTER TABLE ADD COLUMN IF NOT EXISTS` preludes where the live table already existed so `CREATE TABLE IF NOT EXISTS` would have no-opped): `0012_group_chat`, `0013_availability_meetups` (incl. `trip_availability`), `0030_message_reports`, `0031_thread_reports`, `0032_location_preferences` (`user_location_preferences`), `0033_location_sessions` (+10 `location_sessions` cols), `0034_geo_zones` (`place_profiles`, +5 `geo_zones` cols), `0035`/`0038`/`0039` plan-geofence cluster (+`plan_geofences`/`plan_checkins`/`plan_attendance_events`/`geofence_admin_settings` cols, unique `(geofence_id,user_id)` index for the code's upsert), `0036_pulse_geo_tags` (+9 cols), `0041_trip_crew_location` (+prefs/sessions cols), `0042_passport_stamps` (+`passport_stamps`/`passport_memories`/`passport_contribution_events` cols), `0043_trust_engine` (7 trust tables + `trust_restrictions` cols), `0044_hashtag_reports`, `0055_compass_admin` (6 tables), `0062_discovery_place_saves`, `0075_stamp_artwork`, `0114_review_moderation`, `0139_geocode_cache_corrected_at`, `20260621_weather_cache`. All affected drifted tables had 0 rows, so additive reconciliation was safe.
+
+**Live-shape adaptations made while applying (files left untouched as historical record):**
+- `feature_flags` seeds: `key` → live column `flag`.
+- `0041_trip_crew_location` policy: `allowed_member_ids` is `uuid[]` live, so `auth.uid()::text = ANY(...)` → `auth.uid() = ANY(...)`.
+- `0042` index `passport_stamps_user_earned_idx` created on live `awarded_at` (legacy `earned_at` remains allowlisted). Note: `CREATE INDEX IF NOT EXISTS` validates columns even when it skips creation.
+- `0013` circle policies: legacy `circle_memberships(owner_id, member_id)` → live `(user_id, other_id)` (membership is symmetric, semantics preserved).
+- Canonical-vs-legacy NOT NULL conflicts relaxed on empty tables so legacy-shaped inserts work: `pulse_geo_tags.tag_type`, `plan_checkins.plan_geofence_id`, `plan_attendance_events.plan_geofence_id` → nullable.
+- Stale allowlist entry `passport_memories.trip_id` removed (column now exists live).
+
+**Verify:** `cd artifacts/api-server && pnpm run audit:schema -- --include-legacy` — exits 0.

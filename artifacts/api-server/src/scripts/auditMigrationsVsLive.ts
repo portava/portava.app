@@ -52,6 +52,11 @@ if (process.argv.includes("--include-legacy")) {
 const SKIP_FILES = new Set([
   "0050_rent_a_buddy.sql", // superseded by 0134_rent_buddy_schema_rebuild.sql
   "0105_compass_performance_indexes.sql", // references columns that don't exist live
+  // superseded by canonical src/migrations/0062_notifications_schema.sql: live
+  // has equivalently-purposed policies/indexes under canonical names (e.g.
+  // notifications_select_own), and notification_category_preferences is
+  // intentionally keyed by (user_id, category) with no id column
+  "0041_notifications.sql",
 ]);
 
 /**
@@ -88,10 +93,13 @@ const ALLOWLIST = new Set([
   "column:trip_crew_location_preferences.ghost_mode", // live: ghost_mode_enabled
   "column:trip_crew_location_preferences.visibility", // live: visibility_default
   "column:passport_stamps.earned_at", // live: awarded_at
-  "column:passport_memories.trip_id", // does not exist live
   "column:passport_visibility_preferences.stamps_visibility", // live: stamps_visible
   "column:passport_visibility_preferences.map_visibility", // live: map_visible
   "column:hashtags.normalized_name", // live: slug
+  // Legacy-vs-legacy supersessions (verified 2026-07-17 while reconciling the
+  // legacy migrations dir — see docs/migrations.md):
+  "policy:feature_flags.ff_select_all", // superseded by live feature_flags_public_read (same predicate)
+  "policy:plan_geofences.pgf_select_member", // dropped by legacy 0038 RLS fix; replaced by pgf_select_accepted
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@
 - [Supabase migration access](supabase-migration-access.md) — apply migrations via the Supabase Management API query endpoint; direct psql/pooler connections are unreachable from this workspace.
 - [Explore page performance fixes](explore-perf-fixes.md) — 6 targeted fixes for Discover tab cold-start; geocode dedup, batch counts endpoint, client cache, FlatList virtualisation, community cache, deferred PlaceCard fetches.
 - [Scroll-collapse animation gotchas](scroll-collapse-gotchas.md) — size collapse rows from token lineHeight (fontSize overrides don't shrink it); animate height on a View clip wrapper, never on Text (RN web).
+- [Legacy migration reconciliation](legacy-migration-reconciliation.md) — CREATE TABLE/INDEX IF NOT EXISTS traps, live column renames, and apply-time SQL transforms for the legacy dir.
 - [DB column-drift trap](db-column-drift.md) — verify columns against the LIVE schema (generated types drift both ways); PGRST204 = one unknown column fails the whole insert, even null.
 - [Standalone tree parity](standalone-fork-parity.md) — travel-buddy-standalone is a divergent fork; diff each file before copying, port edits manually into divergent screens, run its tsc separately.
 - [API server test suite](api-server-testing.md) — node:test not vitest; suite >5min, run via api-test workflow; fake-client pitfalls.
