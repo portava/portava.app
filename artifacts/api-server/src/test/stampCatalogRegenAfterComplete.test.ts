@@ -945,3 +945,102 @@ describe("POST regenerate when completed, retryable_failed, and permanently_fail
   });
 
 });
+
+// ── Tests: second regenerate after the three-status case ─────────────────────
+//
+// Chained-call edge case. After the first regenerate in the three-status
+// scenario, the batch UPDATE was rolled back by the partial unique index
+// (both failed rows would have become 'queued'), so the failed rows LINGER in
+// their original states and only the fresh INSERT created the queued row.
+//
+// State before the SECOND regenerate: completed + queued + retryable_failed +
+// permanently_failed. The reset UPDATE again targets both failed rows — but a
+// 'queued' row already exists, so the constraint fires again (statement rolled
+// back, resetRows null → hadFailedReset false). The INSERT then hits 23505 as
+// well. Net result must be exactly one queued row, and NO second audit entry
+// (duplicate-click guard: queueErr set + no failed reset → skip the write).
+
+describe("second POST regenerate after the three-status case (lingering failed rows)", () => {
+
+  beforeEach(() => {
+    db = makeDbThreeRows();
+    const client = makeClient(db);
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+  });
+
+  it("first regenerate leaves the failed rows lingering (UPDATE rolled back, INSERT created the queued row)", async () => {
+    const first = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      first.status, 200,
+      `first regenerate must return 200, got ${first.status}: ${JSON.stringify(first.body)}`,
+    );
+
+    // The constraint rolled back the batch UPDATE — both failed rows keep
+    // their original statuses. Only the INSERT created the queued row.
+    const retryable = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.status === "retryable_failed",
+    );
+    const permFailed = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.status === "permanently_failed",
+    );
+    const queued = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.status === "queued",
+    );
+    assert.equal(retryable.length,  1, `retryable_failed row must linger after first call, found ${retryable.length}`);
+    assert.equal(permFailed.length, 1, `permanently_failed row must linger after first call, found ${permFailed.length}`);
+    assert.equal(queued.length,     1, `expected exactly 1 queued row after first call, found ${queued.length}`);
+  });
+
+  it("second regenerate returns 200 with { ok: true }", async () => {
+    const first = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(first.status, 200, `first regenerate must return 200`);
+
+    const second = await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    assert.equal(
+      second.status, 200,
+      `second regenerate must return 200, got ${second.status}: ${JSON.stringify(second.body)}`,
+    );
+    assert.deepEqual(second.body, { ok: true });
+  });
+
+  it("still exactly one queued row after the second regenerate", async () => {
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+
+    const queued = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.status === "queued",
+    );
+    assert.equal(
+      queued.length,
+      1,
+      `expected exactly 1 queued row after second regenerate, found ${queued.length}: ${JSON.stringify(db.stamp_generation_queue)}`,
+    );
+  });
+
+  it("the completed row is still untouched after the second regenerate", async () => {
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+
+    const completedRows = db.stamp_generation_queue.filter(
+      (r) => r.catalog_id === CATALOG_ID && r.status === "completed",
+    );
+    assert.equal(completedRows.length, 1, `expected the completed row to remain, found ${completedRows.length}`);
+    assert.equal(completedRows[0].id, COMPLETED_ID_3, "completed row id must not change");
+  });
+
+  it("does NOT write a second audit log entry (duplicate-click guard)", async () => {
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+    await post(`/admin/stamps/catalog/${CATALOG_ID}/regenerate`);
+
+    const auditEntries = db.stamp_admin_audit_log.filter(
+      (r) => r.catalog_id === CATALOG_ID,
+    );
+    assert.equal(
+      auditEntries.length,
+      1,
+      `expected exactly 1 audit entry after two regenerates, found ${auditEntries.length}: ${JSON.stringify(auditEntries)}`,
+    );
+  });
+
+});
