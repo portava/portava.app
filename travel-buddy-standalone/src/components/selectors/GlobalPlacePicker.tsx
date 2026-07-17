@@ -37,7 +37,7 @@ import {
   View, Text, TextInput, Pressable, FlatList, Modal,
   StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
-import { X, MapPin, Search, Navigation, Clock, TrendingUp } from 'lucide-react-native';
+import { X, MapPin, Search, Navigation, Clock, TrendingUp, RefreshCw } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ExpoLocation from 'expo-location';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
@@ -105,12 +105,17 @@ export function GlobalPlacePicker({
   const [nearPlace, setNearPlace] = useState<Place | null>(null);
   const aliveRef = useRef(true);
 
+  // Bumped by the "Retry" button on a failed search — failed requests are
+  // never cached, so re-running the hook effect issues a fresh fetch.
+  const [searchRetry, setSearchRetry] = useState(0);
+
   const cityMode = mode === 'city';
-  const { results: searchResults, loading: searching } = usePlaceSearch(query, {
+  const { results: searchResults, loading: searching, error: searchError } = usePlaceSearch(query, {
     countryCode,
     type: cityMode ? 'city' : undefined,
     lat: nearbyCoords?.lat,
     lng: nearbyCoords?.lng,
+    refreshKey: searchRetry,
   });
   const { recents, saveRecent } = useRecentPlaces();
   const { places: popularPlaces } = usePopularCities({
@@ -224,6 +229,8 @@ export function GlobalPlacePicker({
   }
 
   const showSearch = query.trim().length > 0;
+  // The custom free-text row stays available when search errors, so the
+  // picker degrades to manual entry instead of appearing broken.
   const showCustom = showSearch && !searching
     && !searchResults.find((r) => r.name.toLowerCase() === query.trim().toLowerCase());
 
@@ -233,7 +240,8 @@ export function GlobalPlacePicker({
     | { kind: 'gps' }
     | { kind: 'section'; label: string; icon?: 'trending' }
     | { kind: 'place'; place: Place; icon: 'pin' | 'clock' | 'near' }
-    | { kind: 'custom' };
+    | { kind: 'custom' }
+    | { kind: 'error' };
 
   const items: ListItem[] = [];
   if (!showSearch) {
@@ -261,15 +269,21 @@ export function GlobalPlacePicker({
       popularRows.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
     }
   } else {
+    if (searchError && !searching) items.push({ kind: 'error' });
     searchResults.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
     if (showCustom) items.push({ kind: 'custom' });
   }
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+      {/* Keyboard handling: the sheet is bottom-anchored, so the KAV must lift
+          it above the keyboard or the results FlatList gets covered.
+          iOS: 'padding' insets the overlay by the keyboard height.
+          Android: 'height' shrinks the overlay — needed because this Modal is
+          statusBarTranslucent, which stops adjustResize from resizing it. */}
       <KeyboardAvoidingView
         style={s.overlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <Pressable style={s.backdrop} onPress={onClose} />
         <View style={[s.sheet, { paddingBottom: insets.bottom + 8 }]}>
@@ -316,6 +330,7 @@ export function GlobalPlacePicker({
             keyExtractor={(item, i) => {
               if (item.kind === 'gps') return 'gps';
               if (item.kind === 'custom') return 'custom';
+              if (item.kind === 'error') return 'error';
               if (item.kind === 'section') return `section-${item.label}`;
               return `${item.icon}-${item.place.id}`;
             }}
@@ -328,6 +343,25 @@ export function GlobalPlacePicker({
                   <View style={s.sectionRow}>
                     {item.icon === 'trending' && <TrendingUp size={11} color={color.mute} />}
                     <Text style={s.sectionLabel}>{item.label}</Text>
+                  </View>
+                );
+              }
+              if (item.kind === 'error') {
+                return (
+                  <View style={s.errorRow} testID="place-search-error">
+                    <View style={s.errorTextWrap}>
+                      <Text style={s.errorTitle}>Couldn't load suggestions</Text>
+                      <Text style={s.rowSub}>You can retry, or add your location as text below.</Text>
+                    </View>
+                    <Pressable
+                      style={s.retryBtn}
+                      onPress={() => setSearchRetry((n) => n + 1)}
+                      hitSlop={8}
+                      testID="place-search-retry"
+                    >
+                      <RefreshCw size={13} color={color.signal} />
+                      <Text style={s.retryText}>Retry</Text>
+                    </Pressable>
                   </View>
                 );
               }
@@ -382,7 +416,7 @@ export function GlobalPlacePicker({
               );
             }}
             ListEmptyComponent={
-              showSearch && !searching ? (
+              showSearch && !searching && !searchError ? (
                 <View style={s.empty}>
                   <Text style={s.emptyText}>No places found. Type to enter a custom city.</Text>
                 </View>
@@ -443,4 +477,18 @@ const s = StyleSheet.create({
   rowSub: { ...t.small, color: color.mute, marginTop: 1 },
   empty: { padding: space.xl, alignItems: 'center' },
   emptyText: { ...t.body, color: color.mute, textAlign: 'center' },
+  errorRow: {
+    flexDirection: 'row', alignItems: 'center', gap: space.md,
+    marginHorizontal: space.xl, marginTop: space.sm, marginBottom: space.xs,
+    padding: space.md, borderRadius: radius.md,
+    borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised,
+  },
+  errorTextWrap: { flex: 1 },
+  errorTitle: { ...t.body, color: color.ink, fontWeight: '600' },
+  retryBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: space.md, paddingVertical: 6,
+    borderRadius: radius.pill, borderWidth: 1, borderColor: color.signal,
+  },
+  retryText: { ...t.small, color: color.signal, fontWeight: '700' },
 });
