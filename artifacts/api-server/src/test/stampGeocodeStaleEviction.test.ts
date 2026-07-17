@@ -1531,3 +1531,49 @@ describe("PUT-revival race: in-flight null does not re-poison cache after evicti
     assert.equal(second?.country, "Germany");
   });
 });
+
+// ── Cold-start dedup ──────────────────────────────────────────────────────────
+//
+// When both the in-memory cache and the DB cache are empty (first-ever lookup),
+// two concurrent callers must still share a single Nominatim request — the
+// _pending dedup map must be populated synchronously before the first await so
+// the second caller always finds the promise and piggy-backs on it.
+
+describe("cold-start dedup: concurrent calls on a completely empty cache share one Nominatim fetch", () => {
+  it("two concurrent calls with no in-memory cache and no DB row make exactly one fetch", async () => {
+    // beforeEach already calls _clearCountryGeocodeCache(), so both the
+    // in-memory cache and _pending map are empty at the start of this test.
+
+    let fetchCallCount = 0;
+    _setGeocodeFetchForTests(async () => {
+      fetchCallCount++;
+      return {
+        ok: true,
+        json: async () => [{ address: { country_code: "nz", country: "New Zealand" } }],
+      };
+    });
+
+    // _setGeocodeFetchForTests sets _dbClientOverride = null (no DB),
+    // so readDbCache returns null and both callers fall through to forwardGeocodeCity.
+    // The first caller creates the _pending promise synchronously (before any await);
+    // the second caller finds that promise via _pending.get(key) and returns it —
+    // guaranteeing a single Nominatim fetch.
+    const [resultA, resultB] = await Promise.all([
+      geocodeCityCountry("ColdStartCity"),
+      geocodeCityCountry("ColdStartCity"),
+    ]);
+
+    assert.equal(
+      fetchCallCount,
+      1,
+      "two concurrent cold-start callers must share one Nominatim fetch — not issue two",
+    );
+
+    assert.equal(resultA?.countryCode, "NZ",
+      "first caller should receive the geocoded result");
+    assert.equal(resultB?.countryCode, "NZ",
+      "second caller should receive the same geocoded result — not a duplicate fetch");
+    assert.equal(resultA?.country, "New Zealand");
+    assert.equal(resultB?.country, "New Zealand");
+  });
+});
