@@ -5,10 +5,14 @@ const config = getDefaultConfig(__dirname);
 
 // Block Metro from watching reanimated's temp android build directories
 // (they are created and deleted during install, causing ENOENT crashes)
+// Also block Jest test files that live under app/ so Expo Router does not
+// try to turn them into routes in the dev/production bundles.
 config.resolver = config.resolver ?? {};
 config.resolver.blockList = [
   /node_modules.*react-native-reanimated_tmp.*/,
   /node_modules.*_tmp_\d+/,
+  /\/__tests__\/.*/,
+  /\.(component\.)?test\.(tsx|ts|jsx|js)$/,
 ];
 
 // On web, redirect native-only packages to no-op shims so TurboModuleRegistry
