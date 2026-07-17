@@ -1,14 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View, Text, Image, Pressable, Modal, TextInput, ActivityIndicator,
-  Alert, StyleSheet, ScrollView,
+  Alert, StyleSheet, ScrollView, useWindowDimensions,
 } from 'react-native';
 import { router } from 'expo-router';
-import { MapPin, Pin, MoreHorizontal, ShieldCheck, X, Plus, PlayCircle, Clock, AlertCircle } from 'lucide-react-native';
+import { MapPin, Pin, MoreHorizontal, Plus, PlayCircle, Clock, AlertCircle, Layers, ChevronDown } from 'lucide-react-native';
 import type { PassportPostcard } from '../types/models.ts';
 import { MediaStampOverlay } from './StampOverlayBadge.tsx';
 import type { usePostcardActions } from '../hooks/usePostcardActions.ts';
-import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { color, space, radius, type as t } from '../theme/tokens.ts';
 
 const INTEREST_LABEL: Record<string, string> = {
   nightlife: 'Nightlife', food: 'Food', beach: 'Beach', luxury: 'Luxury',
@@ -119,134 +119,123 @@ function CardMenu({
 }
 
 /* ────────────────────────────────────────────────────────── */
-/* Single postcard card                                        */
+/* Single postcard tile (photo-grid presentation)              */
+/*                                                             */
+/* Tap opens the existing post viewer (/post/[id]) where       */
+/* caption, note, GPS-verified badge, likes, and comments      */
+/* live. Owners open the CardMenu sheet via the corner button  */
+/* or a long-press on the tile.                                */
 /* ────────────────────────────────────────────────────────── */
-function PostcardCard({
+function PostcardTile({
   card,
   isOwner,
   actions,
+  width,
+  height,
 }: {
   card: PassportPostcard;
   isOwner: boolean;
   actions?: Actions;
+  width: number;
+  height: number;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const isPinned = Boolean(card.pinnedAt);
-  const isVerified = card.locationVerified && card.stampEligible;
-  const date = card.createdAt
-    ? new Date(card.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-    : '';
+
+  // media — prefer thumbnail_url from structured media[], fall back to legacy mediaUrl
+  const allMedia = card.media ?? [];
+  const firstReady = allMedia.find((m) => m.processing_status === 'ready');
+  const firstAny = allMedia[0];
+  const displayItem = firstReady ?? firstAny;
+  const displayUri = firstReady?.thumbnail_url ?? firstReady?.url ?? firstAny?.thumbnail_url ?? firstAny?.url ?? card.mediaUrl;
+  const isVideo = (firstReady ?? firstAny)?.media_type === 'video' || card.hasVideo;
+  const hasPending = allMedia.length > 0 && !firstReady && allMedia.some((m) => m.processing_status === 'pending');
+  const hasFailed = allMedia.length > 0 && !firstReady && allMedia.every((m) => m.processing_status === 'failed');
+  const isCarousel = allMedia.length > 1;
+
+  const location = [card.locationCity ?? card.locationName, card.locationCountry]
+    .filter(Boolean).join(', ');
 
   return (
-    <View style={pc.card}>
-      {/* media — prefer thumbnail_url from structured media[], fall back to legacy mediaUrl */}
-      {(() => {
-        const allMedia = card.media ?? [];
-        const firstReady = allMedia.find((m) => m.processing_status === 'ready');
-        const firstAny = allMedia[0];
-        const displayItem = firstReady ?? firstAny;
-        const displayUri = firstReady?.thumbnail_url ?? firstReady?.url ?? firstAny?.thumbnail_url ?? firstAny?.url ?? card.mediaUrl;
-        const isVideo = (firstReady ?? firstAny)?.media_type === 'video' || card.hasVideo;
-        const hasPending = allMedia.length > 0 && !firstReady && allMedia.some((m) => m.processing_status === 'pending');
-        const hasFailed = allMedia.length > 0 && !firstReady && allMedia.every((m) => m.processing_status === 'failed');
-        return displayUri ? (
-          <Pressable onPress={() => card.postId && router.push(`/post/${card.postId}` as any)}>
-            <Image
-              source={{ uri: displayUri }}
-              style={pc.media}
-              defaultSource={undefined}
-            />
-            {/* Passport-stamp overlay — parse-gated; malformed data renders nothing */}
-            {displayItem ? <MediaStampOverlay raw={displayItem.stamp_overlay} /> : null}
-            {isVideo && !hasPending && !hasFailed && (
-              <View style={pc.videoPlayOverlay}>
-                <PlayCircle size={36} color="#fff" />
-              </View>
-            )}
-            {hasPending && (
-              <View style={pc.mediaBadge}>
-                <Clock size={14} color="#fff" />
-                <Text style={pc.mediaBadgeText}>Processing…</Text>
-              </View>
-            )}
-            {hasFailed && (
-              <View style={[pc.mediaBadge, pc.mediaBadgeFailed]}>
-                <AlertCircle size={14} color="#fff" />
-                <Text style={pc.mediaBadgeText}>Upload failed</Text>
-              </View>
-            )}
-          </Pressable>
-        ) : (
-          <View style={[pc.media, pc.noMedia]}>
-            {hasPending ? (
-              <>
-                <Clock size={22} color={color.mute} />
-                <Text style={pc.noMediaText}>Processing…</Text>
-              </>
-            ) : hasFailed ? (
-              <>
-                <AlertCircle size={22} color={color.mute} />
-                <Text style={pc.noMediaText}>Upload failed</Text>
-              </>
-            ) : (
-              <Text style={pc.noMediaText}>📷</Text>
-            )}
-          </View>
-        );
-      })()}
-
-      {/* overlays */}
-      {isPinned && (
-        <View style={pc.pinBadge}>
-          <Pin size={11} color={color.signal} fill={color.signal} />
-          <Text style={pc.pinText}>PINNED</Text>
+    <Pressable
+      style={[pc.tile, { width, height }]}
+      onPress={() => card.postId && router.push(`/post/${card.postId}` as any)}
+      onLongPress={isOwner && actions ? () => setMenuOpen(true) : undefined}
+      accessibilityRole="button"
+      accessibilityLabel={`Postcard${location ? ` from ${location}` : ''}`}
+    >
+      {displayUri ? (
+        <>
+          <Image source={{ uri: displayUri }} style={pc.media} resizeMode="cover" />
+          {/* Passport-stamp overlay — parse-gated; malformed data renders nothing */}
+          {displayItem ? <MediaStampOverlay raw={displayItem.stamp_overlay} /> : null}
+        </>
+      ) : (
+        <View style={[pc.media, pc.noMedia]}>
+          {hasPending ? (
+            <Clock size={20} color={color.mute} />
+          ) : hasFailed ? (
+            <AlertCircle size={20} color={color.mute} />
+          ) : (
+            <MapPin size={20} color={color.mute} strokeWidth={1.6} />
+          )}
         </View>
       )}
+
+      {/* location chip */}
+      {location ? (
+        <View style={pc.locChip}>
+          <Text style={pc.locChipText} numberOfLines={1}>{location}</Text>
+        </View>
+      ) : null}
+
+      {/* pinned badge */}
+      {isPinned && (
+        <View style={[pc.cornerBadge, pc.pinBadge]}>
+          <Pin size={12} color="#fff" strokeWidth={2.2} />
+        </View>
+      )}
+
+      {/* owner menu button */}
       {isOwner && actions && (
-        <Pressable style={pc.menuBtn} onPress={() => setMenuOpen(true)} hitSlop={8}>
-          <MoreHorizontal size={18} color={color.ink} />
+        <Pressable
+          style={[pc.cornerBadge, pc.menuBtn]}
+          onPress={() => setMenuOpen(true)}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel="Postcard options"
+        >
+          <MoreHorizontal size={14} color="#fff" />
         </Pressable>
       )}
 
-      {/* body */}
-      <View style={pc.body}>
-        <View style={pc.metaRow}>
-          {(card.locationCity || card.locationName) && (
-            <View style={pc.locRow}>
-              <MapPin size={11} color={color.deep} />
-              <Text style={pc.locText} numberOfLines={1}>
-                {card.locationCity ?? card.locationName}
-                {card.locationCountry ? `, ${card.locationCountry}` : ''}
-              </Text>
-            </View>
-          )}
-          {date ? <Text style={pc.dateText}>{date}</Text> : null}
+      {/* media-type / processing badges */}
+      {hasPending ? (
+        <View style={pc.stateBadge}>
+          <Clock size={12} color="#fff" />
+          <Text style={pc.stateBadgeText}>Processing…</Text>
         </View>
-
-        {(card.caption || card.note) ? (
-          <Text style={pc.caption} numberOfLines={3}>
-            {card.note ? `"${card.note}"` : card.caption}
-          </Text>
-        ) : null}
-
-        <View style={pc.badgeRow}>
-          {isVerified ? (
-            <View style={pc.verifiedBadge}>
-              <ShieldCheck size={11} color={color.success} />
-              <Text style={pc.verifiedText}>GPS Verified</Text>
-            </View>
-          ) : (
-            <View style={pc.tagBadge}>
-              <Text style={pc.tagText}>📍 Manual tag</Text>
-            </View>
-          )}
-          {isOwner && (
-            <View style={[pc.visLabel, card.visibility === 'public' ? pc.visPublic : pc.visPrivate]}>
-              <Text style={pc.visText}>{card.visibility === 'public' ? 'Public' : card.visibility === 'trip_only' ? 'Trip' : 'Private'}</Text>
-            </View>
-          )}
+      ) : hasFailed ? (
+        <View style={[pc.stateBadge, pc.stateBadgeFailed]}>
+          <AlertCircle size={12} color="#fff" />
+          <Text style={pc.stateBadgeText}>Failed</Text>
         </View>
-      </View>
+      ) : isVideo ? (
+        <View style={pc.typeBadge}>
+          <PlayCircle size={13} color="#fff" strokeWidth={2.2} />
+        </View>
+      ) : isCarousel ? (
+        <View style={pc.typeBadge}>
+          <Layers size={13} color="#fff" strokeWidth={2.2} />
+        </View>
+      ) : null}
+
+      {/* owner-only visibility chip (non-public only) */}
+      {isOwner && card.visibility !== 'public' && (
+        <View style={pc.visChip}>
+          <Text style={pc.visChipText}>{card.visibility === 'trip_only' ? 'Trip' : 'Private'}</Text>
+        </View>
+      )}
 
       {isOwner && actions && (
         <CardMenu
@@ -256,13 +245,17 @@ function PostcardCard({
           actions={actions}
         />
       )}
-    </View>
+    </Pressable>
   );
 }
 
 /* ────────────────────────────────────────────────────────── */
 /* PostcardsTab                                               */
 /* ────────────────────────────────────────────────────────── */
+const PAGE_SIZE = 16;
+
+type SortKey = 'newest' | 'oldest';
+
 export function PostcardsTab({
   postcards,
   isOwner,
@@ -274,6 +267,28 @@ export function PostcardsTab({
   actions?: Actions;
   onAddPostcard?: () => void;
 }) {
+  const { width } = useWindowDimensions();
+  const [sort, setSort] = useState<SortKey>('newest');
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  const columns = width >= 600 ? 3 : 2;
+  const gap = width < 350 ? 6 : 8;
+  const pad = space.md;
+  const tileW = (Math.min(width, 760) - pad * 2 - gap * (columns - 1)) / columns;
+  const tileH = tileW * 1.25; // 4:5 portrait
+
+  const sorted = useMemo(() => {
+    const list = postcards.slice();
+    // pinned first, then by date
+    list.sort((a, b) => {
+      const pin = (b.pinnedAt ? 1 : 0) - (a.pinnedAt ? 1 : 0);
+      if (pin !== 0) return pin;
+      const cmp = (b.createdAt ?? '').localeCompare(a.createdAt ?? '');
+      return sort === 'newest' ? cmp : -cmp;
+    });
+    return list;
+  }, [postcards, sort]);
+
   if (postcards.length === 0) {
     return (
       <View style={pc.empty}>
@@ -293,87 +308,122 @@ export function PostcardsTab({
     );
   }
 
-  const pinned = postcards.find((c) => c.pinnedAt);
-  const rest = postcards.filter((c) => !c.pinnedAt);
-  const sorted = pinned ? [pinned, ...rest] : rest;
+  const shown = sorted.slice(0, visibleCount);
+  const hasMore = sorted.length > visibleCount;
 
   return (
     <View style={pc.listWrap}>
-      {isOwner && onAddPostcard && (
-        <Pressable style={pc.addBtn} onPress={onAddPostcard}>
-          <Plus size={16} color={color.onInk} />
-          <Text style={pc.addBtnText}>Add Postcard</Text>
+      {/* toolbar: add + sort */}
+      <View style={pc.toolbar}>
+        {isOwner && onAddPostcard ? (
+          <Pressable style={pc.addBtn} onPress={onAddPostcard}>
+            <Plus size={16} color={color.onInk} />
+            <Text style={pc.addBtnText}>Add Postcard</Text>
+          </Pressable>
+        ) : <View />}
+        <Pressable
+          style={pc.sortBtn}
+          onPress={() => setSort((s) => (s === 'newest' ? 'oldest' : 'newest'))}
+          accessibilityRole="button"
+          accessibilityLabel={`Sorted by ${sort}. Tap to change`}
+        >
+          <Text style={pc.sortText}>{sort === 'newest' ? 'Newest' : 'Oldest'}</Text>
+          <ChevronDown size={14} color={color.mute} />
         </Pressable>
-      )}
-      <View style={pc.list}>
-        {sorted.map((card) => (
-          <PostcardCard key={card.id} card={card} isOwner={isOwner} actions={actions} />
+      </View>
+
+      {/* photo grid */}
+      <View style={[pc.grid, { paddingHorizontal: pad, gap }]}>
+        {shown.map((card) => (
+          <PostcardTile
+            key={card.id}
+            card={card}
+            isOwner={isOwner}
+            actions={actions}
+            width={tileW}
+            height={tileH}
+          />
         ))}
       </View>
+
+      {hasMore && (
+        <Pressable
+          style={pc.moreBtn}
+          onPress={() => setVisibleCount((c) => c + PAGE_SIZE)}
+          accessibilityRole="button"
+          accessibilityLabel="Show more postcards"
+        >
+          <Text style={pc.moreText}>Show more</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
 
 const pc = StyleSheet.create({
-  card: {
-    backgroundColor: color.paperRaised, borderRadius: radius.lg,
-    borderWidth: 1, borderColor: color.haze,
-    overflow: 'hidden', ...shadow.card, marginBottom: space.md,
-  },
-  media: { width: '100%', height: 220, backgroundColor: color.haze },
-  noMedia: { alignItems: 'center', justifyContent: 'center' },
-  noMediaText: { fontSize: 40 },
-  pinBadge: {
-    position: 'absolute', top: 10, left: 10,
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: 'rgba(250,249,246,0.92)',
-    borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 4,
-    borderWidth: 1, borderColor: color.signal,
-  },
-  pinText: { fontFamily: 'Courier', fontSize: 9, fontWeight: '700', color: color.signal, letterSpacing: 1 },
-  menuBtn: {
-    position: 'absolute', top: 10, right: 10,
-    backgroundColor: 'rgba(250,249,246,0.92)',
-    borderRadius: 20, padding: 6,
-    borderWidth: 1, borderColor: color.haze,
-  },
-  body: { padding: space.md, gap: space.sm },
-  metaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: space.xs },
-  locRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1 },
-  locText: { ...t.small, color: color.deep, fontFamily: 'Courier', fontWeight: '700', fontSize: 11 },
-  dateText: { ...t.small, color: color.faint, fontFamily: 'Courier', fontSize: 10 },
-  caption: { ...t.body, color: color.ink, lineHeight: 20 },
-  badgeRow: { flexDirection: 'row', gap: space.sm, alignItems: 'center', flexWrap: 'wrap' },
-  verifiedBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#E3F1EA', borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3 },
-  verifiedText: { ...t.small, color: color.success, fontWeight: '700', fontSize: 11 },
-  tagBadge: { backgroundColor: color.paperRaised, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: color.haze },
-  tagText: { ...t.small, color: color.mute, fontSize: 11 },
-  visLabel: { borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3 },
-  visPublic: { backgroundColor: '#E3F1EA' },
-  visPrivate: { backgroundColor: '#FCE9E4' },
-  visText: { ...t.small, fontSize: 11, fontWeight: '700', color: color.ink },
   listWrap: {},
+  toolbar: {
+    minHeight: 48, paddingHorizontal: space.lg, paddingTop: space.sm,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
   addBtn: {
     flexDirection: 'row', alignItems: 'center', gap: space.sm,
-    alignSelf: 'flex-start', marginHorizontal: space.lg, marginTop: space.md,
     backgroundColor: color.signal, borderRadius: radius.pill,
     paddingHorizontal: space.lg, paddingVertical: space.sm,
   },
   addBtnText: { ...t.bodyStrong, color: color.onInk, fontSize: 14 },
-  list: { paddingHorizontal: space.lg, paddingTop: space.md },
-  videoPlayOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.22)',
+  sortBtn: {
+    minHeight: 32, paddingHorizontal: 10, borderRadius: radius.sm,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised,
   },
-  mediaBadge: {
-    position: 'absolute', bottom: 8, left: 8,
+  sortText: { ...t.small, fontSize: 12.5, fontWeight: '600', color: color.mute },
+
+  grid: { flexDirection: 'row', flexWrap: 'wrap', paddingTop: space.sm },
+  tile: {
+    borderRadius: radius.md, overflow: 'hidden', backgroundColor: color.haze,
+  },
+  media: { width: '100%', height: '100%', backgroundColor: color.haze },
+  noMedia: { alignItems: 'center', justifyContent: 'center' },
+
+  locChip: {
+    position: 'absolute', top: 6, left: 6, maxWidth: '78%',
+    minHeight: 24, paddingHorizontal: 8, borderRadius: radius.pill,
+    backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center',
+  },
+  locChipText: { fontSize: 11, fontWeight: '600', color: '#fff' },
+  cornerBadge: {
+    position: 'absolute', width: 26, height: 26, borderRadius: 13,
+    backgroundColor: 'rgba(0,0,0,0.48)', alignItems: 'center', justifyContent: 'center',
+  },
+  pinBadge: { top: 6, right: 38 },
+  menuBtn: { top: 6, right: 6 },
+  typeBadge: {
+    position: 'absolute', bottom: 6, right: 6, width: 26, height: 26, borderRadius: 13,
+    backgroundColor: 'rgba(0,0,0,0.48)', alignItems: 'center', justifyContent: 'center',
+  },
+  stateBadge: {
+    position: 'absolute', bottom: 6, left: 6,
     flexDirection: 'row', alignItems: 'center', gap: 4,
     backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: radius.pill,
     paddingHorizontal: 8, paddingVertical: 4,
   },
-  mediaBadgeFailed: { backgroundColor: 'rgba(200,30,30,0.75)' },
-  mediaBadgeText: { ...t.small, color: '#fff', fontSize: 11, fontWeight: '600' },
+  stateBadgeFailed: { backgroundColor: 'rgba(200,30,30,0.75)' },
+  stateBadgeText: { ...t.small, color: '#fff', fontSize: 10, fontWeight: '600' },
+  visChip: {
+    position: 'absolute', bottom: 6, left: 6,
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: radius.pill,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  visChipText: { fontSize: 10, fontWeight: '700', color: '#fff' },
+
+  moreBtn: {
+    marginTop: space.md, marginHorizontal: space.lg, minHeight: 38, borderRadius: radius.md,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised,
+  },
+  moreText: { ...t.small, fontSize: 13, fontWeight: '600', color: color.mute },
+
   empty: { paddingHorizontal: space.xl, paddingTop: space.xxxl, alignItems: 'center', gap: space.md },
   emptyIcon: { fontSize: 48 },
   emptyTitle: { ...t.heading, color: color.ink },
