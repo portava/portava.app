@@ -74,8 +74,8 @@ const COMMENTS = [
   "Absolutely dreamy.",
 ];
 
-const VIDEO_POSTCARD_URL = "https://www.w3schools.com/html/mov_bbb.mp4";
-const VIDEO_POSTCARD_THUMB = "https://picsum.photos/seed/video-cebu/800/600";
+const VIDEO_POSTCARD_URL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
+const VIDEO_POSTCARD_THUMB = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/images/ForBiggerBlazes.jpg";
 
 function dateDaysAgo(days: number) {
   const d = new Date();
@@ -135,9 +135,9 @@ async function seedDemoFriends() {
       const existingAuthUser = existingAuth?.user;
       if (!existingAuthUser) {
         const { error: createErr } = await sc.auth.admin.createUser({ id: userId, email, password, email_confirm: true });
-        if (createErr) {
+        if (createErr && !createErr.message?.includes("already been registered")) {
           console.warn(`Could not create auth user ${email}:`, createErr.message);
-          if (!createErr.message?.includes("already been registered")) continue;
+          continue;
         }
       }
     }
@@ -195,12 +195,14 @@ async function seedRelationships(targetUserId: string, friends: { id: string }[]
   });
   const friendshipResult = await upsertCompositeRows("user_friendships", acceptedPairs, "user_a,user_b");
 
+  const now = new Date().toISOString();
   const incomingRequests = friends.slice(12, 16).map((f, i) => ({
     id: uuidv5(`friend-req-in:${targetUserId}:${i}`, SEED_NS),
     requester_id: f.id,
     recipient_id: targetUserId,
     status: "pending",
     created_at: dateDaysAgo(10 - i),
+    updated_at: now,
   }));
   const outgoingRequests = friends.slice(16, 20).map((f, i) => ({
     id: uuidv5(`friend-req-out:${targetUserId}:${i}`, SEED_NS),
@@ -208,6 +210,7 @@ async function seedRelationships(targetUserId: string, friends: { id: string }[]
     recipient_id: f.id,
     status: "pending",
     created_at: dateDaysAgo(10 - i),
+    updated_at: now,
   }));
   const requestResult = await upsertRows("friend_requests", [...incomingRequests, ...outgoingRequests]);
 
@@ -323,6 +326,7 @@ async function seedVideoPostcard(targetUserId: string) {
     user_id: targetUserId,
     caption: existingPost?.content ?? content,
     media_url: VIDEO_POSTCARD_URL,
+    media_type: "video",
     location_name: existingPost?.location_name ?? locationName,
     location_city: dest.city,
     location_country: dest.country,
@@ -402,6 +406,7 @@ async function backfillPostMedia(targetUserId: string) {
   }
   return { inserted, skipped };
 }
+
 
 async function main() {
   console.log(`Seeding demo social graph for ${EMAIL} (dry-run=${DRY_RUN})…`);

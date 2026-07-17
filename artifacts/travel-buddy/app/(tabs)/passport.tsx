@@ -48,6 +48,8 @@ import { resolveSectionOrder, type PassportSectionKey } from '../../src/componen
 import { PassportTabReorderSheet } from '../../src/components/passport/PassportTabReorderSheet';
 import { resolveTabOrder, type PassportTabKey, TAB_LABELS } from '../../src/components/passport/passportTabs';
 import { MapTab } from '../../src/components/MapTab';
+import { useAvailabilityStore } from '../../src/context/AvailabilityStore';
+import { resolveAvailabilityChip } from '../../src/lib/availabilityChip';
 
 export default function PassportScreen() {
   const { profile, postcards, stamps, memories, suggestions, loading, error, reload } = usePassport();
@@ -352,6 +354,17 @@ function PassportContent({
   const [buddyProfile, setBuddyProfile] = useState<BuddyProfile | null | undefined>(undefined);
   const [, setTrustSheetOpen] = useState(false);
 
+  // Availability chip — read from the store so no new network calls are needed.
+  const { availability, quickStatus } = useAvailabilityStore();
+  const ownerChipState = resolveAvailabilityChip({
+    openToMeet: availability.openToMeet,
+    quickStatus: quickStatus ?? null,
+    trips: availability.trips,
+    homeCity: profile.homeCity ?? null,
+    // Show homeCity context if the profile has one (owner always sees their own city).
+    showHomeCity: !!(profile.homeCity),
+  });
+
   const handleChangeCover = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
@@ -491,6 +504,8 @@ function PassportContent({
           onTrustInfo={() => setTrustSheetOpen(true)}
           onEditBio={handleEditProfile}
           onSavedPress={() => router.push('/saved' as any)}
+          availabilityChip={ownerChipState}
+          onAvailabilityChipPress={() => router.push('/availability' as any)}
         />
         <PassportStatsRow
           profile={profile}
