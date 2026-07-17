@@ -150,7 +150,12 @@ export default function StampQueueScreen() {
       </View>
 
       {error ? (
-        <View style={styles.errorBanner} testID="catalog-queue-error">
+        <View
+          style={styles.errorBanner}
+          testID="catalog-queue-error"
+          accessibilityRole="alert"
+          accessibilityLiveRegion="assertive"
+        >
           <Text style={styles.errorText}>{error}</Text>
         </View>
       ) : null}

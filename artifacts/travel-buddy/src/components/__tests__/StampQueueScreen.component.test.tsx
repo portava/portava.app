@@ -525,6 +525,19 @@ describe('StampQueueScreen — API error', () => {
     expect(screen.getByText('Failed to load catalog. Please try again.')).toBeTruthy();
   });
 
+  it('exposes the error banner to screen readers via alert role and assertive live region', async () => {
+    mockGetCatalog.mockResolvedValue({ ok: false });
+
+    render(<StampQueueScreen />);
+
+    await waitFor(() => screen.getByTestId('catalog-queue-error'));
+    const banner = screen.getByTestId('catalog-queue-error');
+    // Without these props, TalkBack/VoiceOver never announces a dynamically
+    // appearing error — an admin using a screen reader would miss it entirely.
+    expect(banner.props.accessibilityRole).toBe('alert');
+    expect(banner.props.accessibilityLiveRegion).toBe('assertive');
+  });
+
   it('does not render the empty-list message when the API fails', async () => {
     mockGetCatalog.mockResolvedValue({ ok: false });
 
