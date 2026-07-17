@@ -202,4 +202,28 @@ describe('StampCatalogDetail — API error banner', () => {
     expect(screen.getByText('Paris Eiffel')).toBeTruthy();
     expect(mockActivate).toHaveBeenCalledWith('cat-abc', 'ver-1', expect.any(String));
   });
+
+  it('shows the error banner alongside existing content when a refresh fails after a successful load', async () => {
+    mockGetEntry
+      .mockResolvedValueOnce(detailOk())
+      .mockResolvedValue({ ok: false });
+
+    await act(async () => { render(<StampCatalogDetail />); });
+
+    // Successful initial load: content visible, no error banner.
+    expect(screen.getByText('Paris Eiffel')).toBeTruthy();
+    expect(screen.queryByTestId('catalog-detail-error')).toBeNull();
+
+    // Simulate a pull-to-refresh that fails.
+    const scroll = screen.getByTestId('catalog-detail-scroll');
+    await act(async () => { scroll.props.refreshControl.props.onRefresh(); });
+
+    // Error banner appears inside the ScrollView…
+    await waitFor(() => screen.getByTestId('catalog-detail-error'));
+    expect(screen.getByText('Failed to load entry. Please try again.')).toBeTruthy();
+
+    // …while the previously loaded entry content is still shown beneath it.
+    expect(screen.getByText('Paris Eiffel')).toBeTruthy();
+    expect(screen.getByText('Catalog Metadata')).toBeTruthy();
+  });
 });
