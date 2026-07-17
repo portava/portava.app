@@ -1328,3 +1328,229 @@ describe("completedBookings counter source-of-truth", () => {
     });
   });
 });
+
+// ── PATCH /api/me/profile — clearing media URLs must delete the old storage file ──
+//
+// The route captures the previous avatar/cover URLs before the update and
+// removes the old storage objects afterwards (fire-and-forget setImmediate).
+// This block verifies the cleanup also runs when the new value is null
+// (clearing), so orphaned files don't accumulate in the profile-media bucket —
+// and that no removal happens when there was no old URL to begin with.
+
+describe("PATCH /api/me/profile — old storage file cleanup on clear", () => {
+  const OLD_AVATAR_PATH = `avatars/${USER_ID}/old-avatar.jpg`;
+  const OLD_COVER_PATH  = `covers/${USER_ID}/old-cover.jpg`;
+  const STORAGE_BASE = "https://example.supabase.co/storage/v1/object/public/profile-media/";
+
+  let srv: http.Server;
+  let base: string;
+  let removedPaths: string[];
+  // Mutable current row so each test can control old avatar/cover state.
+  let profileRow: any;
+
+  function makeStorageClient() {
+    function builder(table: string) {
+      const filters: Array<(r: any) => boolean> = [];
+      let isMaybeSingle = false;
+
+      const allRows = (): any[] => (table === "profiles" ? [profileRow] : []);
+
+      const b: any = {
+        select() { return b; },
+        eq(col: string, val: any) { filters.push((r) => String(r[col]) === String(val)); return b; },
+        neq()      { return b; },
+        order()    { return b; },
+        limit()    { return b; },
+        insert()   { return b; },
+        update()   { return b; },
+        upsert()   { return b; },
+        delete()   { return b; },
+        maybeSingle() { isMaybeSingle = true; return b; },
+        single()      { isMaybeSingle = true; return b; },
+
+        then(onF: (v: any) => any, onR?: (e: any) => any) {
+          const rows = allRows().filter((r) => filters.every((f) => f(r)));
+          const result: any = isMaybeSingle
+            ? { data: rows[0] ?? null, error: null }
+            : { data: rows, count: rows.length, error: null };
+          return Promise.resolve(result).then(onF, onR);
+        },
+      };
+      return b;
+    }
+
+    const client: any = {
+      auth: {
+        getUser: async (tok: string) => {
+          if (tok === USER_TOKEN) {
+            return { data: { user: { id: USER_ID, email: "test@example.com" } }, error: null };
+          }
+          return { data: { user: null }, error: { message: "invalid token" } };
+        },
+      },
+      from: (table: string) => builder(table),
+      storage: {
+        createBucket: async () => ({ error: null }),
+        from: (_bucket: string) => ({
+          remove: (paths: string[]) => {
+            removedPaths.push(...paths);
+            return Promise.resolve({ data: paths, error: null });
+          },
+        }),
+      },
+    };
+    return client;
+  }
+
+  /** Flush the fire-and-forget setImmediate cleanup. */
+  function flushCleanup(): Promise<void> {
+    return new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
+  }
+
+  before(async () => {
+    const client = makeStorageClient();
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", profileRouter);
+
+    srv = http.createServer(app);
+    await new Promise<void>((resolve) => srv.listen(0, resolve));
+    base = `http://127.0.0.1:${(srv.address() as any).port}`;
+  });
+
+  after(async () => {
+    _setTestClient(null as any, false);
+    _setTestServiceClient(null as any);
+    await new Promise<void>((resolve) => srv.close(() => resolve()));
+  });
+
+  function patchProfile(body: unknown): Promise<{ status: number; body: any }> {
+    return new Promise((resolve, reject) => {
+      const url = new URL("/api/me/profile", base);
+      const payload = JSON.stringify(body);
+      const r = http.request(
+        {
+          hostname: url.hostname,
+          port: Number(url.port),
+          path: url.pathname,
+          method: "PATCH",
+          headers: {
+            "content-type": "application/json",
+            "content-length": Buffer.byteLength(payload).toString(),
+            authorization: `Bearer ${USER_TOKEN}`,
+          },
+        },
+        (inRes) => {
+          let raw = "";
+          inRes.on("data", (c) => (raw += c));
+          inRes.on("end", () => {
+            let parsed: any;
+            try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+            resolve({ status: inRes.statusCode ?? 0, body: parsed });
+          });
+        },
+      );
+      r.on("error", reject);
+      r.write(payload);
+      r.end();
+    });
+  }
+
+  it("removes the old avatar file from storage when avatarUrl is cleared to null", async () => {
+    removedPaths = [];
+    profileRow = {
+      ...PROFILE_ROW_WITH_SENSITIVE,
+      avatar_url: STORAGE_BASE + OLD_AVATAR_PATH,
+      cover_photo_url: null,
+    };
+
+    const { status, body } = await patchProfile({ avatarUrl: null });
+    assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    await flushCleanup();
+
+    assert.deepEqual(
+      removedPaths,
+      [OLD_AVATAR_PATH],
+      `expected old avatar path to be removed from storage — got: ${JSON.stringify(removedPaths)}`,
+    );
+  });
+
+  it("removes the old cover file from storage when coverUrl is cleared to null", async () => {
+    removedPaths = [];
+    profileRow = {
+      ...PROFILE_ROW_WITH_SENSITIVE,
+      avatar_url: null,
+      cover_photo_url: STORAGE_BASE + OLD_COVER_PATH,
+    };
+
+    const { status, body } = await patchProfile({ coverUrl: null });
+    assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    await flushCleanup();
+
+    assert.deepEqual(
+      removedPaths,
+      [OLD_COVER_PATH],
+      `expected old cover path to be removed from storage — got: ${JSON.stringify(removedPaths)}`,
+    );
+  });
+
+  it("removes both old files when avatarUrl and coverUrl are cleared in one request", async () => {
+    removedPaths = [];
+    profileRow = {
+      ...PROFILE_ROW_WITH_SENSITIVE,
+      avatar_url: STORAGE_BASE + OLD_AVATAR_PATH,
+      cover_photo_url: STORAGE_BASE + OLD_COVER_PATH,
+    };
+
+    const { status } = await patchProfile({ avatarUrl: null, coverUrl: null });
+    assert.equal(status, 200);
+    await flushCleanup();
+
+    assert.deepEqual(
+      removedPaths.sort(),
+      [OLD_AVATAR_PATH, OLD_COVER_PATH].sort(),
+      `expected both old paths to be removed — got: ${JSON.stringify(removedPaths)}`,
+    );
+  });
+
+  it("does not call storage removal when the old avatar URL was already null", async () => {
+    removedPaths = [];
+    profileRow = {
+      ...PROFILE_ROW_WITH_SENSITIVE,
+      avatar_url: null,
+      cover_photo_url: null,
+    };
+
+    const { status } = await patchProfile({ avatarUrl: null, coverUrl: null });
+    assert.equal(status, 200);
+    await flushCleanup();
+
+    assert.deepEqual(
+      removedPaths,
+      [],
+      `no removal expected when old URLs are null — got: ${JSON.stringify(removedPaths)}`,
+    );
+  });
+
+  it("does not remove a file whose old URL is outside the profile-media public bucket", async () => {
+    removedPaths = [];
+    profileRow = {
+      ...PROFILE_ROW_WITH_SENSITIVE,
+      avatar_url: "https://cdn.example.com/external/pic.jpg", // no bucket marker
+      cover_photo_url: null,
+    };
+
+    const { status } = await patchProfile({ avatarUrl: null });
+    assert.equal(status, 200);
+    await flushCleanup();
+
+    assert.deepEqual(
+      removedPaths,
+      [],
+      `no removal expected for non-bucket URLs — got: ${JSON.stringify(removedPaths)}`,
+    );
+  });
+});
