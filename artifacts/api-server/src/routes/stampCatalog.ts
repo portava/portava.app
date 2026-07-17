@@ -569,11 +569,21 @@ router.patch("/admin/stamps/catalog/:id/activate-version", async (req, res) => {
     }
 
     // Already approved — idempotent success, no duplicate audit log.
-    const { data: existingCatalog } = await sc
+    const { data: existingCatalog, error: catFetchErr } = await sc
       .from("universal_stamp_catalog")
       .select()
       .eq("id", id)
       .maybeSingle();
+
+    if (catFetchErr) {
+      sendError(res, "db_error", catFetchErr.message);
+      return;
+    }
+
+    if (!existingCatalog) {
+      sendError(res, "not_found", "Catalog entry not found");
+      return;
+    }
 
     res.json({ entry: existingCatalog, version: existingVersion });
     return;

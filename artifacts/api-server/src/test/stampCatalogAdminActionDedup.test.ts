@@ -635,3 +635,83 @@ describe("PATCH activate-version called twice does not double-write the audit lo
   });
 
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ACTIVATE-VERSION — idempotent path never returns 200 with entry === null
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("PATCH activate-version idempotent path guards the catalog re-fetch", () => {
+
+  it("returns 404 (not 200 with entry null) when the catalog row is missing on the already-approved path", async () => {
+    const first = await patch(
+      `/admin/stamps/catalog/${CATALOG_ID}/activate-version`,
+      { versionId: VERSION_ID },
+    );
+    assert.equal(first.status, 200, `first activate-version failed: ${JSON.stringify(first.body)}`);
+
+    // Simulate the catalog row disappearing (e.g. merged/deleted) while the
+    // version row remains approved.
+    db.universal_stamp_catalog = db.universal_stamp_catalog.filter(
+      (r) => r.id !== CATALOG_ID,
+    );
+
+    const second = await patch(
+      `/admin/stamps/catalog/${CATALOG_ID}/activate-version`,
+      { versionId: VERSION_ID },
+    );
+
+    assert.notEqual(
+      second.status, 200,
+      `must not return 200 when the catalog row is missing, got body ${JSON.stringify(second.body)}`,
+    );
+    assert.equal(
+      second.status, 404,
+      `expected 404 for a missing catalog row, got ${second.status}: ${JSON.stringify(second.body)}`,
+    );
+    assert.equal(second.body?.error, "not_found");
+    assert.notEqual(second.body?.entry, null, "response must never carry entry === null");
+  });
+
+  it("returns a db_error (not 200 with entry null) when the catalog re-fetch errors on the already-approved path", async () => {
+    const first = await patch(
+      `/admin/stamps/catalog/${CATALOG_ID}/activate-version`,
+      { versionId: VERSION_ID },
+    );
+    assert.equal(first.status, 200, `first activate-version failed: ${JSON.stringify(first.body)}`);
+
+    // Wrap the client so any read of universal_stamp_catalog errors, while
+    // stamp_artwork_versions reads keep working (already-approved path).
+    const failingClient = makeClient(db) as any;
+    const realFrom = failingClient.from.bind(failingClient);
+    failingClient.from = (table: string) => {
+      const b = realFrom(table);
+      if (table === "universal_stamp_catalog") {
+        const realMaybeSingle = b.maybeSingle.bind(b);
+        b.maybeSingle = () =>
+          realMaybeSingle().then(() => ({
+            data:  null,
+            error: { message: "connection reset" },
+          }));
+      }
+      return b;
+    };
+    _setTestClient(failingClient, true);
+    _setTestServiceClient(failingClient);
+
+    const second = await patch(
+      `/admin/stamps/catalog/${CATALOG_ID}/activate-version`,
+      { versionId: VERSION_ID },
+    );
+
+    assert.notEqual(
+      second.status, 200,
+      `must not return 200 when the catalog re-fetch errors, got body ${JSON.stringify(second.body)}`,
+    );
+    assert.equal(
+      second.body?.error, "db_error",
+      `expected db_error, got ${JSON.stringify(second.body)}`,
+    );
+    assert.notEqual(second.body?.entry, null, "response must never carry entry === null");
+  });
+
+});
