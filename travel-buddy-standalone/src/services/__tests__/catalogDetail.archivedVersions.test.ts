@@ -269,3 +269,120 @@ describe('getAdminCatalogEntry — archived versions are forwarded to the UI lay
     );
   });
 });
+
+// ── Suite 3: render-branch logic — empty-state and no "Set as Active" button ──
+//
+// The screen renders the candidate card section (which contains the "Set as Active"
+// button) only when candidates.length > 0.  When all versions are archived the
+// filter produces an empty list, so the card section must not be entered and the
+// "Set as Active" button must never appear.
+//
+// We replicate the exact branching logic from [catalogId].tsx lines 204-228:
+//
+//   {candidates.length > 0 ? (
+//     <CandidateCard … onActivate … />   // ← "Set as Active" lives here
+//   ) : !approved ? (
+//     <empty-state text />               // ← this branch must be taken
+//   ) : null}
+
+describe('render-branch logic — all-archived versions hit the empty-state, not the candidate card', () => {
+  // Mirrors the exact two derived values the screen computes from `versions`.
+  function deriveScreenState(versions: Array<{ status: string }>) {
+    const candidates = versions.filter((v) => v.status === 'candidate');
+    const approved   = versions.find((v) => v.status === 'approved');
+    return { candidates, approved };
+  }
+
+  // The render predicate: true when the candidate-card section (and its
+  // "Set as Active" buttons) would be rendered.
+  function wouldRenderCandidateCards(versions: Array<{ status: string }>): boolean {
+    const { candidates } = deriveScreenState(versions);
+    return candidates.length > 0;
+  }
+
+  // The render predicate for the empty-state branch (taken when candidates.length
+  // === 0 AND there is no approved version).
+  function wouldRenderEmptyState(versions: Array<{ status: string }>): boolean {
+    const { candidates, approved } = deriveScreenState(versions);
+    return candidates.length === 0 && !approved;
+  }
+
+  it('a single archived version: candidate-card section is NOT rendered', () => {
+    const versions = [makeVersion('ver-archived-1', 'archived')];
+    assert.equal(
+      wouldRenderCandidateCards(versions),
+      false,
+      'candidate cards must not render when the only version is archived',
+    );
+  });
+
+  it('a single archived version: empty-state branch IS rendered', () => {
+    const versions = [makeVersion('ver-archived-1', 'archived')];
+    assert.equal(
+      wouldRenderEmptyState(versions),
+      true,
+      'empty-state branch must be taken when there are no candidates and no approved version',
+    );
+  });
+
+  it('multiple archived versions: candidate-card section (Set as Active) is NOT rendered', () => {
+    const versions = [
+      makeVersion('ver-archived-1', 'archived'),
+      makeVersion('ver-archived-2', 'archived'),
+      makeVersion('ver-archived-3', 'archived'),
+    ];
+    assert.equal(
+      wouldRenderCandidateCards(versions),
+      false,
+      '"Set as Active" button must not appear for any archived version',
+    );
+  });
+
+  it('multiple archived versions: empty-state branch IS rendered', () => {
+    const versions = [
+      makeVersion('ver-archived-1', 'archived'),
+      makeVersion('ver-archived-2', 'archived'),
+    ];
+    assert.equal(
+      wouldRenderEmptyState(versions),
+      true,
+      'empty-state text must be shown when all versions are archived and none are approved',
+    );
+  });
+
+  it('archived versions alongside an approved version: candidate-card section is NOT rendered, empty-state is also NOT rendered', () => {
+    // When there is an approved version but no candidates, neither the candidate
+    // card section nor the empty-state renders (approved artwork is shown instead).
+    const versions = [
+      makeVersion('ver-archived-1', 'archived'),
+      makeVersion('ver-approved-1', 'approved'),
+    ];
+    assert.equal(
+      wouldRenderCandidateCards(versions),
+      false,
+      'candidate-card section must not render when there are no candidate-status versions',
+    );
+    assert.equal(
+      wouldRenderEmptyState(versions),
+      false,
+      'empty-state must not render when an approved version exists — approved artwork is shown instead',
+    );
+  });
+
+  it('candidate versions still trigger candidate-card section — no regression', () => {
+    const versions = [
+      makeVersion('ver-archived-1', 'archived'),
+      makeVersion('ver-candidate-1', 'candidate'),
+    ];
+    assert.equal(
+      wouldRenderCandidateCards(versions),
+      true,
+      'candidate-card section must render when at least one candidate-status version exists',
+    );
+    assert.equal(
+      wouldRenderEmptyState(versions),
+      false,
+      'empty-state must not render when there is an active candidate',
+    );
+  });
+});
