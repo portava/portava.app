@@ -14,6 +14,7 @@ import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 const INTERESTS: Interest[] = ['nightlife','beach','food','luxury','backpacking','culture','adventure','shopping','photography','business','dating','wellness','events'];
 const STYLES: TravelStyle[] = ['solo','couple','group','business'];
 const TOTAL_STEPS = 4;
+const DISPLAY_NAME_MAX = 40;
 
 export default function Onboarding() {
   const [step, setStep] = useState(0);
@@ -86,8 +87,13 @@ export default function Onboarding() {
   }, []);
 
   async function handleFinish() {
+    const trimmedName = displayName.trim();
+    if (trimmedName.length > DISPLAY_NAME_MAX) {
+      Alert.alert('Display name too long', `Please shorten your display name to ${DISPLAY_NAME_MAX} characters or fewer.`);
+      return;
+    }
     setSaving(true);
-    const patch = buildOnboardingPatch({ displayName, handle, homeCity, homeCountry, travelStyle: style, interests: picked });
+    const patch = buildOnboardingPatch({ displayName: trimmedName, handle, homeCity, homeCountry, travelStyle: style, interests: picked });
     const result = await updateMyProfile(patch);
     setSaving(false);
     if (!result.ok && result.errorKind !== 'config_error' && result.errorKind !== 'unauthenticated') {
@@ -147,17 +153,22 @@ export default function Onboarding() {
             </View>
             <View style={{ gap: space.md }}>
               <View>
-                <Text style={styles.label}>Display name *</Text>
+                <View style={styles.labelRow}>
+                  <Text style={styles.label}>Display name *</Text>
+                  <Text style={styles.charCount}>{displayName.length}/{DISPLAY_NAME_MAX}</Text>
+                </View>
                 <TextInput
                   style={styles.input}
                   value={displayName}
-                  onChangeText={setDisplayName}
+                  onChangeText={(text) => setDisplayName(text.slice(0, DISPLAY_NAME_MAX))}
                   placeholder="e.g. Drae Torres"
                   placeholderTextColor={color.faint}
                   autoCapitalize="words"
                   autoFocus
+                  maxLength={DISPLAY_NAME_MAX}
                   returnKeyType="next"
                 />
+                <Text style={styles.hint}>Maximum 40 characters.</Text>
               </View>
               <View>
                 <Text style={styles.label}>Username (optional)</Text>
@@ -311,6 +322,8 @@ const styles = StyleSheet.create({
     backgroundColor: color.paperRaised,
   },
   hint: { ...t.small, color: color.faint, marginTop: 4 },
+  labelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  charCount: { ...t.small, color: color.faint, fontWeight: '600' as const },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   navRow: {
     flexDirection: 'row',
