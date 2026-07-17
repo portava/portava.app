@@ -30,19 +30,8 @@ import { render, act, waitFor, screen, fireEvent, cleanup } from '@testing-libra
 import FailedJobsScreen from '../../../app/admin/stamps/failed.tsx';
 import { getAdminStampQueue, requeueFailedJob } from '../../services/adminStamps.ts';
 
-// Ensure React always uses synchronous scheduling for state updates.
-//
-// RNTL's act() saves IS_REACT_ACT_ENVIRONMENT before setting it to true,
-// then restores the previous value after the call.  If the global starts as
-// undefined (which jest-expo does not set), every act() call ends by restoring
-// undefined.  State updates from async load() continuations then fire outside
-// act() context between tests, producing:
-//   - "not configured to support act()" warnings
-//   - "overlapping act()" errors that corrupt test isolation
-//
-// Setting it once at module level makes every RNTL act() save true → restore
-// true, keeping synchronous scheduling active for the lifetime of this file.
-globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+// IS_REACT_ACT_ENVIRONMENT is set globally by src/jest.setup.ts — see
+// src/components/__tests__/TESTING.md. No per-file assignment is needed.
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
