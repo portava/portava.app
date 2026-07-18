@@ -441,6 +441,8 @@ function PassportContent({
             <Text style={[s.tabText, tab === key && s.tabTextActive]}>
               {key === 'destinations' && destinationCount > 0
                 ? `${TAB_LABELS[key]} · ${destinationCount}`.toUpperCase()
+                : key === 'plans' && trips.length > 0
+                ? `${TAB_LABELS[key]} · ${trips.length}`.toUpperCase()
                 : TAB_LABELS[key].toUpperCase()}
             </Text>
             {tab === key && <View style={s.tabIndicator} />}
