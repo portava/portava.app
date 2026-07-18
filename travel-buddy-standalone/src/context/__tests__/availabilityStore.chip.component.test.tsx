@@ -24,9 +24,10 @@ import { resolveAvailabilityChip } from '../../lib/availabilityChip.ts';
 const mockGetMyAvailability   = jest.fn();
 const mockPatchMyAvailability = jest.fn();
 
-// NOTE: intentionally exhaustive — the real availability service imports supabase
-// and fetch wrappers that are unavailable in the JSDOM test env.  Spreading
-// requireActual would execute that module-level code and crash the suite.
+// NOTE: intentionally exhaustive — availability.ts imports Supabase helpers at
+// module level; spreading requireActual would execute that import chain and
+// crash the JSDOM suite.  Only the three functions used by AvailabilityStore
+// are needed here.
 jest.mock('../../services/availability.ts', () => ({
   getMyAvailability:   (...args: unknown[]) => mockGetMyAvailability(...args),
   patchMyAvailability: (...args: unknown[]) => mockPatchMyAvailability(...args),
@@ -99,7 +100,7 @@ describe('AvailabilityStore → Passport chip: toggle off → save → chip abse
 
     // Toggle off — in-memory store updates synchronously.
     await act(async () => {
-      screen.getByTestId('btn-toggle-off').props.onPress();
+      fireEvent.press(screen.getByTestId('btn-toggle-off'));
     });
 
     // Chip disappears immediately (no save required for the in-memory update).
@@ -107,7 +108,7 @@ describe('AvailabilityStore → Passport chip: toggle off → save → chip abse
 
     // Save — persists the new state to the backend.
     await act(async () => {
-      screen.getByTestId('btn-save').props.onPress();
+      fireEvent.press(screen.getByTestId('btn-save'));
     });
 
     // Chip remains absent after the save completes.
@@ -133,7 +134,7 @@ describe('AvailabilityStore → Passport chip: toggle on → save → chip prese
 
     // Toggle on — in-memory store updates synchronously.
     await act(async () => {
-      screen.getByTestId('btn-toggle-on').props.onPress();
+      fireEvent.press(screen.getByTestId('btn-toggle-on'));
     });
 
     // Chip appears immediately.
@@ -141,7 +142,7 @@ describe('AvailabilityStore → Passport chip: toggle on → save → chip prese
 
     // Save — persists to the backend.
     await act(async () => {
-      screen.getByTestId('btn-save').props.onPress();
+      fireEvent.press(screen.getByTestId('btn-save'));
     });
 
     // Chip persists after save.

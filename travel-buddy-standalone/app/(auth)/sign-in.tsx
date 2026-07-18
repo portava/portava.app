@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator, ScrollView, StyleSheet, Image } from 'react-native';
-import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
+import { View, Text, TextInput, Pressable, ActivityIndicator, StyleSheet, Image } from 'react-native';
+import { KeyboardSafeView } from '../../src/components/ui/KeyboardSafeView';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Mail, Lock, User as UserIcon, ArrowLeft, Eye, EyeOff } from 'lucide-react-native';
@@ -112,8 +112,7 @@ export default function SignIn() {
   const isForgot = mode === 'forgot-password' || mode === 'forgot-username';
 
   return (
-    <KeyboardSafeScrollView style={{ backgroundColor: color.paper }}>
-      <ScrollView contentContainerStyle={[s.wrap, { paddingTop: insets.top + space.xxxl, paddingBottom: insets.bottom + space.xl }]} keyboardShouldPersistTaps="handled">
+    <KeyboardSafeView style={{ backgroundColor: color.paper }} contentContainerStyle={[s.wrap, { paddingTop: insets.top + space.xxxl, paddingBottom: insets.bottom + space.xl }]}>
         <View style={s.centreBox}>
           <View style={s.brand}>
             <Image source={require('../../assets/images/portava-icon.png')} style={s.logo} accessibilityLabel="Portava" />
@@ -227,8 +226,7 @@ export default function SignIn() {
 
           <Text style={s.legal}>By continuing you agree to travel kindly and respect fellow travelers.</Text>
         </View>
-      </ScrollView>
-    </KeyboardSafeScrollView>
+    </KeyboardSafeView>
   );
 }
 

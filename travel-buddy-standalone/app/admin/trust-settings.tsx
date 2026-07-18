@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -11,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
-import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
+import { KeyboardSafeView } from '../../src/components/ui/KeyboardSafeView';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft } from 'lucide-react-native';
 import { fetchTrustSettings, updateTrustSetting, type TrustSettingKey } from '../../src/services/trustAdmin';
@@ -190,8 +189,7 @@ export default function TrustSettingsScreen() {
   }
 
   return (
-    <KeyboardSafeScrollView style={{ paddingTop: insets.top }}>
-      <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 48 }}>
+    <KeyboardSafeView style={{ paddingTop: insets.top }} scrollViewProps={{ style: styles.container }} contentContainerStyle={{ paddingBottom: 48 }}>
         <View style={styles.header}>
           <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
             <ArrowLeft size={20} color="#111827" />
@@ -217,8 +215,7 @@ export default function TrustSettingsScreen() {
             ))}
           </View>
         ))}
-      </ScrollView>
-    </KeyboardSafeScrollView>
+    </KeyboardSafeView>
   );
 }
 

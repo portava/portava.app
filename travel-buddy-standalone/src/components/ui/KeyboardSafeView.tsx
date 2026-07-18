@@ -43,6 +43,14 @@ export interface KeyboardSafeScrollViewProps {
 /**
  * Bare keyboard-avoiding wrapper — for screens/sheets that already have their
  * own scroll container (ScrollView / FlatList). Defaults to flex: 1.
+ *
+ * ⚠️  Do NOT nest a plain <ScrollView> as the immediate child of this
+ * component — that creates a double-scroll-container anti-pattern. If your
+ * screen only needs a single scroll container, use <KeyboardSafeView> instead:
+ * it already includes a built-in ScrollView with the correct keyboard settings.
+ *
+ * This constraint is enforced by scripts/check-ksv-inner-scroll.mjs
+ * (run via `pnpm lint:ksv`).
  */
 export function KeyboardSafeScrollView({
   children,
