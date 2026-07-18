@@ -30,6 +30,7 @@ import { useMapTravelers } from '../../hooks/useMapTravelers.ts';
 import { TravelerClusterMarkers } from './TravelerMapLayer.tsx';
 import { TravelerPreviewCard } from './TravelerPreviewCard.tsx';
 import type { MapTraveler } from '../../services/mapTravelers.ts';
+import { SectionErrorBoundary } from './SectionErrorBoundary.tsx';
 export type { MapFilter } from './discoverMapFilterStorage.ts';
 
 /** AsyncStorage key for the travelers-layer toggle ('1' on / '0' off). */
@@ -96,22 +97,41 @@ const FILTER_OPTIONS: { key: MapFilter; label: string }[] = [
   { key: 'osm',      label: '📍 Venues' },
 ];
 
+// ── Coordinate safety helpers ─────────────────────────────────────────────────
+
+/** Returns true only when both values are real finite numbers (not NaN/Infinity). */
+function isSafeCoord(lat: unknown, lng: unknown): boolean {
+  return (
+    typeof lat === 'number' && typeof lng === 'number' &&
+    Number.isFinite(lat) && Number.isFinite(lng)
+  );
+}
+
 // ── Viewport helper ───────────────────────────────────────────────────────────
 
 function computeViewport(places: DiscoveryPlace[]) {
-  if (places.length === 0) return null;
-  const lats = places.map((p) => p.lat!);
-  const lngs = places.map((p) => p.lng!);
+  // Only consider places with safe, finite coordinates.
+  const valid = places.filter((p) => isSafeCoord(p.lat, p.lng));
+  if (valid.length === 0) return null;
+  const lats = valid.map((p) => p.lat as number);
+  const lngs = valid.map((p) => p.lng as number);
   const minLat = Math.min(...lats), maxLat = Math.max(...lats);
   const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
   const latDelta = Math.max((maxLat - minLat) * 1.5, 0.05);
   const lngDelta = Math.max((maxLng - minLng) * 1.5, 0.05);
+  const centerLng = (minLng + maxLng) / 2;
+  const centerLat = (minLat + maxLat) / 2;
+  const zoom = Math.min(
+    Math.log2(360 / lngDelta),
+    Math.log2(180 / latDelta),
+  ) - 0.5;
+  // Sanity-check: bail if arithmetic produced a non-finite value.
+  if (!Number.isFinite(centerLng) || !Number.isFinite(centerLat) || !Number.isFinite(zoom)) {
+    return null;
+  }
   return {
-    center: [(minLng + maxLng) / 2, (minLat + maxLat) / 2] as [number, number],
-    zoom: Math.min(
-      Math.log2(360 / lngDelta),
-      Math.log2(180 / latDelta),
-    ) - 0.5,
+    center: [centerLng, centerLat] as [number, number],
+    zoom,
   };
 }
 
@@ -256,8 +276,13 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
     );
   }
 
+  // Guard: ensure the camera center values are finite before passing to MapLibre.
+  const safeCenter = isSafeCoord(vp.center[1], vp.center[0]) ? vp.center : null;
+  const safeZoom = Number.isFinite(vp.zoom) ? vp.zoom : 10;
+
   return (
     <View style={s.root}>
+      <SectionErrorBoundary label="DiscoveryMap" fullScreen>
       <Map
         style={StyleSheet.absoluteFill}
         mapStyle={MAP_STYLE}
@@ -265,20 +290,24 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
         attribution={false}
         onRegionDidChange={handleRegionChange}
       >
-        <Camera
-          ref={cameraRef}
-          initialViewState={{
-            center: vp.center,
-            zoom: vp.zoom,
-          }}
-        />
+        {safeCenter && (
+          <Camera
+            ref={cameraRef}
+            initialViewState={{
+              center: safeCenter,
+              zoom: safeZoom,
+            }}
+          />
+        )}
         {visiblePlaces.map((place) => {
+          // Skip markers with non-finite coordinates — they would crash MapLibre.
+          if (!isSafeCoord(place.lat, place.lng)) return null;
           const db = isDbPlace(place.id);
           const pinBg = db ? DB_PIN_COLOR : (CAT_COLOR[place.category] ?? color.signal);
           return (
             <Marker
               key={place.id}
-              lngLat={[place.lng!, place.lat!]}
+              lngLat={[place.lng as number, place.lat as number]}
             >
               <Pressable onPress={() => onSelectPlace(place)}>
                 <View style={[s.pin, db && s.dbPin, { backgroundColor: pinBg }]}>
@@ -294,12 +323,12 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
         {travelersOn && travelers.length > 0 && (
           <TravelerClusterMarkers
             travelers={travelers}
-            zoom={zoom ?? vp.zoom}
+            zoom={zoom ?? safeZoom}
             onPressTraveler={setSelectedTraveler}
             onPressCluster={(c) => {
               cameraRef.current?.setCamera({
                 centerCoordinate: [c.lng, c.lat],
-                zoomLevel: Math.min((zoom ?? vp.zoom) + 1.8, 17),
+                zoomLevel: Math.min((zoom ?? safeZoom) + 1.8, 17),
                 animationDuration: 450,
               });
             }}
@@ -313,6 +342,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
           </Marker>
         )}
       </Map>
+      </SectionErrorBoundary>
 
       {/* ── Filter toggle ──────────────────────────────────────────────────── */}
       <View style={s.filterRow}>
