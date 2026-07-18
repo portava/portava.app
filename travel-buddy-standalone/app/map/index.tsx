@@ -217,7 +217,6 @@ export default function FullScreenMapScreen() {
   // inside is the same ref that MapTopControls calls setCamera on.
   const cameraRef = useRef<any>(null);
   const { locationState, requireLocation } = useLocationContext();
-
   // Parse query params — invalid / missing values are silently ignored.
   const paramLat = parseCoord(params.lat);
   const paramLng = parseCoord(params.lng);
@@ -241,7 +240,7 @@ export default function FullScreenMapScreen() {
   const destination = title; // city name string, e.g. "Cebu City"
 
   useEffect(() => {
-    if (!entityTypes.split(',').map((s) => s.trim()).includes('places')) return;
+    if (!entityTypes.split(',').map((s: string) => s.trim()).includes('places')) return;
     if (!destination) return;
 
     let cancelled = false;
@@ -250,6 +249,14 @@ export default function FullScreenMapScreen() {
       category,
       { radiusKm: 10, openNow: false, minRating: null },
       1,
+      null,
+      null,
+      null,
+      null,
+      paramLat,
+      paramLng,
+      userLat,
+      userLng,
     ).then((res) => {
       if (cancelled) return;
       if (res.ok && Array.isArray(res.data?.places)) {
@@ -260,7 +267,7 @@ export default function FullScreenMapScreen() {
     });
 
     return () => { cancelled = true; };
-  }, [destination, category, entityTypes]);
+  }, [destination, category, entityTypes, paramLat, paramLng, userLat, userLng]);
 
   // Web: show static placeholder.
   if (Platform.OS === 'web') {

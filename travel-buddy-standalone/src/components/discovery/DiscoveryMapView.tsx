@@ -54,6 +54,13 @@ export interface DiscoveryMapViewProps {
   onSelectPlace: (place: DiscoveryPlace) => void;
   /** Pixels to shift map-overlay UI down so it clears a floating header/tab bar. */
   topInset?: number;
+  /**
+   * Optional camera ref forwarded from a parent screen (e.g. the full-screen
+   * /map route) so an external Recenter button can call setCamera directly.
+   * When omitted, DiscoveryMapView manages its own internal camera ref.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  externalCameraRef?: React.RefObject<any>;
 }
 
 // ── Category pin colours ──────────────────────────────────────────────────────
@@ -119,7 +126,7 @@ function computeViewport(places: DiscoveryPlace[]) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, fallbackZoom, userLat, userLng, topInset = 0 }: DiscoveryMapViewProps) {
+export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, fallbackZoom, userLat, userLng, topInset = 0, externalCameraRef }: DiscoveryMapViewProps) {
   // Lazy initialiser reads the module-level memory cache synchronously so
   // remounts (e.g. Expo Router tab navigation) start with the correct filter
   // value and never flash to 'all' while waiting for AsyncStorage to resolve.
@@ -181,7 +188,11 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
   const vp = viewport ?? fallback;
 
   const travelerCount = useMemo(() => mappable.filter((p) => isDbPlace(p.id)).length, [mappable]);
-  const cameraRef = useRef<any>(null);
+  const internalCameraRef = useRef<any>(null);
+  // Prefer the external ref forwarded from the parent screen (e.g. FullScreenMapScreen)
+  // so MapTopControls can call setCamera on it. Fall back to the internal ref when
+  // DiscoveryMapView is embedded without an external ref (e.g. in the Discover tab).
+  const cameraRef = externalCameraRef ?? internalCameraRef;
   const hasUser = userLat != null && userLng != null;
 
   // ── Travelers layer (users sharing their location in discovery) ──────────
