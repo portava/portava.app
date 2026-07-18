@@ -51,6 +51,13 @@ export interface DiscoveryMapViewProps {
   fallbackZoom?: number;
   places: DiscoveryPlace[];
   onSelectPlace: (place: DiscoveryPlace) => void;
+  /**
+   * Optional camera ref forwarded from a parent screen (e.g. the full-screen
+   * /map route) so an external Recenter button can call setCamera directly.
+   * When omitted, DiscoveryMapView manages its own internal camera ref.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  externalCameraRef?: React.RefObject<any>;
 }
 
 // ── Category pin colours ──────────────────────────────────────────────────────
@@ -135,7 +142,7 @@ function computeViewport(places: DiscoveryPlace[]) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, fallbackZoom, userLat, userLng }: DiscoveryMapViewProps) {
+export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, fallbackZoom, userLat, userLng, externalCameraRef }: DiscoveryMapViewProps) {
   // Lazy initialiser reads the module-level memory cache synchronously so
   // remounts (e.g. Expo Router tab navigation) start with the correct filter
   // value and never flash to 'all' while waiting for AsyncStorage to resolve.
@@ -197,7 +204,11 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
   const vp = viewport ?? fallback;
 
   const travelerCount = useMemo(() => mappable.filter((p) => isDbPlace(p.id)).length, [mappable]);
-  const cameraRef = useRef<any>(null);
+  const internalCameraRef = useRef<any>(null);
+  // Prefer the forwarded ref from the parent (e.g. full-screen /map route) so
+  // external recenter controls can call setCamera.  Fall back to the internal
+  // ref when no parent ref is supplied (in-tab inline map use-case).
+  const cameraRef = externalCameraRef ?? internalCameraRef;
   const hasUser = userLat != null && userLng != null;
 
   // ── Travelers layer (users sharing their location in discovery) ──────────

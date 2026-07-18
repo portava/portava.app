@@ -572,6 +572,9 @@ export default function DiscoveryHub() {
                 if (destinationLng != null && Number.isFinite(destinationLng)) params.lng = String(destinationLng);
                 if (destinationZoom) params.zoom = String(destinationZoom);
                 if (destination) params.title = destination;
+                // Pass the active category so the full-screen map fetches the
+                // same discovery places the user was just browsing in the tab.
+                params.category = activeTab;
                 router.push({ pathname: '/map', params } as any);
               }}
             >

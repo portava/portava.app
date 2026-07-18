@@ -14,7 +14,7 @@
  * Metro selects this file for native. The web platform fallback is handled
  * inline via Platform.OS checks so we avoid a separate .web.tsx route file.
  */
-import React, { useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, Platform,
 } from 'react-native';
@@ -25,6 +25,8 @@ import { MapPin } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens.ts';
 import { MapTopControls } from '../../src/components/map/MapTopControls.tsx';
 import { useLocationContext } from '../../src/context/LocationContext.tsx';
+import { getDiscoveryPlaces } from '../../src/services/discovery.ts';
+import type { DiscoveryPlace, DiscoveryCategory } from '../../src/services/discovery.ts';
 
 // ── Lazy-load native map component only on native ─────────────────────────────
 // This avoids importing MapLibre on web where it would crash.
@@ -188,6 +190,18 @@ const pp = StyleSheet.create({
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 
+/** Valid discovery category keys — mirrors the union in services/discovery.ts */
+const VALID_CATEGORIES: DiscoveryCategory[] = [
+  'for_you', 'places', 'food', 'nightlife', 'activities', 'events', 'beaches', 'transport',
+];
+
+function parseCategory(v: string | string[] | undefined): DiscoveryCategory {
+  const raw = Array.isArray(v) ? v[0] : v;
+  return (raw && (VALID_CATEGORIES as string[]).includes(raw))
+    ? (raw as DiscoveryCategory)
+    : 'for_you';
+}
+
 export default function FullScreenMapScreen() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
@@ -196,8 +210,11 @@ export default function FullScreenMapScreen() {
     lng?: string;
     zoom?: string;
     title?: string;
+    category?: string;
   }>();
 
+  // Shared camera ref — forwarded into DiscoveryMapView so the Camera element
+  // inside is the same ref that MapTopControls calls setCamera on.
   const cameraRef = useRef<any>(null);
   const { locationState, requireLocation } = useLocationContext();
 
@@ -206,12 +223,44 @@ export default function FullScreenMapScreen() {
   const paramLng = parseCoord(params.lng);
   const paramZoom = parseZoom(params.zoom);
   const title = Array.isArray(params.title) ? params.title[0] : (params.title ?? null);
+  const entityTypes = Array.isArray(params.entityTypes) ? params.entityTypes[0] : (params.entityTypes ?? '');
+  const category = parseCategory(params.category);
 
   // Resolved camera position: prefer explicit params, fall back to location context.
   const fallbackLat = paramLat ?? (locationState.coords?.lat ?? null);
   const fallbackLng = paramLng ?? (locationState.coords?.lng ?? null);
   const userLat = locationState.coords?.lat ?? null;
   const userLng = locationState.coords?.lng ?? null;
+
+  // ── Discovery places ───────────────────────────────────────────────────────
+  // Fetch discovery places when the caller requests the "places" entity layer
+  // and a destination city name is available (passed as the `title` param from
+  // the discovery tab).  Falls back to an empty array on error so the map
+  // still renders — only place pins are missing, not the whole map.
+  const [places, setPlaces] = useState<DiscoveryPlace[]>([]);
+  const destination = title; // city name string, e.g. "Cebu City"
+
+  useEffect(() => {
+    if (!entityTypes.split(',').map((s) => s.trim()).includes('places')) return;
+    if (!destination) return;
+
+    let cancelled = false;
+    getDiscoveryPlaces(
+      destination,
+      category,
+      { radiusKm: 10, openNow: false, minRating: null },
+      1,
+    ).then((res) => {
+      if (cancelled) return;
+      if (res.ok && Array.isArray(res.data?.places)) {
+        setPlaces(res.data.places);
+      }
+    }).catch(() => {
+      // Non-fatal: map renders without place pins rather than crashing.
+    });
+
+    return () => { cancelled = true; };
+  }, [destination, category, entityTypes]);
 
   // Web: show static placeholder.
   if (Platform.OS === 'web') {
@@ -229,15 +278,17 @@ export default function FullScreenMapScreen() {
 
   return (
     <View style={s.root}>
-      {/* Full-screen map fills the entire view */}
+      {/* Full-screen map — externalCameraRef wires MapTopControls' recenter
+          button to the Camera element rendered inside DiscoveryMapView. */}
       <MapComponent
-        places={[]}
+        places={places}
         onSelectPlace={() => {}}
         fallbackLat={fallbackLat}
         fallbackLng={fallbackLng}
         fallbackZoom={paramZoom}
         userLat={userLat}
         userLng={userLng}
+        externalCameraRef={cameraRef}
       />
 
       {/* Floating top controls: Back, Recenter, Filters */}
