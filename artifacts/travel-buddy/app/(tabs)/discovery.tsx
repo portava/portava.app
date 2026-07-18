@@ -478,7 +478,10 @@ export default function DiscoveryHub() {
         </ScrollView>
 
         <Pressable
-          style={styles.viewToggle}
+          style={[styles.viewToggle, !destination && styles.viewToggleDisabled]}
+          disabled={!destination}
+          accessibilityLabel="Map view"
+          accessibilityHint={destination ? undefined : 'Set a destination to open the map'}
           onPress={() => {
             const params: Record<string, string> = { entityTypes: 'places,travelers' };
             if (destinationLat != null && Number.isFinite(destinationLat)) params.lat = String(destinationLat);
@@ -491,8 +494,8 @@ export default function DiscoveryHub() {
             router.push({ pathname: '/map', params } as any);
           }}
         >
-          <MapPin size={11} color={color.mute} />
-          <Text style={styles.toggleBtnText}>Map</Text>
+          <MapPin size={11} color={destination ? color.mute : color.faint} />
+          <Text style={[styles.toggleBtnText, !destination && styles.toggleBtnTextDisabled]}>Map</Text>
         </Pressable>
       </View>
 
@@ -897,10 +900,16 @@ const styles = StyleSheet.create({
     borderLeftWidth: 1,
     borderLeftColor: color.haze,
   },
+  viewToggleDisabled: {
+    opacity: 0.4,
+  },
   toggleBtnText: {
     fontSize: 11,
     fontWeight: '600',
     color: color.mute,
+  },
+  toggleBtnTextDisabled: {
+    color: color.faint,
   },
   tab: {
     flexDirection: 'row',
