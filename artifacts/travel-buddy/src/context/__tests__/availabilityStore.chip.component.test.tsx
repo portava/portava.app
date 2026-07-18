@@ -94,6 +94,10 @@ describe('AvailabilityStore → Passport chip: toggle off → save → chip abse
     await waitFor(() => expect(screen.getByTestId('chip')).toBeTruthy());
 
     // Toggle off — in-memory store updates synchronously.
+    // NOTE: use fireEvent.press, not .props.onPress() — RNTL 14 no longer
+    // exposes onPress as a plain prop on Pressable host elements; direct
+    // invocation throws "onPress is not a function" and silently skips the
+    // assertion.
     await act(async () => {
       fireEvent.press(screen.getByTestId('btn-toggle-off'));
     });
@@ -128,6 +132,10 @@ describe('AvailabilityStore → Passport chip: toggle on → save → chip prese
     await waitFor(() => expect(screen.queryByTestId('chip')).toBeNull());
 
     // Toggle on — in-memory store updates synchronously.
+    // NOTE: use fireEvent.press, not .props.onPress() — RNTL 14 no longer
+    // exposes onPress as a plain prop on Pressable host elements; direct
+    // invocation throws "onPress is not a function" and silently skips the
+    // assertion.
     await act(async () => {
       fireEvent.press(screen.getByTestId('btn-toggle-on'));
     });
