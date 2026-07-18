@@ -1,0 +1,368 @@
+Fix the scroll architecture across all main Portava app pages.
+
+CURRENT PROBLEM
+
+The page headers, search bars, filter bars, location selectors, category tabs, availability controls, and other top sections remain fixed/sticky while only the content area below them scrolls.
+
+This causes the user to see only a small fraction of the actual page content, especially on smaller phones.
+
+Examples visible right now:
+
+PULSE
+- Main Portava top header remains fixed
+- "Pulse"
+- "Nothing live nearby right now"
+- My City
+- Availability
+- Pulse filters
+These consume a large portion of the screen while the feed scrolls separately underneath.
+
+DISCOVERY
+- Search bar
+- Discover title
+- City selector
+- Filter/category controls
+- Places/Food/List/Map controls
+remain fixed while only the card results scroll.
+
+This creates a cramped viewport and makes scrolling feel disconnected and unnatural.
+
+REQUIRED BEHAVIOR
+
+The WHOLE PAGE must scroll as one connected vertical surface.
+
+The page header and page content must belong to the same primary scroll container.
+
+When the user scrolls down:
+
+1. The page-specific header should scroll upward with the content.
+2. Large page titles should scroll off-screen.
+3. Location selectors should scroll off-screen.
+4. Availability controls should scroll off-screen.
+5. Filter/category bars should scroll with the page unless there is a very intentional compact sticky state.
+6. Content cards/feed should naturally continue upward into the freed screen space.
+
+The user should eventually be able to use almost the entire screen for content.
+
+DO NOT keep half the screen permanently occupied by fixed headers.
+
+BOTTOM NAVIGATION
+
+The global bottom navigation may remain fixed.
+
+It must:
+- respect safe area
+- not cover the last feed/card item
+- have enough bottom content padding so the final item can scroll completely above the nav
+
+TOP APP BAR
+
+The very small global app bar may remain persistent only if truly necessary.
+
+However:
+
+- It must not consume excessive vertical space.
+- Page titles and page-specific controls must NOT be permanently fixed underneath it.
+- Avoid stacking several fixed headers.
+
+Preferred architecture:
+
+GLOBAL SMALL APP BAR — optionally fixed
+
+PAGE HEADER
+PAGE TITLE
+LOCATION
+AVAILABILITY
+FILTERS
+CONTENT
+
+All of the above page-specific elements should live inside ONE SCROLLABLE PAGE.
+
+PULSE SPECIFIC FIX
+
+Refactor Pulse so the structure is conceptually:
+
+SafeAreaView
+  Screen
+    Optional compact global app bar
+    FlatList / FlashList
+      ListHeaderComponent:
+        Pulse title
+        live-nearby status
+        My City selector
+        Availability selector
+        All / Now / Starting Soon / Tonight / My Trip filters
+        My Trip card
+        Fits Your Time
+        layover prompt
+        Available Buddies
+        any other Pulse modules
+
+      Feed items:
+        postcards
+        memories
+        events
+        plans
+        recommendations
+
+The entire Pulse page must move together.
+
+Do NOT put the Pulse feed inside a separate vertical ScrollView underneath a fixed page header.
+
+There should be ONE primary vertical scroll owner.
+
+Use ListHeaderComponent or equivalent so the header becomes part of the feed.
+
+When the user scrolls down, the Pulse title and controls should disappear upward naturally.
+
+DISCOVERY SPECIFIC FIX
+
+Refactor Discovery so the structure is conceptually:
+
+SafeAreaView
+  Screen
+    Optional compact global app bar
+    FlatList / FlashList
+      ListHeaderComponent:
+        Search field
+        Discover title
+        City selector
+        Explore/For You controls
+        Places/Food/etc category selector
+        List/Map switch
+        contextual filters
+
+      Results:
+        places
+        hidden gems
+        traveler picks
+        neighborhoods
+        events
+        trips
+        buddies
+        recommendations
+
+The search and large filter area must scroll upward with the Discovery results.
+
+Do not leave the search bar + title + city selector + filter bars permanently taking up half the display.
+
+STICKY FILTER BEHAVIOR
+
+If a sticky control is useful, use a COLLAPSING HEADER pattern.
+
+Example:
+
+At top:
+[Search]
+Discover
+[Miami]
+[Full category row]
+[List / Map]
+
+After scrolling:
+[small compact category row]
+
+Only ONE compact row may optionally stay visible.
+
+Do not keep the entire original header fixed.
+
+Any sticky implementation must:
+
+- collapse smoothly
+- not jump
+- not change content height repeatedly
+- not interfere with scroll gestures
+- not cause bounce
+- not create nested vertical scrolling
+
+OTHER MAIN PAGES
+
+Audit and apply this same rule to:
+
+- Pulse
+- Discovery
+- Trips
+- Passport
+- Rent a Buddy
+- Trip details
+- Event details
+- Circle screens
+- Telegraph lists where applicable
+- Search results
+- Saved content
+- Notifications
+- profile pages
+
+For each page decide:
+
+A. What is truly global navigation?
+B. What is page-specific header/content?
+
+Only A may remain fixed.
+
+Page-specific content should normally scroll with the page.
+
+CRITICAL SCROLL ARCHITECTURE RULE
+
+ONE primary vertical scroll container per screen.
+
+Avoid:
+
+ScrollView
+  fixed header
+  ScrollView
+    FlatList
+
+Avoid:
+
+ScrollView containing FlatList with scrolling enabled
+
+Avoid competing nested vertical gesture handlers.
+
+Prefer:
+
+FlatList / FlashList
+  ListHeaderComponent
+  items
+
+or:
+
+ScrollView
+  complete page content
+
+for short static pages.
+
+Use FlatList/FlashList for long or dynamic feeds.
+
+HEADER HEIGHT
+
+Remove oversized fixed empty header areas.
+
+In the Pulse screenshot there is a very large dark area between:
+
+"Nothing live nearby right now"
+
+and
+
+"My City: Miami"
+
+Audit the spacing.
+
+Do not reserve a large static height for empty live-event content.
+
+If nothing is currently live nearby, collapse that section to its actual content height.
+
+The message:
+
+"Nothing live nearby right now"
+
+should not create hundreds of pixels of empty space.
+
+DISCOVERY FILTER OVERLAP
+
+The Discovery screenshot shows the filter/navigation area overlapping result content.
+
+Fix z-index/layout positioning so:
+
+- controls never visually cover cards
+- cards begin after the header in normal document flow
+- after scrolling, content moves naturally underneath only a deliberately compact sticky bar if one exists
+
+Do not position normal page content using absolute positioning.
+
+BOTTOM CONTENT
+
+In the screenshots, bottom cards are also being obstructed by the bottom navigation.
+
+Add correct:
+
+contentContainerStyle paddingBottom
+
+based on:
+
+bottom navigation height
++
+safe area inset
++
+reasonable spacing
+
+The final item must be completely readable and tappable.
+
+ACCEPTANCE TEST
+
+PULSE:
+
+Open Pulse at top.
+
+The user sees:
+- Pulse title
+- current status
+- city
+- availability
+- filters
+- page content
+
+Swipe upward continuously.
+
+Expected:
+- Pulse header moves upward
+- city and availability move upward
+- filters move upward
+- feed fills almost the entire screen
+- bottom nav stays accessible
+- no second hidden scroll container
+- no bouncing between two scroll surfaces
+- no content jump
+
+DISCOVERY:
+
+Open Discovery at top.
+
+Swipe upward.
+
+Expected:
+- search area moves upward
+- Discover title moves upward
+- Miami selector moves upward
+- category controls move upward
+- results occupy the full viewport
+- optional compact filter row may remain if intentionally implemented
+- no overlap between filters and results
+- bottom nav does not cover cards
+
+Test on:
+
+- small Android phone
+- large Android phone
+- iPhone
+- devices with notches
+- devices with gesture navigation
+
+Also test font scaling.
+
+IMPORTANT
+
+Do not solve this by merely changing position: fixed to position: relative on random components.
+
+Audit the actual screen hierarchy.
+
+The primary goal is:
+
+ONE CONNECTED PAGE
+ONE PRIMARY VERTICAL SCROLL
+HEADER + CONTENT MOVE TOGETHER
+
+Report back with:
+
+1. Screens audited
+2. Screens changed
+3. Previous scroll hierarchy
+4. New scroll hierarchy
+5. Fixed/sticky elements that remain and why
+6. Nested scroll containers removed
+7. Absolute-positioned header elements removed
+8. Bottom navigation padding fix
+9. Pulse empty-header spacing fix
+10. Discovery overlap fix
+11. iOS test results
+12. Android test results
