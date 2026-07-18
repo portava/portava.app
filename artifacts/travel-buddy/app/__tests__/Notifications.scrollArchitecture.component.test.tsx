@@ -333,4 +333,69 @@ describe('ActivityCenter (Notifications) — scroll architecture', () => {
 
     expect(titleCrossesScrollBoundary(firstChild)).toBe(false);
   });
+
+  it('Requests tab empty-state branch — "Activity Center" header and empty-state share the same non-scroll container', async () => {
+    // reqLoading=false + incoming=[] triggers SocialRequestsPane's empty-state
+    // branch (lines ~401-414 of notifications.tsx):
+    //   <View style={{ flex: 1 }}>
+    //     {headerComponent}
+    //     <View style={styles.empty}>…"No pending requests"…</View>
+    //   </View>
+    // The default beforeEach already sets this state, but we set it explicitly
+    // here for clarity and resilience against future beforeEach changes.
+    mockUseRequests.mockReturnValue({
+      incoming: [],
+      loading:  false,
+      reload:   jest.fn(),
+    });
+
+    const { toJSON, getByText } = await render(<ActivityCenter />);
+    await act(async () => {});
+
+    // Switch to the Requests tab.
+    await act(async () => {
+      fireEvent.press(getByText('Requests'));
+    });
+
+    const tree = toJSON() as any;
+
+    // The outer root View wraps everything; in the empty-state branch its first
+    // child should be a plain View — not a FlatList / ScrollView.
+    const rootChildren: any[] = Array.isArray(tree?.children) ? tree.children : [];
+    const firstChild = rootChildren[0];
+
+    expect(firstChild).toBeTruthy();
+    // The container must not itself be a scroll node.
+    expect(isScrollNode(firstChild)).toBe(false);
+
+    // The "Activity Center" title must live somewhere inside this container.
+    expect(subtreeHasText(firstChild, 'Activity Center')).toBe(true);
+
+    // The empty-state message must also live inside this same container —
+    // confirming header + empty-state are co-located in the same View.
+    expect(subtreeHasText(firstChild, 'No pending requests')).toBe(true);
+
+    // Guard: the title must not be hidden behind a scroll boundary inside
+    // the empty-state container — i.e. not tucked inside a nested FlatList/ScrollView.
+    function titleCrossesScrollBoundary(node: any): boolean {
+      if (typeof node === 'string') return false;
+      if (!node || typeof node !== 'object') return false;
+      for (const child of (node.children ?? [])) {
+        if (isScrollNode(child)) {
+          if (
+            subtreeHasText(child, 'Activity Center') &&
+            !(node.children ?? []).some(
+              (c: any) => !isScrollNode(c) && subtreeHasText(c, 'Activity Center'),
+            )
+          ) {
+            return true;
+          }
+        }
+        if (titleCrossesScrollBoundary(child)) return true;
+      }
+      return false;
+    }
+
+    expect(titleCrossesScrollBoundary(firstChild)).toBe(false);
+  });
 });
