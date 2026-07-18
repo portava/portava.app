@@ -16,6 +16,7 @@ import { router } from 'expo-router';
 import { MapPin, Calendar, ChevronRight, Luggage } from 'lucide-react-native';
 import type { TripRow } from '../services/trips.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { useBottomInset } from '../hooks/useBottomInset.ts';
 
 const STATUS_COLOR: Record<string, string> = {
   planning: color.mute,
@@ -96,6 +97,7 @@ export function TripsTab({
 }) {
   const visible = isOwner ? trips : trips.filter((t) => t.visibility === 'public');
   const [filter, setFilter] = useState<Filter>('all');
+  const bottomInset = useBottomInset();
 
   // Featured: the ongoing trip, else the soonest upcoming trip.
   const featured = useMemo(() => {
@@ -130,7 +132,7 @@ export function TripsTab({
 
   if (visible.length === 0) {
     return (
-      <View style={tr.empty}>
+      <View style={[tr.empty, { paddingBottom: bottomInset }]}>
         <Text style={tr.emptyIcon}>✈️</Text>
         <Text style={tr.emptyTitle}>No trips shown yet</Text>
         <Text style={tr.emptySub}>
@@ -149,7 +151,7 @@ export function TripsTab({
   const showFeatured = featured && (filter === 'all' || featuredBucket === filter);
 
   return (
-    <View>
+    <View style={{ paddingBottom: bottomInset }}>
       {/* compact filters */}
       <View style={tr.filters}>
         {FILTERS.map((f) => {
