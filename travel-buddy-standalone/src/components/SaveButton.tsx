@@ -162,6 +162,7 @@ export function SaveButton({
           setSaved(true);
           if (entityType === 'post' && userId) writeSavedCache(userId, entityId, true);
           onSavedChange?.(true);
+          fireRankOutcome(entityId, 'pulse', 'save', sessionId ?? null);
           setPickerOpen(false);
         }}
       />
