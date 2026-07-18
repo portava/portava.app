@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { Clock, Users, ChevronDown, ChevronUp, CalendarClock } from 'lucide-react-native';
+import { Clock, Users, ChevronDown, ChevronUp, CalendarClock, MapPin } from 'lucide-react-native';
 import type { CityEvent } from '../types/models.ts';
 import { Stamp, Avatar } from './ui.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
@@ -36,6 +36,19 @@ export function EventCard({ ev, dim, initialSaved }: {
             <Text style={styles.meta}>{ev.attendeeCount}{ev.capacity ? `/${ev.capacity}` : ''} going</Text>
           </View>
         )}
+        <Pressable
+          style={styles.viewOnMapBtn}
+          onPress={(e) => {
+            e.stopPropagation?.();
+            // Entity IDs in useMapEntities are prefixed (e.g. "event:<uuid>").
+            // Pass the prefixed form so the focusId snap matches exactly.
+            router.push(`/map?entityTypes=events&focusId=${encodeURIComponent(`event:${ev.id}`)}` as any);
+          }}
+          hitSlop={4}
+        >
+          <MapPin size={10} color={color.signal} />
+          <Text style={styles.viewOnMapText}>View on map</Text>
+        </Pressable>
       </View>
       {ev.host && <Avatar uri={ev.host.avatarUrl} size={36} />}
       <SaveButton entityType="event" entityId={ev.id} initialSaved={initialSaved} />
@@ -78,6 +91,11 @@ const styles = StyleSheet.create({
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   meta: { ...t.small, color: color.mute },
   saveBtn: { padding: 4 },
+
+  viewOnMapBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2,
+  },
+  viewOnMapText: { ...t.small, color: color.signal, fontSize: 10 },
 
   flexWrap: { marginHorizontal: space.lg, marginTop: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper, overflow: 'hidden' },
   flexHead: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: space.md },

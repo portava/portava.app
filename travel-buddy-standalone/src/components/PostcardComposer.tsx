@@ -28,6 +28,7 @@ import {
 import { validateMedia } from '../services/media.ts';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
+import { MediaSourceSheet } from './ui/MediaSourceSheet.tsx';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import type { Place } from '../lib/location/placeTypes.ts';
 import { placeToLocationFields } from '../lib/location/locationPayload.ts';
@@ -88,6 +89,7 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
   const [error, setError] = useState<string | null>(null);
   const cancelRef = useRef<UploadCancelRef>({});
   const abortedRef = useRef(false);
+  const [changeSheetOpen, setChangeSheetOpen] = useState(false);
 
   // ── Stamp overlay editing state (images only; optional) ─────────────────
   const [stampOverlay, setStampOverlay] = useState<StampOverlayDraft | null>(null);
@@ -440,9 +442,17 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
                     )}
                   </>
                 )}
-                <Pressable style={s.changeBtn} onPress={pickFromLibrary} hitSlop={8}>
+                <Pressable style={s.changeBtn} onPress={() => setChangeSheetOpen(true)} hitSlop={8}>
                   <Text style={s.changeBtnText}>Change</Text>
                 </Pressable>
+                <MediaSourceSheet
+                  visible={changeSheetOpen}
+                  onClose={() => setChangeSheetOpen(false)}
+                  onResult={applyAsset}
+                  allowsVideo
+                  videoMaxDuration={60}
+                  title="Replace media"
+                />
               </View>
             ) : (
               <View style={s.pickerArea}>

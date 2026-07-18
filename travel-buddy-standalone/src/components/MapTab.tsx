@@ -12,6 +12,7 @@ import {
   View, Text, Pressable, ScrollView, Image,
   StyleSheet, ActivityIndicator,
 } from 'react-native';
+import { router } from 'expo-router';
 import { Map as MapView, Camera, Marker } from '@maplibre/maplibre-react-native';
 import type { CameraRef, LngLatBounds } from '@maplibre/maplibre-react-native';
 import type { PassportPostcard } from '../types/models.ts';
@@ -200,6 +201,14 @@ export function MapTab({ postcards, currentCity, currentUserId }: MapTabProps) {
 
       {/* ── Interactive travel map ─────────────────────────────────────────── */}
       <View style={mp.mapWrap}>
+        {/* Full-screen map button */}
+        <Pressable
+          style={mp.fullMapBtn}
+          onPress={() => router.push('/map?entityTypes=stamps&mode=passport' as any)}
+          hitSlop={4}
+        >
+          <Text style={mp.fullMapBtnText}>Open full map</Text>
+        </Pressable>
         {mapLoading && (
           <View style={mp.mapLoader}>
             <ActivityIndicator size="small" color={color.signal} />
@@ -391,6 +400,21 @@ const mp = StyleSheet.create({
     justifyContent: 'center',
     zIndex: 10,
     backgroundColor: `${color.paperRaised}CC`,
+  },
+  fullMapBtn: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    zIndex: 20,
+    backgroundColor: 'rgba(10,61,74,0.82)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  fullMapBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#fff',
   },
   privacyLabel: {
     position: 'absolute',

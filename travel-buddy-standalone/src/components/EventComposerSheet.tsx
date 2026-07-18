@@ -13,8 +13,9 @@ import {
   View, Text, TextInput, Pressable, StyleSheet,
   ScrollView, Switch, ActivityIndicator, Image,
 } from 'react-native';
-import { X, ChevronRight, ChevronLeft, CalendarClock, MapPin, Settings2, Eye, Clock, Camera, Video as VideoIcon } from 'lucide-react-native';
+import { X, ChevronRight, ChevronLeft, CalendarClock, MapPin, Settings2, Eye, Clock, Camera, ImageIcon, Video as VideoIcon } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { MediaSourceSheet } from './ui/MediaSourceSheet.tsx';
 import { createEvent, type CreateEventInput, type EventSummary, type EventVisibility } from '../services/events.ts';
 import { uploadMedia } from '../services/media.ts';
 import { VIDEO_MAX_DURATION_SECONDS } from '../constants/mediaLimits.ts';
@@ -97,6 +98,7 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
   const [coverLocalUri, setCoverLocalUri] = useState<string | null>(null);
   const [uploadingCover, setUploadingCover] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [coverSheetOpen, setCoverSheetOpen] = useState(false);
 
   // Picker visibility
   const [calPickerFor,  setCalPickerFor]  = useState<'start' | 'end' | null>(null);
@@ -124,22 +126,9 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
   const isLast = stepIndex === STEPS.length - 1;
 
   // ── Cover media picker ──────────────────────────────────────────────────────
-  async function handlePickCover() {
+  async function handleCoverResult(asset: ImagePicker.ImagePickerAsset) {
     setUploadError(null);
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      setUploadError('Please allow access to your photo library in Settings.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images', 'videos'],
-      quality: 0.85,
-      videoMaxDuration: VIDEO_MAX_DURATION_SECONDS.event,
-      allowsEditing: false,
-    });
-    if (result.canceled || !result.assets?.length) return;
-    const asset = result.assets[0];
-    const isVideo = asset.type === 'video';
+    const isVideo = asset.type === 'video' || (asset.mimeType ?? '').startsWith('video/');
     const pickedMediaType: 'image' | 'video' = isVideo ? 'video' : 'image';
 
     // Show local preview immediately
@@ -341,13 +330,22 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
                 ) : (
                   <Pressable
                     style={[s.input, s.coverPickerBtn]}
-                    onPress={handlePickCover}
+                    onPress={() => setCoverSheetOpen(true)}
                     disabled={uploadingCover}
                   >
                     <Camera size={16} color={color.mute} />
-                    <Text style={[s.coverPickerText]}>Add cover image or video</Text>
+                    <ImageIcon size={16} color={color.mute} />
+                    <Text style={[s.coverPickerText]}>Camera or Photo Library</Text>
                   </Pressable>
                 )}
+                <MediaSourceSheet
+                  visible={coverSheetOpen}
+                  onClose={() => setCoverSheetOpen(false)}
+                  onResult={handleCoverResult}
+                  allowsVideo
+                  videoMaxDuration={VIDEO_MAX_DURATION_SECONDS.event}
+                  title="Event cover"
+                />
                 {uploadError ? (
                   <Text style={s.uploadErrorText}>{uploadError}</Text>
                 ) : null}

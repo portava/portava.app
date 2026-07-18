@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { router } from 'expo-router';
+import { AlertTriangle } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MapPin, X as XIcon } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens.ts';
@@ -244,6 +245,8 @@ export default function FullScreenMapScreen() {
     zoom?: string;
     title?: string;
     category?: string;
+    focusId?: string;
+    mode?: string;
   }>();
 
   // Shared camera ref — forwarded into DiscoveryMapView so the Camera element
@@ -257,6 +260,10 @@ export default function FullScreenMapScreen() {
   const title = Array.isArray(params.title) ? params.title[0] : (params.title ?? null);
   const entityTypes = Array.isArray(params.entityTypes) ? params.entityTypes[0] : (params.entityTypes ?? '');
   const category = parseCategory(params.category);
+  /** focusId: if set, carousel + camera will snap to the matching entity on first load. */
+  const focusId = Array.isArray(params.focusId) ? params.focusId[0] : (params.focusId ?? null);
+  /** mode: 'passport' | 'circle' | undefined — controls layer presets and UI. */
+  const mode = Array.isArray(params.mode) ? params.mode[0] : (params.mode ?? null);
 
   // Resolved camera position: prefer explicit params, fall back to location context.
   const fallbackLat = paramLat ?? (locationState.coords?.lat ?? null);
@@ -303,15 +310,18 @@ export default function FullScreenMapScreen() {
   }, [destination, category, entityTypes, paramLat, paramLng, userLat, userLng]);
 
   // ── Entity layer filter state ───────────────────────────────────────────────
+  // mode=circle pre-selects only the Friends layer; other modes load persisted prefs.
   const [enabledLayers, setEnabledLayers] = useState<ToggleableEntityType[]>(
-    () => [...TOGGLEABLE_LAYERS],
+    () => mode === 'circle' ? ['friends'] : [...TOGGLEABLE_LAYERS],
   );
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
 
-  // Restore persisted layer preferences on mount.
+  // Restore persisted layer preferences on mount — skipped in circle/passport mode
+  // so the preset is not overwritten by stored prefs.
   useEffect(() => {
+    if (mode === 'circle' || mode === 'passport') return;
     loadEnabledLayers().then(setEnabledLayers).catch(() => {});
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Entity data fetch ───────────────────────────────────────────────────────
   // `title` is used as the city name — passed in from Discovery / Trips entry points.
@@ -344,13 +354,40 @@ export default function FullScreenMapScreen() {
   // ── Carousel state ──────────────────────────────────────────────────────────
   const [activeIndex, setActiveIndex] = useState(0);
   const carouselRef = useRef<MapCarouselRef>(null);
+  // Tracks whether focusId has already been applied — only snap once on first load.
+  const focusAppliedRef = useRef(false);
 
   // Auto-select closest entity whenever the entities list changes.
+  // If focusId is set and not yet applied, prefer that entity over proximity.
   useEffect(() => {
     if (entities.length === 0) {
       setActiveIndex(0);
       return;
     }
+
+    // focusId snap: find matching entity and center on it (once only).
+    // Accepts both the raw ID (e.g. "abc123") and the prefixed form used by
+    // useMapEntities (e.g. "event:abc123") so callers can pass either.
+    if (focusId && !focusAppliedRef.current) {
+      const focusIndex = entities.findIndex(
+        (e) => e.id === focusId || e.id.endsWith(`:${focusId}`),
+      );
+      if (focusIndex >= 0) {
+        focusAppliedRef.current = true;
+        setActiveIndex(focusIndex);
+        carouselRef.current?.scrollToIndex(focusIndex);
+        const entity = entities[focusIndex];
+        cameraRef.current?.setCamera({
+          centerCoordinate: [entity.lng, entity.lat],
+          zoomLevel: zoomForEntity(entity.type),
+          animationDuration: 400,
+        });
+        return;
+      }
+      // focusId not matched — fall through to proximity selection; camera stays on
+      // city default (no crash, per robustness requirement).
+    }
+
     let bestIndex = 0;
     if (userLat != null && userLng != null) {
       let bestDist = Infinity;
@@ -415,6 +452,10 @@ export default function FullScreenMapScreen() {
     return <PermissionPrompt onRequest={() => requireLocation('map')} />;
   }
 
+  // Permission denied but we have city/destination coords — show an inline banner
+  // instead of blocking the map entirely.
+  const showCityLocationBanner = permDenied && !hasNoCoords;
+
   const MapComponent = DiscoveryMapView!;
 
   return (
@@ -461,6 +502,28 @@ export default function FullScreenMapScreen() {
           { bottom: insets.bottom + 16 },
         ]}
       />
+
+      {/* City-location banner — shown when location permission is denied but
+          city/destination coords are available so the map still renders. */}
+      {showCityLocationBanner ? (
+        <View style={s.cityBanner} pointerEvents="none">
+          <AlertTriangle size={12} color="#fff" />
+          <Text style={s.cityBannerText}>
+            Using city location — enable location for better results
+          </Text>
+        </View>
+      ) : null}
+
+      {/* Passport mode banner */}
+      {mode === 'passport' ? (
+        <View style={s.modeBanner} pointerEvents="none">
+          <Text style={s.modeBannerText}>🗺 Passport map · your travel stamps</Text>
+        </View>
+      ) : mode === 'circle' ? (
+        <View style={s.modeBanner} pointerEvents="none">
+          <Text style={s.modeBannerText}>👥 Circle map · friends nearby</Text>
+        </View>
+      ) : null}
 
       {/* ── AskCompassBar + active filter label — floating bottom overlay ── */}
       {/* pointerEvents="box-none" lets map touches pass through the transparent
@@ -525,6 +588,42 @@ const s = StyleSheet.create({
     right: 0,
     gap: space.xs,
     paddingBottom: space.sm,
+  },
+  // City-location banner — shown when location denied but city coords available
+  cityBanner: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.xs,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingVertical: 6,
+    paddingHorizontal: space.md,
+    zIndex: 15,
+  },
+  cityBannerText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  // Mode context banner (passport / circle)
+  modeBanner: {
+    position: 'absolute',
+    alignSelf: 'center',
+    top: 52,
+    zIndex: 15,
+    backgroundColor: 'rgba(10,61,74,0.82)',
+    borderRadius: radius.pill,
+    paddingHorizontal: space.md,
+    paddingVertical: 5,
+  },
+  modeBannerText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '600',
   },
   // Active filter label chip
   filterLabel: {
