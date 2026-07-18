@@ -22,7 +22,7 @@ module.exports = {
   preset: 'jest-expo',
   testMatch: [
     '<rootDir>/src/**/*.component.test.{ts,tsx}',
-    '<rootDir>/app/**/*.component.test.{ts,tsx}',
+    '<rootDir>/app/**/*.test.{ts,tsx}',
   ],
   // Match both flat npm/yarn layout (node_modules/<pkg>) and pnpm's nested
   // layout (node_modules/.pnpm/<hash>/node_modules/<pkg>) with the optional

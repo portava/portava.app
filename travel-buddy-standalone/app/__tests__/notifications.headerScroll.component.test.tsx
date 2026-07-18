@@ -37,6 +37,7 @@ import ActivityCenter from '../notifications.tsx';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
+// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));

@@ -29,6 +29,7 @@ jest.mock('react-native-reanimated', () => {
 });
 
 // ── Safe-area ─────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
   SafeAreaProvider: ({ children }: any) => children,
@@ -45,23 +46,27 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
 }));
 
 // ── expo-router ───────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
   useFocusEffect: (cb: () => void) => { cb(); },
 }));
 
 // ── Comment count store ───────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/lib/commentCountStore', () => ({
   getCommentCountSnapshot: () => new Map(),
   subscribeCommentCount:   () => () => {},
 }));
 
 // ── ScreenErrorBoundary — passthrough ─────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('@/components/ScreenErrorBoundary', () => ({
   ScreenErrorBoundary: ({ children }: any) => children,
 }));
 
 // ── Feed / city-pulse hooks ───────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useCityPulse', () => ({
   useCityPulse: () => ({
     buckets: { fitsAvailability: [], openNearby: [], flexible: [] },
@@ -70,6 +75,7 @@ jest.mock('../../../src/hooks/useCityPulse', () => ({
 }));
 
 // usePulseFeed replaced useGlobalFeed as the primary Pulse feed hook.
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/usePulseFeed', () => ({
   usePulseFeed: () => ({
     items: [], placeCards: [], loading: false, loadingMore: false,
@@ -78,6 +84,7 @@ jest.mock('../../../src/hooks/usePulseFeed', () => ({
   }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/usePosts', () => ({
   useFollowingFeed: () => ({
     data: [], loading: false, loadingMore: false, error: null,
@@ -85,22 +92,27 @@ jest.mock('../../../src/hooks/usePosts', () => ({
   }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useRentABuddyFlag', () => ({
   useRentABuddyFlag: () => ({ enabled: false }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useCircleFlag', () => ({
   useCircleFlag: () => ({ enabled: false }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useLivePulse', () => ({
   useLivePulse: () => ({ refresh: jest.fn() }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/intelligence', () => ({
   fetchPreferences: jest.fn().mockResolvedValue({ ok: false }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
     locationState: {
@@ -114,6 +126,7 @@ jest.mock('../../../src/context/LocationContext', () => ({
 // ── PulseHeader — sentinel stub ───────────────────────────────────────────────
 // Renders a Text node so toJSON tree-walking can confirm PulseHeader appears
 // as a direct sibling ABOVE the FlatList in the new fixed-header architecture.
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PulseHeader', () => ({
   PulseHeader: () => {
     const { Text } = require('react-native');
@@ -124,6 +137,7 @@ jest.mock('../../../src/components/PulseHeader', () => ({
 // ── LivePulseRail — sentinel stub ─────────────────────────────────────────────
 // Renders a Text node inside ListHeaderComponent so we can confirm the header
 // content appears INSIDE the FlatList ScrollView.
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/LivePulseRail', () => ({
   LivePulseRail: () => {
     const { Text } = require('react-native');
@@ -132,17 +146,29 @@ jest.mock('../../../src/components/LivePulseRail', () => ({
 }));
 
 // ── Other heavy UI sub-components ─────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PulseFits',               () => ({ FitsCard: () => null, FlexibleStrip: () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PulseFeedCard',           () => ({ PulseFeedCard:          () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PulseCreate',             () => ({ PulseFilterSheet: () => null, UnifiedPostComposer: () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/primitives',              () => ({ TravelEmptyState:        () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PostCard',                () => ({ PostCard:                () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/LocationPermissionPrompt',() => ({ LocationPermissionPrompt: () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ManualCityPicker',        () => ({ ManualCityPicker:        () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/layover/LayoverModeSheet', () => ({ LayoverModeSheet:       () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/layover/ActiveLayoverPill',() => ({ ActiveLayoverPill:      () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PeopleYouMayKnow',        () => ({ PeopleYouMayKnow:        () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/CircleCompassSuggestions', () => ({ CircleCompassSuggestions: () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ui',                      () => ({ Chip:                    () => null }));
 
 // ── Tree-walking helpers ───────────────────────────────────────────────────────

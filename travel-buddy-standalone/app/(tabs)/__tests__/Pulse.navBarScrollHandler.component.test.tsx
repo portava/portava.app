@@ -43,6 +43,7 @@ jest.mock('react-native', () => {
 });
 
 // ── expo-router ───────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
   useLocalSearchParams: () => ({}),
@@ -60,6 +61,7 @@ jest.mock('expo-router', () => ({
 // Pulse passes it directly as onScroll to the main FlatList, so an identity
 // check in the toJSON props is reliable.
 const mockNavScrollHandler = jest.fn();
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
   useNavBarScrollHandler: () => mockNavScrollHandler,
   NavBarFiller: () => null,
@@ -67,6 +69,7 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
 }));
 
 // ── Location ──────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
     resolvedLocation: null,
@@ -86,6 +89,7 @@ jest.mock('../../../src/context/LocationContext', () => ({
 }));
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useCityPulse', () => ({
   useCityPulse: () => ({
     buckets: { fitsAvailability: [], openNearby: [], buddies: [] },
@@ -93,6 +97,7 @@ jest.mock('../../../src/hooks/useCityPulse', () => ({
   }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/usePulseFeed', () => ({
   usePulseFeed: () => ({
     items: [],
@@ -108,6 +113,7 @@ jest.mock('../../../src/hooks/usePulseFeed', () => ({
   }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/usePosts', () => ({
   useFollowingFeed: () => ({
     data: [],
@@ -120,100 +126,116 @@ jest.mock('../../../src/hooks/usePosts', () => ({
   }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useLivePulse', () => ({
   useLivePulse: () => ({ events: [], loading: false, refresh: jest.fn() }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useRentABuddyFlag', () => ({
   useRentABuddyFlag: () => ({ enabled: false }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useCircleFlag', () => ({
   useCircleFlag: () => ({ enabled: false }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useRankOutcome', () => ({
   fireRankOutcome: jest.fn(),
 }));
 
 // ── Services / libs ───────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/intelligence', () => ({
   fetchPreferences: jest.fn().mockResolvedValue({ ok: false }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/lib/commentCountStore', () => ({
   getCommentCountSnapshot: jest.fn().mockReturnValue([]),
   subscribeCommentCount: jest.fn().mockReturnValue(() => {}),
 }));
 
 // ── Components ────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('@/components/ScreenErrorBoundary', () => ({
   ScreenErrorBoundary: ({ children }: any) => children,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PulseHeader', () => ({
   PulseHeader: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PulseFits', () => ({
   FitsCard: () => null,
   FlexibleStrip: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PulseFeedCard', () => ({
   PulseFeedCard: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PulseCreate', () => ({
   PulseFilterSheet: () => null,
   UnifiedPostComposer: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ui', () => ({
   Chip: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/primitives', () => ({
   TravelEmptyState: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PostCard', () => ({
   PostCard: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ManualCityPicker', () => ({
   ManualCityPicker: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/layover/LayoverModeSheet', () => ({
   LayoverModeSheet: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/layover/ActiveLayoverPill', () => ({
   ActiveLayoverPill: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PeopleYouMayKnow', () => ({
   PeopleYouMayKnow: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/CircleCompassSuggestions', () => ({
   CircleCompassSuggestions: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/LivePulseRail', () => ({
   LivePulseRail: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/LocationPermissionPrompt', () => ({
   LocationPermissionPrompt: () => null,
 }));
 
-jest.mock('lucide-react-native', () => ({
-  Plane: () => null,
-  Users: () => null,
-  MapPin: () => null,
-}));
 
 import Pulse from '../index.tsx';
 

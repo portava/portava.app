@@ -11,11 +11,13 @@ import React from 'react';
 import { render, act } from '@testing-library/react-native';
 
 // ── Safe-area ─────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
 }));
 
 // ── expo-router ───────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
   useLocalSearchParams: () => ({ id: 'trip-test-1' }),
@@ -38,26 +40,31 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
 }));
 
 // ── Bottom inset ──────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useBottomInset', () => ({
   useBottomInset: () => 130,
 }));
 
 // ── Session ───────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/SessionContext', () => ({
   useSession: () => ({ configured: true, isAuthed: true, userId: 'u1' }),
 }));
 
 // ── Rent-a-buddy flag ─────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useRentABuddyFlag', () => ({
   useRentABuddyFlag: () => ({ enabled: false }),
 }));
 
 // ── Stamp toast ───────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/stamps/StampEarnedToast', () => ({
   useStampToast: () => ({ checkForNewStamps: jest.fn() }),
 }));
 
 // ── Backend hooks — data inline in factory to avoid jest.mock hoisting issue ──
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useBackend', () => ({
   useTrip: () => ({
     data: {
@@ -84,19 +91,24 @@ jest.mock('../../../src/hooks/useBackend', () => ({
 }));
 
 // ── Services ──────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/safeReturn', () => ({
   getActiveSession: jest.fn().mockResolvedValue({ session: null }),
 }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/messaging', () => ({
   openTripChat: jest.fn(),
 }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/memories', () => ({
   getTripMemory:    jest.fn().mockResolvedValue({ ok: false }),
   createTripMemory: jest.fn(),
 }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/events', () => ({
   getEventsNearTrip: jest.fn().mockResolvedValue({ ok: false }),
 }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/trips', () => ({
   updateTrip:       jest.fn(),
   createInviteLink: jest.fn(),
@@ -104,6 +116,7 @@ jest.mock('../../../src/services/trips', () => ({
 
 // ── ScreenErrorBoundary — passthrough ─────────────────────────────────────────
 // @/ resolves to package root via jest.config.js moduleNameMapper.
+// NOTE: intentional stub — not under test here.
 jest.mock('@/components/ScreenErrorBoundary', () => ({
   ScreenErrorBoundary: ({ children }: any) => children,
 }));
@@ -124,19 +137,31 @@ jest.mock('../../../src/components/TripPage', () => ({
   TripCrewSection:            () => null,
   TripCircle:                 () => null,
 }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/safeReturn/ActiveSafeReturnCard',  () => ({ ActiveSafeReturnCard:   () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/safeReturn/SafeReturnSetupSheet',  () => ({ SafeReturnSetupSheet:   () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/safeReturn/MissedCheckinPrompt',   () => ({ MissedCheckinPrompt:    () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/TripPlanSection',                  () => ({ TripPlanSection:         () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/TripAvailabilitySection',          () => ({ TripAvailabilitySection: () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ReviewsSection',                   () => ({ ReviewsSection:          () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/DailyBriefCard',                   () => ({ DailyBriefCard:          () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ConciergeCommandBar',              () => ({
   ConciergeCommandBar: require('react').forwardRef((_p: any, _r: any) => null),
 }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/MeetupCreationSheet',  () => ({ MeetupCreationSheet:  () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/TripInviteSheet',      () => ({ TripInviteSheet:      () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/TripInviteLinksSheet', () => ({ TripInviteLinksSheet: () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/layover/LayoverModeSheet', () => ({ LayoverModeSheet: () => null }));
 
 import TripDetail from '../[id].tsx';

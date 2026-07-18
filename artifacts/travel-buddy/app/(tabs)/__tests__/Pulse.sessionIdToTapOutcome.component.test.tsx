@@ -41,6 +41,7 @@ jest.mock('react-native', () => {
 });
 
 // ── expo-router ───────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
   useLocalSearchParams: () => ({}),
@@ -67,12 +68,14 @@ jest.mock('react-native-reanimated', () => {
 });
 
 // ── Safe-area ─────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
   SafeAreaProvider: ({ children }: any) => children,
 }));
 
 // ── Nav-bar collapse ──────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
   useNavBarScrollHandler: () => jest.fn(),
   NavBarFiller: () => null,
@@ -80,6 +83,7 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
 }));
 
 // ── Location ──────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
     resolvedLocation: null,
@@ -110,6 +114,7 @@ const mockFeedItem = {
   createdAt: '2026-01-01T00:00:00Z',
 };
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/usePulseFeed', () => ({
   usePulseFeed: () => ({
     items: [
@@ -134,6 +139,7 @@ jest.mock('../../../src/hooks/usePulseFeed', () => ({
   }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/usePosts', () => ({
   useFollowingFeed: () => ({
     data: [],
@@ -146,6 +152,7 @@ jest.mock('../../../src/hooks/usePosts', () => ({
   }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useCityPulse', () => ({
   useCityPulse: () => ({
     buckets: { fitsAvailability: [], openNearby: [], buddies: [] },
@@ -153,14 +160,17 @@ jest.mock('../../../src/hooks/useCityPulse', () => ({
   }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useLivePulse', () => ({
   useLivePulse: () => ({ events: [], loading: false, refresh: jest.fn() }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useRentABuddyFlag', () => ({
   useRentABuddyFlag: () => ({ enabled: false }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useCircleFlag', () => ({
   useCircleFlag: () => ({ enabled: false }),
 }));
@@ -169,88 +179,101 @@ jest.mock('../../../src/hooks/useCircleFlag', () => ({
 // This is the key mock: we intercept the module-level helper that
 // index.tsx calls on onTouchStart to verify sessionId is forwarded.
 const mockFireRankOutcome = jest.fn();
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useRankOutcome', () => ({
   fireRankOutcome: (...args: any[]) => mockFireRankOutcome(...args),
 }));
 
 // ── Services / libs ───────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/intelligence', () => ({
   fetchPreferences: jest.fn().mockResolvedValue({ ok: false }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/lib/commentCountStore', () => ({
   getCommentCountSnapshot: jest.fn().mockReturnValue([]),
   subscribeCommentCount: jest.fn().mockReturnValue(() => {}),
 }));
 
 // ── Components ────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('@/components/ScreenErrorBoundary', () => ({
   ScreenErrorBoundary: ({ children }: any) => children,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PulseHeader', () => ({
   PulseHeader: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PulseFits', () => ({
   FitsCard: () => null,
   FlexibleStrip: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PulseFeedCard', () => ({
   PulseFeedCard: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PulseCreate', () => ({
   PulseFilterSheet: () => null,
   UnifiedPostComposer: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ui', () => ({
   Chip: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/primitives', () => ({
   TravelEmptyState: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PostCard', () => ({
   PostCard: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ManualCityPicker', () => ({
   ManualCityPicker: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/layover/LayoverModeSheet', () => ({
   LayoverModeSheet: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/layover/ActiveLayoverPill', () => ({
   ActiveLayoverPill: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PeopleYouMayKnow', () => ({
   PeopleYouMayKnow: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/CircleCompassSuggestions', () => ({
   CircleCompassSuggestions: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/LivePulseRail', () => ({
   LivePulseRail: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/LocationPermissionPrompt', () => ({
   LocationPermissionPrompt: () => null,
 }));
 
-jest.mock('lucide-react-native', () => ({
-  Plane: () => null,
-  Users: () => null,
-  MapPin: () => null,
-}));
 
 import Pulse from '../index.tsx';
 

@@ -33,6 +33,7 @@ import FullScreenMapScreen from '../index.tsx';
 // ── expo-router ────────────────────────────────────────────────────────────────
 // The moduleNameMapper wires expo-router to the shared stub; override only the
 // parts this test needs (useLocalSearchParams returning mode=passport).
+// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), replace: jest.fn(), back: jest.fn(), navigate: jest.fn(), dismiss: jest.fn() },
   useRouter:            () => ({ push: jest.fn(), back: jest.fn() }),
@@ -59,6 +60,7 @@ jest.mock('expo-router', () => ({
 }));
 
 // ── react-native-safe-area-context ─────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
 }));
@@ -67,6 +69,7 @@ jest.mock('react-native-safe-area-context', () => ({
 // getPassportMap is the seam under test; everything else is a no-op.
 import { getPassportMap } from '../../../src/services/passportStamps.ts';
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/passportStamps', () => ({
   getPassportMap: jest.fn(),
   _setTestAuthToken: jest.fn(),
@@ -75,11 +78,13 @@ jest.mock('../../../src/services/passportStamps', () => ({
 const mockGetPassportMap = getPassportMap as jest.Mock;
 
 // ── discovery service ──────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/discovery', () => ({
   getDiscoveryPlaces: jest.fn().mockResolvedValue({ ok: false }),
 }));
 
 // ── LocationContext ────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
     locationState: {
@@ -137,6 +142,7 @@ jest.mock('../../../src/components/map/AskCompassBar', () => ({
 // ── COUNTRY_CENTROIDS ──────────────────────────────────────────────────────────
 // Provide a known entry for the test marker's country so buildPassportEntities
 // can produce a stamp entity from the success response.
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/lib/countryCentroids', () => ({
   COUNTRY_CENTROIDS: {
     Philippines: [12.8797, 121.774],

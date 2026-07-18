@@ -29,27 +29,33 @@ import ActivityCenter from '../notifications.tsx';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
+// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../src/hooks/useNavBarCollapse', () => ({
   useNavBarScrollHandler: () => () => undefined,
   NavBarFiller: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../src/hooks/usePosts', () => ({
   FEED_FOCUS_TTL_MS: 0,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../src/hooks/useNotifications', () => ({
   useNotifications: jest.fn(),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../src/hooks/useRequests', () => ({
   useRequests: jest.fn(),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../src/services/requests', () => ({
   acceptRequest:  jest.fn(),
   declineRequest: jest.fn(),
@@ -72,6 +78,7 @@ jest.mock('../../src/components/interaction/UserNameButton', () => {
   };
 });
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../src/lib/displayIdentity', () => ({
   secondaryIdentityText: () => null,
 }));

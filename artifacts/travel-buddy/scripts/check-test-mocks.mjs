@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Guards component tests against crash-prone jest.mock stand-ins.
+ * Guards all jest-run test files against crash-prone jest.mock stand-ins.
  *
  * 1. Object-literal factories — `jest.mock('mod', () => ({ ... }))` — must
  *    either spread `jest.requireActual(...)` or be preceded (within a few
@@ -12,6 +12,9 @@
  *    the global Proxy mock (src/__mocks__/lucide-react-native.tsx, wired via
  *    jest.config moduleNameMapper) already covers every icon and never drifts.
  *
+ * Scans every file matched by jest.config testMatch (src/ and app/, all
+ * *.test.* files — not just component tests).
+ *
  * Mirrors the equivalent guard in travel-buddy-standalone.
  */
 
@@ -19,7 +22,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import process from 'node:process';
 
-const SCAN_ROOTS = ['src'];
+const SCAN_ROOTS = ['src', 'app'];
 const NOTE_LOOKBEHIND_LINES = 4;
 
 // Start of an object-literal factory: jest.mock('mod', () => ({
@@ -27,7 +30,7 @@ const OBJECT_LITERAL_MOCK =
   /jest\.mock\(\s*['"]([^'"]+)['"]\s*,\s*(?:async\s*)?\(\s*\)\s*=>\s*\(\{/;
 const LUCIDE_MOCK = /jest\.mock\(\s*['"]lucide-react-native['"]/;
 
-function collectComponentTests(dir, out = []) {
+function collectTestFiles(dir, out = []) {
   let entries;
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -37,8 +40,8 @@ function collectComponentTests(dir, out = []) {
   for (const entry of entries) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      collectComponentTests(full, out);
-    } else if (/\.component\.test\.[jt]sx?$/.test(entry.name)) {
+      collectTestFiles(full, out);
+    } else if (/\.test\.[jt]sx?$/.test(entry.name)) {
       out.push(full);
     }
   }
@@ -72,7 +75,7 @@ function hasNoteNearby(lines, lineIdx) {
 const violations = [];
 
 for (const root of SCAN_ROOTS) {
-  for (const file of collectComponentTests(root)) {
+  for (const file of collectTestFiles(root)) {
     const src = readFileSync(file, 'utf8');
     const lines = src.split('\n');
 
@@ -117,5 +120,5 @@ if (violations.length > 0) {
 }
 
 console.log(
-  `lint:mocks — no crash-prone jest.mock stand-ins found in ${SCAN_ROOTS.join(', ')} component tests.`,
+  `lint:mocks — no crash-prone jest.mock stand-ins found in ${SCAN_ROOTS.join(', ')} (all jest test files).`,
 );

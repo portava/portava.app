@@ -19,6 +19,7 @@ import DiscoveryHub from '../discovery.tsx';
 
 // ── expo-router ───────────────────────────────────────────────────────────────
 // Override the moduleNameMapper entry so we can capture the router.push spy.
+// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
   router: {
     push:     jest.fn(),
@@ -51,6 +52,7 @@ jest.mock('expo-router', () => ({
 }));
 
 // ── react-native-safe-area-context ────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
 }));
@@ -61,15 +63,18 @@ jest.mock('../../../src/services/hashtag', () => ({
   getTrendingHashtags: jest.fn().mockResolvedValue({ ok: true, data: { trending: [] } }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/discovery', () => ({
   getDiscoveryCategoryCounts:      jest.fn().mockResolvedValue({}),
   getDiscoveryCategoryCountsBatch: jest.fn().mockResolvedValue({}),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/trips', () => ({
   listMyTrips: jest.fn().mockResolvedValue([]),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/rentABuddy', () => ({
   getAvailableNow: jest.fn().mockResolvedValue({ ok: false }),
 }));
@@ -108,6 +113,7 @@ let mockLocationState: {
   coords: { lat: number; lng: number } | null;
 } = { place: { city: null, country: null }, coords: null };
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
     locationState:  mockLocationState,
@@ -127,6 +133,7 @@ jest.mock('../../../src/context/LocationContext', () => ({
 }));
 
 // ── PlanPickerController ──────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PlanPickerController', () => ({
   usePlanPicker: () => ({ open: jest.fn() }),
 }));
@@ -136,18 +143,29 @@ jest.mock('../../../src/components/PlanPickerController', () => ({
 // jest-expo runner. Stub as null renders to isolate the Map shortcut logic.
 const Null = () => null;
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/layover/LayoverModeSheet',    () => ({ LayoverModeSheet:    Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/DiscoveryCategoryTab', () => ({ DiscoveryCategoryTab: Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/PlaceDetailSheet',  () => ({ PlaceDetailSheet:  Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/ForYouTab',         () => ({ ForYouTab:         Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/DestinationBar',    () => ({ DestinationBar:    Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/compass/CompassBuddyRow',     () => ({ CompassBuddyRow:   Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ManualCityPicker',            () => ({ ManualCityPicker:  Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/FollowingHighlightsStrip',    () => ({ FollowingHighlightsStrip: Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/RouteBuilderSheet',           () => ({ RouteBuilderSheet: Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/SubmitPlaceSheet',  () => ({ SubmitPlaceSheet:  Null }));
 
 // SectionErrorBoundary must pass children through so nested content renders.
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/SectionErrorBoundary', () => ({
   SectionErrorBoundary: ({ children }: { children: React.ReactNode }) => children,
 }));

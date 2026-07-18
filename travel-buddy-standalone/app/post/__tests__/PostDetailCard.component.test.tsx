@@ -22,44 +22,52 @@ import { render, screen, waitFor } from '@testing-library/react-native';
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
+// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
 // Mock expo-router so useLocalSearchParams returns a predictable id.
+// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({ id: 'post-abc' }),
   router: { push: jest.fn(), back: jest.fn() },
 }));
 
 // Mock SessionContext — the screen only needs userId.
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/SessionContext', () => ({
   useSession: () => ({ userId: 'user-1', isAuthed: true }),
 }));
 
 // Mock the posts service — tests control the resolved PostRow.
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/posts', () => ({
   getPostById: jest.fn(),
 }));
 
 // Mock nav-bar collapse — NavBarFiller and the scroll handler aren't relevant
 // to media-rendering behaviour.
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
   NavBarFiller: () => null,
   useNavBarScrollHandler: () => () => undefined,
 }));
 
 // Mock CommentsSection — not under test.
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/CommentsSheet', () => ({
   CommentsSection: () => null,
 }));
 
 // Mock ReportPostSheet — not under test.
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ReportPostSheet', () => ({
   ReportPostSheet: () => null,
 }));
 
 // Mock ScreenHeader — not under test.
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ScreenHeader', () => ({
   ScreenHeader: () => null,
 }));
@@ -76,6 +84,7 @@ jest.mock('../../../src/components/ui/KeyboardSafeView', () => {
 });
 
 // Mock commentCountStore — no side-effects needed.
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/lib/commentCountStore', () => ({
   emitCommentCount: jest.fn(),
 }));

@@ -21,6 +21,7 @@ import React from 'react';
 import { render, act } from '@testing-library/react-native';
 
 // ── Safe-area ─────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
 }));
@@ -43,6 +44,7 @@ jest.mock('react-native-reanimated', () => {
 // mockSearchParams is mutable so individual test suites can set the active
 // category without needing a separate module mock per describe block.
 let mockSearchParams: Record<string, string> = {};
+// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
   useLocalSearchParams: () => mockSearchParams,
@@ -60,6 +62,7 @@ jest.mock('expo-router', () => ({
 // passes it directly as onScroll to ForYouTab / DiscoveryCategoryTab, so
 // identity comparison is reliable.
 const mockScrollHandlerSpy = jest.fn();
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
   useNavBarScrollHandler: () => mockScrollHandlerSpy,
   NavBarFiller: () => null,
@@ -67,15 +70,18 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
 }));
 
 // ── Bottom inset ──────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useBottomInset', () => ({
   useBottomInset: () => 130,
 }));
 
 // ── Session + location ────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/SessionContext', () => ({
   useSession: () => ({ configured: true, isAuthed: true, userId: 'u1' }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
     resolvedLocation: {
@@ -100,34 +106,41 @@ jest.mock('../../../src/context/LocationContext', () => ({
 }));
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useRentABuddyFlag', () => ({
   useRentABuddyFlag: () => ({ enabled: false }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useFollowingHighlights', () => ({
   useFollowingHighlights: () => ({ highlights: [], loading: false }),
 }));
 
 // ── Services ──────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/hashtag', () => ({
   getTrendingHashtags: jest.fn().mockResolvedValue({ ok: false }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/discovery', () => ({
   getDiscoveryCategoryCounts:      jest.fn().mockResolvedValue({ ok: false }),
   getDiscoveryCategoryCountsBatch: jest.fn().mockResolvedValue({ ok: false }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/trips', () => ({
   listMyTrips: jest.fn().mockResolvedValue({ ok: false }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/rentABuddy', () => ({
   getAvailableNow: jest.fn().mockResolvedValue({ ok: false }),
 }));
 
 // ── ForYouTab stub — captures onScroll prop ───────────────────────────────────
 let capturedOnScroll: ((...args: any[]) => any) | null = null;
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/ForYouTab', () => ({
   ForYouTab: ({ onScroll }: { onScroll?: (...args: any[]) => any }) => {
     capturedOnScroll = onScroll ?? null;
@@ -140,6 +153,7 @@ jest.mock('../../../src/components/discovery/ForYouTab', () => ({
 // onScroll={navScrollHandler}. This stub captures what is actually passed so
 // tests can assert identity against the spy.
 let capturedCategoryOnScroll: ((...args: any[]) => any) | null = null;
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/DiscoveryCategoryTab', () => ({
   DiscoveryCategoryTab: ({ onScroll }: { onScroll?: (...args: any[]) => any }) => {
     capturedCategoryOnScroll = onScroll ?? null;
@@ -148,17 +162,27 @@ jest.mock('../../../src/components/discovery/DiscoveryCategoryTab', () => ({
 }));
 
 // ── Sub-components ────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/PlaceDetailSheet',        () => ({ PlaceDetailSheet:        () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/DestinationBar',          () => ({ DestinationBar:          () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/SubmitPlaceSheet',        () => ({ SubmitPlaceSheet:        () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/SectionErrorBoundary',    () => ({
   SectionErrorBoundary: ({ children }: any) => children,
 }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/compass/CompassBuddyRow',           () => ({ CompassBuddyRow:          () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ManualCityPicker',                  () => ({ ManualCityPicker:         () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/layover/LayoverModeSheet',          () => ({ LayoverModeSheet:         () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/RouteBuilderSheet',                 () => ({ RouteBuilderSheet:        () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/FollowingHighlightsStrip',          () => ({ FollowingHighlightsStrip: () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PlanPickerController',              () => ({
   usePlanPicker: () => ({ open: jest.fn(), close: jest.fn(), PlanPickerSheet: () => null }),
 }));

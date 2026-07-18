@@ -20,11 +20,13 @@ import React from 'react';
 import { render, act } from '@testing-library/react-native';
 
 // ── Safe-area ─────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
 }));
 
 // ── expo-router ───────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
   useFocusEffect: (cb: () => (() => void) | void) => {
@@ -45,11 +47,13 @@ jest.mock('../../../src/hooks/useBottomInset', () => ({
 }));
 
 // ── Session ───────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/SessionContext', () => ({
   useSession: jest.fn(() => ({ configured: true, isAuthed: true, userId: 'u1' })),
 }));
 
 // ── Messaging hooks ───────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useMessaging', () => ({
   useMyThreads: () => ({ data: [], loading: false, error: null, reload: jest.fn() }),
   useIncomingMessageRequests: () => ({
@@ -63,29 +67,35 @@ jest.mock('../../../src/hooks/useMessaging', () => ({
 }));
 
 // ── Block context + service ────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/BlockedIdsContext', () => ({
   useBlockedIds: () => ({ blockerIds: new Set() }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/blocks', () => ({
   getBlockList: jest.fn().mockResolvedValue({ ok: true, data: [] }),
   blockUser: jest.fn(),
 }));
 
 // ── Reports service ───────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/reports', () => ({
   reportContent: jest.fn(),
 }));
 
 // ── Highlight ring ────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/HighlightRing', () => ({
   HighlightRing: ({ children }: any) => children,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/HighlightViewer', () => ({
   HighlightViewer: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useHighlightRingState', () => ({
   useHighlightRingState: () => null,
 }));
@@ -114,17 +124,20 @@ jest.mock('../../../src/components/ui/KeyboardSafeView', () => {
 });
 
 // ── Compass (focus-event side-effect) ─────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/compass', () => ({
   postCompassFrontloadEvent: jest.fn().mockResolvedValue(undefined),
 }));
 
 // ── Display identity ──────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/lib/displayIdentity', () => ({
   primaryIdentityText: ({ handle }: any) => handle ?? 'Unknown',
   secondaryIdentityText: () => null,
 }));
 
 // ── Circle card preview ───────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/CircleStatusCardMessage.logic', () => ({
   circleCardInboxPreview: () => '',
 }));

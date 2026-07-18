@@ -20,6 +20,7 @@ import React from 'react';
 import { render, act, fireEvent } from '@testing-library/react-native';
 
 // ── Safe-area ─────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
 }));
@@ -30,6 +31,7 @@ jest.mock('react-native-safe-area-context', () => ({
 // ── Nav-bar collapse ──────────────────────────────────────────────────────────
 // makeMutable() is called at module scope in useNavBarCollapse — not supported
 // under Jest, so the entire module is replaced with lightweight stubs.
+// NOTE: intentional stub — not under test here.
 jest.mock('../../src/hooks/useNavBarCollapse', () => ({
   useNavBarScrollHandler: () => () => undefined,
   NavBarFiller: () => null,
@@ -41,6 +43,7 @@ jest.mock('../../src/hooks/useNavBarCollapse', () => ({
 // tests can invoke it a second time to simulate navigation re-entry / deep links.
 let capturedFocusCallback: (() => (() => void) | void) | null = null;
 
+// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
   useFocusEffect: (cb: () => (() => void) | void) => {
@@ -55,21 +58,25 @@ jest.mock('expo-router', () => ({
 }));
 
 // ── usePosts — exports the focus-gate TTL constant ────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../src/hooks/usePosts', () => ({
   FEED_FOCUS_TTL_MS: 0,
 }));
 
 // ── useNotifications ──────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../src/hooks/useNotifications', () => ({
   useNotifications: jest.fn(),
 }));
 
 // ── useRequests ───────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../src/hooks/useRequests', () => ({
   useRequests: jest.fn(),
 }));
 
 // ── Request services ──────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../src/services/requests', () => ({
   acceptRequest:  jest.fn(),
   declineRequest: jest.fn(),
@@ -94,6 +101,7 @@ jest.mock('../../src/components/interaction/UserNameButton', () => {
 });
 
 // ── Display identity ──────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../src/lib/displayIdentity', () => ({
   secondaryIdentityText: () => null,
 }));

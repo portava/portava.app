@@ -13,6 +13,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import DiscoveryHub from '../discovery.tsx';
 
 // ── expo-router ───────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
   router: {
     push:     jest.fn(),
@@ -45,39 +46,47 @@ jest.mock('expo-router', () => ({
 }));
 
 // ── react-native-safe-area-context ────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
 }));
 
 // ── Services ──────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/hashtag', () => ({
   getTrendingHashtags: jest.fn().mockResolvedValue({ ok: true, data: { trending: [] } }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/discovery', () => ({
   getDiscoveryCategoryCounts:      jest.fn().mockResolvedValue({}),
   getDiscoveryCategoryCountsBatch: jest.fn().mockResolvedValue({}),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/trips', () => ({
   listMyTrips: jest.fn().mockResolvedValue([]),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/rentABuddy', () => ({
   getAvailableNow: jest.fn().mockResolvedValue({ ok: false }),
 }));
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
   useNavBarScrollHandler: () => () => {},
   navBarProgress:         { value: 0 },
   NAV_BAR_FILLER_HEIGHT:  96,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useBottomInset', () => ({
   useBottomInset: () => 130,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useFollowingHighlights', () => ({
   useFollowingHighlights: () => ({
     users:             [],
@@ -87,6 +96,7 @@ jest.mock('../../../src/hooks/useFollowingHighlights', () => ({
 }));
 
 // ── Contexts ──────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/SessionContext', () => ({
   useSession: () => ({ userId: 'user-test-1', isAuthed: true }),
 }));
@@ -97,6 +107,7 @@ let mockLocationState: {
   coords: { lat: number; lng: number } | null;
 } = { place: { city: null, country: null }, coords: null };
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
     locationState:   mockLocationState,
@@ -116,6 +127,7 @@ jest.mock('../../../src/context/LocationContext', () => ({
 }));
 
 // ── PlanPickerController ──────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PlanPickerController', () => ({
   usePlanPicker: () => ({ open: jest.fn() }),
 }));
@@ -123,17 +135,28 @@ jest.mock('../../../src/components/PlanPickerController', () => ({
 // ── Heavy sub-components ──────────────────────────────────────────────────────
 const Null = () => null;
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/layover/LayoverModeSheet',        () => ({ LayoverModeSheet:      Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/DiscoveryCategoryTab',  () => ({ DiscoveryCategoryTab:  Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/PlaceDetailSheet',      () => ({ PlaceDetailSheet:      Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/ForYouTab',             () => ({ ForYouTab:             Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/DestinationBar',        () => ({ DestinationBar:        Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/compass/CompassBuddyRow',         () => ({ CompassBuddyRow:       Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ManualCityPicker',                () => ({ ManualCityPicker:      Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/FollowingHighlightsStrip',        () => ({ FollowingHighlightsStrip: Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/RouteBuilderSheet',               () => ({ RouteBuilderSheet:     Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/SubmitPlaceSheet',      () => ({ SubmitPlaceSheet:      Null }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/SectionErrorBoundary', () => ({
   SectionErrorBoundary: ({ children }: { children: React.ReactNode }) => children,
 }));

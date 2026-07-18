@@ -15,11 +15,13 @@ import React from 'react';
 import { render, act } from '@testing-library/react-native';
 
 // ── Safe-area ─────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
 }));
 
 // ── expo-router ───────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
   useFocusEffect: (cb: () => (() => void) | void) => {
@@ -42,29 +44,35 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
 }));
 
 // ── Session + backend hooks ───────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/SessionContext', () => ({
   useSession: () => ({ configured: true, isAuthed: true, userId: 'u1' }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useBackend', () => ({
   useMyTrips: () => ({ data: [], loading: false, error: null, reload: jest.fn() }),
   usePendingTripInvites: () => ({ invites: [], reload: jest.fn() }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useMessaging', () => ({
   useUnreadCounts: () => ({ meetups: 0 }),
 }));
 
 // ── Services ──────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/compass', () => ({
   postCompassFrontloadEvent: jest.fn().mockResolvedValue(undefined),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/trips', () => ({
   acceptTripInvite:  jest.fn(),
   declineTripInvite: jest.fn(),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/lib/inviteCardGoneHandler', () => ({
   classifyInviteAcceptError: jest.fn().mockReturnValue('unknown'),
 }));
@@ -72,6 +80,7 @@ jest.mock('../../../src/lib/inviteCardGoneHandler', () => ({
 // ── ScreenErrorBoundary — passthrough ─────────────────────────────────────────
 // trips.tsx imports from @/components/ScreenErrorBoundary (alias).
 // jest.config.js maps ^@/(.*) → <rootDir>/$1 so this key resolves correctly.
+// NOTE: intentional stub — not under test here.
 jest.mock('@/components/ScreenErrorBoundary', () => ({
   ScreenErrorBoundary: ({ children }: any) => children,
 }));
@@ -79,11 +88,15 @@ jest.mock('@/components/ScreenErrorBoundary', () => ({
 // ── EventsTabScreen — stub to prevent events.tsx dep chain loading ────────────
 // Imported by trips.tsx but only rendered when activeTab === 'events'.
 // Must be mocked to avoid unresolvable imports in events.tsx.
+// NOTE: intentional stub — not under test here.
 jest.mock('../events', () => ({ __esModule: true, default: () => null }));
 
 // ── Heavy sub-components ──────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/NotificationBell',         () => ({ NotificationBell:       () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/layover/LayoverModeSheet', () => ({ LayoverModeSheet:        () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ScreenHeader',             () => ({
   // Render Text so tree-walking can find the title.
   ScreenHeader: ({ title }: { title: string }) => {
@@ -91,6 +104,7 @@ jest.mock('../../../src/components/ScreenHeader',             () => ({
     return <Text testID="screen-header-title">{title}</Text>;
   },
 }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ui', () => ({ Stamp: () => null }));
 
 import Trips from '../trips.tsx';

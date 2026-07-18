@@ -41,36 +41,44 @@ jest.mock('expo-av', () => {
 
 // ── Supporting mocks (same as PostDetailCard.component.test.tsx) ──────────────
 
+// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({ id: 'post-abc' }),
   router: { push: jest.fn(), back: jest.fn() },
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/SessionContext', () => ({
   useSession: () => ({ userId: 'user-1', isAuthed: true }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/posts', () => ({
   getPostById: jest.fn(),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
   NavBarFiller: () => null,
   useNavBarScrollHandler: () => () => undefined,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/CommentsSheet', () => ({
   CommentsSection: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ReportPostSheet', () => ({
   ReportPostSheet: () => null,
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ScreenHeader', () => ({
   ScreenHeader: () => null,
 }));
@@ -85,6 +93,7 @@ jest.mock('../../../src/components/ui/KeyboardSafeView', () => {
   };
 });
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/lib/commentCountStore', () => ({
   emitCommentCount: jest.fn(),
 }));

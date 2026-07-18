@@ -78,15 +78,18 @@ jest.mock('../../../src/services/posts', () => ({
   getPendingPosts: jest.fn().mockResolvedValue({ ok: true, data: [] }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/rentABuddy', () => ({
   getMyBuddyProfile: jest.fn().mockResolvedValue({ ok: false }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/profile', () => ({
   uploadAvatar: jest.fn().mockResolvedValue({ ok: false }),
   uploadCover:  jest.fn().mockResolvedValue({ ok: false }),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/trips', () => ({
   listMyTrips: jest.fn().mockResolvedValue([]),
 }));
@@ -152,6 +155,7 @@ jest.mock('../../../src/components/passport/passportSections', () => ({
 }));
 
 // Expose only the 'destinations' tab so we can assert its label in isolation.
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/passport/passportTabs', () => ({
   resolveTabOrder: () => ['destinations'],
   TAB_LABELS: { destinations: 'Destinations' },
@@ -163,30 +167,54 @@ jest.mock('../../../src/components/passport/passportTabs', () => ({
 
 const Null = () => null;
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/NotificationBell',  () => ({ NotificationBell:  Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/HighlightViewer',   () => ({ HighlightViewer:   Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/HighlightComposer', () => ({ HighlightComposer: Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PostcardComposer',  () => ({ PostcardComposer:  Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/MemoriesTab',           () => ({ MemoriesTab:           Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/TripsTab',              () => ({ TripsTab:              Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/SuggestedMemoryModal',  () => ({ SuggestedMemoryModal:  Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/OwnerActionMenu',       () => ({ OwnerActionMenu:       Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ProfileCompletionCard', () => ({ ProfileCompletionCard: Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PassportShareCard',     () => ({ PassportShareCard:     Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PostcardsTab',          () => ({ PostcardsTab:          Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/StampsTab',             () => ({ StampsTab:             Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/MapTab', () => ({ MapTab: Null }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/passport/PassportIdentityCard',   () => ({ PassportIdentityCard: Null, PassportStatsRow: Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/passport/PassportDivider',         () => ({ PassportDivider:         Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/passport/PassportStampCollection', () => ({ PassportStampCollection: Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/passport/PassportStampsFullView',  () => ({ PassportStampsFullView:  Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/passport/PassportHighlightsStrip', () => ({ PassportHighlightsStrip: Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/passport/PassportAboutSection',    () => ({ PassportAboutSection:    Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/passport/PassportSafetySection',   () => ({ PassportSafetySection:   Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/passport/PassportSectionReorderSheet', () => ({ PassportSectionReorderSheet: Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/passport/PassportTabReorderSheet',     () => ({ PassportTabReorderSheet:     Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/compass/CompassStatusCard',          () => ({ CompassStatusCard:          Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/compass/CompassPassportSuggestions', () => ({ CompassPassportSuggestions: Null }));
 // NOTE: intentionally exhaustive — DestinationsTab imports map/location modules.
 jest.mock('../../../src/components/passport/DestinationsTab', () => ({ DestinationsTab: Null }));

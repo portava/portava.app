@@ -19,11 +19,13 @@ import React from 'react';
 import { render, act, waitFor } from '@testing-library/react-native';
 
 // ── Safe-area ─────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
 }));
 
 // ── expo-router ───────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
   useLocalSearchParams: () => ({ id: 'event-test-1' }),
@@ -42,6 +44,7 @@ jest.mock('expo-router', () => ({
 // mockNavScrollHandler is returned by useNavBarScrollHandler. event/[id].tsx
 // passes it directly as <ScrollView onScroll={navBarScrollHandler} …>.
 const mockNavScrollHandler = jest.fn();
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
   useNavBarScrollHandler: () => mockNavScrollHandler,
   NavBarFiller: () => null,
@@ -49,16 +52,19 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
 }));
 
 // ── Session ───────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/SessionContext', () => ({
   useSession: () => ({ userId: 'u1' }),
 }));
 
 // ── Rent-a-buddy flag ─────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useRentABuddyFlag', () => ({
   useRentABuddyFlag: () => ({ enabled: false }),
 }));
 
 // ── RSVP hook ─────────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useEventRsvp', () => ({
   useEventRsvp: () => ({
     busy: false,
@@ -73,6 +79,7 @@ jest.mock('../../../src/hooks/useEventRsvp', () => ({
 }));
 
 // ── getEvent — resolves immediately with minimal valid data ───────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/events', () => ({
   getEvent: jest.fn().mockResolvedValue({
     ok: true,
@@ -115,18 +122,22 @@ jest.mock('../../../src/services/events', () => ({
   shouldShowRentBuddyCta: jest.fn().mockReturnValue(false),
 }));
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/rentABuddy', () => ({
   checkCityAvailable: jest.fn().mockResolvedValue({ available: false }),
   getTopInCity:       jest.fn().mockResolvedValue({ ok: false }),
 }));
 
 // ── Lib helpers ───────────────────────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/lib/displayIdentity', () => ({
   primaryIdentityText: jest.fn().mockReturnValue('Test User'),
 }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/lib/waitlistState', () => ({
   getWaitlistUiState: jest.fn().mockReturnValue('not_on_waitlist'),
 }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/lib/eventRoleActions', () => ({
   getAttendeeActionSet: jest.fn().mockReturnValue({
     canRsvp: false, canLeave: false, canJoinWaitlist: false,
@@ -134,10 +145,15 @@ jest.mock('../../../src/lib/eventRoleActions', () => ({
 }));
 
 // ── Heavy sub-components — null stubs ─────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/HostDashboardPanel',   () => ({ HostDashboardPanel:  () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ReviewsSection',        () => ({ ReviewsSection:       () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ui/SharedVideoPlayer',  () => ({ SharedVideoPlayer:   () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ui',                    () => ({ Avatar: () => null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/BuddyCard',             () => ({ BuddyCard: () => null, BuddyCardSkeleton: () => null }));
 
 import EventDetailScreen from '../[id].tsx';

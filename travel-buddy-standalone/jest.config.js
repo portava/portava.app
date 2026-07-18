@@ -4,7 +4,7 @@ module.exports = {
   preset: 'jest-expo',
   testMatch: [
     '<rootDir>/src/**/*.component.test.{ts,tsx}',
-    '<rootDir>/app/**/*.component.test.{ts,tsx}',
+    '<rootDir>/app/**/*.test.{ts,tsx}',
   ],
   // React 19 + RNTL v14: sets globalThis.IS_REACT_ACT_ENVIRONMENT = true so
   // RNTL's act() saves/restores true instead of undefined between tests.
