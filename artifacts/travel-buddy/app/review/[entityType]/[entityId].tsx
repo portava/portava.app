@@ -3,14 +3,13 @@ import {
   ActivityIndicator,
   Alert,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { KeyboardSafeScrollView } from '../../../src/components/ui/KeyboardSafeView';
+import { KeyboardSafeView } from '../../../src/components/ui/KeyboardSafeView';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useLocalSearchParams } from 'expo-router';
 import {
@@ -265,8 +264,7 @@ export default function ReviewComposerScreen() {
   }
 
   return (
-    <KeyboardSafeScrollView>
-    <ScrollView style={s.container} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" onScroll={navBarScrollHandler} scrollEventThrottle={16}>
+    <KeyboardSafeView scrollViewProps={{ style: s.container, onScroll: navBarScrollHandler, scrollEventThrottle: 16 }} contentContainerStyle={s.content}>
 
       {/* Header */}
       <View style={s.header}>
@@ -371,8 +369,7 @@ export default function ReviewComposerScreen() {
 
       <NavBarFiller />
 
-    </ScrollView>
-    </KeyboardSafeScrollView>
+    </KeyboardSafeView>
   );
 }
 

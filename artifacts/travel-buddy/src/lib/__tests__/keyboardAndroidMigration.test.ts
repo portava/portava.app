@@ -41,17 +41,22 @@ function read(rel: string): string {
 describe('sign-in screen — migrated from no Android avoidance', () => {
   const src = read('app/(auth)/sign-in.tsx');
 
-  it('imports KeyboardSafeScrollView from the shared UI module', () => {
+  it('imports a KeyboardSafe wrapper from the shared UI module', () => {
+    // sign-in uses KeyboardSafeView (built-in ScrollView) rather than
+    // KeyboardSafeScrollView, because it has no separate outer scroll container.
+    // Both wrappers supply behavior="height" on Android via the same constant.
     assert.ok(
-      src.includes("KeyboardSafeScrollView") && src.includes('KeyboardSafeView'),
-      'sign-in must import KeyboardSafeScrollView from ui/KeyboardSafeView',
+      src.includes('KeyboardSafeView'),
+      'sign-in must import a KeyboardSafe* wrapper from ui/KeyboardSafeView',
     );
   });
 
-  it('renders <KeyboardSafeScrollView in its JSX — inputs are keyboard-safe on Android', () => {
+  it('renders a KeyboardSafe wrapper in its JSX — inputs are keyboard-safe on Android', () => {
+    // Accepts either KeyboardSafeView or KeyboardSafeScrollView — both wrappers
+    // provide behavior="height" on Android via the shared BEHAVIOR constant.
     assert.ok(
-      src.includes('<KeyboardSafeScrollView'),
-      'sign-in JSX must include <KeyboardSafeScrollView so Android gets behavior="height"',
+      src.includes('<KeyboardSafeView') || src.includes('<KeyboardSafeScrollView'),
+      'sign-in JSX must include a <KeyboardSafe* wrapper so Android gets behavior="height"',
     );
   });
 
@@ -60,7 +65,7 @@ describe('sign-in screen — migrated from no Android avoidance', () => {
     const hasRawKAV = src.includes('<KeyboardAvoidingView');
     assert.ok(
       !hasRawKAV,
-      'sign-in must not use a bare KeyboardAvoidingView; use KeyboardSafeScrollView instead',
+      'sign-in must not use a bare KeyboardAvoidingView; use KeyboardSafeView or KeyboardSafeScrollView instead',
     );
   });
 });

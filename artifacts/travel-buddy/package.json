@@ -19,7 +19,8 @@
     "test:stamps": "node --import tsx --test src/test/stampGracefulDegradation.test.ts",
     "test:component": "node scripts/check-test-mocks.mjs && jest --forceExit",
     "lint:imports": "node scripts/check-import-extensions.mjs",
-    "lint:mocks": "node scripts/check-test-mocks.mjs"
+    "lint:mocks": "node scripts/check-test-mocks.mjs",
+    "lint:ksv": "node scripts/check-ksv-inner-scroll.mjs"
   },
   "dependencies": {
     "@maplibre/maplibre-react-native": "11.3.6",
