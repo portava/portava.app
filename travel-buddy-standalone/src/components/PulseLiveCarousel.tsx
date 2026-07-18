@@ -107,6 +107,9 @@ function CarouselInner({
   const opacity = useSharedValue(1);
   const touching = useRef(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Stable ref so panResponder handlers (frozen at creation) can call the
+  // latest startInterval without stale-closure issues.
+  const startIntervalRef = useRef<() => void>(() => {});
 
   // Crossfade then switch card
   const switchTo = useCallback(
@@ -151,6 +154,11 @@ function CarouselInner({
     }, AUTO_ADVANCE_MS);
   }, [count, reduceMotion, opacity]);
 
+  // Keep the ref in sync so frozen panResponder handlers use the latest version.
+  useEffect(() => {
+    startIntervalRef.current = startInterval;
+  }, [startInterval]);
+
   // Pause auto-advance when the screen loses focus; restart (and reset to the
   // first card) when it regains focus.  This also handles app backgrounding
   // because Expo Router fires the blur callback when the app goes to background.
@@ -189,6 +197,9 @@ function CarouselInner({
             return next;
           });
           opacity.value = 1;
+          // Reset the interval so auto-advance fires AUTO_ADVANCE_MS after
+          // the swipe, not at the stale boundary.
+          startIntervalRef.current();
         }
       },
       onPanResponderTerminate: () => {
@@ -245,7 +256,7 @@ function CarouselInner({
           {ongoingEvents.map((_, i) => (
             <Pressable
               key={i}
-              onPress={() => switchTo(i)}
+              onPress={() => { switchTo(i); startInterval(); }}
               accessibilityRole="button"
               accessibilityLabel={`Go to event ${i + 1}`}
               hitSlop={8}
