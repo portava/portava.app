@@ -17,6 +17,7 @@ import { getCurrentGps, reverseGeocodeToPlace, checkLocationPermission } from '.
 import type { Place } from '../lib/location/placeTypes.ts';
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { buildManualCityState, buildManualCityPayload } from './activeLocation.state';
+import { _loadHomeFromProfile } from './activeLocation.homeProfile.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -127,54 +128,6 @@ async function fetchToken(): Promise<string | null> {
   return freshToken();
 }
 
-/**
- * Tier 3 fallback: load the user's profile home city and return it as a
- * minimal ActiveLocationState with source 'home'. Returns null when the
- * profile is unreachable or has no homeCity set.
- */
-async function loadHomeFromProfile(permissionStatus: PermissionStatus): Promise<ActiveLocationState | null> {
-  if (!isSupabaseConfigured) return null;
-  try {
-    const [base, token] = await Promise.all([apiBase(), fetchToken()]);
-    if (!token) return null;
-    const res = await fetch(`${base}/api/me/profile`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return null;
-    const profile = await res.json();
-    const homeCity: string | null = profile.homeCity ?? null;
-    if (!homeCity) return null;
-
-    const place: Place = {
-      id: `home-${homeCity.toLowerCase().replace(/\s+/g, '-')}`,
-      type: 'city',
-      name: homeCity,
-      displayName: profile.homeCountry ? `${homeCity}, ${profile.homeCountry}` : homeCity,
-      country: profile.homeCountry ?? null,
-      countryCode: null,
-      region: null,
-      city: homeCity,
-      district: null,
-      lat: null,
-      lng: null,
-      timezone: null,
-      source: 'manual',
-    };
-
-    return {
-      ok: true,
-      permissionStatus,
-      source: 'home',
-      freshness: 'stale', // Home city has no freshness guarantee
-      coords: null,
-      place,
-      lastUpdatedAt: null,
-      userMessage: null,
-    };
-  } catch {
-    return null;
-  }
-}
 
 async function saveLocationToApi(patch: object): Promise<void> {
   if (!isSupabaseConfigured) return;
@@ -290,7 +243,11 @@ export function useActiveLocation(): UseActiveLocationResult {
         });
       } else {
         // Tier 3: try profile home city as last resort
-        const homeState = await loadHomeFromProfile(permStatus);
+        const homeState = await _loadHomeFromProfile(permStatus, {
+          isConfigured: isSupabaseConfigured,
+          getToken: fetchToken,
+          getBase: apiBase,
+        });
         if (!alive) return;
         if (homeState) {
           setLocationState(homeState);
