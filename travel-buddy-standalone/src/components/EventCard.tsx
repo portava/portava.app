@@ -6,6 +6,7 @@ import type { CityEvent } from '../types/models.ts';
 import { Stamp, Avatar } from './ui.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { SaveButton } from './SaveButton.tsx';
+import { CITY_CENTROIDS } from '../lib/cityCentroids.ts';
 
 function timeLabel(iso: string) {
   const d = new Date(iso);
@@ -42,7 +43,15 @@ export function EventCard({ ev, dim, initialSaved }: {
             e.stopPropagation?.();
             // Entity IDs in useMapEntities are prefixed (e.g. "event:<uuid>").
             // Pass the prefixed form so the focusId snap matches exactly.
-            router.push(`/map?entityTypes=events&focusId=${encodeURIComponent(`event:${ev.id}`)}` as any);
+            // Also include the city's centroid coords so the map camera has an
+            // immediate starting position while useMapEntities is still loading.
+            const cityCoords = CITY_CENTROIDS[ev.city];
+            const coordParams = cityCoords
+              ? `&lat=${cityCoords[0]}&lng=${cityCoords[1]}`
+              : '';
+            router.push(
+              `/map?entityTypes=events&focusId=${encodeURIComponent(`event:${ev.id}`)}${coordParams}` as any,
+            );
           }}
           hitSlop={4}
         >
