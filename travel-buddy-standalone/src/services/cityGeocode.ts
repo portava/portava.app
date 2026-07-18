@@ -42,6 +42,19 @@ type StorageBlob = Record<string, StorageEntry>;
 
 const _cache = new Map<string, [number, number] | null>();
 
+// ── Prune guard ────────────────────────────────────────────────────────────────
+
+/**
+ * Tracks whether a prune pass has already been executed this app session.
+ * Reset to false only in tests via `_resetPruneGuardForTest()`.
+ */
+let _pruneDone = false;
+
+/** @internal — test helper only; not part of the public API. */
+export function _resetPruneGuardForTest(): void {
+  _pruneDone = false;
+}
+
 function makeCacheKey(city: string, country: string | null | undefined): string {
   return `${city.toLowerCase()}|${(country ?? '').toLowerCase()}`;
 }
@@ -81,14 +94,41 @@ async function writeEntry(
  * coordinates are available synchronously in subsequent lookups.
  *
  * Already-populated L1 entries are not overwritten.
+ *
+ * On the first call per app session, expired entries are also pruned from the
+ * AsyncStorage blob so it doesn't accumulate indefinitely.  Subsequent calls
+ * skip the prune step (guard flag) to avoid redundant writes.
  */
 export async function preloadGeocodeCache(storage: StorageLike): Promise<void> {
   const blob = await readBlob(storage);
   const now = Date.now();
+
+  let hasExpired = false;
+  const fresh: StorageBlob = {};
+
   for (const [key, entry] of Object.entries(blob)) {
-    if (_cache.has(key)) continue; // L1 already has this key
-    if (now - entry.cachedAt > CACHE_TTL_MS) continue; // expired — skip
-    _cache.set(key, entry.coords);
+    if (now - entry.cachedAt > CACHE_TTL_MS) {
+      // Expired — skip loading into L1 and exclude from the pruned blob.
+      hasExpired = true;
+      continue;
+    }
+    fresh[key] = entry;
+    if (!_cache.has(key)) {
+      _cache.set(key, entry.coords);
+    }
+  }
+
+  // Prune: rewrite storage without the expired entries, but only once per
+  // app session to avoid redundant writes on every map open.
+  if (!_pruneDone) {
+    _pruneDone = true;
+    if (hasExpired) {
+      try {
+        await storage.setItem(GEOCODE_STORAGE_KEY, JSON.stringify(fresh));
+      } catch {
+        // Storage failures must never break geocoding.
+      }
+    }
   }
 }
 
