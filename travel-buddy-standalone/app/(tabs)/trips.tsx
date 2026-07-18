@@ -205,66 +205,69 @@ function TripsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      {/* Header — hidden when Events tab is active (EventsTabScreen renders its own) */}
-      {activeTab === 'trips' && (
-        <ScreenHeader
-          title="Trips"
-          right={
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-              <NotificationBell />
-              <Pressable style={styles.newBtn} onPress={() => router.push('/trip/new')}>
-                <Plus size={16} color={color.onInk} />
-                <Text style={styles.newBtnText}>New trip</Text>
-              </Pressable>
-            </View>
-          }
-        />
-      )}
-
-      {/* Segmented tab control — Trips | Events */}
-      <View style={styles.segControl}>
-        {(['trips', 'events'] as const).map((tab) => (
-          <Pressable
-            key={tab}
-            style={[styles.segBtn, activeTab === tab && styles.segBtnActive]}
-            onPress={() => setActiveTab(tab)}
-          >
-            <Text style={[styles.segLabel, activeTab === tab && styles.segLabelActive]}>
-              {tab === 'trips' ? 'Trips' : 'Events'}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
-
       {activeTab === 'trips' ? (
         <>
           <ScrollView
             onScroll={navScrollHandler}
             scrollEventThrottle={16}
-            contentContainerStyle={{ padding: space.lg, gap: space.lg }}
+            contentContainerStyle={{ paddingBottom: 0 }}
           >
-            <MeetupsShortcut count={meetupCount} />
+            {/* ScreenHeader and segControl now scroll with content */}
+            <View style={{ paddingTop: insets.top }}>
+              <ScreenHeader
+                title="Trips"
+                right={
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+                    <NotificationBell />
+                    <Pressable style={styles.newBtn} onPress={() => router.push('/trip/new')}>
+                      <Plus size={16} color={color.onInk} />
+                      <Text style={styles.newBtnText}>New trip</Text>
+                    </Pressable>
+                  </View>
+                }
+              />
+            </View>
 
-            {/* Layover Mode quick-access banner */}
-            <Pressable style={styles.layoverBanner} onPress={() => setLayoverOpen(true)}>
-              <Plane size={16} color="#1565C0" />
-              <Text style={styles.layoverBannerText}>Got a layover? Plan activities, check safety & more →</Text>
-            </Pressable>
+            {/* Segmented tab control — Trips | Events */}
+            <View style={styles.segControl}>
+              {(['trips', 'events'] as const).map((tab) => (
+                <Pressable
+                  key={tab}
+                  style={[styles.segBtn, activeTab === tab && styles.segBtnActive]}
+                  onPress={() => setActiveTab(tab)}
+                >
+                  <Text style={[styles.segLabel, activeTab === tab && styles.segLabelActive]}>
+                    {tab === 'trips' ? 'Trips' : 'Events'}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
 
-            {live && <PendingInvitesSection onAccepted={reload} />}
-            {live ? (
-              <LiveTrips trips={realTrips} loading={loading} error={error} />
-            ) : (
-              <Pressable style={styles.signInCta} onPress={() => router.push('/(auth)/sign-in' as any)}>
-                <Text style={styles.signInCtaTitle}>Sign in to see your trips</Text>
-                <Text style={styles.signInCtaSub}>Log or plan a trip, track destinations, and share your travel story.</Text>
+            {/* Trip content */}
+            <View style={{ padding: space.lg, gap: space.lg }}>
+              <MeetupsShortcut count={meetupCount} />
+
+              {/* Layover Mode quick-access banner */}
+              <Pressable style={styles.layoverBanner} onPress={() => setLayoverOpen(true)}>
+                <Plane size={16} color="#1565C0" />
+                <Text style={styles.layoverBannerText}>Got a layover? Plan activities, check safety & more →</Text>
               </Pressable>
-            )}
-            <Pressable style={styles.empty} onPress={() => router.push('/trip/new')}>
-              <Plus size={20} color={color.deep} />
-              <Text style={styles.emptyText}>Start a new trip</Text>
-            </Pressable>
-            <NavBarFiller />
+
+              {live && <PendingInvitesSection onAccepted={reload} />}
+              {live ? (
+                <LiveTrips trips={realTrips} loading={loading} error={error} />
+              ) : (
+                <Pressable style={styles.signInCta} onPress={() => router.push('/(auth)/sign-in' as any)}>
+                  <Text style={styles.signInCtaTitle}>Sign in to see your trips</Text>
+                  <Text style={styles.signInCtaSub}>Log or plan a trip, track destinations, and share your travel story.</Text>
+                </Pressable>
+              )}
+              <Pressable style={styles.empty} onPress={() => router.push('/trip/new')}>
+                <Plus size={20} color={color.deep} />
+                <Text style={styles.emptyText}>Start a new trip</Text>
+              </Pressable>
+              <NavBarFiller />
+            </View>
           </ScrollView>
 
           <LayoverModeSheet
@@ -273,11 +276,29 @@ function TripsScreen() {
           />
         </>
       ) : (
-        /* Offset the EventsTabScreen's own paddingTop: insets.top so it sits
-           flush under our segmented control, not behind the status bar again. */
-        <View style={{ flex: 1, marginTop: -insets.top }}>
-          <EventsTabScreen />
-        </View>
+        <>
+          {/* segControl stays visible for navigation between tabs */}
+          <View style={{ paddingTop: insets.top }}>
+            <View style={styles.segControl}>
+              {(['trips', 'events'] as const).map((tab) => (
+                <Pressable
+                  key={tab}
+                  style={[styles.segBtn, activeTab === tab && styles.segBtnActive]}
+                  onPress={() => setActiveTab(tab)}
+                >
+                  <Text style={[styles.segLabel, activeTab === tab && styles.segLabelActive]}>
+                    {tab === 'trips' ? 'Trips' : 'Events'}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+          {/* Offset the EventsTabScreen's own paddingTop: insets.top so it sits
+              flush under our segmented control, not behind the status bar again. */}
+          <View style={{ flex: 1, marginTop: -insets.top }}>
+            <EventsTabScreen />
+          </View>
+        </>
       )}
     </View>
   );

@@ -368,49 +368,68 @@ export default function EventDetailScreen() {
   const hasMapLocation = !!(event?.locationLat || event?.locationLng || event?.locationName);
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Pressable style={styles.headerBtn} onPress={() => router.back()} hitSlop={8}>
-          <ArrowLeft size={22} color={color.ink} />
-        </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>{event?.title ?? 'Event'}</Text>
-        <View style={styles.headerRight}>
-          {event && !isHost && (
-            <Pressable style={styles.headerBtn} onPress={handleSaveToggle} disabled={saveLoading} hitSlop={8}>
-              {saveLoading
-                ? <ActivityIndicator size="small" color={color.mute} />
-                : isSaved
-                  ? <BookmarkCheck size={20} color={color.signal} />
-                  : <Bookmark size={20} color={color.mute} />}
-            </Pressable>
-          )}
-          {event && (
-            <Pressable style={styles.headerBtn} onPress={handleShare} hitSlop={8}>
-              <Share2 size={20} color={color.mute} />
-            </Pressable>
-          )}
-          {isHost ? (
-            <Pressable style={styles.headerBtn} onPress={() => setShowDashboard(true)} hitSlop={8}>
-              <Settings size={20} color={color.ink} />
-            </Pressable>
-          ) : event ? (
-            <Pressable style={styles.headerBtn} onPress={handleOverflow} hitSlop={8}>
-              <MoreVertical size={20} color={color.mute} />
-            </Pressable>
-          ) : null}
-        </View>
-      </View>
-
+    <View style={styles.container}>
       {loading && !event ? (
-        <View style={styles.center}><ActivityIndicator color={color.signal} /></View>
+        <>
+          {/* Minimal back header for loading state */}
+          <View style={[styles.header, { paddingTop: insets.top + space.sm }]}>
+            <Pressable style={styles.headerBtn} onPress={() => router.back()} hitSlop={8}>
+              <ArrowLeft size={22} color={color.ink} />
+            </Pressable>
+            <Text style={styles.headerTitle} numberOfLines={1}>Event</Text>
+            <View style={styles.headerRight} />
+          </View>
+          <View style={styles.center}><ActivityIndicator color={color.signal} /></View>
+        </>
       ) : error ? (
-        <View style={styles.center}>
-          <Text style={styles.errorText}>{error}</Text>
-          <Pressable onPress={load} style={styles.retryBtn}><Text style={styles.retryText}>Retry</Text></Pressable>
-        </View>
+        <>
+          {/* Minimal back header for error state */}
+          <View style={[styles.header, { paddingTop: insets.top + space.sm }]}>
+            <Pressable style={styles.headerBtn} onPress={() => router.back()} hitSlop={8}>
+              <ArrowLeft size={22} color={color.ink} />
+            </Pressable>
+            <Text style={styles.headerTitle} numberOfLines={1}>Event</Text>
+            <View style={styles.headerRight} />
+          </View>
+          <View style={styles.center}>
+            <Text style={styles.errorText}>{error}</Text>
+            <Pressable onPress={load} style={styles.retryBtn}><Text style={styles.retryText}>Retry</Text></Pressable>
+          </View>
+        </>
       ) : event ? (
         <ScrollView contentContainerStyle={styles.scroll} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
+          {/* Header scrolls with event content */}
+          <View style={[styles.header, { paddingTop: insets.top + space.sm }]}>
+            <Pressable style={styles.headerBtn} onPress={() => router.back()} hitSlop={8}>
+              <ArrowLeft size={22} color={color.ink} />
+            </Pressable>
+            <Text style={styles.headerTitle} numberOfLines={1}>{event?.title ?? 'Event'}</Text>
+            <View style={styles.headerRight}>
+              {event && !isHost && (
+                <Pressable style={styles.headerBtn} onPress={handleSaveToggle} disabled={saveLoading} hitSlop={8}>
+                  {saveLoading
+                    ? <ActivityIndicator size="small" color={color.mute} />
+                    : isSaved
+                      ? <BookmarkCheck size={20} color={color.signal} />
+                      : <Bookmark size={20} color={color.mute} />}
+                </Pressable>
+              )}
+              {event && (
+                <Pressable style={styles.headerBtn} onPress={handleShare} hitSlop={8}>
+                  <Share2 size={20} color={color.mute} />
+                </Pressable>
+              )}
+              {isHost ? (
+                <Pressable style={styles.headerBtn} onPress={() => setShowDashboard(true)} hitSlop={8}>
+                  <Settings size={20} color={color.ink} />
+                </Pressable>
+              ) : event ? (
+                <Pressable style={styles.headerBtn} onPress={handleOverflow} hitSlop={8}>
+                  <MoreVertical size={20} color={color.mute} />
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
           {/* Cover photo / video */}
           {event.coverUrl && event.coverMediaType === 'video' ? (
             <>
