@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, Pressable, ScrollView, StyleSheet, TextInput, Modal,
 } from 'react-native';
@@ -360,7 +360,7 @@ export default function DiscoveryHub() {
   // ListHeaderComponent.  Swiping up causes the full header stack — title,
   // destination bar, search bar, context-mode chips, category tabs, highlights
   // and buddy strip — to scroll off-screen so content fills the viewport.
-  const discoveryHeader = (
+  const discoveryHeader = useMemo(() => (
     <View style={{ paddingTop: insets.top }}>
       {/* ── Compass icon + "Discover" title + DestinationBar + share-place button ── */}
       <View style={styles.header}>
@@ -596,7 +596,30 @@ export default function DiscoveryHub() {
         </View>
       )}
     </View>
-  );
+  ), [
+    insets.top,
+    destination,
+    handleSelectPlaceFromBar,
+    isAuthed,
+    ageFilter,
+    contextMode,
+    screenStatus,
+    openCityPicker,
+    activeTab,
+    categoryCounts,
+    countsLoading,
+    handleTabChange,
+    destinationLat,
+    destinationLng,
+    destinationZoom,
+    highlightUsers,
+    sessionViewedIds,
+    markSessionViewed,
+    trendingHashtags,
+    availableBuddies,
+    buddyCityNotAvailable,
+    currentCity,
+  ]);
 
   return (
     <SectionErrorBoundary label="DiscoveryHub" fullScreen>
