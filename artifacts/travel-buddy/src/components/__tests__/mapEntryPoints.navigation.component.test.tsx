@@ -576,3 +576,103 @@ describe('FullScreenMapScreen — camera falls back to LocationContext coords', 
     expect(capturedProps!.fallbackZoom).toBe(11);
   });
 });
+
+// ── 9. EventCard "View on map" — lat/lng intentionally omitted ─────────────────
+//
+// EventCard constructs the /map URL with only entityTypes and focusId. No lat/lng
+// is derived from the event's city field at push time. The map screen resolves the
+// camera position via the focusId snap (entity list → entity.lat/lng) or via
+// LocationContext fallback.  This test documents that intentional omission so a
+// future refactor doesn't silently break the assumption either way.
+
+describe('EventCard — lat/lng not included in the /map push URL', () => {
+  it('does not include a lat or lng param in the /map push URL', async () => {
+    await render(<EventCard ev={makeEvent('lat-check-id')} />);
+
+    fireEvent.press(screen.getByText('View on map'));
+
+    const url = mockPush.mock.calls[0][0] as string;
+    expect(url).not.toMatch(/[?&]lat=/);
+    expect(url).not.toMatch(/[?&]lng=/);
+  });
+
+  it('passes focusId so the map can snap to the event entity instead of needing coords', async () => {
+    await render(<EventCard ev={makeEvent('snap-id-42')} />);
+
+    fireEvent.press(screen.getByText('View on map'));
+
+    const url = mockPush.mock.calls[0][0] as string;
+    // The map screen resolves position via entity.lat/lng from useMapEntities —
+    // this only works when focusId is present in the URL.
+    expect(url).toContain('focusId=');
+    expect(decodeURIComponent(url)).toContain('snap-id-42');
+  });
+});
+
+// ── 10. PermissionPrompt shown when permission is denied and no coords at all ───
+//
+// When location permission is denied AND no lat/lng comes from either the URL
+// params or LocationContext (i.e. fallbackLat/fallbackLng are both null), the
+// screen must show the PermissionPrompt — not a map centred at [0,0].
+//
+// The Platform.OS guard (web → WebPlaceholder) runs before the permission check.
+// These tests run under the default jest-expo platform ('ios'), so the permission
+// branch is reachable.
+
+describe('FullScreenMapScreen — PermissionPrompt shown when denied with no coords', () => {
+  it('shows "Location access needed" when permission is denied and no lat/lng available', async () => {
+    mockUseLocationContext.mockReturnValueOnce({
+      locationState: { permissionStatus: 'denied', coords: null, place: null },
+      requireLocation: jest.fn(),
+    });
+    // No lat/lng in URL params either.
+    mockUseLocalSearchParams.mockReturnValue({});
+
+    await act(async () => { await render(<FullScreenMapScreen />); });
+
+    expect(screen.getByText('Location access needed')).toBeTruthy();
+  });
+
+  it('does NOT render the map (DiscoveryMapView) when the PermissionPrompt is shown', async () => {
+    const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
+    (DiscoveryMapView as jest.Mock).mockClear();
+
+    mockUseLocationContext.mockReturnValueOnce({
+      locationState: { permissionStatus: 'denied', coords: null, place: null },
+      requireLocation: jest.fn(),
+    });
+    mockUseLocalSearchParams.mockReturnValue({});
+
+    await act(async () => { await render(<FullScreenMapScreen />); });
+
+    // DiscoveryMapView must not have been called — the early return fires first.
+    expect(DiscoveryMapView as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it('still renders the map when permission is denied but city coords are in the URL', async () => {
+    // permDenied && !hasNoCoords → inline banner, not PermissionPrompt.
+    const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
+    let capturedProps: Record<string, any> | null = null;
+    (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
+      capturedProps = props;
+      return null;
+    });
+
+    mockUseLocationContext.mockReturnValueOnce({
+      locationState: { permissionStatus: 'denied', coords: null, place: null },
+      requireLocation: jest.fn(),
+    });
+    // City coords come from the URL — e.g. pushed by a TripPage/EventCard that
+    // includes lat/lng.
+    mockUseLocalSearchParams.mockReturnValue({ lat: '10.317', lng: '123.891' });
+
+    await act(async () => { await render(<FullScreenMapScreen />); });
+
+    // The permission prompt must NOT be shown when coords are available.
+    expect(screen.queryByText('Location access needed')).toBeNull();
+    // The map component must have received the city coords.
+    expect(capturedProps).not.toBeNull();
+    expect(capturedProps!.fallbackLat).toBeCloseTo(10.317);
+    expect(capturedProps!.fallbackLng).toBeCloseTo(123.891);
+  });
+});
