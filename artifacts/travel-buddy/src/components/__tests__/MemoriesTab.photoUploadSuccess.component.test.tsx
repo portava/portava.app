@@ -77,6 +77,31 @@ jest.mock('../ui/KeyboardSafeView', () => {
   };
 });
 
+// NOTE: intentionally exhaustive — expo-av (Video component) requires native
+// AV modules unavailable in the jest-expo runner; SharedVideoPlayer wraps it.
+jest.mock('expo-av', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const R = jest.requireActual('react') as typeof import('react');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { View } = jest.requireActual('react-native') as typeof import('react-native');
+  return {
+    Video: (props: Record<string, unknown>) => R.createElement(View as React.ComponentType, { testID: 'expo-av-video', ...props }),
+    ResizeMode: { CONTAIN: 'contain', COVER: 'cover', STRETCH: 'stretch', NONE: 'none' },
+  };
+});
+
+// NOTE: intentionally exhaustive — SharedVideoPlayer wraps expo-av Video;
+// pulling requireActual pulls in the native AV module which crashes the runner.
+jest.mock('../ui/SharedVideoPlayer', () => ({
+  SharedVideoPlayer: () => null,
+}));
+
+// NOTE: intentionally exhaustive — VideoThumbnail imports expo-image which
+// requires a native module unavailable in the jest-expo runner.
+jest.mock('../ui/VideoThumbnail.tsx', () => ({
+  VideoThumbnail: () => null,
+}));
+
 // NOTE: intentionally exhaustive — SaveButton imports the saves service graph
 // (Supabase + API token stack); pulling requireActual would cause OOM.
 jest.mock('../SaveButton', () => ({ SaveButton: () => null }));
@@ -138,7 +163,7 @@ describe('CreateMemoryModal — upload success', () => {
     );
 
     await act(async () => {
-      fireEvent.press(screen.getByText('Add photo'));
+      fireEvent.press(screen.getByText('Add photo or video'));
       await new Promise<void>((r) => setTimeout(r, 30));
     });
     screen.getByText('Change');
