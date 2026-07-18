@@ -14,7 +14,7 @@
  * Metro selects this file for native. The web platform fallback is handled
  * inline via Platform.OS checks so we avoid a separate .web.tsx route file.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, Platform,
 } from 'react-native';
@@ -35,6 +35,8 @@ import {
 } from '../../src/components/map/MapFilterSheet.tsx';
 import type { MapEntity, ToggleableEntityType } from '../../src/types/mapTypes.ts';
 import { TOGGLEABLE_LAYERS } from '../../src/types/mapTypes.ts';
+import { MapCarousel } from '../../src/components/map/MapCarousel.tsx';
+import type { MapCarouselRef } from '../../src/components/map/MapCarousel.tsx';
 
 // ── Lazy-load native map component only on native ─────────────────────────────
 // This avoids importing MapLibre on web where it would crash.
@@ -47,6 +49,29 @@ if (Platform.OS !== 'web') {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Haversine distance in km between two lat/lng pairs. */
+function haversineKm(
+  lat1: number, lng1: number,
+  lat2: number, lng2: number,
+): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/** Camera zoom per entity type. */
+function zoomForEntity(type: MapEntity['type']): number {
+  if (type === 'trips') return 10;
+  if (type === 'gems' || type === 'places') return 15;
+  return 14; // buddies, events, friends, travelers
+}
 
 /** Parse a query param string to a finite number, or return null. */
 function parseCoord(v: string | string[] | undefined): number | null {
@@ -316,6 +341,68 @@ export default function FullScreenMapScreen() {
   // The active entity list: Compass override takes precedence when set.
   const entities = compassOverrideEntities ?? defaultEntities;
 
+  // ── Carousel state ──────────────────────────────────────────────────────────
+  const [activeIndex, setActiveIndex] = useState(0);
+  const carouselRef = useRef<MapCarouselRef>(null);
+
+  // Auto-select closest entity whenever the entities list changes.
+  useEffect(() => {
+    if (entities.length === 0) {
+      setActiveIndex(0);
+      return;
+    }
+    let bestIndex = 0;
+    if (userLat != null && userLng != null) {
+      let bestDist = Infinity;
+      entities.forEach((e, i) => {
+        const d = haversineKm(userLat, userLng, e.lat, e.lng);
+        if (d < bestDist) { bestDist = d; bestIndex = i; }
+      });
+    }
+    setActiveIndex(bestIndex);
+    // Scroll carousel to that card (may not be mounted yet on first render —
+    // the FlatList initialScrollIndex handles the initial position instead).
+    carouselRef.current?.scrollToIndex(bestIndex);
+    // Pan the camera to the selected entity.
+    const entity = entities[bestIndex];
+    if (entity) {
+      cameraRef.current?.setCamera({
+        centerCoordinate: [entity.lng, entity.lat],
+        zoomLevel: zoomForEntity(entity.type),
+        animationDuration: 400,
+      });
+    }
+  // Deliberately exclude userLat/userLng from deps — we only want this to fire
+  // when the entity list changes, not on every location update.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entities]);
+
+  /** Called when the user swipes the carousel to a new card. */
+  const handleCarouselIndexChange = useCallback(
+    (index: number) => {
+      setActiveIndex(index);
+      const entity = entities[index];
+      if (!entity) return;
+      cameraRef.current?.setCamera({
+        centerCoordinate: [entity.lng, entity.lat],
+        zoomLevel: zoomForEntity(entity.type),
+        animationDuration: 400,
+      });
+    },
+    [entities],
+  );
+
+  /** Called when the user taps a marker on the map. */
+  const handleSelectEntity = useCallback(
+    (entity: MapEntity) => {
+      const index = entities.findIndex((e) => e.id === entity.id);
+      if (index < 0) return;
+      setActiveIndex(index);
+      carouselRef.current?.scrollToIndex(index);
+    },
+    [entities],
+  );
+
   // Web: show static placeholder.
   if (Platform.OS === 'web') {
     return <WebPlaceholder />;
@@ -347,6 +434,7 @@ export default function FullScreenMapScreen() {
         externalCameraRef={cameraRef}
         entities={entities}
         enabledEntityLayers={enabledLayers}
+        onSelectEntity={handleSelectEntity}
       />
 
       {/* Floating top controls: Back, Recenter, Filters */}
@@ -359,6 +447,19 @@ export default function FullScreenMapScreen() {
         title={title}
         topInset={insets.top}
         onFiltersPress={() => setFilterSheetOpen(true)}
+      />
+
+      {/* Bottom carousel — floats above the AskCompassBar; z-index below MapTopControls */}
+      <MapCarousel
+        ref={carouselRef}
+        entities={entities}
+        activeIndex={activeIndex}
+        onIndexChange={handleCarouselIndexChange}
+        onFiltersPress={() => setFilterSheetOpen(true)}
+        style={[
+          s.carousel,
+          { bottom: insets.bottom + 16 },
+        ]}
       />
 
       {/* ── AskCompassBar + active filter label — floating bottom overlay ── */}
@@ -407,6 +508,13 @@ const s = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: '#13213A',
+  },
+  // Bottom carousel strip — floats above safe area, below top controls.
+  carousel: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 10,
   },
   // Floating bottom overlay — stacked above the map, transparent background
   // so the map is visible through the gaps between the bar and chips.
