@@ -59,6 +59,7 @@ export interface PassportMemory {
   verificationLevel: string;
   sourceType: string | null;
   photoUrl: string | null;
+  mediaType: 'image' | 'video' | null;
   planId: string | null;
   tripId: string | null;
   suggestionReason: string | null;
@@ -191,6 +192,7 @@ function mapMemory(r: any): PassportMemory {
     verificationLevel: r.verification_level ?? r.verificationLevel ?? 'unverified',
     sourceType: r.source_type ?? r.sourceType ?? null,
     photoUrl: r.photo_url ?? r.photoUrl ?? null,
+    mediaType: r.media_type ?? r.mediaType ?? null,
     planId: r.plan_id ?? r.planId ?? null,
     tripId: r.trip_id ?? r.tripId ?? null,
     suggestionReason: r.suggestion_reason ?? r.suggestionReason ?? null,
@@ -249,6 +251,7 @@ export async function createPassportMemory(body: {
   category?: string;
   visibility?: MemoryVisibility;
   photoUrl?: string;
+  mediaType?: 'image' | 'video';
 }): Promise<ApiResult<PassportMemory>> {
   const res = await apiPost<any>('/me/passport/memories', body);
   if (!res.ok) return { ok: false, message: res.message };
@@ -264,6 +267,7 @@ export async function updatePassportMemory(
     country?: string | null;
     visibility?: MemoryVisibility;
     photoUrl?: string | null;
+    mediaType?: 'image' | 'video' | null;
   },
 ): Promise<ApiResult<void>> {
   return apiPatch<void>(`/me/passport/memories/${memoryId}`, patch);

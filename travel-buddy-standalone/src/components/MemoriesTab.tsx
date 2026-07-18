@@ -5,8 +5,11 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
-import { MapPin, Lock, Globe, Users, Eye, Camera, X, Pencil } from 'lucide-react-native';
+import { SharedVideoPlayer } from './ui/SharedVideoPlayer.tsx';
+import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
+import { MapPin, Lock, Globe, Users, Eye, Camera, X, Pencil, Video } from 'lucide-react-native';
 import { Plus } from 'lucide-react-native';
+import { VIDEO_MAX_DURATION_SECONDS } from '../constants/mediaLimits.ts';
 import type { PassportMemory, MemoryVisibility } from '../services/passportStamps.ts';
 import {
   createPassportMemory,
@@ -316,16 +319,26 @@ interface MemoryCardProps {
   memory: PassportMemory;
   onVisibilityChange: (id: string, v: MemoryVisibility) => void;
   onEdit: (memory: PassportMemory) => void;
+  onViewVideo?: (memory: PassportMemory) => void;
 }
 
-function MemoryCard({ memory, onVisibilityChange, onEdit }: MemoryCardProps) {
+function MemoryCard({ memory, onVisibilityChange, onEdit, onViewVideo }: MemoryCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const badge = verificationBadge(memory.verificationLevel);
   const cat = CATEGORIES.find((c) => c.key === memory.category);
+  const isVideo = memory.mediaType === 'video';
 
   return (
     <View style={mc.card}>
-      {memory.photoUrl ? (
+      {isVideo && memory.photoUrl ? (
+        <Pressable onPress={() => onViewVideo?.(memory)} style={mc.photoWrap}>
+          <VideoThumbnail posterUri={memory.photoUrl} style={mc.photo} />
+          <View style={mc.videoBadge}>
+            <Video size={10} color="#fff" />
+            <Text style={mc.videoBadgeText}>Video</Text>
+          </View>
+        </Pressable>
+      ) : memory.photoUrl ? (
         <Pressable onPress={() => onEdit(memory)} style={mc.photoWrap}>
           <Image source={{ uri: memory.photoUrl }} style={mc.photo} resizeMode="cover" />
           <View style={mc.photoEditBadge}>
@@ -414,32 +427,40 @@ function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  // Photo state
+  // Media state
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [photoMime, setPhotoMime] = useState<string>('image/jpeg');
+  const [mediaType, setMediaType] = useState<'image' | 'video' | null>(null);
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
 
-  async function pickPhoto() {
+  async function pickMedia() {
     setUploadError('');
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
-      setUploadError('Photo library permission required to add a photo.');
+      setUploadError('Media library permission required to add a photo or video.');
       return;
     }
     const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
+      mediaTypes: ['images', 'videos'],
       quality: 0.85,
       allowsEditing: true,
+      videoMaxDuration: VIDEO_MAX_DURATION_SECONDS.memory,
     });
     if (res.canceled || !res.assets?.[0]) return;
     const asset = res.assets[0];
     setPhotoUri(asset.uri);
     setPhotoMime(asset.mimeType ?? 'image/jpeg');
+    const isVideo = asset.type === 'video' || (asset.mimeType ?? '').startsWith('video/');
+    setMediaType(isVideo ? 'video' : 'image');
+    setVideoDuration(isVideo && asset.duration ? Math.round(asset.duration) : null);
   }
 
-  function removePhoto() {
+  function removeMedia() {
     setPhotoUri(null);
+    setMediaType(null);
+    setVideoDuration(null);
     setUploadError('');
   }
 
@@ -452,6 +473,8 @@ function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalProps) {
     setVisibility('private');
     setPhotoUri(null);
     setPhotoMime('image/jpeg');
+    setMediaType(null);
+    setVideoDuration(null);
     setUploadError('');
     setError('');
   }
@@ -464,13 +487,13 @@ function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalProps) {
 
     let photoUrl: string | undefined;
 
-    // Upload photo first if one was selected
+    // Upload media first if one was selected
     if (photoUri) {
       setUploading(true);
-      const up = await uploadMedia({ uri: photoUri, mimeType: photoMime, type: 'image' });
+      const up = await uploadMedia({ uri: photoUri, mimeType: photoMime, type: mediaType === 'video' ? 'video' : 'image' });
       setUploading(false);
       if (!up.ok || !up.url) {
-        setUploadError(up.message ?? 'Photo upload failed. You can save without a photo or try again.');
+        setUploadError(up.message ?? 'Upload failed. You can save without media or try again.');
         setSaving(false);
         return;
       }
@@ -485,6 +508,7 @@ function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalProps) {
       category,
       visibility,
       photoUrl,
+      mediaType: photoUrl ? (mediaType ?? 'image') : undefined,
     });
     setSaving(false);
     if (!res.ok) { setError(res.message); return; }
@@ -557,11 +581,21 @@ function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalProps) {
             ))}
           </View>
 
-          {/* Photo picker */}
-          <Text style={cm.label}>Photo</Text>
+          {/* Media picker */}
+          <Text style={cm.label}>Photo or Video</Text>
           {photoUri ? (
             <View style={cm.photoPreviewWrap}>
-              <Image source={{ uri: photoUri }} style={cm.photoPreview} resizeMode="cover" />
+              {mediaType === 'video' ? (
+                <SharedVideoPlayer uri={photoUri} autoplay muted loop style={cm.photoPreview} />
+              ) : (
+                <Image source={{ uri: photoUri }} style={cm.photoPreview} resizeMode="cover" />
+              )}
+              {mediaType === 'video' && videoDuration ? (
+                <View style={cm.videoBadge} pointerEvents="none">
+                  <Video size={10} color="#fff" />
+                  <Text style={cm.videoBadgeText}>Video · {Math.floor(videoDuration / 60)}:{String(videoDuration % 60).padStart(2, '0')}</Text>
+                </View>
+              ) : null}
               {uploading && (
                 <View style={cm.photoUploadingOverlay}>
                   <ActivityIndicator color="#fff" size="small" />
@@ -569,18 +603,18 @@ function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalProps) {
                 </View>
               )}
               {!uploading && (
-                <Pressable style={cm.photoRemoveBtn} onPress={removePhoto} hitSlop={8} disabled={isBusy}>
+                <Pressable style={cm.photoRemoveBtn} onPress={removeMedia} hitSlop={8} disabled={isBusy}>
                   <X size={14} color="#fff" />
                 </Pressable>
               )}
-              <Pressable style={cm.photoChangeBtn} onPress={pickPhoto} disabled={isBusy}>
+              <Pressable style={cm.photoChangeBtn} onPress={pickMedia} disabled={isBusy}>
                 <Text style={cm.photoChangeBtnText}>Change</Text>
               </Pressable>
             </View>
           ) : (
-            <Pressable style={cm.photoPickerBtn} onPress={pickPhoto} disabled={isBusy}>
+            <Pressable style={cm.photoPickerBtn} onPress={pickMedia} disabled={isBusy}>
               <Camera size={18} color={color.signal} />
-              <Text style={cm.photoPickerText}>Add photo</Text>
+              <Text style={cm.photoPickerText}>Add photo or video</Text>
             </Pressable>
           )}
 
@@ -620,6 +654,7 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
   const [createOpen, setCreateOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [editMemory, setEditMemory] = useState<PassportMemory | null>(null);
+  const [viewVideoMemory, setViewVideoMemory] = useState<PassportMemory | null>(null);
 
   React.useEffect(() => {
     setLocalMemories(memories);
@@ -637,6 +672,10 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
 
   const handleEdit = useCallback((memory: PassportMemory) => {
     setEditMemory(memory);
+  }, []);
+
+  const handleViewVideo = useCallback((memory: PassportMemory) => {
+    setViewVideoMemory(memory);
   }, []);
 
   const handleEditSaved = useCallback((memoryId: string, patch: EditMemoryPatch) => {
@@ -683,7 +722,7 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
             ) : (
               <View style={mt.list}>
                 {localMemories.slice(0, 5).map((m) => (
-                  <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} onEdit={handleEdit} />
+                  <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} onEdit={handleEdit} onViewVideo={handleViewVideo} />
                 ))}
                 {localMemories.length > 5 && (
                   <Pressable style={mt.addBtnLarge} onPress={() => setCreateOpen(true)}>
@@ -708,6 +747,19 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
                 onClose={() => setEditMemory(null)}
                 onSaved={handleEditSaved}
               />
+            )}
+            {viewVideoMemory?.photoUrl && (
+              <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setViewVideoMemory(null)}>
+                <View style={vv.container}>
+                  <View style={vv.header}>
+                    <Text style={vv.title} numberOfLines={1}>{viewVideoMemory.title ?? 'Memory'}</Text>
+                    <Pressable onPress={() => setViewVideoMemory(null)} hitSlop={8}>
+                      <X size={22} color={color.ink} />
+                    </Pressable>
+                  </View>
+                  <SharedVideoPlayer uri={viewVideoMemory.photoUrl} autoplay muted={false} loop={false} style={vv.player} />
+                </View>
+              </Modal>
             )}
           </>
         )}
@@ -740,7 +792,7 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
       ) : (
         <View style={mt.list}>
           {localMemories.map((m) => (
-            <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} onEdit={handleEdit} />
+            <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} onEdit={handleEdit} onViewVideo={handleViewVideo} />
           ))}
         </View>
       )}
@@ -757,6 +809,19 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
           onClose={() => setEditMemory(null)}
           onSaved={handleEditSaved}
         />
+      )}
+      {viewVideoMemory?.photoUrl && (
+        <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setViewVideoMemory(null)}>
+          <View style={vv.container}>
+            <View style={vv.header}>
+              <Text style={vv.title} numberOfLines={1}>{viewVideoMemory.title ?? 'Memory'}</Text>
+              <Pressable onPress={() => setViewVideoMemory(null)} hitSlop={8}>
+                <X size={22} color={color.ink} />
+              </Pressable>
+            </View>
+            <SharedVideoPlayer uri={viewVideoMemory.photoUrl} autoplay muted={false} loop={false} style={vv.player} />
+          </View>
+        </Modal>
       )}
     </View>
   );
@@ -807,6 +872,13 @@ const mc = StyleSheet.create({
   menuItem: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.sm, borderRadius: radius.md },
   menuItemActive: { backgroundColor: color.haze },
   menuItemText: { ...t.body, color: color.ink },
+  videoBadge: {
+    position: 'absolute', bottom: 8, left: 8,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: 'rgba(17,17,15,0.65)',
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: radius.pill,
+  },
+  videoBadgeText: { fontSize: 10, color: '#fff', fontWeight: '700', fontFamily: 'Courier' },
 });
 
 const cm = StyleSheet.create({
@@ -844,6 +916,13 @@ const cm = StyleSheet.create({
   saveBtn: { backgroundColor: color.signal, borderRadius: radius.pill, paddingVertical: space.md + 2, alignItems: 'center', marginTop: space.xl },
   saveBtnDisabled: { opacity: 0.5 },
   saveBtnText: { ...t.bodyStrong, color: '#fff' },
+  videoBadge: {
+    position: 'absolute', bottom: 8, left: 8,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: 'rgba(17,17,15,0.65)',
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: radius.pill,
+  },
+  videoBadgeText: { fontSize: 10, color: '#fff', fontWeight: '700', fontFamily: 'Courier' },
 });
 
 const ep = StyleSheet.create({
@@ -883,4 +962,15 @@ const mt = StyleSheet.create({
   collapsedTitle: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   collapsedChevron: { color: color.mute, fontSize: 11 },
   collapsedEmpty: { padding: space.md, gap: space.md, borderTopWidth: 1, borderTopColor: color.haze },
+});
+
+const vv = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#000' },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: space.lg, paddingTop: space.lg, paddingBottom: space.md,
+    backgroundColor: color.paper,
+  },
+  title: { ...t.bodyStrong, color: color.ink, flex: 1, marginRight: space.md },
+  player: { flex: 1 },
 });
