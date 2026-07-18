@@ -132,6 +132,21 @@ function defaultRequestReturn(overrides: Record<string, unknown> = {}) {
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
 
+import type { AppNotification } from '../../src/services/notifications.ts';
+
+function makeNotification(id: string, category = 'plans'): AppNotification {
+  return {
+    id,
+    category,
+    title:     `Notification ${id}`,
+    body:      `Body for ${id}`,
+    priority:  'normal',
+    readAt:    null,
+    actionUrl: null,
+    createdAt: '2026-01-01T00:00:00Z',
+  } as unknown as AppNotification;
+}
+
 function makeRequest(id: string): InboxItem {
   return {
     id,
@@ -234,6 +249,67 @@ describe('ActivityCenter — sharedHeader scroll-with-content', () => {
     });
 
     // Switch back to All and confirm still exactly one header.
+    fireEvent.press(screen.getByText('All'));
+
+    await waitFor(() => {
+      const titles = screen.getAllByText('Activity Center');
+      expect(titles).toHaveLength(1);
+    });
+  });
+
+  // ── Plans tab — loading-spinner branch ─────────────────────────────────────
+
+  it('never duplicates the header when switching All → Plans → All rapidly (loading branch)', async () => {
+    // Plans tab will render via the loading-spinner branch: loading=true, notifications=[].
+    mockUseNotifications.mockReturnValue(
+      defaultNotifReturn({ loading: true, notifications: [] }),
+    );
+
+    await render(<ActivityCenter />);
+
+    // Rapid-tap: All → Plans → All with no interleaved awaits.
+    fireEvent.press(screen.getByText('Plans'));
+    fireEvent.press(screen.getByText('All'));
+    fireEvent.press(screen.getByText('Plans'));
+
+    await waitFor(() => {
+      const titles = screen.getAllByText('Activity Center');
+      expect(titles).toHaveLength(1);
+    });
+
+    // Return to All — header must still appear exactly once.
+    fireEvent.press(screen.getByText('All'));
+
+    await waitFor(() => {
+      const titles = screen.getAllByText('Activity Center');
+      expect(titles).toHaveLength(1);
+    });
+  });
+
+  // ── Plans tab — FlatList branch ────────────────────────────────────────────
+
+  it('never duplicates the header when switching All → Plans → All rapidly (FlatList branch)', async () => {
+    // Plans tab will render via the FlatList branch: loading=false, notifications non-empty.
+    mockUseNotifications.mockReturnValue(
+      defaultNotifReturn({
+        loading:       false,
+        notifications: [makeNotification('n1'), makeNotification('n2')],
+      }),
+    );
+
+    await render(<ActivityCenter />);
+
+    // Rapid-tap: All → Plans → All with no interleaved awaits.
+    fireEvent.press(screen.getByText('Plans'));
+    fireEvent.press(screen.getByText('All'));
+    fireEvent.press(screen.getByText('Plans'));
+
+    await waitFor(() => {
+      const titles = screen.getAllByText('Activity Center');
+      expect(titles).toHaveLength(1);
+    });
+
+    // Return to All — header must still appear exactly once.
     fireEvent.press(screen.getByText('All'));
 
     await waitFor(() => {
