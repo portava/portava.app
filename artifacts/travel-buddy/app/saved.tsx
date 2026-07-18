@@ -175,28 +175,35 @@ function CollectionItemsView({ collection, onBack }: CollectionItemsViewProps) {
     setLoadingMore(false);
   };
 
+  const subHeader = (
+    <View style={s.subHeader}>
+      <Pressable onPress={onBack} style={s.backBtn} hitSlop={8}>
+        <ChevronLeft size={22} color={color.ink} />
+      </Pressable>
+      <Text style={s.subHeaderTitle} numberOfLines={1}>{collection.name}</Text>
+      <Text style={s.subHeaderMeta}>
+        {collection.itemCount} {collection.itemCount === 1 ? 'item' : 'items'}
+      </Text>
+    </View>
+  );
+
   return (
     <View style={{ flex: 1 }}>
-      {/* Custom sub-header with in-screen back button */}
-      <View style={s.subHeader}>
-        <Pressable onPress={onBack} style={s.backBtn} hitSlop={8}>
-          <ChevronLeft size={22} color={color.ink} />
-        </Pressable>
-        <Text style={s.subHeaderTitle} numberOfLines={1}>{collection.name}</Text>
-        <Text style={s.subHeaderMeta}>
-          {collection.itemCount} {collection.itemCount === 1 ? 'item' : 'items'}
-        </Text>
-      </View>
-
       {loading ? (
-        <View style={s.center}><ActivityIndicator color={color.signal} /></View>
+        <View style={{ flex: 1 }}>
+          {subHeader}
+          <View style={s.center}><ActivityIndicator color={color.signal} /></View>
+        </View>
       ) : items.length === 0 ? (
-        <View style={s.center}>
-          <Bookmark size={32} color={color.haze} />
-          <Text style={s.emptyTitle}>Nothing saved here yet</Text>
-          <Text style={s.emptySub}>
-            Tap the bookmark icon on posts, places, and more to add items.
-          </Text>
+        <View style={{ flex: 1 }}>
+          {subHeader}
+          <View style={s.center}>
+            <Bookmark size={32} color={color.haze} />
+            <Text style={s.emptyTitle}>Nothing saved here yet</Text>
+            <Text style={s.emptySub}>
+              Tap the bookmark icon on posts, places, and more to add items.
+            </Text>
+          </View>
         </View>
       ) : (
         <FlatList
@@ -208,6 +215,7 @@ function CollectionItemsView({ collection, onBack }: CollectionItemsViewProps) {
           scrollEventThrottle={16}
           onEndReached={loadMore}
           onEndReachedThreshold={0.3}
+          ListHeaderComponent={subHeader}
           ListFooterComponent={
             <>
               {loadingMore ? (
@@ -411,11 +419,6 @@ export default function SavedScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      {/* Always show the top-level Saved header; when in detail view, the
-          sub-header rendered by CollectionItemsView shows the collection name
-          with an in-screen back button. */}
-      <ScreenHeader title="Saved" back />
-
       {activeCollection ? (
         <CollectionItemsView
           collection={activeCollection}
@@ -424,13 +427,17 @@ export default function SavedScreen() {
       ) : (
         <>
           {loading ? (
-            <View style={s.center}><ActivityIndicator color={color.signal} /></View>
+            <View style={{ flex: 1 }}>
+              <ScreenHeader title="Saved" back />
+              <View style={s.center}><ActivityIndicator color={color.signal} /></View>
+            </View>
           ) : collections.length === 0 ? (
             <ScrollView
               contentContainerStyle={s.emptyState}
               onScroll={navBarScrollHandler}
               scrollEventThrottle={16}
             >
+              <ScreenHeader title="Saved" back />
               <Bookmark size={40} color={color.haze} />
               <Text style={s.emptyTitle}>Nothing saved yet</Text>
               <Text style={s.emptySub}>
@@ -465,10 +472,13 @@ export default function SavedScreen() {
               onScroll={navBarScrollHandler}
               scrollEventThrottle={16}
               ListHeaderComponent={
-                <Pressable style={s.newCollectionRow} onPress={() => setCreateOpen(true)}>
-                  <FolderPlus size={18} color={color.deep} />
-                  <Text style={s.newCollectionText}>New collection</Text>
-                </Pressable>
+                <>
+                  <ScreenHeader title="Saved" back />
+                  <Pressable style={s.newCollectionRow} onPress={() => setCreateOpen(true)}>
+                    <FolderPlus size={18} color={color.deep} />
+                    <Text style={s.newCollectionText}>New collection</Text>
+                  </Pressable>
+                </>
               }
               renderItem={({ item: col }) => (
                 <CollectionCard

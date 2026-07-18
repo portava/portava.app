@@ -25,6 +25,7 @@ import { UserNameButton } from '../src/components/interaction/UserNameButton';
 import { UserOverflowMenu } from '../src/components/interaction/UserOverflowMenu';
 import { useBlockedIds } from '../src/context/BlockedIdsContext';
 import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { useBottomInset } from '../src/hooks/useBottomInset';
 
 function CircleUserRow({
   u, reason, tripId,
@@ -132,6 +133,7 @@ function next14Days(): string[] {
 //   <RichText content={circle.description} tags={circle.descriptionTags} hashtagUsages={circle.descriptionHashtags} />
 export default function Circle() {
   const navBarScrollHandler = useNavBarScrollHandler();
+  const bottomInset = useBottomInset();
   const { userId, isAuthed, configured } = useSession();
   const { tripId } = useLocalSearchParams<{ tripId?: string }>();
   const [tripTitle, setTripTitle] = useState<string | null>(null);
@@ -260,232 +262,233 @@ export default function Circle() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <ScreenHeader
-        title="Circle"
-        back
-        right={
-          <Pressable
-            onPress={() => router.push('/discover' as any)}
-            hitSlop={8}
-            style={styles.discoverBtn}
-          >
-            <Compass size={22} color={color.signal} />
-          </Pressable>
-        }
-      />
-
-      {tripId ? (
-        <View style={styles.tripInviteBanner}>
-          <UserPlus size={14} color={color.signal} />
-          <Text style={styles.tripInviteBannerText}>
-            {tripTitle ? `Select someone to invite to ${tripTitle}` : 'Select someone to invite to your trip'}
-          </Text>
-        </View>
-      ) : null}
-
-      {userId ? (
-        <Pressable
-          style={styles.chatBtn}
-          onPress={handleOpenCircleChat}
-          disabled={chatLoading}
-        >
-          <View style={{ position: 'relative' }}>
-            <MessageCircle size={15} color={color.onInk} />
-            <View style={styles.unreadDot} />
-          </View>
-          <Text style={styles.chatBtnText}>Circle Chat</Text>
-        </Pressable>
-      ) : null}
-
-      <View style={styles.tabBar}>
-        <Pressable style={[styles.tab, tab === 'circle' && styles.tabActive]} onPress={() => setTab('circle')}>
-          <Text style={[styles.tabText, tab === 'circle' && styles.tabTextActive]}>
-            Following{following.length > 0 ? ` ${following.length}` : ''}
-          </Text>
-        </Pressable>
-        <Pressable style={[styles.tab, tab === 'followers' && styles.tabActive]} onPress={() => setTab('followers')}>
-          <Text style={[styles.tabText, tab === 'followers' && styles.tabTextActive]}>
-            Followers{followers.length > 0 ? ` ${followers.length}` : ''}
-          </Text>
-        </Pressable>
-      </View>
-
-      {tab === 'circle' && userId && (
-        <Pressable
-          style={[styles.chatBanner, chatLoading && { opacity: 0.6 }]}
-          onPress={handleOpenCircleChat}
-          disabled={chatLoading}
-        >
-          {chatLoading
-            ? <ActivityIndicator size="small" color={color.onInk} />
-            : <MessageCircle size={16} color={color.onInk} />
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: bottomInset }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={color.signal} />}
+        onScroll={navBarScrollHandler}
+        scrollEventThrottle={16}
+      >
+        <ScreenHeader
+          title="Circle"
+          back
+          right={
+            <Pressable
+              onPress={() => router.push('/discover' as any)}
+              hitSlop={8}
+              style={styles.discoverBtn}
+            >
+              <Compass size={22} color={color.signal} />
+            </Pressable>
           }
-          <Text style={styles.chatBannerText}>Circle Group Chat</Text>
-          <Text style={styles.chatBannerSub}>Message everyone in your circle</Text>
-        </Pressable>
-      )}
+        />
 
-      {/* Circle age settings — only shown in circle tab for the logged-in owner */}
-      {tab === 'circle' && live && (
-        <View style={styles.ageSection}>
-          <Pressable style={styles.ageHead} onPress={() => setAgeSettingsOpen((v) => !v)}>
-            <Text style={styles.ageTitle}>Circle Age Limit</Text>
-            {ageSettings?.ageLimitEnabled && ageSettings.label && (
-              <View style={styles.ageBadge}>
-                <Text style={styles.ageBadgeText}>{ageSettings.label}</Text>
-              </View>
-            )}
-            <View style={{ flex: 1 }} />
-            {ageSettingsOpen
-              ? <ChevronUp size={16} color={color.mute} />
-              : <ChevronDown size={16} color={color.mute} />}
+        {tripId ? (
+          <View style={styles.tripInviteBanner}>
+            <UserPlus size={14} color={color.signal} />
+            <Text style={styles.tripInviteBannerText}>
+              {tripTitle ? `Select someone to invite to ${tripTitle}` : 'Select someone to invite to your trip'}
+            </Text>
+          </View>
+        ) : null}
+
+        {userId ? (
+          <Pressable
+            style={styles.chatBtn}
+            onPress={handleOpenCircleChat}
+            disabled={chatLoading}
+          >
+            <View style={{ position: 'relative' }}>
+              <MessageCircle size={15} color={color.onInk} />
+              <View style={styles.unreadDot} />
+            </View>
+            <Text style={styles.chatBtnText}>Circle Chat</Text>
           </Pressable>
-          {ageSettingsOpen && (
-            <View style={styles.ageBody}>
-              <View style={styles.ageToggleRow}>
-                <Text style={styles.ageToggleLabel}>Enable age restriction</Text>
-                <Pressable
-                  style={[styles.toggle, ageEnabled && styles.toggleOn]}
-                  onPress={() => setAgeEnabled((v) => !v)}
-                  hitSlop={8}
-                >
-                  <View style={[styles.toggleThumb, ageEnabled && styles.toggleThumbOn]} />
-                </Pressable>
-              </View>
-              {ageEnabled && (
-                <View style={styles.ageRangeRow}>
-                  <View style={styles.ageRangeField}>
-                    <Text style={styles.ageHint}>Min age</Text>
-                    <TextInput
-                      style={styles.ageInput}
-                      value={minAgeStr}
-                      onChangeText={setMinAgeStr}
-                      placeholder="e.g. 18"
-                      placeholderTextColor={color.faint}
-                      keyboardType="number-pad"
-                      maxLength={3}
-                    />
-                  </View>
-                  <Text style={styles.ageDash}>–</Text>
-                  <View style={styles.ageRangeField}>
-                    <Text style={styles.ageHint}>Max age</Text>
-                    <TextInput
-                      style={styles.ageInput}
-                      value={maxAgeStr}
-                      onChangeText={setMaxAgeStr}
-                      placeholder="e.g. 35"
-                      placeholderTextColor={color.faint}
-                      keyboardType="number-pad"
-                      maxLength={3}
-                    />
-                  </View>
+        ) : null}
+
+        <View style={styles.tabBar}>
+          <Pressable style={[styles.tab, tab === 'circle' && styles.tabActive]} onPress={() => setTab('circle')}>
+            <Text style={[styles.tabText, tab === 'circle' && styles.tabTextActive]}>
+              Following{following.length > 0 ? ` ${following.length}` : ''}
+            </Text>
+          </Pressable>
+          <Pressable style={[styles.tab, tab === 'followers' && styles.tabActive]} onPress={() => setTab('followers')}>
+            <Text style={[styles.tabText, tab === 'followers' && styles.tabTextActive]}>
+              Followers{followers.length > 0 ? ` ${followers.length}` : ''}
+            </Text>
+          </Pressable>
+        </View>
+
+        {tab === 'circle' && userId && (
+          <Pressable
+            style={[styles.chatBanner, chatLoading && { opacity: 0.6 }]}
+            onPress={handleOpenCircleChat}
+            disabled={chatLoading}
+          >
+            {chatLoading
+              ? <ActivityIndicator size="small" color={color.onInk} />
+              : <MessageCircle size={16} color={color.onInk} />
+            }
+            <Text style={styles.chatBannerText}>Circle Group Chat</Text>
+            <Text style={styles.chatBannerSub}>Message everyone in your circle</Text>
+          </Pressable>
+        )}
+
+        {/* Circle age settings — only shown in circle tab for the logged-in owner */}
+        {tab === 'circle' && live && (
+          <View style={styles.ageSection}>
+            <Pressable style={styles.ageHead} onPress={() => setAgeSettingsOpen((v) => !v)}>
+              <Text style={styles.ageTitle}>Circle Age Limit</Text>
+              {ageSettings?.ageLimitEnabled && ageSettings.label && (
+                <View style={styles.ageBadge}>
+                  <Text style={styles.ageBadgeText}>{ageSettings.label}</Text>
                 </View>
               )}
-              {ageEnabled && (
-                <Text style={styles.ageHint}>
-                  People outside this range will be blocked from accepting circle invites. Leave a field blank for no bound.
-                </Text>
-              )}
-              <Pressable
-                style={[styles.ageSaveBtn, ageSaving && { opacity: 0.6 }]}
-                onPress={handleSaveAgeSettings}
-                disabled={ageSaving}
-              >
-                {ageSaving
-                  ? <ActivityIndicator size="small" color={color.onInk} />
-                  : <Text style={styles.ageSaveBtnText}>Save</Text>}
-              </Pressable>
-            </View>
-          )}
-        </View>
-      )}
-
-      {tab === 'circle' && following.length > 0 && (
-        <View style={styles.safeReturnHint}>
-          <Shield size={13} color={color.deep} />
-          <Text style={styles.safeReturnHintText}>
-            People you follow can be added as{' '}
-            <Text style={styles.safeReturnHintBold}>Trusted Contacts</Text>
-            {' '}in Safe Return — a personal check-in system that alerts your circle if you don't confirm you're safe on time.
-          </Text>
-        </View>
-      )}
-
-      {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={color.signal} />
-        </View>
-      ) : (
-        <ScrollView
-          contentContainerStyle={{ padding: space.lg, gap: space.md }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={color.signal} />}
-          onScroll={navBarScrollHandler}
-          scrollEventThrottle={16}
-        >
-          {/* ── Availability grid — shown when circle data is loaded ── */}
-          {live && avMembers.length > 0 && (
-            <View style={styles.avSection}>
-              <Pressable style={styles.avHead} onPress={() => setAvExpanded((v) => !v)}>
-                <CalendarClock size={14} color={color.deep} />
-                <Text style={styles.avTitle}>Circle Availability</Text>
-                {freeCount > 0 && (
-                  <View style={styles.avBadge}>
-                    <Text style={styles.avBadgeText}>{freeCount} free now</Text>
-                  </View>
-                )}
-                <View style={{ flex: 1 }} />
-                {avExpanded
-                  ? <ChevronUp size={16} color={color.mute} />
-                  : <ChevronDown size={16} color={color.mute} />}
-              </Pressable>
-
-              {avExpanded && (
-                <View style={styles.avCard}>
-                  {bestDays.length > 0 && (
-                    <BestDaysBanner
-                      bestDays={bestDays}
-                      totalMembers={avMembers.length}
-                      onDayPress={(date) => setSelectedDay(date)}
-                    />
-                  )}
-                  <AvailabilityGrid
-                    members={avMembers}
-                    days={circleDays}
-                    currentUserId={userId ?? ''}
-                    mode="circle"
-                    onEditOwn={() => router.push('/availability')}
-                    onPlanMeetup={(date) => setMeetupDate(date)}
-                    selectedDay={selectedDay}
-                    onSelectedDayChange={setSelectedDay}
-                  />
-                  <Pressable style={styles.avEditBtn} onPress={() => router.push('/availability')}>
-                    <Text style={styles.avEditBtnText}>Update my availability →</Text>
+              <View style={{ flex: 1 }} />
+              {ageSettingsOpen
+                ? <ChevronUp size={16} color={color.mute} />
+                : <ChevronDown size={16} color={color.mute} />}
+            </Pressable>
+            {ageSettingsOpen && (
+              <View style={styles.ageBody}>
+                <View style={styles.ageToggleRow}>
+                  <Text style={styles.ageToggleLabel}>Enable age restriction</Text>
+                  <Pressable
+                    style={[styles.toggle, ageEnabled && styles.toggleOn]}
+                    onPress={() => setAgeEnabled((v) => !v)}
+                    hitSlop={8}
+                  >
+                    <View style={[styles.toggleThumb, ageEnabled && styles.toggleThumbOn]} />
                   </Pressable>
                 </View>
-              )}
-            </View>
-          )}
+                {ageEnabled && (
+                  <View style={styles.ageRangeRow}>
+                    <View style={styles.ageRangeField}>
+                      <Text style={styles.ageHint}>Min age</Text>
+                      <TextInput
+                        style={styles.ageInput}
+                        value={minAgeStr}
+                        onChangeText={setMinAgeStr}
+                        placeholder="e.g. 18"
+                        placeholderTextColor={color.faint}
+                        keyboardType="number-pad"
+                        maxLength={3}
+                      />
+                    </View>
+                    <Text style={styles.ageDash}>–</Text>
+                    <View style={styles.ageRangeField}>
+                      <Text style={styles.ageHint}>Max age</Text>
+                      <TextInput
+                        style={styles.ageInput}
+                        value={maxAgeStr}
+                        onChangeText={setMaxAgeStr}
+                        placeholder="e.g. 35"
+                        placeholderTextColor={color.faint}
+                        keyboardType="number-pad"
+                        maxLength={3}
+                      />
+                    </View>
+                  </View>
+                )}
+                {ageEnabled && (
+                  <Text style={styles.ageHint}>
+                    People outside this range will be blocked from accepting circle invites. Leave a field blank for no bound.
+                  </Text>
+                )}
+                <Pressable
+                  style={[styles.ageSaveBtn, ageSaving && { opacity: 0.6 }]}
+                  onPress={handleSaveAgeSettings}
+                  disabled={ageSaving}
+                >
+                  {ageSaving
+                    ? <ActivityIndicator size="small" color={color.onInk} />
+                    : <Text style={styles.ageSaveBtnText}>Save</Text>}
+                </Pressable>
+              </View>
+            )}
+          </View>
+        )}
 
-          {/* ── Following / Followers list ── */}
-          {list.map((u) => (
-            <CircleUserRow key={u.id} u={u} reason={circleReason(u, tab)} tripId={tripId} />
-          ))}
-          {list.length === 0 && (
-            <View style={styles.emptyBox}>
-              <Text style={styles.emptyIcon}>{tab === 'circle' ? '🌍' : '👥'}</Text>
-              <Text style={styles.emptyTitle}>
-                {tab === 'circle' ? 'No one in your circle yet' : 'No followers yet'}
-              </Text>
-              <Text style={styles.emptyNote}>
-                {tab === 'circle'
-                  ? 'Find travelers and follow them to build your circle.'
-                  : 'Share your passport and connect with other travelers.'}
-              </Text>
-            </View>
-          )}
-          <NavBarFiller />
-        </ScrollView>
-      )}
+        {tab === 'circle' && following.length > 0 && (
+          <View style={styles.safeReturnHint}>
+            <Shield size={13} color={color.deep} />
+            <Text style={styles.safeReturnHintText}>
+              People you follow can be added as{' '}
+              <Text style={styles.safeReturnHintBold}>Trusted Contacts</Text>
+              {' '}in Safe Return — a personal check-in system that alerts your circle if you don't confirm you're safe on time.
+            </Text>
+          </View>
+        )}
+
+        {loading ? (
+          <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+            <ActivityIndicator color={color.signal} />
+          </View>
+        ) : (
+          <View style={{ padding: space.lg, gap: space.md }}>
+            {/* ── Availability grid — shown when circle data is loaded ── */}
+            {live && avMembers.length > 0 && (
+              <View style={styles.avSection}>
+                <Pressable style={styles.avHead} onPress={() => setAvExpanded((v) => !v)}>
+                  <CalendarClock size={14} color={color.deep} />
+                  <Text style={styles.avTitle}>Circle Availability</Text>
+                  {freeCount > 0 && (
+                    <View style={styles.avBadge}>
+                      <Text style={styles.avBadgeText}>{freeCount} free now</Text>
+                    </View>
+                  )}
+                  <View style={{ flex: 1 }} />
+                  {avExpanded
+                    ? <ChevronUp size={16} color={color.mute} />
+                    : <ChevronDown size={16} color={color.mute} />}
+                </Pressable>
+
+                {avExpanded && (
+                  <View style={styles.avCard}>
+                    {bestDays.length > 0 && (
+                      <BestDaysBanner
+                        bestDays={bestDays}
+                        totalMembers={avMembers.length}
+                        onDayPress={(date) => setSelectedDay(date)}
+                      />
+                    )}
+                    <AvailabilityGrid
+                      members={avMembers}
+                      days={circleDays}
+                      currentUserId={userId ?? ''}
+                      mode="circle"
+                      onEditOwn={() => router.push('/availability')}
+                      onPlanMeetup={(date) => setMeetupDate(date)}
+                      selectedDay={selectedDay}
+                      onSelectedDayChange={setSelectedDay}
+                    />
+                    <Pressable style={styles.avEditBtn} onPress={() => router.push('/availability')}>
+                      <Text style={styles.avEditBtnText}>Update my availability →</Text>
+                    </Pressable>
+                  </View>
+                )}
+              </View>
+            )}
+
+            {/* ── Following / Followers list ── */}
+            {list.map((u) => (
+              <CircleUserRow key={u.id} u={u} reason={circleReason(u, tab)} tripId={tripId} />
+            ))}
+            {list.length === 0 && (
+              <View style={styles.emptyBox}>
+                <Text style={styles.emptyIcon}>{tab === 'circle' ? '🌍' : '👥'}</Text>
+                <Text style={styles.emptyTitle}>
+                  {tab === 'circle' ? 'No one in your circle yet' : 'No followers yet'}
+                </Text>
+                <Text style={styles.emptyNote}>
+                  {tab === 'circle'
+                    ? 'Find travelers and follow them to build your circle.'
+                    : 'Share your passport and connect with other travelers.'}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+      </ScrollView>
 
       {/* Meetup creation — triggered from availability grid "Plan meetup this day" */}
       {meetupDate && userId && (
@@ -509,7 +512,6 @@ const styles = StyleSheet.create({
   tabActive: { backgroundColor: color.ink },
   tabText: { ...t.bodyStrong, color: color.mute, fontSize: 13 },
   tabTextActive: { color: color.onInk },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
   chatBanner: {
     flexDirection: 'row', alignItems: 'center', gap: space.sm,

@@ -788,6 +788,27 @@ function PublicPassportScreenNative() {
     username: username ?? undefined,
   }));
 
+  const navHeader = (
+    <View style={styles.header}>
+      <Pressable onPress={() => router.back()} style={styles.backBtn} hitSlop={8}>
+        <ArrowLeft size={22} color={color.ink} />
+      </Pressable>
+      <Text style={styles.headerTitle} numberOfLines={1}>
+        {displayHandle ? `@${displayHandle}` : (displayName || username || '')}
+      </Text>
+      {!isOwn && profile?.id && social ? (
+        <KebabMenu
+          userId={profile.id}
+          name={social.name}
+          handle={social.handle}
+          onBlocked={() => router.back()}
+        />
+      ) : (
+        <View style={{ width: 38 }} />
+      )}
+    </View>
+  );
+
   async function handleUnmuteFromBadge() {
     if (!profile?.id) return;
     Alert.alert(
@@ -813,55 +834,70 @@ function PublicPassportScreenNative() {
   const renderContent = () => {
     if (loading) {
       return (
-        <View style={styles.center}>
-          <ActivityIndicator color={color.signal} />
+        <View style={{ flex: 1 }}>
+          {navHeader}
+          <View style={styles.center}>
+            <ActivityIndicator color={color.signal} />
+          </View>
         </View>
       );
     }
 
     if (notFound) {
       return (
-        <View style={styles.center}>
-          <Text style={styles.stateIcon}>👤</Text>
-          <Text style={styles.stateTitle}>{PROFILE_NOT_FOUND_TITLE}</Text>
-          <Text style={styles.stateSub}>{PROFILE_NOT_FOUND_SUB}</Text>
+        <View style={{ flex: 1 }}>
+          {navHeader}
+          <View style={styles.center}>
+            <Text style={styles.stateIcon}>👤</Text>
+            <Text style={styles.stateTitle}>{PROFILE_NOT_FOUND_TITLE}</Text>
+            <Text style={styles.stateSub}>{PROFILE_NOT_FOUND_SUB}</Text>
+          </View>
         </View>
       );
     }
 
     if (isBlocked || isBlockedRelation) {
       return (
-        <View style={styles.center}>
-          <ShieldAlert size={40} color={color.haze} />
-          <Text style={styles.stateTitle}>This user is unavailable</Text>
-          <Text style={styles.stateSub}>You can't view this profile.</Text>
-          {iBlockedThem && (
-            <Pressable
-              style={{ marginTop: space.md, paddingHorizontal: space.xl, paddingVertical: 10, borderRadius: 20, borderWidth: 1, borderColor: color.haze }}
-              onPress={handleUnblock}
-            >
-              <Text style={{ fontSize: 13, color: color.mute, fontWeight: '600' }}>Unblock</Text>
-            </Pressable>
-          )}
+        <View style={{ flex: 1 }}>
+          {navHeader}
+          <View style={styles.center}>
+            <ShieldAlert size={40} color={color.haze} />
+            <Text style={styles.stateTitle}>This user is unavailable</Text>
+            <Text style={styles.stateSub}>You can't view this profile.</Text>
+            {iBlockedThem && (
+              <Pressable
+                style={{ marginTop: space.md, paddingHorizontal: space.xl, paddingVertical: 10, borderRadius: 20, borderWidth: 1, borderColor: color.haze }}
+                onPress={handleUnblock}
+              >
+                <Text style={{ fontSize: 13, color: color.mute, fontWeight: '600' }}>Unblock</Text>
+              </Pressable>
+            )}
+          </View>
         </View>
       );
     }
 
     if (isPrivate) {
       return (
-        <View style={styles.center}>
-          <Text style={styles.stateIcon}>🔒</Text>
-          <Text style={styles.stateTitle}>This Passport is private</Text>
-          <Text style={styles.stateSub}>Only the owner can see this Passport.</Text>
+        <View style={{ flex: 1 }}>
+          {navHeader}
+          <View style={styles.center}>
+            <Text style={styles.stateIcon}>🔒</Text>
+            <Text style={styles.stateTitle}>This Passport is private</Text>
+            <Text style={styles.stateSub}>Only the owner can see this Passport.</Text>
+          </View>
         </View>
       );
     }
 
     if (error) {
       return (
-        <View style={styles.center}>
-          <Text style={styles.stateTitle}>Couldn't load Passport</Text>
-          <Text style={styles.stateSub}>{error}</Text>
+        <View style={{ flex: 1 }}>
+          {navHeader}
+          <View style={styles.center}>
+            <Text style={styles.stateTitle}>Couldn't load Passport</Text>
+            <Text style={styles.stateSub}>{error}</Text>
+          </View>
         </View>
       );
     }
@@ -889,6 +925,7 @@ function PublicPassportScreenNative() {
         onScroll={navBarScrollHandler}
         scrollEventThrottle={16}
       >
+        {navHeader}
         <PassportHero
           profile={profile}
           isOwner={isOwn}
@@ -1059,26 +1096,6 @@ function PublicPassportScreenNative() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Nav header */}
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn} hitSlop={8}>
-          <ArrowLeft size={22} color={color.ink} />
-        </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          {displayHandle ? `@${displayHandle}` : (displayName || username || '')}
-        </Text>
-        {!isOwn && profile?.id && social ? (
-          <KebabMenu
-            userId={profile.id}
-            name={social.name}
-            handle={social.handle}
-            onBlocked={() => router.back()}
-          />
-        ) : (
-          <View style={{ width: 38 }} />
-        )}
-      </View>
-
       {renderContent()}
 
       <HighlightViewer

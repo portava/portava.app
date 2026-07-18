@@ -221,9 +221,8 @@ export default function ActivityCenter() {
     setActiveTab(tabKey);
   }, []);
 
-  return (
-    <View style={{ flex: 1, backgroundColor: color.paper }}>
-      {/* Header */}
+  const sharedHeader = (
+    <View>
       <View style={[styles.header, { paddingTop: insets.top + space.md }]}>
         <Text style={styles.headerTitle}>Activity Center</Text>
         <View style={{ flex: 1 }} />
@@ -241,8 +240,6 @@ export default function ActivityCenter() {
           <X size={24} color={color.ink} />
         </Pressable>
       </View>
-
-      {/* Tab bar (horizontally scrollable) */}
       <ScrollView
         ref={tabScrollRef}
         horizontal
@@ -265,20 +262,29 @@ export default function ActivityCenter() {
           );
         })}
       </ScrollView>
+    </View>
+  );
 
+  return (
+    <View style={{ flex: 1, backgroundColor: color.paper }}>
       {/* Content */}
       {activeTab === 'requests' ? (
         <SocialRequestsPane
           items={incomingRequests}
           loading={reqLoading}
           onReload={reloadRequests}
+          headerComponent={sharedHeader}
         />
       ) : loading && notifications.length === 0 ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={color.signal} />
+        <View style={{ flex: 1 }}>
+          {sharedHeader}
+          <View style={styles.center}>
+            <ActivityIndicator size="large" color={color.signal} />
+          </View>
         </View>
       ) : (
         <FlatList
+          ListHeaderComponent={sharedHeader}
           data={notifications}
           keyExtractor={(n) => n.id}
           renderItem={({ item }) => (
@@ -335,10 +341,12 @@ function SocialRequestsPane({
   items,
   loading,
   onReload,
+  headerComponent,
 }: {
   items: InboxItem[];
   loading: boolean;
   onReload: () => void;
+  headerComponent?: React.ReactNode;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const navBarScrollHandler = useNavBarScrollHandler();
@@ -381,20 +389,26 @@ function SocialRequestsPane({
 
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={color.signal} />
+      <View style={{ flex: 1 }}>
+        {headerComponent}
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={color.signal} />
+        </View>
       </View>
     );
   }
 
   if (items.length === 0) {
     return (
-      <View style={styles.empty}>
-        <Text style={styles.emptyIcon}>📬</Text>
-        <Text style={styles.emptyTitle}>No pending requests</Text>
-        <Text style={styles.emptyBody}>
-          Friend requests, circle invites, and trip invites will appear here.
-        </Text>
+      <View style={{ flex: 1 }}>
+        {headerComponent}
+        <View style={styles.empty}>
+          <Text style={styles.emptyIcon}>📬</Text>
+          <Text style={styles.emptyTitle}>No pending requests</Text>
+          <Text style={styles.emptyBody}>
+            Friend requests, circle invites, and trip invites will appear here.
+          </Text>
+        </View>
       </View>
     );
   }
@@ -406,6 +420,7 @@ function SocialRequestsPane({
       contentContainerStyle={{ paddingBottom: space.xxxl }}
       onScroll={navBarScrollHandler}
       scrollEventThrottle={16}
+      ListHeaderComponent={headerComponent ? <>{headerComponent}</> : undefined}
       ListFooterComponent={<NavBarFiller />}
       refreshControl={
         <RefreshControl refreshing={loading} onRefresh={onReload} tintColor={color.signal} />

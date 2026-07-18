@@ -325,246 +325,239 @@ export default function SearchScreen() {
     return chips;
   }, [locationGranted]);
 
+  // Show FlatList result rows only in results mode; all other modes render via ListHeaderComponent
+  const showResults = !suggestActive && !loading && !error && !isEmpty && !showEmptyStart;
+
   return (
     <KeyboardSafeScrollView style={{ backgroundColor: color.paper }}>
-      <ScreenHeader title="Search" back />
-
-      {/* Search bar */}
-      <View style={styles.searchBar}>
-        <Search size={16} color={color.mute} />
-        <TextInput
-          ref={inputRef}
-          style={styles.searchInput}
-          value={query}
-          onChangeText={handleQueryChange}
-          onSubmitEditing={() => submitSearch(query)}
-          placeholder="Search travelers, trips, events, places…"
-          placeholderTextColor={color.faint}
-          autoFocus
-          returnKeyType="search"
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-        {query.length > 0 && (
-          <Pressable onPress={clearQuery} hitSlop={8}>
-            <X size={16} color={color.mute} />
-          </Pressable>
+      <FlatList
+        data={showResults ? results : []}
+        keyExtractor={(item) => `${item.type}:${item.id}`}
+        renderItem={({ item }) => (
+          <SearchResultCard
+            result={item}
+            onActionStateChange={handleActionStateChange}
+          />
         )}
-      </View>
+        keyboardShouldPersistTaps="handled"
+        onScroll={navBarScrollHandler}
+        scrollEventThrottle={16}
+        onEndReached={handleLoadMore}
+        onEndReachedThreshold={0.4}
+        ListHeaderComponent={
+          <View style={{ backgroundColor: color.paper }}>
+            <ScreenHeader title="Search" back />
 
-      {/* Filter tabs */}
-      {showTabs && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.tabScrollView}
-          contentContainerStyle={styles.tabRow}
-        >
-          {TABS.map((tb) => (
-            <Pressable
-              key={tb.key}
-              style={[styles.tab, activeTab === tb.key && styles.tabActive]}
-              onPress={() => handleTabChange(tb.key)}
-            >
-              <Text style={[styles.tabText, activeTab === tb.key && styles.tabTextActive]}>
-                {tb.label}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-      )}
-
-      {/* Time/nearby label pill — shown below tabs when a filter is active */}
-      {showTabs && timeLabel && !needsLocationForNearby && (
-        <View style={styles.timeLabelRow}>
-          <View style={styles.timeLabelPill}>
-            <Text style={styles.timeLabelText}>Showing · {timeLabel}</Text>
-          </View>
-        </View>
-      )}
-
-      {/* Location needed banner — shown when nearby search but no location permission */}
-      {showTabs && needsLocationForNearby && (
-        <Pressable style={styles.locationBanner} onPress={requestLocation}>
-          <AlertCircle size={14} color={color.warn} />
-          <Text style={styles.locationBannerText}>
-            Enable location to find nearby results
-          </Text>
-          <Text style={styles.locationBannerAction}>Enable</Text>
-        </Pressable>
-      )}
-
-      {/* Content area */}
-      {suggestActive ? (
-        <SearchSuggestionsPanel
-          query={query}
-          groups={suggestGroups}
-          loading={suggestLoading}
-          recentSearches={recentSearches}
-          onSubmit={submitSearch}
-          onPickRecent={handlePickRecent}
-          onPickResult={handleSuggestionPick}
-          onScroll={navBarScrollHandler}
-        />
-      ) : loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={color.signal} />
-        </View>
-      ) : error ? (
-        <Pressable style={styles.center} onPress={() => runSearch(query, activeTab)}>
-          <Text style={styles.errorText}>{error}</Text>
-          <Text style={styles.retryHint}>Tap to retry</Text>
-        </Pressable>
-      ) : isEmpty ? (
-        /* No results */
-        <ScrollView
-          contentContainerStyle={[styles.center, { justifyContent: 'flex-start', paddingTop: space.xl }]}
-          keyboardShouldPersistTaps="handled"
-          onScroll={navBarScrollHandler}
-          scrollEventThrottle={16}
-        >
-          <Text style={styles.emptyTitle}>No results found.</Text>
-          <Text style={styles.emptySub}>
-            {timeLabel && !needsLocationForNearby
-              ? `Nothing matched "${query.trim()}" · ${timeLabel}. Try a different term or filter.`
-              : `Nothing matched "${query.trim()}". Try a different search term or filter.`}
-          </Text>
-
-          {/* Contextual recovery chips */}
-          <View style={[styles.chipsRow, { marginTop: space.lg }]}>
-            {locationGranted && (
-              <Pressable
-                style={[styles.chip, styles.chipPrimary]}
-                onPress={() => submitSearch('travelers nearby')}
-              >
-                <MapPin size={12} color={color.onInk} />
-                <Text style={[styles.chipText, { color: color.onInk }]}>Search nearby</Text>
-              </Pressable>
-            )}
-            {!locationGranted && (
-              <Pressable
-                style={[styles.chip, styles.chipPrimary]}
-                onPress={requestLocation}
-              >
-                <MapPin size={12} color={color.onInk} />
-                <Text style={[styles.chipText, { color: color.onInk }]}>Enable location</Text>
-              </Pressable>
-            )}
-            <Pressable
-              style={styles.chip}
-              onPress={() => router.push('/(tabs)/ai' as any)}
-            >
-              <Zap size={12} color={color.signal} />
-              <Text style={styles.chipText}>Ask Compass</Text>
-            </Pressable>
-          </View>
-
-          <Text style={[styles.chipsLabel, { marginTop: space.xl }]}>Try searching for</Text>
-          <View style={styles.chipsRow}>
-            {recoveryChips.slice(0, 4).map((chip) => (
-              <Pressable
-                key={chip}
-                style={styles.chip}
-                onPress={() => submitSearch(chip)}
-              >
-                <Text style={styles.chipText}>{chip}</Text>
-              </Pressable>
-            ))}
-          </View>
-          <NavBarFiller />
-        </ScrollView>
-      ) : showEmptyStart ? (
-        /* Pre-search — recent history + quick suggestions */
-        <ScrollView
-          contentContainerStyle={{ paddingBottom: 100 }}
-          keyboardShouldPersistTaps="handled"
-          onScroll={navBarScrollHandler}
-          scrollEventThrottle={16}
-        >
-          {historyLoaded && recentSearches.length > 0 && (
-            <View style={styles.historySection}>
-              <View style={styles.historyHeader}>
-                <Text style={styles.historyTitle}>Recent</Text>
-                <Pressable onPress={handleClearAllHistory} hitSlop={8}>
-                  <Text style={styles.clearAll}>Clear all</Text>
+            {/* Search bar */}
+            <View style={styles.searchBar}>
+              <Search size={16} color={color.mute} />
+              <TextInput
+                ref={inputRef}
+                style={styles.searchInput}
+                value={query}
+                onChangeText={handleQueryChange}
+                onSubmitEditing={() => submitSearch(query)}
+                placeholder="Search travelers, trips, events, places…"
+                placeholderTextColor={color.faint}
+                autoFocus
+                returnKeyType="search"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              {query.length > 0 && (
+                <Pressable onPress={clearQuery} hitSlop={8}>
+                  <X size={16} color={color.mute} />
                 </Pressable>
-              </View>
-              {recentSearches.map((item) => (
-                <Pressable
-                  key={item.id}
-                  style={styles.historyRow}
-                  onPress={() => handlePickRecent(item)}
-                >
-                  <Clock size={14} color={color.mute} />
-                  <Text style={styles.historyRowText} numberOfLines={1}>{item.query}</Text>
-                  <Pressable hitSlop={8} onPress={() => handleClearOneHistory(item.id)}>
-                    <X size={14} color={color.faint} />
-                  </Pressable>
-                </Pressable>
-              ))}
+              )}
             </View>
-          )}
 
-          {/* When history has loaded but is empty: show nothing (blank canvas) */}
-          {historyLoaded && recentSearches.length === 0 && (
-            <View style={[styles.center, { paddingVertical: space.xl }]}>
-              <Search size={36} color={color.haze} />
-            </View>
-          )}
-
-          {/* Suggestion chips — only shown when there is history to contextualise them */}
-          {recentSearches.length > 0 && (
-            <View style={styles.historySection}>
-              <Text style={styles.historyTitle}>Try searching for</Text>
-              <View style={[styles.chipsRow, { marginTop: space.sm }]}>
-                {locationGranted && (
-                  <Pressable style={[styles.chip, styles.chipPrimary]} onPress={() => submitSearch('travelers nearby')}>
-                    <MapPin size={12} color={color.onInk} />
-                    <Text style={[styles.chipText, { color: color.onInk }]}>Travelers nearby</Text>
-                  </Pressable>
-                )}
-                {recoveryChips.map((chip) => (
-                  <Pressable key={chip} style={styles.chip} onPress={() => submitSearch(chip)}>
-                    <Zap size={12} color={color.signal} />
-                    <Text style={styles.chipText}>{chip}</Text>
+            {/* Filter tabs */}
+            {showTabs && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.tabScrollView}
+                contentContainerStyle={styles.tabRow}
+              >
+                {TABS.map((tb) => (
+                  <Pressable
+                    key={tb.key}
+                    style={[styles.tab, activeTab === tb.key && styles.tabActive]}
+                    onPress={() => handleTabChange(tb.key)}
+                  >
+                    <Text style={[styles.tabText, activeTab === tb.key && styles.tabTextActive]}>
+                      {tb.label}
+                    </Text>
                   </Pressable>
                 ))}
-              </View>
-            </View>
-          )}
+              </ScrollView>
+            )}
 
-          {/* Compass traveler matches — below search suggestions */}
-          <CompassTravelerRow city={userCoords?.city ?? null} limit={6} />
-          <NavBarFiller />
-        </ScrollView>
-      ) : (
-        <FlatList
-          data={results}
-          keyExtractor={(item) => `${item.type}:${item.id}`}
-          renderItem={({ item }) => (
-            <SearchResultCard
-              result={item}
-              onActionStateChange={handleActionStateChange}
-            />
-          )}
-          contentContainerStyle={{ paddingBottom: 100 }}
-          keyboardShouldPersistTaps="handled"
-          onScroll={navBarScrollHandler}
-          scrollEventThrottle={16}
-          onEndReached={handleLoadMore}
-          onEndReachedThreshold={0.4}
-          ListFooterComponent={
-            <>
-              {loadingMore ? (
-                <View style={styles.loadingMore}>
-                  <ActivityIndicator size="small" color={color.signal} />
+            {/* Time/nearby label pill — shown below tabs when a filter is active */}
+            {showTabs && timeLabel && !needsLocationForNearby && (
+              <View style={styles.timeLabelRow}>
+                <View style={styles.timeLabelPill}>
+                  <Text style={styles.timeLabelText}>Showing · {timeLabel}</Text>
                 </View>
-              ) : null}
-              <NavBarFiller />
-            </>
-          }
-        />
-      )}
+              </View>
+            )}
+
+            {/* Location needed banner — shown when nearby search but no location permission */}
+            {showTabs && needsLocationForNearby && (
+              <Pressable style={styles.locationBanner} onPress={requestLocation}>
+                <AlertCircle size={14} color={color.warn} />
+                <Text style={styles.locationBannerText}>
+                  Enable location to find nearby results
+                </Text>
+                <Text style={styles.locationBannerAction}>Enable</Text>
+              </Pressable>
+            )}
+
+            {/* Content area — all non-results modes */}
+            {suggestActive ? (
+              <SearchSuggestionsPanel
+                query={query}
+                groups={suggestGroups}
+                loading={suggestLoading}
+                recentSearches={recentSearches}
+                onSubmit={submitSearch}
+                onPickRecent={handlePickRecent}
+                onPickResult={handleSuggestionPick}
+                onScroll={navBarScrollHandler}
+              />
+            ) : loading ? (
+              <View style={styles.center}>
+                <ActivityIndicator color={color.signal} />
+              </View>
+            ) : error ? (
+              <Pressable style={styles.center} onPress={() => runSearch(query, activeTab)}>
+                <Text style={styles.errorText}>{error}</Text>
+                <Text style={styles.retryHint}>Tap to retry</Text>
+              </Pressable>
+            ) : isEmpty ? (
+              /* No results */
+              <View style={[styles.center, { justifyContent: 'flex-start', paddingTop: space.xl }]}>
+                <Text style={styles.emptyTitle}>No results found.</Text>
+                <Text style={styles.emptySub}>
+                  {timeLabel && !needsLocationForNearby
+                    ? `Nothing matched "${query.trim()}" · ${timeLabel}. Try a different term or filter.`
+                    : `Nothing matched "${query.trim()}". Try a different search term or filter.`}
+                </Text>
+
+                {/* Contextual recovery chips */}
+                <View style={[styles.chipsRow, { marginTop: space.lg }]}>
+                  {locationGranted && (
+                    <Pressable
+                      style={[styles.chip, styles.chipPrimary]}
+                      onPress={() => submitSearch('travelers nearby')}
+                    >
+                      <MapPin size={12} color={color.onInk} />
+                      <Text style={[styles.chipText, { color: color.onInk }]}>Search nearby</Text>
+                    </Pressable>
+                  )}
+                  {!locationGranted && (
+                    <Pressable
+                      style={[styles.chip, styles.chipPrimary]}
+                      onPress={requestLocation}
+                    >
+                      <MapPin size={12} color={color.onInk} />
+                      <Text style={[styles.chipText, { color: color.onInk }]}>Enable location</Text>
+                    </Pressable>
+                  )}
+                  <Pressable
+                    style={styles.chip}
+                    onPress={() => router.push('/(tabs)/ai' as any)}
+                  >
+                    <Zap size={12} color={color.signal} />
+                    <Text style={styles.chipText}>Ask Compass</Text>
+                  </Pressable>
+                </View>
+
+                <Text style={[styles.chipsLabel, { marginTop: space.xl }]}>Try searching for</Text>
+                <View style={styles.chipsRow}>
+                  {recoveryChips.slice(0, 4).map((chip) => (
+                    <Pressable
+                      key={chip}
+                      style={styles.chip}
+                      onPress={() => submitSearch(chip)}
+                    >
+                      <Text style={styles.chipText}>{chip}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            ) : showEmptyStart ? (
+              /* Pre-search — recent history + quick suggestions */
+              <View>
+                {historyLoaded && recentSearches.length > 0 && (
+                  <View style={styles.historySection}>
+                    <View style={styles.historyHeader}>
+                      <Text style={styles.historyTitle}>Recent</Text>
+                      <Pressable onPress={handleClearAllHistory} hitSlop={8}>
+                        <Text style={styles.clearAll}>Clear all</Text>
+                      </Pressable>
+                    </View>
+                    {recentSearches.map((item) => (
+                      <Pressable
+                        key={item.id}
+                        style={styles.historyRow}
+                        onPress={() => handlePickRecent(item)}
+                      >
+                        <Clock size={14} color={color.mute} />
+                        <Text style={styles.historyRowText} numberOfLines={1}>{item.query}</Text>
+                        <Pressable hitSlop={8} onPress={() => handleClearOneHistory(item.id)}>
+                          <X size={14} color={color.faint} />
+                        </Pressable>
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
+
+                {/* When history has loaded but is empty: show nothing (blank canvas) */}
+                {historyLoaded && recentSearches.length === 0 && (
+                  <View style={[styles.center, { paddingVertical: space.xl }]}>
+                    <Search size={36} color={color.haze} />
+                  </View>
+                )}
+
+                {/* Suggestion chips — only shown when there is history to contextualise them */}
+                {recentSearches.length > 0 && (
+                  <View style={styles.historySection}>
+                    <Text style={styles.historyTitle}>Try searching for</Text>
+                    <View style={[styles.chipsRow, { marginTop: space.sm }]}>
+                      {locationGranted && (
+                        <Pressable style={[styles.chip, styles.chipPrimary]} onPress={() => submitSearch('travelers nearby')}>
+                          <MapPin size={12} color={color.onInk} />
+                          <Text style={[styles.chipText, { color: color.onInk }]}>Travelers nearby</Text>
+                        </Pressable>
+                      )}
+                      {recoveryChips.map((chip) => (
+                        <Pressable key={chip} style={styles.chip} onPress={() => submitSearch(chip)}>
+                          <Zap size={12} color={color.signal} />
+                          <Text style={styles.chipText}>{chip}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </View>
+                )}
+
+                {/* Compass traveler matches — below search suggestions */}
+                <CompassTravelerRow city={userCoords?.city ?? null} limit={6} />
+              </View>
+            ) : null}
+          </View>
+        }
+        ListFooterComponent={
+          <>
+            {loadingMore ? (
+              <View style={styles.loadingMore}>
+                <ActivityIndicator size="small" color={color.signal} />
+              </View>
+            ) : null}
+            <NavBarFiller />
+          </>
+        }
+      />
     </KeyboardSafeScrollView>
   );
 }
