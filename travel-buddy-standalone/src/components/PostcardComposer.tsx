@@ -25,6 +25,7 @@ import {
   type PostcardVisibility,
   type UploadCancelRef,
 } from '../services/postcards.ts';
+import { validateMedia } from '../services/media.ts';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
@@ -230,6 +231,18 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
       picked.type === 'video' && picked.duration != null
         ? Math.round(picked.duration / 1000)
         : undefined;
+
+    // Enforce the postcard-specific duration limit (60 s).
+    if (picked.type === 'video' && durationSeconds != null) {
+      const durationValidation = validateMedia(
+        { uri: picked.uri, mimeType, type: 'video', duration: durationSeconds },
+        { surface: 'postcard' },
+      );
+      if (!durationValidation.ok) {
+        Alert.alert('Cannot use this video', durationValidation.message);
+        return;
+      }
+    }
 
     setAsset({
       uri: picked.uri,

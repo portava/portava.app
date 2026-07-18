@@ -26,6 +26,7 @@ import { deletePost } from '../services/postEngagement.ts';
 import { hidePost } from '../services/posts.ts';
 import { primaryIdentityText } from '../lib/displayIdentity.ts';
 import { MediaStampOverlay } from './StampOverlayBadge.tsx';
+import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -225,19 +226,22 @@ function PostCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; 
       {/* ── Immersive media frame ── */}
       <View style={[s.postMedia, { height: mediaHeight }]}>
         {(item.media?.[0]?.thumbnail_url ?? item.media?.[0]?.url ?? item.mediaUrl) && !mediaFailed ? (
-          <Image
-            source={{ uri: item.media?.[0]?.thumbnail_url ?? item.media?.[0]?.url ?? item.mediaUrl }}
-            style={StyleSheet.absoluteFill}
-            resizeMode="cover"
-            onError={() => setMediaFailed(true)}
-          />
+          item.media?.[0]?.media_type === 'video' ? (
+            <VideoThumbnail
+              posterUri={item.media[0].thumbnail_url ?? item.media[0].url}
+              duration={item.media[0].duration_seconds ?? undefined}
+              style={StyleSheet.absoluteFill}
+            />
+          ) : (
+            <Image
+              source={{ uri: item.media?.[0]?.thumbnail_url ?? item.media?.[0]?.url ?? item.mediaUrl }}
+              style={StyleSheet.absoluteFill}
+              resizeMode="cover"
+              onError={() => setMediaFailed(true)}
+            />
+          )
         ) : (
           <PostMediaPlaceholder city={item.city} />
-        )}
-        {item.media?.[0]?.media_type === 'video' && !mediaFailed && (
-          <View style={s.videoPlayBadge} pointerEvents="none">
-            <PlayCircle size={40} color="rgba(255,255,255,0.9)" />
-          </View>
         )}
         {/* Passport-stamp overlay — sits on the photo, under the scrim/labels */}
         {!mediaFailed && <MediaStampOverlay raw={item.media?.[0]?.stamp_overlay} />}
