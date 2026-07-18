@@ -204,7 +204,7 @@ function PostMediaPlaceholder({ city }: { city?: string }) {
 }
 
 /* ── Traveler Post ── */
-function PostCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void }) {
+function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void; sessionId?: string | null }) {
   const { width } = useWindowDimensions();
   const chipVariant = resolveLocationChipVariant(item.locationVisibility, item.neighborhood);
   const chipLabel   = item.venueName ?? item.neighborhood ?? item.city;
@@ -304,6 +304,7 @@ function PostCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; 
             entityId={item.id}
             initialSaved={item.savedByMe ?? false}
             size={17}
+            sessionId={sessionId}
           />
           <CompassFeedbackMenu
             recommendationId={item.id}
@@ -396,7 +397,7 @@ function PlanCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; 
 }
 
 /* ── Hidden Gem Share ── */
-function GemCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void }) {
+function GemCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void; sessionId?: string | null }) {
   const planPicker = usePlanPicker();
   const { userId: currentUserId } = useSession();
   const [dismissed, setDismissed] = useState(false);
@@ -413,7 +414,7 @@ function GemCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; o
       <View style={s.actions}>
         <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'hidden_gem', title: item.title ?? 'Hidden gem', city: item.city, category: 'Hidden Gem' })}><Text style={s.outlineText}>Add to Plan</Text></Pressable>
         <View style={{ flex: 1 }} />
-        <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={17} />
+        <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={17} sessionId={sessionId} />
         <CompassFeedbackMenu
           recommendationId={item.id}
           itemType={item.type}
@@ -427,7 +428,7 @@ function GemCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; o
 }
 
 /* ── Itinerary / Plan Idea ── */
-function ItineraryCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void }) {
+function ItineraryCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void; sessionId?: string | null }) {
   const planPicker = usePlanPicker();
   const [dismissed, setDismissed] = useState(false);
   const dismiss = () => setDismissed(true);
@@ -449,7 +450,7 @@ function ItineraryCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedI
       <View style={s.actions}>
         <Pressable style={s.outlineBtn} onPress={() => planPicker.open({ id: item.id, type: 'experience', title: item.title ?? 'Itinerary', city: item.city, category: 'Itinerary' })}><Text style={s.outlineText}>Use this plan</Text></Pressable>
         <View style={{ flex: 1 }} />
-        <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={17} />
+        <SaveButton entityType="post" entityId={item.id} initialSaved={item.savedByMe ?? false} size={17} sessionId={sessionId} />
         <CompassFeedbackMenu
           recommendationId={item.id}
           itemType={item.type}
@@ -604,7 +605,7 @@ function PlaceRecommendationCard({ item }: { item: PulseFeedItem }) {
 }
 
 /* ── Unified renderer: switch on type ── */
-export function PulseFeedCard({ item, onDeleteSuccess }: { item: PulseFeedItem; onDeleteSuccess?: () => void }) {
+export function PulseFeedCard({ item, onDeleteSuccess, sessionId }: { item: PulseFeedItem; onDeleteSuccess?: () => void; sessionId?: string | null }) {
   const [whyId, setWhyId] = useState<string | null>(null);
   const [whyOpen, setWhyOpen] = useState(false);
 
@@ -612,11 +613,11 @@ export function PulseFeedCard({ item, onDeleteSuccess }: { item: PulseFeedItem; 
 
   let card: React.ReactNode;
   switch (item.type) {
-    case 'post':               card = <PostCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} />; break;
+    case 'post':               card = <PostCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} sessionId={sessionId} />; break;
     case 'question':           card = <QuestionCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} />; break;
     case 'plan':               card = <PlanCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} />; break;
-    case 'hidden_gem':         card = <GemCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} />; break;
-    case 'itinerary':          card = <ItineraryCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} />; break;
+    case 'hidden_gem':         card = <GemCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} sessionId={sessionId} />; break;
+    case 'itinerary':          card = <ItineraryCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} sessionId={sessionId} />; break;
     case 'circle_activity':    card = <CircleCard item={item} />; break;
     case 'compass_suggestion': card = item.reason ? <CompassCard item={item} onWhyPress={handleWhyPress} /> : null; break;
     case 'city_note':          card = item.isProvisional ? <CityNoteCard item={item} /> : null; break;

@@ -451,7 +451,7 @@ function Pulse() {
         ListFooterComponent={Footer}
         renderItem={({ item }) => (
           <View style={{ paddingHorizontal: space.lg }} onTouchStart={() => fireRankOutcome(item.id, 'pulse', 'tap', pulseFeed.sessionId)}>
-            <PulseFeedCard item={item} onDeleteSuccess={() => handlePostDeleted(item.id)} />
+            <PulseFeedCard item={item} onDeleteSuccess={() => handlePostDeleted(item.id)} sessionId={pulseFeed.sessionId} />
           </View>
         )}
         ItemSeparatorComponent={() => <View style={{ height: space.md }} />}

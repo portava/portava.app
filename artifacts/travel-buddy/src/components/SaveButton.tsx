@@ -23,6 +23,7 @@ import { color } from '../theme/tokens.ts';
 import { SaveToCollectionSheet } from './SaveToCollectionSheet.tsx';
 import { useSession } from '../context/SessionContext.tsx';
 import { getSaved, setSaved as writeSavedCache } from '../services/savedPostsCache.ts';
+import { fireRankOutcome } from '../hooks/useRankOutcome.ts';
 
 interface SaveButtonProps {
   entityType: EntityType;
@@ -32,6 +33,8 @@ interface SaveButtonProps {
   size?: number;
   tint?: string;
   onSavedChange?: (saved: boolean) => void;
+  /** Feed session ID forwarded to the rank-outcome endpoint so saves are attributed to the session. */
+  sessionId?: string | null;
 }
 
 export function SaveButton({
@@ -41,6 +44,7 @@ export function SaveButton({
   size = 20,
   tint,
   onSavedChange,
+  sessionId,
 }: SaveButtonProps) {
   const { userId } = useSession();
 
@@ -112,6 +116,8 @@ export function SaveButton({
     setSaved(next);
     if (entityType === 'post' && userId) writeSavedCache(userId, entityId, next);
     onSavedChange?.(next);
+    // Report a 'save' outcome to the ranking loop so the session is credited.
+    if (next) fireRankOutcome(entityId, 'pulse', 'save', sessionId ?? null);
     const ok = next
       ? await saveItem(entityType, entityId)
       : await unsaveItem(entityType, entityId);
