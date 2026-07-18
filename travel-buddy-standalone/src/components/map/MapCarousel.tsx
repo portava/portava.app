@@ -49,6 +49,8 @@ import {
   Heart,
   SlidersHorizontal,
   Stamp,
+  AlertTriangle,
+  RefreshCw,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
@@ -344,6 +346,49 @@ function EmptyCard({ onFiltersPress }: { onFiltersPress?: () => void }) {
   );
 }
 
+// ── Passport loading placeholder card ─────────────────────────────────────────
+
+function PassportLoadingCard() {
+  return (
+    <View style={[cs.card, cs.emptyCard]} accessibilityRole="text">
+      <Stamp size={22} color={color.mute} />
+      <Text style={cs.emptyTitle}>Loading your stamps…</Text>
+      <Text style={cs.emptyBody}>Fetching your passport map, hang tight.</Text>
+    </View>
+  );
+}
+
+// ── Passport error card ───────────────────────────────────────────────────────
+
+function PassportErrorCard({
+  onRetry,
+}: {
+  onRetry?: () => void;
+}) {
+  return (
+    <View style={[cs.card, cs.emptyCard]} accessibilityRole="text">
+      <View style={cs.errorIconCircle}>
+        <AlertTriangle size={20} color="#B45309" />
+      </View>
+      <Text style={cs.emptyTitle}>Couldn't load your stamps</Text>
+      <Text style={cs.emptyBody}>
+        There was a problem fetching your passport map. Check your connection and try again.
+      </Text>
+      {onRetry && (
+        <Pressable
+          style={cs.retryBtn}
+          onPress={onRetry}
+          accessibilityRole="button"
+          accessibilityLabel="Retry loading passport stamps"
+        >
+          <RefreshCw size={13} color="#fff" />
+          <Text style={cs.emptyBtnText}>Tap to retry</Text>
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
 // ── Single animated card wrapper ──────────────────────────────────────────────
 
 function MapEntityCard({
@@ -469,12 +514,27 @@ interface MapCarouselProps {
   activeIndex: number;
   onIndexChange: (index: number) => void;
   onFiltersPress?: () => void;
+  /** Passport mode: true while the getPassportMap fetch is in-flight. */
+  passportLoading?: boolean;
+  /** Passport mode: non-null when getPassportMap returned ok:false. */
+  passportError?: string | null;
+  /** Passport mode: called when the user taps "Retry". */
+  onPassportRetry?: () => void;
   style?: any;
 }
 
 export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
   function MapCarousel(
-    { entities, activeIndex, onIndexChange, onFiltersPress, style },
+    {
+      entities,
+      activeIndex,
+      onIndexChange,
+      onFiltersPress,
+      passportLoading,
+      passportError,
+      onPassportRetry,
+      style,
+    },
     ref,
   ) {
     const flatListRef = useRef<FlatList<MapEntity>>(null);
@@ -505,6 +565,21 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
     );
 
     if (entities.length === 0) {
+      // In passport mode, distinguish between loading, error, and genuine empty.
+      if (passportLoading) {
+        return (
+          <View style={[cs.container, style]}>
+            <PassportLoadingCard />
+          </View>
+        );
+      }
+      if (passportError) {
+        return (
+          <View style={[cs.container, style]}>
+            <PassportErrorCard onRetry={onPassportRetry} />
+          </View>
+        );
+      }
       return (
         <View style={[cs.container, style]}>
           <EmptyCard onFiltersPress={onFiltersPress} />
@@ -602,6 +677,25 @@ const cs = StyleSheet.create({
     ...t.bodyStrong,
     fontSize: 13,
     color: '#fff',
+  },
+  // Passport error card
+  errorIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FEF3C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  retryBtn: {
+    marginTop: space.xs,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
+    backgroundColor: color.signal,
+    borderRadius: radius.md,
   },
   // Type badge
   typeBadge: {

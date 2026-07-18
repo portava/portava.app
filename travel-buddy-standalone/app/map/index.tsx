@@ -356,19 +356,38 @@ export default function FullScreenMapScreen() {
   // In passport mode, fetch country-level stamp data and synthesise MapEntities.
   // The regular entity hooks are bypassed — stamp data replaces them entirely.
   const [passportEntities, setPassportEntities] = useState<MapEntity<PassportCountryPayload>[]>([]);
+  const [passportLoading, setPassportLoading] = useState(false);
+  const [passportError, setPassportError] = useState<string | null>(null);
+  // Increment to re-trigger the passport fetch (retry mechanism).
+  const [passportRetryCount, setPassportRetryCount] = useState(0);
+
+  const handlePassportRetry = useCallback(() => {
+    setPassportRetryCount((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     if (mode !== 'passport') return;
     let cancelled = false;
+    setPassportLoading(true);
+    setPassportError(null);
     getPassportMap().then((res) => {
       if (cancelled) return;
+      setPassportLoading(false);
       if (res.ok) {
         setPassportEntities(buildPassportEntities(res.data.markers));
+        setPassportError(null);
+      } else {
+        setPassportError(res.message ?? 'Could not load your stamps');
       }
-      // Non-fatal: map renders without stamp pins rather than crashing.
-    }).catch(() => {});
+    }).catch((e: unknown) => {
+      if (cancelled) return;
+      setPassportLoading(false);
+      setPassportError(e instanceof Error ? e.message : 'Network error');
+    });
     return () => { cancelled = true; };
-  }, [mode]);
+  // passportRetryCount is intentionally included to allow retry on demand.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, passportRetryCount]);
 
   // ── Entity layer filter state ───────────────────────────────────────────────
   // mode=circle pre-selects only the Friends layer; other modes load persisted prefs.
@@ -563,6 +582,9 @@ export default function FullScreenMapScreen() {
         activeIndex={activeIndex}
         onIndexChange={handleCarouselIndexChange}
         onFiltersPress={() => setFilterSheetOpen(true)}
+        passportLoading={mode === 'passport' ? passportLoading : undefined}
+        passportError={mode === 'passport' ? passportError : undefined}
+        onPassportRetry={mode === 'passport' ? handlePassportRetry : undefined}
         style={[
           s.carousel,
           { bottom: insets.bottom + 16 },

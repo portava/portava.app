@@ -182,8 +182,50 @@ describe('DiscoveryHub — Map shortcut', () => {
     // Coordinates are stringified
     expect(call.params.lat).toBe('48.8566');
     expect(call.params.lng).toBe('2.3522');
+    // City-level zoom is forwarded (default 11 — geocode effect skipped because coords already set)
+    expect(call.params.zoom).toBe('11');
     // Default active tab
     expect(call.params.category).toBe('for_you');
+
+    await act(async () => { unmount(); });
+  });
+
+  it('passes zoom 4 when only country is set — country-level geocode', async () => {
+    mockLocationState = {
+      place:  { city: null, country: 'France' },
+      coords: null,
+    };
+
+    // Stub fetch so the MapTiler geocode effect resolves (key guard passes below).
+    const origFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue({
+      json: () => Promise.resolve({
+        features: [{ center: [2.3514, 46.2276] }],
+      }),
+    } as unknown as Response);
+
+    // Allow the geocode effect to proceed past the key guard.
+    const origKey = process.env.EXPO_PUBLIC_MAPTILER_KEY;
+    process.env.EXPO_PUBLIC_MAPTILER_KEY = 'test-key';
+
+    const { unmount } = await render(<DiscoveryHub />);
+    // Flush the geocode fetch + state update.
+    await act(async () => {});
+
+    fireEvent.press(screen.getByText('Map'));
+
+    expect(mockRouterPush).toHaveBeenCalledTimes(1);
+    const call = mockRouterPush.mock.calls[0][0] as {
+      pathname: string;
+      params: Record<string, string | undefined>;
+    };
+    expect(call.pathname).toBe('/map');
+    // Country-level geocode sets zoom to 4.
+    expect(call.params.zoom).toBe('4');
+
+    // Restore globals.
+    process.env.EXPO_PUBLIC_MAPTILER_KEY = origKey;
+    global.fetch = origFetch;
 
     await act(async () => { unmount(); });
   });
