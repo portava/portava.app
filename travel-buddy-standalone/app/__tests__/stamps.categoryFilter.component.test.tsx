@@ -302,4 +302,56 @@ describe('StampsPage — StampCategoryFilter cycling', () => {
       expect(screen.getByText(expected)).toBeTruthy();
     }
   });
+
+  // ── Revoked-badge persistence tests ──────────────────────────────────────────
+
+  it('revoked tag is visible on a city stamp after pressing the Cities chip', async () => {
+    const revokedCityStamp: PassportStampNew = {
+      ...makeStamp('s-rev', 'city', 'Manila'),
+      isRevoked: true,
+    } as unknown as PassportStampNew;
+
+    mockGetStamps.mockResolvedValue({ ok: true, data: [...ALL_STAMPS, revokedCityStamp] });
+
+    await render(<StampsPage />);
+    await waitFor(() => screen.getByText('Manila'));
+
+    // Press the Cities chip to narrow the filter.
+    fireEvent.press(screen.getByTestId('filter-chip-Cities'));
+
+    await waitFor(() => screen.getByText('Manila'));
+
+    // The stamp label must remain visible.
+    expect(screen.getByText('Manila')).toBeTruthy();
+
+    // The revoked tag must appear alongside the stamp — not be silently dropped.
+    expect(screen.getByText('revoked')).toBeTruthy();
+
+    // Non-city stamps must not appear.
+    expect(screen.queryByText('BGC')).toBeNull();
+  });
+
+  it('revoked tag is still visible after cycling back to All', async () => {
+    const revokedCityStamp: PassportStampNew = {
+      ...makeStamp('s-rev2', 'city', 'Iloilo'),
+      isRevoked: true,
+    } as unknown as PassportStampNew;
+
+    mockGetStamps.mockResolvedValue({ ok: true, data: [...ALL_STAMPS, revokedCityStamp] });
+
+    await render(<StampsPage />);
+    await waitFor(() => screen.getByText('Iloilo'));
+
+    // Narrow to Cities — revoked tag must be visible there.
+    fireEvent.press(screen.getByTestId('filter-chip-Cities'));
+    await waitFor(() => screen.getByText('revoked'));
+    expect(screen.getByText('revoked')).toBeTruthy();
+
+    // Switch back to All — revoked tag must survive the re-render.
+    fireEvent.press(screen.getByTestId('filter-chip-All'));
+
+    await waitFor(() => screen.getByText('BGC'));
+    expect(screen.getByText('Iloilo')).toBeTruthy();
+    expect(screen.getByText('revoked')).toBeTruthy();
+  });
 });
