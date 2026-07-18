@@ -19,7 +19,7 @@
 
 import React from 'react';
 import { FlatList } from 'react-native';
-import { render } from '@testing-library/react-native';
+import { render, screen } from '@testing-library/react-native';
 
 // ── Inset constants ──────────────────────────────────────────────────────────
 
@@ -35,7 +35,7 @@ const NAV_BAR_FILLER = 96;
 // Controlled bottom-inset value — changed per test scenario.
 let mockBottomInset = NAV_BAR_FILLER + IPHONE_BOTTOM;
 
-jest.mock('../../src/hooks/useBottomInset', () => ({
+jest.mock('../../../src/hooks/useBottomInset', () => ({
   useBottomInset: () => mockBottomInset,
 }));
 
@@ -61,7 +61,7 @@ jest.mock('react-native-safe-area-context', () => ({
 
 // Nav bar collapse — navBarProgress must be a stable object; scroll handler
 // is a no-op for rendering purposes.
-jest.mock('../../src/hooks/useNavBarCollapse', () => ({
+jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
   useNavBarScrollHandler: () => () => {},
   navBarProgress: { value: 0 },
   NAV_BAR_FILLER_HEIGHT: 96,
@@ -75,14 +75,14 @@ jest.mock('expo-router', () => ({
 }));
 
 // Heavy feed / city-pulse hooks — return stable empty state.
-jest.mock('../../src/hooks/useCityPulse', () => ({
+jest.mock('../../../src/hooks/useCityPulse', () => ({
   useCityPulse: () => ({
     buckets: { fitsAvailability: [], openNearby: [], flexible: [] },
     status: 'not_set',
   }),
 }));
 
-jest.mock('../../src/hooks/usePosts', () => ({
+jest.mock('../../../src/hooks/usePosts', () => ({
   useGlobalFeed: () => ({
     data: [],
     pending: [],
@@ -105,15 +105,15 @@ jest.mock('../../src/hooks/usePosts', () => ({
   }),
 }));
 
-jest.mock('../../src/hooks/useRentABuddyFlag', () => ({
+jest.mock('../../../src/hooks/useRentABuddyFlag', () => ({
   useRentABuddyFlag: () => ({ enabled: false }),
 }));
 
-jest.mock('../../src/services/intelligence', () => ({
+jest.mock('../../../src/services/intelligence', () => ({
   fetchPreferences: jest.fn().mockResolvedValue({ ok: false }),
 }));
 
-jest.mock('../../src/context/LocationContext', () => ({
+jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
     locationState: { place: { city: 'Cebu City' } },
     openCityPicker: jest.fn(),
@@ -121,42 +121,42 @@ jest.mock('../../src/context/LocationContext', () => ({
 }));
 
 // Heavy UI components — render plain null so we don't pull in native modules.
-jest.mock('../../src/components/PulseHeader', () => ({
+jest.mock('../../../src/components/PulseHeader', () => ({
   PulseHeader: () => null,
 }));
-jest.mock('../../src/components/PulseFits', () => ({
+jest.mock('../../../src/components/PulseFits', () => ({
   FitsCard: () => null,
   FlexibleStrip: () => null,
 }));
-jest.mock('../../src/components/PulseFeedCard', () => ({
+jest.mock('../../../src/components/PulseFeedCard', () => ({
   PulseFeedCard: () => null,
 }));
-jest.mock('../../src/components/PulseCreate', () => ({
+jest.mock('../../../src/components/PulseCreate', () => ({
   PulseFilterSheet: () => null,
   UnifiedPostComposer: () => null,
 }));
-jest.mock('../../src/components/PulseLiveBanner', () => ({
+jest.mock('../../../src/components/PulseLiveBanner', () => ({
   PulseLiveBanner: () => null,
 }));
-jest.mock('../../src/components/primitives', () => ({
+jest.mock('../../../src/components/primitives', () => ({
   TravelEmptyState: () => null,
 }));
-jest.mock('../../src/components/PostCard', () => ({
+jest.mock('../../../src/components/PostCard', () => ({
   PostCard: () => null,
 }));
-jest.mock('../../src/components/LocationPermissionPrompt', () => ({
+jest.mock('../../../src/components/LocationPermissionPrompt', () => ({
   LocationPermissionPrompt: () => null,
 }));
-jest.mock('../../src/components/ManualCityPicker', () => ({
+jest.mock('../../../src/components/ManualCityPicker', () => ({
   ManualCityPicker: () => null,
 }));
-jest.mock('../../src/components/layover/LayoverModeSheet', () => ({
+jest.mock('../../../src/components/layover/LayoverModeSheet', () => ({
   LayoverModeSheet: () => null,
 }));
-jest.mock('../../src/components/layover/ActiveLayoverPill', () => ({
+jest.mock('../../../src/components/layover/ActiveLayoverPill', () => ({
   ActiveLayoverPill: () => null,
 }));
-jest.mock('../../src/components/PeopleYouMayKnow', () => ({
+jest.mock('../../../src/components/PeopleYouMayKnow', () => ({
   PeopleYouMayKnow: () => null,
 }));
 
@@ -198,23 +198,11 @@ describe('Pulse FlatList — contentContainerStyle.paddingBottom with real devic
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const Pulse = require('../index.tsx').default;
-    const { UNSAFE_getAllByType } = await render(<Pulse />);
+    const { toJSON } = await render(<Pulse />);
 
-    const flatLists = UNSAFE_getAllByType(FlatList);
-    expect(flatLists.length).toBeGreaterThan(0);
-
-    // The main feed FlatList is the one whose contentContainerStyle carries
-    // paddingBottom — find any FlatList with that prop set.
-    const paddings = flatLists
-      .map((fl) => {
-        const ccs = fl.props?.contentContainerStyle;
-        if (!ccs) return null;
-        const flat = Array.isArray(ccs)
-          ? Object.assign({}, ...ccs.map((s: any) => (s && typeof s === 'object' ? s : {})))
-          : ccs;
-        return typeof flat?.paddingBottom === 'number' ? flat.paddingBottom : null;
-      })
-      .filter((v): v is number => v !== null);
+    // Traverse the JSON tree for any contentContainerStyle.paddingBottom values.
+    // This avoids UNSAFE_getAllByType which is not exposed on screen in RNTL v14.
+    const paddings = collectContentContainerPaddingBottoms(toJSON());
 
     expect(paddings.length).toBeGreaterThan(0);
     const max = Math.max(...paddings);
@@ -227,19 +215,9 @@ describe('Pulse FlatList — contentContainerStyle.paddingBottom with real devic
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const Pulse = require('../index.tsx').default;
-    const { UNSAFE_getAllByType } = await render(<Pulse />);
+    const { toJSON } = await render(<Pulse />);
 
-    const flatLists = UNSAFE_getAllByType(FlatList);
-    const paddings = flatLists
-      .map((fl) => {
-        const ccs = fl.props?.contentContainerStyle;
-        if (!ccs) return null;
-        const flat = Array.isArray(ccs)
-          ? Object.assign({}, ...ccs.map((s: any) => (s && typeof s === 'object' ? s : {})))
-          : ccs;
-        return typeof flat?.paddingBottom === 'number' ? flat.paddingBottom : null;
-      })
-      .filter((v): v is number => v !== null);
+    const paddings = collectContentContainerPaddingBottoms(toJSON());
 
     expect(paddings.length).toBeGreaterThan(0);
     const max = Math.max(...paddings);
@@ -260,7 +238,7 @@ describe('Pulse FlatList — useBottomInset computation contract', () => {
   it('mock hook returns the expected value for the active scenario', () => {
     mockBottomInset = NAV_BAR_FILLER + IPHONE_BOTTOM;
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { useBottomInset } = require('../../src/hooks/useBottomInset');
+    const { useBottomInset } = require('../../../src/hooks/useBottomInset');
     expect(useBottomInset()).toBe(130);
   });
 });

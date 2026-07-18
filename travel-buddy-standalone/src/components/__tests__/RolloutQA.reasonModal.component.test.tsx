@@ -4,9 +4,18 @@
  * "Mark Failed" used iOS-only Alert.prompt (a silent no-op on Android/web).
  * It now uses ReasonPromptModal; the reason is required. This test pins
  * that the modal opens, requires a reason, and posts it to mark-failed.
+ *
+ * ## Act strategy
+ *
+ * All fireEvent calls are bare (no act() wrapper).  Wrapping fireEvent in
+ * await act(async () => {}) causes React 19 to schedule concurrent follow-up
+ * work after each commit, which overlaps with the next act() scope and
+ * produces "overlapping act() calls" warnings.  Bare fireEvent + waitFor
+ * avoids this: React batches the state update freely, and waitFor's own
+ * internal act() flushes exactly what is needed before the assertion.
  */
 import React from 'react';
-import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
+import { render, waitFor, screen, fireEvent } from '@testing-library/react-native';
 import AdminRolloutDashboard from '../../../app/(rent-a-buddy)/admin/rollout.tsx';
 
 jest.mock('expo-router', () => ({
@@ -39,7 +48,9 @@ describe('Rollout QA reason modal', () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
+    // Deferred so async continuations fire outside act() flushes — no overlapping-act() warnings.
     fetchMock.mockImplementation(async (url: string) => {
+      await new Promise(r => setTimeout(r, 0));
       if (url.includes('/qa/checklists') && !url.includes('mark-failed')) {
         return jsonResponse({ checklists: [checklist] });
       }
@@ -50,23 +61,31 @@ describe('Rollout QA reason modal', () => {
   });
 
   it('marks a checklist failed via the modal with a required reason', async () => {
-    await act(async () => { render(<AdminRolloutDashboard />); });
+    await render(<AdminRolloutDashboard />);
 
-    // Switch to QA tab
-    await act(async () => { fireEvent.press(screen.getByText('QA')); });
+    // Bare press — 'QA' tab switch triggers an async fetch; waitFor below settles it.
+    fireEvent.press(screen.getByText('QA'));
     await waitFor(() => expect(screen.getByText('Mark Failed')).toBeTruthy());
 
     expect(screen.queryByTestId('reason-modal')).toBeNull();
-    await act(async () => { fireEvent.press(screen.getByText('Mark Failed')); });
-    expect(screen.getByTestId('reason-modal')).toBeTruthy();
 
-    // Reason required — confirm disabled with no text
-    await act(async () => { fireEvent.press(screen.getByTestId('reason-confirm-btn')); });
+    // Bare press — sync setState; waitFor below confirms modal appears.
+    fireEvent.press(screen.getByText('Mark Failed'));
+    await waitFor(() => expect(screen.getByTestId('reason-modal')).toBeTruthy());
+
+    // Reason required — confirm disabled with no text.
+    // Bare press — sync no-op; assert immediately.
+    fireEvent.press(screen.getByTestId('reason-confirm-btn'));
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes('mark-failed'))).toBe(false);
 
-    await act(async () => { fireEvent.changeText(screen.getByTestId('reason-input'), 'payment flow broken'); });
-    await act(async () => { fireEvent.press(screen.getByTestId('reason-confirm-btn')); });
+    // Bare changeText — sync setState; waitFor confirms reason committed.
+    fireEvent.changeText(screen.getByTestId('reason-input'), 'payment flow broken');
+    await waitFor(() =>
+      expect(screen.getByTestId('reason-input').props.value).toBe('payment flow broken'),
+    );
 
+    // Bare press — async submit handler; waitFor below flushes the async chain.
+    fireEvent.press(screen.getByTestId('reason-confirm-btn'));
     await waitFor(() => {
       const call = fetchMock.mock.calls.find(([u]) => String(u).includes('/qa/checklists/cl-1/mark-failed'));
       expect(call).toBeTruthy();
@@ -75,20 +94,26 @@ describe('Rollout QA reason modal', () => {
   });
 
   it('double-tapping the modal confirm posts mark-failed exactly once', async () => {
-    await act(async () => { render(<AdminRolloutDashboard />); });
+    await render(<AdminRolloutDashboard />);
 
-    await act(async () => { fireEvent.press(screen.getByText('QA')); });
+    // Bare press — async fetch; waitFor settles it.
+    fireEvent.press(screen.getByText('QA'));
     await waitFor(() => expect(screen.getByText('Mark Failed')).toBeTruthy());
 
-    await act(async () => { fireEvent.press(screen.getByText('Mark Failed')); });
-    await act(async () => { fireEvent.changeText(screen.getByTestId('reason-input'), 'safety flow broken'); });
+    // Bare press — sync setState; waitFor confirms modal appears.
+    fireEvent.press(screen.getByText('Mark Failed'));
+    await waitFor(() => expect(screen.getByTestId('reason-input')).toBeTruthy());
+
+    // Bare changeText — sync setState; waitFor confirms reason committed.
+    fireEvent.changeText(screen.getByTestId('reason-input'), 'safety flow broken');
+    await waitFor(() =>
+      expect(screen.getByTestId('reason-input').props.value).toBe('safety flow broken'),
+    );
 
     // Fast double-tap before the modal closes.
-    await act(async () => {
-      const btn = screen.getByTestId('reason-confirm-btn');
-      fireEvent.press(btn);
-      fireEvent.press(btn);
-    });
+    const btn = screen.getByTestId('reason-confirm-btn');
+    fireEvent.press(btn);
+    fireEvent.press(btn);
 
     await waitFor(() =>
       expect(fetchMock.mock.calls.filter(([u]) => String(u).includes('mark-failed')).length).toBe(1));

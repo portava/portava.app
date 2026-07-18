@@ -64,6 +64,10 @@ jest.mock('../../services/adminStamps', () => ({
 
 const mockGetCatalog = getAdminStampCatalog as jest.Mock;
 
+/** Defer mock resolution to the next macrotask so continuations fire outside act(). */
+const deferred = <T>(value: T): Promise<T> =>
+  new Promise(resolve => setTimeout(() => resolve(value), 0));
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function catalogOk(entries: Array<{ id: string; display_name: string; stamp_type: string; country_code: string; status: string }>, total?: number) {
@@ -323,7 +327,7 @@ describe('StampQueueScreen — search filter', () => {
     // Initial load returns ENTRY_A; the search-filtered load returns ENTRY_B.
     mockGetCatalog
       .mockResolvedValueOnce(catalogOk([ENTRY_A]))
-      .mockResolvedValue(catalogOk([ENTRY_B]));
+      .mockImplementation(() => deferred(catalogOk([ENTRY_B])));
 
     await render(<StampQueueScreen />);
     await screen.findByText('Paris Eiffel');
@@ -346,7 +350,7 @@ describe('StampQueueScreen — search filter', () => {
     // debounced search fires — ensuring waitFor doesn't resolve prematurely.
     mockGetCatalog
       .mockResolvedValueOnce(catalogOk([ENTRY_A]))
-      .mockResolvedValue(catalogOk([ENTRY_B]));
+      .mockImplementation(() => deferred(catalogOk([ENTRY_B])));
 
     await render(<StampQueueScreen />);
     await screen.findByText('Paris Eiffel');
@@ -365,7 +369,7 @@ describe('StampQueueScreen — search filter', () => {
     // Initial load returns ENTRY_A; filtered load returns nothing.
     mockGetCatalog
       .mockResolvedValueOnce(catalogOk([ENTRY_A]))
-      .mockResolvedValue(catalogOk([]));
+      .mockImplementation(() => deferred(catalogOk([])));
 
     await render(<StampQueueScreen />);
     await screen.findByText('Paris Eiffel');
@@ -383,8 +387,8 @@ describe('StampQueueScreen — search filter', () => {
     // First load (initial), second load (after typing), third load (after clearing).
     mockGetCatalog
       .mockResolvedValueOnce(catalogOk([ENTRY_A]))
-      .mockResolvedValueOnce(catalogOk([ENTRY_B]))
-      .mockResolvedValue(catalogOk([ENTRY_A, ENTRY_B]));
+      .mockImplementationOnce(() => deferred(catalogOk([ENTRY_B])))
+      .mockImplementation(() => deferred(catalogOk([ENTRY_A, ENTRY_B])));
 
     await render(<StampQueueScreen />);
     await screen.findByText('Paris Eiffel');
@@ -431,9 +435,9 @@ describe('StampQueueScreen — combined status + search filters', () => {
     // After chip press (status='approved', search='') → returns ENTRY_B.
     // After search typed (status='approved', search='Tokyo') → returns ENTRY_B.
     mockGetCatalog
-      .mockResolvedValueOnce(catalogOk([ENTRY_A]))       // initial
-      .mockResolvedValueOnce(catalogOk([ENTRY_B]))       // after chip press
-      .mockResolvedValue(catalogOk([ENTRY_B]));          // after search typed
+      .mockResolvedValueOnce(catalogOk([ENTRY_A]))                              // initial
+      .mockImplementationOnce(() => deferred(catalogOk([ENTRY_B])))           // after chip press
+      .mockImplementation(() => deferred(catalogOk([ENTRY_B])));              // after search typed
 
     await render(<StampQueueScreen />);
     await screen.findByText('Paris Eiffel');
@@ -459,10 +463,10 @@ describe('StampQueueScreen — combined status + search filters', () => {
   it('passes status but not search after the search field is cleared while a chip is active', async () => {
     // Initial → after chip press → after search typed → after search cleared.
     mockGetCatalog
-      .mockResolvedValueOnce(catalogOk([ENTRY_A]))       // initial
-      .mockResolvedValueOnce(catalogOk([ENTRY_B]))       // chip pressed
-      .mockResolvedValueOnce(catalogOk([ENTRY_B]))       // search typed
-      .mockResolvedValue(catalogOk([ENTRY_B]));          // search cleared
+      .mockResolvedValueOnce(catalogOk([ENTRY_A]))                              // initial
+      .mockImplementationOnce(() => deferred(catalogOk([ENTRY_B])))           // chip pressed
+      .mockImplementationOnce(() => deferred(catalogOk([ENTRY_B])))           // search typed
+      .mockImplementation(() => deferred(catalogOk([ENTRY_B])));              // search cleared
 
     await render(<StampQueueScreen />);
     await screen.findByText('Paris Eiffel');

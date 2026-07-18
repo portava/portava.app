@@ -5,9 +5,18 @@
  * Android/web). It now uses ReasonPromptModal with an OPTIONAL note. This
  * test pins that the modal opens, submits with an empty note (note is
  * optional here), and passes a typed note through to the service.
+ *
+ * ## Act strategy
+ *
+ * All fireEvent calls are bare (no act() wrapper).  Wrapping fireEvent in
+ * await act(async () => {}) causes React 19 to schedule concurrent follow-up
+ * work after each commit, which overlaps with the next act() scope and
+ * produces "overlapping act() calls" warnings.  Bare fireEvent + waitFor
+ * avoids this: React batches the state update freely, and waitFor's own
+ * internal act() flushes exactly what is needed before the assertion.
  */
 import React from 'react';
-import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
+import { render, waitFor, screen, fireEvent } from '@testing-library/react-native';
 import GamingFlagsScreen from '../../../app/admin/gaming-flags.tsx';
 import { fetchGamingFlags, markGamingFlagReviewed } from '../../services/trustAdmin.ts';
 
@@ -34,6 +43,10 @@ jest.mock('../../services/trustAdmin', () => ({
 const mockFlags  = fetchGamingFlags as jest.Mock;
 const mockReview = markGamingFlagReviewed as jest.Mock;
 
+/** Defer mock resolution to the next macrotask so continuations fire outside act(). */
+const deferred = <T>(value: T): Promise<T> =>
+  new Promise(resolve => setTimeout(() => resolve(value), 0));
+
 const flag = {
   id: 'flag-1',
   user_id: 'user-1',
@@ -43,55 +56,71 @@ const flag = {
 
 describe('GamingFlags reason modal', () => {
   it('marks a flag reviewed via the modal with a note', async () => {
-    mockFlags.mockResolvedValue({ flags: [flag], total: 1 });
-    mockReview.mockResolvedValue({});
+    mockFlags.mockImplementation(() => deferred({ flags: [flag], total: 1 }));
+    mockReview.mockImplementation(() => deferred({}));
 
-    await act(async () => { render(<GamingFlagsScreen />); });
-
+    await render(<GamingFlagsScreen />);
     await waitFor(() => expect(screen.getByText('Mark Reviewed')).toBeTruthy());
     expect(screen.queryByTestId('reason-modal')).toBeNull();
 
-    await act(async () => { fireEvent.press(screen.getByText('Mark Reviewed')); });
-    expect(screen.getByTestId('reason-modal')).toBeTruthy();
+    // Bare press — sync setState; waitFor below confirms modal appears.
+    fireEvent.press(screen.getByText('Mark Reviewed'));
+    await waitFor(() => expect(screen.getByTestId('reason-modal')).toBeTruthy());
 
-    await act(async () => { fireEvent.changeText(screen.getByTestId('reason-input'), 'legit streak'); });
-    await act(async () => { fireEvent.press(screen.getByTestId('reason-confirm-btn')); });
+    // Bare changeText — sync setState; waitFor confirms note committed.
+    fireEvent.changeText(screen.getByTestId('reason-input'), 'legit streak');
+    await waitFor(() =>
+      expect(screen.getByTestId('reason-input').props.value).toBe('legit streak'),
+    );
 
-    await waitFor(() => expect(mockReview).toHaveBeenCalledWith('flag-1', 'legit streak'));
-    // Row removed after success
-    expect(screen.queryByText('Mark Reviewed')).toBeNull();
+    // Bare press — async submit handler; waitFor below flushes the async chain.
+    fireEvent.press(screen.getByTestId('reason-confirm-btn'));
+    await waitFor(() => {
+      expect(mockReview).toHaveBeenCalledWith('flag-1', 'legit streak');
+      // Row removed after success
+      expect(screen.queryByText('Mark Reviewed')).toBeNull();
+    });
   });
 
   it('note is optional — submits with undefined when left blank', async () => {
-    mockFlags.mockResolvedValue({ flags: [flag], total: 1 });
-    mockReview.mockResolvedValue({});
+    mockFlags.mockImplementation(() => deferred({ flags: [flag], total: 1 }));
+    mockReview.mockImplementation(() => deferred({}));
 
-    await act(async () => { render(<GamingFlagsScreen />); });
+    await render(<GamingFlagsScreen />);
     await waitFor(() => expect(screen.getByText('Mark Reviewed')).toBeTruthy());
 
-    await act(async () => { fireEvent.press(screen.getByText('Mark Reviewed')); });
-    await act(async () => { fireEvent.press(screen.getByTestId('reason-confirm-btn')); });
+    // Bare press — sync setState; waitFor confirms modal appears.
+    fireEvent.press(screen.getByText('Mark Reviewed'));
+    await waitFor(() => expect(screen.getByTestId('reason-confirm-btn')).toBeTruthy());
 
+    // Bare press — async submit handler; waitFor flushes the async chain.
+    fireEvent.press(screen.getByTestId('reason-confirm-btn'));
     await waitFor(() => expect(mockReview).toHaveBeenCalledWith('flag-1', undefined));
   });
 
   it('double-tapping the modal confirm marks the flag reviewed exactly once', async () => {
     mockReview.mockClear();
-    mockFlags.mockResolvedValue({ flags: [flag], total: 1 });
-    mockReview.mockResolvedValue({});
+    mockFlags.mockImplementation(() => deferred({ flags: [flag], total: 1 }));
+    mockReview.mockImplementation(() => deferred({}));
 
-    await act(async () => { render(<GamingFlagsScreen />); });
+    await render(<GamingFlagsScreen />);
     await waitFor(() => expect(screen.getByText('Mark Reviewed')).toBeTruthy());
 
-    await act(async () => { fireEvent.press(screen.getByText('Mark Reviewed')); });
-    await act(async () => { fireEvent.changeText(screen.getByTestId('reason-input'), 'note'); });
+    // Bare press — sync setState; waitFor confirms modal appears.
+    fireEvent.press(screen.getByText('Mark Reviewed'));
+    await waitFor(() => expect(screen.getByTestId('reason-input')).toBeTruthy());
 
-    // Fast double-tap before the modal closes.
-    await act(async () => {
-      const btn = screen.getByTestId('reason-confirm-btn');
-      fireEvent.press(btn);
-      fireEvent.press(btn);
-    });
+    // Bare changeText — sync setState; waitFor confirms note committed.
+    fireEvent.changeText(screen.getByTestId('reason-input'), 'note');
+    await waitFor(() =>
+      expect(screen.getByTestId('reason-input').props.value).toBe('note'),
+    );
+
+    // Fast double-tap before the modal closes — both presses are bare so the
+    // in-flight guard (submittingRef) sees the first press before any re-render.
+    const btn = screen.getByTestId('reason-confirm-btn');
+    fireEvent.press(btn);
+    fireEvent.press(btn);
 
     await waitFor(() => expect(mockReview).toHaveBeenCalledTimes(1));
     expect(mockReview).toHaveBeenCalledWith('flag-1', 'note');

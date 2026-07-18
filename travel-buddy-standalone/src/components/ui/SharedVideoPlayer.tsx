@@ -106,6 +106,7 @@ export function SharedVideoPlayer({
       {!isPlaying && poster ? (
         <View style={StyleSheet.absoluteFill} pointerEvents="none">
           <Image
+            testID="poster-image"
             source={{ uri: poster }}
             style={StyleSheet.absoluteFill}
             resizeMode="cover"
