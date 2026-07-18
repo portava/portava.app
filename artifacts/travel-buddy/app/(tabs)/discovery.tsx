@@ -150,6 +150,8 @@ export default function DiscoveryHub() {
   const [availableBuddies, setAvailableBuddies] = useState<BuddyProfile[]>([]);
   const [buddyStripLoading, setBuddyStripLoading] = useState(false);
   const [buddyCityNotAvailable, setBuddyCityNotAvailable] = useState(false);
+  const [nudgeHighlighted, setNudgeHighlighted] = useState(false);
+  const nudgeHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Step-1 instrumentation + Step-4 cache-first paint ─────────────────────
   const mountedAt          = useRef(Date.now());
@@ -180,6 +182,19 @@ export default function DiscoveryHub() {
     setRouteBuilderDraft(draft);
     setRouteBuilderOpen(true);
   }, []);
+
+  // Fired when a user taps a context-mode chip while it is disabled (no destination set).
+  // Briefly highlights the location-nudge banner so the user understands why the chip
+  // is inactive, and opens the city picker so they can act immediately.
+  const handleDisabledChipPress = useCallback(() => {
+    setNudgeHighlighted(true);
+    if (nudgeHighlightTimerRef.current) clearTimeout(nudgeHighlightTimerRef.current);
+    nudgeHighlightTimerRef.current = setTimeout(() => {
+      setNudgeHighlighted(false);
+      nudgeHighlightTimerRef.current = null;
+    }, 1800);
+    openCityPicker();
+  }, [openCityPicker]);
 
   // Keep destination in sync when location city changes (GPS capture / manual set).
   useEffect(() => {
@@ -497,9 +512,9 @@ export default function DiscoveryHub() {
             <Pressable
               key={m.key}
               style={[styles.modeChip, active && styles.modeChipActive, chipsDisabled && styles.modeChipDisabled]}
-              onPress={() => setContextMode(m.key)}
-              disabled={chipsDisabled}
+              onPress={chipsDisabled ? handleDisabledChipPress : () => setContextMode(m.key)}
               accessibilityState={{ disabled: chipsDisabled }}
+              accessibilityHint={chipsDisabled ? 'Set a city to enable context modes' : undefined}
             >
               <m.Icon size={12} color={active ? color.signal : color.mute} />
               <Text style={[styles.modeChipLabel, active && styles.modeChipLabelActive]}>
@@ -513,7 +528,7 @@ export default function DiscoveryHub() {
       {/* ── Location nudge — shown when no destination is set ── */}
       {screenStatus === 'location-required' && (
         <Pressable
-          style={styles.locationNudge}
+          style={[styles.locationNudge, nudgeHighlighted && styles.locationNudgeHighlighted]}
           onPress={openCityPicker}
           accessibilityRole="button"
           accessibilityLabel="Set your location to discover nearby places"
@@ -701,6 +716,8 @@ export default function DiscoveryHub() {
     availableBuddies,
     buddyCityNotAvailable,
     currentCity,
+    nudgeHighlighted,
+    handleDisabledChipPress,
   ]);
 
   return (
@@ -944,6 +961,10 @@ const styles = StyleSheet.create({
     backgroundColor: color.signal + '10',
     borderBottomWidth: 1,
     borderBottomColor: color.signal + '30',
+  },
+  locationNudgeHighlighted: {
+    backgroundColor: color.signal + '28',
+    borderBottomColor: color.signal + '70',
   },
   locationNudgeText: {
     ...t.small,
