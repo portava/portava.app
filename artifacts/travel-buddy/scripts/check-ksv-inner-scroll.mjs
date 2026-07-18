@@ -21,6 +21,13 @@
  *      first '>') and then look at the next non-empty line. If it starts a
  *      <ScrollView element, the file is flagged.
  *
+ * SCOPE LIMITATION — this guard only catches DIRECT JSX children.
+ *   If the inner <ScrollView> is wrapped inside a helper component
+ *   (e.g. <MyList> that itself renders a <ScrollView>), the static
+ *   line-by-line scan cannot see through the component boundary and
+ *   will NOT flag the file. This is an intentional trade-off: the
+ *   analysis is fast, zero-dependency, and catches the common case.
+ *
  * NOTE exceptions — files added to ALLOWED are skipped entirely.
  */
 

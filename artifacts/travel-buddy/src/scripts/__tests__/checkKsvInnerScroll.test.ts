@@ -56,6 +56,41 @@ export default function GoodScreen() {
 }
 `.trimStart();
 
+/**
+ * Wrapper-component fixture — the <ScrollView> lives one JSX level further
+ * away, inside a helper component (<MyList>) that is itself a direct child of
+ * <KeyboardSafeScrollView>.
+ *
+ * The guard performs static line-by-line analysis and only flags cases where
+ * the DIRECT child of <KeyboardSafeScrollView> (the first non-empty line after
+ * the opening tag closes) starts with a <ScrollView element. When the
+ * anti-pattern is hidden inside another component, the guard cannot see it and
+ * will NOT fire — this is an acknowledged, intentional limitation of the
+ * static-analysis approach.
+ */
+const WRAPPER_COMPONENT_TSX = `
+import React from 'react';
+import { ScrollView, Text } from 'react-native';
+import { KeyboardSafeScrollView } from 'src/components/ui/KeyboardSafeScrollView';
+
+// MyList hides a <ScrollView> one level deeper — the guard cannot see inside it.
+function MyList() {
+  return (
+    <ScrollView>
+      <Text>item</Text>
+    </ScrollView>
+  );
+}
+
+export default function WrappedScreen() {
+  return (
+    <KeyboardSafeScrollView>
+      <MyList />
+    </KeyboardSafeScrollView>
+  );
+}
+`.trimStart();
+
 /** Self-closing <KeyboardSafeScrollView /> — no children, must not fire. */
 const SELF_CLOSING_TSX = `
 import React from 'react';
@@ -149,6 +184,32 @@ describe('check-ksv-inner-scroll.mjs', () => {
     assert.ok(
       output.includes('BadWidget.tsx'),
       `expected error output to mention BadWidget.tsx, got:\n${output}`,
+    );
+  });
+
+  it('exits 0 (not caught) when <ScrollView> is hidden inside a wrapper component — guard only checks direct children', () => {
+    // Limitation: the guard performs line-by-line static analysis. It looks at
+    // the first non-empty line immediately after <KeyboardSafeScrollView> closes
+    // its opening tag. When a helper component (e.g. <MyList />) is the direct
+    // child and THAT component internally renders a <ScrollView>, the guard
+    // cannot see the nesting and will not flag it.
+    const tmp = makeTmpWithApp();
+    tmps.push(tmp);
+    writeFileSync(join(tmp, 'app', 'WrappedScreen.tsx'), WRAPPER_COMPONENT_TSX);
+
+    const result = runGuard(tmp);
+
+    assert.equal(
+      result.status,
+      0,
+      `guard is not expected to catch a <ScrollView> nested inside a wrapper component; ` +
+        `if it now exits 1, the guard's scope has expanded beyond its documented limits.\nstderr:\n${result.stderr}`,
+    );
+
+    const output = (result.stderr ?? '') + (result.stdout ?? '');
+    assert.ok(
+      output.includes('no KeyboardSafeScrollView+ScrollView nesting found'),
+      `expected ok message for wrapper-component case, got:\n${output}`,
     );
   });
 
