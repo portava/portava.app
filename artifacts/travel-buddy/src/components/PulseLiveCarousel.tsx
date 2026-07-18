@@ -197,10 +197,12 @@ function CarouselInner({
             return next;
           });
           opacity.value = 1;
-          // Reset the interval so auto-advance fires AUTO_ADVANCE_MS after
-          // the swipe, not at the stale boundary.
-          startIntervalRef.current();
         }
+        // Reset the interval unconditionally so auto-advance fires
+        // AUTO_ADVANCE_MS after *any* touch release — not just full swipes.
+        // A partial swipe that didn't cross SWIPE_THRESHOLD would otherwise
+        // leave the interval at its stale countdown position.
+        startIntervalRef.current();
       },
       onPanResponderTerminate: () => {
         touching.current = false;
