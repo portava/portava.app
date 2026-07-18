@@ -49,22 +49,204 @@ function visibilityLabel(vis: MemoryVisibility): string {
   return 'Private';
 }
 
+// ── Edit Memory Photo Modal ───────────────────────────────────────────────────
+
+interface EditPhotoModalProps {
+  visible: boolean;
+  memory: PassportMemory;
+  onClose: () => void;
+  onSaved: (memoryId: string, newPhotoUrl: string | null) => void;
+}
+
+function EditMemoryPhotoModal({ visible, memory, onClose, onSaved }: EditPhotoModalProps) {
+  // Track whether we're working with a newly picked local URI or the existing remote URL.
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [photoMime, setPhotoMime] = useState<string>('image/jpeg');
+  // null  → user explicitly removed the photo
+  // undefined → no change (keep existing)
+  const [removePhoto, setRemovePhoto] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const [error, setError] = useState('');
+
+  // Reset state whenever the modal opens for a (potentially different) memory.
+  React.useEffect(() => {
+    if (visible) {
+      setPhotoUri(null);
+      setPhotoMime('image/jpeg');
+      setRemovePhoto(false);
+      setUploading(false);
+      setSaving(false);
+      setUploadError('');
+      setError('');
+    }
+  }, [visible]);
+
+  async function pickPhoto() {
+    setUploadError('');
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      setUploadError('Photo library permission required to add a photo.');
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.85,
+      allowsEditing: true,
+    });
+    if (res.canceled || !res.assets?.[0]) return;
+    const asset = res.assets[0];
+    setPhotoUri(asset.uri);
+    setPhotoMime(asset.mimeType ?? 'image/jpeg');
+    setRemovePhoto(false);
+  }
+
+  function handleRemove() {
+    setPhotoUri(null);
+    setRemovePhoto(true);
+    setUploadError('');
+  }
+
+  function handleUndoRemove() {
+    setRemovePhoto(false);
+  }
+
+  const isBusy = uploading || saving;
+
+  // Decide what the "current" preview is:
+  // 1. Newly picked local image  → photoUri
+  // 2. User removed              → nothing (show picker)
+  // 3. No change                 → memory.photoUrl
+  const previewUri = photoUri ?? (removePhoto ? null : memory.photoUrl);
+
+  async function handleSave() {
+    setSaving(true);
+    setError('');
+    setUploadError('');
+
+    let photoUrl: string | null | undefined;
+
+    if (photoUri) {
+      // Upload the newly selected image.
+      setUploading(true);
+      const up = await uploadMedia({ uri: photoUri, mimeType: photoMime, type: 'image' });
+      setUploading(false);
+      if (!up.ok || !up.url) {
+        setUploadError(up.message ?? 'Photo upload failed. You can save without a photo or try again.');
+        setSaving(false);
+        return;
+      }
+      photoUrl = up.url;
+    } else if (removePhoto) {
+      photoUrl = null;
+    } else {
+      // Nothing changed — close without a network call.
+      setSaving(false);
+      onClose();
+      return;
+    }
+
+    const res = await updatePassportMemory(memory.id, { photoUrl });
+    setSaving(false);
+    if (!res.ok) { setError(res.message); return; }
+    onSaved(memory.id, photoUrl as string | null);
+    onClose();
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <KeyboardSafeView>
+        <View style={cm.header}>
+          <Text style={cm.title}>Edit Photo</Text>
+          <Pressable onPress={onClose} hitSlop={8} disabled={isBusy}>
+            <X size={22} color={color.ink} />
+          </Pressable>
+        </View>
+        <View style={cm.body}>
+          <Text style={cm.label}>Photo</Text>
+
+          {previewUri ? (
+            <View style={cm.photoPreviewWrap}>
+              <Image source={{ uri: previewUri }} style={cm.photoPreview} resizeMode="cover" />
+              {uploading && (
+                <View style={cm.photoUploadingOverlay}>
+                  <ActivityIndicator color="#fff" size="small" />
+                  <Text style={cm.photoUploadingText}>Uploading…</Text>
+                </View>
+              )}
+              {!uploading && (
+                <Pressable style={cm.photoRemoveBtn} onPress={handleRemove} hitSlop={8} disabled={isBusy}>
+                  <X size={14} color="#fff" />
+                </Pressable>
+              )}
+              <Pressable style={cm.photoChangeBtn} onPress={pickPhoto} disabled={isBusy}>
+                <Text style={cm.photoChangeBtnText}>Change</Text>
+              </Pressable>
+            </View>
+          ) : removePhoto ? (
+            <View style={ep.removedState}>
+              <Text style={ep.removedText}>Photo will be removed</Text>
+              <Pressable onPress={handleUndoRemove} hitSlop={8}>
+                <Text style={ep.undoText}>Undo</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable style={cm.photoPickerBtn} onPress={pickPhoto} disabled={isBusy}>
+              <Camera size={18} color={color.signal} />
+              <Text style={cm.photoPickerText}>Add photo</Text>
+            </Pressable>
+          )}
+
+          {uploadError ? (
+            <View style={cm.uploadErrorBox}>
+              <Text style={cm.uploadErrorText}>{uploadError}</Text>
+              <Pressable onPress={() => setUploadError('')} hitSlop={8}>
+                <Text style={cm.uploadErrorDismiss}>Dismiss</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {error ? <Text style={cm.error}>{error}</Text> : null}
+
+          <Pressable style={[cm.saveBtn, isBusy && cm.saveBtnDisabled]} onPress={handleSave} disabled={isBusy}>
+            {isBusy
+              ? <ActivityIndicator color="#fff" size="small" />
+              : <Text style={cm.saveBtnText}>Save</Text>}
+          </Pressable>
+        </View>
+      </KeyboardSafeView>
+    </Modal>
+  );
+}
+
 // ── Memory Card ───────────────────────────────────────────────────────────────
 
 interface MemoryCardProps {
   memory: PassportMemory;
   onVisibilityChange: (id: string, v: MemoryVisibility) => void;
+  onEditPhoto: (memory: PassportMemory) => void;
 }
 
-function MemoryCard({ memory, onVisibilityChange }: MemoryCardProps) {
+function MemoryCard({ memory, onVisibilityChange, onEditPhoto }: MemoryCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const badge = verificationBadge(memory.verificationLevel);
   const cat = CATEGORIES.find((c) => c.key === memory.category);
 
   return (
     <View style={mc.card}>
-      {memory.photoUrl && (
-        <Image source={{ uri: memory.photoUrl }} style={mc.photo} resizeMode="cover" />
+      {memory.photoUrl ? (
+        <Pressable onPress={() => onEditPhoto(memory)} style={mc.photoWrap}>
+          <Image source={{ uri: memory.photoUrl }} style={mc.photo} resizeMode="cover" />
+          <View style={mc.photoEditBadge}>
+            <Camera size={13} color="#fff" />
+          </View>
+        </Pressable>
+      ) : (
+        <Pressable style={mc.addPhotoBanner} onPress={() => onEditPhoto(memory)}>
+          <Camera size={14} color={color.signal} />
+          <Text style={mc.addPhotoText}>Add photo</Text>
+        </Pressable>
       )}
       <View style={mc.body}>
         <View style={mc.row}>
@@ -340,6 +522,7 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
   const [localMemories, setLocalMemories] = useState<PassportMemory[]>(memories);
   const [createOpen, setCreateOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [editPhotoMemory, setEditPhotoMemory] = useState<PassportMemory | null>(null);
 
   React.useEffect(() => {
     setLocalMemories(memories);
@@ -354,6 +537,16 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
     setLocalMemories((prev) => [memory, ...prev]);
     onReload();
   }, [onReload]);
+
+  const handleEditPhoto = useCallback((memory: PassportMemory) => {
+    setEditPhotoMemory(memory);
+  }, []);
+
+  const handlePhotoSaved = useCallback((memoryId: string, newPhotoUrl: string | null) => {
+    setLocalMemories((prev) =>
+      prev.map((m) => m.id === memoryId ? { ...m, photoUrl: newPhotoUrl } : m),
+    );
+  }, []);
 
   if (loading && !collapsed) {
     return (
@@ -383,7 +576,7 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
             ) : (
               <View style={mt.list}>
                 {localMemories.slice(0, 5).map((m) => (
-                  <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} />
+                  <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} onEditPhoto={handleEditPhoto} />
                 ))}
                 {localMemories.length > 5 && (
                   <Pressable style={mt.addBtnLarge} onPress={() => setCreateOpen(true)}>
@@ -401,6 +594,14 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
               onClose={() => setCreateOpen(false)}
               onCreated={handleCreated}
             />
+            {editPhotoMemory && (
+              <EditMemoryPhotoModal
+                visible={true}
+                memory={editPhotoMemory}
+                onClose={() => setEditPhotoMemory(null)}
+                onSaved={handlePhotoSaved}
+              />
+            )}
           </>
         )}
       </View>
@@ -432,7 +633,7 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
       ) : (
         <View style={mt.list}>
           {localMemories.map((m) => (
-            <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} />
+            <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} onEditPhoto={handleEditPhoto} />
           ))}
         </View>
       )}
@@ -442,6 +643,14 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
         onClose={() => setCreateOpen(false)}
         onCreated={handleCreated}
       />
+      {editPhotoMemory && (
+        <EditMemoryPhotoModal
+          visible={true}
+          memory={editPhotoMemory}
+          onClose={() => setEditPhotoMemory(null)}
+          onSaved={handlePhotoSaved}
+        />
+      )}
     </View>
   );
 }
@@ -454,7 +663,21 @@ const mc = StyleSheet.create({
     borderWidth: 1, borderColor: color.haze, overflow: 'hidden',
     marginBottom: space.md,
   },
+  photoWrap: { position: 'relative' },
   photo: { width: '100%', aspectRatio: 4 / 5, backgroundColor: color.haze },
+  photoEditBadge: {
+    position: 'absolute', bottom: 8, right: 8,
+    width: 28, height: 28, borderRadius: 14,
+    backgroundColor: 'rgba(17,17,15,0.6)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  addPhotoBanner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: color.haze,
+    backgroundColor: color.paper,
+  },
+  addPhotoText: { ...t.small, color: color.signal, fontWeight: '700' },
   body: { padding: space.md },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginBottom: 4 },
   catLabel: { fontFamily: 'Courier', fontSize: 10, color: color.mute, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase' },
@@ -511,6 +734,17 @@ const cm = StyleSheet.create({
   saveBtn: { backgroundColor: color.signal, borderRadius: radius.pill, paddingVertical: space.md + 2, alignItems: 'center', marginTop: space.xl },
   saveBtnDisabled: { opacity: 0.5 },
   saveBtnText: { ...t.bodyStrong, color: '#fff' },
+});
+
+const ep = StyleSheet.create({
+  removedState: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderWidth: 1.5, borderColor: color.haze, borderStyle: 'dashed',
+    borderRadius: radius.md, paddingVertical: 14, paddingHorizontal: space.md,
+    backgroundColor: color.paperRaised,
+  },
+  removedText: { ...t.small, color: color.mute, fontWeight: '600' },
+  undoText: { ...t.small, color: color.signal, fontWeight: '700' },
 });
 
 const mt = StyleSheet.create({
