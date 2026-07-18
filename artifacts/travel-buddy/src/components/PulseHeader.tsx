@@ -10,6 +10,8 @@ import { useUnreadCounts } from '../hooks/useMessaging.ts';
 import { NotificationBell } from './NotificationBell.tsx';
 import { navBarProgress } from '../hooks/useNavBarCollapse.ts';
 import { getMyProfile } from '../services/profile.ts';
+import { PulseLiveCarousel } from './PulseLiveCarousel.tsx';
+import type { CityEvent } from '../types/models.ts';
 
 /**
  * Portava Pulse top bar — approved dark-navy concept.
@@ -23,16 +25,23 @@ import { getMyProfile } from '../services/profile.ts';
  * availability pill → /availability, messages → Telegraph, filter → onFilter.
  */
 
-// Hero block natural height, derived from line boxes (fontSize overrides do
-// not shrink lineHeight — collapse must use these exact numbers):
-//   title 34 + subtitle (18 + 2 marginTop) + pill row (30 + 10 marginTop) = 94
-const HERO_H = 94;
+// Hero block natural height — must match the real content or heroClip clips early.
+// Breakdown:
+//   title 34
+//   + carousel container (2 marginTop + 79 card + 11 dots-max) = 92
+//   + pill row (10 marginTop + 30 pill height) = 40
+//   = 166
+// The carousel is wrapped in a fixed-height View so this constant stays reliable
+// regardless of how many events are live (fallback text fills the same space).
+const CAROUSEL_H = 92;
+const HERO_H = 34 + CAROUSEL_H + 40;
 
 export function PulseHeader({
   city = 'Cebu',
   cityFull = 'Cebu City',
   availabilityText = 'Open tonight',
   filterCount = 0,
+  liveEvents,
   onSearch,
   onFilter,
   onCityPress,
@@ -45,6 +54,7 @@ export function PulseHeader({
   travelerType?: string;
   openToMeet?: boolean;
   filterCount?: number;
+  liveEvents?: CityEvent[];
   onSearch?: () => void;
   onFilter?: () => void;
   onCityPress?: () => void;
@@ -146,7 +156,10 @@ export function PulseHeader({
       {/* Hero: Pulse title + subtitle + city/availability pills — collapses */}
       <Animated.View style={[styles.heroClip, animatedHero]}>
         <Text style={styles.heroTitle}>Pulse</Text>
-        <Text style={styles.heroSub} numberOfLines={1}>What's alive in {cityFull || city} right now</Text>
+        {/* Fixed-height wrapper keeps HERO_H accurate regardless of event count */}
+        <View style={styles.carouselSlot}>
+          <PulseLiveCarousel events={liveEvents ?? []} />
+        </View>
 
         <View style={styles.pillRow}>
           <Pressable
@@ -251,6 +264,11 @@ const styles = StyleSheet.create({
   heroClip: {
     overflow: 'hidden',
     // height + marginTop animated via animatedHero
+  },
+  carouselSlot: {
+    height: CAROUSEL_H,
+    overflow: 'hidden',
+    justifyContent: 'flex-start',
   },
   heroTitle: {
     fontSize: 28,

@@ -287,6 +287,7 @@ export default function Pulse() {
         cityFull={activeCity}
         availabilityText={status === 'not_set' ? 'Availability not set' : STATUS_LABEL[status]}
         filterCount={filterCount}
+        liveEvents={bannerEvents}
         onSearch={() => router.push('/(tabs)/discovery')}
         onFilter={() => setSheetOpen(true)}
         onCityPress={openCityPicker}
