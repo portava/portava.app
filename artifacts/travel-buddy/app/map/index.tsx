@@ -29,12 +29,15 @@ import { AskCompassBar } from '../../src/components/map/AskCompassBar.tsx';
 import { useLocationContext } from '../../src/context/LocationContext.tsx';
 import { getDiscoveryPlaces } from '../../src/services/discovery.ts';
 import type { DiscoveryPlace, DiscoveryCategory } from '../../src/services/discovery.ts';
+import { getPassportMap } from '../../src/services/passportStamps.ts';
+import type { PassportMapMarker } from '../../src/services/passportStamps.ts';
+import { COUNTRY_CENTROIDS } from '../../src/lib/countryCentroids.ts';
 import { useMapEntities } from '../../src/hooks/useMapEntities.ts';
 import {
   MapFilterSheet,
   loadEnabledLayers,
 } from '../../src/components/map/MapFilterSheet.tsx';
-import type { MapEntity, ToggleableEntityType } from '../../src/types/mapTypes.ts';
+import type { MapEntity, ToggleableEntityType, PassportCountryPayload } from '../../src/types/mapTypes.ts';
 import { TOGGLEABLE_LAYERS } from '../../src/types/mapTypes.ts';
 import { MapCarousel } from '../../src/components/map/MapCarousel.tsx';
 import type { MapCarouselRef } from '../../src/components/map/MapCarousel.tsx';
@@ -47,6 +50,46 @@ if (Platform.OS !== 'web') {
   // Safe: this branch is never executed on web (tree-shaken by Metro).
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   DiscoveryMapView = require('../../src/components/discovery/DiscoveryMapView').DiscoveryMapView;
+}
+
+// ── Passport helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Collapse city-level passport markers into one country-centroid entity per
+ * visited country.  Markers without a known centroid are silently skipped.
+ */
+function buildPassportEntities(
+  markers: PassportMapMarker[],
+): MapEntity<PassportCountryPayload>[] {
+  // Group by country: accumulate stamp count + unique city list.
+  const byCountry = new Map<string, { stampCount: number; cities: Set<string> }>();
+  for (const m of markers) {
+    if (!m.country) continue;
+    if (!byCountry.has(m.country)) {
+      byCountry.set(m.country, { stampCount: 0, cities: new Set() });
+    }
+    const entry = byCountry.get(m.country)!;
+    entry.stampCount += m.stampCount;
+    if (m.city) entry.cities.add(m.city);
+  }
+
+  const entities: MapEntity<PassportCountryPayload>[] = [];
+  for (const [country, data] of byCountry.entries()) {
+    const centroid = COUNTRY_CENTROIDS[country];
+    if (!centroid) continue; // skip unknown countries
+    entities.push({
+      id: `stamp:${country}`,
+      type: 'stamps',
+      lat: centroid[0],
+      lng: centroid[1],
+      payload: {
+        country,
+        stampCount: data.stampCount,
+        cities: Array.from(data.cities),
+      },
+    });
+  }
+  return entities;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -309,6 +352,24 @@ export default function FullScreenMapScreen() {
     return () => { cancelled = true; };
   }, [destination, category, entityTypes, paramLat, paramLng, userLat, userLng]);
 
+  // ── Passport stamp entities ────────────────────────────────────────────────
+  // In passport mode, fetch country-level stamp data and synthesise MapEntities.
+  // The regular entity hooks are bypassed — stamp data replaces them entirely.
+  const [passportEntities, setPassportEntities] = useState<MapEntity<PassportCountryPayload>[]>([]);
+
+  useEffect(() => {
+    if (mode !== 'passport') return;
+    let cancelled = false;
+    getPassportMap().then((res) => {
+      if (cancelled) return;
+      if (res.ok) {
+        setPassportEntities(buildPassportEntities(res.data.markers));
+      }
+      // Non-fatal: map renders without stamp pins rather than crashing.
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [mode]);
+
   // ── Entity layer filter state ───────────────────────────────────────────────
   // mode=circle pre-selects only the Friends layer; other modes load persisted prefs.
   const [enabledLayers, setEnabledLayers] = useState<ToggleableEntityType[]>(
@@ -325,9 +386,11 @@ export default function FullScreenMapScreen() {
 
   // ── Entity data fetch ───────────────────────────────────────────────────────
   // `title` is used as the city name — passed in from Discovery / Trips entry points.
+  // In passport mode the hook still runs but its output is discarded in favour of
+  // passportEntities — React hooks cannot be called conditionally.
   const { entities: defaultEntities } = useMapEntities({
-    enabledLayers,
-    city: title,
+    enabledLayers: mode === 'passport' ? [] : enabledLayers,
+    city: mode === 'passport' ? null : title,
     lat: fallbackLat,
     lng: fallbackLng,
   });
@@ -348,8 +411,11 @@ export default function FullScreenMapScreen() {
     setCompassQuery(null);
   }
 
-  // The active entity list: Compass override takes precedence when set.
-  const entities = compassOverrideEntities ?? defaultEntities;
+  // The active entity list.  Priority order:
+  //   1. Compass override (active search result)
+  //   2. Passport entities when mode=passport
+  //   3. Default hook-sourced entities
+  const entities = compassOverrideEntities ?? (mode === 'passport' ? passportEntities : defaultEntities);
 
   // ── Carousel state ──────────────────────────────────────────────────────────
   const [activeIndex, setActiveIndex] = useState(0);

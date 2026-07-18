@@ -368,7 +368,7 @@ export function DiscoveryMapView({
             }}
           />
         )}
-        {entities.length > 0 && enabledEntityLayers.length > 0 && (
+        {entities.length > 0 && (enabledEntityLayers.length > 0 || entities.some((e) => e.type === 'stamps')) && (
           <EntityMapLayers
             entities={entities}
             enabledLayers={enabledEntityLayers}

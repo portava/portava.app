@@ -19,9 +19,10 @@ import {
   Sparkles,
   Plane,
   Heart,
+  Stamp,
 } from 'lucide-react-native';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
-import type { MapEntity, MapEntityType, ToggleableEntityType } from '../../types/mapTypes.ts';
+import type { MapEntity, MapEntityType, ToggleableEntityType, PassportCountryPayload } from '../../types/mapTypes.ts';
 import type { BuddyProfile } from '../../services/rentABuddy.ts';
 import type { EventListItem } from '../../services/events.ts';
 import type { HiddenGem } from '../../services/hiddenGems.ts';
@@ -256,7 +257,46 @@ const pin = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // Stamp count badge — sits top-right of the stamp pin circle
+  badge: {
+    position: 'absolute',
+    top: -4,
+    right: -6,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  badgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '700',
+  },
 });
+
+// ── Stamp marker (passport mode) ──────────────────────────────────────────────
+
+function StampMarker({ entity, onPress }: { entity: MapEntity<PassportCountryPayload>; onPress: (e: MapEntity) => void }) {
+  const cfg = MAP_LAYER_CONFIG.stamps;
+  const { stampCount } = entity.payload;
+  return (
+    <Pressable onPress={() => onPress(entity)} hitSlop={6}>
+      <View style={[pin.wrap, { backgroundColor: cfg.color }]}>
+        <Stamp size={12} color="#fff" />
+      </View>
+      {stampCount > 1 && (
+        <View style={[pin.badge, { backgroundColor: cfg.color }]}>
+          <Text style={pin.badgeText}>{stampCount}</Text>
+        </View>
+      )}
+      <View style={[pin.dot, { backgroundColor: cfg.color }]} />
+    </Pressable>
+  );
+}
 
 // ── Render single marker by type ──────────────────────────────────────────────
 
@@ -272,6 +312,8 @@ function SingleMarker({ entity, onPress }: { entity: MapEntity; onPress: (e: Map
       return <TripMarker entity={entity as MapEntity<TripRow>} onPress={onPress} />;
     case 'friends':
       return <FriendMarker entity={entity as MapEntity<CircleMemberLocation>} onPress={onPress} />;
+    case 'stamps':
+      return <StampMarker entity={entity as MapEntity<PassportCountryPayload>} onPress={onPress} />;
     default:
       return null;
   }
@@ -299,7 +341,11 @@ export function EntityMapLayers({
   onPressCluster,
 }: EntityMapLayersProps) {
   const filtered = useMemo(
-    () => entities.filter((e) => enabledLayers.includes(e.type as ToggleableEntityType)),
+    // 'stamps' is not a ToggleableEntityType (it's never user-toggled) but
+    // must still render in passport mode — always pass it through.
+    () => entities.filter(
+      (e) => e.type === 'stamps' || enabledLayers.includes(e.type as ToggleableEntityType),
+    ),
     [entities, enabledLayers],
   );
 
