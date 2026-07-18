@@ -7,9 +7,8 @@
  *   - params.title set to the current destination city
  *   - params.category matching the active tab
  *
- * Also confirms the button still navigates (with a degraded params set)
- * when coords are null — so the full-screen map never opens blank due to
- * a missing guard.
+ * Also confirms the button is disabled (router.push NOT called) when no
+ * destination is set — so the full-screen map never opens blank.
  *
  * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
  */
@@ -253,6 +252,23 @@ describe('DiscoveryHub — Map shortcut', () => {
     // Lat/lng must be absent — not set to 'null' or 'undefined'
     expect(call.params.lat).toBeUndefined();
     expect(call.params.lng).toBeUndefined();
+
+    await act(async () => { unmount(); });
+  });
+
+  it('does NOT call router.push when destination is null — button is disabled', async () => {
+    // mockLocationState is reset to no-city/no-coords in beforeEach — use as-is.
+    const { unmount } = await render(<DiscoveryHub />);
+    await act(async () => {});
+
+    // The Map button should be present but disabled.
+    const mapButton = screen.getByRole('button', { name: 'Map view' });
+    expect(mapButton).toBeTruthy();
+
+    // fireEvent.press on a disabled Pressable must not trigger onPress.
+    fireEvent.press(mapButton);
+
+    expect(mockRouterPush).not.toHaveBeenCalled();
 
     await act(async () => { unmount(); });
   });
