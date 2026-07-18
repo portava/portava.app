@@ -50,6 +50,17 @@ if ((kavGuard.status ?? 1) !== 0) {
   process.exit(kavGuard.status ?? 1);
 }
 
+// Pre-flight: reject <KeyboardSafeScrollView> + inner <ScrollView> nesting in
+// app/ and src/components/ — use <KeyboardSafeView> instead.
+const ksvGuard = spawnSync(
+  process.execPath,
+  ['scripts/check-ksv-inner-scroll.mjs'],
+  { stdio: 'inherit' },
+);
+if ((ksvGuard.status ?? 1) !== 0) {
+  process.exit(ksvGuard.status ?? 1);
+}
+
 // Known-broken node:test files, excluded from the run. Fix and remove.
 const KNOWN_BROKEN = [];
 
