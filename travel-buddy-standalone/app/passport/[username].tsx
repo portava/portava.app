@@ -321,6 +321,7 @@ export default function PassportDeepLinkScreen() {
           isFollowing={isAuthed ? follow.isFollowing : undefined}
           followLoading={isAuthed ? (follow.loading || follow.toggling) : undefined}
           onFollowPress={isAuthed ? follow.toggle : undefined}
+          countriesVisited={countries}
           availabilityChip={publicChipState}
           onAvailabilityChipPress={publicChipState ? () => setAvailStatusSheetOpen(true) : undefined}
         />

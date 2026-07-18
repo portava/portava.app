@@ -20,7 +20,7 @@ import { PostcardComposer } from '../../src/components/PostcardComposer';
 import { MemoriesTab } from '../../src/components/MemoriesTab';
 import { TripsTab } from '../../src/components/TripsTab';
 import { SuggestedMemoryModal } from '../../src/components/SuggestedMemoryModal';
-import type { PassportMemory } from '../../src/services/passportStamps';
+import type { PassportMemory, PassportStats } from '../../src/services/passportStamps';
 import { useSession } from '../../src/context/SessionContext';
 import { listMyTrips } from '../../src/services/trips';
 import { OwnerActionMenu } from '../../src/components/OwnerActionMenu';
@@ -364,6 +364,9 @@ function PassportContent({
   const [coverUploading, setCoverUploading] = useState(false);
   const [buddyProfile, setBuddyProfile] = useState<BuddyProfile | null | undefined>(undefined);
   const [, setTrustSheetOpen] = useState(false);
+  // Owner passport stats reported up from PassportStatsRow (single fetch) —
+  // powers the World Traveler stamp on the identity card.
+  const [passportStats, setPassportStats] = useState<PassportStats | null>(null);
 
   // Availability chip — read from the store; refresh on focus so it stays in sync
   // with the backend after the user saves changes on the availability screen.
@@ -539,7 +542,9 @@ function PassportContent({
           trustLabel={profile.trustLabel ?? undefined}
           onTrustInfo={() => setTrustSheetOpen(true)}
           onEditBio={handleEditProfile}
+          onEditProfile={handleEditProfile}
           onSavedPress={() => router.push('/saved' as any)}
+          countriesVisited={passportStats?.countries ?? null}
           availabilityChip={ownerChipState}
           onAvailabilityChipPress={() => router.push('/availability' as any)}
         />
@@ -547,6 +552,7 @@ function PassportContent({
           profile={profile}
           isOwner
           iconOnly={statsIconOnly}
+          onStatsLoaded={setPassportStats}
           onStatPress={(label) => {
             if (label === 'Trips') setTab('plans');
             else if (label === 'Stamps') setTab('stamps');

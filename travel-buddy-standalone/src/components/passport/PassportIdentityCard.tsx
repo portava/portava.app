@@ -14,7 +14,7 @@ import Svg, { Circle, Path, Rect, Text as SvgText } from 'react-native-svg';
 import {
   ShieldCheck, Globe, MapPin, Camera,
   UserPlus, UserCheck, MoreHorizontal,
-  Briefcase, Users, Stamp, PenLine, Bookmark,
+  Briefcase, Users, Stamp, PenLine,
 } from 'lucide-react-native';
 import type { OwnProfile, PublicProfile } from '../../types/models.ts';
 import { resolveAvatarUrl, fallbackInitials, truncateDisplayName } from '../../utils/identity.ts';
@@ -51,8 +51,14 @@ interface Props {
   onFollowPress?: () => void;
   /** Owner: tap "Add a bio" empty state → navigate to edit profile */
   onEditBio?: () => void;
-  /** Owner: tap compact Saved shortcut → navigate to /saved */
+  /** Owner: primary Edit Profile button at the bottom of the card */
+  onEditProfile?: () => void;
+  /** Deprecated: Saved moved to the ⋯ menu; prop kept optional for
+      backward compatibility with existing call sites. */
   onSavedPress?: () => void;
+  /** Distinct countries visited — powers the faded WORLD TRAVELER stamp
+      (shown at 5+). Owner: passport stats; public: derived from postcards. */
+  countriesVisited?: number | null;
   /** Resolved chip state from resolveAvailabilityChip(); null = hide chip */
   availabilityChip?: AvailabilityChipState | null;
   /** Called when the chip is pressed (owner → /availability; public → meet-up action) */
@@ -121,20 +127,51 @@ function PassportVerifiedStamp() {
 
 // ─── Trust Score bar ──────────────────────────────────────────────────────────
 
-function TrustScoreBar({ score, onPress }: { score: number; onPress?: () => void }) {
-  const pct = Math.min(100, Math.max(0, score));
+function TrustScoreBar({ score, onPress }: { score: number | null; onPress?: () => void }) {
+  // null = account has no trust score yet — still show the pill (honest empty
+  // state) so the trust system is always visible on the owner's passport.
+  const pct = score != null ? Math.min(100, Math.max(0, score)) : 0;
   return (
     <Pressable style={s.trustCard} onPress={onPress} disabled={!onPress} hitSlop={8}>
       <View style={s.trustCardRow}>
         <ShieldCheck size={14} color={GREEN_STAMP} strokeWidth={2.5} />
         <Text style={s.trustCardLabel}>TRUST SCORE</Text>
-        <Text style={s.trustCardScore}>{Math.round(score)}</Text>
-        <Text style={s.trustCardTotal}>/100</Text>
+        {score != null ? (
+          <>
+            <Text style={s.trustCardScore}>{Math.round(score)}</Text>
+            <Text style={s.trustCardTotal}>/100</Text>
+          </>
+        ) : (
+          <Text style={s.trustCardTotal}>Not yet rated</Text>
+        )}
       </View>
       <View style={s.trustBarBg}>
         <View style={[s.trustBarFill, { width: `${pct}%` as any }]} />
       </View>
     </Pressable>
+  );
+}
+
+// ─── World Traveler achievement stamp ─────────────────────────────────────────
+// Faded rotated ink stamp, earned at 5+ countries. Watermark only —
+// pointerEvents none, never blocks the controls beneath it.
+
+export const WORLD_TRAVELER_MIN_COUNTRIES = 5;
+
+function WorldTravelerStamp() {
+  return (
+    <View style={s.worldStamp} pointerEvents="none" accessibilityLabel="World Traveler stamp — 5 or more countries visited">
+      <Svg width={78} height={78} viewBox="0 0 80 80">
+        <Circle cx={40} cy={40} r={37} stroke={GREEN_STAMP} strokeWidth={2.5} strokeDasharray="4 2" fill="none" />
+        <Circle cx={40} cy={40} r={29.5} stroke={GREEN_STAMP} strokeWidth={1} fill="none" opacity={0.7} />
+        <SvgText x="40" y="27" textAnchor="middle" fill={GREEN_STAMP} fontSize="8" fontWeight="800" letterSpacing="1">★ WORLD ★</SvgText>
+        <Circle cx={40} cy={39} r={8} stroke={GREEN_STAMP} strokeWidth={1.4} fill="none" />
+        <Path d="M32 39 H48" stroke={GREEN_STAMP} strokeWidth={1.1} />
+        <Path d="M40 31 C36.5 34.5 36.5 43.5 40 47 C43.5 43.5 43.5 34.5 40 31 Z" stroke={GREEN_STAMP} strokeWidth={1.1} fill="none" />
+        <SvgText x="40" y="59" textAnchor="middle" fill={GREEN_STAMP} fontSize="8" fontWeight="800" letterSpacing="1">TRAVELER</SvgText>
+        <SvgText x="40" y="68" textAnchor="middle" fill={GREEN_STAMP} fontSize="5.5" fontWeight="700" letterSpacing="0.5">5+ COUNTRIES</SvgText>
+      </Svg>
+    </View>
   );
 }
 
@@ -178,15 +215,25 @@ interface StatsRowProps {
   onStatPress?: (label: string) => void;
   /** When true: show icon + count, hide label. When false/undefined: show label + count, hide icon. */
   iconOnly?: boolean;
+  /** Reports loaded owner stats up to the screen (e.g. for the World
+      Traveler stamp) — avoids a duplicate getPassportStats call. */
+  onStatsLoaded?: (stats: PassportStats) => void;
 }
 
-export function PassportStatsRow({ profile, isOwner, overrideStats, onStatPress, iconOnly }: StatsRowProps) {
+export function PassportStatsRow({ profile, isOwner, overrideStats, onStatPress, iconOnly, onStatsLoaded }: StatsRowProps) {
+  const onStatsLoadedRef = React.useRef(onStatsLoaded);
+  onStatsLoadedRef.current = onStatsLoaded;
   const [liveStats, setLiveStats] = useState<PassportStats | null>(null);
 
   useEffect(() => {
     if (!isOwner) return;
     getPassportStats()
-      .then((res) => { if (res.ok) setLiveStats(res.data); })
+      .then((res) => {
+        if (res.ok) {
+          setLiveStats(res.data);
+          onStatsLoadedRef.current?.(res.data);
+        }
+      })
       .catch(() => {});
   }, [isOwner]);
 
@@ -218,7 +265,7 @@ export function PassportIdentityCard({
   hasHighlights, allHighlightsViewed, onHighlightRingPress, onNewHighlightPress,
   trustScore, trustLabel, onTrustInfo,
   isFollowing, followLoading, onFollowPress,
-  onEditBio, onSavedPress,
+  onEditBio, onEditProfile, onSavedPress, countriesVisited,
   availabilityChip, onAvailabilityChipPress,
 }: Props) {
   const username      = 'username' in profile ? profile.username : null;
@@ -267,6 +314,11 @@ export function PassportIdentityCard({
 
         {/* ── Card body ───────────────────────────────────────── */}
         <View style={s.body}>
+
+          {/* ── World Traveler stamp — faded watermark, earned at 5+ countries ── */}
+          {(countriesVisited ?? 0) >= WORLD_TRAVELER_MIN_COUNTRIES ? (
+            <WorldTravelerStamp />
+          ) : null}
 
           {/* ── ⋯ menu — top-right, always visible ── */}
           {onMenuPress ? (
@@ -333,10 +385,11 @@ export function PassportIdentityCard({
             <View style={s.rightCol}>
               <Text style={s.travelerLabel}>TRAVELER ★</Text>
 
-              {/* Name row — verified stamp replaces CheckCircle2 */}
+              {/* Name row — verified stamp replaces CheckCircle2.
+                  Mixed case per the approved identity design. */}
               <View style={s.nameRow}>
                 <Text style={s.displayName} numberOfLines={1}>
-                  {resolvedName.toUpperCase()}
+                  {resolvedName}
                 </Text>
                 {isVerified ? <PassportVerifiedStamp /> : null}
               </View>
@@ -351,9 +404,11 @@ export function PassportIdentityCard({
                 onPress={onAvailabilityChipPress}
               />
 
-              {/* Trust Score — compact, inside identity area */}
-              {trustScore != null ? (
-                <TrustScoreBar score={trustScore} onPress={onTrustInfo} />
+              {/* Trust Score — compact, inside identity area.
+                  Always visible for the owner (honest "Not yet rated" state);
+                  public profiles only show it once a score exists. */}
+              {trustScore != null || isOwner ? (
+                <TrustScoreBar score={trustScore ?? null} onPress={onTrustInfo} />
               ) : null}
 
               {/* Interests tags */}
@@ -374,21 +429,9 @@ export function PassportIdentityCard({
                 </View>
               ) : null}
 
-              {/* Owner: Saved shortcut */}
-              {isOwner && onSavedPress ? (
-                <View style={s.publicActions}>
-                  <Pressable
-                    style={s.savedPill}
-                    onPress={onSavedPress}
-                    hitSlop={8}
-                    accessibilityLabel="Saved"
-                    testID="saved-btn"
-                  >
-                    <Bookmark size={14} color={INK} strokeWidth={2} />
-                    <Text style={s.savedPillText}>Saved</Text>
-                  </Pressable>
-                </View>
-              ) : null}
+              {/* Saved shortcut removed from the header — Saved stays
+                  reachable via the ⋯ menu (OwnerActionMenu), so no
+                  functionality is lost. */}
 
               {/* Public: Follow pill */}
               {!isOwner ? (
@@ -440,6 +483,19 @@ export function PassportIdentityCard({
               ) : null}
             </View>
           </View>
+
+          {/* ── Owner: primary Edit Profile action (approved design) ── */}
+          {isOwner && onEditProfile ? (
+            <Pressable
+              style={s.editProfileBtn}
+              onPress={onEditProfile}
+              accessibilityRole="button"
+              accessibilityLabel="Edit Profile"
+            >
+              <PenLine size={14} color={CREAM} strokeWidth={2} />
+              <Text style={s.editProfileText}>Edit Profile</Text>
+            </Pressable>
+          ) : null}
 
         </View>
       </View>
@@ -515,12 +571,13 @@ const s = StyleSheet.create({
   columns: {
     flexDirection: 'row',
     gap: 8,
+    // Vertically center the avatar against the identity info column.
+    alignItems: 'center',
   },
 
   /* Left column — avatar only */
   leftCol: {
     alignItems: 'center',
-    paddingTop: 4,
   },
   avatarOuter: {
     alignItems: 'center',
@@ -691,24 +748,6 @@ const s = StyleSheet.create({
     color: '#fff',
   },
 
-  /* Owner: Saved shortcut pill */
-  savedPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 20,
-    backgroundColor: 'rgba(28,28,26,0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(28,28,26,0.14)',
-  },
-  savedPillText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: INK,
-  },
-
   /* ── Passport stamp + Bio — lower identity area ── */
   bioSection: {
     flexDirection: 'row',
@@ -744,15 +783,46 @@ const s = StyleSheet.create({
     color: MUTED,
     fontWeight: '500',
   },
+
+  /* World Traveler faded stamp — watermark behind content */
+  worldStamp: {
+    position: 'absolute',
+    top: 40,
+    right: 12,
+    opacity: 0.3,
+    transform: [{ rotate: '-14deg' }],
+    zIndex: 0,
+  },
+
+  /* Owner: primary Edit Profile button */
+  editProfileBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 44,
+    marginTop: 12,
+    borderRadius: 10,
+    backgroundColor: INK,
+  },
+  editProfileText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: CREAM,
+  },
 });
 
 // ─── Stats row styles (separate section below the card) ───────────────────────
 
 const st = StyleSheet.create({
+  // Stats as a separate "ticket" card per the approved design.
   section: {
+    marginHorizontal: 12,
+    marginTop: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: PP.borderLight,
     backgroundColor: PP.paper,
-    borderBottomWidth: 1,
-    borderBottomColor: PP.borderLight,
   },
   statsRow: {
     flexDirection: 'row',

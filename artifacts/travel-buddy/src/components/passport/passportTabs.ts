@@ -20,7 +20,7 @@ export const CANONICAL_TAB_ORDER: PassportTabKey[] = [
 export const TAB_LABELS: Record<PassportTabKey, string> = {
   postcards:    'Postcards',
   memories:     'Memories',
-  plans:        'Plans',
+  plans:        'Trips',
   stamps:       'Stamps',
   map:          'Map',
   destinations: 'Destinations',
