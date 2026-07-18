@@ -119,3 +119,45 @@ describe('diversity + exploration', () => {
     assert.ok(Object.values(s.features).every((v) => Number.isFinite(v)));
   });
 });
+
+describe('expanded candidate pool smoke tests', () => {
+  it('a kind:event starting in 3h outranks a kind:post with no startsAt and equal other signals', () => {
+    const event: RankCandidate = {
+      id: 'event-3h',
+      kind: 'event',
+      startsAt: iso(3 * HOUR),
+      authorTrustScore: 80,
+    };
+    const post: RankCandidate = {
+      id: 'post-no-start',
+      kind: 'post',
+      createdAt: iso(-1 * HOUR),
+      // No startsAt — actionability kernel scores 0
+    };
+    const ranked = rankCandidates([post, event], ctx(), { exploration: false, diversity: false });
+    assert.equal(ranked[0].candidate.id, 'event-3h',
+      'event starting soon must outrank post with no startsAt');
+  });
+
+  it('missing trust score contributes 0, not a crash', () => {
+    const c: RankCandidate = { id: 'no-trust', kind: 'buddy' };
+    const s = scoreCandidate(c, ctx());
+    assert.equal(s.features.trust, 0);
+    assert.ok(Number.isFinite(s.score));
+  });
+
+  it('missing startsAt contributes 0 actionability, not a crash', () => {
+    const c: RankCandidate = { id: 'no-start', kind: 'plan' };
+    const s = scoreCandidate(c, ctx());
+    assert.equal(s.features.actionability, 0);
+    assert.ok(Number.isFinite(s.score));
+  });
+
+  it('plan with hasCapacity:true gets capacityOpen bonus', () => {
+    const withCap: RankCandidate = { id: 'open', kind: 'plan', hasCapacity: true };
+    const noCap: RankCandidate = { id: 'full', kind: 'plan', hasCapacity: false };
+    const s1 = scoreCandidate(withCap, ctx()).score;
+    const s2 = scoreCandidate(noCap, ctx()).score;
+    assert.ok(s1 > s2, 'open plan must score higher than full plan');
+  });
+});

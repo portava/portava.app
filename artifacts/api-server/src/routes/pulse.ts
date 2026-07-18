@@ -187,12 +187,15 @@ router.get("/pulse", async (req, res) => {
   //
   // This block is a best-effort load; if the blocks query fails the feed is
   // served without the filter (non-fatal — Compass ranking will degrade too).
+  //
+  // blockedSet is hoisted to outer scope so the expanded candidate pool
+  // (events, plans, buddies fetched later) can apply the same filter.
+  const blockedSet = new Set<string>();
   try {
     const [blockedRes, blockerRes] = await Promise.all([
       sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
       sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
     ]);
-    const blockedSet = new Set<string>();
     for (const row of (blockedRes.data as any[]) ?? []) blockedSet.add(row.blocked_id as string);
     for (const row of (blockerRes.data as any[]) ?? []) blockedSet.add(row.blocker_id as string);
 
@@ -313,6 +316,7 @@ router.get("/pulse", async (req, res) => {
   //   b. Hashtag interest boost (from compass_user_preferences)
   //   c. Viewer's current Compass city boost
   let orderedPosts = posts;
+  let rankedCandidates: Array<{ kind: string; item: unknown }> = [];
   let prompts: Array<{ type: string; id: string; title: string; body: string; action: string }> = [];
 
   try {
@@ -355,27 +359,182 @@ router.get("/pulse", async (req, res) => {
 
       const viewerCity = (compassProfile.currentCity ?? "").toLowerCase();
 
+      // ── Fetch events, plans, and buddy candidates for the ranking pool ──────
+      const nowMs = Date.now();
+      const in24hIso = new Date(nowMs + 24 * 60 * 60 * 1_000).toISOString();
+      const nowIso = new Date(nowMs).toISOString();
+
+      // Events: state=open, starts within 24 h, public, city-scoped when known
+      // Block filtering applied after fetch: exclude events hosted by blocked users.
+      const rawEvents: any[] = [];
+      try {
+        let evQ = sc
+          .from("events")
+          .select("id, host_id, title, category, starts_at, city, max_attendees, going_count, tags")
+          .eq("state", "open")
+          .eq("visibility", "public")
+          .gte("starts_at", nowIso)
+          .lte("starts_at", in24hIso)
+          .limit(20);
+        if (viewerCity) evQ = evQ.ilike("city", `%${viewerCity}%`);
+        const { data: evRows } = await evQ;
+        for (const ev of (evRows as any[]) ?? []) {
+          if (blockedSet.size > 0 && blockedSet.has(ev.host_id as string)) continue;
+          rawEvents.push(ev);
+        }
+      } catch { /* non-fatal */ }
+
+      // Plans: trips with open join slots starting today or tomorrow, city-scoped.
+      // Block filtering: exclude trips owned by blocked users.
+      const rawPlans: any[] = [];
+      try {
+        const tomorrowEnd = new Date(nowMs + 48 * 60 * 60 * 1_000).toISOString().slice(0, 10);
+        const todayStart = nowIso.slice(0, 10);
+        let planQ = sc
+          .from("trips")
+          .select("id, owner_id, title, destination_city, start_date, visibility, member_count, max_members")
+          .in("status", ["planning", "upcoming"])
+          .gte("start_date", todayStart)
+          .lte("start_date", tomorrowEnd)
+          .eq("visibility", "public")
+          .limit(20);
+        if (viewerCity) planQ = planQ.ilike("destination_city", `%${viewerCity}%`);
+        const { data: planRows } = await planQ;
+        for (const plan of (planRows as any[]) ?? []) {
+          if (blockedSet.size > 0 && blockedSet.has(plan.owner_id as string)) continue;
+          // Only include trips with open slots (max_members null means unlimited)
+          const memberCount = (plan.member_count as number | null) ?? 0;
+          const maxMembers = plan.max_members as number | null;
+          if (maxMembers === null || memberCount < maxMembers) rawPlans.push(plan);
+        }
+      } catch { /* non-fatal */ }
+
+      // Buddies: approved/auto_approved profiles, city-scoped, excluding viewer.
+      // Block filtering: exclude buddies whose user_id is in the blocked set.
+      const rawBuddies: any[] = [];
+      try {
+        let bQ = sc
+          .from("rent_buddy_profiles")
+          .select("id, user_id, city, trust_score")
+          .in("moderation_status", ["approved", "auto_approved"])
+          .neq("user_id", user.id)
+          .limit(10);
+        if (viewerCity) bQ = bQ.ilike("city", `%${viewerCity}%`);
+        const { data: bRows } = await bQ;
+        for (const b of (bRows as any[]) ?? []) {
+          if (blockedSet.size > 0 && blockedSet.has(b.user_id as string)) continue;
+          rawBuddies.push(b);
+        }
+      } catch { /* non-fatal */ }
+
+      // Batch-fetch author trust scores for posts + event hosts
+      const authorIdsForTrust = new Set<string>();
+      for (const p of posts) {
+        if ((p as any).authorId) authorIdsForTrust.add((p as any).authorId as string);
+      }
+      for (const ev of rawEvents) {
+        if (ev.host_id) authorIdsForTrust.add(ev.host_id as string);
+      }
+      const trustMap = new Map<string, number>();
+      if (authorIdsForTrust.size > 0) {
+        try {
+          const { data: trustRows } = await sc
+            .from("user_trust_scores")
+            .select("user_id, score")
+            .in("user_id", [...authorIdsForTrust]);
+          for (const r of (trustRows as any[]) ?? []) {
+            trustMap.set(r.user_id as string, r.score as number);
+          }
+        } catch { /* non-fatal — trust scores contribute 0 when absent */ }
+      }
+
       // ── Unified ranking (portavaRank — spec §42) ─────────────────────────
       // The previous inline scorer (linear recency + follow/hashtag/city
       // boosts) is preserved as features inside the shared scoring core,
       // which adds exponential recency, author-repetition diversity, and
       // deterministic exploration slots so new voices surface. Pulse,
       // Discover, Compass, and Events all rank through this one module.
+      //
+      // Candidates: posts + events + plans + buddies — all ranked together.
+      const postCandidates = posts.map((p: any) => ({
+        id: p.id as string,
+        kind: "post" as const,
+        createdAt: p.createdAt as string | null,
+        city: (p.locationCity as string | null) ?? null,
+        neighborhood: (p.locationName as string | null) ?? null,
+        authorId: (p.authorId as string | null) ?? null,
+        authorTrustScore: trustMap.get(p.authorId as string) ?? null,
+        tags: Array.isArray(p.spanHashtags)
+          ? (p.spanHashtags as Array<{ slug?: string }>)
+              .map((h) => (h.slug ?? "").toLowerCase())
+              .filter(Boolean)
+          : [],
+        __post: p,
+      }));
+
+      const eventCandidates = rawEvents.map((ev: any) => ({
+        id: ev.id as string,
+        kind: "event" as const,
+        startsAt: (ev.starts_at as string | null) ?? null,
+        city: ev.city ? (ev.city as string).toLowerCase() : null,
+        authorId: (ev.host_id as string | null) ?? null,
+        authorTrustScore: trustMap.get(ev.host_id as string) ?? null,
+        hasCapacity: ev.max_attendees == null || (ev.going_count ?? 0) < ev.max_attendees,
+        category: (ev.category as string | null) ?? null,
+        tags: Array.isArray(ev.tags)
+          ? (ev.tags as string[]).map((t) => t.toLowerCase())
+          : [],
+        __event: {
+          id: ev.id,
+          title: ev.title,
+          category: ev.category,
+          startsAt: ev.starts_at,
+          city: ev.city,
+          hasCapacity: ev.max_attendees == null || (ev.going_count ?? 0) < ev.max_attendees,
+          goingCount: ev.going_count ?? 0,
+          maxAttendees: ev.max_attendees ?? null,
+        },
+      }));
+
+      const planCandidates = rawPlans.map((plan: any) => ({
+        id: plan.id as string,
+        kind: "plan" as const,
+        startsAt: plan.start_date ? `${plan.start_date as string}T00:00:00Z` : null,
+        city: plan.destination_city ? (plan.destination_city as string).toLowerCase() : null,
+        authorId: (plan.owner_id as string | null) ?? null,
+        hasCapacity: true, // only open-slot trips enter
+        __plan: {
+          id: plan.id,
+          title: plan.title,
+          city: plan.destination_city,
+          startDate: plan.start_date,
+          memberCount: plan.member_count ?? 0,
+          maxMembers: plan.max_members ?? null,
+        },
+      }));
+
+      const buddyCandidates = rawBuddies.map((b: any) => ({
+        id: b.user_id as string,
+        kind: "buddy" as const,
+        authorId: (b.user_id as string | null) ?? null,
+        authorTrustScore: b.trust_score != null ? (b.trust_score as number) : null,
+        city: b.city ? (b.city as string).toLowerCase() : null,
+        __buddy: {
+          id: b.id,
+          userId: b.user_id,
+          city: b.city,
+        },
+      }));
+
+      const allCandidates = [
+        ...postCandidates,
+        ...eventCandidates,
+        ...planCandidates,
+        ...buddyCandidates,
+      ];
+
       const ranked = rankCandidates(
-        posts.map((p: any) => ({
-          id: p.id as string,
-          kind: "post" as const,
-          createdAt: p.createdAt as string | null,
-          city: (p.locationCity as string | null) ?? null,
-          neighborhood: (p.locationName as string | null) ?? null,
-          authorId: (p.authorId as string | null) ?? null,
-          tags: Array.isArray(p.spanHashtags)
-            ? (p.spanHashtags as Array<{ slug?: string }>)
-                .map((h) => (h.slug ?? "").toLowerCase())
-                .filter(Boolean)
-            : [],
-          __post: p,
-        })),
+        allCandidates,
         {
           userId: user.id,
           city: viewerCity,
@@ -383,7 +542,25 @@ router.get("/pulse", async (req, res) => {
           interestTags,
         },
       );
-      orderedPosts = ranked.map((x) => (x.candidate as any).__post);
+
+      // ── Extract results preserving backward compatibility ──────────────
+      // `posts` stays post-only so existing mobile pagination/cursors work.
+      // `rankedCandidates` is a new field carrying all kinds with discriminators
+      // for clients that support the expanded feed.
+      orderedPosts = ranked
+        .filter((x) => !!(x.candidate as any).__post)
+        .map((x) => (x.candidate as any).__post);
+
+      rankedCandidates = ranked
+        .map((x) => {
+          const c = x.candidate as any;
+          if (c.__post)   return { kind: 'post'  as const, item: c.__post };
+          if (c.__event)  return { kind: 'event' as const, item: c.__event };
+          if (c.__plan)   return { kind: 'plan'  as const, item: c.__plan };
+          if (c.__buddy)  return { kind: 'buddy' as const, item: c.__buddy };
+          return null;
+        })
+        .filter(Boolean) as Array<{ kind: string; item: unknown }>;
 
       // ── Intent-mode overlays (applied after ranking) ─────────────────────
       if (compassContext.contextState === "safety_mode" || primaryMode === "safety_mode") {
@@ -475,7 +652,7 @@ router.get("/pulse", async (req, res) => {
     }
   } catch { /* non-fatal — place cards degrade gracefully */ }
 
-  res.json({ posts: orderedPosts, total: orderedPosts.length, tab, prompts, placeCards });
+  res.json({ posts: orderedPosts, total: orderedPosts.length, tab, prompts, placeCards, rankedCandidates });
 });
 
 /* ===========================================================================
