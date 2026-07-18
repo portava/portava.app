@@ -22,14 +22,14 @@ import { render, screen, waitFor } from '@testing-library/react-native';
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
-// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
 // Mock expo-router so useLocalSearchParams returns a predictable id.
-// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
   useLocalSearchParams: () => ({ id: 'post-abc' }),
   router: { push: jest.fn(), back: jest.fn() },
 }));

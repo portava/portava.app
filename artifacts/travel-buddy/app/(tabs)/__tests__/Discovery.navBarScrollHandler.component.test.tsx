@@ -21,8 +21,8 @@ import React from 'react';
 import { render, act } from '@testing-library/react-native';
 
 // ── Safe-area ─────────────────────────────────────────────────────────────────
-// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
 }));
 
@@ -44,8 +44,8 @@ jest.mock('react-native-reanimated', () => {
 // mockSearchParams is mutable so individual test suites can set the active
 // category without needing a separate module mock per describe block.
 let mockSearchParams: Record<string, string> = {};
-// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
   router: { push: jest.fn(), back: jest.fn() },
   useLocalSearchParams: () => mockSearchParams,
   useFocusEffect: (cb: () => (() => void) | void) => {

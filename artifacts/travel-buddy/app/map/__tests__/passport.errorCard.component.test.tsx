@@ -33,8 +33,8 @@ import FullScreenMapScreen from '../index.tsx';
 // ── expo-router ────────────────────────────────────────────────────────────────
 // The moduleNameMapper wires expo-router to the shared stub; override only the
 // parts this test needs (useLocalSearchParams returning mode=passport).
-// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
   router: { push: jest.fn(), replace: jest.fn(), back: jest.fn(), navigate: jest.fn(), dismiss: jest.fn() },
   useRouter:            () => ({ push: jest.fn(), back: jest.fn() }),
   useLocalSearchParams: () => ({ mode: 'passport' }),
@@ -60,8 +60,8 @@ jest.mock('expo-router', () => ({
 }));
 
 // ── react-native-safe-area-context ─────────────────────────────────────────────
-// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
 }));
 

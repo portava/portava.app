@@ -41,13 +41,13 @@ jest.mock('expo-av', () => {
 
 // ── Supporting mocks (same as PostDetailCard.component.test.tsx) ──────────────
 
-// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
   useLocalSearchParams: () => ({ id: 'post-abc' }),
   router: { push: jest.fn(), back: jest.fn() },
 }));

@@ -23,9 +23,8 @@ import { render, act, waitFor, fireEvent, cleanup, screen } from '@testing-libra
 import AboutScreen from '../about.tsx';
 import { getMyProfile, updateMyProfile } from '../../../../src/services/profile.ts';
 
-// NOTE: intentionally exhaustive — requireActual pulls native-module internals
-// that are not safe under jest.
 jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 

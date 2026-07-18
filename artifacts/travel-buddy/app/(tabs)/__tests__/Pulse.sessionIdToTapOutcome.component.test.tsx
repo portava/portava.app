@@ -41,8 +41,8 @@ jest.mock('react-native', () => {
 });
 
 // ── expo-router ───────────────────────────────────────────────────────────────
-// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
   router: { push: jest.fn(), back: jest.fn() },
   useLocalSearchParams: () => ({}),
   useFocusEffect: (cb: () => (() => void) | void) => {
@@ -68,8 +68,8 @@ jest.mock('react-native-reanimated', () => {
 });
 
 // ── Safe-area ─────────────────────────────────────────────────────────────────
-// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
   SafeAreaProvider: ({ children }: any) => children,
 }));

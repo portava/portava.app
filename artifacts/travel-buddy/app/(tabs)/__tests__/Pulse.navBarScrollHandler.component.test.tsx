@@ -43,8 +43,8 @@ jest.mock('react-native', () => {
 });
 
 // ── expo-router ───────────────────────────────────────────────────────────────
-// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
   router: { push: jest.fn(), back: jest.fn() },
   useLocalSearchParams: () => ({}),
   useFocusEffect: (cb: () => (() => void) | void) => {

@@ -19,8 +19,8 @@ import DiscoveryHub from '../discovery.tsx';
 
 // ── expo-router ───────────────────────────────────────────────────────────────
 // Override the moduleNameMapper entry so we can capture the router.push spy.
-// NOTE: intentional stub — not under test here.
 jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
   router: {
     push:     jest.fn(),
     replace:  jest.fn(),
@@ -52,8 +52,8 @@ jest.mock('expo-router', () => ({
 }));
 
 // ── react-native-safe-area-context ────────────────────────────────────────────
-// NOTE: intentional stub — not under test here.
 jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
 }));
 
