@@ -44,7 +44,7 @@ import { TelegraphSystemNotice } from './TelegraphSystemNotice.tsx';
 import { TranslationSettingsSheet } from './TranslationSettingsSheet.tsx';
 import { TripMembersSheet } from './TripMembersSheet.tsx';
 import type { Message } from '../services/messaging.ts';
-import { deleteMessage, saveMessage, sendMediaMessage } from '../services/messaging.ts';
+import { deleteMessage, saveMessage, sendMediaMessage, muteThread } from '../services/messaging.ts';
 import { useMessageMediaPicker } from '../hooks/useMessageMediaPicker.ts';
 import { MessageMediaBubble } from './MessageMediaBubble.tsx';
 import { reportContent, type ReasonCode } from '../services/reports.ts';
@@ -438,6 +438,9 @@ interface Props {
 }
 
 export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
+  // Mute state for the header toggle — persisted via the existing
+  // muteThread service (beta-audit: replaces the 'coming soon' stub).
+  const [threadMuted, setThreadMuted] = useState(false);
   const insets = useSafeAreaInsets();
   const { userId } = useSession();
   const { state, thread, messages, sending, errorMessage, reload, send, retrySend, notifyTyping, typingUserIds } = useGroupChat(type, id);
@@ -644,20 +647,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
         </View>
       </Pressable>
       <View style={styles.headerActions}>
-        <Pressable
-          hitSlop={8}
-          style={styles.headerIconBtn}
-          onPress={() => Alert.alert('Thread info', 'Members, shared media, and settings — coming soon.')}
-        >
-          <Info size={18} color={color.mute} />
-        </Pressable>
-        <Pressable
-          hitSlop={8}
-          style={styles.headerIconBtn}
-          onPress={() => Alert.alert('Search messages', 'Message search coming soon.')}
-        >
-          <Search size={18} color={color.mute} />
-        </Pressable>
+        {/* Thread info + message search hidden until built (beta-audit) */}
         <Pressable
           hitSlop={8}
           style={styles.headerIconBtn}
@@ -668,9 +658,14 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
         <Pressable
           hitSlop={8}
           style={styles.headerIconBtn}
-          onPress={() => Alert.alert('Mute thread', 'Mute controls coming soon.')}
+          accessibilityLabel={threadMuted ? 'Unmute thread' : 'Mute thread'}
+          onPress={async () => {
+            const next = !threadMuted;
+            const res = await muteThread(id, next);
+            if (res.ok) setThreadMuted(next);
+          }}
         >
-          <VolumeX size={18} color={color.mute} />
+          <VolumeX size={18} color={threadMuted ? color.signal : color.mute} />
         </Pressable>
       </View>
     </View>
@@ -739,21 +734,15 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
               <Globe size={12} color={color.signal} />
               <Text style={styles.quickBtnText}>View Trip</Text>
             </Pressable>
-            <Pressable style={styles.quickBtn} onPress={() => Alert.alert('Add Plan', 'Add a plan item — coming soon.')}>
-              <CalendarClock size={12} color={color.signal} />
-              <Text style={styles.quickBtnText}>Add Plan</Text>
-            </Pressable>
+            {/* Add Plan hidden until the in-chat plan flow is built (beta-audit) */}
           </>
         ) : (
           <>
-            <Pressable style={styles.quickBtn} onPress={() => Alert.alert('View Circle', 'Circle overview — coming soon.')}>
+            <Pressable style={styles.quickBtn} onPress={() => router.push('/circle' as any)}>
               <Users size={12} color={color.signal} />
               <Text style={styles.quickBtnText}>View Circle</Text>
             </Pressable>
-            <Pressable style={styles.quickBtn} onPress={() => Alert.alert('Share Discovery', 'Share a place from Discovery — coming soon.')}>
-              <Compass size={12} color={color.signal} />
-              <Text style={styles.quickBtnText}>Share Discovery</Text>
-            </Pressable>
+            {/* Share Discovery hidden until the picker flow is built (beta-audit) */}
           </>
         )}
       </View>
@@ -969,20 +958,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
             >
               <Paperclip size={18} color={mediaPicker.media ? color.signal : color.mute} />
             </Pressable>
-            <Pressable
-              style={styles.composeIconBtn}
-              onPress={() => Alert.alert('Share Discovery', 'Share a place from Discovery — coming soon.')}
-              hitSlop={6}
-            >
-              <Compass size={18} color={color.mute} />
-            </Pressable>
-            <Pressable
-              style={styles.composeIconBtn}
-              onPress={() => Alert.alert('AI Suggestions', 'Compass AI suggestions — coming soon.')}
-              hitSlop={6}
-            >
-              <Bot size={18} color={color.mute} />
-            </Pressable>
+            {/* Share Discovery + AI Suggestions hidden until built (beta-audit) */}
             <MentionInput
               ref={mentionRef}
               style={styles.inputField}

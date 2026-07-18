@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 import { router, useFocusEffect } from 'expo-router';
+import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import { FEED_FOCUS_TTL_MS } from '../../src/hooks/usePosts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -79,7 +80,7 @@ const STEP_LABELS_MAP: Record<DatePreset, string> = {
   next7:    'Next 7 Days',
 };
 
-export default function EventsTabScreen() {
+function EventsTabScreen() {
   const insets = useSafeAreaInsets();
   const { isAuthed, configured } = useSession();
   const { locationState, requestLocation } = useLocationContext();
@@ -148,6 +149,7 @@ export default function EventsTabScreen() {
     else setLoading(true);
     setError(null);
 
+    try {
     const cat = category !== 'All' ? category : undefined;
     const dateRange = datePresetToRange(datePreset);
     const city = cityFilter || undefined;
@@ -205,16 +207,23 @@ export default function EventsTabScreen() {
       setCategoryRows({});
     }
 
-    if (!mainRes.ok && !weekendRes.ok) setError('Failed to load events');
+    // Error when the PRIMARY fetch failed — with a date preset active,
+    // weekendRes is a hardcoded ok stub, so it must not mask the failure
+    // (beta-audit fix).
+    if (!mainRes.ok) setError('Failed to load events');
     // Advance TTL stamp only when the PRIMARY fetch (mainRes) succeeded.
-    // weekendRes being ok while mainRes failed is not a successful load —
-    // allowing that to stamp would suppress retries for the full TTL window.
     if (mainRes.ok) {
       lastLoadedAt.current = Date.now();
       lastFiltersKey.current = currentFiltersKeyRef.current;
     }
-    setLoading(false);
-    setRefreshing(false);
+    } catch {
+      // One rejected promise (e.g. auth token) must never strand the tab on
+      // an infinite spinner with no recovery (beta-audit fix).
+      setError('Failed to load events');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, [configured, isAuthed, category, datePreset, cityFilter, freeOnly, verifiedHostOnly, capacityAvailable]);
 
   // Focus-driven refresh: skip when data is still fresh AND filters haven't
@@ -800,3 +809,14 @@ const styles = StyleSheet.create({
   emptyBtn:           { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: color.signal, paddingHorizontal: space.lg, paddingVertical: space.md, borderRadius: radius.pill, marginTop: space.sm, ...shadow.card },
   emptyBtnText:       { ...t.body, color: color.onInk, fontWeight: '700' },
 });
+
+
+// Wrapped: a render throw (e.g. a malformed event row) must show the
+// recoverable error screen, never a blank Events tab (beta-audit fix).
+export default function EventsTabScreenBoundary() {
+  return (
+    <ScreenErrorBoundary>
+      <EventsTabScreen />
+    </ScreenErrorBoundary>
+  );
+}

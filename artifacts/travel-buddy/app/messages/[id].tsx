@@ -1569,17 +1569,25 @@ export default function TelegraphThread() {
         {/* Right-side action icons */}
         {!compact && (
           <View style={styles.headerActions}>
-            <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Thread info', 'Members, shared media, and settings — coming soon.')}>
+            {/* Thread info + message search hidden until built (beta-audit).
+                Safety/overflow controls live in ThreadSafetySheet. */}
+            {false ? <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Thread info', 'Members, shared media, and settings — coming soon.')}>
               <Info size={18} color={color.mute} />
-            </Pressable>
-            <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Search messages', 'Message search coming soon.')}>
-              <Search size={18} color={color.mute} />
-            </Pressable>
+            </Pressable> : null}
             <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => setShowTranslationSheet(true)}>
               <Languages size={18} color={autoTranslate ? color.signal : color.mute} />
             </Pressable>
-            <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Mute thread', 'Mute controls coming soon.')}>
-              <VolumeX size={18} color={color.mute} />
+            <Pressable
+              hitSlop={8}
+              style={styles.headerIconBtn}
+              accessibilityLabel={threadIsMuted ? 'Unmute thread' : 'Mute thread'}
+              onPress={async () => {
+                const next = !threadIsMuted;
+                await muteThread(id ?? '', next);
+                setThreadIsMuted(next);
+              }}
+            >
+              <VolumeX size={18} color={threadIsMuted ? color.signal : color.mute} />
             </Pressable>
             <Pressable style={styles.headerIconBtn} onPress={() => setShowSafetySheet(true)} hitSlop={8}>
               <MoreVertical size={18} color={color.mute} />
@@ -1614,10 +1622,7 @@ export default function TelegraphThread() {
             <Users size={12} color={color.signal} />
             <Text style={styles.quickBtnText}>View Circle</Text>
           </Pressable>
-          <Pressable style={styles.quickBtn} onPress={() => Alert.alert('Share Discovery', 'Share a place from Discovery — coming soon.')}>
-            <Compass size={12} color={color.signal} />
-            <Text style={styles.quickBtnText}>Share Discovery</Text>
-          </Pressable>
+          {/* Share Discovery hidden until the picker flow is built (beta-audit) */}
         </View>
       );
     }
@@ -1926,9 +1931,9 @@ export default function TelegraphThread() {
         )}
 
         {/* Discovery card stub */}
-        <Pressable style={styles.composeIconBtn} onPress={() => Alert.alert('Share Discovery', 'Share a place from Discovery — coming soon.')} hitSlop={6}>
+        {false ? <Pressable style={styles.composeIconBtn} hitSlop={6}>
           <Compass size={18} color={color.mute} />
-        </Pressable>
+          </Pressable> : null}
 
         {/* Ask Compass chip — gated by COMPASS_TELEGRAPH feature flag */}
         {compassTelegraphEnabled === true && (

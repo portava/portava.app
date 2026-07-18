@@ -526,8 +526,8 @@ export default function EventDetailScreen() {
             <View style={styles.metaRow}>
               <Users size={14} color={color.mute} />
               <Text style={styles.meta}>
-                {event.counts.going} going{event.maxAttendees ? ` · ${event.maxAttendees} max` : ''}
-                {event.waitlistCount > 0 ? ` · ${event.waitlistCount} waitlisted` : ''}
+                {event.counts?.going ?? 0} going{event.maxAttendees ? ` · ${event.maxAttendees} max` : ''}
+                {(event.waitlistCount ?? 0) > 0 ? ` · ${event.waitlistCount} waitlisted` : ''}
               </Text>
             </View>
 
@@ -592,16 +592,16 @@ export default function EventDetailScreen() {
             )}
 
             {/* Attendee strip */}
-            {event.goingAttendees.length > 0 && (
+            {(event.goingAttendees?.length ?? 0) > 0 && (
               <View style={styles.attendeeRow}>
-                {event.goingAttendees.slice(0, 5).map((a) => (
+                {(event.goingAttendees ?? []).slice(0, 5).map((a) => (
                   <View key={a.id} style={styles.avatarOverlap}>
                     <Avatar uri={a.avatarUrl ?? ''} size={32} />
                   </View>
                 ))}
-                {event.counts.going > 5 && (
+                {(event.counts?.going ?? 0) > 5 && (
                   <View style={[styles.avatarOverlap, styles.avatarMore]}>
-                    <Text style={styles.avatarMoreText}>+{event.counts.going - 5}</Text>
+                    <Text style={styles.avatarMoreText}>+{(event.counts?.going ?? 0) - 5}</Text>
                   </View>
                 )}
               </View>
@@ -921,7 +921,7 @@ export default function EventDetailScreen() {
           onPress={() => setShowRsvpMenu(false)}
         >
           <View style={[styles.rsvpMenu, { bottom: insets.bottom + 80 }]}>
-            {RSVP_OPTIONS.filter((o) => event.rsvpOptions.includes(o.key)).map((o) => (
+            {RSVP_OPTIONS.filter((o) => (event.rsvpOptions ?? []).includes(o.key)).map((o) => (
               <Pressable
                 key={o.key}
                 style={[styles.rsvpMenuItem, event.myRsvp === o.key && styles.rsvpMenuItemActive]}
