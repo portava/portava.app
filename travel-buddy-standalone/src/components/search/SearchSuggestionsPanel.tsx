@@ -14,8 +14,8 @@
  */
 import React from 'react';
 import {
-  View, Text, ScrollView, Pressable, Image, StyleSheet, ActivityIndicator,
-  type NativeSyntheticEvent, type NativeScrollEvent, type ImageStyle,
+  View, Text, Pressable, Image, StyleSheet, ActivityIndicator,
+  type ImageStyle,
 } from 'react-native';
 import { Search, Clock } from 'lucide-react-native';
 import { TypeIcon } from './searchNav.tsx';
@@ -32,7 +32,8 @@ interface Props {
   onSubmit: (q: string) => void;
   onPickRecent: (entry: SearchHistoryEntry) => void;
   onPickResult: (result: UnifiedSearchResult) => void;
-  onScroll?: (e: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  /** @deprecated Panel no longer owns a ScrollView; scroll is handled by the outer FlatList. */
+  onScroll?: never;
 }
 
 function SuggestionAvatar({ item }: { item: UnifiedSearchResult }) {
@@ -53,7 +54,7 @@ function SuggestionAvatar({ item }: { item: UnifiedSearchResult }) {
 
 export function SearchSuggestionsPanel({
   query, groups, loading, recentSearches,
-  onSubmit, onPickRecent, onPickResult, onScroll,
+  onSubmit, onPickRecent, onPickResult,
 }: Props) {
   const trimmed = query.trim();
   const qLower = trimmed.toLowerCase();
@@ -68,12 +69,9 @@ export function SearchSuggestionsPanel({
   const hasAny = groups.some((g) => g.items.length > 0);
 
   return (
-    <ScrollView
-      keyboardShouldPersistTaps="handled"
-      contentContainerStyle={{ paddingBottom: 100 }}
-      onScroll={onScroll}
-      scrollEventThrottle={16}
-    >
+    // Intentionally a plain View — scroll is owned by the outer FlatList.
+    // A nested ScrollView here would create a scroll-capture conflict.
+    <View style={{ paddingBottom: 100 }}>
       {/* Always-first: run the full search */}
       <Pressable style={styles.searchForRow} onPress={() => onSubmit(trimmed)}>
         <View style={styles.searchForIcon}>
@@ -136,7 +134,7 @@ export function SearchSuggestionsPanel({
         </Text>
       )}
       <NavBarFiller />
-    </ScrollView>
+    </View>
   );
 }
 
