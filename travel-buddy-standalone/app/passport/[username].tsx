@@ -32,7 +32,8 @@ import { resolveAvailabilityChip } from '../../src/lib/availabilityChip';
 // New passport design components
 import { PassportIdentityCard, PassportStatsRow } from '../../src/components/passport/PassportIdentityCard';
 import { PassportDivider } from '../../src/components/passport/PassportDivider';
-import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useBottomInset } from '../../src/hooks/useBottomInset';
 
 // Tab order is resolved from the owner's saved preference at render time.
 
@@ -120,6 +121,7 @@ export default function PassportDeepLinkScreen() {
   const [availStatusSheetOpen, setAvailStatusSheetOpen] = useState(false);
   const insets = useSafeAreaInsets();
   const navBarScrollHandler = useNavBarScrollHandler();
+  const bottomInset = useBottomInset();
 
   // Availability chip — computed from public profile fields when the API returns them.
   // homeCity visibility: show only when the profile makes it public (homeCity present).
@@ -304,7 +306,7 @@ export default function PassportDeepLinkScreen() {
 
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: 80 }}
+        contentContainerStyle={{ paddingBottom: bottomInset }}
         showsVerticalScrollIndicator={false}
         onScroll={handleScroll}
         scrollEventThrottle={16}
@@ -359,7 +361,6 @@ export default function PassportDeepLinkScreen() {
             </>
           );
         })()}
-        <NavBarFiller />
       </ScrollView>
 
       <HighlightViewer
