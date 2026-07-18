@@ -4,6 +4,11 @@
  * Shows avatars with gradient rings for followed users who have active highlights.
  * Tapping an avatar opens HighlightViewer for that user's highlights.
  * The ring mutes to grey once all highlights have been viewed in the current session.
+ *
+ * Poster rule: the avatar inside each ring always shows the user's avatarUrl.
+ * The first highlight's mediaThumbnailUrl is used when rendering a thumbnail fallback
+ * — never the raw mediaUrl for video highlights (which would break as an <Image> src).
+ * A ▶ badge is overlaid on the ring when the user's first highlight is a video.
  */
 import React, { useState } from 'react';
 import {
@@ -21,6 +26,27 @@ interface Props {
   users: HighlightFeedUser[];
   sessionViewedIds: Set<string>;
   onMarkViewed: (ids: string[]) => void;
+}
+
+/**
+ * Resolve the poster URI to render inside the ring for a user's first highlight.
+ * Prefers mediaThumbnailUrl; falls back to mediaUrl only for image highlights.
+ * Returns null for video highlights with no thumbnail (grey placeholder shown).
+ */
+function resolveRingPosterUri(user: HighlightFeedUser): string | null {
+  // Prefer user avatar — it's always safe to render in an <Image>
+  if (user.avatarUrl) return user.avatarUrl;
+
+  const first = user.highlights[0];
+  if (!first) return null;
+
+  // For video highlights, only use a dedicated thumbnail — never the raw video URL
+  if (first.mediaType.startsWith('video/')) {
+    return first.mediaThumbnailUrl ?? null;
+  }
+
+  // Image highlights: thumbnail preferred, raw URL acceptable
+  return first.mediaThumbnailUrl ?? first.mediaUrl;
 }
 
 export function FollowingHighlightsStrip({ users, sessionViewedIds, onMarkViewed }: Props) {
@@ -48,6 +74,10 @@ export function FollowingHighlightsStrip({ users, sessionViewedIds, onMarkViewed
             (h) => h.viewedByMe || sessionViewedIds.has(h.id),
           );
           const label = u.handle ?? u.name ?? '';
+          const firstHighlight = u.highlights[0];
+          const mediaType = firstHighlight?.mediaType;
+          const posterUri = resolveRingPosterUri(u);
+
           return (
             <Pressable
               key={u.userId}
@@ -56,10 +86,10 @@ export function FollowingHighlightsStrip({ users, sessionViewedIds, onMarkViewed
               accessibilityRole="button"
               accessibilityLabel={`View ${label}'s highlights`}
             >
-              <HighlightRing hasActive allViewed={allViewed} size={AVATAR_SIZE}>
-                {u.avatarUrl ? (
+              <HighlightRing hasActive allViewed={allViewed} size={AVATAR_SIZE} mediaType={mediaType}>
+                {posterUri ? (
                   <Image
-                    source={{ uri: u.avatarUrl }}
+                    source={{ uri: posterUri }}
                     style={styles.avatar}
                   />
                 ) : (

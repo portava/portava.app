@@ -82,6 +82,8 @@ export function HighlightViewer({
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const videoRef = useRef<Video>(null);
+  // Separate ref for the HTML <video> element rendered on web
+  const webVideoRef = useRef<any>(null);
   // goNextRef lets the stable handleVideoStatus callback call the latest goNext
   const goNextRef = useRef<() => void>(() => {});
 
@@ -117,6 +119,22 @@ export function HighlightViewer({
   // Keep goNextRef current on every render so handleVideoStatus always calls
   // the latest version without a stale closure.
   goNextRef.current = goNext;
+
+  // Web: sync pause/resume to the HTML <video> element
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !webVideoRef.current) return;
+    if (paused) {
+      webVideoRef.current.pause();
+    } else {
+      webVideoRef.current.play().catch(() => {});
+    }
+  }, [paused]);
+
+  // Web: sync muted state to the HTML <video> element
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !webVideoRef.current) return;
+    webVideoRef.current.muted = isMuted;
+  }, [isMuted]);
 
   // Progress timer — images only. Videos drive progress via onPlaybackStatusUpdate.
   useEffect(() => {
@@ -271,16 +289,38 @@ export function HighlightViewer({
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
       <View style={s.container}>
-        {/* Media — native video player for clips, Image for photos */}
-        {isVideo ? (
+        {/* Media — web <video> on web, expo-av Video on native, Image for photos */}
+        {isVideo && Platform.OS === 'web' ? (
+          // Web video fallback: HTML <video> element with progress/auto-advance wired
+          // via onTimeUpdate / onEnded; paused and muted are synced via useEffect above.
+          <video
+            key={current.id}
+            ref={webVideoRef}
+            src={current.mediaUrl}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              ...(shouldApplyFilter ? { filter: cssFilter } : {}),
+            } as any}
+            autoPlay
+            muted={isMuted}
+            playsInline
+            onTimeUpdate={(e: React.SyntheticEvent<HTMLVideoElement>) => {
+              const el = e.currentTarget;
+              if (el.duration > 0) setProgress(el.currentTime / el.duration);
+            }}
+            onEnded={() => goNextRef.current()}
+          />
+        ) : isVideo ? (
           <Video
             key={current.id}
             ref={videoRef}
             source={{ uri: current.mediaUrl }}
-            style={[
-              StyleSheet.absoluteFill,
-              shouldApplyFilter && Platform.OS === 'web' ? { filter: cssFilter } as any : undefined,
-            ]}
+            style={StyleSheet.absoluteFill}
             resizeMode={ResizeMode.COVER}
             shouldPlay={!paused}
             isLooping={false}
