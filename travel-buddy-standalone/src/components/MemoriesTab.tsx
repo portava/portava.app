@@ -450,11 +450,11 @@ function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalProps) {
     });
     if (res.canceled || !res.assets?.[0]) return;
     const asset = res.assets[0];
-    setPhotoUri(asset.uri);
-    setPhotoMime(asset.mimeType ?? 'image/jpeg');
     const isVideo = asset.type === 'video' || (asset.mimeType ?? '').startsWith('video/');
+    setPhotoUri(asset.uri);
+    setPhotoMime(asset.mimeType ?? (isVideo ? 'video/mp4' : 'image/jpeg'));
     setMediaType(isVideo ? 'video' : 'image');
-    setVideoDuration(isVideo && asset.duration ? Math.round(asset.duration) : null);
+    setVideoDuration(isVideo && asset.duration ? Math.round(asset.duration / 1000) : null);
   }
 
   function removeMedia() {
@@ -490,7 +490,10 @@ function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalProps) {
     // Upload media first if one was selected
     if (photoUri) {
       setUploading(true);
-      const up = await uploadMedia({ uri: photoUri, mimeType: photoMime, type: mediaType === 'video' ? 'video' : 'image' });
+      const up = await uploadMedia(
+        { uri: photoUri, mimeType: photoMime, type: mediaType === 'video' ? 'video' : 'image', duration: videoDuration ?? undefined },
+        { surface: 'memory' },
+      );
       setUploading(false);
       if (!up.ok || !up.url) {
         setUploadError(up.message ?? 'Upload failed. You can save without media or try again.');
