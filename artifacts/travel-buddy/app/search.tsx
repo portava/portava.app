@@ -423,7 +423,6 @@ export default function SearchScreen() {
                 onSubmit={submitSearch}
                 onPickRecent={handlePickRecent}
                 onPickResult={handleSuggestionPick}
-                onScroll={navBarScrollHandler}
               />
             ) : loading ? (
               <View style={styles.center}>
