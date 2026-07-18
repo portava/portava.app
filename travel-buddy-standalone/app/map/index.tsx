@@ -27,6 +27,13 @@ import { MapTopControls } from '../../src/components/map/MapTopControls.tsx';
 import { useLocationContext } from '../../src/context/LocationContext.tsx';
 import { getDiscoveryPlaces } from '../../src/services/discovery.ts';
 import type { DiscoveryPlace, DiscoveryCategory } from '../../src/services/discovery.ts';
+import { useMapEntities } from '../../src/hooks/useMapEntities.ts';
+import {
+  MapFilterSheet,
+  loadEnabledLayers,
+} from '../../src/components/map/MapFilterSheet.tsx';
+import type { ToggleableEntityType } from '../../src/types/mapTypes.ts';
+import { TOGGLEABLE_LAYERS } from '../../src/types/mapTypes.ts';
 
 // ── Lazy-load native map component only on native ─────────────────────────────
 // This avoids importing MapLibre on web where it would crash.
@@ -269,6 +276,26 @@ export default function FullScreenMapScreen() {
     return () => { cancelled = true; };
   }, [destination, category, entityTypes, paramLat, paramLng, userLat, userLng]);
 
+  // ── Entity layer filter state ───────────────────────────────────────────────
+  const [enabledLayers, setEnabledLayers] = useState<ToggleableEntityType[]>(
+    () => [...TOGGLEABLE_LAYERS],
+  );
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+
+  // Restore persisted layer preferences on mount.
+  useEffect(() => {
+    loadEnabledLayers().then(setEnabledLayers).catch(() => {});
+  }, []);
+
+  // ── Entity data fetch ───────────────────────────────────────────────────────
+  // `title` is used as the city name — passed in from Discovery / Trips entry points.
+  const { entities } = useMapEntities({
+    enabledLayers,
+    city: title,
+    lat: fallbackLat,
+    lng: fallbackLng,
+  });
+
   // Web: show static placeholder.
   if (Platform.OS === 'web') {
     return <WebPlaceholder />;
@@ -286,7 +313,9 @@ export default function FullScreenMapScreen() {
   return (
     <View style={s.root}>
       {/* Full-screen map — externalCameraRef wires MapTopControls' recenter
-          button to the Camera element rendered inside DiscoveryMapView. */}
+          button to the Camera element rendered inside DiscoveryMapView.
+          Entity layers (Buddies, Events, Gems, Trips, Friends) are injected
+          via entities/enabledEntityLayers props. */}
       <MapComponent
         places={places}
         onSelectPlace={() => {}}
@@ -296,6 +325,8 @@ export default function FullScreenMapScreen() {
         userLat={userLat}
         userLng={userLng}
         externalCameraRef={cameraRef}
+        entities={entities}
+        enabledEntityLayers={enabledLayers}
       />
 
       {/* Floating top controls: Back, Recenter, Filters */}
@@ -307,6 +338,15 @@ export default function FullScreenMapScreen() {
         fallbackLng={fallbackLng}
         title={title}
         topInset={insets.top}
+        onFiltersPress={() => setFilterSheetOpen(true)}
+      />
+
+      {/* Layer filter bottom sheet */}
+      <MapFilterSheet
+        visible={filterSheetOpen}
+        onClose={() => setFilterSheetOpen(false)}
+        enabledLayers={enabledLayers}
+        onChangeEnabledLayers={setEnabledLayers}
       />
     </View>
   );
