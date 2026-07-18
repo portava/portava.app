@@ -676,3 +676,118 @@ describe('FullScreenMapScreen — PermissionPrompt shown when denied with no coo
     expect(capturedProps!.fallbackLng).toBeCloseTo(123.891);
   });
 });
+
+// ── 11. Invalid lat/lng strings are silently discarded ────────────────────────
+//
+// parseCoord returns null for any non-finite input (NaN, Infinity, alphabetic
+// strings, empty string). When both lat and lng params are null the screen must
+// fall back to the user's GPS coords from LocationContext — not lock the camera
+// at [0,0] or pass NaN to DiscoveryMapView.
+
+describe('FullScreenMapScreen — invalid lat/lng strings silently discarded', () => {
+  /** Helper: set up a LocationContext with known GPS coords and capture the
+   *  props DiscoveryMapView receives after rendering with the given params. */
+  async function renderWithInvalidCoords(
+    params: Record<string, string>,
+    contextCoords = { lat: 48.8566, lng: 2.3522 },
+  ): Promise<Record<string, any> | null> {
+    const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
+    let capturedProps: Record<string, any> | null = null;
+    (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
+      capturedProps = props;
+      return null;
+    });
+
+    mockUseLocationContext.mockReturnValueOnce({
+      locationState: {
+        permissionStatus: 'granted',
+        coords: contextCoords,
+        place: null,
+      },
+      requireLocation: jest.fn(),
+    });
+
+    mockUseLocalSearchParams.mockReturnValue(params);
+
+    await act(async () => { await render(<FullScreenMapScreen />); });
+
+    return capturedProps;
+  }
+
+  it('falls back to LocationContext coords when lat="abc" and lng="NaN"', async () => {
+    const props = await renderWithInvalidCoords({ lat: 'abc', lng: 'NaN' });
+
+    expect(props).not.toBeNull();
+    // Must use the context coords — not 0, not NaN.
+    expect(props!.fallbackLat).toBeCloseTo(48.8566);
+    expect(props!.fallbackLng).toBeCloseTo(2.3522);
+    expect(props!.fallbackLat).not.toBeNaN();
+    expect(props!.fallbackLng).not.toBeNaN();
+  });
+
+  it('falls back to LocationContext coords when lat="" (empty string)', async () => {
+    const props = await renderWithInvalidCoords({ lat: '', lng: '' });
+
+    expect(props).not.toBeNull();
+    expect(props!.fallbackLat).toBeCloseTo(48.8566);
+    expect(props!.fallbackLng).toBeCloseTo(2.3522);
+    expect(props!.fallbackLat).not.toBeNaN();
+    expect(props!.fallbackLng).not.toBeNaN();
+  });
+
+  it('falls back to LocationContext coords when lat="Infinity" and lng="-Infinity"', async () => {
+    const props = await renderWithInvalidCoords({ lat: 'Infinity', lng: '-Infinity' });
+
+    expect(props).not.toBeNull();
+    expect(props!.fallbackLat).toBeCloseTo(48.8566);
+    expect(props!.fallbackLng).toBeCloseTo(2.3522);
+    expect(props!.fallbackLat).not.toBeNaN();
+    expect(props!.fallbackLng).not.toBeNaN();
+  });
+
+  it('does not pass 0 to DiscoveryMapView when lat="abc" and no LocationContext coords', async () => {
+    // When both the param and the context are absent the value should be null,
+    // never a default of 0 that would freeze the camera in the mid-Atlantic.
+    const props = await renderWithInvalidCoords(
+      { lat: 'abc', lng: 'abc' },
+      // Simulate no GPS fix: override helper by setting contextCoords to trigger
+      // a null coords path — we do this by calling mockReturnValueOnce directly.
+      // (The helper arg is ignored; we override below before the helper runs.)
+      { lat: 0, lng: 0 }, // placeholder; overridden immediately below
+    );
+
+    // The helper already used the mockReturnValueOnce from the second arg, so we
+    // re-run manually here for the no-coords case.
+    const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
+    let capturedProps2: Record<string, any> | null = null;
+    (DiscoveryMapView as jest.Mock).mockImplementationOnce((p: any) => {
+      capturedProps2 = p;
+      return null;
+    });
+
+    mockUseLocationContext.mockReturnValueOnce({
+      locationState: { permissionStatus: 'granted', coords: null, place: null },
+      requireLocation: jest.fn(),
+    });
+    mockUseLocalSearchParams.mockReturnValue({ lat: 'abc', lng: 'abc' });
+
+    await act(async () => { await render(<FullScreenMapScreen />); });
+
+    // fallbackLat/fallbackLng must be null (not 0) when no source is available.
+    expect(capturedProps2).not.toBeNull();
+    expect(capturedProps2!.fallbackLat).toBeNull();
+    expect(capturedProps2!.fallbackLng).toBeNull();
+  });
+
+  it('renders without crashing for every invalid-coord variant', async () => {
+    const invalidValues = ['abc', 'NaN', 'Infinity', '-Infinity', '', '   ', 'null', 'undefined'];
+
+    for (const val of invalidValues) {
+      mockUseLocalSearchParams.mockReturnValue({ lat: val, lng: val });
+
+      await expect(
+        act(async () => { await render(<FullScreenMapScreen />); }),
+      ).resolves.not.toThrow();
+    }
+  });
+});
