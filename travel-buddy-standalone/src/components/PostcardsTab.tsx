@@ -7,6 +7,7 @@ import { router } from 'expo-router';
 import { MapPin, Pin, MoreHorizontal, Plus, PlayCircle, Clock, AlertCircle, Layers, ChevronDown } from 'lucide-react-native';
 import type { PassportPostcard } from '../types/models.ts';
 import { MediaStampOverlay } from './StampOverlayBadge.tsx';
+import { PostcardEmptyState } from './PostcardEmptyState.tsx';
 import type { usePostcardActions } from '../hooks/usePostcardActions.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 
@@ -291,20 +292,10 @@ export function PostcardsTab({
 
   if (postcards.length === 0) {
     return (
-      <View style={pc.empty}>
-        <Text style={pc.emptyIcon}>🌍</Text>
-        <Text style={pc.emptyTitle}>No postcards yet</Text>
-        <Text style={pc.emptySub}>
-          {isOwner
-            ? 'Share a travel moment to start your Passport wall.'
-            : "This traveler hasn't posted any postcards yet."}
-        </Text>
-        {isOwner && (
-          <Pressable style={pc.emptyBtn} onPress={onAddPostcard ?? (() => router.push('/create' as any))}>
-            <Text style={pc.emptyBtnText}>Add first Postcard</Text>
-          </Pressable>
-        )}
-      </View>
+      <PostcardEmptyState
+        isOwner={isOwner}
+        onAddPostcard={onAddPostcard}
+      />
     );
   }
 
@@ -423,13 +414,6 @@ const pc = StyleSheet.create({
     borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised,
   },
   moreText: { ...t.small, fontSize: 13, fontWeight: '600', color: color.mute },
-
-  empty: { paddingHorizontal: space.xl, paddingTop: space.xxxl, alignItems: 'center', gap: space.md },
-  emptyIcon: { fontSize: 48 },
-  emptyTitle: { ...t.heading, color: color.ink },
-  emptySub: { ...t.body, color: color.mute, textAlign: 'center' },
-  emptyBtn: { backgroundColor: color.signal, paddingHorizontal: space.xl, paddingVertical: space.md, borderRadius: radius.pill },
-  emptyBtnText: { ...t.bodyStrong, color: color.onInk },
 });
 
 const mn = StyleSheet.create({
