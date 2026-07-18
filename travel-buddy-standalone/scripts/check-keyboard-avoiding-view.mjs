@@ -19,7 +19,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import process from 'node:process';
 
-const SCAN_ROOTS = ['src/screens', 'src/components'];
+const SCAN_ROOTS = ['app', 'src/components'];
 
 // Relative paths (from the travel-buddy package root) that are permitted to
 // contain a raw <KeyboardAvoidingView.
