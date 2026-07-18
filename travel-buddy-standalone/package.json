@@ -20,6 +20,7 @@
     "test:invite-gone": "node --import tsx/esm --test src/lib/__tests__/inviteCardGoneHandler.test.ts",
     "test:component": "node scripts/check-test-mocks.mjs && jest --forceExit",
     "lint:imports": "node scripts/check-import-extensions.mjs",
+    "lint:ksv": "node scripts/check-ksv-inner-scroll.mjs",
     "lint:mocks": "node scripts/check-test-mocks.mjs"
   },
   "dependencies": {
