@@ -37,10 +37,16 @@ jest.mock('../../src/hooks/useNavBarCollapse', () => ({
 }));
 
 // ── expo-router ───────────────────────────────────────────────────────────────
+// capturedFocusCallback holds the latest callback passed to useFocusEffect so
+// tests can invoke it a second time to simulate navigation re-entry / deep links.
+let capturedFocusCallback: (() => (() => void) | void) | null = null;
+
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
   useFocusEffect: (cb: () => (() => void) | void) => {
     const React = require('react');
+    // Capture the latest callback so tests can trigger a re-focus manually.
+    capturedFocusCallback = cb;
     React.useEffect(() => {
       const cleanup = cb();
       return typeof cleanup === 'function' ? cleanup : undefined;
@@ -377,6 +383,71 @@ describe('ActivityCenter (Notifications) — scroll architecture', () => {
 
     // Guard: the title must not be hidden behind a scroll boundary inside
     // the empty-state container — i.e. not tucked inside a nested FlatList/ScrollView.
+    function titleCrossesScrollBoundary(node: any): boolean {
+      if (typeof node === 'string') return false;
+      if (!node || typeof node !== 'object') return false;
+      for (const child of (node.children ?? [])) {
+        if (isScrollNode(child)) {
+          if (
+            subtreeHasText(child, 'Activity Center') &&
+            !(node.children ?? []).some(
+              (c: any) => !isScrollNode(c) && subtreeHasText(c, 'Activity Center'),
+            )
+          ) {
+            return true;
+          }
+        }
+        if (titleCrossesScrollBoundary(child)) return true;
+      }
+      return false;
+    }
+
+    expect(titleCrossesScrollBoundary(firstChild)).toBe(false);
+  });
+
+  it('Requests tab empty-state — header and empty-state stay co-located after useFocusEffect fires a second time (deep-link re-entry)', async () => {
+    // Arrange: empty requests list, not loading — triggers SocialRequestsPane's
+    // empty-state branch (lines ~401-414 of notifications.tsx).
+    mockUseRequests.mockReturnValue({
+      incoming: [],
+      loading:  false,
+      reload:   jest.fn(),
+    });
+
+    const { toJSON, getByText } = await render(<ActivityCenter />);
+    await act(async () => {});
+
+    // Switch to the Requests tab so SocialRequestsPane renders.
+    await act(async () => {
+      fireEvent.press(getByText('Requests'));
+    });
+
+    // Simulate navigation returning from a deep link: useFocusEffect fires again.
+    // capturedFocusCallback holds the latest callback registered by ActivityCenter.
+    await act(async () => {
+      if (capturedFocusCallback) capturedFocusCallback();
+    });
+
+    const tree = toJSON() as any;
+
+    // The outer root View's first child must be a plain View (not a scroll node)
+    // in the empty-state branch — header and empty-state must share it.
+    const rootChildren: any[] = Array.isArray(tree?.children) ? tree.children : [];
+    const firstChild = rootChildren[0];
+
+    expect(firstChild).toBeTruthy();
+    // Must not be a scroll container itself.
+    expect(isScrollNode(firstChild)).toBe(false);
+
+    // "Activity Center" title must be co-located in this container.
+    expect(subtreeHasText(firstChild, 'Activity Center')).toBe(true);
+
+    // Empty-state copy must also be in the same container.
+    expect(subtreeHasText(firstChild, 'No pending requests')).toBe(true);
+
+    // Guard: title must not be reachable only through a scroll boundary —
+    // i.e. the header must not have been pushed into a nested FlatList/ScrollView
+    // on re-focus.
     function titleCrossesScrollBoundary(node: any): boolean {
       if (typeof node === 'string') return false;
       if (!node || typeof node !== 'object') return false;
