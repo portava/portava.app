@@ -158,7 +158,7 @@ Rank the launch dashboards by this order, not raw engagement:
 - `artifacts/api-server/src/lib/portavaRank.ts` — the pure, dependency-free core:
   all §3 features, MMR diversity, seeded exploration, `rankCandidates()` one-call
   pipeline, tunable `DEFAULT_WEIGHTS`, feature vectors exposed for logging.
-- `artifacts/api-server/src/test/portavaRank.test.ts` — 12 tests locking in the
+- `artifacts/api-server/src/test/portavaRank.test.ts` — 14 tests locking in the
   product-defining behaviors ("event tonight beats viral post from elsewhere",
   trust-dampened virality, no inferred availability, deterministic exploration).
   Run: `node --import tsx/esm --test src/test/portavaRank.test.ts`

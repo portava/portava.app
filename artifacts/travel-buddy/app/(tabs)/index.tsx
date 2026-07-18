@@ -30,6 +30,7 @@ import { PeopleYouMayKnow } from '../../src/components/PeopleYouMayKnow';
 import { CircleCompassSuggestions } from '../../src/components/CircleCompassSuggestions';
 import { LivePulseRail } from '../../src/components/LivePulseRail';
 import { useLivePulse } from '../../src/hooks/useLivePulse';
+import { fireRankOutcome } from '../../src/hooks/useRankOutcome';
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
 
@@ -447,7 +448,7 @@ function Pulse() {
         ListHeaderComponent={Header}
         ListFooterComponent={Footer}
         renderItem={({ item }) => (
-          <View style={{ paddingHorizontal: space.lg }}>
+          <View style={{ paddingHorizontal: space.lg }} onTouchStart={() => fireRankOutcome(item.id, 'pulse', 'tap')}>
             <PulseFeedCard item={item} onDeleteSuccess={() => handlePostDeleted(item.id)} />
           </View>
         )}

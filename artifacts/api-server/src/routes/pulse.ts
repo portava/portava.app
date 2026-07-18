@@ -365,68 +365,72 @@ router.get("/pulse", async (req, res) => {
       const in24hIso = new Date(nowMs + 24 * 60 * 60 * 1_000).toISOString();
       const nowIso = new Date(nowMs).toISOString();
 
-      // Events: state=open, starts within 24 h, public, city-scoped when known
-      // Block filtering applied after fetch: exclude events hosted by blocked users.
+      // ── Parallel candidate fetches (events + plans + buddies) ───────────────
+      // Queries are built first (with optional city scoping) then raced with
+      // Promise.allSettled so a rejected source drops only its own results —
+      // post candidates and the overall feed are never affected.
+
+      // Events: state=open, starts within 24 h, public.
+      let evQ = sc
+        .from("events")
+        .select("id, host_id, title, category, starts_at, city, max_attendees, going_count, tags")
+        .eq("state", "open")
+        .eq("visibility", "public")
+        .gte("starts_at", nowIso)
+        .lte("starts_at", in24hIso)
+        .limit(20);
+      if (viewerCity) evQ = evQ.ilike("city", `%${viewerCity}%`);
+
+      // Plans: trips with open join slots starting today or tomorrow.
+      const tomorrowEnd = new Date(nowMs + 48 * 60 * 60 * 1_000).toISOString().slice(0, 10);
+      const todayStart = nowIso.slice(0, 10);
+      let planQ = sc
+        .from("trips")
+        .select("id, owner_id, title, destination_city, start_date, visibility, member_count, max_members")
+        .in("status", ["planning", "upcoming"])
+        .gte("start_date", todayStart)
+        .lte("start_date", tomorrowEnd)
+        .eq("visibility", "public")
+        .limit(20);
+      if (viewerCity) planQ = planQ.ilike("destination_city", `%${viewerCity}%`);
+
+      // Buddies: approved, city-scoped, excluding viewer.
+      let bQ = sc
+        .from("rent_buddy_profiles")
+        .select("id, user_id, city, trust_score")
+        .in("moderation_status", ["approved", "auto_approved"])
+        .neq("user_id", user.id)
+        .limit(10);
+      if (viewerCity) bQ = bQ.ilike("city", `%${viewerCity}%`);
+
+      // Race all three — a rejected promise contributes an empty array.
+      const [evResult, planResult, buddyResult] = await Promise.allSettled([evQ, planQ, bQ]);
+
       const rawEvents: any[] = [];
-      try {
-        let evQ = sc
-          .from("events")
-          .select("id, host_id, title, category, starts_at, city, max_attendees, going_count, tags")
-          .eq("state", "open")
-          .eq("visibility", "public")
-          .gte("starts_at", nowIso)
-          .lte("starts_at", in24hIso)
-          .limit(20);
-        if (viewerCity) evQ = evQ.ilike("city", `%${viewerCity}%`);
-        const { data: evRows } = await evQ;
-        for (const ev of (evRows as any[]) ?? []) {
+      if (evResult.status === "fulfilled") {
+        for (const ev of ((evResult.value as any).data as any[]) ?? []) {
           if (blockedSet.size > 0 && blockedSet.has(ev.host_id as string)) continue;
           rawEvents.push(ev);
         }
-      } catch { /* non-fatal */ }
+      }
 
-      // Plans: trips with open join slots starting today or tomorrow, city-scoped.
-      // Block filtering: exclude trips owned by blocked users.
       const rawPlans: any[] = [];
-      try {
-        const tomorrowEnd = new Date(nowMs + 48 * 60 * 60 * 1_000).toISOString().slice(0, 10);
-        const todayStart = nowIso.slice(0, 10);
-        let planQ = sc
-          .from("trips")
-          .select("id, owner_id, title, destination_city, start_date, visibility, member_count, max_members")
-          .in("status", ["planning", "upcoming"])
-          .gte("start_date", todayStart)
-          .lte("start_date", tomorrowEnd)
-          .eq("visibility", "public")
-          .limit(20);
-        if (viewerCity) planQ = planQ.ilike("destination_city", `%${viewerCity}%`);
-        const { data: planRows } = await planQ;
-        for (const plan of (planRows as any[]) ?? []) {
+      if (planResult.status === "fulfilled") {
+        for (const plan of ((planResult.value as any).data as any[]) ?? []) {
           if (blockedSet.size > 0 && blockedSet.has(plan.owner_id as string)) continue;
-          // Only include trips with open slots (max_members null means unlimited)
           const memberCount = (plan.member_count as number | null) ?? 0;
           const maxMembers = plan.max_members as number | null;
           if (maxMembers === null || memberCount < maxMembers) rawPlans.push(plan);
         }
-      } catch { /* non-fatal */ }
+      }
 
-      // Buddies: approved/auto_approved profiles, city-scoped, excluding viewer.
-      // Block filtering: exclude buddies whose user_id is in the blocked set.
       const rawBuddies: any[] = [];
-      try {
-        let bQ = sc
-          .from("rent_buddy_profiles")
-          .select("id, user_id, city, trust_score")
-          .in("moderation_status", ["approved", "auto_approved"])
-          .neq("user_id", user.id)
-          .limit(10);
-        if (viewerCity) bQ = bQ.ilike("city", `%${viewerCity}%`);
-        const { data: bRows } = await bQ;
-        for (const b of (bRows as any[]) ?? []) {
+      if (buddyResult.status === "fulfilled") {
+        for (const b of ((buddyResult.value as any).data as any[]) ?? []) {
           if (blockedSet.size > 0 && blockedSet.has(b.user_id as string)) continue;
           rawBuddies.push(b);
         }
-      } catch { /* non-fatal */ }
+      }
 
       // Batch-fetch author trust scores for posts + event hosts
       const authorIdsForTrust = new Set<string>();
