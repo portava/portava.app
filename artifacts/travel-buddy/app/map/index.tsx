@@ -368,9 +368,16 @@ export default function FullScreenMapScreen() {
   useEffect(() => {
     if (mode !== 'passport') return;
     let cancelled = false;
-    setPassportLoading(true);
     setPassportError(null);
+
+    // Only show the loading card if the fetch takes longer than 150 ms.
+    // This prevents a one-frame flicker when stamps resolve quickly.
+    const loadingTimer = setTimeout(() => {
+      if (!cancelled) setPassportLoading(true);
+    }, 150);
+
     getPassportMap().then((res) => {
+      clearTimeout(loadingTimer);
       if (cancelled) return;
       setPassportLoading(false);
       if (res.ok) {
@@ -380,11 +387,15 @@ export default function FullScreenMapScreen() {
         setPassportError(res.message ?? 'Could not load your stamps');
       }
     }).catch((e: unknown) => {
+      clearTimeout(loadingTimer);
       if (cancelled) return;
       setPassportLoading(false);
       setPassportError(e instanceof Error ? e.message : 'Network error');
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      clearTimeout(loadingTimer);
+    };
   // passportRetryCount is intentionally included to allow retry on demand.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, passportRetryCount]);
