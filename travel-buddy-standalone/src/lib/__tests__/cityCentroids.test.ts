@@ -107,4 +107,31 @@ describe('CITY_CENTROIDS — key-level spot checks for new cities', () => {
   check('Karachi',      24.8607,  67.0011);
   check('Doha',         25.2854,  51.5310);
   check('Jeddah',       21.4858,  39.1925);
+
+  // Latin American cities
+  check('Quito',        -0.2295,  -78.5243);
+  check('Caracas',      10.4806,  -66.9036);
+  check('Montevideo',  -34.9011,  -56.1645);
+  check('Asunción',    -25.2867,  -57.6470);
+  check('La Paz',      -16.5000,  -68.1193);
+  check('Guayaquil',    -2.1962,  -79.8862);
+  check('Cali',          3.4516,  -76.5320);
+  check('Barranquilla', 10.9639,  -74.7964);
+  check('Recife',       -8.0476,  -34.8770);
+  check('Belo Horizonte', -19.9167, -43.9345);
+  check('Managua',      12.1364,  -86.2919);
+  check('Guatemala City', 14.6349, -90.5069);
+  check('Havana',       23.1136,  -82.3666);
+  check('Santo Domingo', 18.4861, -69.9312);
+
+  // Central Asian & South Caucasus cities
+  check('Tashkent',     41.2995,   69.2401);
+  check('Almaty',       43.2220,   76.8512);
+  check('Astana',       51.1801,   71.4460);
+  check('Baku',         40.4093,   49.8671);
+  check('Tbilisi',      41.6938,   44.8015);
+  check('Yerevan',      40.1872,   44.5152);
+  check('Bishkek',      42.8746,   74.5698);
+  check('Dushanbe',     38.5598,   68.7733);
+  check('Ashgabat',     37.9601,   58.3261);
 });
