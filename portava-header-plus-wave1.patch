@@ -1,0 +1,2655 @@
+From 10651fd3dbb0c90640a1f10b5c317ea90824ceb6 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Sat, 18 Jul 2026 12:37:55 +0000
+Subject: [PATCH 1/2] Passport header: approved identity design (rebuilt on
+ current tree)
+
+Re-applies the approved header design, adapted around the availability
+chip already in this tree (chipState API kept as-is):
+- Owner: full-width Edit Profile button at the bottom of the card
+- Trust Score pill always visible for owner ('Not yet rated' when null)
+- Display name mixed case; avatar vertically centered
+- Saved pill removed (Saved stays reachable in the owner menu)
+- Stats row restyled as a bordered ticket card; onStatsLoaded reports
+  stats up (no duplicate fetch)
+- World Traveler faded stamp at 5+ countries (owner: passport stats;
+  public passports: distinct postcard countries)
+- Passport tab label Plans -> Trips (key/order/persistence unchanged)
+Mirrored to artifacts/travel-buddy
+---
+ .../travel-buddy/app/(tabs)/passport.tsx      |   8 +-
+ .../travel-buddy/app/passport/[username].tsx  |   1 +
+ .../passport/PassportIdentityCard.tsx         | 170 ++++++++++++------
+ .../src/components/passport/passportTabs.ts   |   2 +-
+ .../app/(tabs)/passport.tsx                   |   8 +-
+ .../app/passport/[username].tsx               |   1 +
+ .../passport/PassportIdentityCard.tsx         | 170 ++++++++++++------
+ .../src/components/passport/passportTabs.ts   |   2 +-
+ 8 files changed, 258 insertions(+), 104 deletions(-)
+
+diff --git a/artifacts/travel-buddy/app/(tabs)/passport.tsx b/artifacts/travel-buddy/app/(tabs)/passport.tsx
+index 1aacbf9..e410891 100644
+--- a/artifacts/travel-buddy/app/(tabs)/passport.tsx
++++ b/artifacts/travel-buddy/app/(tabs)/passport.tsx
+@@ -20,7 +20,7 @@ import { PostcardComposer } from '../../src/components/PostcardComposer';
+ import { MemoriesTab } from '../../src/components/MemoriesTab';
+ import { TripsTab } from '../../src/components/TripsTab';
+ import { SuggestedMemoryModal } from '../../src/components/SuggestedMemoryModal';
+-import type { PassportMemory } from '../../src/services/passportStamps';
++import type { PassportMemory, PassportStats } from '../../src/services/passportStamps';
+ import { useSession } from '../../src/context/SessionContext';
+ import { listMyTrips } from '../../src/services/trips';
+ import { OwnerActionMenu } from '../../src/components/OwnerActionMenu';
+@@ -364,6 +364,9 @@ function PassportContent({
+   const [coverUploading, setCoverUploading] = useState(false);
+   const [buddyProfile, setBuddyProfile] = useState<BuddyProfile | null | undefined>(undefined);
+   const [, setTrustSheetOpen] = useState(false);
++  // Owner passport stats reported up from PassportStatsRow (single fetch) —
++  // powers the World Traveler stamp on the identity card.
++  const [passportStats, setPassportStats] = useState<PassportStats | null>(null);
+ 
+   // Availability chip — read from the store; refresh on focus so it stays in sync
+   // with the backend after the user saves changes on the availability screen.
+@@ -539,7 +542,9 @@ function PassportContent({
+           trustLabel={profile.trustLabel ?? undefined}
+           onTrustInfo={() => setTrustSheetOpen(true)}
+           onEditBio={handleEditProfile}
++          onEditProfile={handleEditProfile}
+           onSavedPress={() => router.push('/saved' as any)}
++          countriesVisited={passportStats?.countries ?? null}
+           availabilityChip={ownerChipState}
+           onAvailabilityChipPress={() => router.push('/availability' as any)}
+         />
+@@ -547,6 +552,7 @@ function PassportContent({
+           profile={profile}
+           isOwner
+           iconOnly={statsIconOnly}
++          onStatsLoaded={setPassportStats}
+           onStatPress={(label) => {
+             if (label === 'Trips') setTab('plans');
+             else if (label === 'Stamps') setTab('stamps');
+diff --git a/artifacts/travel-buddy/app/passport/[username].tsx b/artifacts/travel-buddy/app/passport/[username].tsx
+index c76628f..ee91f15 100644
+--- a/artifacts/travel-buddy/app/passport/[username].tsx
++++ b/artifacts/travel-buddy/app/passport/[username].tsx
+@@ -321,6 +321,7 @@ export default function PassportDeepLinkScreen() {
+           isFollowing={isAuthed ? follow.isFollowing : undefined}
+           followLoading={isAuthed ? (follow.loading || follow.toggling) : undefined}
+           onFollowPress={isAuthed ? follow.toggle : undefined}
++          countriesVisited={countries}
+           availabilityChip={publicChipState}
+           onAvailabilityChipPress={publicChipState ? () => setAvailStatusSheetOpen(true) : undefined}
+         />
+diff --git a/artifacts/travel-buddy/src/components/passport/PassportIdentityCard.tsx b/artifacts/travel-buddy/src/components/passport/PassportIdentityCard.tsx
+index ce71071..3085165 100644
+--- a/artifacts/travel-buddy/src/components/passport/PassportIdentityCard.tsx
++++ b/artifacts/travel-buddy/src/components/passport/PassportIdentityCard.tsx
+@@ -14,7 +14,7 @@ import Svg, { Circle, Path, Rect, Text as SvgText } from 'react-native-svg';
+ import {
+   ShieldCheck, Globe, MapPin, Camera,
+   UserPlus, UserCheck, MoreHorizontal,
+-  Briefcase, Users, Stamp, PenLine, Bookmark,
++  Briefcase, Users, Stamp, PenLine,
+ } from 'lucide-react-native';
+ import type { OwnProfile, PublicProfile } from '../../types/models.ts';
+ import { resolveAvatarUrl, fallbackInitials, truncateDisplayName } from '../../utils/identity.ts';
+@@ -51,8 +51,14 @@ interface Props {
+   onFollowPress?: () => void;
+   /** Owner: tap "Add a bio" empty state → navigate to edit profile */
+   onEditBio?: () => void;
+-  /** Owner: tap compact Saved shortcut → navigate to /saved */
++  /** Owner: primary Edit Profile button at the bottom of the card */
++  onEditProfile?: () => void;
++  /** Deprecated: Saved moved to the ⋯ menu; prop kept optional for
++      backward compatibility with existing call sites. */
+   onSavedPress?: () => void;
++  /** Distinct countries visited — powers the faded WORLD TRAVELER stamp
++      (shown at 5+). Owner: passport stats; public: derived from postcards. */
++  countriesVisited?: number | null;
+   /** Resolved chip state from resolveAvailabilityChip(); null = hide chip */
+   availabilityChip?: AvailabilityChipState | null;
+   /** Called when the chip is pressed (owner → /availability; public → meet-up action) */
+@@ -121,15 +127,23 @@ function PassportVerifiedStamp() {
+ 
+ // ─── Trust Score bar ──────────────────────────────────────────────────────────
+ 
+-function TrustScoreBar({ score, onPress }: { score: number; onPress?: () => void }) {
+-  const pct = Math.min(100, Math.max(0, score));
++function TrustScoreBar({ score, onPress }: { score: number | null; onPress?: () => void }) {
++  // null = account has no trust score yet — still show the pill (honest empty
++  // state) so the trust system is always visible on the owner's passport.
++  const pct = score != null ? Math.min(100, Math.max(0, score)) : 0;
+   return (
+     <Pressable style={s.trustCard} onPress={onPress} disabled={!onPress} hitSlop={8}>
+       <View style={s.trustCardRow}>
+         <ShieldCheck size={14} color={GREEN_STAMP} strokeWidth={2.5} />
+         <Text style={s.trustCardLabel}>TRUST SCORE</Text>
+-        <Text style={s.trustCardScore}>{Math.round(score)}</Text>
+-        <Text style={s.trustCardTotal}>/100</Text>
++        {score != null ? (
++          <>
++            <Text style={s.trustCardScore}>{Math.round(score)}</Text>
++            <Text style={s.trustCardTotal}>/100</Text>
++          </>
++        ) : (
++          <Text style={s.trustCardTotal}>Not yet rated</Text>
++        )}
+       </View>
+       <View style={s.trustBarBg}>
+         <View style={[s.trustBarFill, { width: `${pct}%` as any }]} />
+@@ -138,6 +152,29 @@ function TrustScoreBar({ score, onPress }: { score: number; onPress?: () => void
+   );
+ }
+ 
++// ─── World Traveler achievement stamp ─────────────────────────────────────────
++// Faded rotated ink stamp, earned at 5+ countries. Watermark only —
++// pointerEvents none, never blocks the controls beneath it.
++
++export const WORLD_TRAVELER_MIN_COUNTRIES = 5;
++
++function WorldTravelerStamp() {
++  return (
++    <View style={s.worldStamp} pointerEvents="none" accessibilityLabel="World Traveler stamp — 5 or more countries visited">
++      <Svg width={78} height={78} viewBox="0 0 80 80">
++        <Circle cx={40} cy={40} r={37} stroke={GREEN_STAMP} strokeWidth={2.5} strokeDasharray="4 2" fill="none" />
++        <Circle cx={40} cy={40} r={29.5} stroke={GREEN_STAMP} strokeWidth={1} fill="none" opacity={0.7} />
++        <SvgText x="40" y="27" textAnchor="middle" fill={GREEN_STAMP} fontSize="8" fontWeight="800" letterSpacing="1">★ WORLD ★</SvgText>
++        <Circle cx={40} cy={39} r={8} stroke={GREEN_STAMP} strokeWidth={1.4} fill="none" />
++        <Path d="M32 39 H48" stroke={GREEN_STAMP} strokeWidth={1.1} />
++        <Path d="M40 31 C36.5 34.5 36.5 43.5 40 47 C43.5 43.5 43.5 34.5 40 31 Z" stroke={GREEN_STAMP} strokeWidth={1.1} fill="none" />
++        <SvgText x="40" y="59" textAnchor="middle" fill={GREEN_STAMP} fontSize="8" fontWeight="800" letterSpacing="1">TRAVELER</SvgText>
++        <SvgText x="40" y="68" textAnchor="middle" fill={GREEN_STAMP} fontSize="5.5" fontWeight="700" letterSpacing="0.5">5+ COUNTRIES</SvgText>
++      </Svg>
++    </View>
++  );
++}
++
+ // ─── Stat ticket ──────────────────────────────────────────────────────────────
+ // iconOnly=true  → icon bg + number, no label text  (scrolled / compact)
+ // iconOnly=false → label text + number, no icon bg  (expanded, default)
+@@ -178,15 +215,25 @@ interface StatsRowProps {
+   onStatPress?: (label: string) => void;
+   /** When true: show icon + count, hide label. When false/undefined: show label + count, hide icon. */
+   iconOnly?: boolean;
++  /** Reports loaded owner stats up to the screen (e.g. for the World
++      Traveler stamp) — avoids a duplicate getPassportStats call. */
++  onStatsLoaded?: (stats: PassportStats) => void;
+ }
+ 
+-export function PassportStatsRow({ profile, isOwner, overrideStats, onStatPress, iconOnly }: StatsRowProps) {
++export function PassportStatsRow({ profile, isOwner, overrideStats, onStatPress, iconOnly, onStatsLoaded }: StatsRowProps) {
++  const onStatsLoadedRef = React.useRef(onStatsLoaded);
++  onStatsLoadedRef.current = onStatsLoaded;
+   const [liveStats, setLiveStats] = useState<PassportStats | null>(null);
+ 
+   useEffect(() => {
+     if (!isOwner) return;
+     getPassportStats()
+-      .then((res) => { if (res.ok) setLiveStats(res.data); })
++      .then((res) => {
++        if (res.ok) {
++          setLiveStats(res.data);
++          onStatsLoadedRef.current?.(res.data);
++        }
++      })
+       .catch(() => {});
+   }, [isOwner]);
+ 
+@@ -218,7 +265,7 @@ export function PassportIdentityCard({
+   hasHighlights, allHighlightsViewed, onHighlightRingPress, onNewHighlightPress,
+   trustScore, trustLabel, onTrustInfo,
+   isFollowing, followLoading, onFollowPress,
+-  onEditBio, onSavedPress,
++  onEditBio, onEditProfile, onSavedPress, countriesVisited,
+   availabilityChip, onAvailabilityChipPress,
+ }: Props) {
+   const username      = 'username' in profile ? profile.username : null;
+@@ -268,6 +315,11 @@ export function PassportIdentityCard({
+         {/* ── Card body ───────────────────────────────────────── */}
+         <View style={s.body}>
+ 
++          {/* ── World Traveler stamp — faded watermark, earned at 5+ countries ── */}
++          {(countriesVisited ?? 0) >= WORLD_TRAVELER_MIN_COUNTRIES ? (
++            <WorldTravelerStamp />
++          ) : null}
++
+           {/* ── ⋯ menu — top-right, always visible ── */}
+           {onMenuPress ? (
+             <Pressable
+@@ -333,10 +385,11 @@ export function PassportIdentityCard({
+             <View style={s.rightCol}>
+               <Text style={s.travelerLabel}>TRAVELER ★</Text>
+ 
+-              {/* Name row — verified stamp replaces CheckCircle2 */}
++              {/* Name row — verified stamp replaces CheckCircle2.
++                  Mixed case per the approved identity design. */}
+               <View style={s.nameRow}>
+                 <Text style={s.displayName} numberOfLines={1}>
+-                  {resolvedName.toUpperCase()}
++                  {resolvedName}
+                 </Text>
+                 {isVerified ? <PassportVerifiedStamp /> : null}
+               </View>
+@@ -351,9 +404,11 @@ export function PassportIdentityCard({
+                 onPress={onAvailabilityChipPress}
+               />
+ 
+-              {/* Trust Score — compact, inside identity area */}
+-              {trustScore != null ? (
+-                <TrustScoreBar score={trustScore} onPress={onTrustInfo} />
++              {/* Trust Score — compact, inside identity area.
++                  Always visible for the owner (honest "Not yet rated" state);
++                  public profiles only show it once a score exists. */}
++              {trustScore != null || isOwner ? (
++                <TrustScoreBar score={trustScore ?? null} onPress={onTrustInfo} />
+               ) : null}
+ 
+               {/* Interests tags */}
+@@ -374,21 +429,9 @@ export function PassportIdentityCard({
+                 </View>
+               ) : null}
+ 
+-              {/* Owner: Saved shortcut */}
+-              {isOwner && onSavedPress ? (
+-                <View style={s.publicActions}>
+-                  <Pressable
+-                    style={s.savedPill}
+-                    onPress={onSavedPress}
+-                    hitSlop={8}
+-                    accessibilityLabel="Saved"
+-                    testID="saved-btn"
+-                  >
+-                    <Bookmark size={14} color={INK} strokeWidth={2} />
+-                    <Text style={s.savedPillText}>Saved</Text>
+-                  </Pressable>
+-                </View>
+-              ) : null}
++              {/* Saved shortcut removed from the header — Saved stays
++                  reachable via the ⋯ menu (OwnerActionMenu), so no
++                  functionality is lost. */}
+ 
+               {/* Public: Follow pill */}
+               {!isOwner ? (
+@@ -441,6 +484,19 @@ export function PassportIdentityCard({
+             </View>
+           </View>
+ 
++          {/* ── Owner: primary Edit Profile action (approved design) ── */}
++          {isOwner && onEditProfile ? (
++            <Pressable
++              style={s.editProfileBtn}
++              onPress={onEditProfile}
++              accessibilityRole="button"
++              accessibilityLabel="Edit Profile"
++            >
++              <PenLine size={14} color={CREAM} strokeWidth={2} />
++              <Text style={s.editProfileText}>Edit Profile</Text>
++            </Pressable>
++          ) : null}
++
+         </View>
+       </View>
+     </View>
+@@ -515,12 +571,13 @@ const s = StyleSheet.create({
+   columns: {
+     flexDirection: 'row',
+     gap: 8,
++    // Vertically center the avatar against the identity info column.
++    alignItems: 'center',
+   },
+ 
+   /* Left column — avatar only */
+   leftCol: {
+     alignItems: 'center',
+-    paddingTop: 4,
+   },
+   avatarOuter: {
+     alignItems: 'center',
+@@ -691,24 +748,6 @@ const s = StyleSheet.create({
+     color: '#fff',
+   },
+ 
+-  /* Owner: Saved shortcut pill */
+-  savedPill: {
+-    flexDirection: 'row',
+-    alignItems: 'center',
+-    gap: 5,
+-    paddingHorizontal: 14,
+-    paddingVertical: 7,
+-    borderRadius: 20,
+-    backgroundColor: 'rgba(28,28,26,0.08)',
+-    borderWidth: 1,
+-    borderColor: 'rgba(28,28,26,0.14)',
+-  },
+-  savedPillText: {
+-    fontSize: 13,
+-    fontWeight: '600',
+-    color: INK,
+-  },
+-
+   /* ── Passport stamp + Bio — lower identity area ── */
+   bioSection: {
+     flexDirection: 'row',
+@@ -744,15 +783,46 @@ const s = StyleSheet.create({
+     color: MUTED,
+     fontWeight: '500',
+   },
++
++  /* World Traveler faded stamp — watermark behind content */
++  worldStamp: {
++    position: 'absolute',
++    top: 40,
++    right: 12,
++    opacity: 0.3,
++    transform: [{ rotate: '-14deg' }],
++    zIndex: 0,
++  },
++
++  /* Owner: primary Edit Profile button */
++  editProfileBtn: {
++    flexDirection: 'row',
++    alignItems: 'center',
++    justifyContent: 'center',
++    gap: 6,
++    minHeight: 44,
++    marginTop: 12,
++    borderRadius: 10,
++    backgroundColor: INK,
++  },
++  editProfileText: {
++    fontSize: 14,
++    fontWeight: '700',
++    color: CREAM,
++  },
+ });
+ 
+ // ─── Stats row styles (separate section below the card) ───────────────────────
+ 
+ const st = StyleSheet.create({
++  // Stats as a separate "ticket" card per the approved design.
+   section: {
++    marginHorizontal: 12,
++    marginTop: 10,
++    borderRadius: 14,
++    borderWidth: 1,
++    borderColor: PP.borderLight,
+     backgroundColor: PP.paper,
+-    borderBottomWidth: 1,
+-    borderBottomColor: PP.borderLight,
+   },
+   statsRow: {
+     flexDirection: 'row',
+diff --git a/artifacts/travel-buddy/src/components/passport/passportTabs.ts b/artifacts/travel-buddy/src/components/passport/passportTabs.ts
+index 5a2edb0..3359853 100644
+--- a/artifacts/travel-buddy/src/components/passport/passportTabs.ts
++++ b/artifacts/travel-buddy/src/components/passport/passportTabs.ts
+@@ -20,7 +20,7 @@ export const CANONICAL_TAB_ORDER: PassportTabKey[] = [
+ export const TAB_LABELS: Record<PassportTabKey, string> = {
+   postcards:    'Postcards',
+   memories:     'Memories',
+-  plans:        'Plans',
++  plans:        'Trips',
+   stamps:       'Stamps',
+   map:          'Map',
+   destinations: 'Destinations',
+diff --git a/travel-buddy-standalone/app/(tabs)/passport.tsx b/travel-buddy-standalone/app/(tabs)/passport.tsx
+index 1aacbf9..e410891 100644
+--- a/travel-buddy-standalone/app/(tabs)/passport.tsx
++++ b/travel-buddy-standalone/app/(tabs)/passport.tsx
+@@ -20,7 +20,7 @@ import { PostcardComposer } from '../../src/components/PostcardComposer';
+ import { MemoriesTab } from '../../src/components/MemoriesTab';
+ import { TripsTab } from '../../src/components/TripsTab';
+ import { SuggestedMemoryModal } from '../../src/components/SuggestedMemoryModal';
+-import type { PassportMemory } from '../../src/services/passportStamps';
++import type { PassportMemory, PassportStats } from '../../src/services/passportStamps';
+ import { useSession } from '../../src/context/SessionContext';
+ import { listMyTrips } from '../../src/services/trips';
+ import { OwnerActionMenu } from '../../src/components/OwnerActionMenu';
+@@ -364,6 +364,9 @@ function PassportContent({
+   const [coverUploading, setCoverUploading] = useState(false);
+   const [buddyProfile, setBuddyProfile] = useState<BuddyProfile | null | undefined>(undefined);
+   const [, setTrustSheetOpen] = useState(false);
++  // Owner passport stats reported up from PassportStatsRow (single fetch) —
++  // powers the World Traveler stamp on the identity card.
++  const [passportStats, setPassportStats] = useState<PassportStats | null>(null);
+ 
+   // Availability chip — read from the store; refresh on focus so it stays in sync
+   // with the backend after the user saves changes on the availability screen.
+@@ -539,7 +542,9 @@ function PassportContent({
+           trustLabel={profile.trustLabel ?? undefined}
+           onTrustInfo={() => setTrustSheetOpen(true)}
+           onEditBio={handleEditProfile}
++          onEditProfile={handleEditProfile}
+           onSavedPress={() => router.push('/saved' as any)}
++          countriesVisited={passportStats?.countries ?? null}
+           availabilityChip={ownerChipState}
+           onAvailabilityChipPress={() => router.push('/availability' as any)}
+         />
+@@ -547,6 +552,7 @@ function PassportContent({
+           profile={profile}
+           isOwner
+           iconOnly={statsIconOnly}
++          onStatsLoaded={setPassportStats}
+           onStatPress={(label) => {
+             if (label === 'Trips') setTab('plans');
+             else if (label === 'Stamps') setTab('stamps');
+diff --git a/travel-buddy-standalone/app/passport/[username].tsx b/travel-buddy-standalone/app/passport/[username].tsx
+index c76628f..ee91f15 100644
+--- a/travel-buddy-standalone/app/passport/[username].tsx
++++ b/travel-buddy-standalone/app/passport/[username].tsx
+@@ -321,6 +321,7 @@ export default function PassportDeepLinkScreen() {
+           isFollowing={isAuthed ? follow.isFollowing : undefined}
+           followLoading={isAuthed ? (follow.loading || follow.toggling) : undefined}
+           onFollowPress={isAuthed ? follow.toggle : undefined}
++          countriesVisited={countries}
+           availabilityChip={publicChipState}
+           onAvailabilityChipPress={publicChipState ? () => setAvailStatusSheetOpen(true) : undefined}
+         />
+diff --git a/travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx b/travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx
+index ce71071..3085165 100644
+--- a/travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx
++++ b/travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx
+@@ -14,7 +14,7 @@ import Svg, { Circle, Path, Rect, Text as SvgText } from 'react-native-svg';
+ import {
+   ShieldCheck, Globe, MapPin, Camera,
+   UserPlus, UserCheck, MoreHorizontal,
+-  Briefcase, Users, Stamp, PenLine, Bookmark,
++  Briefcase, Users, Stamp, PenLine,
+ } from 'lucide-react-native';
+ import type { OwnProfile, PublicProfile } from '../../types/models.ts';
+ import { resolveAvatarUrl, fallbackInitials, truncateDisplayName } from '../../utils/identity.ts';
+@@ -51,8 +51,14 @@ interface Props {
+   onFollowPress?: () => void;
+   /** Owner: tap "Add a bio" empty state → navigate to edit profile */
+   onEditBio?: () => void;
+-  /** Owner: tap compact Saved shortcut → navigate to /saved */
++  /** Owner: primary Edit Profile button at the bottom of the card */
++  onEditProfile?: () => void;
++  /** Deprecated: Saved moved to the ⋯ menu; prop kept optional for
++      backward compatibility with existing call sites. */
+   onSavedPress?: () => void;
++  /** Distinct countries visited — powers the faded WORLD TRAVELER stamp
++      (shown at 5+). Owner: passport stats; public: derived from postcards. */
++  countriesVisited?: number | null;
+   /** Resolved chip state from resolveAvailabilityChip(); null = hide chip */
+   availabilityChip?: AvailabilityChipState | null;
+   /** Called when the chip is pressed (owner → /availability; public → meet-up action) */
+@@ -121,15 +127,23 @@ function PassportVerifiedStamp() {
+ 
+ // ─── Trust Score bar ──────────────────────────────────────────────────────────
+ 
+-function TrustScoreBar({ score, onPress }: { score: number; onPress?: () => void }) {
+-  const pct = Math.min(100, Math.max(0, score));
++function TrustScoreBar({ score, onPress }: { score: number | null; onPress?: () => void }) {
++  // null = account has no trust score yet — still show the pill (honest empty
++  // state) so the trust system is always visible on the owner's passport.
++  const pct = score != null ? Math.min(100, Math.max(0, score)) : 0;
+   return (
+     <Pressable style={s.trustCard} onPress={onPress} disabled={!onPress} hitSlop={8}>
+       <View style={s.trustCardRow}>
+         <ShieldCheck size={14} color={GREEN_STAMP} strokeWidth={2.5} />
+         <Text style={s.trustCardLabel}>TRUST SCORE</Text>
+-        <Text style={s.trustCardScore}>{Math.round(score)}</Text>
+-        <Text style={s.trustCardTotal}>/100</Text>
++        {score != null ? (
++          <>
++            <Text style={s.trustCardScore}>{Math.round(score)}</Text>
++            <Text style={s.trustCardTotal}>/100</Text>
++          </>
++        ) : (
++          <Text style={s.trustCardTotal}>Not yet rated</Text>
++        )}
+       </View>
+       <View style={s.trustBarBg}>
+         <View style={[s.trustBarFill, { width: `${pct}%` as any }]} />
+@@ -138,6 +152,29 @@ function TrustScoreBar({ score, onPress }: { score: number; onPress?: () => void
+   );
+ }
+ 
++// ─── World Traveler achievement stamp ─────────────────────────────────────────
++// Faded rotated ink stamp, earned at 5+ countries. Watermark only —
++// pointerEvents none, never blocks the controls beneath it.
++
++export const WORLD_TRAVELER_MIN_COUNTRIES = 5;
++
++function WorldTravelerStamp() {
++  return (
++    <View style={s.worldStamp} pointerEvents="none" accessibilityLabel="World Traveler stamp — 5 or more countries visited">
++      <Svg width={78} height={78} viewBox="0 0 80 80">
++        <Circle cx={40} cy={40} r={37} stroke={GREEN_STAMP} strokeWidth={2.5} strokeDasharray="4 2" fill="none" />
++        <Circle cx={40} cy={40} r={29.5} stroke={GREEN_STAMP} strokeWidth={1} fill="none" opacity={0.7} />
++        <SvgText x="40" y="27" textAnchor="middle" fill={GREEN_STAMP} fontSize="8" fontWeight="800" letterSpacing="1">★ WORLD ★</SvgText>
++        <Circle cx={40} cy={39} r={8} stroke={GREEN_STAMP} strokeWidth={1.4} fill="none" />
++        <Path d="M32 39 H48" stroke={GREEN_STAMP} strokeWidth={1.1} />
++        <Path d="M40 31 C36.5 34.5 36.5 43.5 40 47 C43.5 43.5 43.5 34.5 40 31 Z" stroke={GREEN_STAMP} strokeWidth={1.1} fill="none" />
++        <SvgText x="40" y="59" textAnchor="middle" fill={GREEN_STAMP} fontSize="8" fontWeight="800" letterSpacing="1">TRAVELER</SvgText>
++        <SvgText x="40" y="68" textAnchor="middle" fill={GREEN_STAMP} fontSize="5.5" fontWeight="700" letterSpacing="0.5">5+ COUNTRIES</SvgText>
++      </Svg>
++    </View>
++  );
++}
++
+ // ─── Stat ticket ──────────────────────────────────────────────────────────────
+ // iconOnly=true  → icon bg + number, no label text  (scrolled / compact)
+ // iconOnly=false → label text + number, no icon bg  (expanded, default)
+@@ -178,15 +215,25 @@ interface StatsRowProps {
+   onStatPress?: (label: string) => void;
+   /** When true: show icon + count, hide label. When false/undefined: show label + count, hide icon. */
+   iconOnly?: boolean;
++  /** Reports loaded owner stats up to the screen (e.g. for the World
++      Traveler stamp) — avoids a duplicate getPassportStats call. */
++  onStatsLoaded?: (stats: PassportStats) => void;
+ }
+ 
+-export function PassportStatsRow({ profile, isOwner, overrideStats, onStatPress, iconOnly }: StatsRowProps) {
++export function PassportStatsRow({ profile, isOwner, overrideStats, onStatPress, iconOnly, onStatsLoaded }: StatsRowProps) {
++  const onStatsLoadedRef = React.useRef(onStatsLoaded);
++  onStatsLoadedRef.current = onStatsLoaded;
+   const [liveStats, setLiveStats] = useState<PassportStats | null>(null);
+ 
+   useEffect(() => {
+     if (!isOwner) return;
+     getPassportStats()
+-      .then((res) => { if (res.ok) setLiveStats(res.data); })
++      .then((res) => {
++        if (res.ok) {
++          setLiveStats(res.data);
++          onStatsLoadedRef.current?.(res.data);
++        }
++      })
+       .catch(() => {});
+   }, [isOwner]);
+ 
+@@ -218,7 +265,7 @@ export function PassportIdentityCard({
+   hasHighlights, allHighlightsViewed, onHighlightRingPress, onNewHighlightPress,
+   trustScore, trustLabel, onTrustInfo,
+   isFollowing, followLoading, onFollowPress,
+-  onEditBio, onSavedPress,
++  onEditBio, onEditProfile, onSavedPress, countriesVisited,
+   availabilityChip, onAvailabilityChipPress,
+ }: Props) {
+   const username      = 'username' in profile ? profile.username : null;
+@@ -268,6 +315,11 @@ export function PassportIdentityCard({
+         {/* ── Card body ───────────────────────────────────────── */}
+         <View style={s.body}>
+ 
++          {/* ── World Traveler stamp — faded watermark, earned at 5+ countries ── */}
++          {(countriesVisited ?? 0) >= WORLD_TRAVELER_MIN_COUNTRIES ? (
++            <WorldTravelerStamp />
++          ) : null}
++
+           {/* ── ⋯ menu — top-right, always visible ── */}
+           {onMenuPress ? (
+             <Pressable
+@@ -333,10 +385,11 @@ export function PassportIdentityCard({
+             <View style={s.rightCol}>
+               <Text style={s.travelerLabel}>TRAVELER ★</Text>
+ 
+-              {/* Name row — verified stamp replaces CheckCircle2 */}
++              {/* Name row — verified stamp replaces CheckCircle2.
++                  Mixed case per the approved identity design. */}
+               <View style={s.nameRow}>
+                 <Text style={s.displayName} numberOfLines={1}>
+-                  {resolvedName.toUpperCase()}
++                  {resolvedName}
+                 </Text>
+                 {isVerified ? <PassportVerifiedStamp /> : null}
+               </View>
+@@ -351,9 +404,11 @@ export function PassportIdentityCard({
+                 onPress={onAvailabilityChipPress}
+               />
+ 
+-              {/* Trust Score — compact, inside identity area */}
+-              {trustScore != null ? (
+-                <TrustScoreBar score={trustScore} onPress={onTrustInfo} />
++              {/* Trust Score — compact, inside identity area.
++                  Always visible for the owner (honest "Not yet rated" state);
++                  public profiles only show it once a score exists. */}
++              {trustScore != null || isOwner ? (
++                <TrustScoreBar score={trustScore ?? null} onPress={onTrustInfo} />
+               ) : null}
+ 
+               {/* Interests tags */}
+@@ -374,21 +429,9 @@ export function PassportIdentityCard({
+                 </View>
+               ) : null}
+ 
+-              {/* Owner: Saved shortcut */}
+-              {isOwner && onSavedPress ? (
+-                <View style={s.publicActions}>
+-                  <Pressable
+-                    style={s.savedPill}
+-                    onPress={onSavedPress}
+-                    hitSlop={8}
+-                    accessibilityLabel="Saved"
+-                    testID="saved-btn"
+-                  >
+-                    <Bookmark size={14} color={INK} strokeWidth={2} />
+-                    <Text style={s.savedPillText}>Saved</Text>
+-                  </Pressable>
+-                </View>
+-              ) : null}
++              {/* Saved shortcut removed from the header — Saved stays
++                  reachable via the ⋯ menu (OwnerActionMenu), so no
++                  functionality is lost. */}
+ 
+               {/* Public: Follow pill */}
+               {!isOwner ? (
+@@ -441,6 +484,19 @@ export function PassportIdentityCard({
+             </View>
+           </View>
+ 
++          {/* ── Owner: primary Edit Profile action (approved design) ── */}
++          {isOwner && onEditProfile ? (
++            <Pressable
++              style={s.editProfileBtn}
++              onPress={onEditProfile}
++              accessibilityRole="button"
++              accessibilityLabel="Edit Profile"
++            >
++              <PenLine size={14} color={CREAM} strokeWidth={2} />
++              <Text style={s.editProfileText}>Edit Profile</Text>
++            </Pressable>
++          ) : null}
++
+         </View>
+       </View>
+     </View>
+@@ -515,12 +571,13 @@ const s = StyleSheet.create({
+   columns: {
+     flexDirection: 'row',
+     gap: 8,
++    // Vertically center the avatar against the identity info column.
++    alignItems: 'center',
+   },
+ 
+   /* Left column — avatar only */
+   leftCol: {
+     alignItems: 'center',
+-    paddingTop: 4,
+   },
+   avatarOuter: {
+     alignItems: 'center',
+@@ -691,24 +748,6 @@ const s = StyleSheet.create({
+     color: '#fff',
+   },
+ 
+-  /* Owner: Saved shortcut pill */
+-  savedPill: {
+-    flexDirection: 'row',
+-    alignItems: 'center',
+-    gap: 5,
+-    paddingHorizontal: 14,
+-    paddingVertical: 7,
+-    borderRadius: 20,
+-    backgroundColor: 'rgba(28,28,26,0.08)',
+-    borderWidth: 1,
+-    borderColor: 'rgba(28,28,26,0.14)',
+-  },
+-  savedPillText: {
+-    fontSize: 13,
+-    fontWeight: '600',
+-    color: INK,
+-  },
+-
+   /* ── Passport stamp + Bio — lower identity area ── */
+   bioSection: {
+     flexDirection: 'row',
+@@ -744,15 +783,46 @@ const s = StyleSheet.create({
+     color: MUTED,
+     fontWeight: '500',
+   },
++
++  /* World Traveler faded stamp — watermark behind content */
++  worldStamp: {
++    position: 'absolute',
++    top: 40,
++    right: 12,
++    opacity: 0.3,
++    transform: [{ rotate: '-14deg' }],
++    zIndex: 0,
++  },
++
++  /* Owner: primary Edit Profile button */
++  editProfileBtn: {
++    flexDirection: 'row',
++    alignItems: 'center',
++    justifyContent: 'center',
++    gap: 6,
++    minHeight: 44,
++    marginTop: 12,
++    borderRadius: 10,
++    backgroundColor: INK,
++  },
++  editProfileText: {
++    fontSize: 14,
++    fontWeight: '700',
++    color: CREAM,
++  },
+ });
+ 
+ // ─── Stats row styles (separate section below the card) ───────────────────────
+ 
+ const st = StyleSheet.create({
++  // Stats as a separate "ticket" card per the approved design.
+   section: {
++    marginHorizontal: 12,
++    marginTop: 10,
++    borderRadius: 14,
++    borderWidth: 1,
++    borderColor: PP.borderLight,
+     backgroundColor: PP.paper,
+-    borderBottomWidth: 1,
+-    borderBottomColor: PP.borderLight,
+   },
+   statsRow: {
+     flexDirection: 'row',
+diff --git a/travel-buddy-standalone/src/components/passport/passportTabs.ts b/travel-buddy-standalone/src/components/passport/passportTabs.ts
+index 5a2edb0..3359853 100644
+--- a/travel-buddy-standalone/src/components/passport/passportTabs.ts
++++ b/travel-buddy-standalone/src/components/passport/passportTabs.ts
+@@ -20,7 +20,7 @@ export const CANONICAL_TAB_ORDER: PassportTabKey[] = [
+ export const TAB_LABELS: Record<PassportTabKey, string> = {
+   postcards:    'Postcards',
+   memories:     'Memories',
+-  plans:        'Plans',
++  plans:        'Trips',
+   stamps:       'Stamps',
+   map:          'Map',
+   destinations: 'Destinations',
+-- 
+2.43.0
+
+
+From 466dd4a55ba3963f682a10c1e94a30a60d2235a3 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Sat, 18 Jul 2026 12:37:55 +0000
+Subject: [PATCH 2/2] Beta Wave 1: fix P0s + quick P1s from readiness audit
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+P0-1 Post Edit dead route: new /post/edit/[id] screen (caption +
+     visibility via existing getPostById/updatePost; owner-only,
+     loading/error/retry states); PostCard's 4 Edit actions rewired
+P0-2 LiveShareSheet: 'share with all' toggle now actually restricts —
+     per-member checklist when off; allowedIds honors the selection
+P0-3 Pulse (home): wrapped in ScreenErrorBoundary; For You initial load
+     shows a spinner instead of a misleading empty state
+P1-4 Circle thread quick-button: /circle/<id> (unmatched) -> /circle
+P1-5 Buddy application services/pricing step -> buddy-dashboard/packages
+P1-10 Trip detail: network failure shows 'Couldn't load this trip' +
+      retry instead of masquerading as 'Trip not found'
+P1-11 Thread error state: wired existing reload() to a Try again button
+Mirrored to artifacts/travel-buddy
+---
+ .../app/(rent-a-buddy)/become/apply.tsx       |   2 +-
+ artifacts/travel-buddy/app/(tabs)/index.tsx   | 728 ++++++++----------
+ artifacts/travel-buddy/app/messages/[id].tsx  |  18 +-
+ artifacts/travel-buddy/app/post/edit/[id].tsx | 206 +++++
+ artifacts/travel-buddy/app/trip/[id].tsx      |  22 +-
+ .../travel-buddy/src/components/PostCard.tsx  |   8 +-
+ .../components/tripCrew/LiveShareSheet.tsx    |  60 +-
+ .../app/(rent-a-buddy)/become/apply.tsx       |   2 +-
+ travel-buddy-standalone/app/(tabs)/index.tsx  |  17 +-
+ travel-buddy-standalone/app/messages/[id].tsx |  18 +-
+ .../app/post/edit/[id].tsx                    | 206 +++++
+ travel-buddy-standalone/app/trip/[id].tsx     |  22 +-
+ .../src/components/PostCard.tsx               |   8 +-
+ .../components/tripCrew/LiveShareSheet.tsx    |  60 +-
+ 14 files changed, 954 insertions(+), 423 deletions(-)
+ create mode 100644 artifacts/travel-buddy/app/post/edit/[id].tsx
+ create mode 100644 travel-buddy-standalone/app/post/edit/[id].tsx
+
+diff --git a/artifacts/travel-buddy/app/(rent-a-buddy)/become/apply.tsx b/artifacts/travel-buddy/app/(rent-a-buddy)/become/apply.tsx
+index d9c746b..9e6dc60 100644
+--- a/artifacts/travel-buddy/app/(rent-a-buddy)/become/apply.tsx
++++ b/artifacts/travel-buddy/app/(rent-a-buddy)/become/apply.tsx
+@@ -387,7 +387,7 @@ export default function ApplyToBeBuddy() {
+               onPress={() => {
+                 // Navigate to the relevant management screen for this item
+                 if (item.done) return;
+-                if (['services', 'pricing'].includes(item.key)) router.push('/(rent-a-buddy)/buddy-dashboard/services' as any);
++                if (['services', 'pricing'].includes(item.key)) router.push('/(rent-a-buddy)/buddy-dashboard/packages' as any); // services screen doesn't exist (beta-audit fix)
+                 else if (item.key === 'availability') router.push('/(rent-a-buddy)/buddy-dashboard/availability' as any);
+                 else router.push('/(rent-a-buddy)/buddy-dashboard' as any);
+               }}
+diff --git a/artifacts/travel-buddy/app/(tabs)/index.tsx b/artifacts/travel-buddy/app/(tabs)/index.tsx
+index 9583f47..54aec28 100644
+--- a/artifacts/travel-buddy/app/(tabs)/index.tsx
++++ b/artifacts/travel-buddy/app/(tabs)/index.tsx
+@@ -1,120 +1,91 @@
+-import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+-import type { NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
++import React, { useState, useMemo, useCallback, useEffect } from 'react';
+ import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, ActivityIndicator, RefreshControl } from 'react-native';
+-import { useSafeAreaInsets } from 'react-native-safe-area-context';
++import { getCommentCountSnapshot, subscribeCommentCount } from '../../src/lib/commentCountStore';
+ import { router, useFocusEffect } from 'expo-router';
+-import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated';
+-import { useNavBarScrollHandler, navBarProgress } from '../../src/hooks/useNavBarCollapse';
+-import { useBottomInset } from '../../src/hooks/useBottomInset';
++import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
+ import { PostCard } from '../../src/components/PostCard';
+ import { PulseHeader } from '../../src/components/PulseHeader';
+ import { FitsCard, FlexibleStrip } from '../../src/components/PulseFits';
+ import { PulseFeedCard } from '../../src/components/PulseFeedCard';
+ import { PulseFilterSheet, UnifiedPostComposer } from '../../src/components/PulseCreate';
+-import { PulseLiveBanner } from '../../src/components/PulseLiveBanner';
++import { Chip } from '../../src/components/ui';
+ import { TravelEmptyState } from '../../src/components/primitives';
+ import { useCityPulse } from '../../src/hooks/useCityPulse';
+-import { useGlobalFeed, useFollowingFeed } from '../../src/hooks/usePosts';
++import { useFollowingFeed } from '../../src/hooks/usePosts';
++import { usePulseFeed } from '../../src/hooks/usePulseFeed';
+ import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
++import { useCircleFlag } from '../../src/hooks/useCircleFlag';
+ import { fetchPreferences } from '../../src/services/intelligence';
+ import { STATUS_LABEL } from '../../src/lib/availability';
+-
+-import { PULSE_FILTERS } from '../../src/types/models';
+ import type { PulseFilter, PulseFeedItem } from '../../src/types/models';
+ import type { PostRow } from '../../src/services/posts';
+-import { postRowToFeedItem } from '../../src/lib/postFeedAdapter';
+ import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+ import { useLocationContext } from '../../src/context/LocationContext';
+ import { LocationPermissionPrompt } from '../../src/components/LocationPermissionPrompt';
+ import { ManualCityPicker } from '../../src/components/ManualCityPicker';
+ import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
+ import { ActiveLayoverPill } from '../../src/components/layover/ActiveLayoverPill';
++import { Plane, Users, MapPin } from 'lucide-react-native';
+ import { PeopleYouMayKnow } from '../../src/components/PeopleYouMayKnow';
+-import { pv } from '../../src/theme/pulseTheme';
+-
+-const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Hidden Gems', 'Circle'];
+-
+-/**
+- * Display labels for the Portava chip row. The VALUES stay the internal
+- * PulseFilter truth ('All', 'Plans', …) — only the visible label changes,
+- * so toggle logic, sheet filters, and feed filtering are untouched.
+- */
+-const CHIP_LABELS: Partial<Record<PulseFilter, string>> = {
+-  All: 'For You',
+-  Plans: 'Events',
+-  Posts: 'Posts',
+-  'Hidden Gems': 'Gems',
+-  Circle: 'People',
+-};
++import { CircleCompassSuggestions } from '../../src/components/CircleCompassSuggestions';
++import { LivePulseRail } from '../../src/components/LivePulseRail';
++import { useLivePulse } from '../../src/hooks/useLivePulse';
++
++const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
+ 
+ type FeedMode = 'forYou' | 'following';
+ 
+-/** Scroll offsets below this count as "at the top" — new posts prepend automatically. */
+-const AT_TOP_THRESHOLD = 80;
+-
+-/**
+- * Stable creation timestamp for the synthetic rent-a-buddy card so the feed
+- * memo doesn't produce a brand-new item object per render (which would defeat
+- * row memoization and re-render the whole list).
+- */
+-const RENT_A_BUDDY_CREATED_AT = new Date(0).toISOString();
+-
+-/**
+- * Memoized feed row. The delete callback is derived from the stable
+- * (onPostDeleted, item.id) pair inside the row so the props passed to the
+- * memo boundary are themselves stable — inline closures in renderItem would
+- * defeat React.memo and re-render every visible card on each list render.
+- */
+-const FeedRow = React.memo(function FeedRow({
+-  item,
+-  onPostDeleted,
+-}: {
+-  item: PulseFeedItem;
+-  onPostDeleted: (id: string) => void;
+-}) {
+-  const handleDeleted = useCallback(() => onPostDeleted(item.id), [onPostDeleted, item.id]);
+-  if (item.type === 'post') {
+-    return <PulseFeedCard item={item} onDeleteSuccess={handleDeleted} />;
+-  }
+-  return (
+-    <View style={{ paddingHorizontal: space.lg }}>
+-      <PulseFeedCard item={item} onDeleteSuccess={handleDeleted} />
+-    </View>
+-  );
+-});
++/** Convert a real PostRow from the API into a PulseFeedItem for the Pulse Wall. */
++function postRowToFeedItem(p: PostRow): PulseFeedItem {
++  return {
++    id: p.id,
++    type: 'post',
++    city: p.locationCity ?? 'Traveler Post',
++    author: {
++      id: p.authorId,
++      name: p.author?.name ?? 'Traveler',
++      avatarUrl: p.author?.avatarUrl ?? '',
++    },
++    createdAt: p.createdAt,
++    timeAgo: timeAgo(p.createdAt),
++    tags: [categoryToStamp(p.category)],
++    categoryFallback: !p.category,
++    mediaUrl: p.mediaUrls[0],
++    // Structured media passthrough — carries thumbnail/video info AND the
++    // stamp_overlay jsonb that PulseFeedCard renders via MediaStampOverlay.
++    media: p.media,
++    caption: p.content,
++    source: 'user',
++    neighborhood: p.locationName ?? undefined,
++    visibility: p.visibility === 'trip_only' ? 'private' : (p.visibility as 'public' | 'private'),
++    likeCount: p.likeCount,
++    commentCount: p.commentCount,
++    likedByMe: p.likedByMe,
++    canLike: p.canLike,
++    canComment: p.canComment,
++    canShare: p.canShare,
++    spanTags: p.tags,
++    spanHashtags: p.hashtagUsages,
++  };
++}
+ 
+-/** Module-level separator — a stable reference so FlatList never re-mounts separators. */
+-function FeedSeparator({ leadingItem }: { leadingItem?: PulseFeedItem }) {
+-  return <View style={{ height: leadingItem?.type === 'post' ? 8 : space.md }} />;
++/** Map a PostCategory slug to a human-readable stamp label. Falls back to 'Travel'. */
++function categoryToStamp(cat: string | null | undefined): string {
++  if (!cat) return 'Travel';
++  return cat.charAt(0).toUpperCase() + cat.slice(1);
+ }
+ 
+-export default function Pulse() {
+-  const insets = useSafeAreaInsets();
+-  const navScrollHandler = useNavBarScrollHandler();
+-  const bottomInset = useBottomInset();
+-
+-  // For You / Following toggle collapses with the nav bar on scroll-down,
+-  // leaving just the compact icon rail. Natural height 46 px:
+-  // lineHeight 22 (t.bodyStrong) + modeBtn paddingVertical 8×2
+-  // + modeRow padding 3×2 + border 1×2.
+-  const animatedModeRow = useAnimatedStyle(() => {
+-    const p = navBarProgress.value;
+-    return {
+-      height: interpolate(p, [0, 1], [46, 0]),
+-      marginBottom: interpolate(p, [0, 1], [8, 0]),
+-      opacity: interpolate(p, [0, 0.5], [1, 0], 'clamp'),
+-    };
+-  });
++function timeAgo(iso: string): string {
++  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
++  if (s < 60) return 'just now';
++  const m = Math.floor(s / 60);
++  if (m < 60) return `${m}m ago`;
++  const h = Math.floor(m / 60);
++  if (h < 24) return `${h}h ago`;
++  return `${Math.floor(h / 24)}d ago`;
++}
+ 
+-  // Chip row shrinks slightly (mostly vertical) in sync with the nav bar;
+-  // chips scale proportionally so labels never clip.
+-  const animatedChipRow = useAnimatedStyle(() => {
+-    const p = navBarProgress.value;
+-    return {
+-      height: interpolate(p, [0, 1], [46, 38]),
+-      transform: [{ scale: interpolate(p, [0, 1], [1, 0.9]) }],
+-    };
+-  });
++function Pulse() {
+   const [feedMode, setFeedMode] = useState<FeedMode>('forYou');
+   const [active, setActive] = useState<PulseFilter[]>(['All']);
+   const [sheetOpen, setSheetOpen] = useState(false);
+@@ -123,118 +94,110 @@ export default function Pulse() {
+   const [categoryAffinities, setCategoryAffinities] = useState<Record<string, number>>({});
+   const [peopleRefreshKey, setPeopleRefreshKey] = useState(0);
+   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
++  const { enabled: circleEnabled } = useCircleFlag();
+ 
+-  const { locationState, openCityPicker, resolvedLocation, clearSessionLocation } = useLocationContext();
+-  // Use the full 3-tier cascade (GPS → last-known → home) via resolvedLocation.
+-  const activeCity = resolvedLocation.place.city ?? 'Cebu City';
+-  const activeCitySlug = activeCity.toLowerCase().replace(/\s+/g, '-');
++  // Comment count overrides: populated by the post detail screen via commentCountStore.
++  // Initialised from the store snapshot so overrides from a previous visit are applied
++  // immediately on mount, before any reload completes.
++  const [commentCountOverrides, setCommentCountOverrides] = useState<Map<string, number>>(
++    () => new Map(getCommentCountSnapshot()),
++  );
++
++  const { locationState, openCityPicker } = useLocationContext();
++  const activeCity = locationState.place.city ?? null;
++  const activeCitySlug = (activeCity ?? '').toLowerCase().replace(/\s+/g, '-');
+ 
+   // Load learned category affinities from the preference engine so Pulse
+   // ranking improves as the user interacts with recommendations.
+   useEffect(() => {
+-    let cancelled = false;
+     fetchPreferences().then((res) => {
+-      if (!cancelled && res.ok && res.data?.inferred?.categoryAffinities) {
++      if (res.ok && res.data?.inferred?.categoryAffinities) {
+         setCategoryAffinities(res.data.inferred.categoryAffinities);
+       }
+     }).catch(() => { /* best-effort: silently ignore if not logged in yet */ });
+-    return () => { cancelled = true; };
+   }, []);
+ 
+   const { buckets, status } = useCityPulse({ currentCitySlug: activeCitySlug, interests: [], categoryAffinities });
+ 
+-  const realFeed = useGlobalFeed();
++  const livePulse = useLivePulse({
++    context: activeCitySlug ? 'currentCity' : 'myPlans',
++    citySlug: activeCitySlug || undefined,
++    lat: locationState.coords?.lat,
++    lng: locationState.coords?.lng,
++  });
++
++  // Primary Pulse feed: real posts + place cards from /api/pulse.
++  const pulseFeed = usePulseFeed({
++    city: activeCity ?? undefined,
++    lat: locationState.coords?.lat,
++    lng: locationState.coords?.lng,
++  });
+   const followingFeed = useFollowingFeed();
+ 
+   // When any post is deleted, remove it from both feeds so it cannot reappear on refresh
+   const handlePostDeleted = useCallback((id: string) => {
+-    realFeed.markDeleted(id);
++    pulseFeed.markDeleted(id);
+     followingFeed.markDeleted(id);
+-  }, [realFeed.markDeleted, followingFeed.markDeleted]);
+-
+-  // List ref + last-known scroll offset. The offset decides whether buffered
+-  // new posts can be prepended silently (user at top) or must wait behind the
+-  // "new posts" pill (user mid-feed).
+-  const listRef = useRef<FlatList<PulseFeedItem>>(null);
+-  const scrollOffsetRef = useRef(0);
+-  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+-    scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+-    navScrollHandler(event);
+-  }, [navScrollHandler]);
+-
+-  // On focus: only refresh when the data is stale (TTL), and do it in the
+-  // background without replacing the list — so re-entering the tab never
+-  // resets the scroll position. Pull-to-refresh still does a full reload.
++  }, [pulseFeed.markDeleted, followingFeed.markDeleted]);
++
+   useFocusEffect(
+     useCallback(() => {
+-      // Clear any temporary city search from Discovery so re-entering Pulse
+-      // always shows the canonical resolved location, not a stale session city.
+-      clearSessionLocation();
+-      realFeed.refreshIfStale();
+-      if (feedMode === 'following') followingFeed.refreshIfStale();
+-    }, [clearSessionLocation, realFeed.refreshIfStale, followingFeed.refreshIfStale, feedMode]),
++      // Seed overrides from the store snapshot so feed cards reflect any
++      // comment count changes made on the detail screen before the reload lands.
++      const snapshot = getCommentCountSnapshot();
++      if (snapshot.size > 0) {
++        setCommentCountOverrides(new Map(snapshot));
++      }
++      pulseFeed.reload();
++      if (feedMode === 'following') followingFeed.reload();
++      // Refresh the Live Pulse rail whenever the Pulse tab is focused so
++      // users always see fresh data on re-open, not just on mount or pull-to-refresh.
++      livePulse.refresh();
++    }, [pulseFeed.reload, followingFeed.reload, feedMode, livePulse.refresh]),
+   );
+ 
+-  // If new posts arrive while the user is already at (or near) the top,
+-  // prepend them automatically — no pill needed, no visible jump.
+-  useEffect(() => {
+-    if (realFeed.pending.length > 0 && scrollOffsetRef.current < AT_TOP_THRESHOLD) {
+-      realFeed.applyPending();
+-    }
+-  }, [realFeed.pending, realFeed.applyPending]);
+-
++  // Keep overrides in sync while the detail screen is open in the background
++  // (e.g. the user opens comments, adds one, then returns).
+   useEffect(() => {
+-    if (followingFeed.pending.length > 0 && scrollOffsetRef.current < AT_TOP_THRESHOLD) {
+-      followingFeed.applyPending();
+-    }
+-  }, [followingFeed.pending, followingFeed.applyPending]);
+-
+-  const handleNewPostsPress = useCallback(() => {
+-    if (feedMode === 'following') {
+-      followingFeed.applyPending();
+-    } else {
+-      realFeed.applyPending();
+-    }
+-    listRef.current?.scrollToOffset({ offset: 0, animated: true });
+-  }, [feedMode, realFeed.applyPending, followingFeed.applyPending]);
++    return subscribeCommentCount((postId, count) => {
++      setCommentCountOverrides((prev) => {
++        const next = new Map(prev);
++        next.set(postId, count);
++        return next;
++      });
++    });
++  }, []);
+ 
+   // When switching to Following, load it on first activation.
+   const handleFeedMode = useCallback((mode: FeedMode) => {
+     setFeedMode(mode);
+-    if (mode === 'following') followingFeed.refreshIfStale();
+-  }, [followingFeed.refreshIfStale]);
++    if (mode === 'following') followingFeed.reload();
++  }, [followingFeed.reload]);
+ 
+   const handleRefresh = useCallback(() => {
+     setPeopleRefreshKey((k) => k + 1);
++    livePulse.refresh();
+     if (feedMode === 'following') followingFeed.reload();
+-    else realFeed.reload();
+-  }, [feedMode, followingFeed.reload, realFeed.reload]);
++    else pulseFeed.reload();
++  }, [feedMode, followingFeed.reload, pulseFeed.reload, livePulse.refresh]);
+ 
+-  const fits = useMemo(
+-    () => [...buckets.fitsAvailability, ...buckets.openNearby],
+-    [buckets.fitsAvailability, buckets.openNearby],
+-  );
++  const fits = [...buckets.fitsAvailability, ...buckets.openNearby];
+   const noFits = fits.length === 0;
+ 
+-  // Stable events array for the live banner — a fresh array every render
+-  // would defeat the banner's memo and re-measure it during scroll.
+-  const bannerEvents = useMemo(
+-    () => [...fits, ...buckets.flexible],
+-    [fits, buckets.flexible],
+-  );
+-
++  // pulseFeed.items are already PulseFeedItem[] (pre-mapped by usePulseFeed)
+   const realItems = useMemo<PulseFeedItem[]>(
+-    () => (realFeed.data ?? [])
+-      .filter((p) => p.mediaUrls.length > 0)
+-      .map(postRowToFeedItem),
+-    [realFeed.data],
++    () => pulseFeed.items,
++    [pulseFeed.items],
+   );
++
+   const forYouFeed = useMemo<PulseFeedItem[]>(() => {
+     const filteredReal = active.includes('All') || active.includes('Posts')
+       ? realItems
+       : realItems.filter(() => false);
+-    return filteredReal;
+-  }, [realItems, active]);
++    // Place cards only shown in All / default view (not when a specific type filter is active)
++    const showPlaceCards = active.includes('All') && realItems.length < 5;
++    return [...filteredReal, ...(showPlaceCards ? pulseFeed.placeCards : [])];
++  }, [realItems, pulseFeed.placeCards, active]);
+ 
+   const followingItems = useMemo<PulseFeedItem[]>(
+     () => (followingFeed.data ?? []).map(postRowToFeedItem),
+@@ -245,28 +208,36 @@ export default function Pulse() {
+ 
+   // Inject a synthetic rent_a_buddy feed item (rendered by PulseFeedCard switch) at position 3
+   const feed = useMemo<PulseFeedItem[]>(() => {
+-    if (!rentBuddyEnabled || feedMode === 'following') return baseFeed;
+-    const buddyItem: PulseFeedItem = {
+-      id: '__rent_a_buddy__',
+-      type: 'rent_a_buddy',
+-      city: activeCity,
+-      createdAt: RENT_A_BUDDY_CREATED_AT,
+-      tags: [],
+-      source: 'editorial',
+-    };
+-    const insertAt = Math.min(3, baseFeed.length);
+-    return [...baseFeed.slice(0, insertAt), buddyItem, ...baseFeed.slice(insertAt)];
+-  }, [baseFeed, rentBuddyEnabled, feedMode, activeCity]);
++    let result: PulseFeedItem[];
++    if (!rentBuddyEnabled || feedMode === 'following') {
++      result = baseFeed;
++    } else {
++      const buddyItem: PulseFeedItem = {
++        id: '__rent_a_buddy__',
++        type: 'rent_a_buddy',
++        city: activeCity ?? '',
++        createdAt: new Date().toISOString(),
++        tags: [],
++        source: 'editorial',
++      };
++      const insertAt = Math.min(3, baseFeed.length);
++      result = [...baseFeed.slice(0, insertAt), buddyItem, ...baseFeed.slice(insertAt)];
++    }
+ 
+-  const filterCount = active.filter((f) => f !== 'All').length;
++    // Apply comment count overrides from the detail screen so counts are
++    // correct immediately on return, without waiting for the feed reload.
++    // Only applies to real user posts (type === 'post') — synthetic items like
++    // rent_a_buddy have no post ID in the store and must not be mutated.
++    if (commentCountOverrides.size === 0) return result;
++    return result.map((item) => {
++      if (item.type !== 'post') return item;
++      const override = commentCountOverrides.get(item.id);
++      if (override === undefined || override === item.commentCount) return item;
++      return { ...item, commentCount: override };
++    });
++  }, [baseFeed, rentBuddyEnabled, feedMode, activeCity, commentCountOverrides]);
+ 
+-  // Stable renderItem/keyExtractor so the FlatList doesn't tear down and
+-  // rebuild rows on every screen render (a major source of scroll jank).
+-  const renderItem = useCallback(
+-    ({ item }: { item: PulseFeedItem }) => <FeedRow item={item} onPostDeleted={handlePostDeleted} />,
+-    [handlePostDeleted],
+-  );
+-  const keyExtractor = useCallback((it: PulseFeedItem) => String(it.id), []);
++  const filterCount = active.filter((f) => f !== 'All').length;
+ 
+   function toggleQuick(f: PulseFilter) {
+     if (f === 'All') { setActive(['All']); return; }
+@@ -284,109 +255,56 @@ export default function Pulse() {
+   }
+ 
+   const Header = (
+-    <View style={{ paddingTop: insets.top }}>
+-      {/* PulseHeader scrolls with the feed — not pinned above it */}
+-      <PulseHeader
+-        city={activeCity}
+-        cityFull={activeCity}
+-        availabilityText={status === 'not_set' ? 'Availability not set' : STATUS_LABEL[status]}
+-        filterCount={filterCount}
+-        liveEvents={bannerEvents}
+-        onSearch={() => router.push('/(tabs)/discovery')}
+-        onFilter={() => setSheetOpen(true)}
+-        onCityPress={openCityPicker}
+-      />
+-
+-      {/* Freshness indicator — shown when location is last-known or home-only */}
+-      {(resolvedLocation.source === 'last_known' || resolvedLocation.source === 'home') && (
+-        <View style={styles.locationFreshnessBar}>
+-          <Text style={styles.locationFreshnessText}>
+-            {resolvedLocation.source === 'home' ? 'Using home city' : 'Using last known location'}
+-          </Text>
+-        </View>
+-      )}
+-
+-      {/* Mode toggle + filter chips — scroll with the feed (previously fixed stickyControls) */}
+-      <View style={{ paddingVertical: space.sm }}>
+-        <Animated.View style={[styles.modeRowClip, animatedModeRow]}>
+-          <View style={styles.modeRow}>
+-            <Pressable
+-              style={[styles.modeBtn, feedMode === 'forYou' && styles.modeBtnActive]}
+-              onPress={() => handleFeedMode('forYou')}
+-            >
+-              <Text style={[styles.modeBtnText, feedMode === 'forYou' && styles.modeBtnTextActive]}>For You</Text>
+-            </Pressable>
+-            <Pressable
+-              style={[styles.modeBtn, feedMode === 'following' && styles.modeBtnActive]}
+-              onPress={() => handleFeedMode('following')}
+-            >
+-              <Text style={[styles.modeBtnText, feedMode === 'following' && styles.modeBtnTextActive]}>Following</Text>
+-            </Pressable>
++    <View>
++      {/* Live Pulse smart rail — above all other sections */}
++      <LivePulseRail pulse={livePulse} />
++
++      {activeCity ? (
++        <>
++          {/* Fits your time */}
++          <View style={styles.fitsHead}>
++            <Text style={styles.sectionTitle}>Fits your time</Text>
++            <View style={styles.insideBadge}><Text style={styles.insideText}>Inside your availability</Text></View>
++            <View style={{ flex: 1 }} />
++            {fits.length > 0 && (
++              <Pressable onPress={() => router.push('/(tabs)/trips')}><Text style={styles.viewAll}>View all ({fits.length})</Text></Pressable>
++            )}
+           </View>
+-        </Animated.View>
+-        {feedMode === 'forYou' && (
+-          <Animated.View style={[styles.chipRowClip, animatedChipRow]}>
+-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+-              {QUICK_FILTERS.map((f) => {
+-                const isChipActive = active.includes(f);
+-                const label = CHIP_LABELS[f] ?? f;
+-                return (
+-                  <Pressable
+-                    key={f}
+-                    style={[styles.chip, isChipActive && styles.chipActive]}
+-                    onPress={() => toggleQuick(f)}
+-                    hitSlop={{ top: 6, bottom: 6, left: 0, right: 0 }}
+-                    accessibilityRole="button"
+-                    accessibilityState={{ selected: isChipActive }}
+-                    accessibilityLabel={`${label} filter${isChipActive ? ', selected' : ''}`}
+-                  >
+-                    <Text style={[styles.chipText, isChipActive && styles.chipTextActive]}>{label}</Text>
+-                  </Pressable>
+-                );
+-              })}
++          {noFits ? (
++            <View style={styles.empty}>
++              <Text style={styles.emptyTitle}>{status === 'not_set' ? 'Set your availability to see better matches.' : 'No plans fit your availability yet.'}</Text>
++              <Text style={styles.emptySub}>Check flexible options below or create a plan.</Text>
++            </View>
++          ) : (
++            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.fitsStrip}>
++              {fits.map((e) => <FitsCard key={e.id} ev={e} />)}
+             </ScrollView>
+-          </Animated.View>
+-        )}
+-      </View>
++          )}
+ 
+-      {/* Live multi-status banner — computed from real event buckets + availability */}
+-      <PulseLiveBanner
+-        city={activeCity}
+-        events={bannerEvents}
+-        availabilityLabel={status === 'not_set' ? 'Set availability' : STATUS_LABEL[status]}
+-      />
+-
+-      {/* Postcards — event/gem/trip cards that fit your time */}
+-      <View style={styles.fitsHead}>
+-        <Text style={styles.sectionTitle}>Postcards</Text>
+-        <View style={styles.insideBadge}><Text style={styles.insideText}>Fits your time</Text></View>
+-        <View style={{ flex: 1 }} />
+-        {fits.length > 0 && (
+-          <Pressable onPress={() => router.push('/(tabs)/trips')}><Text style={styles.viewAll}>View all ({fits.length})</Text></Pressable>
+-        )}
+-      </View>
+-      {noFits ? (
+-        <View style={styles.empty}>
+-          <Text style={styles.emptyTitle}>{status === 'not_set' ? 'Set your availability to see better matches.' : 'No plans fit your availability yet.'}</Text>
+-          <Text style={styles.emptySub}>Check flexible options below or create a plan.</Text>
+-        </View>
++          {/* When you're flexible */}
++          <FlexibleStrip events={buckets.flexible} />
++        </>
+       ) : (
+-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.fitsStrip}>
+-          {fits.map((e) => <FitsCard key={e.id} ev={e} />)}
+-        </ScrollView>
++        <Pressable style={styles.cityCta} onPress={openCityPicker}>
++          <MapPin size={16} color={color.signal} />
++          <Text style={styles.cityCtaText}>Tell us your city to see plans, events, and travelers near you →</Text>
++        </Pressable>
+       )}
+ 
+-      {/* When you're flexible */}
+-      <FlexibleStrip events={buckets.flexible} />
++      {/* Layover Mode entry point */}
++      <Pressable style={styles.layoverBanner} onPress={() => setLayoverSheetOpen(true)}>
++        <Plane size={16} color="#1565C0" />
++        <Text style={styles.layoverBannerText}>Got a layover? Get activities, safety tips & more →</Text>
++      </Pressable>
+ 
+-      {/* Available Buddies in [City] — city-level buddy module shown below Fits strip */}
++      {/* Available Buddies in [City] — city-level buddy module shown below Layover banner */}
+       {rentBuddyEnabled && (
+         <View style={styles.buddyModule}>
+           {/* Module header */}
+           <View style={styles.buddyModuleHead}>
+             <View style={{ flex: 1 }}>
+-              <Text style={styles.buddyModuleTitle}>Available Buddies in {activeCity}</Text>
+-              <Text style={styles.buddyModuleCount}>12 locals ready to help</Text>
++              <Text style={styles.buddyModuleTitle}>Available Buddies in {activeCity ?? 'your city'}</Text>
++              <Text style={styles.buddyModuleCount}>Local buddies available</Text>
+             </View>
+             <Pressable onPress={() => router.push('/(rent-a-buddy)/search' as any)}>
+               <Text style={styles.buddyModuleViewAll}>View all →</Text>
+@@ -398,41 +316,61 @@ export default function Pulse() {
+               <Pressable
+                 key={cat}
+                 style={styles.buddyCategoryChip}
+-                onPress={() => router.push(`/(rent-a-buddy)/search?city=${encodeURIComponent(activeCity)}&category=${cat.toLowerCase().replace(/\s+/g, '_')}` as any)}
++                onPress={() => router.push(`/(rent-a-buddy)/search?city=${encodeURIComponent(activeCity ?? '')}&category=${cat.toLowerCase().replace(/\s+/g, '_')}` as any)}
+               >
+                 <Text style={styles.buddyCategoryText}>{cat}</Text>
+               </Pressable>
+             ))}
+           </ScrollView>
+-          {/* 3 preview buddy cards */}
+-          <View style={styles.buddyPreviewRow}>
+-            {[
+-              { name: 'Marco T.', category: 'City Tour', rating: '4.9' },
+-              { name: 'Ana R.', category: 'Arrival Help', rating: '5.0' },
+-              { name: 'Jin S.', category: 'Nightlife', rating: '4.8' },
+-            ].map((buddy) => (
+-              <Pressable
+-                key={buddy.name}
+-                style={styles.buddyPreviewCard}
+-                onPress={() => router.push('/(rent-a-buddy)/search' as any)}
+-              >
+-                <View style={styles.buddyPreviewAvatar} />
+-                <Text style={styles.buddyPreviewName} numberOfLines={1}>{buddy.name}</Text>
+-                <Text style={styles.buddyPreviewCat} numberOfLines={1}>{buddy.category}</Text>
+-                <View style={styles.buddyPreviewRating}>
+-                  <Text style={styles.buddyPreviewRatingText}>★ {buddy.rating}</Text>
+-                </View>
+-              </Pressable>
+-            ))}
+-          </View>
++          {/* Browse all buddies CTA */}
++          <Pressable
++            style={styles.buddyBrowseBtn}
++            onPress={() => router.push(`/(rent-a-buddy)/search?city=${encodeURIComponent(activeCity ?? '')}` as any)}
++          >
++            <Users size={16} color="#E53935" />
++            <Text style={styles.buddyBrowseBtnText}>Browse local buddies in {activeCity}</Text>
++          </Pressable>
+         </View>
+       )}
+ 
++      {/* Circle suggestions — shown in For You mode when find_your_circle_enabled flag is on */}
++      {feedMode === 'forYou' && circleEnabled && <CircleCompassSuggestions />}
++
+       {/* People you may know — shown in For You mode only */}
+       {feedMode === 'forYou' && <PeopleYouMayKnow refreshKey={peopleRefreshKey} />}
+ 
+-      {/* Pulse Wall section label — scrolls with pre-wall content */}
++      {/* Pulse Wall — feed mode toggle + quick filters */}
+       <Text style={styles.wallTitle}>Pulse Wall</Text>
++
++      {/* For You / Following toggle */}
++      <View style={styles.modeRow}>
++        <Pressable
++          style={[styles.modeBtn, feedMode === 'forYou' && styles.modeBtnActive]}
++          onPress={() => handleFeedMode('forYou')}
++        >
++          <Text style={[styles.modeBtnText, feedMode === 'forYou' && styles.modeBtnTextActive]}>For You</Text>
++        </Pressable>
++        <Pressable
++          style={[styles.modeBtn, feedMode === 'following' && styles.modeBtnActive]}
++          onPress={() => handleFeedMode('following')}
++        >
++          <Text style={[styles.modeBtnText, feedMode === 'following' && styles.modeBtnTextActive]}>Following</Text>
++        </Pressable>
++      </View>
++
++      {/* Quick filter chips — only visible in For You mode */}
++      {feedMode === 'forYou' && (
++        <FlatList
++          data={QUICK_FILTERS}
++          horizontal
++          showsHorizontalScrollIndicator={false}
++          keyExtractor={(x) => x}
++          contentContainerStyle={styles.filterRow}
++          renderItem={({ item }) => (
++            <Chip label={item} active={active.includes(item)} onPress={() => toggleQuick(item)} />
++          )}
++        />
++      )}
+     </View>
+   );
+ 
+@@ -454,6 +392,18 @@ export default function Pulse() {
+     </View>
+   );
+ 
++  const isLoadingMore =
++    feedMode === 'following' ? followingFeed.loadingMore : pulseFeed.loadingMore;
++
++  const ForYouError = (
++    <View style={styles.followingEmpty}>
++      <Text style={styles.followingEmptyTitle}>Couldn't load the For You feed. Check your connection and try again.</Text>
++      <Pressable style={styles.exploreBtn} onPress={() => pulseFeed.reload()}>
++        <Text style={styles.exploreBtnText}>Retry</Text>
++      </Pressable>
++    </View>
++  );
++
+   const Footer = (
+     <View>
+       {feedMode === 'following' ? (
+@@ -464,58 +414,56 @@ export default function Pulse() {
+         ) : followingItems.length === 0 ? (
+           FollowingEmpty
+         ) : null
+-      ) : (
+-        feed.length === 0 ? (
+-          <TravelEmptyState title="No results for these filters" sub="Try clearing a filter or switch to All." action="Clear filters" onAction={() => setActive(['All'])} />
+-        ) : null
++      ) : pulseFeed.loading && feed.length === 0 ? (
++        // Initial For You load — spinner, not a misleading empty state.
++        <View style={styles.loadingWrap}><ActivityIndicator size="large" color={color.signal} /></View>
++      ) : pulseFeed.error ? (
++        ForYouError
++      ) : feed.length === 0 ? (
++        <TravelEmptyState title="No results for these filters" sub="Try clearing a filter or switch to All." action="Clear filters" onAction={() => setActive(['All'])} />
++      ) : null}
++      {isLoadingMore && (
++        <View style={styles.loadMoreWrap}>
++          <ActivityIndicator size="small" color={color.signal} />
++        </View>
+       )}
+-      
+     </View>
+   );
+ 
+   return (
+-    <View style={{ flex: 1, backgroundColor: pv.navy }}>
+-      {/* New-posts pill — buffered fresh posts are one tap away, never a scroll jump */}
+-      {(() => {
+-        const pendingCount = feedMode === 'following' ? followingFeed.pending.length : realFeed.pending.length;
+-        if (pendingCount === 0) return null;
+-        return (
+-          <View style={styles.newPostsWrap} pointerEvents="box-none">
+-            <Pressable
+-              style={styles.newPostsPill}
+-              onPress={handleNewPostsPress}
+-              accessibilityRole="button"
+-              accessibilityLabel={`${pendingCount} new posts. Tap to show`}
+-            >
+-              <Text style={styles.newPostsText}>↑ {pendingCount} new post{pendingCount === 1 ? '' : 's'}</Text>
+-            </Pressable>
+-          </View>
+-        );
+-      })()}
+-
++    <View style={{ flex: 1, backgroundColor: color.paper }}>
++      <PulseHeader
++        city={activeCity ?? ''}
++        cityFull={activeCity ?? ''}
++        availabilityText={status === 'not_set' ? 'Availability not set' : STATUS_LABEL[status]}
++        filterCount={filterCount}
++        onSearch={() => router.push('/search' as any)}
++        onFilter={() => setSheetOpen(true)}
++        onCityPress={openCityPicker}
++      />
+       <FlatList
+-        ref={listRef}
+         data={feed}
+-        keyExtractor={keyExtractor}
++        keyExtractor={(it) => it.id}
+         ListHeaderComponent={Header}
+-        contentContainerStyle={{ paddingBottom: bottomInset }}
+         ListFooterComponent={Footer}
+-        renderItem={renderItem}
+-        ItemSeparatorComponent={FeedSeparator}
++        renderItem={({ item }) => (
++          <View style={{ paddingHorizontal: space.lg }}>
++            <PulseFeedCard item={item} onDeleteSuccess={() => handlePostDeleted(item.id)} />
++          </View>
++        )}
++        ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
++        contentContainerStyle={{ paddingBottom: 120 }}
+         showsVerticalScrollIndicator={false}
+-        onScroll={handleScroll}
+-        scrollEventThrottle={16}
+-        initialNumToRender={6}
+-        maxToRenderPerBatch={6}
+-        windowSize={7}
+-        updateCellsBatchingPeriod={50}
+-        removeClippedSubviews
+-        overScrollMode="auto"
++        onEndReached={() => {
++          if (feedMode === 'following') followingFeed.loadMore();
++          else pulseFeed.loadMore();
++        }}
++        onEndReachedThreshold={0.3}
+         refreshControl={
+           <RefreshControl
+-            refreshing={feedMode === 'following' ? followingFeed.loading : realFeed.loading}
++            refreshing={feedMode === 'following' ? followingFeed.loading : pulseFeed.loading}
+             onRefresh={handleRefresh}
+-            tintColor={pv.teal}
++            tintColor={color.signal}
+           />
+         }
+       />
+@@ -527,16 +475,14 @@ export default function Pulse() {
+         onClear={() => setActive(['All'])}
+         onClose={() => setSheetOpen(false)}
+       />
+-      <UnifiedPostComposer visible={createOpen} onClose={() => setCreateOpen(false)} onSuccess={() => realFeed.reload()} />
++      <UnifiedPostComposer visible={createOpen} onClose={() => setCreateOpen(false)} onSuccess={() => pulseFeed.reload()} />
+ 
+       {/* Location overlays */}
+       <LocationPermissionPrompt />
+       <ManualCityPicker />
+ 
+-      {/* Resume pill for an in-flight layover session */}
+-      <ActiveLayoverPill />
+-
+       {/* Layover Mode */}
++      <ActiveLayoverPill />
+       <LayoverModeSheet
+         visible={layoverSheetOpen}
+         onClose={() => setLayoverSheetOpen(false)}
+@@ -547,66 +493,31 @@ export default function Pulse() {
+ }
+ 
+ const styles = StyleSheet.create({
+-  /* "N new posts" pill — floats just under the sticky controls */
+-  newPostsWrap: { position: 'absolute', top: 190, left: 0, right: 0, alignItems: 'center', zIndex: 20 },
+-  newPostsPill: {
+-    backgroundColor: pv.teal, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 8,
+-    shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 4,
+-  },
+-  newPostsText: { ...t.bodyStrong, color: pv.navy, fontSize: 13 },
+-  stickyControls: {
+-    backgroundColor: pv.navy,
+-    // paddingTop is applied inline: insets.top + space.sm (accounts for status bar)
+-    // Subtle bottom shadow so the sticky bar reads as a layer above the feed
+-    shadowColor: '#000',
+-    shadowOpacity: 0.3,
+-    shadowRadius: 4,
+-    shadowOffset: { width: 0, height: 2 },
+-    elevation: 3,
+-    zIndex: 10,
+-  },
+   fitsHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, marginTop: space.lg, marginBottom: space.md, flexWrap: 'wrap' },
+-  sectionTitle: { ...t.title, color: pv.text, fontSize: 20 },
+-  insideBadge: { backgroundColor: pv.navySoft, borderWidth: 1, borderColor: pv.navyEdge, borderRadius: 999, paddingHorizontal: space.sm, paddingVertical: 3 },
+-  insideText: { ...t.small, color: pv.teal, fontSize: 11, fontWeight: '600' },
+-  viewAll: { ...t.small, color: pv.teal, fontWeight: '700' },
++  sectionTitle: { ...t.title, color: color.ink, fontSize: 20 },
++  insideBadge: { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: 999, paddingHorizontal: space.sm, paddingVertical: 3 },
++  insideText: { ...t.small, color: color.deep, fontSize: 11, fontWeight: '600' },
++  viewAll: { ...t.small, color: color.signal, fontWeight: '700' },
+   fitsStrip: { gap: space.md, paddingHorizontal: space.lg, paddingBottom: space.sm },
+-  empty: { marginHorizontal: space.lg, padding: space.lg, borderRadius: 14, borderWidth: 1, borderColor: pv.navyEdge, backgroundColor: pv.navyRaised },
+-  emptyTitle: { ...t.bodyStrong, color: pv.text },
+-  emptySub: { ...t.small, color: pv.textMute, marginTop: 4 },
+-  wallTitle: { ...t.title, color: pv.text, fontSize: 20, paddingHorizontal: space.lg, marginTop: 24, marginBottom: space.sm },
+-  // Clip container for the collapsing mode row — height/margin/opacity are
+-  // animated; the inner modeRow keeps its natural 42 px layout and gets
+-  // clipped as the container folds.
+-  modeRowClip: { overflow: 'hidden' },
+-  modeRow: { flexDirection: 'row', marginHorizontal: space.lg, borderRadius: 12, borderWidth: 1, borderColor: pv.navyEdge, backgroundColor: pv.navyRaised, padding: 3, gap: 3 },
++  empty: { marginHorizontal: space.lg, padding: space.lg, borderRadius: 14, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
++  emptyTitle: { ...t.bodyStrong, color: color.ink },
++  emptySub: { ...t.small, color: color.mute, marginTop: 4 },
++  wallTitle: { ...t.title, color: color.ink, fontSize: 20, paddingHorizontal: space.lg, marginTop: space.xxl, marginBottom: space.md },
++  modeRow: { flexDirection: 'row', marginHorizontal: space.lg, marginBottom: space.md, borderRadius: 12, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised, padding: 3, gap: 3 },
+   modeBtn: { flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center' },
+-  modeBtnActive: { backgroundColor: 'rgba(255,255,255,0.12)' },
+-  modeBtnText: { ...t.bodyStrong, fontSize: 14, color: pv.textMute },
+-  modeBtnTextActive: { color: pv.text },
+-  /* Portava filter chips — values stay the internal PulseFilter truth */
+-  chipRowClip: { overflow: 'hidden', justifyContent: 'center' },
+-  chipRow: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, paddingVertical: 6 },
+-  chip: { borderRadius: 999, borderWidth: 1, borderColor: pv.navyEdge, backgroundColor: pv.navySoft, paddingHorizontal: 14, paddingVertical: 8 },
+-  chipActive: { backgroundColor: pv.tealDim, borderColor: pv.teal },
+-  chipText: { fontSize: 13, lineHeight: 18, fontWeight: '600', color: pv.textMute },
+-  chipTextActive: { color: pv.teal, fontWeight: '800' },
++  modeBtnActive: { backgroundColor: color.paper, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 2 },
++  modeBtnText: { ...t.bodyStrong, fontSize: 14, color: color.mute },
++  modeBtnTextActive: { color: color.ink },
++  filterRow: { gap: space.sm, paddingHorizontal: space.lg, paddingBottom: space.md },
+   inspoLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.faint, letterSpacing: 1.5, paddingHorizontal: space.lg, marginTop: space.xxl, marginBottom: space.md },
+-  followingEmpty: { marginHorizontal: space.lg, marginTop: space.xl, padding: space.xl, borderRadius: 16, borderWidth: 1, borderColor: pv.navyEdge, backgroundColor: pv.navyRaised, alignItems: 'center', gap: space.md },
+-  followingEmptyTitle: { ...t.body, color: pv.text, textAlign: 'center', lineHeight: 22 },
++  followingEmpty: { marginHorizontal: space.lg, marginTop: space.xl, padding: space.xl, borderRadius: 16, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised, alignItems: 'center', gap: space.md },
++  followingEmptyTitle: { ...t.body, color: color.deep, textAlign: 'center', lineHeight: 22 },
+   exploreBtn: { backgroundColor: color.signal, paddingHorizontal: space.lg, paddingVertical: 10, borderRadius: 10 },
+   exploreBtnText: { ...t.bodyStrong, color: '#fff', fontSize: 14 },
+   loadingWrap: { paddingVertical: space.xxl, alignItems: 'center' },
+-  locationFreshnessBar: {
+-    marginHorizontal: space.lg,
+-    marginTop: space.xs,
+-    paddingHorizontal: space.md,
+-    paddingVertical: 4,
+-    backgroundColor: 'rgba(255,255,255,0.06)',
+-    borderRadius: 6,
+-    alignSelf: 'flex-start',
+-  },
+-  locationFreshnessText: { ...t.small, color: pv.textMute, fontSize: 11 },
++  loadMoreWrap: { paddingVertical: space.lg, alignItems: 'center' },
++  layoverBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: space.lg, marginTop: space.lg, marginBottom: space.sm, backgroundColor: '#E3F2FD', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
++  layoverBannerText: { flex: 1, fontSize: 13, fontWeight: '500', color: '#1565C0' },
+   /* Available Buddies in [City] module */
+   buddyModule: { marginHorizontal: space.lg, marginTop: space.lg, backgroundColor: '#FFF5F5', borderRadius: 14, borderWidth: 1, borderColor: '#E5393530', padding: space.md, gap: space.sm },
+   buddyModuleHead: { flexDirection: 'row', alignItems: 'flex-start' },
+@@ -616,11 +527,32 @@ const styles = StyleSheet.create({
+   buddyCategoryRow: { gap: space.sm },
+   buddyCategoryChip: { borderWidth: 1.5, borderColor: '#E53935', borderRadius: 999, paddingHorizontal: space.md, paddingVertical: 5, backgroundColor: '#fff' },
+   buddyCategoryText: { ...t.small, fontWeight: '700', color: '#E53935', fontSize: 11 },
+-  buddyPreviewRow: { flexDirection: 'row', gap: space.sm },
+-  buddyPreviewCard: { flex: 1, backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: color.haze, padding: space.sm, alignItems: 'center', gap: 3 },
+-  buddyPreviewAvatar: { width: 38, height: 38, borderRadius: 19, backgroundColor: color.haze, marginBottom: 2 },
+-  buddyPreviewName: { ...t.small, fontWeight: '700', color: color.ink, fontSize: 11 },
+-  buddyPreviewCat: { ...t.small, color: color.mute, fontSize: 10 },
+-  buddyPreviewRating: { backgroundColor: '#FFF3CD', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 },
+-  buddyPreviewRatingText: { ...t.small, color: '#9A6700', fontWeight: '700', fontSize: 10 },
++  buddyBrowseBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E53935', borderRadius: 10, paddingVertical: 12 },
++  buddyBrowseBtnText: { ...t.small, fontWeight: '700', color: '#E53935', fontSize: 13 },
++  cityCta: {
++    flexDirection: 'row',
++    alignItems: 'center',
++    gap: space.sm,
++    marginHorizontal: space.lg,
++    marginTop: space.lg,
++    marginBottom: space.sm,
++    backgroundColor: color.signal + '10',
++    borderWidth: 1,
++    borderColor: color.signal + '40',
++    borderRadius: 12,
++    paddingHorizontal: space.md,
++    paddingVertical: 14,
++  },
++  cityCtaText: { flex: 1, ...t.small, fontWeight: '600', color: color.signal, fontSize: 13, lineHeight: 18 },
+ });
++
++// Wrapped: a render throw anywhere in Pulse (the default landing tab) must
++// show the recoverable error screen, never a white screen. Matches
++// discovery.tsx / trips.tsx / trip/[id].tsx.
++export default function PulseScreen() {
++  return (
++    <ScreenErrorBoundary>
++      <Pulse />
++    </ScreenErrorBoundary>
++  );
++}
+diff --git a/artifacts/travel-buddy/app/messages/[id].tsx b/artifacts/travel-buddy/app/messages/[id].tsx
+index f0066a9..e5f7c16 100644
+--- a/artifacts/travel-buddy/app/messages/[id].tsx
++++ b/artifacts/travel-buddy/app/messages/[id].tsx
+@@ -1609,7 +1609,8 @@ export default function TelegraphThread() {
+     if (threadType === 'circle' && contextId) {
+       return (
+         <View style={styles.quickBar}>
+-          <Pressable style={styles.quickBtn} onPress={() => router.push(`/circle/${contextId}` as any)}>
++          {/* /circle/<id> is not a route — the circle screen is /circle (beta-audit fix) */}
++          <Pressable style={styles.quickBtn} onPress={() => router.push('/circle' as any)}>
+             <Users size={12} color={color.signal} />
+             <Text style={styles.quickBtnText}>View Circle</Text>
+           </Pressable>
+@@ -1636,7 +1637,20 @@ export default function TelegraphThread() {
+     return (
+       <View style={{ flex: 1, backgroundColor: color.paper }}>
+         <ThreadHeader compact />
+-        <View style={styles.center}><Text style={styles.errText}>{error}</Text></View>
++        <View style={styles.center}>
++          <Text style={styles.errText}>{error}</Text>
++          <Pressable
++            style={{
++              marginTop: space.md, paddingHorizontal: space.xl, paddingVertical: space.sm,
++              borderRadius: radius.pill, borderWidth: 1, borderColor: color.signal,
++            }}
++            onPress={reload}
++            accessibilityRole="button"
++            accessibilityLabel="Retry loading messages"
++          >
++            <Text style={{ ...t.bodyStrong, color: color.signal }}>Try again</Text>
++          </Pressable>
++        </View>
+       </View>
+     );
+   }
+diff --git a/artifacts/travel-buddy/app/post/edit/[id].tsx b/artifacts/travel-buddy/app/post/edit/[id].tsx
+new file mode 100644
+index 0000000..9ef5fe3
+--- /dev/null
++++ b/artifacts/travel-buddy/app/post/edit/[id].tsx
+@@ -0,0 +1,206 @@
++/**
++ * Post edit screen — /post/edit/[id]
++ *
++ * Fixes the beta-audit P0 where PostCard's "Edit" action navigated to a
++ * nonexistent route. Owners can edit the post's caption and visibility via
++ * the existing updatePost service (content + visibility are the fields the
++ * API contract supports; media editing is out of scope here).
++ */
++import React, { useEffect, useState, useCallback } from 'react';
++import {
++  View, Text, TextInput, Pressable, StyleSheet,
++  ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Alert,
++} from 'react-native';
++import { router, useLocalSearchParams } from 'expo-router';
++import { ArrowLeft, Globe, Lock, Luggage } from 'lucide-react-native';
++import { getPostById, updatePost, type PostRow, type PostVisibility } from '../../../src/services/posts';
++import { useSession } from '../../../src/context/SessionContext';
++import { color, space, radius, type as t } from '../../../src/theme/tokens';
++
++const CONTENT_MAX = 2000;
++
++const VISIBILITY_OPTIONS: { value: PostVisibility; label: string; Icon: React.ComponentType<any> }[] = [
++  { value: 'public', label: 'Public', Icon: Globe },
++  { value: 'trip_only', label: 'Trip only', Icon: Luggage },
++  { value: 'private', label: 'Private', Icon: Lock },
++];
++
++export default function EditPostScreen() {
++  const { id } = useLocalSearchParams<{ id: string }>();
++  const { userId } = useSession();
++
++  const [post, setPost] = useState<PostRow | null>(null);
++  const [loading, setLoading] = useState(true);
++  const [loadError, setLoadError] = useState<string | null>(null);
++  const [content, setContent] = useState('');
++  const [visibility, setVisibility] = useState<PostVisibility>('public');
++  const [saving, setSaving] = useState(false);
++
++  const load = useCallback(async () => {
++    if (!id) return;
++    setLoading(true);
++    setLoadError(null);
++    const res = await getPostById(id);
++    setLoading(false);
++    if (!res.ok || !res.data) {
++      setLoadError(res.message ?? 'Could not load this post.');
++      return;
++    }
++    setPost(res.data);
++    setContent(res.data.content ?? '');
++    setVisibility(res.data.visibility);
++  }, [id]);
++
++  useEffect(() => { load(); }, [load]);
++
++  const isOwner = post != null && userId != null && post.authorId === userId;
++  const dirty = post != null && (content !== (post.content ?? '') || visibility !== post.visibility);
++
++  const handleSave = useCallback(async () => {
++    if (!post || saving) return;
++    const trimmed = content.trim();
++    if (!trimmed) {
++      Alert.alert('Empty caption', 'Write something before saving, or go back to leave the post unchanged.');
++      return;
++    }
++    setSaving(true);
++    const res = await updatePost(post.id, { content: trimmed, visibility });
++    setSaving(false);
++    if (!res.ok) {
++      Alert.alert('Could not save', res.message ?? 'Something went wrong. Please try again.');
++      return;
++    }
++    router.back();
++  }, [post, content, visibility, saving]);
++
++  return (
++    <KeyboardAvoidingView
++      style={s.root}
++      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
++    >
++      {/* Header */}
++      <View style={s.header}>
++        <Pressable onPress={() => router.back()} hitSlop={10} accessibilityLabel="Back">
++          <ArrowLeft size={22} color={color.ink} />
++        </Pressable>
++        <Text style={s.headerTitle}>Edit Post</Text>
++        <Pressable
++          onPress={handleSave}
++          disabled={!isOwner || !dirty || saving}
++          hitSlop={8}
++          accessibilityRole="button"
++          accessibilityLabel="Save changes"
++        >
++          {saving
++            ? <ActivityIndicator size="small" color={color.signal} />
++            : <Text style={[s.saveText, (!isOwner || !dirty) && s.saveTextDisabled]}>Save</Text>}
++        </Pressable>
++      </View>
++
++      {loading ? (
++        <View style={s.center}><ActivityIndicator color={color.signal} /></View>
++      ) : loadError ? (
++        <View style={s.center}>
++          <Text style={s.errTitle}>Could not load this post</Text>
++          <Text style={s.errSub}>{loadError}</Text>
++          <Pressable style={s.retryBtn} onPress={load} accessibilityRole="button">
++            <Text style={s.retryText}>Try again</Text>
++          </Pressable>
++        </View>
++      ) : !post ? (
++        <View style={s.center}>
++          <Text style={s.errTitle}>Post not found</Text>
++          <Text style={s.errSub}>It may have been deleted.</Text>
++        </View>
++      ) : !isOwner ? (
++        <View style={s.center}>
++          <Text style={s.errTitle}>Only the author can edit this post</Text>
++        </View>
++      ) : (
++        <ScrollView style={{ flex: 1 }} contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
++          <Text style={s.label}>CAPTION</Text>
++          <TextInput
++            style={s.input}
++            value={content}
++            onChangeText={setContent}
++            multiline
++            maxLength={CONTENT_MAX}
++            placeholder="Share your travel moment…"
++            placeholderTextColor={color.faint}
++            textAlignVertical="top"
++            autoFocus
++          />
++          <Text style={s.count}>{content.length}/{CONTENT_MAX}</Text>
++
++          <Text style={s.label}>VISIBILITY</Text>
++          <View style={s.visRow}>
++            {VISIBILITY_OPTIONS.map(({ value, label, Icon }) => {
++              const on = visibility === value;
++              return (
++                <Pressable
++                  key={value}
++                  style={[s.visChip, on && s.visChipOn]}
++                  onPress={() => setVisibility(value)}
++                  accessibilityRole="button"
++                  accessibilityState={{ selected: on }}
++                  accessibilityLabel={`Visibility: ${label}`}
++                >
++                  <Icon size={14} color={on ? color.onInk : color.ink} />
++                  <Text style={[s.visText, on && s.visTextOn]}>{label}</Text>
++                </Pressable>
++              );
++            })}
++          </View>
++
++          <Text style={s.hint}>
++            Photos and videos can't be changed after posting — to swap media, delete this post and create a new one.
++          </Text>
++        </ScrollView>
++      )}
++    </KeyboardAvoidingView>
++  );
++}
++
++const s = StyleSheet.create({
++  root: { flex: 1, backgroundColor: color.paper },
++  header: {
++    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
++    paddingHorizontal: space.lg, paddingTop: 56, paddingBottom: space.md,
++    borderBottomWidth: 1, borderBottomColor: color.haze,
++  },
++  headerTitle: { ...t.heading, color: color.ink },
++  saveText: { ...t.bodyStrong, color: color.signal },
++  saveTextDisabled: { color: color.faint },
++
++  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.sm },
++  errTitle: { ...t.bodyStrong, color: color.ink, textAlign: 'center' },
++  errSub: { ...t.small, color: color.mute, textAlign: 'center' },
++  retryBtn: {
++    marginTop: space.sm, paddingHorizontal: space.xl, paddingVertical: space.sm,
++    borderRadius: radius.pill, borderWidth: 1, borderColor: color.signal,
++  },
++  retryText: { ...t.bodyStrong, color: color.signal },
++
++  body: { padding: space.lg, gap: space.sm },
++  label: {
++    fontSize: 11, fontWeight: '700', letterSpacing: 1.2,
++    color: color.mute, marginTop: space.md,
++  },
++  input: {
++    minHeight: 140, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md,
++    padding: space.md, ...t.body, color: color.ink, backgroundColor: color.paperRaised,
++  },
++  count: { ...t.small, color: color.faint, alignSelf: 'flex-end', fontSize: 11 },
++
++  visRow: { flexDirection: 'row', gap: space.sm },
++  visChip: {
++    flexDirection: 'row', alignItems: 'center', gap: 6,
++    minHeight: 36, paddingHorizontal: 12, borderRadius: radius.pill,
++    borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised,
++  },
++  visChipOn: { backgroundColor: color.signal, borderColor: color.signal },
++  visText: { ...t.small, fontWeight: '600', color: color.ink },
++  visTextOn: { color: color.onInk },
++
++  hint: { ...t.small, color: color.mute, marginTop: space.md, lineHeight: 18 },
++});
+diff --git a/artifacts/travel-buddy/app/trip/[id].tsx b/artifacts/travel-buddy/app/trip/[id].tsx
+index 4a3409d..b0cc35d 100644
+--- a/artifacts/travel-buddy/app/trip/[id].tsx
++++ b/artifacts/travel-buddy/app/trip/[id].tsx
+@@ -44,7 +44,7 @@ function TripDetailScreen() {
+   const navBarScrollHandler = useNavBarScrollHandler();
+   const bottomInset = useBottomInset();
+   const live = configured && isAuthed;
+-  const { data: realTrip, loading } = useTrip(live ? id : undefined);
++  const { data: realTrip, loading, error: tripError, reload: reloadTrip } = useTrip(live ? id : undefined);
+   const { invites } = usePendingTripInvites();
+   const isPendingInvite = live ? invites.some((inv) => inv.tripId === id) : false;
+   const pageScrollRef    = useRef<ScrollView>(null);
+@@ -180,6 +180,26 @@ function TripDetailScreen() {
+     return <View style={{ flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={color.signal} /></View>;
+   }
+ 
++  // Network/API failure is NOT "trip not found" — show an honest error with
++  // retry instead of the misleading not-found copy (beta-audit fix).
++  if (!realTrip && tripError) {
++    return (
++      <View style={{ flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center', padding: space.xl }}>
++        <Text style={{ ...t.bodyStrong, color: color.ink, marginBottom: space.sm }}>Couldn't load this trip</Text>
++        <Text style={{ ...t.small, color: color.mute, textAlign: 'center' }}>Check your connection and try again.</Text>
++        <Pressable
++          style={{ marginTop: space.lg, paddingHorizontal: space.lg, paddingVertical: space.sm, borderRadius: radius.pill, backgroundColor: color.signal }}
++          onPress={reloadTrip}
++        >
++          <Text style={{ color: '#fff', fontWeight: '700' }}>Try again</Text>
++        </Pressable>
++        <Pressable style={{ marginTop: space.sm, padding: space.sm }} onPress={() => router.back()}>
++          <Text style={{ ...t.small, color: color.mute }}>Go back</Text>
++        </Pressable>
++      </View>
++    );
++  }
++
+   if (!realTrip) {
+     return (
+       <View style={{ flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center', padding: space.xl }}>
+diff --git a/artifacts/travel-buddy/src/components/PostCard.tsx b/artifacts/travel-buddy/src/components/PostCard.tsx
+index f63f318..3d7fba7 100644
+--- a/artifacts/travel-buddy/src/components/PostCard.tsx
++++ b/artifacts/travel-buddy/src/components/PostCard.tsx
+@@ -134,7 +134,7 @@ function HeroCard({ post }: { post: Post }) {
+           onSettingsChange={setSettings}
+           onArchived={() => setOwnerMenuOpen(false)}
+           onDeleted={() => router.back()}
+-          onEdit={() => router.push(`/post/${post.id}/edit` as any)}
++          onEdit={() => router.push(`/post/edit/${post.id}` as any)}
+         />
+       )}
+     </Pressable>
+@@ -229,7 +229,7 @@ function StandardCard({ post }: { post: Post }) {
+           onSettingsChange={setSettings}
+           onArchived={() => setOwnerMenuOpen(false)}
+           onDeleted={() => router.back()}
+-          onEdit={() => router.push(`/post/${post.id}/edit` as any)}
++          onEdit={() => router.push(`/post/edit/${post.id}` as any)}
+         />
+       )}
+     </View>
+@@ -298,7 +298,7 @@ function QuestionCard({ post }: { post: Post }) {
+           onSettingsChange={setSettings}
+           onArchived={() => setOwnerMenuOpen(false)}
+           onDeleted={() => router.back()}
+-          onEdit={() => router.push(`/post/${post.id}/edit` as any)}
++          onEdit={() => router.push(`/post/edit/${post.id}` as any)}
+         />
+       )}
+     </View>
+@@ -360,7 +360,7 @@ function ItineraryCard({ post }: { post: Post }) {
+           onSettingsChange={setSettings}
+           onArchived={() => setOwnerMenuOpen(false)}
+           onDeleted={() => router.back()}
+-          onEdit={() => router.push(`/post/${post.id}/edit` as any)}
++          onEdit={() => router.push(`/post/edit/${post.id}` as any)}
+         />
+       )}
+     </Pressable>
+diff --git a/artifacts/travel-buddy/src/components/tripCrew/LiveShareSheet.tsx b/artifacts/travel-buddy/src/components/tripCrew/LiveShareSheet.tsx
+index 5a3f660..0989bb0 100644
+--- a/artifacts/travel-buddy/src/components/tripCrew/LiveShareSheet.tsx
++++ b/artifacts/travel-buddy/src/components/tripCrew/LiveShareSheet.tsx
+@@ -37,18 +37,31 @@ export function LiveShareSheet({ visible, tripId, members, onDismiss, onStarted
+   const [duration, setDuration] = useState<ShareDuration>('30m');
+   const [visibility, setVisibility] = useState<'city_only' | 'neighborhood' | 'nearby'>('neighborhood');
+   const [shareWithAll, setShareWithAll] = useState(true);
++  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+   const [loading, setLoading] = useState(false);
+   const [error, setError] = useState<string | null>(null);
+ 
+   const eligibleMembers = members.filter((m) => !m.ghostMode && m.statusLabel !== 'location_hidden');
+ 
++  function toggleMember(userId: string) {
++    setSelectedIds((prev) => {
++      const next = new Set(prev);
++      if (next.has(userId)) next.delete(userId);
++      else next.add(userId);
++      return next;
++    });
++    setError(null);
++  }
++
+   async function handleStart() {
++    // Honor the user's choice: "share with all" sends to every eligible crew
++    // member; otherwise ONLY the explicitly selected members receive the share.
+     const allowedIds = shareWithAll
+       ? eligibleMembers.map((m) => m.userId)
+-      : eligibleMembers.map((m) => m.userId); // simplified: always all for now
++      : eligibleMembers.filter((m) => selectedIds.has(m.userId)).map((m) => m.userId);
+ 
+     if (allowedIds.length === 0) {
+-      setError('No crew members to share with');
++      setError(shareWithAll ? 'No crew members to share with' : 'Select at least one crew member');
+       return;
+     }
+ 
+@@ -125,15 +138,40 @@ export function LiveShareSheet({ visible, tripId, members, onDismiss, onStarted
+         <View style={s.toggleRow}>
+           <View style={{ flex: 1 }}>
+             <Text style={s.toggleLabel}>Share with all {eligibleMembers.length} crew members</Text>
+-            <Text style={s.toggleSub}>You can manage individual access in settings</Text>
++            <Text style={s.toggleSub}>Turn off to choose specific crew members</Text>
+           </View>
+           <Switch
+             value={shareWithAll}
+-            onValueChange={setShareWithAll}
++            onValueChange={(v) => { setShareWithAll(v); setError(null); }}
+             trackColor={{ true: color.signal }}
+           />
+         </View>
+ 
++        {/* Per-member selection — shown when not sharing with everyone */}
++        {!shareWithAll ? (
++          <View style={s.memberList}>
++            {eligibleMembers.map((m) => {
++              const on = selectedIds.has(m.userId);
++              const label = m.name ?? (m.handle ? `@${m.handle}` : 'Crew member');
++              return (
++                <Pressable
++                  key={m.userId}
++                  style={s.memberRow}
++                  onPress={() => toggleMember(m.userId)}
++                  accessibilityRole="checkbox"
++                  accessibilityState={{ checked: on }}
++                  accessibilityLabel={`Share with ${label}`}
++                >
++                  <View style={[s.memberCheck, on && s.memberCheckOn]}>
++                    {on ? <Text style={s.memberCheckMark}>✓</Text> : null}
++                  </View>
++                  <Text style={s.memberName} numberOfLines={1}>{label}</Text>
++                </Pressable>
++              );
++            })}
++          </View>
++        ) : null}
++
+         {error ? <Text style={s.error}>{error}</Text> : null}
+ 
+         <Pressable style={[s.cta, loading && s.ctaDisabled]} onPress={handleStart} disabled={loading}>
+@@ -191,6 +229,20 @@ const s = StyleSheet.create({
+   toggleLabel: { ...t.small, fontWeight: '600', color: color.ink },
+   toggleSub: { ...t.small, color: color.mute, fontSize: 11, marginTop: 2 },
+   error: { ...t.small, color: '#DC2626', marginBottom: space.sm },
++
++  memberList: { marginBottom: space.sm, gap: 2 },
++  memberRow: {
++    flexDirection: 'row', alignItems: 'center', gap: space.sm,
++    minHeight: 40, paddingHorizontal: 4,
++  },
++  memberCheck: {
++    width: 20, height: 20, borderRadius: 6,
++    borderWidth: 1.5, borderColor: color.haze,
++    alignItems: 'center', justifyContent: 'center',
++  },
++  memberCheckOn: { backgroundColor: color.signal, borderColor: color.signal },
++  memberCheckMark: { color: color.onInk, fontSize: 12, fontWeight: '700' },
++  memberName: { ...t.body, color: color.ink, flex: 1 },
+   cta: {
+     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+     backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: 14, marginTop: space.md,
+diff --git a/travel-buddy-standalone/app/(rent-a-buddy)/become/apply.tsx b/travel-buddy-standalone/app/(rent-a-buddy)/become/apply.tsx
+index d9c746b..9e6dc60 100644
+--- a/travel-buddy-standalone/app/(rent-a-buddy)/become/apply.tsx
++++ b/travel-buddy-standalone/app/(rent-a-buddy)/become/apply.tsx
+@@ -387,7 +387,7 @@ export default function ApplyToBeBuddy() {
+               onPress={() => {
+                 // Navigate to the relevant management screen for this item
+                 if (item.done) return;
+-                if (['services', 'pricing'].includes(item.key)) router.push('/(rent-a-buddy)/buddy-dashboard/services' as any);
++                if (['services', 'pricing'].includes(item.key)) router.push('/(rent-a-buddy)/buddy-dashboard/packages' as any); // services screen doesn't exist (beta-audit fix)
+                 else if (item.key === 'availability') router.push('/(rent-a-buddy)/buddy-dashboard/availability' as any);
+                 else router.push('/(rent-a-buddy)/buddy-dashboard' as any);
+               }}
+diff --git a/travel-buddy-standalone/app/(tabs)/index.tsx b/travel-buddy-standalone/app/(tabs)/index.tsx
+index 40d9cb9..54aec28 100644
+--- a/travel-buddy-standalone/app/(tabs)/index.tsx
++++ b/travel-buddy-standalone/app/(tabs)/index.tsx
+@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
+ import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, ActivityIndicator, RefreshControl } from 'react-native';
+ import { getCommentCountSnapshot, subscribeCommentCount } from '../../src/lib/commentCountStore';
+ import { router, useFocusEffect } from 'expo-router';
++import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
+ import { PostCard } from '../../src/components/PostCard';
+ import { PulseHeader } from '../../src/components/PulseHeader';
+ import { FitsCard, FlexibleStrip } from '../../src/components/PulseFits';
+@@ -84,7 +85,7 @@ function timeAgo(iso: string): string {
+   return `${Math.floor(h / 24)}d ago`;
+ }
+ 
+-export default function Pulse() {
++function Pulse() {
+   const [feedMode, setFeedMode] = useState<FeedMode>('forYou');
+   const [active, setActive] = useState<PulseFilter[]>(['All']);
+   const [sheetOpen, setSheetOpen] = useState(false);
+@@ -413,6 +414,9 @@ export default function Pulse() {
+         ) : followingItems.length === 0 ? (
+           FollowingEmpty
+         ) : null
++      ) : pulseFeed.loading && feed.length === 0 ? (
++        // Initial For You load — spinner, not a misleading empty state.
++        <View style={styles.loadingWrap}><ActivityIndicator size="large" color={color.signal} /></View>
+       ) : pulseFeed.error ? (
+         ForYouError
+       ) : feed.length === 0 ? (
+@@ -541,3 +545,14 @@ const styles = StyleSheet.create({
+   },
+   cityCtaText: { flex: 1, ...t.small, fontWeight: '600', color: color.signal, fontSize: 13, lineHeight: 18 },
+ });
++
++// Wrapped: a render throw anywhere in Pulse (the default landing tab) must
++// show the recoverable error screen, never a white screen. Matches
++// discovery.tsx / trips.tsx / trip/[id].tsx.
++export default function PulseScreen() {
++  return (
++    <ScreenErrorBoundary>
++      <Pulse />
++    </ScreenErrorBoundary>
++  );
++}
+diff --git a/travel-buddy-standalone/app/messages/[id].tsx b/travel-buddy-standalone/app/messages/[id].tsx
+index f0066a9..e5f7c16 100644
+--- a/travel-buddy-standalone/app/messages/[id].tsx
++++ b/travel-buddy-standalone/app/messages/[id].tsx
+@@ -1609,7 +1609,8 @@ export default function TelegraphThread() {
+     if (threadType === 'circle' && contextId) {
+       return (
+         <View style={styles.quickBar}>
+-          <Pressable style={styles.quickBtn} onPress={() => router.push(`/circle/${contextId}` as any)}>
++          {/* /circle/<id> is not a route — the circle screen is /circle (beta-audit fix) */}
++          <Pressable style={styles.quickBtn} onPress={() => router.push('/circle' as any)}>
+             <Users size={12} color={color.signal} />
+             <Text style={styles.quickBtnText}>View Circle</Text>
+           </Pressable>
+@@ -1636,7 +1637,20 @@ export default function TelegraphThread() {
+     return (
+       <View style={{ flex: 1, backgroundColor: color.paper }}>
+         <ThreadHeader compact />
+-        <View style={styles.center}><Text style={styles.errText}>{error}</Text></View>
++        <View style={styles.center}>
++          <Text style={styles.errText}>{error}</Text>
++          <Pressable
++            style={{
++              marginTop: space.md, paddingHorizontal: space.xl, paddingVertical: space.sm,
++              borderRadius: radius.pill, borderWidth: 1, borderColor: color.signal,
++            }}
++            onPress={reload}
++            accessibilityRole="button"
++            accessibilityLabel="Retry loading messages"
++          >
++            <Text style={{ ...t.bodyStrong, color: color.signal }}>Try again</Text>
++          </Pressable>
++        </View>
+       </View>
+     );
+   }
+diff --git a/travel-buddy-standalone/app/post/edit/[id].tsx b/travel-buddy-standalone/app/post/edit/[id].tsx
+new file mode 100644
+index 0000000..9ef5fe3
+--- /dev/null
++++ b/travel-buddy-standalone/app/post/edit/[id].tsx
+@@ -0,0 +1,206 @@
++/**
++ * Post edit screen — /post/edit/[id]
++ *
++ * Fixes the beta-audit P0 where PostCard's "Edit" action navigated to a
++ * nonexistent route. Owners can edit the post's caption and visibility via
++ * the existing updatePost service (content + visibility are the fields the
++ * API contract supports; media editing is out of scope here).
++ */
++import React, { useEffect, useState, useCallback } from 'react';
++import {
++  View, Text, TextInput, Pressable, StyleSheet,
++  ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Alert,
++} from 'react-native';
++import { router, useLocalSearchParams } from 'expo-router';
++import { ArrowLeft, Globe, Lock, Luggage } from 'lucide-react-native';
++import { getPostById, updatePost, type PostRow, type PostVisibility } from '../../../src/services/posts';
++import { useSession } from '../../../src/context/SessionContext';
++import { color, space, radius, type as t } from '../../../src/theme/tokens';
++
++const CONTENT_MAX = 2000;
++
++const VISIBILITY_OPTIONS: { value: PostVisibility; label: string; Icon: React.ComponentType<any> }[] = [
++  { value: 'public', label: 'Public', Icon: Globe },
++  { value: 'trip_only', label: 'Trip only', Icon: Luggage },
++  { value: 'private', label: 'Private', Icon: Lock },
++];
++
++export default function EditPostScreen() {
++  const { id } = useLocalSearchParams<{ id: string }>();
++  const { userId } = useSession();
++
++  const [post, setPost] = useState<PostRow | null>(null);
++  const [loading, setLoading] = useState(true);
++  const [loadError, setLoadError] = useState<string | null>(null);
++  const [content, setContent] = useState('');
++  const [visibility, setVisibility] = useState<PostVisibility>('public');
++  const [saving, setSaving] = useState(false);
++
++  const load = useCallback(async () => {
++    if (!id) return;
++    setLoading(true);
++    setLoadError(null);
++    const res = await getPostById(id);
++    setLoading(false);
++    if (!res.ok || !res.data) {
++      setLoadError(res.message ?? 'Could not load this post.');
++      return;
++    }
++    setPost(res.data);
++    setContent(res.data.content ?? '');
++    setVisibility(res.data.visibility);
++  }, [id]);
++
++  useEffect(() => { load(); }, [load]);
++
++  const isOwner = post != null && userId != null && post.authorId === userId;
++  const dirty = post != null && (content !== (post.content ?? '') || visibility !== post.visibility);
++
++  const handleSave = useCallback(async () => {
++    if (!post || saving) return;
++    const trimmed = content.trim();
++    if (!trimmed) {
++      Alert.alert('Empty caption', 'Write something before saving, or go back to leave the post unchanged.');
++      return;
++    }
++    setSaving(true);
++    const res = await updatePost(post.id, { content: trimmed, visibility });
++    setSaving(false);
++    if (!res.ok) {
++      Alert.alert('Could not save', res.message ?? 'Something went wrong. Please try again.');
++      return;
++    }
++    router.back();
++  }, [post, content, visibility, saving]);
++
++  return (
++    <KeyboardAvoidingView
++      style={s.root}
++      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
++    >
++      {/* Header */}
++      <View style={s.header}>
++        <Pressable onPress={() => router.back()} hitSlop={10} accessibilityLabel="Back">
++          <ArrowLeft size={22} color={color.ink} />
++        </Pressable>
++        <Text style={s.headerTitle}>Edit Post</Text>
++        <Pressable
++          onPress={handleSave}
++          disabled={!isOwner || !dirty || saving}
++          hitSlop={8}
++          accessibilityRole="button"
++          accessibilityLabel="Save changes"
++        >
++          {saving
++            ? <ActivityIndicator size="small" color={color.signal} />
++            : <Text style={[s.saveText, (!isOwner || !dirty) && s.saveTextDisabled]}>Save</Text>}
++        </Pressable>
++      </View>
++
++      {loading ? (
++        <View style={s.center}><ActivityIndicator color={color.signal} /></View>
++      ) : loadError ? (
++        <View style={s.center}>
++          <Text style={s.errTitle}>Could not load this post</Text>
++          <Text style={s.errSub}>{loadError}</Text>
++          <Pressable style={s.retryBtn} onPress={load} accessibilityRole="button">
++            <Text style={s.retryText}>Try again</Text>
++          </Pressable>
++        </View>
++      ) : !post ? (
++        <View style={s.center}>
++          <Text style={s.errTitle}>Post not found</Text>
++          <Text style={s.errSub}>It may have been deleted.</Text>
++        </View>
++      ) : !isOwner ? (
++        <View style={s.center}>
++          <Text style={s.errTitle}>Only the author can edit this post</Text>
++        </View>
++      ) : (
++        <ScrollView style={{ flex: 1 }} contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
++          <Text style={s.label}>CAPTION</Text>
++          <TextInput
++            style={s.input}
++            value={content}
++            onChangeText={setContent}
++            multiline
++            maxLength={CONTENT_MAX}
++            placeholder="Share your travel moment…"
++            placeholderTextColor={color.faint}
++            textAlignVertical="top"
++            autoFocus
++          />
++          <Text style={s.count}>{content.length}/{CONTENT_MAX}</Text>
++
++          <Text style={s.label}>VISIBILITY</Text>
++          <View style={s.visRow}>
++            {VISIBILITY_OPTIONS.map(({ value, label, Icon }) => {
++              const on = visibility === value;
++              return (
++                <Pressable
++                  key={value}
++                  style={[s.visChip, on && s.visChipOn]}
++                  onPress={() => setVisibility(value)}
++                  accessibilityRole="button"
++                  accessibilityState={{ selected: on }}
++                  accessibilityLabel={`Visibility: ${label}`}
++                >
++                  <Icon size={14} color={on ? color.onInk : color.ink} />
++                  <Text style={[s.visText, on && s.visTextOn]}>{label}</Text>
++                </Pressable>
++              );
++            })}
++          </View>
++
++          <Text style={s.hint}>
++            Photos and videos can't be changed after posting — to swap media, delete this post and create a new one.
++          </Text>
++        </ScrollView>
++      )}
++    </KeyboardAvoidingView>
++  );
++}
++
++const s = StyleSheet.create({
++  root: { flex: 1, backgroundColor: color.paper },
++  header: {
++    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
++    paddingHorizontal: space.lg, paddingTop: 56, paddingBottom: space.md,
++    borderBottomWidth: 1, borderBottomColor: color.haze,
++  },
++  headerTitle: { ...t.heading, color: color.ink },
++  saveText: { ...t.bodyStrong, color: color.signal },
++  saveTextDisabled: { color: color.faint },
++
++  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.sm },
++  errTitle: { ...t.bodyStrong, color: color.ink, textAlign: 'center' },
++  errSub: { ...t.small, color: color.mute, textAlign: 'center' },
++  retryBtn: {
++    marginTop: space.sm, paddingHorizontal: space.xl, paddingVertical: space.sm,
++    borderRadius: radius.pill, borderWidth: 1, borderColor: color.signal,
++  },
++  retryText: { ...t.bodyStrong, color: color.signal },
++
++  body: { padding: space.lg, gap: space.sm },
++  label: {
++    fontSize: 11, fontWeight: '700', letterSpacing: 1.2,
++    color: color.mute, marginTop: space.md,
++  },
++  input: {
++    minHeight: 140, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md,
++    padding: space.md, ...t.body, color: color.ink, backgroundColor: color.paperRaised,
++  },
++  count: { ...t.small, color: color.faint, alignSelf: 'flex-end', fontSize: 11 },
++
++  visRow: { flexDirection: 'row', gap: space.sm },
++  visChip: {
++    flexDirection: 'row', alignItems: 'center', gap: 6,
++    minHeight: 36, paddingHorizontal: 12, borderRadius: radius.pill,
++    borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised,
++  },
++  visChipOn: { backgroundColor: color.signal, borderColor: color.signal },
++  visText: { ...t.small, fontWeight: '600', color: color.ink },
++  visTextOn: { color: color.onInk },
++
++  hint: { ...t.small, color: color.mute, marginTop: space.md, lineHeight: 18 },
++});
+diff --git a/travel-buddy-standalone/app/trip/[id].tsx b/travel-buddy-standalone/app/trip/[id].tsx
+index 4a3409d..b0cc35d 100644
+--- a/travel-buddy-standalone/app/trip/[id].tsx
++++ b/travel-buddy-standalone/app/trip/[id].tsx
+@@ -44,7 +44,7 @@ function TripDetailScreen() {
+   const navBarScrollHandler = useNavBarScrollHandler();
+   const bottomInset = useBottomInset();
+   const live = configured && isAuthed;
+-  const { data: realTrip, loading } = useTrip(live ? id : undefined);
++  const { data: realTrip, loading, error: tripError, reload: reloadTrip } = useTrip(live ? id : undefined);
+   const { invites } = usePendingTripInvites();
+   const isPendingInvite = live ? invites.some((inv) => inv.tripId === id) : false;
+   const pageScrollRef    = useRef<ScrollView>(null);
+@@ -180,6 +180,26 @@ function TripDetailScreen() {
+     return <View style={{ flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={color.signal} /></View>;
+   }
+ 
++  // Network/API failure is NOT "trip not found" — show an honest error with
++  // retry instead of the misleading not-found copy (beta-audit fix).
++  if (!realTrip && tripError) {
++    return (
++      <View style={{ flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center', padding: space.xl }}>
++        <Text style={{ ...t.bodyStrong, color: color.ink, marginBottom: space.sm }}>Couldn't load this trip</Text>
++        <Text style={{ ...t.small, color: color.mute, textAlign: 'center' }}>Check your connection and try again.</Text>
++        <Pressable
++          style={{ marginTop: space.lg, paddingHorizontal: space.lg, paddingVertical: space.sm, borderRadius: radius.pill, backgroundColor: color.signal }}
++          onPress={reloadTrip}
++        >
++          <Text style={{ color: '#fff', fontWeight: '700' }}>Try again</Text>
++        </Pressable>
++        <Pressable style={{ marginTop: space.sm, padding: space.sm }} onPress={() => router.back()}>
++          <Text style={{ ...t.small, color: color.mute }}>Go back</Text>
++        </Pressable>
++      </View>
++    );
++  }
++
+   if (!realTrip) {
+     return (
+       <View style={{ flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center', padding: space.xl }}>
+diff --git a/travel-buddy-standalone/src/components/PostCard.tsx b/travel-buddy-standalone/src/components/PostCard.tsx
+index f63f318..3d7fba7 100644
+--- a/travel-buddy-standalone/src/components/PostCard.tsx
++++ b/travel-buddy-standalone/src/components/PostCard.tsx
+@@ -134,7 +134,7 @@ function HeroCard({ post }: { post: Post }) {
+           onSettingsChange={setSettings}
+           onArchived={() => setOwnerMenuOpen(false)}
+           onDeleted={() => router.back()}
+-          onEdit={() => router.push(`/post/${post.id}/edit` as any)}
++          onEdit={() => router.push(`/post/edit/${post.id}` as any)}
+         />
+       )}
+     </Pressable>
+@@ -229,7 +229,7 @@ function StandardCard({ post }: { post: Post }) {
+           onSettingsChange={setSettings}
+           onArchived={() => setOwnerMenuOpen(false)}
+           onDeleted={() => router.back()}
+-          onEdit={() => router.push(`/post/${post.id}/edit` as any)}
++          onEdit={() => router.push(`/post/edit/${post.id}` as any)}
+         />
+       )}
+     </View>
+@@ -298,7 +298,7 @@ function QuestionCard({ post }: { post: Post }) {
+           onSettingsChange={setSettings}
+           onArchived={() => setOwnerMenuOpen(false)}
+           onDeleted={() => router.back()}
+-          onEdit={() => router.push(`/post/${post.id}/edit` as any)}
++          onEdit={() => router.push(`/post/edit/${post.id}` as any)}
+         />
+       )}
+     </View>
+@@ -360,7 +360,7 @@ function ItineraryCard({ post }: { post: Post }) {
+           onSettingsChange={setSettings}
+           onArchived={() => setOwnerMenuOpen(false)}
+           onDeleted={() => router.back()}
+-          onEdit={() => router.push(`/post/${post.id}/edit` as any)}
++          onEdit={() => router.push(`/post/edit/${post.id}` as any)}
+         />
+       )}
+     </Pressable>
+diff --git a/travel-buddy-standalone/src/components/tripCrew/LiveShareSheet.tsx b/travel-buddy-standalone/src/components/tripCrew/LiveShareSheet.tsx
+index 5a3f660..0989bb0 100644
+--- a/travel-buddy-standalone/src/components/tripCrew/LiveShareSheet.tsx
++++ b/travel-buddy-standalone/src/components/tripCrew/LiveShareSheet.tsx
+@@ -37,18 +37,31 @@ export function LiveShareSheet({ visible, tripId, members, onDismiss, onStarted
+   const [duration, setDuration] = useState<ShareDuration>('30m');
+   const [visibility, setVisibility] = useState<'city_only' | 'neighborhood' | 'nearby'>('neighborhood');
+   const [shareWithAll, setShareWithAll] = useState(true);
++  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+   const [loading, setLoading] = useState(false);
+   const [error, setError] = useState<string | null>(null);
+ 
+   const eligibleMembers = members.filter((m) => !m.ghostMode && m.statusLabel !== 'location_hidden');
+ 
++  function toggleMember(userId: string) {
++    setSelectedIds((prev) => {
++      const next = new Set(prev);
++      if (next.has(userId)) next.delete(userId);
++      else next.add(userId);
++      return next;
++    });
++    setError(null);
++  }
++
+   async function handleStart() {
++    // Honor the user's choice: "share with all" sends to every eligible crew
++    // member; otherwise ONLY the explicitly selected members receive the share.
+     const allowedIds = shareWithAll
+       ? eligibleMembers.map((m) => m.userId)
+-      : eligibleMembers.map((m) => m.userId); // simplified: always all for now
++      : eligibleMembers.filter((m) => selectedIds.has(m.userId)).map((m) => m.userId);
+ 
+     if (allowedIds.length === 0) {
+-      setError('No crew members to share with');
++      setError(shareWithAll ? 'No crew members to share with' : 'Select at least one crew member');
+       return;
+     }
+ 
+@@ -125,15 +138,40 @@ export function LiveShareSheet({ visible, tripId, members, onDismiss, onStarted
+         <View style={s.toggleRow}>
+           <View style={{ flex: 1 }}>
+             <Text style={s.toggleLabel}>Share with all {eligibleMembers.length} crew members</Text>
+-            <Text style={s.toggleSub}>You can manage individual access in settings</Text>
++            <Text style={s.toggleSub}>Turn off to choose specific crew members</Text>
+           </View>
+           <Switch
+             value={shareWithAll}
+-            onValueChange={setShareWithAll}
++            onValueChange={(v) => { setShareWithAll(v); setError(null); }}
+             trackColor={{ true: color.signal }}
+           />
+         </View>
+ 
++        {/* Per-member selection — shown when not sharing with everyone */}
++        {!shareWithAll ? (
++          <View style={s.memberList}>
++            {eligibleMembers.map((m) => {
++              const on = selectedIds.has(m.userId);
++              const label = m.name ?? (m.handle ? `@${m.handle}` : 'Crew member');
++              return (
++                <Pressable
++                  key={m.userId}
++                  style={s.memberRow}
++                  onPress={() => toggleMember(m.userId)}
++                  accessibilityRole="checkbox"
++                  accessibilityState={{ checked: on }}
++                  accessibilityLabel={`Share with ${label}`}
++                >
++                  <View style={[s.memberCheck, on && s.memberCheckOn]}>
++                    {on ? <Text style={s.memberCheckMark}>✓</Text> : null}
++                  </View>
++                  <Text style={s.memberName} numberOfLines={1}>{label}</Text>
++                </Pressable>
++              );
++            })}
++          </View>
++        ) : null}
++
+         {error ? <Text style={s.error}>{error}</Text> : null}
+ 
+         <Pressable style={[s.cta, loading && s.ctaDisabled]} onPress={handleStart} disabled={loading}>
+@@ -191,6 +229,20 @@ const s = StyleSheet.create({
+   toggleLabel: { ...t.small, fontWeight: '600', color: color.ink },
+   toggleSub: { ...t.small, color: color.mute, fontSize: 11, marginTop: 2 },
+   error: { ...t.small, color: '#DC2626', marginBottom: space.sm },
++
++  memberList: { marginBottom: space.sm, gap: 2 },
++  memberRow: {
++    flexDirection: 'row', alignItems: 'center', gap: space.sm,
++    minHeight: 40, paddingHorizontal: 4,
++  },
++  memberCheck: {
++    width: 20, height: 20, borderRadius: 6,
++    borderWidth: 1.5, borderColor: color.haze,
++    alignItems: 'center', justifyContent: 'center',
++  },
++  memberCheckOn: { backgroundColor: color.signal, borderColor: color.signal },
++  memberCheckMark: { color: color.onInk, fontSize: 12, fontWeight: '700' },
++  memberName: { ...t.body, color: color.ink, flex: 1 },
+   cta: {
+     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+     backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: 14, marginTop: space.md,
+-- 
+2.43.0
+
