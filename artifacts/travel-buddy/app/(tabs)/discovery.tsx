@@ -3,7 +3,7 @@ import {
   View, Text, Pressable, ScrollView, StyleSheet, TextInput, Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams, router } from 'expo-router';
+import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
 import {
   Compass, Sparkles, MapPin, Coffee, Moon, Activity,
   Calendar, Waves, Navigation, Plane, Users, Hash, PlusCircle, Search, SlidersHorizontal,
@@ -84,9 +84,14 @@ export default function DiscoveryHub() {
   const bottomInset = useBottomInset();
   const { isAuthed } = useSession();
   const { open: openPlanPicker } = usePlanPicker();
-  const { locationState, showCityPicker, openCityPicker, closeCityPicker, setManualCity, isLoading } = useLocationContext();
+  const {
+    locationState, showCityPicker, openCityPicker, closeCityPicker, isLoading,
+    resolvedLocation, setSessionLocation, clearSessionLocation,
+  } = useLocationContext();
   const { users: highlightUsers, sessionViewedIds, markSessionViewed } = useFollowingHighlights();
-  const currentCity = locationState.place.city ?? null;
+  // currentCity always reads from the canonical location (not the session override)
+  // so that trending-hashtag and buddy fetches re-anchor on GPS updates.
+  const currentCity = resolvedLocation.place.city ?? null;
   const navScrollHandler = useNavBarScrollHandler();
 
   const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([]);
@@ -111,15 +116,15 @@ export default function DiscoveryHub() {
   );
 
   const [activeTab, setActiveTab] = useState<DiscoveryCategory>(initialCategory);
-  // Seed from location context city if available; null when no location is set yet.
+  // Seed from resolved location (cascade: GPS → last-known → home).
   const [destination, setDestination] = useState<string | null>(
-    () => locationState.place.city ?? null
+    () => resolvedLocation.place.city ?? null
   );
   const [destinationLat, setDestinationLat] = useState<number | null>(
-    () => finiteOrNull(locationState.coords?.lat)
+    () => finiteOrNull(resolvedLocation.coords?.lat)
   );
   const [destinationLng, setDestinationLng] = useState<number | null>(
-    () => finiteOrNull(locationState.coords?.lng)
+    () => finiteOrNull(resolvedLocation.coords?.lng)
   );
   const [destinationZoom, setDestinationZoom] = useState<number>(11);
   const [contextMode, setContextMode] = useState<DiscoveryContextMode>('in_city');
@@ -305,9 +310,10 @@ export default function DiscoveryHub() {
     setDestination(place.city ?? place.name);
     setDestinationLat(place.lat ?? null);
     setDestinationLng(place.lng ?? null);
-    // Also persist as manual city in the location system
-    setManualCity(place).catch(() => {});
-  }, [setManualCity]);
+    // Session-only override — never written to the backend or persistent storage.
+    // Cleared automatically on tab focus via useFocusEffect below.
+    setSessionLocation(place);
+  }, [setSessionLocation]);
 
   // MapTiler geocode on load:
   //  - If a city is set but coords missing -> geocode the city (zoom 11).
@@ -342,8 +348,20 @@ export default function DiscoveryHub() {
     setDestination(place.city ?? place.name);
     setDestinationLat(place.lat ?? null);
     setDestinationLng(place.lng ?? null);
-    setManualCity(place).catch(() => {});
-  }, [setManualCity]);
+    // Session-only — does not persist or overwrite the user's canonical location.
+    setSessionLocation(place);
+  }, [setSessionLocation]);
+
+  // On every focus: clear session city override and re-anchor to canonical location.
+  // This ensures a temporary city search never persists across tab switches.
+  useFocusEffect(
+    useCallback(() => {
+      clearSessionLocation();
+      setDestination(locationState.place.city ?? null);
+      setDestinationLat(finiteOrNull(locationState.coords?.lat));
+      setDestinationLng(finiteOrNull(locationState.coords?.lng));
+    }, [clearSessionLocation, locationState.place.city, locationState.coords]),
+  );
 
   // Explicit top-level screen status. 'error' is handled by the surrounding
   // SectionErrorBoundary (fullScreen) and per-tab empty states cover 'empty'.
@@ -382,6 +400,15 @@ export default function DiscoveryHub() {
           )}
         </View>
       </View>
+
+      {/* Freshness indicator — shown when location is last-known or home-only */}
+      {(resolvedLocation.source === 'last_known' || resolvedLocation.source === 'home') && (
+        <View style={styles.freshnessBar}>
+          <Text style={styles.freshnessText}>
+            {resolvedLocation.source === 'home' ? 'Using home city' : 'Using last known location'}
+          </Text>
+        </View>
+      )}
 
       {/* ── Search bar + filter button ── */}
       <View style={styles.searchRow}>
@@ -1159,6 +1186,22 @@ const styles = StyleSheet.create({
     ...t.body,
     color: color.faint,
     flex: 1,
+  },
+  freshnessBar: {
+    marginHorizontal: space.lg,
+    marginBottom: space.xs,
+    paddingHorizontal: space.sm,
+    paddingVertical: 3,
+    backgroundColor: color.paperRaised,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: color.haze,
+    alignSelf: 'flex-start',
+  },
+  freshnessText: {
+    ...t.small,
+    color: color.mute,
+    fontSize: 11,
   },
 });
 

@@ -124,8 +124,9 @@ export default function Pulse() {
   const [peopleRefreshKey, setPeopleRefreshKey] = useState(0);
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
 
-  const { locationState, openCityPicker } = useLocationContext();
-  const activeCity = locationState.place.city ?? 'Cebu City';
+  const { locationState, openCityPicker, resolvedLocation, clearSessionLocation } = useLocationContext();
+  // Use the full 3-tier cascade (GPS → last-known → home) via resolvedLocation.
+  const activeCity = resolvedLocation.place.city ?? 'Cebu City';
   const activeCitySlug = activeCity.toLowerCase().replace(/\s+/g, '-');
 
   // Load learned category affinities from the preference engine so Pulse
@@ -166,9 +167,12 @@ export default function Pulse() {
   // resets the scroll position. Pull-to-refresh still does a full reload.
   useFocusEffect(
     useCallback(() => {
+      // Clear any temporary city search from Discovery so re-entering Pulse
+      // always shows the canonical resolved location, not a stale session city.
+      clearSessionLocation();
       realFeed.refreshIfStale();
       if (feedMode === 'following') followingFeed.refreshIfStale();
-    }, [realFeed.refreshIfStale, followingFeed.refreshIfStale, feedMode]),
+    }, [clearSessionLocation, realFeed.refreshIfStale, followingFeed.refreshIfStale, feedMode]),
   );
 
   // If new posts arrive while the user is already at (or near) the top,
@@ -292,6 +296,15 @@ export default function Pulse() {
         onFilter={() => setSheetOpen(true)}
         onCityPress={openCityPicker}
       />
+
+      {/* Freshness indicator — shown when location is last-known or home-only */}
+      {(resolvedLocation.source === 'last_known' || resolvedLocation.source === 'home') && (
+        <View style={styles.locationFreshnessBar}>
+          <Text style={styles.locationFreshnessText}>
+            {resolvedLocation.source === 'home' ? 'Using home city' : 'Using last known location'}
+          </Text>
+        </View>
+      )}
 
       {/* Mode toggle + filter chips — scroll with the feed (previously fixed stickyControls) */}
       <View style={{ paddingVertical: space.sm }}>
@@ -584,6 +597,16 @@ const styles = StyleSheet.create({
   exploreBtn: { backgroundColor: color.signal, paddingHorizontal: space.lg, paddingVertical: 10, borderRadius: 10 },
   exploreBtnText: { ...t.bodyStrong, color: '#fff', fontSize: 14 },
   loadingWrap: { paddingVertical: space.xxl, alignItems: 'center' },
+  locationFreshnessBar: {
+    marginHorizontal: space.lg,
+    marginTop: space.xs,
+    paddingHorizontal: space.md,
+    paddingVertical: 4,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  locationFreshnessText: { ...t.small, color: pv.textMute, fontSize: 11 },
   /* Available Buddies in [City] module */
   buddyModule: { marginHorizontal: space.lg, marginTop: space.lg, backgroundColor: '#FFF5F5', borderRadius: 14, borderWidth: 1, borderColor: '#E5393530', padding: space.md, gap: space.sm },
   buddyModuleHead: { flexDirection: 'row', alignItems: 'flex-start' },

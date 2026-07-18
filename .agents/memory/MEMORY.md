@@ -26,3 +26,4 @@
 - [Jest moduleNameMapper vs per-file mocks](jest-mapper-vs-perfile-mocks.md) — mapping a module globally while a test file still has a jest.mock factory requiring the mock path causes infinite recursion; remove per-file mocks when adding a mapper entry.
 - [Modal Proxy mock for react-native](modal-proxy-mock.md) — Proxy intercepts only Modal key; two-file rule for async Modal tests.
 - [Events API field names](events-api-field-names.md) — formatEvent() returns camelCase (startsAt/goingCount/maxAttendees); mapApiEvent must read those, not snake_case. No `source` column on events — use tags for demo labelling.
+- [Unified location context pattern](location-context-unified.md) — resolvedLocation (session → GPS → last-known → home) is the single source of truth; component test mocks must include it or FullScreenMapScreen crashes.

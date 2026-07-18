@@ -25,7 +25,8 @@ export type LocationSource =
   | 'gps'          // legacy — kept for backward-compat with persisted API payloads
   | 'gps_fresh'    // live fix from getCurrentPositionAsync
   | 'gps_cached'   // fallback from getLastKnownPositionAsync
-  | 'last_known'   // legacy alias for gps_cached
+  | 'last_known'   // server-persisted location from a previous session
+  | 'home'         // profile home city — lowest-priority fallback
   | 'manual_city'
   | 'trip_context'
   | 'post_tag'
@@ -126,6 +127,55 @@ async function fetchToken(): Promise<string | null> {
   return freshToken();
 }
 
+/**
+ * Tier 3 fallback: load the user's profile home city and return it as a
+ * minimal ActiveLocationState with source 'home'. Returns null when the
+ * profile is unreachable or has no homeCity set.
+ */
+async function loadHomeFromProfile(permissionStatus: PermissionStatus): Promise<ActiveLocationState | null> {
+  if (!isSupabaseConfigured) return null;
+  try {
+    const [base, token] = await Promise.all([apiBase(), fetchToken()]);
+    if (!token) return null;
+    const res = await fetch(`${base}/api/me/profile`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const profile = await res.json();
+    const homeCity: string | null = profile.homeCity ?? null;
+    if (!homeCity) return null;
+
+    const place: Place = {
+      id: `home-${homeCity.toLowerCase().replace(/\s+/g, '-')}`,
+      type: 'city',
+      name: homeCity,
+      displayName: profile.homeCountry ? `${homeCity}, ${profile.homeCountry}` : homeCity,
+      country: profile.homeCountry ?? null,
+      countryCode: null,
+      region: null,
+      city: homeCity,
+      district: null,
+      lat: null,
+      lng: null,
+      timezone: null,
+      source: 'manual',
+    };
+
+    return {
+      ok: true,
+      permissionStatus,
+      source: 'home',
+      freshness: 'stale', // Home city has no freshness guarantee
+      coords: null,
+      place,
+      lastUpdatedAt: null,
+      userMessage: null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function saveLocationToApi(patch: object): Promise<void> {
   if (!isSupabaseConfigured) return;
   try {
@@ -218,7 +268,10 @@ export function useActiveLocation(): UseActiveLocationResult {
     return () => { mountedRef.current = false; };
   }, []);
 
-  // On mount: check permission + load saved state from API
+  // On mount: 3-tier cascade:
+  //   tier 1 — GPS live/cached (requestLocation, called by the user or auto)
+  //   tier 2 — server-persisted last-active (loadLocationFromApi)
+  //   tier 3 — profile home city (loadHomeFromProfile)
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -228,14 +281,23 @@ export function useActiveLocation(): UseActiveLocationResult {
       ]);
       if (!alive) return;
 
-      if (savedState) {
+      if (savedState?.ok) {
+        // Tier 2: server-persisted last-active or manual city
         setLocationState({
           ...savedState,
           permissionStatus: permStatus,
           freshness: computeFreshness(savedState.lastUpdatedAt),
         });
       } else {
-        setLocationState((prev) => ({ ...prev, permissionStatus: permStatus }));
+        // Tier 3: try profile home city as last resort
+        const homeState = await loadHomeFromProfile(permStatus);
+        if (!alive) return;
+        if (homeState) {
+          setLocationState(homeState);
+        } else {
+          // No location at all — just update permission status
+          setLocationState((prev) => ({ ...prev, permissionStatus: permStatus }));
+        }
       }
     })();
     return () => { alive = false; };
