@@ -27,7 +27,8 @@ import {
   encodeDestinationKey,
   type DestinationGroup,
 } from '../../utils/destinationGrouping.ts';
-import { batchGeocodeCities } from '../../services/cityGeocode.ts';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { batchGeocodeCities, preloadGeocodeCache } from '../../services/cityGeocode.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -323,7 +324,9 @@ export function DestinationsTab({ memories, stamps, postcards, trips }: Props) {
     setGeocodedCount(0);
 
     const entries = groups.map((g) => ({ city: g.city, country: g.country }));
-    batchGeocodeCities(entries, (resolved) => setGeocodedCount(resolved))
+    preloadGeocodeCache(AsyncStorage)
+      .catch(() => {})
+      .then(() => batchGeocodeCities(entries, (resolved) => setGeocodedCount(resolved), AsyncStorage))
       .then((result) => {
         const next: CoordsMap = {};
         for (const [key, coords] of result) next[key] = coords;
