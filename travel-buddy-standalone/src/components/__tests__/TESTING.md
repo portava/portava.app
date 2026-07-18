@@ -54,3 +54,45 @@ outside act() during cleanup and corrupts the next test.
 
 Reference implementation: `pressAlertButton` in
 `FailedJobsScreen.component.test.tsx`.
+
+## 3. Always use `makePassportMock` when mocking `usePassport`
+
+Any test that mocks `usePassport` **must** include `lastLoadedAt` in the
+returned object.  Omitting it causes the focus-TTL guard inside `passport.tsx`
+to compare `Date.now()` against `undefined`, which produces `NaN`.  Because
+`NaN` is never less than the TTL, every focus fires `reload()` unconditionally,
+creating an infinite re-render loop that OOMs the jest-expo runner.
+
+Use the shared factory from `testUtils.ts` — it enforces the full
+`PassportState` shape at the TypeScript level so a missing field is caught at
+compile time, not at runtime:
+
+```ts
+import { makePassportMock, MINIMAL_OWN_PROFILE } from './testUtils.ts';
+
+const mockReload = jest.fn();
+
+// Stable ref — do NOT create a new { current: … } object inside
+// mockReturnValue(); a new reference on every render fires the
+// `useEffect(() => setLocalPostcards(postcards), [postcards])` loop.
+const mockLastLoadedAt = { current: 0 };
+
+mockUsePassport.mockReturnValue(
+  makePassportMock({
+    profile:      MINIMAL_OWN_PROFILE,  // or your own OwnProfile object
+    reload:       mockReload,
+    lastLoadedAt: mockLastLoadedAt,
+  }),
+);
+```
+
+Tests that exercise focus-TTL logic should also install a `Date.now` spy and
+stamp the ref **after** the spy is installed so the initial render sees
+`Date.now() - lastLoadedAt.current === 0` (within TTL):
+
+```ts
+const dateSpy = jest.spyOn(Date, 'now').mockReturnValue(BASE_TIME);
+mockLastLoadedAt.current = BASE_TIME;   // within TTL on first render
+```
+
+Reference implementation: `PassportContent.focusTTL.component.test.tsx`.
