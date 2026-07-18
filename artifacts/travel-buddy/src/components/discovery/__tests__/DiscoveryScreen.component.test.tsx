@@ -76,13 +76,15 @@ jest.mock('../../PlanPickerController', () => ({
   usePlanPicker: () => ({ open: jest.fn() }),
 }));
 
-// NOTE: intentionally exhaustive — stubbed session context.
 jest.mock('../../../context/SessionContext', () => ({
+  ...jest.requireActual('../../../context/SessionContext'),
   useSession: () => ({ isAuthed: true, userId: 'user-1' }),
 }));
 
-// NOTE: intentionally exhaustive — stubbed location context driven by
-// mockLocation so each test controls the location scenario.
+// NOTE: intentionally exhaustive — LocationContext pulls in useActiveLocation
+// which imports expo-location native modules unavailable in the jest-expo JSDOM
+// runner; spreading requireActual would crash the suite.  Each test drives
+// location state through the mockLocation variable instead.
 jest.mock('../../../context/LocationContext', () => ({
   useLocationContext: () => mockLocation,
 }));

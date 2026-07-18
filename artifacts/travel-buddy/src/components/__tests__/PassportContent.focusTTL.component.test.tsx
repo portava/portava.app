@@ -206,14 +206,14 @@ jest.mock('../../hooks/useHighlightRingState', () => ({
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
-// NOTE: intentionally exhaustive — SessionContext wraps the Supabase auth
-// client; requireActual would pull in the live auth listener.
 jest.mock('../../context/SessionContext', () => ({
+  ...jest.requireActual('../../context/SessionContext'),
   useSession: () => ({ userId: 'user-test-1', isAuthed: true }),
 }));
 
-// NOTE: intentionally exhaustive — AvailabilityStore uses a Zustand store
-// wired to the Supabase realtime channel; requireActual triggers subscriptions.
+// NOTE: intentionally exhaustive — the real AvailabilityStore initializes a
+// Zustand store at module level and triggers side-effects (reads refs, schedules
+// fetches) that crash the JSDOM env.  Only the hook return value is needed here.
 jest.mock('../../context/AvailabilityStore', () => ({
   useAvailabilityStore: () => ({
     availability: { openToMeet: false, trips: [] },

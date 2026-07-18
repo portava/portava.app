@@ -34,18 +34,13 @@ jest.mock('../../services/availability.ts', () => ({
   patchMyQuickStatus:  jest.fn().mockResolvedValue({ ok: false, data: null }),
 }));
 
-// NOTE: intentionally exhaustive — SessionContext pulls in Supabase auth helpers
-// at module level; spreading requireActual would execute that import chain and
-// crash the JSDOM suite.  The provider only calls useSession() for two flags.
 jest.mock('../SessionContext.tsx', () => ({
+  ...jest.requireActual('../SessionContext.tsx'),
   useSession: () => ({ configured: true, isAuthed: true, userId: 'user-1' }),
 }));
 
-// NOTE: intentionally exhaustive — events.ts imports and re-exports large data
-// fixtures; only mockAvailability is needed here, and requireActual is safe but
-// the module also pulls in native-only deps in CI.
 jest.mock('../../data/events.ts', () => ({
-  mockAvailability: { weekly: { days: {} }, trips: [], openToMeet: false },
+  ...jest.requireActual('../../data/events.ts'),
 }));
 
 // ── Minimal chip consumer ─────────────────────────────────────────────────────
