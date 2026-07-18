@@ -73,7 +73,8 @@ jest.mock('../../../src/hooks/useCityPulse', () => ({
 jest.mock('../../../src/hooks/usePulseFeed', () => ({
   usePulseFeed: () => ({
     items: [], placeCards: [], loading: false, loadingMore: false,
-    error: null, reload: jest.fn(), loadMore: jest.fn(), markDeleted: jest.fn(),
+    hasMore: false, error: null, reload: jest.fn(), loadMore: jest.fn(),
+    markDeleted: jest.fn(), sessionId: null,
   }),
 }));
 
