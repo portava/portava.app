@@ -22,8 +22,7 @@ import { router } from 'expo-router';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor.tsx';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
-
-const MAX_VIDEO_DURATION_SECONDS = 10;
+import { VIDEO_MAX_DURATION_SECONDS } from '../constants/mediaLimits.ts';
 
 const DURATIONS: { hours: number; label: string }[] = [
   { hours: 3,  label: '3h' },
@@ -104,7 +103,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
     const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images', 'videos'],
       quality: 0.85,
-      videoMaxDuration: MAX_VIDEO_DURATION_SECONDS,
+      videoMaxDuration: VIDEO_MAX_DURATION_SECONDS.highlight,
       allowsEditing: true,
     });
     if (res.canceled || !res.assets?.[0]) return;
@@ -121,7 +120,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
     const res = await ImagePicker.launchCameraAsync({
       mediaTypes: ['images', 'videos'],
       quality: 0.85,
-      videoMaxDuration: MAX_VIDEO_DURATION_SECONDS,
+      videoMaxDuration: VIDEO_MAX_DURATION_SECONDS.highlight,
       allowsEditing: true,
     });
     if (res.canceled || !res.assets?.[0]) return;
@@ -133,8 +132,8 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
     const asVideo = mime.startsWith('video/') || a.type === 'video';
     const durationSec = a.duration ? a.duration / 1000 : null;
 
-    if (asVideo && durationSec != null && durationSec > MAX_VIDEO_DURATION_SECONDS) {
-      setError(`Highlights can be up to ${MAX_VIDEO_DURATION_SECONDS}s. Your video is ${durationSec.toFixed(1)}s.`);
+    if (asVideo && durationSec != null && durationSec > VIDEO_MAX_DURATION_SECONDS.highlight) {
+      setError(`Highlights can be up to ${VIDEO_MAX_DURATION_SECONDS.highlight}s. Your video is ${durationSec.toFixed(1)}s.`);
       return;
     }
 
@@ -302,7 +301,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
                   </Pressable>
                 </View>
               )}
-              <Text style={s.mediaHint}>Photos or videos up to {MAX_VIDEO_DURATION_SECONDS}s</Text>
+              <Text style={s.mediaHint}>Photos or videos up to {VIDEO_MAX_DURATION_SECONDS.highlight}s</Text>
             </View>
 
             {/* Caption */}

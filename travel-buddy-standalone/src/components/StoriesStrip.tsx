@@ -1,9 +1,13 @@
 /**
  * StoriesStrip — horizontal row of story rings shown at the top of feeds.
  * Shows "your story" ring first, then followed users with active stories.
+ *
+ * Poster rule: the avatar circle inside each ring always shows the user's
+ * avatarUrl (never a raw video media_url, which would break as an <Image> src).
+ * A ▶ badge is overlaid on the ring when the user's first story is a video.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { color, radius, space, type as t } from '../theme/tokens.ts';
 import { HighlightRing } from './HighlightRing.tsx';
 import { useSession } from '../context/SessionContext.tsx';
@@ -16,6 +20,11 @@ interface Props {
   onTapUser: (user: StoryFeedUser) => void;
   onTapSelf: () => void;
   style?: any;
+}
+
+/** Returns the MIME type of the first story, or undefined if none. */
+function firstStoryMediaType(stories: Story[]): string | undefined {
+  return stories[0]?.media_type ?? undefined;
 }
 
 export function StoriesStrip({ onTapUser, onTapSelf, style }: Props) {
@@ -59,8 +68,16 @@ export function StoriesStrip({ onTapUser, onTapSelf, style }: Props) {
                   allViewed={selfEntry != null}
                   hasActive={Boolean(selfEntry)}
                   isOwner
+                  mediaType={selfEntry ? firstStoryMediaType(selfEntry.stories) : undefined}
                 >
-                  <View style={[s.avatarCircle, { width: RING_SIZE, height: RING_SIZE, borderRadius: RING_SIZE / 2 }]} />
+                  {selfEntry?.avatarUrl ? (
+                    <Image
+                      source={{ uri: selfEntry.avatarUrl }}
+                      style={[s.avatarCircle, { width: RING_SIZE, height: RING_SIZE, borderRadius: RING_SIZE / 2 }]}
+                    />
+                  ) : (
+                    <View style={[s.avatarCircle, { width: RING_SIZE, height: RING_SIZE, borderRadius: RING_SIZE / 2 }]} />
+                  )}
                 </HighlightRing>
                 <View style={s.plusBadge}>
                   <Text style={s.plusText}>+</Text>
@@ -72,14 +89,23 @@ export function StoriesStrip({ onTapUser, onTapSelf, style }: Props) {
         }
 
         const hasUnviewed = item.hasUnviewed;
+        const mediaType = firstStoryMediaType(item.stories);
         return (
           <Pressable style={s.item} onPress={() => onTapUser(item)}>
             <HighlightRing
               size={RING_SIZE}
               allViewed={!hasUnviewed}
               hasActive
+              mediaType={mediaType}
             >
-              <View style={[s.avatarCircle, { width: RING_SIZE, height: RING_SIZE, borderRadius: RING_SIZE / 2 }]} />
+              {item.avatarUrl ? (
+                <Image
+                  source={{ uri: item.avatarUrl }}
+                  style={[s.avatarCircle, { width: RING_SIZE, height: RING_SIZE, borderRadius: RING_SIZE / 2 }]}
+                />
+              ) : (
+                <View style={[s.avatarCircle, { width: RING_SIZE, height: RING_SIZE, borderRadius: RING_SIZE / 2 }]} />
+              )}
             </HighlightRing>
             <Text style={s.label} numberOfLines={1}>{item.name ?? item.handle ?? 'Traveler'}</Text>
           </Pressable>

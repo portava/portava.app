@@ -14,10 +14,12 @@
  *   onPress     — tap handler (viewer opens HighlightViewer; owner opens composer)
  *   ringWidth   — stroke width of the ring (default 2.5)
  *   gap         — gap between avatar and ring (default 2)
+ *   mediaType   — MIME type of the first/current highlight; when it starts with
+ *                 'video/' a small ▶ badge is overlaid on the bottom-right of the ring
  */
 import React, { useEffect, useRef } from 'react';
 import { View, Animated, Pressable, StyleSheet } from 'react-native';
-import Svg, { Defs, LinearGradient, Stop, Circle } from 'react-native-svg';
+import Svg, { Defs, LinearGradient, Stop, Circle, Polygon } from 'react-native-svg';
 
 const GRADIENT_COLORS = ['#F5A623', '#E91E8C', '#9C27B0'] as const;
 const GRADIENT_VIEWED = ['#C0C0C0', '#A0A0A0'] as const;
@@ -30,6 +32,7 @@ interface Props {
   onPress?: () => void;
   ringWidth?: number;
   gap?: number;
+  mediaType?: string;
   children: React.ReactNode;
 }
 
@@ -40,9 +43,11 @@ export function HighlightRing({
   onPress,
   ringWidth = 2.5,
   gap = 2,
+  mediaType,
   children,
 }: Props) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const isVideo = (mediaType ?? '').startsWith('video/');
 
   useEffect(() => {
     if (!hasActive || allViewed) {
@@ -76,6 +81,10 @@ export function HighlightRing({
   const colors = allViewed ? GRADIENT_VIEWED : GRADIENT_COLORS;
 
   const gradId = `hlRingGrad_${size}_${allViewed ? 'v' : 'u'}`;
+
+  // Play badge sizing — scales with avatar size
+  const badgeSize = Math.round(size * 0.28);
+  const badgeOffset = ringWidth + gap - 1; // sits just outside the inner edge
 
   return (
     <Pressable onPress={onPress} hitSlop={4}>
@@ -120,8 +129,40 @@ export function HighlightRing({
           >
             {children}
           </View>
+
+          {/* ▶ video badge — bottom-right corner of the ring */}
+          {isVideo && (
+            <View
+              style={[
+                styles.videoBadge,
+                {
+                  width: badgeSize,
+                  height: badgeSize,
+                  borderRadius: badgeSize / 2,
+                  bottom: badgeOffset,
+                  right: badgeOffset,
+                },
+              ]}
+            >
+              <Svg width={badgeSize * 0.55} height={badgeSize * 0.55} viewBox="0 0 10 12">
+                {/* Play triangle pointing right */}
+                <Polygon points="1,1 9,6 1,11" fill="#fff" />
+              </Svg>
+            </View>
+          )}
         </View>
       </Animated.View>
     </Pressable>
   );
 }
+
+const styles = StyleSheet.create({
+  videoBadge: {
+    position: 'absolute',
+    backgroundColor: 'rgba(17,17,15,0.75)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
+});
