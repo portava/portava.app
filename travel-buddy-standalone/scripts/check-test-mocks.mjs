@@ -15,7 +15,7 @@
  * Scans every file matched by jest.config testMatch (src/ and app/, all
  * *.test.* files — not just component tests).
  *
- * Mirrors the equivalent guard in artifacts/travel-buddy.
+ * Mirrors the equivalent guard in travel-buddy-standalone.
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
