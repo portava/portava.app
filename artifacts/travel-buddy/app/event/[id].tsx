@@ -46,6 +46,7 @@ import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useEventRsvp } from '../../src/hooks/useEventRsvp';
 import { HostDashboardPanel } from '../../src/components/HostDashboardPanel';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
+import { SharedVideoPlayer } from '../../src/components/ui/SharedVideoPlayer';
 import { Avatar } from '../../src/components/ui';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
@@ -410,8 +411,20 @@ export default function EventDetailScreen() {
         </View>
       ) : event ? (
         <ScrollView contentContainerStyle={styles.scroll} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
-          {/* Cover photo */}
-          {event.coverUrl ? (
+          {/* Cover photo / video */}
+          {event.coverUrl && event.coverMediaType === 'video' ? (
+            <>
+              <SharedVideoPlayer
+                uri={event.coverUrl}
+                autoplay={false}
+                muted
+                style={styles.cover}
+              />
+              <View style={styles.promoVideoBadge}>
+                <Text style={styles.promoVideoText}>Promotional video</Text>
+              </View>
+            </>
+          ) : event.coverUrl ? (
             <Image source={{ uri: event.coverUrl }} style={styles.cover} resizeMode="cover" />
           ) : (
             <View style={[styles.cover, styles.coverPlaceholder]}>
@@ -932,6 +945,8 @@ const styles = StyleSheet.create({
   scroll:             { paddingBottom: 120 },
   cover:              { width: '100%', height: 220 },
   coverPlaceholder:   { backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
+  promoVideoBadge:    { backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: space.md, paddingVertical: 4, alignSelf: 'flex-start', marginLeft: space.lg, marginTop: -28, borderRadius: radius.pill, zIndex: 1 },
+  promoVideoText:     { color: '#fff', fontSize: 11, fontWeight: '700' },
   body:               { padding: space.lg, gap: space.md },
   stateBadge:         { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill },
   stateBadgeText:     { fontSize: 12, fontWeight: '700' },

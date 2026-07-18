@@ -135,8 +135,11 @@ export function validateMedia(
  * service-role key — bypasses Storage RLS). Returns the public URL on success.
  * Steps: validate → get bearer token → fetch(uri)→blob → POST binary to API →
  * parse { url, path }. Rich error detail on failure.
+ *
+ * @param validateOpts  Surface-specific validation options (e.g. `{ surface: 'event' }`).
+ *   When omitted, the legacy highlight limit (10 s) is applied for backward compatibility.
  */
-export async function uploadMedia(media: PickedMedia): Promise<MediaUploadResult> {
+export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMediaOptions): Promise<MediaUploadResult> {
   if (!(_testConfiguredOverride ?? isSupabaseConfigured)) {
     return { ok: false, url: null, mediaType: null, errorKind: 'config_error', message: 'Backend not configured' };
   }
@@ -145,7 +148,7 @@ export async function uploadMedia(media: PickedMedia): Promise<MediaUploadResult
     return { ok: false, url: null, mediaType: null, errorKind: 'config_error', message: 'API base URL not configured' };
   }
 
-  const v = validateMedia(media);
+  const v = validateMedia(media, validateOpts);
   if (!v.ok) {
     return { ok: false, url: null, mediaType: null, errorKind: v.kind, message: v.message };
   }

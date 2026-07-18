@@ -443,6 +443,7 @@ const CreateEventSchema = z.object({
   startsAt:        z.string().optional(),
   endsAt:          z.string().optional(),
   coverUrl:        z.string().url().optional().nullable(),
+  coverMediaType:  z.enum(["image", "video"]).optional().nullable(),
   maxAttendees:    z.number().int().positive().optional().nullable(),
   ageMin:          z.number().int().min(13).max(100).optional().nullable(),
   ageMax:          z.number().int().min(13).max(100).optional().nullable(),
@@ -471,6 +472,7 @@ const UpdateEventSchema = z.object({
   startsAt:        z.string().nullable().optional(),
   endsAt:          z.string().nullable().optional(),
   coverUrl:        z.string().url().nullable().optional(),
+  coverMediaType:  z.enum(["image", "video"]).nullable().optional(),
   maxAttendees:    z.number().int().positive().nullable().optional(),
   ageMin:          z.number().int().min(13).max(100).nullable().optional(),
   ageMax:          z.number().int().min(13).max(100).nullable().optional(),
@@ -554,6 +556,7 @@ router.post("/events", async (req, res) => {
       starts_at:        b.startsAt ?? null,
       ends_at:          b.endsAt ?? null,
       cover_url:        b.coverUrl ?? null,
+      cover_media_type: b.coverMediaType ?? null,
       max_attendees:    b.maxAttendees ?? null,
       age_min:          b.ageMin ?? null,
       age_max:          b.ageMax ?? null,
@@ -576,6 +579,17 @@ router.post("/events", async (req, res) => {
     .single();
 
   if (error) { req.log.error({ err: error }, "create event"); sendError(res, "db_error", error.message); return; }
+
+  // Insert cover media record into event_media (best-effort; non-fatal)
+  if (b.coverUrl && b.coverMediaType) {
+    await sc.from("event_media").insert({
+      event_id:    (ev as any).id,
+      uploader_id: user.id,
+      media_url:   b.coverUrl,
+      media_type:  b.coverMediaType,
+      caption:     "cover",
+    }).then(undefined, (e: any) => { req.log.warn({ err: e }, "insert cover event_media failed (non-fatal)"); });
+  }
 
   // Insert host role record
   await sc.from("event_roles").insert({ event_id: (ev as any).id, user_id: user.id, role: "host" }).then(undefined, () => {});
@@ -1492,6 +1506,7 @@ router.post("/events/drafts/:draftId/publish", async (req, res) => {
     starts_at:        b.startsAt,
     ends_at:          b.endsAt ?? null,
     cover_url:        b.coverUrl ?? null,
+    cover_media_type: b.coverMediaType ?? null,
     max_attendees:    b.maxAttendees ?? null,
     age_min:          b.ageMin ?? null,
     age_max:          b.ageMax ?? null,
@@ -1512,6 +1527,17 @@ router.post("/events/drafts/:draftId/publish", async (req, res) => {
   }).select("*").single();
 
   if (error) { req.log.error({ err: error }, "publish draft"); sendError(res, "db_error", error.message); return; }
+
+  // Insert cover media record into event_media (best-effort; non-fatal)
+  if (b.coverUrl && b.coverMediaType) {
+    await sc.from("event_media").insert({
+      event_id:    (ev as any).id,
+      uploader_id: user.id,
+      media_url:   b.coverUrl,
+      media_type:  b.coverMediaType,
+      caption:     "cover",
+    }).then(undefined, (e: any) => { req.log.warn({ err: e }, "insert cover event_media (publish draft) failed (non-fatal)"); });
+  }
 
   // Delete the draft now that it's published
   await sc.from("event_drafts").delete().eq("id", draftId);
@@ -1773,6 +1799,7 @@ router.patch("/events/:id", async (req, res) => {
   if (b.startsAt        !== undefined) patch.starts_at        = b.startsAt;
   if (b.endsAt          !== undefined) patch.ends_at          = b.endsAt;
   if (b.coverUrl        !== undefined) patch.cover_url        = b.coverUrl;
+  if (b.coverMediaType  !== undefined) patch.cover_media_type = b.coverMediaType;
   if (b.maxAttendees    !== undefined) patch.max_attendees    = b.maxAttendees;
   if (b.ageMin          !== undefined) patch.age_min          = b.ageMin;
   if (b.ageMax          !== undefined) patch.age_max          = b.ageMax;
@@ -3160,6 +3187,7 @@ function formatEvent(ev: any, viewerId: string, opts?: { goingRsvp?: boolean; ho
     startsAt:            ev.starts_at ?? null,
     endsAt:              ev.ends_at ?? null,
     coverUrl:            ev.cover_url ?? null,
+    coverMediaType:      ev.cover_media_type ?? null,
     maxAttendees:        ev.max_attendees ?? null,
     ageMin:              ev.age_min ?? null,
     ageMax:              ev.age_max ?? null,

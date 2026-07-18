@@ -8,6 +8,7 @@
  */
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
+import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import {
   CalendarClock, MapPin, Users, ChevronRight,
   Bookmark, BookmarkCheck, Lock, Globe, UserCheck, ShieldCheck,
@@ -85,7 +86,13 @@ export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSave
       <View style={[styles.stripe, { backgroundColor: stateColor }]} />
 
       {/* Cover thumbnail */}
-      {event.coverUrl && !imgFailed ? (
+      {event.coverUrl && !imgFailed && event.coverMediaType === 'video' ? (
+        <VideoThumbnail
+          posterUri={event.coverUrl}
+          style={styles.thumb}
+          onPress={onPress}
+        />
+      ) : event.coverUrl && !imgFailed ? (
         <Image source={{ uri: event.coverUrl }} style={styles.thumb} resizeMode="cover" onError={() => setImgFailed(true)} />
       ) : (
         <View style={[styles.thumb, styles.thumbPlaceholder, { backgroundColor: catColor + '22' }]}>

@@ -53,6 +53,7 @@ export interface EventSummary {
   startsAt: string | null;
   endsAt: string | null;
   coverUrl: string | null;
+  coverMediaType: 'image' | 'video' | null;
   maxAttendees: number | null;
   ageMin: number | null;
   ageMax: number | null;
@@ -156,6 +157,7 @@ export interface CreateEventInput {
   startsAt?: string;
   endsAt?: string;
   coverUrl?: string | null;
+  coverMediaType?: 'image' | 'video' | null;
   maxAttendees?: number | null;
   ageMin?: number | null;
   ageMax?: number | null;
@@ -244,6 +246,7 @@ export interface UpdateEventInput {
   startsAt?: string | null;
   endsAt?: string | null;
   coverUrl?: string | null;
+  coverMediaType?: 'image' | 'video' | null;
   maxAttendees?: number | null;
   ageMin?: number | null;
   ageMax?: number | null;
