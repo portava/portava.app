@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
@@ -51,6 +51,7 @@ import { PassportTabReorderSheet } from '../../src/components/passport/PassportT
 import { resolveTabOrder, type PassportTabKey, TAB_LABELS } from '../../src/components/passport/passportTabs';
 import { MapTab } from '../../src/components/MapTab';
 import { DestinationsTab } from '../../src/components/passport/DestinationsTab';
+import { groupByDestination } from '../../src/utils/destinationGrouping';
 import { useAvailabilityStore } from '../../src/context/AvailabilityStore';
 import { resolveAvailabilityChip } from '../../src/lib/availabilityChip';
 
@@ -355,6 +356,10 @@ function PassportContent({
   onArrangeTabs: () => void;
 }) {
   const verifiedStamps = (stamps ?? []).filter((st) => !st.locked).length;
+  const destinationCount = useMemo(
+    () => groupByDestination(memories, stamps, postcards, trips).length,
+    [memories, stamps, postcards, trips],
+  );
   const [pendingCount, setPendingCount] = useState(0);
   const [coverUploading, setCoverUploading] = useState(false);
   const [buddyProfile, setBuddyProfile] = useState<BuddyProfile | null | undefined>(undefined);
@@ -434,7 +439,9 @@ function PassportContent({
             onPress={() => setTab(key)}
           >
             <Text style={[s.tabText, tab === key && s.tabTextActive]}>
-              {TAB_LABELS[key].toUpperCase()}
+              {key === 'destinations' && destinationCount > 0
+                ? `${TAB_LABELS[key]} · ${destinationCount}`.toUpperCase()
+                : TAB_LABELS[key].toUpperCase()}
             </Text>
             {tab === key && <View style={s.tabIndicator} />}
           </Pressable>
