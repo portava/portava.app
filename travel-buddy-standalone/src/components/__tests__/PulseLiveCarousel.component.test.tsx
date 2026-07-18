@@ -13,7 +13,7 @@
  */
 
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { PulseLiveCarousel } from '../PulseLiveCarousel.tsx';
 import type { CityEvent } from '../../types/models.ts';
 
@@ -158,7 +158,10 @@ describe('PulseLiveCarousel', () => {
   });
 
   it('tapping a dot switches to the corresponding event', async () => {
-    jest.useFakeTimers();
+    // Uses real timers — fake-timer + advanceTimersByTime in a React 19 async
+    // test fires setActiveIndex inside a timer callback without an act() scope,
+    // which React 19 wraps in an internal async act that poisons subsequent
+    // renders in the file.  Real timers + waitFor avoids that entirely.
     const ev1 = ongoingEvent({ id: 'evt-a', title: 'Event Alpha' });
     const ev2 = ongoingEvent({ id: 'evt-b', title: 'Event Beta' });
     const ev3 = ongoingEvent({ id: 'evt-c', title: 'Event Gamma' });
@@ -167,15 +170,14 @@ describe('PulseLiveCarousel', () => {
     // Initially shows first event
     expect(screen.getByText('Event Alpha')).toBeTruthy();
 
-    // Tap the third dot ("Go to event 3")
+    // Tap the third dot — switchTo() fires setTimeout(setActiveIndex, 150ms)
     const dot3 = screen.getByRole('button', { name: 'Go to event 3' });
     fireEvent.press(dot3);
 
-    // After the crossfade half-duration, index switches
-    jest.advanceTimersByTime(200);
-
-    expect(screen.getByText('Event Gamma')).toBeTruthy();
-    jest.useRealTimers();
+    // Poll until the 150ms crossfade delay fires and the re-render propagates.
+    await waitFor(() => expect(screen.getByText('Event Gamma')).toBeTruthy(), {
+      timeout: 500,
+    });
   });
 
   it('renders the fallback — not a crash — when every event has a malformed date', async () => {
