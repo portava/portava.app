@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, Pressable, ScrollView, StyleSheet, Platform, TextInput, Modal,
+  View, Text, Pressable, ScrollView, StyleSheet, TextInput, Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -132,7 +132,6 @@ export default function DiscoveryHub() {
   const [debouncedAgeRange, setDebouncedAgeRange] = useState<{ min: number | null; max: number | null }>({ min: null, max: null });
   const [selectedPlace, setSelectedPlace] = useState<DiscoveryPlace | null>(null);
   const [detailVisible, setDetailVisible] = useState(false);
-  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [layoverOpen, setLayoverOpen] = useState(false);
   const [routeBuilderDraft, setRouteBuilderDraft] = useState<RouteStopDraft | null>(null);
   const [routeBuilderOpen, setRouteBuilderOpen] = useState(false);
@@ -275,16 +274,12 @@ export default function DiscoveryHub() {
   // DiscoveryCategoryTab fires its own onFiltersChange with its initial state.
   const handleTabChange = (key: DiscoveryCategory) => {
     setActiveTab(key);
-    setViewMode('list');
     setActiveFilters({ radiusKm: 10, openNow: false, minRating: null });
   };
 
   const handleFiltersChange = useCallback((filters: DiscoveryFilters) => {
     setActiveFilters(filters);
   }, []);
-
-  // Map toggle is shown on all native tabs (category tabs + for_you).
-  const showMapToggle = Platform.OS !== 'web';
 
   const handleAddToPlan = useCallback((place: { id: string; name: string; category: string; address?: string | null }) => {
     setDetailVisible(false);
@@ -554,37 +549,23 @@ export default function DiscoveryHub() {
           })}
         </ScrollView>
 
-        {showMapToggle && (
-          <View style={styles.viewToggle}>
-            <Pressable
-              style={[styles.toggleBtn, viewMode === 'list' && styles.toggleBtnActive]}
-              onPress={() => setViewMode('list')}
-            >
-              <Text style={[styles.toggleBtnText, viewMode === 'list' && styles.toggleBtnTextActive]}>
-                List
-              </Text>
-            </Pressable>
-            <Pressable
-              style={styles.toggleBtn}
-              onPress={() => {
-                const params: Record<string, string> = { entityTypes: 'places,travelers' };
-                if (destinationLat != null && Number.isFinite(destinationLat)) params.lat = String(destinationLat);
-                if (destinationLng != null && Number.isFinite(destinationLng)) params.lng = String(destinationLng);
-                if (destinationZoom) params.zoom = String(destinationZoom);
-                if (destination) params.title = destination;
-                // Pass the active category so the full-screen map fetches the
-                // same discovery places the user was just browsing in the tab.
-                params.category = activeTab;
-                router.push({ pathname: '/map', params } as any);
-              }}
-            >
-              <MapPin size={11} color={color.mute} />
-              <Text style={styles.toggleBtnText}>
-                Map
-              </Text>
-            </Pressable>
-          </View>
-        )}
+        <Pressable
+          style={styles.viewToggle}
+          onPress={() => {
+            const params: Record<string, string> = { entityTypes: 'places,travelers' };
+            if (destinationLat != null && Number.isFinite(destinationLat)) params.lat = String(destinationLat);
+            if (destinationLng != null && Number.isFinite(destinationLng)) params.lng = String(destinationLng);
+            if (destinationZoom) params.zoom = String(destinationZoom);
+            if (destination) params.title = destination;
+            // Pass the active category so the full-screen map fetches the
+            // same discovery places the user was just browsing in the tab.
+            params.category = activeTab;
+            router.push({ pathname: '/map', params } as any);
+          }}
+        >
+          <MapPin size={11} color={color.mute} />
+          <Text style={styles.toggleBtnText}>Map</Text>
+        </Pressable>
       </View>
 
       {/* ── Following highlights strip ── */}
@@ -697,7 +678,6 @@ export default function DiscoveryHub() {
               lng={destinationLng}
               userLat={locationState.coords?.lat ?? null}
               userLng={locationState.coords?.lng ?? null}
-              viewMode={viewMode}
               fallbackZoom={destinationZoom}
               sortBy={activeFilters.sortBy ?? null}
               bottomInset={bottomInset}
@@ -716,7 +696,6 @@ export default function DiscoveryHub() {
             onAddToRoute={handleAddToRoute}
             onPickDestination={handlePickDestination}
             contextMode={contextMode}
-            viewMode={viewMode}
             ageFilter={ageFilter}
             customMinAge={debouncedAgeRange.min}
             customMaxAge={debouncedAgeRange.max}
@@ -882,24 +861,10 @@ const styles = StyleSheet.create({
     borderLeftWidth: 1,
     borderLeftColor: color.haze,
   },
-  toggleBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: space.sm,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
-  },
-  toggleBtnActive: {
-    backgroundColor: color.signal + '14',
-  },
   toggleBtnText: {
     fontSize: 11,
     fontWeight: '600',
     color: color.mute,
-  },
-  toggleBtnTextActive: {
-    color: color.signal,
   },
   tab: {
     flexDirection: 'row',

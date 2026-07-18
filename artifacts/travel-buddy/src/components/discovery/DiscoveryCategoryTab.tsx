@@ -221,7 +221,6 @@ interface DiscoveryCategoryTabProps {
   /** Fired with a full normalized Place when the user picks a popular destination chip. */
   onPickDestination?: (place: Place) => void;
   contextMode?: DiscoveryContextMode | null;
-  viewMode?: 'list' | 'map';
   ageFilter?: import('../../../src/services/discovery').DiscoveryAgeFilter | null;
   customMinAge?: number | null;
   customMaxAge?: number | null;
@@ -247,7 +246,6 @@ export function DiscoveryCategoryTab({
   onAddToRoute,
   onPickDestination,
   contextMode,
-  viewMode = 'list',
   ageFilter,
   customMinAge,
   customMaxAge,

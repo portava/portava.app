@@ -41,7 +41,6 @@ interface ForYouTabProps {
   userLat?: number | null;
   userLng?: number | null;
   fallbackZoom?: number;
-  viewMode?: 'list' | 'map';
   sortBy?: string | null;
   bottomInset?: number;
   /** Reanimated scroll handler forwarded from the parent discovery screen. */
