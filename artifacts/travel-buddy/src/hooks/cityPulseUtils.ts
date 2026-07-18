@@ -77,7 +77,19 @@ export function resolveEventsOnError(isDev: boolean, fallback: CityEvent[]): Cit
 }
 
 /**
- * Fetch live events from /api/events and return them as CityEvent[].
+ * Result shape returned by fetchCityEvents.
+ * `sessionId` is the UUID the server stamped on the impression batch — pass it
+ * through to any recordOutcome() call so the learning loop can join impressions
+ * to outcomes.
+ */
+export interface FetchCityEventsResult {
+  events: CityEvent[];
+  sessionId: string | undefined;
+}
+
+/**
+ * Fetch live events from /api/events and return the mapped events together
+ * with the session ID that the server attached to this impression batch.
  * Throws on any non-ok HTTP status so callers can fall back gracefully.
  *
  * @param base - API base URL (e.g. https://xyz.replit.dev)
@@ -90,14 +102,15 @@ export async function fetchCityEvents(
   token: string,
   city: string,
   currentCitySlug: string,
-): Promise<CityEvent[]> {
+): Promise<FetchCityEventsResult> {
   const params = new URLSearchParams({ city, state: 'open', limit: '20' });
   const r = await fetch(`${base}/api/events?${params}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  const data = (await r.json()) as { events?: unknown[] };
-  return (data?.events ?? []).map((e) =>
+  const data = (await r.json()) as { events?: unknown[]; sessionId?: string };
+  const events = (data?.events ?? []).map((e) =>
     mapApiEvent(e as Record<string, unknown>, city, currentCitySlug),
   );
+  return { events, sessionId: data?.sessionId };
 }

@@ -20,6 +20,7 @@ import { resolveStatus } from '../lib/availability.ts';
 import { useAvailabilityStore } from '../context/AvailabilityStore.tsx';
 import { freshToken } from '../services/apiToken.ts';
 export { mapApiEvent, fetchCityEvents, resolveEventsOnSuccess, resolveEventsOnError } from './cityPulseUtils.ts';
+export type { FetchCityEventsResult } from './cityPulseUtils.ts';
 import { fetchCityEvents, resolveEventsOnSuccess, resolveEventsOnError } from './cityPulseUtils.ts';
 
 /** How long fetched events are considered fresh before a background re-fetch fires. */
@@ -64,6 +65,10 @@ export function useCityPulse({
   // Production: start with empty list and show real events only.
   // Dev only: fall back to mockEvents so the screen isn't blank during development.
   const [events, setEvents] = useState<CityEvent[]>([]);
+  // sessionId is the UUID the server stamped on the impression batch for this
+  // fetch — consumers must forward it to recordOutcome() so impressions and
+  // outcomes can be joined in rank_events.
+  const [sessionId, setSessionId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     const city = currentCitySlug?.replace(/-/g, ' ') ?? '';
@@ -74,9 +79,11 @@ export function useCityPulse({
       return;
     }
 
-    // Clear stale events immediately so the previous city's events are never
-    // shown under the new city's name while the debounce or fetch is in flight.
+    // Clear stale events and sessionId immediately so the previous city's data
+    // is never shown under the new city's name while the debounce or fetch is
+    // in flight.
     setEvents([]);
+    setSessionId(undefined);
 
     let cancelled = false;
     let ttlTimer: ReturnType<typeof setTimeout>;
@@ -88,8 +95,9 @@ export function useCityPulse({
           return;
         }
         fetchCityEvents(base, token, city, currentCitySlug ?? '')
-          .then((fetched) => {
+          .then(({ events: fetched, sessionId: sid }) => {
             if (cancelled) return;
+            setSessionId(sid);
             setEvents(resolveEventsOnSuccess(fetched));
             // Schedule a background re-fetch once the TTL expires so events
             // stay fresh without requiring the user to pull-to-refresh.
@@ -125,5 +133,5 @@ export function useCityPulse({
   );
 
   const status = resolveStatus(availability, new Date().toISOString(), currentCitySlug);
-  return { buckets, availability, status, loading: false, error: null };
+  return { buckets, availability, status, sessionId, loading: false, error: null };
 }

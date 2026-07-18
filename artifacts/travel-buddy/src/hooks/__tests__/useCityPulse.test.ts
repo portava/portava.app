@@ -140,7 +140,7 @@ describe('fetchCityEvents — fetch, map, and error paths', () => {
     };
     globalThis.fetch = async () => makeFakeResponse(true, { events: [apiEvent] }) as Response;
 
-    const results = await fetchCityEvents('https://api.example.com', 'test-token', 'Cebu', 'cebu');
+    const { events: results } = await fetchCityEvents('https://api.example.com', 'test-token', 'Cebu', 'cebu');
 
     assert.equal(results.length, 1);
     assert.equal(results[0].id,            'ev1');
@@ -154,8 +154,23 @@ describe('fetchCityEvents — fetch, map, and error paths', () => {
   test('returns [] when the API returns an empty events array (valid no-events state)', async () => {
     globalThis.fetch = async () => makeFakeResponse(true, { events: [] }) as Response;
 
-    const results = await fetchCityEvents('https://api.example.com', 'test-token', 'Cebu', 'cebu');
+    const { events: results } = await fetchCityEvents('https://api.example.com', 'test-token', 'Cebu', 'cebu');
     assert.equal(results.length, 0);
+  });
+
+  test('returns the sessionId from the API response when present', async () => {
+    globalThis.fetch = async () =>
+      makeFakeResponse(true, { events: [], sessionId: 'sess-abc-123' }) as Response;
+
+    const { sessionId } = await fetchCityEvents('https://api.example.com', 'test-token', 'Cebu', 'cebu');
+    assert.equal(sessionId, 'sess-abc-123');
+  });
+
+  test('returns undefined sessionId when the API response omits it', async () => {
+    globalThis.fetch = async () => makeFakeResponse(true, { events: [] }) as Response;
+
+    const { sessionId } = await fetchCityEvents('https://api.example.com', 'test-token', 'Cebu', 'cebu');
+    assert.equal(sessionId, undefined);
   });
 
   test('throws on HTTP 503 so the hook can catch and fall back to mock data in dev', async () => {
@@ -234,9 +249,9 @@ const MOCK_EVENTS = [
 
 describe('resolveEventsOnSuccess — live events replace mock data when fetch succeeds', () => {
   test('returns the fetched live events array when the API returned events', async () => {
-    const fetched = await fetchCityEvents(
+    await fetchCityEvents(
       'https://api.example.com', 'tok', 'Cebu', 'cebu',
-    ).catch(() => [] as ReturnType<typeof resolveEventsOnSuccess>);
+    ).catch(() => undefined);
 
     // Simulate successful fetch with 2 live events
     const liveEvents = [
@@ -253,7 +268,6 @@ describe('resolveEventsOnSuccess — live events replace mock data when fetch su
     assert.equal(result[1].id, 'lv2');
     // Ensures live events are NOT replaced by mock data
     assert.ok(!result.some(e => e.id === 'm1'), 'mock events must not appear in result');
-    void fetched;
   });
 
   test('returns empty array (not mock data) when API returns zero events', () => {
@@ -269,7 +283,7 @@ describe('resolveEventsOnSuccess — live events replace mock data when fetch su
     };
     globalThis.fetch = async () => makeFakeResponse(true, { events: [apiEvent] }) as Response;
 
-    const fetched = await fetchCityEvents('https://api.example.com', 'tok', 'Manila', 'manila');
+    const { events: fetched } = await fetchCityEvents('https://api.example.com', 'tok', 'Manila', 'manila');
     const resolved = resolveEventsOnSuccess(fetched);
 
     assert.equal(resolved.length, 1);
