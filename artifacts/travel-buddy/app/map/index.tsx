@@ -21,9 +21,10 @@ import {
 import { useLocalSearchParams } from 'expo-router';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MapPin } from 'lucide-react-native';
+import { MapPin, X as XIcon } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens.ts';
 import { MapTopControls } from '../../src/components/map/MapTopControls.tsx';
+import { AskCompassBar } from '../../src/components/map/AskCompassBar.tsx';
 import { useLocationContext } from '../../src/context/LocationContext.tsx';
 import { getDiscoveryPlaces } from '../../src/services/discovery.ts';
 import type { DiscoveryPlace, DiscoveryCategory } from '../../src/services/discovery.ts';
@@ -32,7 +33,7 @@ import {
   MapFilterSheet,
   loadEnabledLayers,
 } from '../../src/components/map/MapFilterSheet.tsx';
-import type { ToggleableEntityType } from '../../src/types/mapTypes.ts';
+import type { MapEntity, ToggleableEntityType } from '../../src/types/mapTypes.ts';
 import { TOGGLEABLE_LAYERS } from '../../src/types/mapTypes.ts';
 
 // ── Lazy-load native map component only on native ─────────────────────────────
@@ -289,12 +290,31 @@ export default function FullScreenMapScreen() {
 
   // ── Entity data fetch ───────────────────────────────────────────────────────
   // `title` is used as the city name — passed in from Discovery / Trips entry points.
-  const { entities } = useMapEntities({
+  const { entities: defaultEntities } = useMapEntities({
     enabledLayers,
     city: title,
     lat: fallbackLat,
     lng: fallbackLng,
   });
+
+  // ── Compass search override ─────────────────────────────────────────────────
+  // When a Compass query is active, compassOverrideEntities replaces defaultEntities
+  // for both the marker layers and the carousel.  Cleared via the ✕ dismiss button.
+  const [compassOverrideEntities, setCompassOverrideEntities] = useState<MapEntity[] | null>(null);
+  const [compassQuery, setCompassQuery] = useState<string | null>(null);
+
+  function handleCompassResults(entities: MapEntity[], query: string) {
+    setCompassOverrideEntities(entities);
+    setCompassQuery(query);
+  }
+
+  function handleCompassClear() {
+    setCompassOverrideEntities(null);
+    setCompassQuery(null);
+  }
+
+  // The active entity list: Compass override takes precedence when set.
+  const entities = compassOverrideEntities ?? defaultEntities;
 
   // Web: show static placeholder.
   if (Platform.OS === 'web') {
@@ -341,6 +361,37 @@ export default function FullScreenMapScreen() {
         onFiltersPress={() => setFilterSheetOpen(true)}
       />
 
+      {/* ── AskCompassBar + active filter label — floating bottom overlay ── */}
+      {/* pointerEvents="box-none" lets map touches pass through the transparent
+          areas; the bar and chips capture their own touch events normally. */}
+      <View style={s.bottomOverlay} pointerEvents="box-none">
+        {/* Active Compass filter label — shown while a query is active */}
+        {compassQuery ? (
+          <View style={s.filterLabel}>
+            <Text style={s.filterLabelText} numberOfLines={1}>
+              Showing: {compassQuery}
+            </Text>
+            <Pressable
+              style={s.filterClearBtn}
+              onPress={handleCompassClear}
+              hitSlop={8}
+            >
+              <XIcon size={12} color="#fff" />
+            </Pressable>
+          </View>
+        ) : null}
+
+        {/* Ask Compass search bar */}
+        <AskCompassBar
+          city={title ?? ''}
+          userLat={userLat}
+          userLng={userLng}
+          bottomInset={insets.bottom}
+          onResults={handleCompassResults}
+          onClear={handleCompassClear}
+        />
+      </View>
+
       {/* Layer filter bottom sheet */}
       <MapFilterSheet
         visible={filterSheetOpen}
@@ -356,5 +407,46 @@ const s = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: '#13213A',
+  },
+  // Floating bottom overlay — stacked above the map, transparent background
+  // so the map is visible through the gaps between the bar and chips.
+  bottomOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    gap: space.xs,
+    paddingBottom: space.sm,
+  },
+  // Active filter label chip
+  filterLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    backgroundColor: 'rgba(10,61,74,0.92)',
+    borderRadius: radius.pill,
+    paddingHorizontal: space.md,
+    paddingVertical: 6,
+    gap: space.xs,
+    marginBottom: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  filterLabelText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    maxWidth: 260,
+  },
+  filterClearBtn: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
