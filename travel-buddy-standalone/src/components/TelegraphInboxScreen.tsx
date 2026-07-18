@@ -18,6 +18,7 @@ import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { TG, TG_AVATAR } from '../theme/telegraphTokens.ts';
 import { TelegraphAvatar, TelegraphRow } from './telegraph/TelegraphPrimitives.tsx';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
+import { useBottomInset } from '../hooks/useBottomInset.ts';
 import type { ThreadSummary, MessageRequest } from '../services/messaging.ts';
 import { circleCardInboxPreview } from './CircleStatusCardMessage.logic';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
@@ -287,6 +288,7 @@ interface Props {
 
 export function TelegraphInboxScreen({ topInset = 0 }: Props) {
   const insets = useSafeAreaInsets();
+  const bottomInset = useBottomInset();
   const { isAuthed, userId } = useSession();
   const { data: threads, loading, error, reload } = useMyThreads();
   const {
@@ -351,9 +353,10 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
 
   const pt = Math.max(insets.top, topInset);
 
-  return (
-    <KeyboardSafeScrollView>
-    <View style={[s.screen, { paddingTop: pt }]}>
+  // Header, search bar, and filter chips — used as ListHeaderComponent so they
+  // scroll with the list content rather than staying fixed above it.
+  const listHeader = (
+    <View style={{ paddingTop: pt }}>
       <View style={s.header}>
         <View style={s.brandRow}>
           <View style={s.brandIcon}>
@@ -363,11 +366,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
         </View>
       </View>
 
-      {!isAuthed ? (
-        <View style={s.center}>
-          <Text style={s.emptyBody}>Sign in to view your messages.</Text>
-        </View>
-      ) : (
+      {isAuthed && (
         <>
           <View style={s.searchWrap}>
             <Search size={16} color={color.faint} style={s.searchIcon} />
@@ -407,59 +406,99 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
               );
             })}
           </ScrollView>
+        </>
+      )}
+    </View>
+  );
 
-          {error ? (
-            <View style={s.center}><Text style={[s.emptyBody, { color: '#B33' }]}>{error}</Text></View>
+  // Not signed in — single FlatList with header + sign-in message
+  if (!isAuthed) {
+    return (
+      <KeyboardSafeScrollView style={{ backgroundColor: TG.surface }}>
+        <FlatList
+          data={[]}
+          keyExtractor={() => ''}
+          ListHeaderComponent={listHeader}
+          ListEmptyComponent={
+            <View style={s.center}>
+              <Text style={s.emptyBody}>Sign in to view your messages.</Text>
+            </View>
+          }
+          contentContainerStyle={{ paddingBottom: bottomInset }}
+          renderItem={() => null}
+        />
+      </KeyboardSafeScrollView>
+    );
+  }
+
+  // Requests pane — its own FlatList with the shared header
+  if (filter === 'requests') {
+    return (
+      <KeyboardSafeScrollView style={{ backgroundColor: TG.surface }}>
+        <RequestsPane
+          requests={filteredRequests}
+          loading={reqLoading}
+          onAccept={acceptRequest}
+          onDecline={declineRequest}
+          listHeader={listHeader}
+          bottomInset={bottomInset}
+        />
+      </KeyboardSafeScrollView>
+    );
+  }
+
+  // Loading / error / empty / thread list — single FlatList
+  return (
+    <KeyboardSafeScrollView style={{ backgroundColor: TG.surface }}>
+      <FlatList
+        data={
+          error || loading || filtered.length === 0
+            ? []
+            : buildInboxItems(filtered, filter, requestCount)
+        }
+        keyExtractor={(item) => item._t === 'thread' ? item.thread.id : item.key}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={
+          error ? (
+            <View style={s.center}>
+              <Text style={[s.emptyBody, { color: '#B33' }]}>{error}</Text>
+            </View>
           ) : loading ? (
             <View style={{ paddingTop: space.sm }}>
               {[0, 1, 2, 3, 4, 5].map((i) => <SkeletonRow key={i} />)}
             </View>
-          ) : filter === 'requests' ? (
-            <RequestsPane
-              requests={filteredRequests}
-              loading={reqLoading}
-              onAccept={acceptRequest}
-              onDecline={declineRequest}
-            />
-          ) : filtered.length === 0 ? (
-            <EmptyState filter={filter} />
           ) : (
-            <FlatList
-              data={buildInboxItems(filtered, filter, requestCount)}
-              keyExtractor={(item) =>
-                item._t === 'thread' ? item.thread.id : item.key}
-              contentContainerStyle={{ paddingBottom: space.xxxl }}
-              renderItem={({ item }) => {
-                if (item._t === 'divider') return <SectionDivider label={item.label} />;
-                if (item._t === 'requests') {
-                  return (
-                    <TelegraphRow
-                      avatar={
-                        <View style={s.requestsRowIcon}>
-                          <UserCheck size={20} color={color.signal} />
-                        </View>
-                      }
-                      onPress={() => setFilter('requests')}
-                    >
-                      <View style={s.nameRow}>
-                        <Text style={[s.name, s.nameBold]}>Message requests</Text>
-                        <View style={s.unreadBubble}>
-                          <Text style={s.unreadText}>{item.count > 99 ? '99+' : item.count}</Text>
-                        </View>
-                      </View>
-                      <Text style={s.preview} numberOfLines={1}>
-                        People you haven't chatted with yet
-                      </Text>
-                    </TelegraphRow>
-                  );
+            <EmptyState filter={filter} />
+          )
+        }
+        contentContainerStyle={{ paddingBottom: bottomInset }}
+        renderItem={({ item }) => {
+          if (item._t === 'divider') return <SectionDivider label={item.label} />;
+          if (item._t === 'requests') {
+            return (
+              <TelegraphRow
+                avatar={
+                  <View style={s.requestsRowIcon}>
+                    <UserCheck size={20} color={color.signal} />
+                  </View>
                 }
-                return <ThreadRow item={item.thread} userId={userId} />;
-              }}
-            />
-          )}
-        </>
-      )}
-    </View>
+                onPress={() => setFilter('requests')}
+              >
+                <View style={s.nameRow}>
+                  <Text style={[s.name, s.nameBold]}>Message requests</Text>
+                  <View style={s.unreadBubble}>
+                    <Text style={s.unreadText}>{item.count > 99 ? '99+' : item.count}</Text>
+                  </View>
+                </View>
+                <Text style={s.preview} numberOfLines={1}>
+                  People you haven't chatted with yet
+                </Text>
+              </TelegraphRow>
+            );
+          }
+          return <ThreadRow item={item.thread} userId={userId} />;
+        }}
+      />
     </KeyboardSafeScrollView>
   );
 }
@@ -750,34 +789,19 @@ function RequestsPane({
   loading,
   onAccept,
   onDecline,
+  listHeader,
+  bottomInset,
 }: {
   requests: MessageRequest[];
   loading: boolean;
   onAccept: (requestId: string) => Promise<{ ok: boolean; data: { status: string; threadId: string } | null }>;
   onDecline: (requestId: string) => Promise<{ ok: boolean; data: { status: string } | null }>;
+  listHeader?: React.ReactElement;
+  bottomInset: number;
 }) {
-  if (loading) {
-    return (
-      <View style={s.center}>
-        <ActivityIndicator color={color.signal} />
-      </View>
-    );
-  }
-
-  if (requests.length === 0) {
-    return (
-      <View style={s.center}>
-        <Text style={s.emptyTitle}>No pending requests</Text>
-        <Text style={s.emptyBody}>
-          Message requests from people you don't know yet will appear here.
-        </Text>
-      </View>
-    );
-  }
-
   // Dedup by requestId in case the API returns duplicates
   const seen = new Set<string>();
-  const uniqueRequests = requests.filter((r) => {
+  const uniqueRequests = loading ? [] : requests.filter((r) => {
     if (seen.has(r.requestId)) return false;
     seen.add(r.requestId);
     return true;
@@ -787,14 +811,31 @@ function RequestsPane({
     <FlatList
       data={uniqueRequests}
       keyExtractor={(item) => item.requestId}
-      contentContainerStyle={{ paddingBottom: space.xxxl }}
+      contentContainerStyle={{ paddingBottom: bottomInset }}
       ListHeaderComponent={
-        <View style={rc.safetyBar}>
-          <ShieldOff size={13} color={color.mute} />
-          <Text style={rc.safetyText}>
-            These people aren't in your circles yet. They won't know you've seen their request until you accept.
-          </Text>
-        </View>
+        <>
+          {listHeader}
+          <View style={rc.safetyBar}>
+            <ShieldOff size={13} color={color.mute} />
+            <Text style={rc.safetyText}>
+              These people aren't in your circles yet. They won't know you've seen their request until you accept.
+            </Text>
+          </View>
+        </>
+      }
+      ListEmptyComponent={
+        loading ? (
+          <View style={s.center}>
+            <ActivityIndicator color={color.signal} />
+          </View>
+        ) : (
+          <View style={s.center}>
+            <Text style={s.emptyTitle}>No pending requests</Text>
+            <Text style={s.emptyBody}>
+              Message requests from people you don't know yet will appear here.
+            </Text>
+          </View>
+        )
       }
       renderItem={({ item }) => (
         <RequestCard
@@ -819,7 +860,6 @@ function RequestsPane({
 }
 
 const s = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: TG.surface },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl },
 
   header: {
