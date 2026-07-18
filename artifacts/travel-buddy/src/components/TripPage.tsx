@@ -1,5 +1,6 @@
 import React, { useState, useEffect, Component, type ErrorInfo, type ReactNode } from 'react';
 import { View, Text, Image, Pressable, ScrollView, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { SharedVideoPlayer } from './ui/SharedVideoPlayer.tsx';
 import { router } from 'expo-router';
 import Svg, { Path } from 'react-native-svg';
 import {
@@ -47,9 +48,15 @@ export function TripHero({ trip }: { trip: TripDetail }) {
   return (
     <View style={hero.wrap}>
       <View style={hero.imageCard}>
-        <View style={hero.imageBg}>
-          <View style={hero.stampMark}><Plane size={16} color={color.onInk} /><Text style={hero.stampText}>CEBU</Text></View>
-        </View>
+        {trip.coverMediaType === 'video' && trip.coverUrl ? (
+          <SharedVideoPlayer uri={trip.coverUrl} autoplay muted loop style={hero.imageBg} />
+        ) : trip.coverUrl ? (
+          <Image source={{ uri: trip.coverUrl }} style={hero.imageBg} resizeMode="cover" />
+        ) : (
+          <View style={hero.imageBg}>
+            <View style={hero.stampMark}><Plane size={16} color={color.onInk} /><Text style={hero.stampText}>CEBU</Text></View>
+          </View>
+        )}
         <View style={hero.identity}>
           <View style={hero.titleRow}>
             <Text style={hero.title}>{trip.title}</Text>

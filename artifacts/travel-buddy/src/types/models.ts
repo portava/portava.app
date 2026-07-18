@@ -716,6 +716,7 @@ export interface TripDetail {
   openToMeet: boolean;
   availabilityLabel?: string;
   coverUrl: string;
+  coverMediaType?: 'image' | 'video' | null;
   progress: number;
   progressSteps: TripProgressStep[];
   nextUpPlanId?: ID | null;

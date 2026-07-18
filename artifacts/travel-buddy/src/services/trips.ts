@@ -62,6 +62,7 @@ export interface TripRow {
   travelStyle: string | null;
   openToMeet: boolean;
   coverUrl: string | null;
+  coverMediaType: 'image' | 'video' | null;
   progress: number;
   tripType: string | null;
   timezone: string | null;
@@ -87,6 +88,7 @@ function mapTrip(r: any): TripRow {
     destinationCountry: r.destination_country, neighborhoods: r.neighborhoods ?? [],
     startDate: r.start_date, endDate: r.end_date, status: r.status, visibility: r.visibility,
     travelStyle: r.travel_style, openToMeet: r.open_to_meet, coverUrl: r.cover_url,
+    coverMediaType: (r.cover_media_type as 'image' | 'video' | null) ?? null,
     progress: r.progress ?? 0,
     tripType: r.trip_type ?? null,
     timezone: r.timezone ?? null,
@@ -130,7 +132,8 @@ export interface CreateTripInput {
   endDate?: string;
   status?: TripStatus;
   visibility?: TripVisibility;
-  coverUrl?: string;
+  coverUrl?: string | null;
+  coverMediaType?: 'image' | 'video' | null;
   tripNotes?: string | null;
 }
 
@@ -164,6 +167,7 @@ export async function createTrip(input: CreateTripInput): Promise<TripRow | null
       status: input.status ?? 'planning',
       visibility: input.visibility ?? 'private',
       coverUrl: input.coverUrl,
+      coverMediaType: input.coverMediaType ?? null,
       tripNotes: input.tripNotes ?? null,
     }),
   });
@@ -190,6 +194,7 @@ export async function updateTrip(id: string, patch: Partial<CreateTripInput & { 
   if (patch.status !== undefined) body.status = patch.status;
   if (patch.visibility !== undefined) body.visibility = patch.visibility;
   if (patch.coverUrl !== undefined) body.coverUrl = patch.coverUrl;
+  if (patch.coverMediaType !== undefined) body.coverMediaType = patch.coverMediaType;
   if (patch.tripNotes !== undefined) body.tripNotes = patch.tripNotes;
   if (patch.progress !== undefined) body.progress = patch.progress;
   const res = await fetch(`${apiBase}/api/trips/${id}`, {

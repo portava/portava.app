@@ -213,6 +213,7 @@ function TripDetailScreen() {
     travelStyle: realTrip.travelStyle ?? '',
     openToMeet: realTrip.openToMeet,
     coverUrl: realTrip.coverUrl ?? '',
+    coverMediaType: realTrip.coverMediaType ?? null,
     progress: realTrip.progress,
     progressSteps: [],
     timeline: [],

@@ -1,16 +1,20 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, Pressable, ActivityIndicator,
-  ScrollView, StyleSheet, Alert,
+  ScrollView, StyleSheet, Alert, Image,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { router, useLocalSearchParams } from 'expo-router';
-import { CalendarDays, MapPin, X } from 'lucide-react-native';
+import { CalendarDays, MapPin, X, ImagePlus, Film } from 'lucide-react-native';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { useSession } from '../../src/context/SessionContext';
 import { getTrip, updateTrip } from '../../src/services/trips';
+import { uploadMedia, type PickedMedia } from '../../src/services/media';
+import { VIDEO_MAX_DURATION_SECONDS } from '../../src/constants/mediaLimits';
 import { GlobalCalendarPicker } from '../../src/components/selectors/GlobalCalendarPicker';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
+import { VideoThumbnail } from '../../src/components/ui/VideoThumbnail';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { formatDisplayDate, fromISODate } from '../../src/lib/dateTime/formatters';
 import type { Place } from '../../src/lib/location/placeTypes';
@@ -37,6 +41,9 @@ export default function EditTrip() {
   const [endDate, setEndDate] = useState<string | null>(null);
   const [visibility, setVisibility] = useState<TripVisibility>('private');
   const [tripNotes, setTripNotes] = useState('');
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [coverMediaType, setCoverMediaType] = useState<'image' | 'video' | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [calOpen, setCalOpen] = useState(false);
@@ -66,9 +73,57 @@ export default function EditTrip() {
       setEndDate(tr.endDate ?? null);
       setVisibility((tr.visibility as TripVisibility) ?? 'private');
       setTripNotes(tr.tripNotes ?? '');
+      setCoverUrl(tr.coverUrl ?? null);
+      setCoverMediaType(tr.coverMediaType ?? null);
       setLoading(false);
     }).catch(() => { setLoadError('Could not load trip.'); setLoading(false); });
   }, [id, live, userId]);
+
+  const pickCover = useCallback(async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permission needed', 'Allow access to your photos and videos to set a cover.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images', 'videos'],
+      quality: 0.9,
+      videoMaxDuration: VIDEO_MAX_DURATION_SECONDS.trip,
+      allowsEditing: false,
+    });
+    if (result.canceled || result.assets.length === 0) return;
+    const asset = result.assets[0];
+    const isVideo = asset.type === 'video';
+    const picked: PickedMedia = {
+      uri: asset.uri,
+      type: isVideo ? 'video' : 'image',
+      fileName: asset.fileName ?? `cover_${Date.now()}.${isVideo ? 'mp4' : 'jpg'}`,
+      mimeType: asset.mimeType ?? (isVideo ? 'video/mp4' : 'image/jpeg'),
+      fileSize: asset.fileSize ?? null,
+      width: asset.width ?? null,
+      height: asset.height ?? null,
+      duration: isVideo && asset.duration ? asset.duration / 1000 : null,
+    };
+    setUploading(true);
+    try {
+      const upload = await uploadMedia(picked, { surface: 'trip' });
+      if (!upload.ok || !upload.url) {
+        Alert.alert('Upload failed', upload.message ?? 'Could not upload cover. Please try again.');
+        return;
+      }
+      setCoverUrl(upload.url);
+      setCoverMediaType(isVideo ? 'video' : 'image');
+    } catch {
+      Alert.alert('Upload failed', 'Could not upload cover. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  }, []);
+
+  const removeCover = useCallback(() => {
+    setCoverUrl(null);
+    setCoverMediaType(null);
+  }, []);
 
   const save = useCallback(async () => {
     // Synchronous guard — checked before any async work or React state update.
@@ -92,6 +147,10 @@ export default function EditTrip() {
         endDate: endDate ?? undefined,
         visibility,
         tripNotes: tripNotes.trim() || null,
+        // Pass null explicitly when cover was removed so the API clears cover_url.
+        // Coercing to undefined would silently omit the field and leave the old cover.
+        coverUrl: coverUrl,
+        coverMediaType: coverMediaType,
       });
       if (!updated) { setError('Could not save changes. Try again.'); return; }
       router.replace(`/trip/${id}` as any);
@@ -101,7 +160,7 @@ export default function EditTrip() {
       setBusy(false);
       saveLock.current = false;
     }
-  }, [title, place, live, id, startDate, endDate, visibility, tripNotes]);
+  }, [title, place, live, id, startDate, endDate, visibility, tripNotes, coverUrl, coverMediaType]);
 
   if (!live) {
     return (
@@ -202,6 +261,60 @@ export default function EditTrip() {
         </View>
 
         <View>
+          <Text style={styles.label}>Cover photo or video (optional)</Text>
+          {coverUrl ? (
+            <View style={styles.coverPreview}>
+              {coverMediaType === 'video' ? (
+                <VideoThumbnail posterUri={coverUrl} style={styles.coverImg} />
+              ) : (
+                <Image source={{ uri: coverUrl }} style={styles.coverImg} resizeMode="cover" />
+              )}
+              <View style={styles.coverActions}>
+                <Pressable
+                  style={styles.coverBtn}
+                  onPress={pickCover}
+                  disabled={uploading}
+                  accessibilityLabel="Change cover"
+                >
+                  {uploading
+                    ? <ActivityIndicator size="small" color={color.signal} />
+                    : <Text style={styles.coverBtnText}>Change</Text>
+                  }
+                </Pressable>
+                <Pressable
+                  style={[styles.coverBtn, styles.coverBtnRemove]}
+                  onPress={removeCover}
+                  disabled={uploading}
+                  accessibilityLabel="Remove cover"
+                >
+                  <Text style={[styles.coverBtnText, { color: color.mute }]}>Remove</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : (
+            <Pressable
+              style={styles.coverPicker}
+              onPress={pickCover}
+              disabled={uploading}
+              accessibilityRole="button"
+              accessibilityLabel="Add cover photo or video"
+            >
+              {uploading ? (
+                <ActivityIndicator size="small" color={color.signal} />
+              ) : (
+                <>
+                  <View style={styles.coverPickerIcons}>
+                    <ImagePlus size={18} color={color.mute} />
+                    <Film size={18} color={color.mute} />
+                  </View>
+                  <Text style={styles.coverPickerText}>Add photo or video (up to 2 min)</Text>
+                </>
+              )}
+            </Pressable>
+          )}
+        </View>
+
+        <View>
           <Text style={styles.label}>Trip notes (optional)</Text>
           <TextInput
             style={[styles.input, styles.notesInput]}
@@ -288,6 +401,24 @@ const styles = StyleSheet.create({
   visBtnActive: { borderColor: color.signal, backgroundColor: `${color.signal}10` },
   visBtnText: { ...t.small, color: color.mute, fontWeight: '600' },
   visBtnTextActive: { color: color.signal },
+  coverPicker: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.sm,
+    backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze,
+    borderStyle: 'dashed', borderRadius: radius.md, paddingVertical: space.xl,
+    minHeight: 80,
+  },
+  coverPickerIcons: { flexDirection: 'row', gap: space.sm },
+  coverPickerText: { ...t.body, color: color.mute },
+  coverPreview: { gap: space.sm },
+  coverImg: { width: '100%', height: 160, borderRadius: radius.md, overflow: 'hidden' },
+  coverActions: { flexDirection: 'row', gap: space.sm },
+  coverBtn: {
+    flex: 1, paddingVertical: space.sm, borderRadius: radius.md,
+    borderWidth: 1, borderColor: color.haze, alignItems: 'center',
+    backgroundColor: color.paperRaised,
+  },
+  coverBtnRemove: { borderColor: color.haze },
+  coverBtnText: { ...t.small, color: color.signal, fontWeight: '600' },
   errorText: { ...t.small, color: color.signal, fontWeight: '600' },
   saveBtn: {
     backgroundColor: color.ink, paddingVertical: space.md,

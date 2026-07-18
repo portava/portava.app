@@ -21,7 +21,7 @@ const router = Router();
 const TRIP_COLUMNS =
   "id, owner_id, title, destination_city, destination_country, destination_lat, " +
   "destination_lng, destination_place_id, start_date, end_date, status, visibility, " +
-  "cover_url, trip_type, timezone, travel_style, open_to_meet, trip_notes, " +
+  "cover_url, cover_media_type, trip_type, timezone, travel_style, open_to_meet, trip_notes, " +
   "show_on_profile, show_in_discovery, allow_friend_suggestions, allow_trip_crew_invites, " +
   "allow_join_requests, show_exact_dates, show_destination_city, delayed_posting_default, " +
   "precise_location_visible, plan_edit_permission, progress, created_at, updated_at";
@@ -239,7 +239,7 @@ router.post("/trips", async (req, res) => {
     return;
   }
 
-  const { title, destinationCity, destinationCountry, startDate, endDate, visibility, coverUrl, tripNotes } = req.body;
+  const { title, destinationCity, destinationCountry, startDate, endDate, visibility, coverUrl, coverMediaType, tripNotes } = req.body;
 
   // Date conflict check — applies even when title/city are absent (draft support)
   if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
@@ -263,6 +263,7 @@ router.post("/trips", async (req, res) => {
       status: computedStatus,
       visibility: visibility ?? "private",
       cover_url: coverUrl ?? null,
+      cover_media_type: coverMediaType ?? null,
       trip_notes: tripNotes ?? null,
     })
     .select(TRIP_COLUMNS)
@@ -505,7 +506,7 @@ router.get("/me/trip-invites/pending", async (req, res) => {
   // Fetch trip details
   const { data: trips, error: tripsErr } = await sc
     .from("trips")
-    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id, visibility, trip_type, show_exact_dates, show_destination_city")
+    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, cover_media_type, owner_id, visibility, trip_type, show_exact_dates, show_destination_city")
     .in("id", tripIds);
 
   if (tripsErr) { sendError(res, "db_error", tripsErr.message); return; }
@@ -551,6 +552,7 @@ router.get("/me/trip-invites/pending", async (req, res) => {
         startDate:          trip.start_date ?? null,
         endDate:            trip.end_date ?? null,
         coverUrl:           trip.cover_url ?? null,
+        coverMediaType:     trip.cover_media_type ?? null,
         invitedAt:          row.created_at,
         visibility:         (trip.visibility as string) ?? null,
         memberCount:        memberCountMap[row.trip_id] ?? null,
@@ -599,6 +601,7 @@ const PatchTripSchema = z.object({
   travelStyle:             z.string().nullable().optional(),
   openToMeet:              z.boolean().optional(),
   coverUrl:                z.string().url().nullable().optional(),
+  coverMediaType:          z.enum(['image', 'video']).nullable().optional(),
   tripNotes:               z.string().nullable().optional(),
   showOnProfile:           z.boolean().optional(),
   showInDiscovery:         z.boolean().optional(),
@@ -656,6 +659,7 @@ router.patch("/trips/:tripId", async (req, res) => {
   if (b.travelStyle            !== undefined) patch.travel_style             = b.travelStyle;
   if (b.openToMeet             !== undefined) patch.open_to_meet             = b.openToMeet;
   if (b.coverUrl               !== undefined) patch.cover_url                = b.coverUrl;
+  if (b.coverMediaType         !== undefined) patch.cover_media_type         = b.coverMediaType;
   if (b.tripNotes              !== undefined) patch.trip_notes               = b.tripNotes;
   if (b.showOnProfile          !== undefined) patch.show_on_profile          = b.showOnProfile;
   if (b.showInDiscovery        !== undefined) patch.show_in_discovery        = b.showInDiscovery;
@@ -991,7 +995,7 @@ router.get("/me/plan-editable-trips", async (req, res) => {
   // Fetch trip details including plan_edit_permission
   const { data: trips, error: tripsErr } = await sc
     .from("trips")
-    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id, plan_edit_permission, trip_type, timezone, trip_notes, show_on_profile, show_in_discovery, allow_friend_suggestions, allow_trip_crew_invites, allow_join_requests, show_exact_dates, show_destination_city, delayed_posting_default, precise_location_visible, destination_lat, destination_lng, destination_place_id")
+    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, cover_media_type, owner_id, plan_edit_permission, trip_type, timezone, trip_notes, show_on_profile, show_in_discovery, allow_friend_suggestions, allow_trip_crew_invites, allow_join_requests, show_exact_dates, show_destination_city, delayed_posting_default, precise_location_visible, destination_lat, destination_lng, destination_place_id")
     .in("id", tripIds);
 
   if (tripsErr) { sendError(res, "db_error", tripsErr.message); return; }
@@ -1032,6 +1036,7 @@ router.get("/me/plan-editable-trips", async (req, res) => {
       startDate:          t.start_date ?? null,
       endDate:            t.end_date ?? null,
       coverUrl:           t.cover_url ?? null,
+      coverMediaType:     t.cover_media_type ?? null,
     })),
   });
 });
