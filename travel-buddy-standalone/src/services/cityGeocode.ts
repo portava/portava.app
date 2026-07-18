@@ -96,9 +96,8 @@ export async function preloadGeocodeCache(storage: StorageLike): Promise<void> {
  * Resolve a city name to [latitude, longitude].
  *
  * Checks L1 (in-memory) first, then hits Nominatim.  When `storage` is
- * provided, successful coordinates and definitive "not found" results are
- * persisted to L2.  Transient failures (HTTP errors, timeouts) are only
- * cached in-memory so the next session retries.
+ * provided, new Nominatim results (including null/unresolvable) are persisted
+ * to L2 so they survive app restarts.
  *
  * Returns null if the lookup fails or the city is not found.
  */
