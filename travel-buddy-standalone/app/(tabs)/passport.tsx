@@ -50,6 +50,7 @@ import { resolveSectionOrder, type PassportSectionKey } from '../../src/componen
 import { PassportTabReorderSheet } from '../../src/components/passport/PassportTabReorderSheet';
 import { resolveTabOrder, type PassportTabKey, TAB_LABELS } from '../../src/components/passport/passportTabs';
 import { MapTab } from '../../src/components/MapTab';
+import { DestinationsTab } from '../../src/components/passport/DestinationsTab';
 import { useAvailabilityStore } from '../../src/context/AvailabilityStore';
 import { resolveAvailabilityChip } from '../../src/lib/availabilityChip';
 
@@ -154,7 +155,7 @@ export default function PassportScreen() {
   React.useEffect(() => { setLocalPostcards(postcards); }, [postcards]);
 
   React.useEffect(() => {
-    if ((tab === 'plans') && !tripsLoaded) {
+    if ((tab === 'plans' || tab === 'destinations') && !tripsLoaded) {
       setTripsLoaded(true);
       listMyTrips().then(setTrips).catch(() => {});
     }
@@ -465,6 +466,14 @@ function PassportContent({
         )}
         {tab === 'map' && (
           <MapTab postcards={postcards} />
+        )}
+        {tab === 'destinations' && (
+          <DestinationsTab
+            memories={memories}
+            stamps={stamps}
+            postcards={postcards}
+            trips={trips}
+          />
         )}
       </View>
     </>

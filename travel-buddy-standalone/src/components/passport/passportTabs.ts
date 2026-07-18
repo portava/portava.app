@@ -6,7 +6,7 @@
  * Public / visitor views display the owner's saved order.
  */
 
-export type PassportTabKey = 'postcards' | 'memories' | 'plans' | 'stamps' | 'map';
+export type PassportTabKey = 'postcards' | 'memories' | 'plans' | 'stamps' | 'map' | 'destinations';
 
 export const CANONICAL_TAB_ORDER: PassportTabKey[] = [
   'postcards',
@@ -14,14 +14,16 @@ export const CANONICAL_TAB_ORDER: PassportTabKey[] = [
   'plans',
   'stamps',
   'map',
+  'destinations',
 ];
 
 export const TAB_LABELS: Record<PassportTabKey, string> = {
-  postcards: 'Postcards',
-  memories:  'Memories',
-  plans:     'Plans',
-  stamps:    'Stamps',
-  map:       'Map',
+  postcards:    'Postcards',
+  memories:     'Memories',
+  plans:        'Plans',
+  stamps:       'Stamps',
+  map:          'Map',
+  destinations: 'Destinations',
 };
 
 /**
