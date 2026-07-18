@@ -151,6 +151,27 @@ describe('PulseLiveCarousel', () => {
     expect(router.push).toHaveBeenCalledWith('/event/evt-tap');
   });
 
+  it('tapping a dot switches to the corresponding event', async () => {
+    jest.useFakeTimers();
+    const ev1 = ongoingEvent({ id: 'evt-a', title: 'Event Alpha' });
+    const ev2 = ongoingEvent({ id: 'evt-b', title: 'Event Beta' });
+    const ev3 = ongoingEvent({ id: 'evt-c', title: 'Event Gamma' });
+    await render(<PulseLiveCarousel events={[ev1, ev2, ev3]} now={NOW} />);
+
+    // Initially shows first event
+    expect(screen.getByText('Event Alpha')).toBeTruthy();
+
+    // Tap the third dot ("Go to event 3")
+    const dot3 = screen.getByRole('button', { name: 'Go to event 3' });
+    fireEvent.press(dot3);
+
+    // After the crossfade half-duration, index switches
+    jest.advanceTimersByTime(200);
+
+    expect(screen.getByText('Event Gamma')).toBeTruthy();
+    jest.useRealTimers();
+  });
+
   it('skips future and past events — only renders the one that is actually ongoing', async () => {
     const future = futureEvent({ id: 'evt-fut', title: 'Not Yet' });
     const ongoing = ongoingEvent({ id: 'evt-on', title: 'Right Now' });

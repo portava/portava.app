@@ -235,10 +235,14 @@ function CarouselInner({
 
       {/* Dot indicators — only when > 1 event */}
       {count > 1 && (
-        <View style={styles.dots} accessibilityElementsHidden>
+        <View style={styles.dots}>
           {ongoingEvents.map((_, i) => (
-            <View
+            <Pressable
               key={i}
+              onPress={() => switchTo(i)}
+              accessibilityRole="button"
+              accessibilityLabel={`Go to event ${i + 1}`}
+              hitSlop={8}
               style={[styles.dot, i === activeIndex && styles.dotActive]}
             />
           ))}
