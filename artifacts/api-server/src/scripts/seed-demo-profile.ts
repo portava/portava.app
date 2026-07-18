@@ -240,7 +240,7 @@ async function getOtherProfiles(excludeId: string, limit = 25) {
   return (data ?? []).filter((p) => p.id !== excludeId);
 }
 
-async function getStampDefinitions(limit = 25) {
+async function getStampDefinitions(limit = 100) {
   const { data, error } = await sc
     .from("stamp_definitions")
     .select("id, slug, stamp_type, name, city, country, source_system, category")
@@ -746,7 +746,7 @@ async function main() {
 
   const [others, definitions] = await Promise.all([
     getOtherProfiles(profile.id),
-    getStampDefinitions(30),
+    getStampDefinitions(), // fetches up to 100 active definitions
   ]);
   console.log(`Found ${others.length} other profiles, ${definitions.length} stamp definitions`);
 
