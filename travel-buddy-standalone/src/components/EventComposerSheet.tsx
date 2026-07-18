@@ -2,7 +2,7 @@
  * EventComposerSheet — multi-step bottom sheet for creating or editing an Event.
  *
  * Steps:
- *   1. Basics   — title, description, dates
+ *   1. Basics   — title, description, dates, cover media
  *   2. Location — location name / place picker
  *   3. Settings — capacity, age, trust score, verified-only, visibility,
  *                 chat toggle, price field
@@ -11,10 +11,14 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
-  ScrollView, Switch,
+  ScrollView, Switch, ActivityIndicator, Image,
 } from 'react-native';
-import { X, ChevronRight, ChevronLeft, CalendarClock, MapPin, Settings2, Eye, Clock } from 'lucide-react-native';
+import { X, ChevronRight, ChevronLeft, CalendarClock, MapPin, Settings2, Eye, Clock, Camera, Video as VideoIcon } from 'lucide-react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { createEvent, type CreateEventInput, type EventSummary, type EventVisibility } from '../services/events.ts';
+import { uploadMedia } from '../services/media.ts';
+import { VIDEO_MAX_DURATION_SECONDS } from '../constants/mediaLimits.ts';
+import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import { GlobalCalendarPicker } from './selectors/GlobalCalendarPicker.tsx';
 import { GlobalTimePicker } from './selectors/GlobalTimePicker.tsx';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
@@ -87,6 +91,13 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
   const [endTime,      setEndTime]      = useState<string | null>(null);
   const [category, setCategory] = useState('');
 
+  // Cover media
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [coverMediaType, setCoverMediaType] = useState<'image' | 'video' | null>(null);
+  const [coverLocalUri, setCoverLocalUri] = useState<string | null>(null);
+  const [uploadingCover, setUploadingCover] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
   // Picker visibility
   const [calPickerFor,  setCalPickerFor]  = useState<'start' | 'end' | null>(null);
   const [timePickerFor, setTimePickerFor] = useState<'start' | 'end' | null>(null);
@@ -112,9 +123,65 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
   const isFirst = stepIndex === 0;
   const isLast = stepIndex === STEPS.length - 1;
 
+  // ── Cover media picker ──────────────────────────────────────────────────────
+  async function handlePickCover() {
+    setUploadError(null);
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      setUploadError('Please allow access to your photo library in Settings.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images', 'videos'],
+      quality: 0.85,
+      videoMaxDuration: VIDEO_MAX_DURATION_SECONDS.event,
+      allowsEditing: false,
+    });
+    if (result.canceled || !result.assets?.length) return;
+    const asset = result.assets[0];
+    const isVideo = asset.type === 'video';
+    const pickedMediaType: 'image' | 'video' = isVideo ? 'video' : 'image';
+
+    // Show local preview immediately
+    setCoverLocalUri(asset.uri);
+    setCoverMediaType(pickedMediaType);
+    setCoverUrl(null);
+
+    // Upload — pass the 'event' surface so the 120 s duration limit applies
+    setUploadingCover(true);
+    const uploadResult = await uploadMedia(
+      {
+        uri: asset.uri,
+        mimeType: asset.mimeType ?? (isVideo ? 'video/mp4' : 'image/jpeg'),
+        fileName: asset.fileName ?? undefined,
+        fileSize: asset.fileSize ?? undefined,
+        type: pickedMediaType,
+        duration: asset.duration != null ? asset.duration / 1000 : null,
+      },
+      { surface: 'event' },
+    );
+    setUploadingCover(false);
+
+    if (!uploadResult.ok || !uploadResult.url) {
+      setUploadError(uploadResult.message ?? 'Upload failed. Try again.');
+      setCoverLocalUri(null);
+      setCoverMediaType(null);
+      return;
+    }
+    setCoverUrl(uploadResult.url);
+  }
+
+  function handleRemoveCover() {
+    setCoverUrl(null);
+    setCoverMediaType(null);
+    setCoverLocalUri(null);
+    setUploadError(null);
+  }
+
   function nextStep() {
     if (step === 'basics') {
       if (!title.trim()) { setError('Title is required'); return; }
+      if (uploadingCover) { setError('Please wait for the cover upload to finish'); return; }
       if (startDateStr && endDateStr) {
         const startISO = buildISODateTime(startDateStr, startTime);
         const endISO   = buildISODateTime(endDateStr,   endTime);
@@ -136,6 +203,10 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
   }
 
   async function handleSave(publishNow: boolean) {
+    if (uploadingCover) {
+      setError('Please wait for the cover upload to finish');
+      return;
+    }
     setSaving(true);
     setError(null);
 
@@ -147,6 +218,8 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
       country: country.trim() || undefined,
       startsAt: buildISODateTime(startDateStr, startTime),
       endsAt:   buildISODateTime(endDateStr,   endTime),
+      coverUrl: coverUrl ?? undefined,
+      coverMediaType: coverMediaType ?? undefined,
       category: category.trim() || undefined,
       maxAttendees: maxAttendees ? parseInt(maxAttendees) : undefined,
       ageMin: ageMin ? parseInt(ageMin) : undefined,
@@ -172,6 +245,9 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
 
   // ── Picker: today's ISO date as the minimum ────────────────────────────────
   const todayISO = new Date().toISOString().slice(0, 10);
+
+  // Resolved local URI for preview (before upload completes, use local; after, use remote)
+  const previewUri = coverUrl ?? coverLocalUri;
 
   return (
     <KeyboardSafeScrollView style={s.kav}>
@@ -228,6 +304,53 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
                   onChangeText={setCategory}
                   maxLength={60}
                 />
+
+                {/* ── Cover media picker ── */}
+                <Text style={s.label}>Cover image or video (optional)</Text>
+                {previewUri ? (
+                  <View style={s.coverPreviewWrap}>
+                    {coverMediaType === 'video' ? (
+                      <VideoThumbnail
+                        posterUri={previewUri}
+                        style={s.coverPreview}
+                      />
+                    ) : (
+                      <Image source={{ uri: previewUri }} style={s.coverPreview} resizeMode="cover" />
+                    )}
+                    {/* Upload overlay */}
+                    {uploadingCover && (
+                      <View style={s.coverUploadOverlay}>
+                        <ActivityIndicator color="#fff" />
+                        <Text style={s.coverUploadText}>Uploading…</Text>
+                      </View>
+                    )}
+                    {/* Remove button */}
+                    {!uploadingCover && (
+                      <Pressable style={s.coverRemoveBtn} onPress={handleRemoveCover} hitSlop={8}>
+                        <X size={14} color="#fff" />
+                      </Pressable>
+                    )}
+                    {/* Media type badge */}
+                    {coverMediaType === 'video' && !uploadingCover && (
+                      <View style={s.coverVideoBadge}>
+                        <VideoIcon size={10} color="#fff" />
+                        <Text style={s.coverVideoBadgeText}>Video</Text>
+                      </View>
+                    )}
+                  </View>
+                ) : (
+                  <Pressable
+                    style={[s.input, s.coverPickerBtn]}
+                    onPress={handlePickCover}
+                    disabled={uploadingCover}
+                  >
+                    <Camera size={16} color={color.mute} />
+                    <Text style={[s.coverPickerText]}>Add cover image or video</Text>
+                  </Pressable>
+                )}
+                {uploadError ? (
+                  <Text style={s.uploadErrorText}>{uploadError}</Text>
+                ) : null}
 
                 {/* Start date */}
                 <Text style={s.label}>Start date</Text>
@@ -441,6 +564,14 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
             {step === 'review' && (
               <>
                 <View style={s.reviewCard}>
+                  {/* Cover preview in review */}
+                  {previewUri && coverMediaType === 'video' && (
+                    <VideoThumbnail posterUri={previewUri} style={s.reviewCoverThumb} />
+                  )}
+                  {previewUri && coverMediaType === 'image' && (
+                    <Image source={{ uri: previewUri }} style={s.reviewCoverThumb} resizeMode="cover" />
+                  )}
+
                   <Text style={s.reviewTitle}>{title}</Text>
                   {description ? <Text style={s.reviewDesc}>{description}</Text> : null}
 
@@ -481,17 +612,17 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
                 </View>
 
                 <Pressable
-                  style={[s.publishBtn, saving && { opacity: 0.6 }]}
+                  style={[s.publishBtn, (saving || uploadingCover) && { opacity: 0.6 }]}
                   onPress={() => handleSave(true)}
-                  disabled={saving}
+                  disabled={saving || uploadingCover}
                 >
                   <Text style={s.publishBtnText}>{saving ? 'Publishing…' : 'Publish event'}</Text>
                 </Pressable>
 
                 <Pressable
-                  style={[s.draftBtn, saving && { opacity: 0.6 }]}
+                  style={[s.draftBtn, (saving || uploadingCover) && { opacity: 0.6 }]}
                   onPress={() => handleSave(false)}
-                  disabled={saving}
+                  disabled={saving || uploadingCover}
                 >
                   <Text style={s.draftBtnText}>Save as draft</Text>
                 </Pressable>
@@ -511,9 +642,17 @@ export function EventComposerSheet({ onDismiss, onCreated }: Props) {
             )}
             <View style={{ flex: 1 }} />
             {!isLast && (
-              <Pressable style={s.navNext} onPress={nextStep}>
-                <Text style={s.navNextText}>Next</Text>
-                <ChevronRight size={18} color={color.onInk} />
+              <Pressable
+                style={[s.navNext, uploadingCover && { opacity: 0.6 }]}
+                onPress={nextStep}
+                disabled={uploadingCover}
+              >
+                {uploadingCover ? (
+                  <ActivityIndicator size="small" color={color.onInk} />
+                ) : (
+                  <Text style={s.navNextText}>Next</Text>
+                )}
+                {!uploadingCover && <ChevronRight size={18} color={color.onInk} />}
               </Pressable>
             )}
           </View>
@@ -595,7 +734,19 @@ const s = StyleSheet.create({
   priceBtnActive:{ borderColor: color.signal, backgroundColor: color.signal },
   priceBtnText:{ ...t.small, color: color.mute, fontWeight: '600' },
   priceBtnTextActive:{ color: color.onInk },
+  // Cover media
+  coverPickerBtn:     { flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'center' },
+  coverPickerText:    { ...t.body, color: color.mute },
+  coverPreviewWrap:   { borderRadius: radius.md, overflow: 'hidden', position: 'relative', height: 160 },
+  coverPreview:       { width: '100%', height: 160, borderRadius: radius.md },
+  coverUploadOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  coverUploadText:    { color: '#fff', ...t.small, fontWeight: '600' },
+  coverRemoveBtn:     { position: 'absolute', top: 6, right: 6, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 12, padding: 4 },
+  coverVideoBadge:    { position: 'absolute', bottom: 6, left: 6, flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
+  coverVideoBadgeText:{ color: '#fff', fontSize: 10, fontWeight: '700' },
+  uploadErrorText:    { ...t.small, color: '#DC2626', marginTop: 4 },
   reviewCard: { backgroundColor: color.paper, borderRadius: radius.lg, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: space.sm, marginBottom: space.lg },
+  reviewCoverThumb:   { width: '100%', height: 140, borderRadius: radius.md, marginBottom: space.sm },
   reviewTitle:{ ...t.title, color: color.ink, fontWeight: '800', fontSize: 18 },
   reviewDesc: { ...t.body, color: color.mute },
   reviewRow:  { flexDirection: 'row', alignItems: 'center', gap: 6 },
