@@ -84,6 +84,7 @@ const createMemorySchema = z.object({
   category: z.string().max(80).optional(),
   visibility: VISIBILITY.optional().default("private"),
   photoUrl: z.string().url().nullable().optional(),
+  mediaType: z.enum(["image", "video"]).nullable().optional(),
 });
 
 const patchMemorySchema = z.object({
@@ -93,6 +94,7 @@ const patchMemorySchema = z.object({
   country: z.string().max(100).nullable().optional(),
   visibility: VISIBILITY.optional(),
   photoUrl: z.string().url().nullable().optional(),
+  mediaType: z.enum(["image", "video"]).nullable().optional(),
 });
 
 const acceptSuggestionSchema = z.object({
@@ -217,6 +219,7 @@ router.get("/me/passport/memories", async (req, res) => {
       verificationLevel: m.verification_level,
       sourceType: m.source_type,
       photoUrl: m.photo_url,
+      mediaType: m.media_type ?? null,
       planId: m.plan_id,
       tripId: m.trip_id,
       suggestionReason: m.suggestion_reason,
@@ -253,6 +256,7 @@ router.post("/me/passport/memories", async (req, res) => {
     userId: user.id,
     ...parsed.data,
     photoUrl: parsed.data.photoUrl ?? undefined,
+    mediaType: parsed.data.mediaType ?? undefined,
     description: parsed.data.description ?? undefined,
   });
 
@@ -304,7 +308,8 @@ router.patch("/me/passport/memories/:id", async (req, res) => {
     city: parsed.data.city,
     country: parsed.data.country,
     visibility: parsed.data.visibility,
-    photoUrl: parsed.data.photoUrl,
+    photoUrl: parsed.data.photoUrl ?? undefined,
+    mediaType: parsed.data.mediaType ?? undefined,
   });
 
   if (!ok) {
@@ -347,6 +352,7 @@ router.get("/me/passport/suggestions", async (req, res) => {
       verificationLevel: m.verification_level,
       sourceType: m.source_type,
       photoUrl: m.photo_url,
+      mediaType: m.media_type ?? null,
       planId: m.plan_id,
       tripId: m.trip_id,
       suggestionReason: m.suggestion_reason,
@@ -622,6 +628,7 @@ router.get("/users/:username/passport/memories", async (req, res) => {
     category: m.category,
     visibility: m.visibility,
     photoUrl: m.photo_url,
+    mediaType: m.media_type ?? null,
     earnedAt: m.earned_at,
   }));
 

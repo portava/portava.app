@@ -64,6 +64,7 @@ export interface MemoryRow {
   source_type: string | null;
   source_id: string | null;
   photo_url: string | null;
+  media_type: string | null;
   plan_id: string | null;
   trip_id: string | null;
   place_id: string | null;

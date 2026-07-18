@@ -30,6 +30,7 @@ export interface CreateSuggestedMemoryInput {
 export interface CreateMemoryInput extends CreateSuggestedMemoryInput {
   visibility?: VisibilityTier;
   photoUrl?: string | null;
+  mediaType?: string | null;
 }
 
 export interface UpdateMemoryInput {
@@ -39,6 +40,7 @@ export interface UpdateMemoryInput {
   country?: string | null;
   visibility?: VisibilityTier;
   photoUrl?: string | null;
+  mediaType?: string | null;
 }
 
 /**
@@ -100,6 +102,7 @@ export async function createMemory(
       source_type: input.sourceType ?? null,
       source_id: input.sourceId ?? null,
       photo_url: input.photoUrl ?? null,
+      media_type: input.mediaType ?? null,
       plan_id: input.planId ?? null,
       trip_id: input.tripId ?? null,
       place_id: input.placeId ?? null,
@@ -179,6 +182,7 @@ export async function updateMemory(
   if (patch.country !== undefined) update.country = patch.country;
   if (patch.visibility !== undefined) update.visibility = patch.visibility;
   if (patch.photoUrl !== undefined) update.photo_url = patch.photoUrl;
+  if (patch.mediaType !== undefined) update.media_type = patch.mediaType;
 
   if (Object.keys(update).length === 1) return false;
 
@@ -203,7 +207,7 @@ export async function loadMemories(
 ): Promise<any[]> {
   const { data, error } = await db
     .from("passport_memories")
-    .select("id, status, title, description, country, city, neighborhood, category, visibility, verification_level, source_type, source_id, photo_url, plan_id, trip_id, place_id, suggestion_reason, earned_at, created_at")
+    .select("id, status, title, description, country, city, neighborhood, category, visibility, verification_level, source_type, source_id, photo_url, media_type, plan_id, trip_id, place_id, suggestion_reason, earned_at, created_at")
     .eq("user_id", userId)
     .eq("status", "active")
     .order("earned_at", { ascending: false })
@@ -222,7 +226,7 @@ export async function loadSuggestions(
 ): Promise<any[]> {
   const { data, error } = await db
     .from("passport_memories")
-    .select("id, status, title, description, country, city, neighborhood, category, visibility, verification_level, source_type, source_id, photo_url, plan_id, trip_id, place_id, suggestion_reason, earned_at, created_at")
+    .select("id, status, title, description, country, city, neighborhood, category, visibility, verification_level, source_type, source_id, photo_url, media_type, plan_id, trip_id, place_id, suggestion_reason, earned_at, created_at")
     .eq("user_id", userId)
     .eq("status", "suggested")
     .order("earned_at", { ascending: false })
