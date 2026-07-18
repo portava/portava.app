@@ -28,18 +28,25 @@ export function mapApiEvent(
   city: string,
   currentCitySlug: string,
 ): CityEvent {
-  const startAt = (e.start_time as string) ?? '';
+  // formatEvent() returns camelCase field names (startsAt, goingCount,
+  // maxAttendees). Accept either the camelCase form the API currently sends or
+  // the legacy snake_case names so the mapper stays forward- and back-compatible.
+  const startAt =
+    (e.startsAt as string) ??
+    (e.start_time as string) ??
+    (e.starts_at as string) ??
+    '';
   return {
     id:            e.id as string,
     kind:          (e.kind as CityEvent['kind']) ?? 'event',
     title:         e.title as string,
     city:          (e.city as string) ?? city,
-    citySlug:      (e.city_slug as string) ?? currentCitySlug,
+    citySlug:      (e.city_slug as string) ?? (e.citySlug as string) ?? currentCitySlug,
     startAt,
     block:         blockOf(startAt),
     category:      (e.category as Interest) ?? 'social',
-    attendeeCount: (e.attendee_count as number) ?? 0,
-    capacity:      (e.max_capacity as number) ?? undefined,
+    attendeeCount: (e.goingCount as number) ?? (e.attendee_count as number) ?? 0,
+    capacity:      (e.maxAttendees as number) ?? (e.max_capacity as number) ?? undefined,
     score:         null,
   };
 }

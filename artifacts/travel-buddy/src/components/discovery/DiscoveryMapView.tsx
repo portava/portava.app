@@ -426,7 +426,9 @@ export function DiscoveryMapView({
       )}
 
       {/* ── Badge row ──────────────────────────────────────────────────────── */}
-      <View style={s.badgeRow}>
+      {/* In full-screen mode the carousel occupies the bottom ~120 px, so we
+          push the badge row up above it to keep it visible.                  */}
+      <View style={[s.badgeRow, externalCameraRef ? s.badgeRowFullScreen : null]}>
         <View style={s.badge}>
           <MapPin size={10} color="#fff" />
           <Text style={s.badgeText}>
@@ -464,7 +466,9 @@ export function DiscoveryMapView({
         )}
       </View>
 
-      {hasUser && (
+      {/* Recenter button — hidden in full-screen mode where MapTopControls
+          already provides its own recenter action.                           */}
+      {hasUser && !externalCameraRef && (
         <Pressable style={s.recenterBtn} onPress={recenterOnMe} hitSlop={8}>
           <Navigation size={18} color={color.signal} />
         </Pressable>
@@ -528,7 +532,10 @@ export function DiscoveryMapView({
       )}
 
       {/* ── Entity preview card (Buddy / Event / Gem / Trip / Friend) ───────── */}
-      {selectedEntity && (
+      {/* Suppressed in full-screen mode (externalCameraRef set) — the parent's
+          MapCarousel handles entity selection there, so this card would create
+          a duplicate overlay on top of the carousel.                          */}
+      {selectedEntity && !externalCameraRef && (
         <MapEntityPreviewCard
           entity={selectedEntity}
           onClose={() => setSelectedEntity(null)}
@@ -666,6 +673,11 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     alignItems: 'center',
+  },
+  /** In full-screen map mode the carousel occupies ~120 px at the bottom.
+   *  Push the badge row above it so it stays visible. */
+  badgeRowFullScreen: {
+    bottom: 140,
   },
   badge: {
     flexDirection: 'row',
