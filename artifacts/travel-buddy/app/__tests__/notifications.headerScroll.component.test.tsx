@@ -215,4 +215,30 @@ describe('ActivityCenter — sharedHeader scroll-with-content', () => {
       expect(titles).toHaveLength(1);
     });
   });
+
+  it('never duplicates the header when switching All → Requests → All rapidly', async () => {
+    mockUseRequests.mockReturnValue(
+      defaultRequestReturn({ incoming: [makeRequest('r1')] }),
+    );
+
+    await render(<ActivityCenter />);
+
+    // Rapid-tap: no interleaved awaits — all three presses fire synchronously.
+    fireEvent.press(screen.getByText('Requests'));
+    fireEvent.press(screen.getByText('All'));
+    fireEvent.press(screen.getByText('Requests'));
+
+    await waitFor(() => {
+      const titles = screen.getAllByText('Activity Center');
+      expect(titles).toHaveLength(1);
+    });
+
+    // Switch back to All and confirm still exactly one header.
+    fireEvent.press(screen.getByText('All'));
+
+    await waitFor(() => {
+      const titles = screen.getAllByText('Activity Center');
+      expect(titles).toHaveLength(1);
+    });
+  });
 });
