@@ -25,6 +25,7 @@ import React from 'react';
 import { act, render } from '@testing-library/react-native';
 import PassportScreen from '../../../app/(tabs)/passport.tsx';
 import { FEED_FOCUS_TTL_MS } from '../../hooks/usePosts.ts';
+import { makePassportMock, MINIMAL_OWN_PROFILE } from './testUtils.ts';
 
 // ── Controlled useFocusEffect ─────────────────────────────────────────────────
 // Capture the callback so tests can re-trigger focus manually.
@@ -87,58 +88,6 @@ jest.mock('expo-image-picker', () => ({
 // ── usePassport — pre-loaded, no loading spinner ──────────────────────────────
 
 const mockReload = jest.fn();
-
-const MOCK_PROFILE = {
-  id:                    'user-test-1',
-  username:              'testuser',
-  handle:                'testuser',
-  name:                  'Test User',
-  displayName:           'Test User',
-  bio:                   null,
-  avatarUrl:             null,
-  homeCity:              null,
-  homeCountry:           null,
-  currentCity:           null,
-  travelStyle:           null,
-  interests:             [],
-  verified:              false,
-  verificationStatus:    'unverified' as const,
-  verifiedAt:            null,
-  openToMeet:            false,
-  isPrivate:             false,
-  passportVisibility:    'public' as const,
-  coverPhotoUrl:         null,
-  usernameUpdatedAt:     null,
-  createdAt:             '2024-01-01T00:00:00Z',
-  spokenLanguages:       [],
-  defaultLanguage:       null,
-  travelStyles:          [],
-  travelPace:            null,
-  budgetStyle:           null,
-  travelGroupStyle:      [],
-  lookingFor:            [],
-  comfortLevel:          null,
-  availabilityTags:      [],
-  planningStyle:         null,
-  publicSocialLinks:     {},
-  preferredLanguage:     null,
-  dateOfBirth:           null,
-  dobVerified:           false,
-  trustScore:            null,
-  trustLabel:            null,
-  verificationLevel:     'none' as const,
-  idVerifiedAt:          null,
-  selfieVerifiedAt:      null,
-  homeCountryVerifiedAt: null,
-  safetyFlagsCount:      0,
-  followersCount:        0,
-  followingCount:        0,
-  tripCount:             0,
-  hostVerifiedAt:        null,
-  buddyVerifiedAt:       null,
-  passportSectionOrder:  null,
-  passportTabOrder:      null,
-};
 
 // NOTE: intentionally exhaustive — usePassport calls Supabase and the full
 // network stack; pulling requireActual would trigger live network requests.
@@ -320,17 +269,13 @@ const mockLastLoadedAt: { current: number } = { current: 0 };
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function setupPassportMock() {
-  mockUsePassport.mockReturnValue({
-    profile:      MOCK_PROFILE,
-    postcards:    [],
-    stamps:       [],
-    memories:     [],
-    suggestions:  [],
-    loading:      false,
-    error:        null,
-    reload:       mockReload,
-    lastLoadedAt: mockLastLoadedAt,
-  });
+  mockUsePassport.mockReturnValue(
+    makePassportMock({
+      profile:      MINIMAL_OWN_PROFILE,
+      reload:       mockReload,
+      lastLoadedAt: mockLastLoadedAt,
+    }),
+  );
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
