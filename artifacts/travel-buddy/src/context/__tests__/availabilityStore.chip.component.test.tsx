@@ -24,10 +24,8 @@ import { resolveAvailabilityChip } from '../../lib/availabilityChip.ts';
 const mockGetMyAvailability   = jest.fn();
 const mockPatchMyAvailability = jest.fn();
 
-// NOTE: intentionally exhaustive — the real availability service imports supabase
-// and fetch wrappers that are unavailable in the JSDOM test env.  Spreading
-// requireActual would execute that module-level code and crash the suite.
 jest.mock('../../services/availability.ts', () => ({
+  ...jest.requireActual('../../services/availability.ts'),
   getMyAvailability:   (...args: unknown[]) => mockGetMyAvailability(...args),
   patchMyAvailability: (...args: unknown[]) => mockPatchMyAvailability(...args),
   patchMyQuickStatus:  jest.fn().mockResolvedValue({ ok: false, data: null }),
