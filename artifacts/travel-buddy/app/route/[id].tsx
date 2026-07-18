@@ -31,7 +31,7 @@ import { useRoutePlan } from '../../src/hooks/useRoutePlan';
 import { RouteMinimapView } from '../../src/components/RouteMinimapView';
 import { RouteFullMapModal } from '../../src/components/RouteFullMapModal';
 import { SafeReturnSetupSheet } from '../../src/components/safeReturn/SafeReturnSetupSheet';
-import { useActiveLocation } from '../../src/hooks/useActiveLocation';
+import { useLocationContext } from '../../src/context/LocationContext';
 import type { RouteStop, RouteLeg } from '../../src/services/routePlan';
 import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
@@ -99,7 +99,7 @@ export default function ActiveRouteScreen() {
   const { userId: currentUserId } = useSession();
   const navBarScrollHandler = useNavBarScrollHandler();
 
-  const { locationState, requestLocation } = useActiveLocation();
+  const { locationState, requestLocation, resolvedLocation } = useLocationContext();
   const [compassExpanded, setCompassExpanded]   = useState(false);
   const [safeReturnVisible, setSafeReturnVisible] = useState(false);
   const [safeReturnChecking, setSafeReturnChecking] = useState(false);
@@ -111,8 +111,8 @@ export default function ActiveRouteScreen() {
   const [membershipLoading, setMembershipLoading] = useState(false);
   const [compassActions, setCompassActions]     = useState<CompassAskRecommendation['nextActions'] | null>(null);
 
-  const userLat = locationState.coords?.lat ?? null;
-  const userLng = locationState.coords?.lng ?? null;
+  const userLat = resolvedLocation.coords?.lat ?? null;
+  const userLng = resolvedLocation.coords?.lng ?? null;
 
   // Background geofence + foreground fallback checkpoint monitor.
   // Fires CHECKPOINT_ARRIVAL_TASK on enter, drains queue on foreground resume.

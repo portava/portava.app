@@ -15,7 +15,7 @@ import {
   clearSearchHistory,
 } from '../src/services/discovery';
 import type { UnifiedSearchResult, SearchHistoryEntry } from '../src/services/discovery';
-import { useActiveLocation } from '../src/hooks/useActiveLocation';
+import { useLocationContext } from '../src/context/LocationContext';
 import { CompassTravelerRow } from '../src/components/compass/CompassTravelerRow';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
@@ -46,7 +46,7 @@ const RECOVERY_CHIPS_BASE = [
 
 export default function SearchScreen() {
   const params = useLocalSearchParams<{ q?: string; type?: string }>();
-  const { locationState, requestLocation } = useActiveLocation();
+  const { locationState, requestLocation, resolvedLocation } = useLocationContext();
   const navBarScrollHandler = useNavBarScrollHandler();
 
   const [query, setQuery] = useState(params.q ?? '');
@@ -77,17 +77,18 @@ export default function SearchScreen() {
 
   const locationGranted = locationState.permissionStatus === 'granted';
 
-  // Pass user coords only when permission already granted — never prompt from search screen
+  // Pass user coords from the unified cascade (GPS → last-known → home city).
+  // Never prompt from the search screen — resolvedLocation already skips prompting.
   const userCoords = useMemo(() => {
-    if (locationGranted && locationState.coords) {
+    if (resolvedLocation.coords) {
       return {
-        lat: locationState.coords.lat,
-        lng: locationState.coords.lng,
-        city: (locationState as any).place?.city ?? undefined,
+        lat: resolvedLocation.coords.lat,
+        lng: resolvedLocation.coords.lng,
+        city: resolvedLocation.place?.city ?? undefined,
       };
     }
     return undefined;
-  }, [locationGranted, locationState]);
+  }, [resolvedLocation]);
 
   const tz = useMemo(() => {
     try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; }
