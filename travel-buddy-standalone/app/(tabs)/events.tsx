@@ -29,7 +29,7 @@ import {
 } from '../../src/lib/eventDateTime';
 import { EventDiscoveryCard } from '../../src/components/EventDiscoveryCard';
 import { useSession } from '../../src/context/SessionContext';
-import { useActiveLocation } from '../../src/hooks/useActiveLocation';
+import { useLocationContext } from '../../src/context/LocationContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 
 // ── Date preset helpers ───────────────────────────────────────────────────────
@@ -82,7 +82,7 @@ const STEP_LABELS_MAP: Record<DatePreset, string> = {
 export default function EventsTabScreen() {
   const insets = useSafeAreaInsets();
   const { isAuthed, configured } = useSession();
-  const { locationState, requestLocation } = useActiveLocation();
+  const { locationState, requestLocation } = useLocationContext();
   const navScrollHandler = useNavBarScrollHandler();
 
   const [refreshing, setRefreshing] = useState(false);

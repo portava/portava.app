@@ -188,8 +188,18 @@ jest.mock('../../utils/compassFormat', () => ({
 // native internals that are not safe under jest.
 jest.mock('../../context/LocationContext', () => ({
   useLocationContext: jest.fn(() => ({
-    locationState: { permissionStatus: 'granted', coords: null, place: null },
+    locationState: { permissionStatus: 'granted', coords: null, place: { city: null } },
     requireLocation: jest.fn(),
+    // resolvedLocation — required by FullScreenMapScreen after location unification.
+    // Mirrors the shape of ResolvedLocation; coords null simulates GPS-denied + no cache.
+    resolvedLocation: {
+      place: { city: null },
+      coords: null,
+      source: 'none',
+      freshness: 'live',
+    },
+    setSessionLocation: jest.fn(),
+    clearSessionLocation: jest.fn(),
   })),
 }));
 jest.mock('../../services/discovery', () => ({

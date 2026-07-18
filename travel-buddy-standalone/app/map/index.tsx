@@ -295,7 +295,7 @@ export default function FullScreenMapScreen() {
   // Shared camera ref — forwarded into DiscoveryMapView so the Camera element
   // inside is the same ref that MapTopControls calls setCamera on.
   const cameraRef = useRef<any>(null);
-  const { locationState, requireLocation } = useLocationContext();
+  const { locationState, requireLocation, resolvedLocation } = useLocationContext();
   // Parse query params — invalid / missing values are silently ignored.
   const paramLat = parseCoord(params.lat);
   const paramLng = parseCoord(params.lng);
@@ -308,9 +308,11 @@ export default function FullScreenMapScreen() {
   /** mode: 'passport' | 'circle' | undefined — controls layer presets and UI. */
   const mode = Array.isArray(params.mode) ? params.mode[0] : (params.mode ?? null);
 
-  // Resolved camera position: prefer explicit params, fall back to location context.
-  const fallbackLat = paramLat ?? (locationState.coords?.lat ?? null);
-  const fallbackLng = paramLng ?? (locationState.coords?.lng ?? null);
+  // Resolved camera position: prefer explicit params, then fall back through the
+  // full 3-tier cascade (GPS → last-known session → profile home) via resolvedLocation.
+  const fallbackLat = paramLat ?? (resolvedLocation.coords?.lat ?? null);
+  const fallbackLng = paramLng ?? (resolvedLocation.coords?.lng ?? null);
+  // userLat/userLng = actual live GPS position (for proximity sorting only).
   const userLat = locationState.coords?.lat ?? null;
   const userLng = locationState.coords?.lng ?? null;
 
