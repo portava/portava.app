@@ -331,6 +331,84 @@ describe("Passport Memories — suggested memory lifecycle", () => {
   });
 });
 
+describe("Passport Memories — PATCH city/country round-trip", () => {
+  const EDIT_MEMORY_ID = "edit-memory-uuid-1";
+  let patchClient: ReturnType<typeof makeFakeClient>;
+
+  before(() => {
+    patchClient = makeFakeClient(
+      {
+        featureFlags: { passport_memories_enabled: true },
+        stamps: [],
+        memories: [
+          {
+            id: EDIT_MEMORY_ID,
+            user_id: USER_ID,
+            status: "active",
+            title: "Old title",
+            description: "Old desc",
+            country: "Japan",
+            city: "Tokyo",
+            neighborhood: null,
+            category: "city",
+            visibility: "private",
+            verification_level: "unverified",
+            source_type: null,
+            source_id: null,
+            photo_url: null,
+            plan_id: null,
+            trip_id: null,
+            place_id: null,
+            suggestion_reason: null,
+            earned_at: "2026-01-01T00:00:00Z",
+            created_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+        contributions: [],
+        locationPrefs: [],
+      },
+      USER_ID,
+    );
+    _setTestClient(patchClient, true);
+    _setTestServiceClient(patchClient);
+  });
+
+  it("PATCH /me/passport/memories/:id accepts city and country and forwards them to the DB", async () => {
+    const r = await req("PATCH", `/api/me/passport/memories/${EDIT_MEMORY_ID}`, {
+      title: "New title",
+      city: "Osaka",
+      country: "Japan",
+    });
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.updated, true);
+
+    // Verify the DB update contained the new city and country columns.
+    const memoryUpdates = patchClient._updated.filter((u: any) => u.table === "passport_memories");
+    assert.ok(memoryUpdates.length > 0, "expected at least one DB update on passport_memories");
+    const patch = memoryUpdates[memoryUpdates.length - 1].patch;
+    assert.equal(patch.city, "Osaka", "city must be written to DB");
+    assert.equal(patch.country, "Japan", "country must be written to DB");
+    assert.equal(patch.title, "New title", "title must also be written to DB");
+  });
+
+  it("PATCH /me/passport/memories/:id can clear city by sending null", async () => {
+    const r = await req("PATCH", `/api/me/passport/memories/${EDIT_MEMORY_ID}`, {
+      city: null,
+    });
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+
+    const memoryUpdates = patchClient._updated.filter((u: any) => u.table === "passport_memories");
+    const patch = memoryUpdates[memoryUpdates.length - 1].patch;
+    assert.equal(patch.city, null, "city=null must be written to DB to clear it");
+  });
+
+  it("PATCH /me/passport/memories/:id rejects an empty patch", async () => {
+    const r = await req("PATCH", `/api/me/passport/memories/${EDIT_MEMORY_ID}`, {});
+    assert.equal(r.status, 400, `expected 400, got ${r.status}`);
+    assert.equal(r.body.error, "invalid_payload");
+  });
+});
+
 describe("Passport Map — privacy invariant", () => {
   before(() => {
     const client = makeFakeClient(

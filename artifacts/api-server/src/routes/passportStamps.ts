@@ -89,6 +89,8 @@ const createMemorySchema = z.object({
 const patchMemorySchema = z.object({
   title: z.string().min(1).max(200).optional(),
   description: z.string().max(1000).nullable().optional(),
+  city: z.string().max(100).nullable().optional(),
+  country: z.string().max(100).nullable().optional(),
   visibility: VISIBILITY.optional(),
   photoUrl: z.string().url().nullable().optional(),
 });
@@ -298,9 +300,11 @@ router.patch("/me/passport/memories/:id", async (req, res) => {
 
   const ok = await updateMemory(client, req.params.id, user.id, {
     title: parsed.data.title,
-    description: parsed.data.description ?? undefined,
+    description: parsed.data.description,
+    city: parsed.data.city,
+    country: parsed.data.country,
     visibility: parsed.data.visibility,
-    photoUrl: parsed.data.photoUrl ?? undefined,
+    photoUrl: parsed.data.photoUrl,
   });
 
   if (!ok) {

@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
-import { MapPin, Lock, Globe, Users, Eye, Camera, X } from 'lucide-react-native';
+import { MapPin, Lock, Globe, Users, Eye, Camera, X, Pencil } from 'lucide-react-native';
 import { Plus } from 'lucide-react-native';
 import type { PassportMemory, MemoryVisibility } from '../services/passportStamps.ts';
 import {
@@ -49,30 +49,48 @@ function visibilityLabel(vis: MemoryVisibility): string {
   return 'Private';
 }
 
-// ── Edit Memory Photo Modal ───────────────────────────────────────────────────
+// ── Edit Memory Modal ─────────────────────────────────────────────────────────
 
-interface EditPhotoModalProps {
+interface EditMemoryPatch {
+  title?: string | null;
+  description?: string | null;
+  city?: string | null;
+  country?: string | null;
+  photoUrl?: string | null;
+}
+
+interface EditMemoryModalProps {
   visible: boolean;
   memory: PassportMemory;
   onClose: () => void;
-  onSaved: (memoryId: string, newPhotoUrl: string | null) => void;
+  onSaved: (memoryId: string, patch: EditMemoryPatch) => void;
 }
 
-function EditMemoryPhotoModal({ visible, memory, onClose, onSaved }: EditPhotoModalProps) {
-  // Track whether we're working with a newly picked local URI or the existing remote URL.
+function EditMemoryModal({ visible, memory, onClose, onSaved }: EditMemoryModalProps) {
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [city, setCity] = useState('');
+  const [country, setCountry] = useState('');
+
+  // Photo state
+  // photoUri: newly picked local URI; null means no new pick
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [photoMime, setPhotoMime] = useState<string>('image/jpeg');
-  // null  → user explicitly removed the photo
-  // undefined → no change (keep existing)
+  // removePhoto: user explicitly wants to delete the existing photo
   const [removePhoto, setRemovePhoto] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [uploadError, setUploadError] = useState('');
+
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  // Reset state whenever the modal opens for a (potentially different) memory.
+  // Reset all fields whenever the modal opens for a (potentially different) memory.
   React.useEffect(() => {
     if (visible) {
+      setTitle(memory.title ?? '');
+      setDescription(memory.description ?? '');
+      setCity(memory.city ?? '');
+      setCountry(memory.country ?? '');
       setPhotoUri(null);
       setPhotoMime('image/jpeg');
       setRemovePhoto(false);
@@ -81,7 +99,7 @@ function EditMemoryPhotoModal({ visible, memory, onClose, onSaved }: EditPhotoMo
       setUploadError('');
       setError('');
     }
-  }, [visible]);
+  }, [visible, memory]);
 
   async function pickPhoto() {
     setUploadError('');
@@ -102,33 +120,52 @@ function EditMemoryPhotoModal({ visible, memory, onClose, onSaved }: EditPhotoMo
     setRemovePhoto(false);
   }
 
-  function handleRemove() {
+  function handleRemovePhoto() {
     setPhotoUri(null);
     setRemovePhoto(true);
     setUploadError('');
   }
 
-  function handleUndoRemove() {
+  function handleUndoRemovePhoto() {
     setRemovePhoto(false);
   }
 
   const isBusy = uploading || saving;
 
-  // Decide what the "current" preview is:
+  // What photo preview to show:
   // 1. Newly picked local image  → photoUri
   // 2. User removed              → nothing (show picker)
   // 3. No change                 → memory.photoUrl
   const previewUri = photoUri ?? (removePhoto ? null : memory.photoUrl);
 
   async function handleSave() {
+    const trimTitle = title.trim();
+    if (!trimTitle) { setError('Title is required'); return; }
+
     setSaving(true);
     setError('');
     setUploadError('');
 
-    let photoUrl: string | null | undefined;
+    // Build the patch — only include fields that actually changed.
+    const patch: EditMemoryPatch = {};
 
+    const newTitle = trimTitle !== (memory.title ?? '') ? trimTitle : undefined;
+    if (newTitle !== undefined) patch.title = newTitle;
+
+    const trimDesc = description.trim();
+    const origDesc = memory.description ?? '';
+    if (trimDesc !== origDesc) patch.description = trimDesc || null;
+
+    const trimCity = city.trim();
+    const origCity = memory.city ?? '';
+    if (trimCity !== origCity) patch.city = trimCity || null;
+
+    const trimCountry = country.trim();
+    const origCountry = memory.country ?? '';
+    if (trimCountry !== origCountry) patch.country = trimCountry || null;
+
+    // Handle photo changes.
     if (photoUri) {
-      // Upload the newly selected image.
       setUploading(true);
       const up = await uploadMedia({ uri: photoUri, mimeType: photoMime, type: 'image' });
       setUploading(false);
@@ -137,20 +174,22 @@ function EditMemoryPhotoModal({ visible, memory, onClose, onSaved }: EditPhotoMo
         setSaving(false);
         return;
       }
-      photoUrl = up.url;
+      patch.photoUrl = up.url;
     } else if (removePhoto) {
-      photoUrl = null;
-    } else {
-      // Nothing changed — close without a network call.
+      patch.photoUrl = null;
+    }
+
+    // If nothing changed, close without a network call.
+    if (Object.keys(patch).length === 0) {
       setSaving(false);
       onClose();
       return;
     }
 
-    const res = await updatePassportMemory(memory.id, { photoUrl });
+    const res = await updatePassportMemory(memory.id, patch);
     setSaving(false);
     if (!res.ok) { setError(res.message); return; }
-    onSaved(memory.id, photoUrl as string | null);
+    onSaved(memory.id, patch);
     onClose();
   }
 
@@ -158,14 +197,65 @@ function EditMemoryPhotoModal({ visible, memory, onClose, onSaved }: EditPhotoMo
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <KeyboardSafeView>
         <View style={cm.header}>
-          <Text style={cm.title}>Edit Photo</Text>
+          <Text style={cm.title}>Edit Memory</Text>
           <Pressable onPress={onClose} hitSlop={8} disabled={isBusy}>
             <X size={22} color={color.ink} />
           </Pressable>
         </View>
-        <View style={cm.body}>
-          <Text style={cm.label}>Photo</Text>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={cm.body} keyboardShouldPersistTaps="handled">
+          <Text style={cm.label}>Title *</Text>
+          <TextInput
+            style={cm.input}
+            value={title}
+            onChangeText={setTitle}
+            placeholder="A memorable moment…"
+            placeholderTextColor={color.faint}
+            maxLength={200}
+            editable={!isBusy}
+          />
 
+          <Text style={cm.label}>Description</Text>
+          <TextInput
+            style={[cm.input, cm.multiline]}
+            value={description}
+            onChangeText={setDescription}
+            placeholder="Tell the story…"
+            placeholderTextColor={color.faint}
+            multiline
+            maxLength={1000}
+            textAlignVertical="top"
+            editable={!isBusy}
+          />
+
+          <View style={cm.row}>
+            <View style={{ flex: 1 }}>
+              <Text style={cm.label}>City</Text>
+              <TextInput
+                style={cm.input}
+                value={city}
+                onChangeText={setCity}
+                placeholder="City"
+                placeholderTextColor={color.faint}
+                maxLength={100}
+                editable={!isBusy}
+              />
+            </View>
+            <View style={{ width: space.md }} />
+            <View style={{ flex: 1 }}>
+              <Text style={cm.label}>Country</Text>
+              <TextInput
+                style={cm.input}
+                value={country}
+                onChangeText={setCountry}
+                placeholder="Country"
+                placeholderTextColor={color.faint}
+                maxLength={100}
+                editable={!isBusy}
+              />
+            </View>
+          </View>
+
+          <Text style={cm.label}>Photo</Text>
           {previewUri ? (
             <View style={cm.photoPreviewWrap}>
               <Image source={{ uri: previewUri }} style={cm.photoPreview} resizeMode="cover" />
@@ -176,7 +266,7 @@ function EditMemoryPhotoModal({ visible, memory, onClose, onSaved }: EditPhotoMo
                 </View>
               )}
               {!uploading && (
-                <Pressable style={cm.photoRemoveBtn} onPress={handleRemove} hitSlop={8} disabled={isBusy}>
+                <Pressable style={cm.photoRemoveBtn} onPress={handleRemovePhoto} hitSlop={8} disabled={isBusy}>
                   <X size={14} color="#fff" />
                 </Pressable>
               )}
@@ -187,7 +277,7 @@ function EditMemoryPhotoModal({ visible, memory, onClose, onSaved }: EditPhotoMo
           ) : removePhoto ? (
             <View style={ep.removedState}>
               <Text style={ep.removedText}>Photo will be removed</Text>
-              <Pressable onPress={handleUndoRemove} hitSlop={8}>
+              <Pressable onPress={handleUndoRemovePhoto} hitSlop={8}>
                 <Text style={ep.undoText}>Undo</Text>
               </Pressable>
             </View>
@@ -214,7 +304,7 @@ function EditMemoryPhotoModal({ visible, memory, onClose, onSaved }: EditPhotoMo
               ? <ActivityIndicator color="#fff" size="small" />
               : <Text style={cm.saveBtnText}>Save</Text>}
           </Pressable>
-        </View>
+        </ScrollView>
       </KeyboardSafeView>
     </Modal>
   );
@@ -225,10 +315,10 @@ function EditMemoryPhotoModal({ visible, memory, onClose, onSaved }: EditPhotoMo
 interface MemoryCardProps {
   memory: PassportMemory;
   onVisibilityChange: (id: string, v: MemoryVisibility) => void;
-  onEditPhoto: (memory: PassportMemory) => void;
+  onEdit: (memory: PassportMemory) => void;
 }
 
-function MemoryCard({ memory, onVisibilityChange, onEditPhoto }: MemoryCardProps) {
+function MemoryCard({ memory, onVisibilityChange, onEdit }: MemoryCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const badge = verificationBadge(memory.verificationLevel);
   const cat = CATEGORIES.find((c) => c.key === memory.category);
@@ -236,24 +326,31 @@ function MemoryCard({ memory, onVisibilityChange, onEditPhoto }: MemoryCardProps
   return (
     <View style={mc.card}>
       {memory.photoUrl ? (
-        <Pressable onPress={() => onEditPhoto(memory)} style={mc.photoWrap}>
+        <Pressable onPress={() => onEdit(memory)} style={mc.photoWrap}>
           <Image source={{ uri: memory.photoUrl }} style={mc.photo} resizeMode="cover" />
           <View style={mc.photoEditBadge}>
             <Camera size={13} color="#fff" />
           </View>
         </Pressable>
       ) : (
-        <Pressable style={mc.addPhotoBanner} onPress={() => onEditPhoto(memory)}>
+        <Pressable style={mc.addPhotoBanner} onPress={() => onEdit(memory)}>
           <Camera size={14} color={color.signal} />
           <Text style={mc.addPhotoText}>Add photo</Text>
         </Pressable>
       )}
       <View style={mc.body}>
-        <View style={mc.row}>
-          {cat && <Text style={mc.catLabel}>{cat.label}</Text>}
-          {badge ? <Text style={mc.badge}>{badge}</Text> : null}
+        <View style={mc.titleRow}>
+          <View style={mc.titleMeta}>
+            <View style={mc.row}>
+              {cat && <Text style={mc.catLabel}>{cat.label}</Text>}
+              {badge ? <Text style={mc.badge}>{badge}</Text> : null}
+            </View>
+            <Text style={mc.title} numberOfLines={2}>{memory.title ?? 'Untitled memory'}</Text>
+          </View>
+          <Pressable onPress={() => onEdit(memory)} hitSlop={8} style={mc.editBtn}>
+            <Pencil size={14} color={color.mute} />
+          </Pressable>
         </View>
-        <Text style={mc.title} numberOfLines={2}>{memory.title ?? 'Untitled memory'}</Text>
         {(memory.city || memory.country) && (
           <View style={mc.locationRow}>
             <MapPin size={12} color={color.mute} />
@@ -522,7 +619,7 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
   const [localMemories, setLocalMemories] = useState<PassportMemory[]>(memories);
   const [createOpen, setCreateOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const [editPhotoMemory, setEditPhotoMemory] = useState<PassportMemory | null>(null);
+  const [editMemory, setEditMemory] = useState<PassportMemory | null>(null);
 
   React.useEffect(() => {
     setLocalMemories(memories);
@@ -538,13 +635,23 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
     onReload();
   }, [onReload]);
 
-  const handleEditPhoto = useCallback((memory: PassportMemory) => {
-    setEditPhotoMemory(memory);
+  const handleEdit = useCallback((memory: PassportMemory) => {
+    setEditMemory(memory);
   }, []);
 
-  const handlePhotoSaved = useCallback((memoryId: string, newPhotoUrl: string | null) => {
+  const handleEditSaved = useCallback((memoryId: string, patch: EditMemoryPatch) => {
     setLocalMemories((prev) =>
-      prev.map((m) => m.id === memoryId ? { ...m, photoUrl: newPhotoUrl } : m),
+      prev.map((m) => {
+        if (m.id !== memoryId) return m;
+        return {
+          ...m,
+          ...(patch.title !== undefined ? { title: patch.title } : {}),
+          ...(patch.description !== undefined ? { description: patch.description } : {}),
+          ...(patch.city !== undefined ? { city: patch.city } : {}),
+          ...(patch.country !== undefined ? { country: patch.country } : {}),
+          ...(patch.photoUrl !== undefined ? { photoUrl: patch.photoUrl } : {}),
+        };
+      }),
     );
   }, []);
 
@@ -576,7 +683,7 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
             ) : (
               <View style={mt.list}>
                 {localMemories.slice(0, 5).map((m) => (
-                  <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} onEditPhoto={handleEditPhoto} />
+                  <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} onEdit={handleEdit} />
                 ))}
                 {localMemories.length > 5 && (
                   <Pressable style={mt.addBtnLarge} onPress={() => setCreateOpen(true)}>
@@ -594,12 +701,12 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
               onClose={() => setCreateOpen(false)}
               onCreated={handleCreated}
             />
-            {editPhotoMemory && (
-              <EditMemoryPhotoModal
+            {editMemory && (
+              <EditMemoryModal
                 visible={true}
-                memory={editPhotoMemory}
-                onClose={() => setEditPhotoMemory(null)}
-                onSaved={handlePhotoSaved}
+                memory={editMemory}
+                onClose={() => setEditMemory(null)}
+                onSaved={handleEditSaved}
               />
             )}
           </>
@@ -633,7 +740,7 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
       ) : (
         <View style={mt.list}>
           {localMemories.map((m) => (
-            <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} onEditPhoto={handleEditPhoto} />
+            <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} onEdit={handleEdit} />
           ))}
         </View>
       )}
@@ -643,12 +750,12 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
         onClose={() => setCreateOpen(false)}
         onCreated={handleCreated}
       />
-      {editPhotoMemory && (
-        <EditMemoryPhotoModal
+      {editMemory && (
+        <EditMemoryModal
           visible={true}
-          memory={editPhotoMemory}
-          onClose={() => setEditPhotoMemory(null)}
-          onSaved={handlePhotoSaved}
+          memory={editMemory}
+          onClose={() => setEditMemory(null)}
+          onSaved={handleEditSaved}
         />
       )}
     </View>
@@ -679,6 +786,9 @@ const mc = StyleSheet.create({
   },
   addPhotoText: { ...t.small, color: color.signal, fontWeight: '700' },
   body: { padding: space.md },
+  titleRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 },
+  titleMeta: { flex: 1, marginRight: space.sm },
+  editBtn: { padding: 4, marginTop: 2 },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginBottom: 4 },
   catLabel: { fontFamily: 'Courier', fontSize: 10, color: color.mute, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase' },
   badge: { fontSize: 12 },

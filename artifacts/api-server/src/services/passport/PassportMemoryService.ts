@@ -35,6 +35,8 @@ export interface CreateMemoryInput extends CreateSuggestedMemoryInput {
 export interface UpdateMemoryInput {
   title?: string;
   description?: string | null;
+  city?: string | null;
+  country?: string | null;
   visibility?: VisibilityTier;
   photoUrl?: string | null;
 }
@@ -173,6 +175,8 @@ export async function updateMemory(
   const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (patch.title !== undefined) update.title = patch.title;
   if (patch.description !== undefined) update.description = patch.description;
+  if (patch.city !== undefined) update.city = patch.city;
+  if (patch.country !== undefined) update.country = patch.country;
   if (patch.visibility !== undefined) update.visibility = patch.visibility;
   if (patch.photoUrl !== undefined) update.photo_url = patch.photoUrl;
 

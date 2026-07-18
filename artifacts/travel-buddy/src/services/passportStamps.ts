@@ -258,8 +258,10 @@ export async function createPassportMemory(body: {
 export async function updatePassportMemory(
   memoryId: string,
   patch: {
-    title?: string;
+    title?: string | null;
     description?: string | null;
+    city?: string | null;
+    country?: string | null;
     visibility?: MemoryVisibility;
     photoUrl?: string | null;
   },
