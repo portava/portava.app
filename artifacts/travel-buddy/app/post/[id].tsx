@@ -15,6 +15,7 @@ import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { ReportPostSheet } from '../../src/components/ReportPostSheet';
 import { CommentsSection } from '../../src/components/CommentsSheet';
 import { MediaStampOverlay } from '../../src/components/StampOverlayBadge';
+import { SharedVideoPlayer } from '../../src/components/ui/SharedVideoPlayer';
 import { getPostById, type PostRow } from '../../src/services/posts';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
@@ -117,8 +118,20 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
 
       {firstMedia ? (
         <View style={[card.media, { height: mediaHeight, overflow: 'hidden' as const }]}>
-          <Image source={{ uri: firstMedia }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-          <MediaStampOverlay raw={firstMediaItem?.stamp_overlay} />
+          {firstMediaItem?.media_type === 'video' ? (
+            <SharedVideoPlayer
+              uri={firstMedia}
+              poster={firstMediaItem?.thumbnail_url ?? undefined}
+              autoplay={false}
+              muted
+              style={StyleSheet.absoluteFill}
+            />
+          ) : (
+            <>
+              <Image source={{ uri: firstMedia }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+              <MediaStampOverlay raw={firstMediaItem?.stamp_overlay} />
+            </>
+          )}
         </View>
       ) : (
         <View style={[card.media, { height: mediaHeight }, card.mediaPlaceholder]}>

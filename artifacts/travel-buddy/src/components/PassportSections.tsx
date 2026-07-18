@@ -5,6 +5,7 @@ import { ShieldCheck, Lock, ChevronRight } from 'lucide-react-native';
 import type { TrustValue, TravelStats, Plan, Perk, User } from '../types/models.ts';
 import { Stamp } from './ui.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 
 const TIER_LABEL: Record<TrustValue['tier'], string> = {
   new: 'New Traveler', rising: 'Rising', trusted: 'Trusted', pillar: 'Community Pillar',
@@ -82,9 +83,18 @@ export function BuddyPreview({ buddies }: { buddies: User[] }) {
   );
 }
 
-function PostcardMediaImage({ url }: { url: string }) {
+function PostcardMediaImage({ url, kind, durationSeconds }: { url: string; kind: 'image' | 'video'; durationSeconds?: number }) {
   const [failed, setFailed] = useState(false);
   if (failed) return <View style={[styles.pcMedia, { backgroundColor: '#E5E7EB' }]} />;
+  if (kind === 'video') {
+    return (
+      <VideoThumbnail
+        posterUri={url}
+        duration={durationSeconds}
+        style={styles.pcMedia}
+      />
+    );
+  }
   return <Image source={{ uri: url }} style={styles.pcMedia} onError={() => setFailed(true)} />;
 }
 
@@ -94,7 +104,7 @@ export function PostcardList({ posts }: { posts: import('../types/models').Post[
     return (
       <View style={styles.pcEmpty}>
         <Text style={styles.pcEmptyTitle}>No postcards yet</Text>
-        <Text style={styles.pcEmptySub}>Share a moment from your travels and it’ll show up here.</Text>
+        <Text style={styles.pcEmptySub}>Share a moment from your travels and it'll show up here.</Text>
       </View>
     );
   }
@@ -103,7 +113,7 @@ export function PostcardList({ posts }: { posts: import('../types/models').Post[
       {posts.map((p) => (
         <Pressable key={p.id} style={styles.pc} onPress={() => router.push(`/post/${p.id}`)}>
           {p.media[0] ? (
-            <PostcardMediaImage url={p.media[0].url} />
+            <PostcardMediaImage url={p.media[0].url} kind={p.media[0].kind} />
           ) : null}
           <View style={styles.pcBody}>
             <View style={styles.pcMetaRow}>
