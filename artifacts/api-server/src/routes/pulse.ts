@@ -1,5 +1,6 @@
 import { enrichSpans } from '../lib/enrichSpans';
 import { rankCandidates } from '../lib/portavaRank';
+import { logImpression } from '../lib/rankLog';
 import { isFlagEnabled } from '../lib/featureFlags';
 import { getCompassProfile } from "../compass/CompassProfileService";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
@@ -542,6 +543,7 @@ router.get("/pulse", async (req, res) => {
           interestTags,
         },
       );
+      void logImpression(ranked, user.id, "pulse");
 
       // ── Extract results preserving backward compatibility ──────────────
       // `posts` stays post-only so existing mobile pagination/cursors work.

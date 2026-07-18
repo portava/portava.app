@@ -33,7 +33,8 @@ import { buildCompassContext, defaultSignals } from "../compass/CompassContextEn
 import { rankItemsForDiscovery } from "../compass/CompassFeedBuilder";
 import { isEnabled } from "../compass/flags";
 import { rankCandidates } from "../lib/portavaRank";
-import type { RankCandidate, ViewerContext } from "../lib/portavaRank";
+import type { RankCandidate, ViewerContext, ScoredCandidate } from "../lib/portavaRank";
+import { logImpression } from "../lib/rankLog";
 
 const router = Router();
 
@@ -972,6 +973,9 @@ router.get("/discovery", async (req, res) => {
     // exploration slots, and feature-weight surface as Pulse.  Missing fields
     // (no authorId, no distanceKm) contribute 0 to rank — never a crash.
     // Unauthenticated requests keep the existing distance/saved-count sort.
+    type PlaceCandidate = RankCandidate & { __place: DiscoveryPlace };
+    // Hoisted so it is accessible after the if/else block for per-page impression logging.
+    let scoredByPlaceId = new Map<string, ScoredCandidate<RankCandidate>>();
     let ranked: DiscoveryPlace[];
     if (callerUserId) {
       const rankSc = getServiceClient();
@@ -1012,7 +1016,6 @@ router.get("/discovery", async (req, res) => {
       // Map DiscoveryPlace → RankCandidate.
       // DB-backed places (id prefix "db/") are treated as gems (curated by hosts);
       // OSM places are kind "place". Both carry savedCount as the likeCount proxy.
-      type PlaceCandidate = RankCandidate & { __place: DiscoveryPlace };
       const candidates: PlaceCandidate[] = places.map((p) => ({
         id: p.id,
         kind: p.id.startsWith("db/") ? "gem" as const : "place" as const,
@@ -1026,6 +1029,8 @@ router.get("/discovery", async (req, res) => {
       }));
 
       const scored = rankCandidates(candidates, viewerContext);
+      // Map place id → ScoredCandidate for per-page impression logging below.
+      scoredByPlaceId = new Map(scored.map((s) => [(s.candidate as PlaceCandidate).__place.id, s]));
       ranked = scored.map((s) => (s.candidate as PlaceCandidate).__place);
     } else {
       // Unauthenticated: keep existing distance/saved-count ordering
@@ -1034,6 +1039,13 @@ router.get("/discovery", async (req, res) => {
 
     const filtered = applyFilters(ranked);
     const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+    // Log impressions for exactly the items that were served — after filter + page slice.
+    if (callerUserId && scoredByPlaceId.size > 0) {
+      const servedScored = slice
+        .map((p) => scoredByPlaceId.get(p.id))
+        .filter((s): s is ScoredCandidate<RankCandidate> => s !== undefined);
+      void logImpression(servedScored, callerUserId, "discovery");
+    }
     res.json({ places: slice, total: filtered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
       sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
   } catch (err) {

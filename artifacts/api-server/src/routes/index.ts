@@ -75,6 +75,7 @@ import searchHistoryRouter from "./searchHistory";
 import postcardsRouter from "./postcards";
 import engagementRouter from "./engagement";
 import circleRouter from "./circle";
+import rankEventsRouter from "./rankEvents";
 
 const router: IRouter = Router();
 
@@ -154,5 +155,6 @@ router.use(discoverySearchRouter);
 router.use(searchHistoryRouter);
 router.use(engagementRouter);
 router.use(circleRouter);
+router.use(rankEventsRouter);
 
 export default router;

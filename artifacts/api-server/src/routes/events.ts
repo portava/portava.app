@@ -187,6 +187,7 @@ import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import { rankCandidates } from "../lib/portavaRank.js";
 import type { RankCandidate, ViewerContext } from "../lib/portavaRank.js";
+import { logImpression } from "../lib/rankLog.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -852,11 +853,12 @@ router.get("/events", async (req, res) => {
     __ev: ev,
   }));
 
-  const rankedEvents = rankCandidates(eventCandidates, viewerContext)
-    .map((s) => (s.candidate as EventCandidate).__ev);
+  const rankedScored = rankCandidates(eventCandidates, viewerContext);
+  const rankedEvents = rankedScored.map((s) => (s.candidate as EventCandidate).__ev);
 
-  // Paginate the ranked result
+  // Paginate the ranked result — log only what is actually served
   const pagedEvents = rankedEvents.slice(offset, offset + limit);
+  void logImpression(rankedScored.slice(offset, offset + limit), user.id, "events");
 
   res.json({
     events: pagedEvents.map((ev: any) => ({
