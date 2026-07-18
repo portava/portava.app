@@ -21,6 +21,7 @@ import {
   fetchCompassBuddyMatches,
   type CompassBuddyResult,
 } from '../../services/compass.ts';
+import { resolveCompassTitle } from '../../utils/compassFormat.ts';
 
 interface Props {
   city?: string | null;
@@ -61,7 +62,7 @@ function BuddyCard({ item }: { item: CompassBuddyResult }) {
         ) : (
           <View style={[s.avatar, s.avatarPlaceholder]}>
             <Text style={s.avatarInitial}>
-              {(item.title ?? 'B').charAt(0).toUpperCase()}
+              {(resolveCompassTitle(item)).charAt(0).toUpperCase()}
             </Text>
           </View>
         )}
@@ -73,7 +74,7 @@ function BuddyCard({ item }: { item: CompassBuddyResult }) {
       </View>
 
       {/* Name */}
-      <Text style={s.name} numberOfLines={1}>{item.title ?? 'Buddy'}</Text>
+      <Text style={s.name} numberOfLines={1}>{resolveCompassTitle(item)}</Text>
 
       {/* Category chip */}
       <View style={s.catChip}>

@@ -26,6 +26,7 @@ import { CompassWhySheet } from './CompassWhySheet.tsx';
 import { CompassFeedbackMenu } from './CompassFeedbackMenu.tsx';
 import { postCompassAnalyticsEvent, COMPASS_ENGINE_VERSION } from '../../services/compass.ts';
 import type { CompassFeedItem } from '../../services/compass.ts';
+import { resolveCompassTitle, formatCompassSubtitle, formatCompassContext, resolveCompassCategory } from '../../utils/compassFormat.ts';
 
 // ── Action label mapping ──────────────────────────────────────────────────────
 
@@ -65,12 +66,29 @@ interface CardProps {
 }
 
 function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }: CardProps) {
-  const reason = (item.data?.reason as string)
-    ?? (item.data?.description as string)
-    ?? (item.explanationKey ? 'Recommended for you' : 'Compass pick');
   const source     = (item.data?.source as string) ?? null;
   const trustLabel = (item.data?.trustLabel as string) ?? null;
+  const title      = resolveCompassTitle(item);
+  const subtitle   = formatCompassSubtitle(item);
   const city       = (item.data?.city as string) ?? null;
+
+  function navigateToItem() {
+    const type = item.type ?? '';
+    if (type === 'event') {
+      router.push(`/event/${item.id}` as any);
+    } else if (type === 'hidden_gem') {
+      const rawId = (item.data?.id as string | undefined) ?? item.id.replace(/^gem:/, '');
+      router.push(`/gems/${rawId}` as any);
+    } else if (type === 'place') {
+      router.push('/(tabs)/discovery' as any);
+    } else if (type === 'traveler' || type === 'user') {
+      router.push(`/profile/${item.id}` as any);
+    } else if (type === 'post') {
+      router.push(`/post/${item.id}` as any);
+    } else {
+      router.push('/(tabs)/ai' as any);
+    }
+  }
 
   function handleActionTap() {
     postCompassAnalyticsEvent({
@@ -81,14 +99,15 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
       section_name:           sectionName,
       city:                   city ?? undefined,
     });
+    navigateToItem();
   }
 
   return (
-    <View style={s.card}>
+    <Pressable style={({ pressed }) => [s.card, pressed && { opacity: 0.85 }]} onPress={navigateToItem}>
       {/* Row 1: type chip + overflow menu */}
       <View style={s.typeRow}>
         <View style={s.typeChip}>
-          <Text style={s.typeText}>{(item.category || item.type || 'pick').toLowerCase()}</Text>
+          <Text style={s.typeText}>{resolveCompassCategory(item) || (item.type ?? 'pick')}</Text>
         </View>
         <View style={{ flex: 1 }} />
         <CompassFeedbackMenu
@@ -105,22 +124,20 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
       </View>
 
       {/* Title */}
-      <Text style={s.cardTitle} numberOfLines={2}>
-        {item.title ?? item.type ?? 'Compass Pick'}
-      </Text>
+      <Text style={s.cardTitle} numberOfLines={2}>{title}</Text>
 
-      {/* City hint */}
-      {city ? (
+      {/* Real metadata line */}
+      {subtitle ? (
         <View style={s.cityRow}>
           <Navigation size={9} color={color.faint} />
-          <Text style={s.cityText} numberOfLines={1}>{city}</Text>
+          <Text style={s.cityText} numberOfLines={1}>{subtitle}</Text>
         </View>
       ) : null}
 
-      {/* Reason pill */}
+      {/* Reason / context */}
       <Pressable style={s.reasonPill} onPress={onWhyPress} hitSlop={4}>
         <Sparkles size={9} color={color.signal} />
-        <Text style={s.reasonText} numberOfLines={2}>{reason}</Text>
+        <Text style={s.reasonText} numberOfLines={2}>{formatCompassContext(item)}</Text>
       </Pressable>
 
       {/* Source + trust */}
@@ -140,7 +157,7 @@ function CompassPickCard({ item, sectionName, onWhyPress, onDismiss, onRestore }
       <Pressable style={s.actionBtn} onPress={handleActionTap}>
         <Text style={s.actionText}>{actionLabel(item.type ?? '')}</Text>
       </Pressable>
-    </View>
+    </Pressable>
   );
 }
 

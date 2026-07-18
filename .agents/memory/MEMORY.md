@@ -6,6 +6,7 @@
 - [Legacy migration reconciliation](legacy-migration-reconciliation.md) — CREATE TABLE/INDEX IF NOT EXISTS traps, live column renames, and apply-time SQL transforms for the legacy dir.
 - [DB column-drift trap](db-column-drift.md) — verify columns against the LIVE schema (generated types drift both ways); PGRST204 = one unknown column fails the whole insert, even null.
 - [Standalone tree parity](standalone-fork-parity.md) — travel-buddy-standalone is a divergent fork; diff each file before copying, port edits manually into divergent screens, run its tsc separately.
+- [Compass item hydration](compass-item-hydration.md) — top-level `title`/`category` must be set in the hydrator; shared `compassFormat.ts` utility resolves real names and event metadata across feed and recommendation surfaces.
 - [API server test suite](api-server-testing.md) — node:test not vitest; suite >5min, run via api-test workflow; fake-client pitfalls.
 - [Display-name privacy rule](display-name-privacy.md) — @handle default, real name only if opted in; exemptions listed inside.
 - [Edit-tool $ metacharacters](edit-tool-metacharacters.md) — never put JS replace patterns ($ followed by &, ', backtick, digit, $) in Edit new_string; they expand and corrupt files. WriteFile is verbatim-safe.

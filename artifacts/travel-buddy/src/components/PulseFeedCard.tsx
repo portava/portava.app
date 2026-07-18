@@ -12,6 +12,7 @@ import { usePlanPicker } from './PlanPickerController.tsx';
 import { RichText } from './RichText.tsx';
 import { CompassFeedbackMenu } from './compass/CompassFeedbackMenu.tsx';
 import { CompassWhySheet } from './compass/CompassWhySheet.tsx';
+import { resolveCompassTitle, formatCompassSubtitle } from '../utils/compassFormat.ts';
 import { PostEngagementBar } from './PostEngagementBar.tsx';
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
@@ -490,13 +491,17 @@ function CompassCard({ item, onWhyPress }: { item: PulseFeedItem; onWhyPress?: (
         <View style={s.compassBadge}><Sparkles size={13} color={color.onInk} /></View>
         <Text style={s.compassLabel}>COMPASS SUGGESTION</Text>
       </View>
-      <Text style={s.title}>{item.title}</Text>
+      <Text style={s.title}>{resolveCompassTitle(item)}</Text>
+      {(() => {
+        const subtitle = formatCompassSubtitle(item);
+        return subtitle ? <Text style={s.meta} numberOfLines={1}>{subtitle}</Text> : null;
+      })()}
       {item.reason ? <View style={s.reasonRow}><Info size={13} color={color.deep} /><Text style={s.reason}>{item.reason}</Text></View> : null}
       {item.isProvisional ? <Text style={s.prov}>Based on starter city notes — provisional</Text> : null}
       <View style={s.actions}>
         <Pressable style={s.outlineBtn} onPress={() => router.push('/(tabs)/ai')}><Text style={s.outlineText}>View Details</Text></Pressable>
         <View style={{ flex: 1 }} />
-        <Pressable style={s.solidBtn} onPress={() => planPicker.open({ id: item.id, type: 'compass_suggestion', title: item.title ?? 'Compass pick', city: item.city, category: 'Compass' })}><Plus size={14} color={color.onInk} /><Text style={s.solidText}>Add to Plan</Text></Pressable>
+        <Pressable style={s.solidBtn} onPress={() => planPicker.open({ id: item.id, type: 'compass_suggestion', title: resolveCompassTitle(item), city: item.city, category: 'Compass' })}><Plus size={14} color={color.onInk} /><Text style={s.solidText}>Add to Plan</Text></Pressable>
         <CompassFeedbackMenu
           recommendationId={item.id}
           itemType={item.type}

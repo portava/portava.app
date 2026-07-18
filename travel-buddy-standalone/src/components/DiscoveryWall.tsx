@@ -140,11 +140,11 @@ export function CompassPickBlock({ pick, side }: { pick: DiscoveryItem; side: Di
             <Text style={cp.heroTitle}>{pick.name}</Text>
             <Sparkles size={16} color={color.signal} />
           </View>
-          <Text style={cp.heroSub}>Top nightlife spot right now</Text>
+          <Text style={cp.heroSub}>{pick.category.replace(/[_-]/g, ' ')} · Compass Pick</Text>
           <View style={cp.locRow}><MapPin size={13} color={color.onInk} /><Text style={cp.heroLoc}>{pick.neighborhood}, {pick.city}</Text></View>
-          <View style={cp.matchRow}><Info size={13} color={color.onInk} /><Text style={cp.matchText}>Matches your nightlife interest</Text></View>
+          <View style={cp.matchRow}><Info size={13} color={color.onInk} /><Text style={cp.matchText} numberOfLines={2}>{pick.blurb}</Text></View>
           <View style={cp.heroBtns}>
-            <Pressable style={cp.ghostBtn}><Text style={cp.ghostText}>View Details</Text></Pressable>
+            <Pressable style={cp.ghostBtn} onPress={() => router.push('/(tabs)/ai')}><Text style={cp.ghostText}>View Details</Text></Pressable>
             <Pressable style={cp.addBtn} onPress={() => planPicker.open({ id: pick.id, type: 'experience', title: pick.name, city: pick.city, category: 'Compass Pick' })}>
               <Plus size={15} color={color.onInk} /><Text style={cp.addText}>Add to Plan</Text>
             </Pressable>

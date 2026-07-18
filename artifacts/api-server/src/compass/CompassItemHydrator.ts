@@ -76,16 +76,21 @@ async function fetchPosts(
 }
 
 function postToItem(post: any): CompassItem {
+  const content = post.content ?? "";
+  const title = content.trim() || null;
   return {
     id:              post.id,
     type:            "post",
+    title:           title,
+    category:        "post",
     authorId:        post.author_id ?? undefined,
     createdAt:       post.created_at,
-    contentBody:     post.content ?? null,
+    contentBody:     content,
     city:            post.location_city ?? null,
     country:         post.location_country ?? null,
     visibilityScope: "public",
     qualityScore:    5,
+    data:            { title },
   };
 }
 
@@ -195,6 +200,8 @@ async function fetchEvents(
     return rawEvents.map((event: any): CompassItem => ({
       id:                   String(event.id),
       type:                 "event",
+      title:                event.title ?? null,
+      category:             event.category ?? "event",
       authorId:             event.host_id ?? undefined,
       city:                 event.city ?? null,
       capacity:             event.max_attendees ?? undefined,
@@ -236,6 +243,8 @@ async function fetchPlaces(
     return ((data as any[]) ?? []).map((place): CompassItem => ({
       id:              `place:${place.id}`,
       type:            "place",
+      title:           place.name ?? null,
+      category:        place.category ?? "place",
       authorId:        place.submitted_by ?? undefined,
       contentBody:     place.name,
       interestTags:    [place.category].filter(Boolean),
@@ -270,6 +279,8 @@ async function fetchHiddenGems(
     return ((data as any[]) ?? []).map((gem): CompassItem => ({
       id:              `gem:${gem.id}`,
       type:            "hidden_gem",
+      title:           gem.name ?? null,
+      category:        gem.category ?? "hidden_gem",
       authorId:        gem.submitted_by ?? undefined,
       contentBody:     gem.name,
       interestTags:    [gem.category].filter(Boolean),

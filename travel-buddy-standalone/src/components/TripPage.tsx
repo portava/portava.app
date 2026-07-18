@@ -9,6 +9,7 @@ import {
 } from 'lucide-react-native';
 import { useTripSavedPlaces } from '../hooks/useTripSavedPlaces.ts';
 import { fetchCompassTripBrief, type CompassRecommendation } from '../services/compass.ts';
+import { resolveCompassTitle, formatCompassSubtitle } from '../utils/compassFormat.ts';
 import { openTripChat } from '../services/messaging.ts';
 import { createPlanItem } from '../services/tripPlan.ts';
 import type { BookmarkedPlace } from '../services/discoveryBookmarks.ts';
@@ -637,7 +638,7 @@ function BriefItemCard({ item, tripId }: { item: CompassRecommendation; tripId?:
     setAdding(true);
     try {
       await createPlanItem(tripId, {
-        title:      item.title ?? 'Compass pick',
+        title:      resolveCompassTitle(item),
         category:   item.type === 'event' ? 'activity' : 'activity',
         sourceType: item.type === 'event' ? 'meetup' : item.type === 'place' || item.type === 'hidden_gem' ? 'place' : undefined,
         sourceId:   item.id || undefined,
@@ -660,8 +661,11 @@ function BriefItemCard({ item, tripId }: { item: CompassRecommendation; tripId?:
           <Text style={cb.itemTypeText}>{item.type.replace('_', ' ')}</Text>
         </View>
       </View>
-      <Text style={cb.itemTitle} numberOfLines={2}>{item.title ?? 'Compass pick'}</Text>
-      {item.city ? <Text style={cb.itemCity} numberOfLines={1}>📍 {item.city}</Text> : null}
+      <Text style={cb.itemTitle} numberOfLines={2}>{resolveCompassTitle(item)}</Text>
+      {(() => {
+        const subtitle = formatCompassSubtitle(item);
+        return subtitle ? <Text style={cb.itemCity} numberOfLines={1}>📍 {subtitle}</Text> : null;
+      })()}
       <Text style={cb.itemReason} numberOfLines={2}>{item.reason}</Text>
       <View style={cb.itemBtnRow}>
         <Pressable style={[cb.itemBtn, cb.itemBtnView]} onPress={() => router.push(briefItemRoute(item) as any)}>

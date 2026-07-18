@@ -27,6 +27,7 @@ import { HiddenGemsSection, TravelerPicksSection, prefillSavedPlaceIds } from '.
 import type { RouteStopDraft } from '../RouteBuilderSheet.tsx';
 import { useCompassFeed } from '../../hooks/compass/useCompassFeed.ts';
 import { CompassFeedbackMenu } from '../compass/CompassFeedbackMenu.tsx';
+import { resolveCompassTitle } from '../../utils/compassFormat.ts';
 import { CompassWhySheet } from '../compass/CompassWhySheet.tsx';
 import { postCompassFrontloadEvent, postCompassContext } from '../../services/compass.ts';
 import { CompassPicksSection } from '../compass/CompassPicksSection.tsx';
@@ -56,7 +57,7 @@ type ForYouItem =
 function compassItemToPlace(item: import('../../services/compass.ts').CompassFeedItem): DiscoveryPlace {
   return {
     id:           item.id,
-    name:         item.title ?? item.type,
+    name:         resolveCompassTitle(item),
     category:     'for_you',
     type:         item.category ?? null,
     description:  (item.data?.description as string) ?? null,

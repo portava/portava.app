@@ -19,6 +19,7 @@ import { Sparkles, UserPlus, UserCheck, MapPin, Calendar } from 'lucide-react-na
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { fetchCompassRecommendations, type CompassRecommendation } from '../../services/compass.ts';
 import { getFollowStatus, followUser } from '../../services/follows.ts';
+import { resolveCompassTitle, formatCompassSubtitle } from '../../utils/compassFormat.ts';
 
 type FollowState = 'none' | 'following' | 'requested' | 'loading';
 
@@ -114,13 +115,16 @@ function SuggestionCard({
           <Text style={[s.typeText, { color: meta.bg }]}>{item.type.replace('_', ' ')}</Text>
         </View>
       </View>
-      <Text style={s.cardTitle} numberOfLines={2}>{item.title ?? 'Compass pick'}</Text>
-      {item.city ? (
-        <View style={s.cityRow}>
-          <MapPin size={9} color={color.faint} />
-          <Text style={s.cityText} numberOfLines={1}>{item.city}</Text>
-        </View>
-      ) : null}
+      <Text style={s.cardTitle} numberOfLines={2}>{resolveCompassTitle(item)}</Text>
+      {(() => {
+        const subtitle = formatCompassSubtitle(item);
+        return subtitle ? (
+          <View style={s.cityRow}>
+            <MapPin size={9} color={color.faint} />
+            <Text style={s.cityText} numberOfLines={1}>{subtitle}</Text>
+          </View>
+        ) : null;
+      })()}
       <View style={s.reasonPill}>
         <Sparkles size={8} color={color.signal} />
         <Text style={s.reasonText} numberOfLines={2}>{item.reason}</Text>
