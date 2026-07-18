@@ -38,8 +38,18 @@ module.exports = {
   moduleNameMapper: {
     // AsyncStorage's native module is null under jest; map every import to the
     // official jest mock so no test file needs a per-file jest.mock.
-    '^@react-native-async-storage/async-storage$': '@react-native-async-storage/async-storage/jest/async-storage-mock',
+    '^@react-native-async-storage/async-storage$':
+      '@react-native-async-storage/async-storage/jest/async-storage-mock',
     'lucide-react-native': '<rootDir>/src/__mocks__/lucide-react-native.tsx',
     'expo-router': '<rootDir>/src/__mocks__/expo-router.tsx',
+    // maplibre requires native GL/camera modules unavailable in jest-expo.
+    // The stub exports null-render components so screens using the map can be
+    // tested without crashing the suite.
+    '^@maplibre/maplibre-react-native$':
+      '<rootDir>/src/__mocks__/maplibre-react-native.tsx',
+    // expo-av requires the native ExponentAV module unavailable in jest-expo.
+    // Per-file jest.mock() factories (e.g. SharedVideoPlayer tests) override
+    // this global stub when they need to assert on Video behaviour.
+    '^expo-av$': '<rootDir>/src/__mocks__/expo-av.tsx',
   },
 };

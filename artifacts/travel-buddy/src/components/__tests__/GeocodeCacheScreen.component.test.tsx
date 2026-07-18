@@ -73,6 +73,10 @@ const mockGetRows = getGeocodeCacheRows   as jest.Mock;
 const mockDelete  = deleteGeocodeCacheRow as jest.Mock;
 const mockPut     = putGeocodeCacheRow    as jest.Mock;
 
+/** Defer mock resolution to the next macrotask so continuations fire outside act(). */
+const deferred = <T>(value: T): Promise<T> =>
+  new Promise(resolve => setTimeout(() => resolve(value), 0));
+
 // ── Response builders ──────────────────────────────────────────────────────────
 
 function rowsOk() {
@@ -115,9 +119,10 @@ describe('GeocodeCacheScreen — PUT correction warning banner', () => {
     mockDelete.mockReset();
     mockPut.mockReset();
 
-    mockGetRows.mockResolvedValue(rowsOk());
-    mockDelete.mockResolvedValue({ ok: true, data: { deleted: true, city_key: 'paris__fr' } });
-    mockPut.mockResolvedValue(putOk(0));
+    // Deferred so async continuations fire outside act() flushes — no overlapping-act() warnings.
+    mockGetRows.mockImplementation(() => deferred(rowsOk()));
+    mockDelete.mockImplementation(() => deferred({ ok: true, data: { deleted: true, city_key: 'paris__fr' } }));
+    mockPut.mockImplementation(() => deferred(putOk(0)));
   });
 
   afterEach(async () => {
@@ -176,7 +181,7 @@ describe('GeocodeCacheScreen — PUT correction warning banner', () => {
   // banner would let the test pass before the async work is drained.
 
   it('PUT without repair_catalog returns xx_entries_pending = 0 → no banner', async () => {
-    mockPut.mockResolvedValue(putOk(0));
+    mockPut.mockImplementation(() => deferred(putOk(0)));
 
     await render(<AdminGeocodeCacheScreen />);
     await waitForRow();
@@ -202,7 +207,7 @@ describe('GeocodeCacheScreen — PUT correction warning banner', () => {
   // xx_entries_pending → the warning banner surfaces and shows the exact count.
 
   it('PUT without repair_catalog returns xx_entries_pending > 0 → warning banner appears', async () => {
-    mockPut.mockResolvedValue(putOk(3));
+    mockPut.mockImplementation(() => deferred(putOk(3)));
 
     await render(<AdminGeocodeCacheScreen />);
     await waitForRow();
@@ -223,7 +228,7 @@ describe('GeocodeCacheScreen — PUT correction warning banner', () => {
   // ── 4. PUT failure → alert, no banner ──────────────────────────────────────
 
   it('PUT failure shows an error alert and no warning banner', async () => {
-    mockPut.mockResolvedValue(putFail('Forbidden'));
+    mockPut.mockImplementation(() => deferred(putFail('Forbidden')));
 
     const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     try {

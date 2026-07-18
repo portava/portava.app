@@ -13,7 +13,7 @@
  */
 
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import { PulseLiveCarousel } from '../PulseLiveCarousel.tsx';
 import type { CityEvent } from '../../types/models.ts';
 
@@ -91,6 +91,11 @@ function pastEvent(overrides: Partial<CityEvent> = {}): CityEvent {
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 describe('PulseLiveCarousel', () => {
+  // Restore real timers after every test so fake-timer tests (dot-tap,
+  // unmount) don't leak into subsequent tests that use await render().
+  afterEach(() => {
+    jest.useRealTimers();
+  });
   it('renders the event title and LIVE badge for an ongoing event', async () => {
     const ev = ongoingEvent({ id: 'evt-live', title: 'Salsa Night' });
     await render(<PulseLiveCarousel events={[ev]} now={NOW} />);
@@ -218,7 +223,9 @@ describe('PulseLiveCarousel', () => {
     jest.advanceTimersByTime(4000);
 
     // Unmount simulates the screen losing focus (useFocusEffect cleanup fires)
-    unmount();
+     // Wrapped in act() so React flushes the cleanup effects (interval clear)
+    // before we advance timers — avoids overlapping-act() noise.
+    await act(async () => { unmount(); });
 
     // After unmount the interval must be cleared — advancing time should not
     // trigger any state updates or throw "Can't perform state update on an

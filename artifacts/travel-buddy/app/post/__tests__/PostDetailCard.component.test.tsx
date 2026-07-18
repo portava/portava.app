@@ -240,7 +240,9 @@ describe('PostDetailCard media rendering', () => {
     );
 
     // The MapPin icon is rendered inside the placeholder view.
-    expect(screen.getByTestId('icon-MapPin')).toBeTruthy();
+    // Multiple icon-MapPin instances may exist (e.g. post header + placeholder);
+    // confirm at least one is present.
+    expect(screen.getAllByTestId('icon-MapPin').length).toBeGreaterThan(0);
 
     // Neither video nor image media components should be present.
     expect(screen.queryByTestId('shared-video-player')).toBeNull();

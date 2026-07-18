@@ -5,9 +5,18 @@
  * screen now collects reasons via ReasonPromptModal. This test pins that
  * confirming a pending trust event opens the modal, requires a reason, and
  * passes the typed reason to the service.
+ *
+ * ## Act strategy
+ *
+ * All fireEvent calls are bare (no act() wrapper).  Wrapping fireEvent in
+ * await act(async () => {}) causes React 19 to schedule concurrent follow-up
+ * work after each commit, which overlaps with the next act() scope and
+ * produces "overlapping act() calls" warnings.  Bare fireEvent + waitFor
+ * avoids this: React batches the state update freely, and waitFor's own
+ * internal act() flushes exactly what is needed before the assertion.
  */
 import React from 'react';
-import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-native';
+import { render, waitFor, screen, fireEvent } from '@testing-library/react-native';
 import TrustDetailScreen from '../../../app/admin/trust-detail.tsx';
 import { fetchUserTrustDetail, confirmTrustEvent } from '../../services/trustAdmin.ts';
 
@@ -35,6 +44,10 @@ jest.mock('../../services/trustAdmin', () => ({
 const mockFetch   = fetchUserTrustDetail as jest.Mock;
 const mockConfirm = confirmTrustEvent as jest.Mock;
 
+/** Defer mock resolution to the next macrotask so continuations fire outside act(). */
+const deferred = <T>(value: T): Promise<T> =>
+  new Promise(resolve => setTimeout(() => resolve(value), 0));
+
 const detail = {
   profile: { public_level: 'reliable_traveler', overall_score: 70, categories: {} },
   caps: [],
@@ -53,49 +66,62 @@ const detail = {
 
 describe('TrustDetail reason modal', () => {
   it('confirms a pending event via the modal and passes the reason', async () => {
-    mockFetch.mockResolvedValue(detail);
-    mockConfirm.mockResolvedValue({});
+    mockFetch.mockImplementation(() => deferred(detail));
+    mockConfirm.mockImplementation(() => deferred({}));
 
-    await act(async () => { render(<TrustDetailScreen />); });
-
+    await render(<TrustDetailScreen />);
     await waitFor(() => expect(screen.getByText('Confirm')).toBeTruthy());
 
     // No modal yet
     expect(screen.queryByTestId('reason-modal')).toBeNull();
 
-    await act(async () => { fireEvent.press(screen.getByText('Confirm')); });
-    expect(screen.getByTestId('reason-modal')).toBeTruthy();
+    // Bare press — sync setState; waitFor below confirms modal appears.
+    fireEvent.press(screen.getByText('Confirm'));
+    await waitFor(() => expect(screen.getByTestId('reason-modal')).toBeTruthy());
 
     // Confirm is disabled without a reason — service must not be called.
-    await act(async () => { fireEvent.press(screen.getByTestId('reason-confirm-btn')); });
+    // Bare press — the handler is a sync no-op; assert immediately.
+    fireEvent.press(screen.getByTestId('reason-confirm-btn'));
     expect(mockConfirm).not.toHaveBeenCalled();
 
-    await act(async () => { fireEvent.changeText(screen.getByTestId('reason-input'), '  verified with host  '); });
-    await act(async () => { fireEvent.press(screen.getByTestId('reason-confirm-btn')); });
-
+    // Bare changeText — sync setState; waitFor confirms note committed.
+    fireEvent.changeText(screen.getByTestId('reason-input'), '  verified with host  ');
     await waitFor(() =>
-      expect(mockConfirm).toHaveBeenCalledWith('ev-1', 'verified with host'));
-    // Modal closed after submit
-    expect(screen.queryByTestId('reason-modal')).toBeNull();
+      expect(screen.getByTestId('reason-input').props.value).toBe('  verified with host  '),
+    );
+
+    // Bare press — async submit handler; waitFor below flushes the async chain.
+    fireEvent.press(screen.getByTestId('reason-confirm-btn'));
+    await waitFor(() => {
+      expect(mockConfirm).toHaveBeenCalledWith('ev-1', 'verified with host');
+      // Modal closed after submit
+      expect(screen.queryByTestId('reason-modal')).toBeNull();
+    });
   });
 
   it('double-tapping the modal confirm submits the event confirmation exactly once', async () => {
     mockConfirm.mockClear();
-    mockFetch.mockResolvedValue(detail);
-    mockConfirm.mockResolvedValue({});
+    mockFetch.mockImplementation(() => deferred(detail));
+    mockConfirm.mockImplementation(() => deferred({}));
 
-    await act(async () => { render(<TrustDetailScreen />); });
+    await render(<TrustDetailScreen />);
     await waitFor(() => expect(screen.getByText('Confirm')).toBeTruthy());
 
-    await act(async () => { fireEvent.press(screen.getByText('Confirm')); });
-    await act(async () => { fireEvent.changeText(screen.getByTestId('reason-input'), 'verified'); });
+    // Bare press — sync setState; waitFor confirms modal appears.
+    fireEvent.press(screen.getByText('Confirm'));
+    await waitFor(() => expect(screen.getByTestId('reason-input')).toBeTruthy());
 
-    // Fast double-tap before the modal closes.
-    await act(async () => {
-      const btn = screen.getByTestId('reason-confirm-btn');
-      fireEvent.press(btn);
-      fireEvent.press(btn);
-    });
+    // Bare changeText — sync setState; waitFor confirms note committed.
+    fireEvent.changeText(screen.getByTestId('reason-input'), 'verified');
+    await waitFor(() =>
+      expect(screen.getByTestId('reason-input').props.value).toBe('verified'),
+    );
+
+    // Fast double-tap before the modal closes — both presses are bare so the
+    // in-flight guard sees the first press before any re-render.
+    const btn = screen.getByTestId('reason-confirm-btn');
+    fireEvent.press(btn);
+    fireEvent.press(btn);
 
     await waitFor(() => expect(mockConfirm).toHaveBeenCalledTimes(1));
     expect(mockConfirm).toHaveBeenCalledWith('ev-1', 'verified');

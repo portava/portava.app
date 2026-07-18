@@ -217,8 +217,10 @@ describe('PulseLiveCarousel', () => {
     // Interval is running — advance past one cycle without error
     jest.advanceTimersByTime(4000);
 
-    // Unmount simulates the screen losing focus (useFocusEffect cleanup fires)
-    unmount();
+    // Unmount simulates the screen losing focus (useFocusEffect cleanup fires).
+    // Wrapped in act() so React flushes the cleanup effects (interval clear)
+    // before we advance timers — avoids overlapping-act() noise.
+    await act(async () => { unmount(); });
 
     // After unmount the interval must be cleared — advancing time should not
     // trigger any state updates or throw "Can't perform state update on an

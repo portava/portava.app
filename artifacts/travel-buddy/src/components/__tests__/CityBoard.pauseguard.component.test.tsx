@@ -100,11 +100,18 @@ describe('CityBoard pause duplicate-POST guard', () => {
   });
 
   it('two rapid pause Alert confirms produce exactly one POST', async () => {
-    await act(async () => { render(<AdminRolloutDashboard />); });
+    // RNTL v14: render() is async — must be awaited or `screen` stays unbound.
+    // Do NOT wrap render() in an outer act() — RNTL already wraps internally,
+    // and a second act() wrapper causes overlapping-act() warnings that corrupt
+    // async state flushing in subsequent steps.
+    await render(<AdminRolloutDashboard />);
 
-    // Cities tab is the default — expand the city card to reveal the Pause button.
-    await waitFor(() => expect(screen.getByText('TestCity')).toBeTruthy());
-    await act(async () => { fireEvent.press(screen.getByText('TestCity')); });
+    // Cities tab is the default — wait for the async cities load, then expand
+    // the city card to reveal the Pause button.
+    // The city name renders as "TestCity, TC" (city + country in one Text node),
+    // so use a regex to avoid exact-match failures.
+    await waitFor(() => expect(screen.getByText(/TestCity/)).toBeTruthy());
+    await act(async () => { fireEvent.press(screen.getByText(/TestCity/)); });
     await waitFor(() => expect(screen.getByText('Pause')).toBeTruthy());
 
     // Press Pause → Alert opens.
