@@ -1,42 +1,33 @@
 /**
- * CreateMemoryModal — upload failure surface
+ * CreateMemoryModal — upload error clears on re-pick
  *
- * When uploadMedia returns { ok: false, message: 'Upload failed' }:
- *   • the inline upload-error message is visible
- *   • createPassportMemory is NOT called (no save without a photo URL)
+ * After an upload failure the upload-error banner is visible.  When the user
+ * presses 'Change' to pick a new photo the banner must disappear — pickMedia()
+ * calls setUploadError('') as its first statement so the stale message never
+ * lingers into a subsequent attempt.
  *
- * ## act() / screen discipline
+ * ## act() / screen discipline — same constraints as photoUploadFail
  *
- * CreateMemoryModal wraps everything in react-native's <Modal>.  The Modal
- * animation/visibility lifecycle creates an async act() scope inside RNTL's
- * render() promise.  Any subsequent explicit act() call then collides with
- * that floating scope → "overlapping act() calls" → actScopeDepth corrupted
- * → state updates never flush.
- *
- * Fixes applied:
- *
- * A. react-native's Modal is replaced with a synchronous View via a Proxy
- *    mock (see below).  The Proxy intercepts only the 'Modal' key so every
- *    other export RNTL needs (AccessibilityInfo, Platform, …) falls through
- *    to the actual react-native module via Reflect.get.
- *
- * B. `await render()` is called OUTSIDE any explicit act() wrapper.
- *
- * C. Every state-producing press is wrapped in `await act(async () => { … })`.
- *
- * D. uploadMedia is mocked with a deferred promise (not mockResolvedValue).
- *    Fast-resolving mocks fire handleSave's continuation between waitFor polls,
- *    outside any act scope.  Deferreds let us call resolve() inside settleWith
- *    so every state-setter runs within a controlled act scope.
- *
- * E. This test lives in its own file.  The two upload-path tests share mocks
- *    and act() helpers but cannot coexist in the same file: test 1's act scopes
- *    corrupt the screen global in a way that prevents test 2's render from
- *    rebinding it.  Separate files → separate Jest workers → no shared state.
+ * A. react-native's Modal replaced with a synchronous View (Proxy mock) to
+ *    prevent the floating async act() scope that corrupts actScopeDepth.
+ * B. `await render()` outside any explicit act().
+ * C. settleWith (async act + 30 ms timeout) commits every setState batch.
+ * D. uploadMedia uses a deferred promise so resolve() fires inside the act
+ *    scope controlled by settleWith.
+ * E. The initial error-visibility check uses a synchronous getByText rather
+ *    than waitFor.  waitFor temporarily sets IS_REACT_ACT_ENVIRONMENT=false
+ *    (via wrapAsync), which can interfere with how subsequent act() calls
+ *    route scheduler work: stale microtasks from scheduleImmediateRootSchedule
+ *    Task fire during the waitFor polling window and leave processRootSchedule
+ *    InMicrotask in a "already ran" state, so the Dismiss/re-pick setState
+ *    is never flushed by a later flushActQueue.  Skipping waitFor before the
+ *    re-pick sidesteps this entirely — settleWith's own flushActQueue commits
+ *    both setUploadError('') and setPhotoUri atomically.
  */
 
 import React from 'react';
 import { act, render, screen, fireEvent, waitFor } from '@testing-library/react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { CreateMemoryModal } from '../MemoriesTab.tsx';
 import { uploadMedia } from '../../services/media.ts';
 import { createPassportMemory } from '../../services/passportStamps.ts';
@@ -106,7 +97,8 @@ jest.mock('expo-av', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { View } = jest.requireActual('react-native') as typeof import('react-native');
   return {
-    Video: (props: Record<string, unknown>) => R.createElement(View as React.ComponentType, { testID: 'expo-av-video', ...props }),
+    Video: (props: Record<string, unknown>) =>
+      R.createElement(View as React.ComponentType, { testID: 'expo-av-video', ...props }),
     ResizeMode: { CONTAIN: 'contain', COVER: 'cover', STRETCH: 'stretch', NONE: 'none' },
   };
 });
@@ -131,21 +123,23 @@ jest.mock('../SaveButton', () => ({ SaveButton: () => null }));
 
 const uploadMediaMock          = uploadMedia          as jest.Mock;
 const createPassportMemoryMock = createPassportMemory as jest.Mock;
-
-// ── Lifecycle ──────────────────────────────────────────────────────────────────
-
-beforeEach(() => {
-  uploadMediaMock.mockReset();
-  createPassportMemoryMock.mockReset();
-});
+const launchImageLibraryMock   = ImagePicker.launchImageLibraryAsync as jest.Mock;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function deferredUpload() {
-  let resolve!: (v: { ok: boolean; url: string | null; mediaType: string | null; message?: string }) => void;
-  const promise = new Promise<{ ok: boolean; url: string | null; mediaType: string | null; message?: string }>(
-    (res) => { resolve = res; },
-  );
+  let resolve!: (v: {
+    ok: boolean;
+    url: string | null;
+    mediaType: string | null;
+    message?: string;
+  }) => void;
+  const promise = new Promise<{
+    ok: boolean;
+    url: string | null;
+    mediaType: string | null;
+    message?: string;
+  }>((res) => { resolve = res; });
   return { promise, resolve };
 }
 
@@ -156,14 +150,25 @@ async function settleWith(setup: () => void): Promise<void> {
   });
 }
 
+// ── Lifecycle ──────────────────────────────────────────────────────────────────
+
+beforeEach(() => {
+  uploadMediaMock.mockReset();
+  createPassportMemoryMock.mockReset();
+  launchImageLibraryMock.mockResolvedValue({
+    canceled: false,
+    assets: [{ uri: 'file:///picked-photo.jpg', mimeType: 'image/jpeg' }],
+  });
+});
+
 // ── Test ───────────────────────────────────────────────────────────────────────
 
-describe('CreateMemoryModal — upload failure', () => {
-  it('shows the upload error message when uploadMedia fails and does NOT call createPassportMemory', async () => {
+describe('CreateMemoryModal — upload error clears on re-pick', () => {
+  it('clears the upload error when the user picks a new photo after a failure', async () => {
     const d = deferredUpload();
     uploadMediaMock.mockReturnValue(d.promise);
 
-    // await render() outside any act() — see rule B in file header.
+    // Rule B: await render() outside any act().
     await render(<CreateMemoryModal visible onClose={jest.fn()} onCreated={jest.fn()} />);
 
     fireEvent.changeText(
@@ -171,26 +176,62 @@ describe('CreateMemoryModal — upload failure', () => {
       'My test memory',
     );
 
-    // Photo pick: press + 30 ms timeout within one act so both ImagePicker
-    // awaits (requestPermissions + launchImageLibrary) resolve before act exits.
+    // ── First photo pick ──────────────────────────────────────────────────────
+    // 30 ms window lets both ImagePicker awaits (requestPermissions + launch)
+    // resolve inside the act scope so setPhotoUri is committed by flushActQueue.
     await act(async () => {
       fireEvent.press(screen.getByText('Add photo or video'));
       await new Promise<void>((r) => setTimeout(r, 30));
     });
-    screen.getByText('Change'); // sync confirmation that setPhotoUri committed
+    screen.getByText('Change'); // sync: setPhotoUri committed
 
-    // Save press: handleSave suspends at await uploadMedia(d.promise).
+    // ── Save → suspended at uploadMedia ──────────────────────────────────────
     await act(async () => { fireEvent.press(screen.getByText('Save Memory')); });
     expect(uploadMediaMock).toHaveBeenCalledTimes(1);
 
-    // Resolve inside settleWith: handleSave's continuation
-    // (setUploading(false), setUploadError('Upload failed'), setSaving(false))
-    // fires as a microtask before the 30 ms timer, inside the act scope.
+    // ── Settle upload failure ─────────────────────────────────────────────────
+    // handleSave's continuation fires as a microtask before the 30 ms timer,
+    // committing setUploading(false) + setUploadError('Upload failed') +
+    // setSaving(false) inside the act scope via flushActQueue.
     await settleWith(() =>
       d.resolve({ ok: false, url: null, mediaType: null, message: 'Upload failed' }),
     );
 
-    await waitFor(() => expect(screen.getByText('Upload failed')).toBeTruthy());
+    // Synchronous check — no waitFor, which avoids the IS_REACT_ACT_ENVIRONMENT
+    // disruption described in the file header (rule E).
+    expect(screen.getByText('Upload failed')).toBeTruthy();
+    expect(createPassportMemoryMock).not.toHaveBeenCalled();
+
+    // ── Re-pick ───────────────────────────────────────────────────────────────
+    // Use a fresh URI so setPhotoUri emits a genuine change alongside
+    // setUploadError('') — prevents React from eliding the render.
+    launchImageLibraryMock.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: 'file:///picked-photo-2.jpg', mimeType: 'image/jpeg' }],
+    });
+
+    // settleWith commits pickMedia's state batch atomically:
+    //   1. setUploadError('')  — sync, before first await
+    //   2. (requestPermissions resolves during 30 ms window)
+    //   3. (launchImageLibrary resolves during 30 ms window)
+    //   4. setPhotoUri('file:///picked-photo-2.jpg') — committed together with (1)
+    await settleWith(() => {
+      fireEvent.press(screen.getByText('Change'));
+    });
+
+    // Confirms pickMedia ran fully (two launchImageLibrary calls total).
+    // Since setUploadError('') is pickMedia's FIRST statement, and pickMedia ran,
+    // the setter was definitely called.
+    expect(launchImageLibraryMock).toHaveBeenCalledTimes(2);
+
+    // Upload error must be gone — settleWith committed the batch that includes
+    // setUploadError('').  waitFor here is just a safety poll with a short
+    // timeout; the state should already be committed.
+    await waitFor(
+      () => expect(screen.queryByText('Upload failed')).toBeNull(),
+      { timeout: 2000 },
+    );
+
     expect(createPassportMemoryMock).not.toHaveBeenCalled();
   });
 });
