@@ -59,7 +59,16 @@ export function useTrip(id: string | undefined) {
     return () => { active = false; };
   }, [id]);
 
-  return { data, loading, error };
+  const reload = useCallback(() => {
+    if (!id) return;
+    setLoading(true); setError(null);
+    getTrip(id)
+      .then((t) => setData(t))
+      .catch((e) => setError(e?.message ?? 'Failed to load trip'))
+      .finally(() => setLoading(false));
+  }, [id]);
+
+  return { data, loading, error, reload };
 }
 
 export function usePendingTripInvites() {
