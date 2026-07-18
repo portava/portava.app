@@ -297,6 +297,13 @@ export function DestinationsTab({ memories, stamps, postcards, trips }: Props) {
     trips:     groups.filter((g) => g.trips.length > 0).length,
   }), [groups]);
 
+  // Reset active filter to 'all' when the selected chip becomes hidden (count=0)
+  useEffect(() => {
+    if (activeFilter !== 'all' && filterCounts[activeFilter] === 0) {
+      setActiveFilter('all');
+    }
+  }, [activeFilter, filterCounts]);
+
   // Deselect pin if it's filtered out
   useEffect(() => {
     if (selectedKey && !filteredGroups.find((g) => g.key === selectedKey)) {
