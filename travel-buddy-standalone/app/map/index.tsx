@@ -241,7 +241,7 @@ export default function FullScreenMapScreen() {
   const destination = title; // city name string, e.g. "Cebu City"
 
   useEffect(() => {
-    if (!entityTypes.split(',').map((s) => s.trim()).includes('places')) return;
+    if (!entityTypes.split(',').map((s: string) => s.trim()).includes('places')) return;
     if (!destination) return;
 
     let cancelled = false;
