@@ -46,7 +46,7 @@ jest.mock('../../../src/hooks/useBottomInset', () => ({
 
 // ── Session ───────────────────────────────────────────────────────────────────
 jest.mock('../../../src/context/SessionContext', () => ({
-  useSession: () => ({ configured: true, isAuthed: true, userId: 'u1' }),
+  useSession: jest.fn(() => ({ configured: true, isAuthed: true, userId: 'u1' })),
 }));
 
 // ── Messaging hooks ───────────────────────────────────────────────────────────
@@ -130,6 +130,7 @@ jest.mock('../../../src/components/CircleStatusCardMessage.logic', () => ({
 }));
 
 import Messages from '../messages.tsx';
+import { useSession } from '../../../src/context/SessionContext.tsx';
 
 // ── Tree-walking helpers ───────────────────────────────────────────────────────
 
@@ -149,7 +150,13 @@ function subtreeHasText(node: any, text: string): boolean {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+const mockUseSession = useSession as jest.Mock;
+
 describe('Messages / TelegraphInboxScreen — scroll architecture', () => {
+  beforeEach(() => {
+    mockUseSession.mockReturnValue({ configured: true, isAuthed: true, userId: 'u1' });
+  });
+
   it('Telegraph brand title is inside the primary ScrollView — not pinned above it', async () => {
     const { toJSON } = await render(<Messages />);
     await act(async () => {});
@@ -202,5 +209,22 @@ describe('Messages / TelegraphInboxScreen — scroll architecture', () => {
     }
 
     checkNoHeaderSibling(tree);
+  });
+
+  it('unauthenticated: Telegraph brand title is inside the scroll subtree — not pinned above it', async () => {
+    mockUseSession.mockReturnValue({ configured: true, isAuthed: false, userId: null });
+
+    const { toJSON } = await render(<Messages />);
+    await act(async () => {});
+
+    const tree = toJSON() as any;
+    const scrollViews = findScrollViews(tree);
+    expect(scrollViews.length).toBeGreaterThan(0);
+
+    // The "Telegraph" brand text must appear within a ScrollView subtree,
+    // confirming the listHeader is still rendered as ListHeaderComponent
+    // in the unauthenticated FlatList — not as an absolute-positioned sibling.
+    const titleInScroll = scrollViews.some((sv) => subtreeHasText(sv, 'Telegraph'));
+    expect(titleInScroll).toBe(true);
   });
 });
