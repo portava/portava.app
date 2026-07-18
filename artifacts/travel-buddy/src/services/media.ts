@@ -13,6 +13,14 @@
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import {
+  VIDEO_MAX_SIZE_BYTES,
+  IMAGE_MAX_SIZE_BYTES,
+  VIDEO_MAX_DURATION_SECONDS,
+  ACCEPTED_VIDEO_TYPES,
+  ACCEPTED_IMAGE_TYPES,
+  type VideoSurface,
+} from '../constants/mediaLimits.ts';
 
 // ---------------------------------------------------------------------------
 // Test-only injection slots — let unit tests bypass supabase at the boundary.
@@ -30,10 +38,14 @@ export function _setTestConfiguredOverride(v: boolean | null): void {
   _testConfiguredOverride = v;
 }
 
-export const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-export const ALLOWED_VIDEO_TYPES = ['video/mp4'];
-export const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB
-export const MAX_VIDEO_BYTES = 50 * 1024 * 1024; // 50MB
+/** @deprecated Use ACCEPTED_IMAGE_TYPES from constants/mediaLimits.ts */
+export const ALLOWED_IMAGE_TYPES = [...ACCEPTED_IMAGE_TYPES];
+/** @deprecated Use ACCEPTED_VIDEO_TYPES from constants/mediaLimits.ts */
+export const ALLOWED_VIDEO_TYPES = [...ACCEPTED_VIDEO_TYPES];
+/** @deprecated Use IMAGE_MAX_SIZE_BYTES from constants/mediaLimits.ts */
+export const MAX_IMAGE_BYTES = IMAGE_MAX_SIZE_BYTES;
+/** @deprecated Use VIDEO_MAX_SIZE_BYTES from constants/mediaLimits.ts */
+export const MAX_VIDEO_BYTES = VIDEO_MAX_SIZE_BYTES;
 
 export interface PickedMedia {
   uri: string;
@@ -70,8 +82,17 @@ function apiBase(): string {
 }
 
 export interface ValidateMediaOptions {
-  /** Maximum allowed video duration in seconds. Applies to highlights (10s) and video postcards (10s). */
+  /**
+   * Maximum allowed video duration in seconds. Takes precedence over `surface`.
+   * Kept for backwards compatibility — prefer `surface` for new callers.
+   */
   maxVideoDurationSeconds?: number;
+  /**
+   * Named surface — looks up VIDEO_MAX_DURATION_SECONDS[surface] as the
+   * duration limit. Ignored when maxVideoDurationSeconds is also set.
+   * Defaults to the old highlight limit (10 s) if neither is provided.
+   */
+  surface?: VideoSurface;
 }
 
 export function validateMedia(
@@ -79,24 +100,30 @@ export function validateMedia(
   opts?: ValidateMediaOptions,
 ): { ok: true } | { ok: false; kind: MediaErrorKind; message: string } {
   const mime = media.mimeType ?? (media.type === 'video' ? 'video/mp4' : 'image/jpeg');
-  const isImage = ALLOWED_IMAGE_TYPES.includes(mime);
-  const isVideo = ALLOWED_VIDEO_TYPES.includes(mime);
+  const isImage = (ACCEPTED_IMAGE_TYPES as readonly string[]).includes(mime);
+  const isVideo = (ACCEPTED_VIDEO_TYPES as readonly string[]).includes(mime);
   if (!isImage && !isVideo) {
     return { ok: false, kind: 'invalid_type', message: `Unsupported media type: ${mime}` };
   }
   if (media.fileSize != null) {
-    const max = isVideo ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+    const max = isVideo ? VIDEO_MAX_SIZE_BYTES : IMAGE_MAX_SIZE_BYTES;
     if (media.fileSize > max) {
       return { ok: false, kind: 'too_large', message: `File too large (${Math.round(media.fileSize / 1024 / 1024)}MB; max ${Math.round(max / 1024 / 1024)}MB)` };
     }
   }
-  if (isVideo && opts?.maxVideoDurationSeconds != null) {
+  if (isVideo) {
+    // Resolve duration limit: explicit opt > surface lookup > legacy default (10s)
+    const maxDuration =
+      opts?.maxVideoDurationSeconds ??
+      (opts?.surface != null ? VIDEO_MAX_DURATION_SECONDS[opts.surface] : undefined) ??
+      VIDEO_MAX_DURATION_SECONDS.highlight;
+
     const duration = media.duration;
-    if (duration != null && duration > opts.maxVideoDurationSeconds) {
+    if (duration != null && duration > maxDuration) {
       return {
         ok: false,
         kind: 'too_large',
-        message: `Highlights and video Postcards can be up to ${opts.maxVideoDurationSeconds} seconds.`,
+        message: `Video can be up to ${maxDuration} seconds for this surface.`,
       };
     }
   }

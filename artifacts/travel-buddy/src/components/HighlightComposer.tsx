@@ -147,7 +147,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
       height: a.height,
       type: a.type,
     };
-    const v = validateMedia(picked, { maxVideoDurationSeconds: 10 });
+    const v = validateMedia(picked, { surface: 'highlight' });
     if (!v.ok) { setError(v.message); return; }
 
     setMimeType(mime);
