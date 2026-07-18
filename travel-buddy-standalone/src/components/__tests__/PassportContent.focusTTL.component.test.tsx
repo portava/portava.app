@@ -148,24 +148,29 @@ jest.mock('../../hooks/usePassport', () => ({
 
 // ── Services ──────────────────────────────────────────────────────────────────
 
+// NOTE: intentionally exhaustive — services/posts imports Supabase and the API
+// token stack, pulling in a module graph that causes OOM under jest-expo when
+// loaded via requireActual.  Only getPendingPosts is used by passport.tsx.
 jest.mock('../../services/posts', () => ({
-  ...jest.requireActual('../../services/posts'),
   getPendingPosts: jest.fn(),
 }));
 
+// NOTE: intentionally exhaustive — services/rentABuddy imports Supabase;
+// requireActual would cause OOM.  Only getMyBuddyProfile is used by passport.tsx.
 jest.mock('../../services/rentABuddy', () => ({
-  ...jest.requireActual('../../services/rentABuddy'),
   getMyBuddyProfile: jest.fn(),
 }));
 
+// NOTE: intentionally exhaustive — services/profile imports Supabase;
+// requireActual would cause OOM.  Only uploadAvatar/uploadCover are used.
 jest.mock('../../services/profile', () => ({
-  ...jest.requireActual('../../services/profile'),
   uploadAvatar: jest.fn().mockResolvedValue({ ok: false }),
   uploadCover:  jest.fn().mockResolvedValue({ ok: false }),
 }));
 
+// NOTE: intentionally exhaustive — services/trips imports Supabase;
+// requireActual would cause OOM.  Only listMyTrips is used by passport.tsx.
 jest.mock('../../services/trips', () => ({
-  ...jest.requireActual('../../services/trips'),
   listMyTrips: jest.fn().mockResolvedValue([]),
 }));
 
@@ -206,8 +211,10 @@ jest.mock('../../hooks/useHighlightRingState', () => ({
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
+// NOTE: intentionally exhaustive — SessionContext imports Supabase, auth
+// services, and circle/cache services that pull in native-incompatible modules
+// under jest-expo.  Only useSession is consumed by passport.tsx.
 jest.mock('../../context/SessionContext', () => ({
-  ...jest.requireActual('../../context/SessionContext'),
   useSession: () => ({ userId: 'user-test-1', isAuthed: true }),
 }));
 
@@ -298,18 +305,31 @@ const mockGetPendingPosts = getPendingPosts as jest.Mock;
 const { getMyBuddyProfile } = require('../../services/rentABuddy.ts');
 const mockGetMyBuddyProfile = getMyBuddyProfile as jest.Mock;
 
+// Stable ref object shared across all tests.  Its .current is updated in each
+// beforeEach to the suite's BASE_TIME *after* the Date.now spy is installed,
+// so the component sees lastLoadedAt.current === Date.now() on first render and
+// correctly suppresses the initial reload.
+//
+// Using a stable object (not mockImplementation returning a new {current:…} on
+// every call) avoids the infinite re-render triggered by passport.tsx's
+// `useEffect(() => setLocalPostcards(postcards), [postcards])` — that hook
+// fires whenever the postcards reference changes, and a fresh [] on every
+// render is a new reference every time.
+const mockLastLoadedAt: { current: number } = { current: 0 };
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function setupPassportMock() {
   mockUsePassport.mockReturnValue({
-    profile:     MOCK_PROFILE,
-    postcards:   [],
-    stamps:      [],
-    memories:    [],
-    suggestions: [],
-    loading:     false,
-    error:       null,
-    reload:      mockReload,
+    profile:      MOCK_PROFILE,
+    postcards:    [],
+    stamps:       [],
+    memories:     [],
+    suggestions:  [],
+    loading:      false,
+    error:        null,
+    reload:       mockReload,
+    lastLoadedAt: mockLastLoadedAt,
   });
 }
 
@@ -326,6 +346,10 @@ describe('PassportContent — focus TTL guard: reload suppressed within TTL', ()
 
     // Freeze Date.now() at BASE_TIME for the initial mount.
     dateSpy = jest.spyOn(Date, 'now').mockReturnValue(BASE_TIME);
+
+    // Stamp the ref to match the mocked clock so the component sees
+    // Date.now() - lastLoadedAt.current === 0 on first render (within TTL).
+    mockLastLoadedAt.current = BASE_TIME;
 
     mockGetPendingPosts.mockResolvedValue({ ok: true, data: [] });
     mockGetMyBuddyProfile.mockResolvedValue({ ok: false });
@@ -389,6 +413,10 @@ describe('PassportContent — unconditional lightweight calls on every focus', (
     setupPassportMock();
 
     dateSpy = jest.spyOn(Date, 'now').mockReturnValue(BASE_TIME);
+
+    // Stamp the ref to match the mocked clock so Date.now() - lastLoadedAt.current === 0
+    // on first render (within TTL) — same pattern as the first suite.
+    mockLastLoadedAt.current = BASE_TIME;
 
     mockGetPendingPosts.mockResolvedValue({ ok: true, data: [] });
     mockGetMyBuddyProfile.mockResolvedValue({ ok: false });
