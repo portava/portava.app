@@ -32,6 +32,7 @@ import { LivePulseRail } from '../../src/components/LivePulseRail';
 import { useLivePulse } from '../../src/hooks/useLivePulse';
 import { fireRankOutcome } from '../../src/hooks/useRankOutcome';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
 
@@ -106,6 +107,7 @@ function Pulse() {
   );
 
   const navBarScrollHandler = useNavBarScrollHandler();
+  const { markFirstContent, epoch } = useScreenTiming('Pulse');
   const { locationState, openCityPicker } = useLocationContext();
   const activeCity = locationState.place.city ?? null;
   const activeCitySlug = (activeCity ?? '').toLowerCase().replace(/\s+/g, '-');
@@ -183,6 +185,12 @@ function Pulse() {
     if (feedMode === 'following') followingFeed.reload();
     else pulseFeed.reload();
   }, [feedMode, followingFeed.reload, pulseFeed.reload, livePulse.refresh]);
+
+  // Perf timing: fire on every focus cycle when feed items are present.
+  // epoch increments on each focus so warm opens fire even without data changes.
+  useEffect(() => {
+    if (pulseFeed.items.length > 0) markFirstContent();
+  }, [epoch, pulseFeed.items.length > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fits = [...buckets.fitsAvailability, ...buckets.openNearby];
   const noFits = fits.length === 0;

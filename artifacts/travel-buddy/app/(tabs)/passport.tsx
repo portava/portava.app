@@ -54,9 +54,11 @@ import { DestinationsTab } from '../../src/components/passport/DestinationsTab';
 import { groupByDestination } from '../../src/utils/destinationGrouping';
 import { useAvailabilityStore } from '../../src/context/AvailabilityStore';
 import { resolveAvailabilityChip } from '../../src/lib/availabilityChip';
+import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 
 export default function PassportScreen() {
   const { profile, postcards, stamps, memories, suggestions, loading, error, reload, lastLoadedAt } = usePassport();
+  const { markFirstContent, epoch } = useScreenTiming('Passport');
   const { userId: ownUserId } = useSession();
   const [tab, setTab] = useState<PassportTabKey>('postcards');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -186,6 +188,12 @@ export default function PassportScreen() {
   // runs — React throws "Rendered more hooks than during the previous render"
   // and the page goes blank. profile is null while loading; the hook accepts
   // a null username safely.
+  // Perf timing: fire on every focus cycle when profile is loaded.
+  // epoch increments on each focus so warm opens fire even without data changes.
+  useEffect(() => {
+    if (profile) markFirstContent();
+  }, [epoch, !!profile]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const { cardRef, share, sharing } = usePassportShare(profile?.username ?? null);
 
   if (loading) {

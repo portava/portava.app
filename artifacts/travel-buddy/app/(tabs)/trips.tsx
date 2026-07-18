@@ -24,6 +24,7 @@ import { useUnreadCounts } from '../../src/hooks/useMessaging';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { acceptTripInvite, declineTripInvite, type TripInvite } from '../../src/services/trips';
 import { classifyInviteAcceptError } from '../../src/lib/inviteCardGoneHandler';
+import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 
 function MeetupsShortcut({ count }: { count: number }) {
   const label = count > 9 ? '9+' : count > 0 ? String(count) : null;
@@ -196,12 +197,19 @@ function TripsScreen() {
   const [activeTab, setActiveTab] = useState<TripsTab>('trips');
   const insets = useSafeAreaInsets();
   const navScrollHandler = useNavBarScrollHandler();
+  const { markFirstContent, epoch } = useScreenTiming('Trips');
 
   useFocusEffect(useCallback(() => {
     postCompassFrontloadEvent({ eventType: 'navigation', screen: 'trips' }).catch(() => {});
   }, []));
 
   React.useEffect(() => { if (live) reload(); }, [live, reload]);
+
+  // Perf timing: fire on every focus cycle when trips are loaded.
+  // epoch increments on each focus so warm opens fire even without data changes.
+  React.useEffect(() => {
+    if (realTrips.length > 0) markFirstContent();
+  }, [epoch, realTrips.length > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
