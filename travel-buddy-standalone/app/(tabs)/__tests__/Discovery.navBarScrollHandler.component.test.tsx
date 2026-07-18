@@ -223,3 +223,38 @@ describe('Discovery screen — nav-bar scroll handler wiring (DiscoveryCategoryT
     expect(mockScrollHandlerSpy).toHaveBeenCalledTimes(1);
   });
 });
+
+// ── Parametrized: handler reaches every non-ForYou tab ────────────────────────
+// Iterates over several TABS entries (places, events, beaches, nightlife) to
+// confirm that onScroll={navScrollHandler} is wired regardless of which
+// category is active. A per-category rendering branch that accidentally drops
+// the prop for some tabs would fail here.
+
+const NON_FOR_YOU_CATEGORIES = ['places', 'events', 'beaches', 'nightlife'] as const;
+
+describe.each(NON_FOR_YOU_CATEGORIES)(
+  'Discovery screen — collapse handler reaches DiscoveryCategoryTab (category=%s)',
+  (category) => {
+    beforeEach(() => {
+      mockSearchParams = { category };
+      capturedCategoryOnScroll = null;
+      mockScrollHandlerSpy.mockClear();
+    });
+
+    it(`[${category}] DiscoveryCategoryTab receives the collapse handler as onScroll`, async () => {
+      await render(<DiscoveryHub />);
+      await act(async () => {});
+
+      expect(capturedCategoryOnScroll).toBe(mockScrollHandlerSpy);
+    });
+
+    it(`[${category}] invoking the captured onScroll calls the collapse handler`, async () => {
+      await render(<DiscoveryHub />);
+      await act(async () => {});
+
+      expect(capturedCategoryOnScroll).not.toBeNull();
+      capturedCategoryOnScroll!({ nativeEvent: { contentOffset: { y: 80 } } } as any);
+      expect(mockScrollHandlerSpy).toHaveBeenCalledTimes(1);
+    });
+  },
+);
