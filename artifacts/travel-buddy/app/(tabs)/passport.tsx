@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useBottomInset } from '../../src/hooks/useBottomInset';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Share2, Clock } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -415,6 +416,7 @@ function PassportContent({
   }, [reload, refreshAvailability]));
 
   const navScrollHandler = useNavBarScrollHandler();
+  const bottomInset = useBottomInset();
   const [statsIconOnly, setStatsIconOnly] = useState(false);
   const handleScroll = useCallback((e: any) => {
     navScrollHandler(e);
@@ -494,7 +496,7 @@ function PassportContent({
     <View style={s.root}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingTop: insets.top }}
+        contentContainerStyle={{ paddingTop: insets.top, paddingBottom: bottomInset }}
         showsVerticalScrollIndicator={false}
         onScroll={handleScroll}
         scrollEventThrottle={16}
@@ -635,7 +637,6 @@ function PassportContent({
         />
 
         <View style={{ height: 24 }} />
-        <NavBarFiller />
       </ScrollView>
 
       {/* ── Absolute UI: share + bell + menus ── */}

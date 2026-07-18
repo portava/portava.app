@@ -4,7 +4,8 @@ import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, Activit
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated';
-import { useNavBarScrollHandler, NavBarFiller, navBarProgress } from '../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler, navBarProgress } from '../../src/hooks/useNavBarCollapse';
+import { useBottomInset } from '../../src/hooks/useBottomInset';
 import { PostCard } from '../../src/components/PostCard';
 import { PulseHeader } from '../../src/components/PulseHeader';
 import { FitsCard, FlexibleStrip } from '../../src/components/PulseFits';
@@ -90,6 +91,7 @@ function FeedSeparator({ leadingItem }: { leadingItem?: PulseFeedItem }) {
 export default function Pulse() {
   const insets = useSafeAreaInsets();
   const navScrollHandler = useNavBarScrollHandler();
+  const bottomInset = useBottomInset();
 
   // For You / Following toggle collapses with the nav bar on scroll-down,
   // leaving just the compact icon rail. Natural height 46 px:
@@ -485,7 +487,8 @@ export default function Pulse() {
         data={feed}
         keyExtractor={keyExtractor}
         ListHeaderComponent={Header}
-        ListFooterComponent={<>{Footer}<NavBarFiller /></>}
+        contentContainerStyle={{ paddingBottom: bottomInset }}
+        ListFooterComponent={Footer}
         renderItem={renderItem}
         ItemSeparatorComponent={FeedSeparator}
         showsVerticalScrollIndicator={false}

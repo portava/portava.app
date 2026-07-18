@@ -11,9 +11,9 @@ import {
 import { getTrendingHashtags, type TrendingHashtag } from '../../src/services/hashtag';
 import type { DiscoveryAgeFilter } from '../../src/services/discovery';
 import type { Place } from '../../src/lib/location/placeTypes';
-import { NAV_BAR_FILLER_HEIGHT } from '../../src/hooks/useNavBarCollapse';
-import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useBottomInset } from '../../src/hooks/useBottomInset';
+import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode, DiscoveryFilters } from '../../src/services/discovery';
 import { getDiscoveryCategoryCounts, getDiscoveryCategoryCountsBatch } from '../../src/services/discovery';
 import { DiscoveryCategoryTab } from '../../src/components/discovery/DiscoveryCategoryTab';
@@ -81,6 +81,7 @@ const CONTEXT_MODES: ContextModeItem[] = [
 
 export default function DiscoveryHub() {
   const insets = useSafeAreaInsets();
+  const bottomInset = useBottomInset();
   const { isAuthed } = useSession();
   const { open: openPlanPicker } = usePlanPicker();
   const { locationState, showCityPicker, openCityPicker, closeCityPicker, setManualCity, isLoading } = useLocationContext();
@@ -689,7 +690,7 @@ export default function DiscoveryHub() {
               viewMode={viewMode}
               fallbackZoom={destinationZoom}
               sortBy={activeFilters.sortBy ?? null}
-              bottomInset={NAV_BAR_FILLER_HEIGHT + insets.bottom}
+              bottomInset={bottomInset}
               onScroll={navScrollHandler}
             />
             </SectionErrorBoundary>
@@ -715,7 +716,7 @@ export default function DiscoveryHub() {
             userLng={locationState.coords?.lng ?? null}
             onFiltersChange={handleFiltersChange}
             fallbackZoom={destinationZoom}
-            bottomInset={NAV_BAR_FILLER_HEIGHT + insets.bottom}
+            bottomInset={bottomInset}
             onScroll={navScrollHandler}
           />
           </SectionErrorBoundary>
