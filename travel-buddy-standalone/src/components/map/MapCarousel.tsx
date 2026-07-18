@@ -48,10 +48,11 @@ import {
   Plane,
   Heart,
   SlidersHorizontal,
+  Stamp,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
-import type { MapEntity } from '../../types/mapTypes.ts';
+import type { MapEntity, PassportCountryPayload } from '../../types/mapTypes.ts';
 import type { BuddyProfile } from '../../services/rentABuddy.ts';
 import type { EventListItem } from '../../services/events.ts';
 import type { HiddenGem } from '../../services/hiddenGems.ts';
@@ -291,6 +292,41 @@ function FriendCardBody({ entity }: { entity: MapEntity<CircleMemberLocation> })
   );
 }
 
+function StampCardBody({ entity }: { entity: MapEntity<PassportCountryPayload> }) {
+  const { country, stampCount, cities } = entity.payload;
+  const cfg = MAP_LAYER_CONFIG.stamps;
+  const cityLabel = cities.slice(0, 3).join(' · ');
+  return (
+    <>
+      <View style={cs.topRow}>
+        <View style={[cs.iconCircle, { backgroundColor: cfg.color }]}>
+          <Stamp size={18} color="#fff" />
+        </View>
+        <View style={cs.topText}>
+          <Text style={cs.primaryText} numberOfLines={1}>{country}</Text>
+          {cityLabel ? (
+            <Text style={cs.secondaryText} numberOfLines={1}>{cityLabel}</Text>
+          ) : null}
+        </View>
+      </View>
+      <View style={cs.chipRow}>
+        <View style={cs.chip}>
+          <Stamp size={10} color={cfg.color} />
+          <Text style={[cs.chipText, { color: cfg.color }]}>
+            {stampCount} {stampCount === 1 ? 'stamp' : 'stamps'}
+          </Text>
+        </View>
+        {cities.length > 0 && (
+          <View style={cs.chip}>
+            <MapPin size={10} color={color.mute} />
+            <Text style={cs.chipText}>{cities.length} {cities.length === 1 ? 'city' : 'cities'}</Text>
+          </View>
+        )}
+      </View>
+    </>
+  );
+}
+
 // ── Empty state card ──────────────────────────────────────────────────────────
 
 function EmptyCard({ onFiltersPress }: { onFiltersPress?: () => void }) {
@@ -356,6 +392,8 @@ function MapEntityCard({
         return <TripCardBody entity={entity as MapEntity<TripRow>} />;
       case 'friends':
         return <FriendCardBody entity={entity as MapEntity<CircleMemberLocation>} />;
+      case 'stamps':
+        return <StampCardBody entity={entity as MapEntity<PassportCountryPayload>} />;
       default:
         return null;
     }
@@ -388,6 +426,11 @@ function MapEntityCard({
         router.push(`/messages/${loc.userId}` as any);
         break;
       }
+      case 'stamps':
+        // Passport tab handles its own navigation — tapping a country card
+        // on the map just centres the camera (handled by the parent's
+        // handleSelectEntity), so no deep-link is needed here.
+        break;
     }
   };
 

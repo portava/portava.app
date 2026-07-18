@@ -15,11 +15,23 @@ export type MapEntityType =
   | 'events'
   | 'gems'
   | 'trips'
-  | 'friends';
+  | 'friends'
+  | 'stamps';
 
-/** Toggleable layers — excludes 'places' and 'travelers' which are controlled
- * by DiscoveryMapView's own internal filter UI. */
-export type ToggleableEntityType = Exclude<MapEntityType, 'places' | 'travelers'>;
+/**
+ * Payload for a passport-mode country pin in the map carousel.
+ * One entity per visited country, positioned at the country centroid.
+ */
+export interface PassportCountryPayload {
+  country: string;
+  stampCount: number;
+  /** Distinct cities visited in this country. */
+  cities: string[];
+}
+
+/** Toggleable layers — excludes 'places' and 'travelers' (Discovery UI controls)
+ * and 'stamps' (passport-only mode, not a user-togglable layer). */
+export type ToggleableEntityType = Exclude<MapEntityType, 'places' | 'travelers' | 'stamps'>;
 
 export const TOGGLEABLE_LAYERS: ToggleableEntityType[] = [
   'buddies',
@@ -46,6 +58,7 @@ export const MAP_LAYER_CONFIG: Record<MapEntityType, MapLayerConfig> = {
   gems:     { color: '#7C3AED', label: 'Hidden Gems' },
   trips:    { color: '#2563EB', label: 'Trips' },
   friends:  { color: '#16A34A', label: 'Friends' },
+  stamps:   { color: '#DC2626', label: 'Passport Stamps' },
 };
 
 // ── Normalised entity envelope ────────────────────────────────────────────────
