@@ -764,7 +764,7 @@ export function TripStamps({ stamps }: { stamps: PassportStamp[] }) {
 export function TripMapPreview() {
   return (
     <View>
-      <TravelSectionHeader title="Map Preview" onAction={() => router.push('/(tabs)/discovery')} actionLabel="View map" />
+      <TravelSectionHeader title="Map Preview" onAction={() => router.push('/map?entityTypes=trips' as any)} actionLabel="View map" />
       <View style={mp.card}>
         <View style={mp.map}>
           <View style={[mp.pin, { top: '30%', left: '25%', backgroundColor: color.signal }]} />

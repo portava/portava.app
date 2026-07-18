@@ -12,10 +12,11 @@
  * Stale presence markers are greyed out and intentionally non-routable.
  */
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { router } from 'expo-router';
 import { Map, Camera, GeoJSONSource, Layer, Marker } from '@maplibre/maplibre-react-native';
-import { MapPin } from 'lucide-react-native';
-import { color, radius, type as t } from '../../theme/tokens.ts';
+import { MapPin, Maximize2 } from 'lucide-react-native';
+import { color, radius, space, type as t } from '../../theme/tokens.ts';
 
 import { MAP_STYLE_URL } from '../../constants/mapStyle.ts';
 const MAP_STYLE = MAP_STYLE_URL;
@@ -82,6 +83,15 @@ export function CircleMapSection({ members, meetingPoint, meetingPointLabel }: P
 
   return (
     <View style={s.mapSurface}>
+      {/* Full-screen map button */}
+      <Pressable
+        style={s.fullMapBtn}
+        onPress={() => router.push('/map?entityTypes=friends&mode=circle' as any)}
+        hitSlop={4}
+      >
+        <Maximize2 size={12} color="#fff" />
+        <Text style={s.fullMapBtnText}>Full map</Text>
+      </Pressable>
       <Map style={{ flex: 1 }} mapStyle={MAP_STYLE} logo={false} attribution={false}>
         <Camera initialViewState={{ center: centerPoint, zoom: 13 }} />
 
@@ -134,6 +144,24 @@ const s = StyleSheet.create({
     borderRadius: radius.md,
     overflow: 'hidden',
     marginHorizontal: 16,
+  },
+  fullMapBtn: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    zIndex: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(10,61,74,0.82)',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  fullMapBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#fff',
   },
   banner: {
     flexDirection: 'row',

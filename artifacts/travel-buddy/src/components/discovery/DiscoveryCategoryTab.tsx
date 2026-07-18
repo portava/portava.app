@@ -8,7 +8,6 @@ import { getDiscoveryPlaces } from '../../services/discovery.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
-import { DiscoveryMapView } from './DiscoveryMapView';
 import { usePopularCities } from '../../hooks/usePopularCities.ts';
 import { POPULAR } from '../selectors/GlobalPlacePicker.tsx';
 import type { Place } from '../../lib/location/placeTypes.ts';
@@ -361,8 +360,6 @@ export function DiscoveryCategoryTab({
 
       {loading && places.length === 0 ? (
         <PlaceSkeletonList count={6} />
-      ) : viewMode === 'map' ? (
-        <DiscoveryMapView key={destination} places={places} onSelectPlace={onSelectPlace} fallbackLat={lat} fallbackLng={lng} userLat={userLat} userLng={userLng} fallbackZoom={fallbackZoom} />
       ) : error && places.length === 0 ? (
         <View style={styles.center}>
           <Text style={styles.emptyTitle}>Couldn't load places</Text>

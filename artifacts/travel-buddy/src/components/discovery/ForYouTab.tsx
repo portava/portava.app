@@ -17,7 +17,6 @@ import { getDiscoveryPlaces, getSavedPlaceIds } from '../../services/discovery.t
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceDetailSheet } from './PlaceDetailSheet.tsx';
-import { DiscoveryMapView } from './DiscoveryMapView';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { useSession } from '../../context/SessionContext.tsx';
 import { useCommunityDiscovery } from '../../hooks/useCommunityDiscovery.ts';
@@ -74,7 +73,7 @@ function compassItemToPlace(item: import('../../services/compass').CompassFeedIt
   };
 }
 
-export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy, bottomInset, onScroll }: ForYouTabProps) {
+export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, sortBy, bottomInset, onScroll }: ForYouTabProps) {
   const { isAuthed }            = useSession();
   const [items, setItems]       = useState<ForYouItem[]>([]);
   const [loading, setLoading]   = useState(false);
@@ -121,14 +120,6 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   );
 
   const community = useCommunityDiscovery(destination ?? null, sortBy);
-
-  // All OSM/Compass items + community places unified for DiscoveryMapView.
-  const mapPlaces = useMemo<DiscoveryPlace[]>(() => {
-    const osmPlaces = items.map((i) => i.place);
-    // Community places already in DiscoveryPlace shape; DiscoveryMapView
-    // filters out those without lat/lng so nulls are safe.
-    return [...osmPlaces, ...community.places];
-  }, [items, community.places]);
 
   // Monotonically-increasing counter so stale async callbacks from an old
   // load() call can detect they've been superseded and bail out safely.
@@ -213,37 +204,6 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
 
   if (loading && items.length === 0) {
     return <PlaceSkeletonList count={5} />;
-  }
-
-  if (viewMode === 'map') {
-    return (
-      <>
-        <DiscoveryMapView
-          key={destination}
-          places={mapPlaces}
-          onSelectPlace={(p) => {
-            // Strip "comm/" prefix so PlaceDetailSheet uses the bare UUID
-            // for save/bookmark calls — the prefix only exists for map rendering.
-            const id = p.id.startsWith('comm/') ? p.id.slice(5) : p.id;
-            setDetail(id === p.id ? p : { ...p, id });
-          }}
-          fallbackLat={lat}
-          fallbackLng={lng}
-          userLat={userLat}
-          userLng={userLng}
-          fallbackZoom={fallbackZoom}
-        />
-        <PlaceDetailSheet
-          place={detail}
-          visible={detail !== null}
-          onClose={() => setDetail(null)}
-          onAddToPlan={(p) => {
-            setDetail(null);
-            onAddToPlan({ id: p.id, name: p.name, category: p.category, address: p.address });
-          }}
-        />
-      </>
-    );
   }
 
   // Virtualized list data — pre-filtered to exclude dismissed items.
