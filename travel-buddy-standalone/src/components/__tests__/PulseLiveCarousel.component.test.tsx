@@ -22,6 +22,12 @@ import type { CityEvent } from '../../types/models.ts';
 jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
   router: { push: jest.fn() },
+  // Map useFocusEffect → useEffect(cb, []) so focus-lifecycle is exercisable
+  // in Jest without a full React Navigation navigator.
+  useFocusEffect: (cb: () => (() => void) | void) => {
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    require('react').useEffect(cb, []);
+  },
 }));
 
 // NOTE: intentionally exhaustive — react-native-safe-area-context pulls native-module
@@ -182,5 +188,26 @@ describe('PulseLiveCarousel', () => {
     expect(screen.getByText('LIVE')).toBeTruthy();
     expect(screen.queryByText('Not Yet')).toBeNull();
     expect(screen.queryByText('Long Gone')).toBeNull();
+  });
+
+  it('clears the auto-advance interval when the component unmounts (focus lost)', async () => {
+    jest.useFakeTimers();
+    const ev1 = ongoingEvent({ id: 'evt-a', title: 'Event Alpha' });
+    const ev2 = ongoingEvent({ id: 'evt-b', title: 'Event Beta' });
+
+    const { unmount } = await render(<PulseLiveCarousel events={[ev1, ev2]} now={NOW} />);
+
+    // Interval is running — advance past one cycle without error
+    jest.advanceTimersByTime(4000);
+
+    // Unmount simulates the screen losing focus (useFocusEffect cleanup fires)
+    unmount();
+
+    // After unmount the interval must be cleared — advancing time should not
+    // trigger any state updates or throw "Can't perform state update on an
+    // unmounted component".
+    expect(() => jest.advanceTimersByTime(8000)).not.toThrow();
+
+    jest.useRealTimers();
   });
 });

@@ -25,7 +25,7 @@ import Animated, {
   withTiming,
   useReducedMotion,
 } from 'react-native-reanimated';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import type { CityEvent } from '../types/models.ts';
 import { pv } from '../theme/pulseTheme.ts';
 import { type as t } from '../theme/tokens.ts';
@@ -151,12 +151,18 @@ function CarouselInner({
     }, AUTO_ADVANCE_MS);
   }, [count, reduceMotion, opacity]);
 
-  useEffect(() => {
-    startInterval();
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [startInterval, ongoingEvents]);
+  // Pause auto-advance when the screen loses focus; restart (and reset to the
+  // first card) when it regains focus.  This also handles app backgrounding
+  // because Expo Router fires the blur callback when the app goes to background.
+  useFocusEffect(
+    useCallback(() => {
+      setActiveIndex(0);
+      startInterval();
+      return () => {
+        if (intervalRef.current) clearInterval(intervalRef.current);
+      };
+    }, [startInterval]),
+  );
 
   // Swipe gesture — only activate on clear horizontal movement so the inner
   // Pressable still receives taps. NOT claiming responder on touchStart avoids
