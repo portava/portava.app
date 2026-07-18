@@ -46,6 +46,7 @@ import {
 
 import { useSession } from '../src/context/SessionContext';
 import { color, radius, type as t } from '../src/theme/tokens';
+import { useBottomInset } from '../src/hooks/useBottomInset';
 
 type ScreenState =
   | 'loading'
@@ -57,6 +58,7 @@ type ScreenState =
   | 'ok';
 
 export default function CirclePresenceScreen() {
+  const bottomInset = useBottomInset();
   const { userId } = useSession();
   const params = useLocalSearchParams<{
     contextType?: string;
@@ -337,6 +339,7 @@ export default function CirclePresenceScreen() {
 
   const listHeader = (
     <View style={g.headerArea}>
+      <ScreenHeader title={contextLabel} />
       {globalPaused && (
         <View style={g.pauseBanner}>
           <Pause size={14} color={color.mute} />
@@ -426,7 +429,6 @@ export default function CirclePresenceScreen() {
 
   return (
     <View style={g.screen}>
-      <ScreenHeader title={contextLabel} />
       <FlatList
         data={otherMembers}
         keyExtractor={(m) => m.userId}
@@ -444,7 +446,7 @@ export default function CirclePresenceScreen() {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
         }
-        contentContainerStyle={g.listContent}
+        contentContainerStyle={{ paddingBottom: bottomInset }}
         ItemSeparatorComponent={() => <View style={g.separator} />}
       />
 

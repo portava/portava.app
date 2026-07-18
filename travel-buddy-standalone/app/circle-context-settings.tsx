@@ -143,36 +143,45 @@ export default function CircleContextSettingsScreen() {
   const current = effectiveMode();
   const title = contextLabel || (contextType === 'trip' ? 'Trip' : 'Event');
 
+  const pageHeader = (
+    <View style={s.header}>
+      <Pressable onPress={() => router.back()} style={s.backBtn}>
+        <ArrowLeft size={22} color={color.ink} />
+      </Pressable>
+      <View style={{ flex: 1 }}>
+        <Text style={s.headerTitle}>Circle sharing</Text>
+        <Text style={s.headerSub} numberOfLines={1}>{title}</Text>
+      </View>
+      {saving && <ActivityIndicator size="small" color={color.deep} />}
+    </View>
+  );
+
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
-      <View style={s.header}>
-        <Pressable onPress={() => router.back()} style={s.backBtn}>
-          <ArrowLeft size={22} color={color.ink} />
-        </Pressable>
-        <View style={{ flex: 1 }}>
-          <Text style={s.headerTitle}>Circle sharing</Text>
-          <Text style={s.headerSub} numberOfLines={1}>{title}</Text>
-        </View>
-        {saving && <ActivityIndicator size="small" color={color.deep} />}
-      </View>
-
       {loading ? (
-        <View style={s.center}>
-          <ActivityIndicator color={color.deep} />
+        <View style={{ flex: 1 }}>
+          {pageHeader}
+          <View style={s.center}>
+            <ActivityIndicator color={color.deep} />
+          </View>
         </View>
       ) : loadError || !settings ? (
-        <View style={s.center}>
-          <Text style={s.errorText}>
-            {live ? 'Failed to load settings.' : 'Sign in to manage Circle settings.'}
-          </Text>
-          {live && loadError && (
-            <Pressable style={s.retryBtn} onPress={load}>
-              <Text style={s.retryText}>Try again</Text>
-            </Pressable>
-          )}
+        <View style={{ flex: 1 }}>
+          {pageHeader}
+          <View style={s.center}>
+            <Text style={s.errorText}>
+              {live ? 'Failed to load settings.' : 'Sign in to manage Circle settings.'}
+            </Text>
+            {live && loadError && (
+              <Pressable style={s.retryBtn} onPress={load}>
+                <Text style={s.retryText}>Try again</Text>
+              </Pressable>
+            )}
+          </View>
         </View>
       ) : (
         <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + space.xxxl }}>
+          {pageHeader}
 
           {settings.paused && (
             <View style={s.pauseBanner}>
