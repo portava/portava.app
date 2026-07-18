@@ -96,3 +96,54 @@ mockLastLoadedAt.current = BASE_TIME;   // within TTL on first render
 ```
 
 Reference implementation: `PassportContent.focusTTL.component.test.tsx`.
+
+---
+
+## Rule 6 — Testing components that use react-native's \<Modal\>
+
+react-native's `<Modal>` has an async animation/visibility lifecycle. When
+`<Modal visible={true}>` is rendered, its mount phase starts a slide animation
+that posts a macrotask (via `requestAnimationFrame` or `setTimeout`). That
+macrotask fires an extra `popActScope` call **after** RNTL's render() act scope
+has already closed, corrupting `actScopeDepth` and `IsSomeRendererActing`.
+Every subsequent explicit `act()` call (for presses or `settleWith`) then fails
+to flush state updates, and `waitFor` times out.
+
+**Fix:** replace `Modal` with a synchronous View using a `Proxy` mock. The
+`Proxy` intercepts only the `'Modal'` key so RNTL's own `react-native` imports
+(AccessibilityInfo, Platform, etc.) fall through untouched via `Reflect.get`.
+
+```tsx
+jest.mock('react-native', () => {
+  const actual = jest.requireActual('react-native');
+  return new Proxy(actual, {
+    get(target, prop, receiver) {
+      if (prop === 'Modal') {
+        const R = require('react');
+        return ({ children, visible }) =>
+          visible ? R.createElement(target.View, null, children) : null;
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+});
+```
+
+**Why Proxy over spread or Object.create:**
+- `{ ...actual, Modal: … }` copies only own-enumerable properties — RNTL's
+  non-enumerable getters (AccessibilityInfo, etc.) vanish, crashing imports.
+- `Object.create(actual)` puts our `Modal` as an own property but
+  `_interopRequireWildcard` uses `hasOwnProperty` when iterating, so other
+  exports from `actual` may not reach callers correctly.
+- `Proxy` with `Reflect.get` passes through every key transparently regardless
+  of enumerability or prototype chain.
+
+**Two-file rule:** even with the Proxy mock, the two or more overlapping act()
+warnings left by pickPhoto's `act()` corrupt `screen`'s cleanup between tests.
+Each Modal-component test that does async operations should live in its own
+file. Separate files → separate Jest workers → no shared `actScopeDepth` or
+`IsSomeRendererActing` state.
+
+Reference implementations:
+- `MemoriesTab.photoUploadFail.component.test.tsx`
+- `MemoriesTab.photoUploadSuccess.component.test.tsx`

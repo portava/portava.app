@@ -417,7 +417,7 @@ interface CreateModalProps {
   onCreated: (memory: PassportMemory) => void;
 }
 
-function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalProps) {
+export function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [city, setCity] = useState('');
