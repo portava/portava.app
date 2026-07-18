@@ -616,6 +616,8 @@ router.get("/events", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
+  const sessionId = randomUUID();
+
   const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
   const offset = (page - 1) * limit;
@@ -858,7 +860,7 @@ router.get("/events", async (req, res) => {
 
   // Paginate the ranked result — log only what is actually served
   const pagedEvents = rankedEvents.slice(offset, offset + limit);
-  void logImpression(rankedScored.slice(offset, offset + limit), user.id, "events");
+  void logImpression(rankedScored.slice(offset, offset + limit), user.id, "events", sessionId);
 
   res.json({
     events: pagedEvents.map((ev: any) => ({
@@ -868,6 +870,7 @@ router.get("/events", async (req, res) => {
     })),
     page,
     limit,
+    sessionId,
   });
 });
 

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { enrichSpans } from '../lib/enrichSpans';
 import { rankCandidates } from '../lib/portavaRank';
 import { logImpression } from '../lib/rankLog';
@@ -96,6 +97,7 @@ router.get("/pulse", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
+  const sessionId = randomUUID();
 
   const parsed = pulseQuerySchema.safeParse(req.query);
   if (!parsed.success) {
@@ -547,7 +549,7 @@ router.get("/pulse", async (req, res) => {
           interestTags,
         },
       );
-      void logImpression(ranked, user.id, "pulse");
+      void logImpression(ranked, user.id, "pulse", sessionId);
 
       // ── Extract results preserving backward compatibility ──────────────
       // `posts` stays post-only so existing mobile pagination/cursors work.
@@ -658,7 +660,7 @@ router.get("/pulse", async (req, res) => {
     }
   } catch { /* non-fatal — place cards degrade gracefully */ }
 
-  res.json({ posts: orderedPosts, total: orderedPosts.length, tab, prompts, placeCards, rankedCandidates });
+  res.json({ posts: orderedPosts, total: orderedPosts.length, tab, prompts, placeCards, rankedCandidates, sessionId });
 });
 
 /* ===========================================================================
