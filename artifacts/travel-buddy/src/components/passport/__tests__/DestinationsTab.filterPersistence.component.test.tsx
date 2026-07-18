@@ -212,6 +212,56 @@ describe('DestinationsTab — filter persistence across List/Map mode switches',
   });
 
   /**
+   * Filter-chip reset: if "Trips" is the active filter and all trips are
+   * removed, the Trips chip disappears (count=0) and the filter must fall
+   * back to 'all' — not stay stuck on the now-hidden chip.
+   *
+   * Confirms:
+   *   • The 'All' chip shows as active after the re-render.
+   *   • The total destination count reflects all remaining destinations.
+   *   • No ghost filter-empty state appears due to a stale filter value.
+   */
+  it('resets activeFilter to All when the selected chip becomes hidden after data removal', async () => {
+    const { rerender } = await render(
+      <DestinationsTab
+        memories={memories}
+        stamps={stamps}
+        postcards={postcards}
+        trips={trips}
+      />,
+    );
+
+    // ── Select "Trips" — Berlin visible, 1/2 destination ───────────────────
+    const tripsChip = await waitFor(() => screen.getByText(/^Trips/));
+    fireEvent.press(tripsChip);
+    await waitFor(() => expect(screen.getByText('1/2 destination')).toBeTruthy());
+    expect(screen.getByText('Berlin')).toBeTruthy();
+    expect(screen.queryByText('Paris')).toBeNull();
+
+    // ── Remove all trips — Trips chip should vanish, filter resets to 'all' ─
+    await rerender(
+      <DestinationsTab
+        memories={memories}
+        stamps={stamps}
+        postcards={postcards}
+        trips={[]}
+      />,
+    );
+
+    // Only Paris (memory) remains; count is "1 destination" (no filter suffix)
+    await waitFor(() => expect(screen.getByText('1 destination')).toBeTruthy());
+
+    // Paris is visible — not filtered out by a stale 'trips' value
+    expect(screen.getByText('Paris')).toBeTruthy();
+
+    // The Trips chip must be gone (count=0 → hidden)
+    expect(screen.queryByText(/^Trips/)).toBeNull();
+
+    // No ghost filter-empty message — 'all' is active so the list shows Paris
+    expect(screen.queryByText(/No destinations with trips yet/i)).toBeNull();
+  });
+
+  /**
    * Full round-trip: List → Map → List.  Switching modes twice must not
    * accumulate resets — the filter stays at "Trips" across both switches.
    */
