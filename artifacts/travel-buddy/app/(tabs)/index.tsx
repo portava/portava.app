@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import type { NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, ActivityIndicator, RefreshControl } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated';
 import { useNavBarScrollHandler, NavBarFiller, navBarProgress } from '../../src/hooks/useNavBarCollapse';
@@ -87,6 +88,7 @@ function FeedSeparator({ leadingItem }: { leadingItem?: PulseFeedItem }) {
 }
 
 export default function Pulse() {
+  const insets = useSafeAreaInsets();
   const navScrollHandler = useNavBarScrollHandler();
 
   // For You / Following toggle collapses with the nav bar on scroll-down,
@@ -277,6 +279,17 @@ export default function Pulse() {
 
   const Header = (
     <View>
+      {/* PulseHeader scrolls with the feed — not pinned above it */}
+      <PulseHeader
+        city={activeCity}
+        cityFull={activeCity}
+        availabilityText={status === 'not_set' ? 'Availability not set' : STATUS_LABEL[status]}
+        filterCount={filterCount}
+        onSearch={() => router.push('/(tabs)/discovery')}
+        onFilter={() => setSheetOpen(true)}
+        onCityPress={openCityPicker}
+      />
+
       {/* Live multi-status banner — computed from real event buckets + availability */}
       <PulseLiveBanner
         city={activeCity}
@@ -403,21 +416,11 @@ export default function Pulse() {
 
   return (
     <View style={{ flex: 1, backgroundColor: pv.navy }}>
-      <PulseHeader
-        city={activeCity}
-        cityFull={activeCity}
-        availabilityText={status === 'not_set' ? 'Availability not set' : STATUS_LABEL[status]}
-        filterCount={filterCount}
-        onSearch={() => router.push('/(tabs)/discovery')}
-        onFilter={() => setSheetOpen(true)}
-        onCityPress={openCityPicker}
-      />
-
       {/* ── Sticky wall controls: mode toggle + category filter rail ──
            Both collapse in sync with the floating nav bar on scroll-down:
            the mode toggle folds away entirely; the rail keeps icons and
            collapses its labels. Everything restores on scroll-up. */}
-      <View style={styles.stickyControls}>
+      <View style={[styles.stickyControls, { paddingTop: insets.top + space.sm }]}>
         <Animated.View style={[styles.modeRowClip, animatedModeRow]}>
           <View style={styles.modeRow}>
             <Pressable
@@ -539,7 +542,7 @@ const styles = StyleSheet.create({
   newPostsText: { ...t.bodyStrong, color: pv.navy, fontSize: 13 },
   stickyControls: {
     backgroundColor: pv.navy,
-    paddingTop: space.sm,
+    // paddingTop is applied inline: insets.top + space.sm (accounts for status bar)
     // Subtle bottom shadow so the sticky bar reads as a layer above the feed
     shadowColor: '#000',
     shadowOpacity: 0.3,

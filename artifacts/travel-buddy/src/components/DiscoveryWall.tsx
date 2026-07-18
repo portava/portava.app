@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, Image, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Compass, Search, SlidersHorizontal, Bookmark, MapPin, Plus, Sparkles, Info, ChevronRight,
   Gem, Share2, Route, Flag,
@@ -89,9 +88,8 @@ export function DiscoveryHeader({
   city?: string; filterCount?: number;
   onSearch?: () => void; onFilter?: () => void; onSaved?: () => void;
 }) {
-  const insets = useSafeAreaInsets();
   return (
-    <View style={[h.wrap, { paddingTop: insets.top + space.sm }]}>
+    <View style={[h.wrap, { paddingTop: space.sm }]}>
       <View style={h.row}>
         <Compass size={26} color={color.signal} />
         <View style={{ flex: 1 }}>
