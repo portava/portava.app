@@ -21,7 +21,7 @@
  *   event full + no waitlist → "Full — no waitlist"
  *   attendeeActions.canRsvp → RSVP dropdown (open/started; not banned)
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
   StyleSheet, Alert, Image, Share, ActionSheetIOS, Platform, Linking,
@@ -43,6 +43,7 @@ import {
 import { checkCityAvailable, getTopInCity, type BuddyProfile } from '../../src/services/rentABuddy';
 import { BuddyCard, BuddyCardSkeleton } from '../../src/components/BuddyCard';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
+import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useEventRsvp } from '../../src/hooks/useEventRsvp';
 import { HostDashboardPanel } from '../../src/components/HostDashboardPanel';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
@@ -115,6 +116,7 @@ export default function EventDetailScreen() {
   const { userId } = useSession();
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
   const navBarScrollHandler = useNavBarScrollHandler();
+  const { markFirstContent, epoch } = useScreenTiming('EventDetail');
 
   const [event, setEvent] = useState<EventDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -150,6 +152,12 @@ export default function EventDetailScreen() {
   }, [id]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  // Perf timing: fire on every focus cycle when event data is loaded.
+  // epoch increments on each focus so warm opens fire even without data changes.
+  useEffect(() => {
+    if (event) markFirstContent();
+  }, [epoch, !!event]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── RSVP state machine (centralised hook) ─────────────────────────────────
   const {

@@ -5,6 +5,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, Share2, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin, ShieldCheck, Radio, Link2 } from 'lucide-react-native';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
+import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import {
   TripHero, TodayNextUp, SavedIdeas, TripSavedPlacesSection,
@@ -40,11 +41,18 @@ function TripDetailScreen() {
   const insets = useSafeAreaInsets();
   const { configured, isAuthed, userId } = useSession();
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
+  const { markFirstContent, epoch } = useScreenTiming('TripDetail');
   const { checkForNewStamps } = useStampToast();
   const navBarScrollHandler = useNavBarScrollHandler();
   const bottomInset = useBottomInset();
   const live = configured && isAuthed;
   const { data: realTrip, loading, error: tripError, reload: reloadTrip } = useTrip(live ? id : undefined);
+
+  // Perf timing: fire on every focus cycle when trip data is loaded.
+  // epoch increments on each focus so warm opens fire even without data changes.
+  useEffect(() => {
+    if (realTrip) markFirstContent();
+  }, [epoch, !!realTrip]); // eslint-disable-line react-hooks/exhaustive-deps
   const { invites } = usePendingTripInvites();
   const isPendingInvite = live ? invites.some((inv) => inv.tripId === id) : false;
   const pageScrollRef    = useRef<ScrollView>(null);

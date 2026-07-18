@@ -32,6 +32,7 @@ import { EventDiscoveryCard } from '../../src/components/EventDiscoveryCard';
 import { useSession } from '../../src/context/SessionContext';
 import { useLocationContext } from '../../src/context/LocationContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 
 // ── Date preset helpers ───────────────────────────────────────────────────────
 
@@ -85,6 +86,7 @@ function EventsTabScreen() {
   const { isAuthed, configured } = useSession();
   const { locationState, requestLocation } = useLocationContext();
   const navScrollHandler = useNavBarScrollHandler();
+  const { markFirstContent, epoch } = useScreenTiming('Events');
 
   const [refreshing, setRefreshing] = useState(false);
 
@@ -236,6 +238,14 @@ function EventsTabScreen() {
       load();
     }
   }, [load]));
+
+  // Perf timing: fire on every focus cycle when any events section has content.
+  // epoch increments on each focus so warm opens fire even without data changes.
+  useEffect(() => {
+    if (!loading && (todayEvents.length > 0 || tomorrowEvents.length > 0 || weekendEvents.length > 0 || followingEvents.length > 0)) {
+      markFirstContent();
+    }
+  }, [epoch, !loading && (todayEvents.length > 0 || tomorrowEvents.length > 0 || weekendEvents.length > 0 || followingEvents.length > 0)]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Near-me load ───────────────────────────────────────────────────────────
   async function handleNearMeRequest() {

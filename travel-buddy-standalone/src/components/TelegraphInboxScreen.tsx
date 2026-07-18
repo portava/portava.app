@@ -19,6 +19,7 @@ import { TG, TG_AVATAR } from '../theme/telegraphTokens.ts';
 import { TelegraphAvatar, TelegraphRow } from './telegraph/TelegraphPrimitives.tsx';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { useBottomInset } from '../hooks/useBottomInset.ts';
+import { useScreenTiming } from '../hooks/useScreenTiming.ts';
 import type { ThreadSummary, MessageRequest } from '../services/messaging.ts';
 import { circleCardInboxPreview } from './CircleStatusCardMessage.logic';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
@@ -291,6 +292,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
   const bottomInset = useBottomInset();
   const { isAuthed, userId } = useSession();
   const { data: threads, loading, error, reload } = useMyThreads();
+  const { markFirstContent, epoch } = useScreenTiming('Telegraph');
   const {
     data: requests,
     loading: reqLoading,
@@ -325,6 +327,12 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
     reloadRequests();
     void loadBlockList();
   }, [reload, reloadRequests, loadBlockList]));
+
+  // Perf timing: fire on every focus cycle when threads are loaded.
+  // epoch increments on each focus so warm opens fire even without data changes.
+  useEffect(() => {
+    if (threads.length > 0) markFirstContent();
+  }, [epoch, threads.length > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const filtered = threads.filter((th) => {
     // Hide direct threads where the other member is blocked (either direction).
