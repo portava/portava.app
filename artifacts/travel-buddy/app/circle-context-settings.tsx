@@ -134,6 +134,8 @@ export default function CircleContextSettingsScreen() {
     if (res.ok) {
       setSettings(res.data);
     } else if (res.status === 403 && res.error === 'not_supported') {
+      // Backend doesn't support precise mode in this version — see the
+      // disabled option UI; this alert stays as a backstop only.
       Alert.alert('Not available', 'Precise live mode is not available in this version.');
     } else {
       Alert.alert('Error', 'Could not save. Please try again.');

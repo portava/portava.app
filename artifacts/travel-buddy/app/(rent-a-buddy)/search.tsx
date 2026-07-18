@@ -124,6 +124,7 @@ export default function RentABuddySearch() {
     if (!city.trim()) return;
     const nextPage = reset ? 1 : page + 1;
     if (reset) { setLoading(true); setError(null); }
+    try {
     const res = await searchBuddies({
       city,
       ...((cityLat != null && cityLng != null
@@ -134,14 +135,20 @@ export default function RentABuddySearch() {
       perPage: 10,
       ...(bookingDate ? { date: bookingDate } : {}),
     });
-    setLoading(false);
-    setRefreshing(false);
     if (!res.ok) { setError(res.error); return; }
     const newBuddies = res.data.buddies;
     setBuddies(reset ? newBuddies : prev => [...prev, ...newBuddies]);
     setTotal(res.data.total);
     setPage(nextPage);
     setHasMore(newBuddies.length === 10 && (nextPage * 10) < res.data.total);
+    } catch {
+      // A rejected promise must never strand the results on skeletons
+      // with no error (beta-audit P2 fix).
+      setError('Search failed. Please try again.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, [city, cityLat, cityLng, selectedCategory, page, bookingDate]);
 
   useEffect(() => {

@@ -1676,6 +1676,9 @@ export default function TelegraphThread() {
       <QuickActionBar />
 
       <FlatList
+        windowSize={9}
+        initialNumToRender={18}
+        maxToRenderPerBatch={12}
         ref={listRef}
         data={listItems}
         keyExtractor={(item) => item._t === 'day' ? item.key : item.data.id}

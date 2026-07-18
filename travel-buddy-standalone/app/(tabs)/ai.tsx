@@ -105,6 +105,17 @@ export default function AiChat() {
         onScroll={navScrollHandler}
         scrollEventThrottle={16}
       >
+        {entries.length === 0 ? (
+          <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32, gap: 8 }}>
+            <Text style={{ fontSize: 32 }}>🧭</Text>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: color.ink, textAlign: 'center' }}>
+              Ask Compass anything
+            </Text>
+            <Text style={{ fontSize: 13, color: color.mute, textAlign: 'center', lineHeight: 19 }}>
+              "What should I do tonight?" · "Hidden gems near me" · "Plan my layover"
+            </Text>
+          </View>
+        ) : null}
         {entries.map((e) => {
           if (e.kind === 'user') {
             return (
@@ -210,11 +221,11 @@ function RecCard({
       ) : null}
 
       <View style={styles.usedRow}>
-        <Stamp label={`${rec.usedPostIds.length} posts used`} tone="deep" />
+        <Stamp label={`${rec.usedPostIds?.length ?? 0} posts used`} tone="deep" />
       </View>
 
       <View style={styles.actions}>
-        {rec.nextActions.map((a) => (
+        {(rec.nextActions ?? []).map((a) => (
           <Pressable
             key={a.kind}
             style={styles.actionBtn}
