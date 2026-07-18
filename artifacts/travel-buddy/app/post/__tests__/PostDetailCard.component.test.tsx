@@ -221,6 +221,32 @@ describe('PostDetailCard media rendering', () => {
     expect(screen.queryByTestId('shared-video-player')).toBeNull();
   });
 
+  it('renders the location placeholder when media array and mediaUrls are empty', async () => {
+    mockGetPostById.mockResolvedValue(
+      postOk(
+        makePost({
+          media: [],
+          mediaUrls: [],
+          locationCity: 'Tokyo',
+        }),
+      ),
+    );
+
+    render(<PostDetail />);
+
+    // The placeholder branch renders the city label as uppercased text.
+    await waitFor(() =>
+      expect(screen.getByText('TOKYO')).toBeTruthy(),
+    );
+
+    // The MapPin icon is rendered inside the placeholder view.
+    expect(screen.getByTestId('icon-MapPin')).toBeTruthy();
+
+    // Neither video nor image media components should be present.
+    expect(screen.queryByTestId('shared-video-player')).toBeNull();
+    expect(screen.queryByTestId('stamp-overlay')).toBeNull();
+  });
+
   it('stamp overlay is absent for a video post', async () => {
     mockGetPostById.mockResolvedValue(
       postOk(
