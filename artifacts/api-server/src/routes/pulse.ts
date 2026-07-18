@@ -1,4 +1,5 @@
 import { enrichSpans } from '../lib/enrichSpans';
+import { rankCandidates } from '../lib/portavaRank';
 import { isFlagEnabled } from '../lib/featureFlags';
 import { getCompassProfile } from "../compass/CompassProfileService";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
@@ -354,44 +355,35 @@ router.get("/pulse", async (req, res) => {
 
       const viewerCity = (compassProfile.currentCity ?? "").toLowerCase();
 
-      // ── Scoring function ─────────────────────────────────────────────────
-      // Base score: recency (0–100, linearly decays over 7 days).
-      // Boosts are additive multipliers (not caps) so strong signals compound.
-      const NOW_MS = Date.now();
-      const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1_000;
-      const TWO_HOURS_MS  = 2 * 60 * 60 * 1_000;
-
-      function scorePost(p: any): number {
-        const ageMs = NOW_MS - new Date(p.createdAt).getTime();
-        const recency = Math.max(0, 1 - ageMs / SEVEN_DAYS_MS); // 0–1
-
-        let boost = 0;
-
-        // a. Followed-user recency boost — posts from followed users within 2 h
-        //    get a strong boost; older posts from followed users get a mild boost.
-        if (followedIds.has(p.authorId)) {
-          boost += ageMs <= TWO_HOURS_MS ? 0.5 : 0.2;
-        }
-
-        // b. Hashtag interest boost — any matching hashtag slug in the post
-        if (interestTags.size > 0 && Array.isArray(p.spanHashtags)) {
-          const matched = (p.spanHashtags as Array<{ slug: string }>)
-            .some((h) => interestTags.has(h.slug?.toLowerCase() ?? ""));
-          if (matched) boost += 0.3;
-        }
-
-        // c. City boost — posts from the viewer's current Compass city
-        if (viewerCity && (p.locationCity ?? "").toLowerCase().includes(viewerCity)) {
-          boost += 0.2;
-        }
-
-        return recency + boost;
-      }
-
-      // Re-rank by score descending (stable: equal scores keep createdAt order)
-      const scored = posts.map((p: any) => ({ p, score: scorePost(p) }));
-      scored.sort((a: any, b: any) => b.score - a.score);
-      orderedPosts = scored.map((x: any) => x.p);
+      // ── Unified ranking (portavaRank — spec §42) ─────────────────────────
+      // The previous inline scorer (linear recency + follow/hashtag/city
+      // boosts) is preserved as features inside the shared scoring core,
+      // which adds exponential recency, author-repetition diversity, and
+      // deterministic exploration slots so new voices surface. Pulse,
+      // Discover, Compass, and Events all rank through this one module.
+      const ranked = rankCandidates(
+        posts.map((p: any) => ({
+          id: p.id as string,
+          kind: "post" as const,
+          createdAt: p.createdAt as string | null,
+          city: (p.locationCity as string | null) ?? null,
+          neighborhood: (p.locationName as string | null) ?? null,
+          authorId: (p.authorId as string | null) ?? null,
+          tags: Array.isArray(p.spanHashtags)
+            ? (p.spanHashtags as Array<{ slug?: string }>)
+                .map((h) => (h.slug ?? "").toLowerCase())
+                .filter(Boolean)
+            : [],
+          __post: p,
+        })),
+        {
+          userId: user.id,
+          city: viewerCity,
+          followedIds,
+          interestTags,
+        },
+      );
+      orderedPosts = ranked.map((x) => (x.candidate as any).__post);
 
       // ── Intent-mode overlays (applied after ranking) ─────────────────────
       if (compassContext.contextState === "safety_mode" || primaryMode === "safety_mode") {
