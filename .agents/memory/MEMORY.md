@@ -24,3 +24,4 @@
 - [Alert onPress act() poison](rn-alert-onpress-act-poison.md) — awaiting an Alert button's async onPress inside act() kills effects for all later renders in the file; await outside, then flush with empty act().
 - [RNTL render must be awaited](rntl-async-render.md) — travel-buddy component tests: `await render(...)` or screen stays unbound ("render function has not been called").
 - [Jest moduleNameMapper vs per-file mocks](jest-mapper-vs-perfile-mocks.md) — mapping a module globally while a test file still has a jest.mock factory requiring the mock path causes infinite recursion; remove per-file mocks when adding a mapper entry.
+- [Modal Proxy mock for react-native](modal-proxy-mock.md) — Proxy intercepts only Modal key; two-file rule for async Modal tests.
