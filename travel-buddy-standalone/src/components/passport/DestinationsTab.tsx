@@ -7,11 +7,12 @@
  *                 pin opens the DestinationDetailScreen for that city.
  *
  * The List / Map toggle lives in an inline header row above the content.
+ * A filter chip bar lets users narrow pins/cards by content type.
  */
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, FlatList, Pressable, Image, StyleSheet,
-  ActivityIndicator, useWindowDimensions,
+  ActivityIndicator, useWindowDimensions, ScrollView,
 } from 'react-native';
 import { router } from 'expo-router';
 import { MapPin, List, Map as MapIcon } from 'lucide-react-native';
@@ -32,6 +33,7 @@ import { color, space, radius, type as t } from '../../theme/tokens.ts';
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type ViewMode = 'list' | 'map';
+type ContentFilter = 'all' | 'memories' | 'stamps' | 'postcards' | 'trips';
 
 interface CoordsMap {
   /** key → [lat, lng] — null when unresolvable */
@@ -45,6 +47,57 @@ interface Props {
   stamps: PassportStamp[];
   postcards: PassportPostcard[];
   trips: TripRow[];
+}
+
+// ── Filter bar ────────────────────────────────────────────────────────────────
+
+interface FilterBarProps {
+  active: ContentFilter;
+  onChange: (f: ContentFilter) => void;
+  counts: Record<ContentFilter, number>;
+}
+
+const FILTER_OPTIONS: { value: ContentFilter; label: string }[] = [
+  { value: 'all',       label: 'All' },
+  { value: 'memories',  label: 'Memories' },
+  { value: 'stamps',    label: 'Stamps' },
+  { value: 'postcards', label: 'Postcards' },
+  { value: 'trips',     label: 'Trips' },
+];
+
+function FilterBar({ active, onChange, counts }: FilterBarProps) {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={f.row}
+      style={f.scroll}
+    >
+      {FILTER_OPTIONS.map(({ value, label }) => {
+        const isActive = active === value;
+        const count = counts[value];
+        // Hide chips with 0 items (except "All")
+        if (value !== 'all' && count === 0) return null;
+        return (
+          <Pressable
+            key={value}
+            style={[f.chip, isActive && f.chipActive]}
+            onPress={() => onChange(value)}
+            hitSlop={4}
+          >
+            <Text style={[f.chipText, isActive && f.chipTextActive]}>
+              {label}
+              {value !== 'all' && (
+                <Text style={[f.chipCount, isActive && f.chipCountActive]}>
+                  {' '}{count}
+                </Text>
+              )}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
 }
 
 // ── Chip helper ───────────────────────────────────────────────────────────────
@@ -141,11 +194,35 @@ function DestinationPinBadge({ label, selected, onPress }: PinBadgeProps) {
 
 interface CalloutProps {
   group: DestinationGroup;
+  activeFilter: ContentFilter;
   onClose: () => void;
   onOpen: () => void;
 }
 
-function DestinationCallout({ group, onClose, onOpen }: CalloutProps) {
+function DestinationCallout({ group, activeFilter, onClose, onOpen }: CalloutProps) {
+  // Build meta line reflecting only the filtered content type
+  const metaParts: string[] = [];
+  if (activeFilter === 'all' || activeFilter === 'memories') {
+    if (group.memories.length > 0) metaParts.push(`${group.memories.length} memory`);
+  }
+  if (activeFilter === 'all' || activeFilter === 'stamps') {
+    if (group.stamps.length > 0) metaParts.push(`${group.stamps.length} stamp`);
+  }
+  if (activeFilter === 'all' || activeFilter === 'postcards') {
+    if (group.postcards.length > 0) metaParts.push(`${group.postcards.length} postcard`);
+  }
+  if (activeFilter === 'all' || activeFilter === 'trips') {
+    if (group.trips.length > 0) metaParts.push(`${group.trips.length} trip`);
+  }
+
+  const metaStr = metaParts
+    .map((part, i, arr) =>
+      i < arr.length - 1
+        ? `${part}s · `
+        : `${part}${part.endsWith('s') ? '' : 's'}`,
+    )
+    .join('');
+
   return (
     <View style={s.callout}>
       <View style={s.calloutLeft}>
@@ -153,21 +230,7 @@ function DestinationCallout({ group, onClose, onOpen }: CalloutProps) {
         {group.country ? (
           <Text style={s.calloutCountry}>{group.country}</Text>
         ) : null}
-        <Text style={s.calloutMeta}>
-          {[
-            group.memories.length > 0 && `${group.memories.length} memory`,
-            group.stamps.length > 0 && `${group.stamps.length} stamp`,
-            group.postcards.length > 0 && `${group.postcards.length} postcard`,
-            group.trips.length > 0 && `${group.trips.length} trip`,
-          ]
-            .filter(Boolean)
-            .map((s, i, arr) =>
-              i < arr.length - 1
-                ? `${s}s · `
-                : `${s}${(s as string).endsWith('s') ? '' : 's'}`,
-            )
-            .join('')}
-        </Text>
+        <Text style={s.calloutMeta}>{metaStr}</Text>
       </View>
       <Pressable onPress={onOpen} style={s.calloutOpen}>
         <Text style={s.calloutOpenText}>View</Text>
@@ -198,6 +261,7 @@ function EmptyState() {
 export function DestinationsTab({ memories, stamps, postcards, trips }: Props) {
   const { height: winHeight } = useWindowDimensions();
   const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const [activeFilter, setActiveFilter] = useState<ContentFilter>('all');
   const [coordsMap, setCoordsMap] = useState<CoordsMap>({});
   const [geocoding, setGeocoding] = useState(false);
   const [geocodedCount, setGeocodedCount] = useState(0);
@@ -209,6 +273,36 @@ export function DestinationsTab({ memories, stamps, postcards, trips }: Props) {
     () => groupByDestination(memories, stamps, postcards, trips),
     [memories, stamps, postcards, trips],
   );
+
+  // Filter groups by active content-type filter
+  const filteredGroups = useMemo(() => {
+    if (activeFilter === 'all') return groups;
+    return groups.filter((g) => {
+      switch (activeFilter) {
+        case 'memories':  return g.memories.length > 0;
+        case 'stamps':    return g.stamps.length > 0;
+        case 'postcards': return g.postcards.length > 0;
+        case 'trips':     return g.trips.length > 0;
+        default:          return true;
+      }
+    });
+  }, [groups, activeFilter]);
+
+  // Per-filter destination counts for the chip bar labels
+  const filterCounts = useMemo((): Record<ContentFilter, number> => ({
+    all:       groups.length,
+    memories:  groups.filter((g) => g.memories.length > 0).length,
+    stamps:    groups.filter((g) => g.stamps.length > 0).length,
+    postcards: groups.filter((g) => g.postcards.length > 0).length,
+    trips:     groups.filter((g) => g.trips.length > 0).length,
+  }), [groups]);
+
+  // Deselect pin if it's filtered out
+  useEffect(() => {
+    if (selectedKey && !filteredGroups.find((g) => g.key === selectedKey)) {
+      setSelectedKey(null);
+    }
+  }, [filteredGroups, selectedKey]);
 
   // Geocode all destinations when switching to map mode (once per mount)
   useEffect(() => {
@@ -228,10 +322,10 @@ export function DestinationsTab({ memories, stamps, postcards, trips }: Props) {
       .finally(() => setGeocoding(false));
   }, [viewMode, groups]);
 
-  // Fit camera to all resolved pins
+  // Fit camera to filtered resolved pins
   useEffect(() => {
     if (!cameraRef.current || viewMode !== 'map') return;
-    const resolved = groups
+    const resolved = filteredGroups
       .map((g) => coordsMap[`${g.city.toLowerCase()}|${(g.country ?? '').toLowerCase()}`])
       .filter((c): c is [number, number] => c != null);
     if (resolved.length === 0) return;
@@ -252,7 +346,7 @@ export function DestinationsTab({ memories, stamps, postcards, trips }: Props) {
       padding: { top: 40, right: 20, bottom: 120, left: 20 },
       duration: 600,
     });
-  }, [coordsMap, viewMode, groups]);
+  }, [coordsMap, viewMode, filteredGroups]);
 
   const handleOpenDetail = useCallback((group: DestinationGroup) => {
     router.push({
@@ -261,17 +355,17 @@ export function DestinationsTab({ memories, stamps, postcards, trips }: Props) {
     });
   }, []);
 
-  const selectedGroup = groups.find((g) => g.key === selectedKey) ?? null;
+  const selectedGroup = filteredGroups.find((g) => g.key === selectedKey) ?? null;
 
-  // Count destinations without coords for the fallback note
+  // Count destinations without coords for the fallback note (from filtered set)
   const resolvedPins = useMemo(() => {
-    return groups.filter((g) => {
+    return filteredGroups.filter((g) => {
       const k = `${g.city.toLowerCase()}|${(g.country ?? '').toLowerCase()}`;
       return coordsMap[k] != null;
     });
-  }, [groups, coordsMap]);
+  }, [filteredGroups, coordsMap]);
 
-  const unmappedCount = groups.length - resolvedPins.length;
+  const unmappedCount = filteredGroups.length - resolvedPins.length;
 
   if (groups.length === 0) {
     return <EmptyState />;
@@ -282,7 +376,8 @@ export function DestinationsTab({ memories, stamps, postcards, trips }: Props) {
   const toggleHeader = (
     <View style={s.toggleRow}>
       <Text style={s.toggleLabel}>
-        {groups.length} {groups.length === 1 ? 'destination' : 'destinations'}
+        {filteredGroups.length}{activeFilter !== 'all' ? `/${groups.length}` : ''}{' '}
+        {filteredGroups.length === 1 ? 'destination' : 'destinations'}
       </Text>
       <View style={s.toggleBtns}>
         <Pressable
@@ -309,6 +404,19 @@ export function DestinationsTab({ memories, stamps, postcards, trips }: Props) {
     </View>
   );
 
+  // ── Filter chip bar ───────────────────────────────────────────────────────
+
+  const filterBar = (
+    <FilterBar
+      active={activeFilter}
+      onChange={(f) => {
+        setActiveFilter(f);
+        setSelectedKey(null);
+      }}
+      counts={filterCounts}
+    />
+  );
+
   // ── Map mode ──────────────────────────────────────────────────────────────
 
   if (viewMode === 'map') {
@@ -317,6 +425,7 @@ export function DestinationsTab({ memories, stamps, postcards, trips }: Props) {
     return (
       <View style={{ paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: space.xl }}>
         {toggleHeader}
+        {filterBar}
 
         {/* Map container */}
         <View style={[s.mapWrap, { height: mapHeight }]}>
@@ -325,7 +434,7 @@ export function DestinationsTab({ memories, stamps, postcards, trips }: Props) {
               ref={cameraRef}
               initialViewState={{ center: [10, 20], zoom: 1 }}
             />
-            {groups.map((group) => {
+            {filteredGroups.map((group) => {
               const coordKey = `${group.city.toLowerCase()}|${(group.country ?? '').toLowerCase()}`;
               const coords = coordsMap[coordKey];
               if (!coords) return null;
@@ -353,12 +462,20 @@ export function DestinationsTab({ memories, stamps, postcards, trips }: Props) {
             </View>
           )}
 
-          {/* Empty overlay — no pins resolved */}
+          {/* Empty overlay — no pins resolved for current filter */}
           {!geocoding && resolvedPins.length === 0 && (
             <View style={s.emptyMapOverlay} pointerEvents="none">
               <Text style={s.emptyMapIcon}>🗺️</Text>
-              <Text style={s.emptyMapTitle}>Couldn't place any pins</Text>
-              <Text style={s.emptyMapSub}>Switch to List view to browse your destinations.</Text>
+              <Text style={s.emptyMapTitle}>
+                {activeFilter === 'all'
+                  ? 'Couldn\'t place any pins'
+                  : `No ${activeFilter} pins to show`}
+              </Text>
+              <Text style={s.emptyMapSub}>
+                {activeFilter === 'all'
+                  ? 'Switch to List view to browse your destinations.'
+                  : 'Try a different filter or switch to List view.'}
+              </Text>
             </View>
           )}
         </View>
@@ -367,6 +484,7 @@ export function DestinationsTab({ memories, stamps, postcards, trips }: Props) {
         {selectedGroup && (
           <DestinationCallout
             group={selectedGroup}
+            activeFilter={activeFilter}
             onClose={() => setSelectedKey(null)}
             onOpen={() => {
               setSelectedKey(null);
@@ -393,13 +511,21 @@ export function DestinationsTab({ memories, stamps, postcards, trips }: Props) {
   return (
     <View style={s.listWrapper}>
       {toggleHeader}
+      {filterBar}
       <FlatList
-        data={groups}
+        data={filteredGroups}
         keyExtractor={(item) => item.key}
         renderItem={({ item }) => <DestinationCard group={item} />}
         contentContainerStyle={s.list}
         scrollEnabled={false}
         ItemSeparatorComponent={() => <View style={s.separator} />}
+        ListEmptyComponent={
+          <View style={s.filterEmpty}>
+            <Text style={s.filterEmptyText}>
+              No destinations with {activeFilter} yet.
+            </Text>
+          </View>
+        }
       />
     </View>
   );
@@ -439,13 +565,54 @@ const pin = StyleSheet.create({
   },
 });
 
+const f = StyleSheet.create({
+  scroll: {
+    marginBottom: space.md,
+    marginHorizontal: -space.xs,
+  },
+  row: {
+    flexDirection: 'row',
+    gap: space.xs,
+    paddingHorizontal: space.xs,
+  },
+  chip: {
+    paddingHorizontal: space.md,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: color.haze,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  chipActive: {
+    backgroundColor: color.ink,
+    borderColor: color.ink,
+  },
+  chipText: {
+    ...t.small,
+    fontWeight: '600',
+    color: color.mute,
+    fontSize: 13,
+  },
+  chipTextActive: {
+    color: color.paper,
+  },
+  chipCount: {
+    fontWeight: '500',
+    color: color.faint,
+    fontSize: 12,
+  },
+  chipCountActive: {
+    color: 'rgba(255,255,255,0.65)',
+  },
+});
+
 const s = StyleSheet.create({
   // ── Toggle row ──────────────────────────────────────────────────────────────
   toggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: space.md,
+    marginBottom: space.sm,
   },
   toggleLabel: {
     ...t.small,
@@ -570,6 +737,16 @@ const s = StyleSheet.create({
     paddingBottom: 0,
   },
   separator: { height: space.md },
+
+  filterEmpty: {
+    paddingVertical: space.xl,
+    alignItems: 'center',
+  },
+  filterEmptyText: {
+    ...t.small,
+    color: color.faint,
+    textAlign: 'center',
+  },
 
   card: {
     backgroundColor: color.paperRaised,
