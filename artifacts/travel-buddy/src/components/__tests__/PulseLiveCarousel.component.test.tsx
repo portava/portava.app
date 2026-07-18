@@ -178,6 +178,21 @@ describe('PulseLiveCarousel', () => {
     jest.useRealTimers();
   });
 
+  it('renders the fallback — not a crash — when every event has a malformed date', async () => {
+    const badEvents: CityEvent[] = [
+      makeEvent({ id: 'bad-1', title: 'Broken Alpha', startAt: 'not-a-date' }),
+      makeEvent({ id: 'bad-2', title: 'Broken Beta',  startAt: 'not-a-date' }),
+      makeEvent({ id: 'bad-3', title: 'Broken Gamma', startAt: 'not-a-date' }),
+    ];
+    await render(<PulseLiveCarousel events={badEvents} now={NOW} />);
+
+    expect(screen.getByText('Nothing live nearby right now')).toBeTruthy();
+    expect(screen.queryByText('Broken Alpha')).toBeNull();
+    expect(screen.queryByText('Broken Beta')).toBeNull();
+    expect(screen.queryByText('Broken Gamma')).toBeNull();
+    expect(screen.queryByText('LIVE')).toBeNull();
+  });
+
   it('skips future and past events — only renders the one that is actually ongoing', async () => {
     const future = futureEvent({ id: 'evt-fut', title: 'Not Yet' });
     const ongoing = ongoingEvent({ id: 'evt-on', title: 'Right Now' });
