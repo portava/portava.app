@@ -26,6 +26,8 @@ export interface UsePulseFeedResult {
   loadMore: () => void;
   /** Mark a post as deleted so it is filtered out on every subsequent reload. */
   markDeleted: (id: string) => void;
+  /** Session UUID returned by the most recent successful feed response. Forward to outcome calls. */
+  sessionId: string | null;
 }
 
 export function usePulseFeed(opts: {
@@ -39,6 +41,7 @@ export function usePulseFeed(opts: {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   // Cursor = createdAt of the oldest item on the current page
   const cursorRef = useRef<string | null>(null);
@@ -72,6 +75,7 @@ export function usePulseFeed(opts: {
           }
           setItems(raw.map(pulsePostToFeedItem).filter((p) => !deletedIds.current.has(p.id)));
           setPlaceCards(result.data.placeCards.map(placeCardToFeedItem));
+          setSessionId(result.data.sessionId ?? null);
           setError(null);
         } else {
           setError(result.error);
@@ -118,5 +122,5 @@ export function usePulseFeed(opts: {
     return () => { abortRef.current?.abort(); };
   }, [reload]);
 
-  return { items, placeCards, loading, loadingMore, hasMore, error, reload, loadMore, markDeleted };
+  return { items, placeCards, loading, loadingMore, hasMore, error, reload, loadMore, markDeleted, sessionId };
 }

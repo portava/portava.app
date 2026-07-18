@@ -99,10 +99,12 @@ jest.mock('../../../src/hooks/usePulseFeed', () => ({
     placeCards: [],
     loading: false,
     loadingMore: false,
+    hasMore: false,
     error: null,
     reload: jest.fn(),
     loadMore: jest.fn(),
     markDeleted: jest.fn(),
+    sessionId: null,
   }),
 }));
 
