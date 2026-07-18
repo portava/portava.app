@@ -185,6 +185,8 @@ import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
+import { rankCandidates } from "../lib/portavaRank.js";
+import type { RankCandidate, ViewerContext } from "../lib/portavaRank.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -624,13 +626,18 @@ router.get("/events", async (req, res) => {
   const dateFrom = (req.query.dateFrom as string) ?? null;
   const dateTo   = (req.query.dateTo as string) ?? null;
 
+  // Fetch a larger candidate pool so the ranker has meaningful diversity to
+  // work with — the final page slice happens after rankCandidates().
+  // starts_at is kept as a secondary sort so the DB returns chronologically
+  // sensible rows before ranking applies the actionability kernel.
+  const RANK_POOL_SIZE = 200;
   let query = sc
     .from("events")
     .select("*")
     .in("state", state === "all" ? ["open","full","waitlist","started","completed"] : [state])
     .in("visibility", ["public", "friends_only"])
     .order("starts_at", { ascending: true, nullsFirst: false })
-    .range(offset, offset + limit - 1);
+    .limit(RANK_POOL_SIZE);
 
   if (city)     query = query.ilike("city", `%${city}%`);
   if (category) query = query.eq("category", category);
@@ -773,14 +780,86 @@ router.get("/events", async (req, res) => {
   // Batch-fetch host profiles for display on cards
   const hostIds = [...new Set(filtered.map((e: any) => e.host_id as string))];
   const hostProfileMap: Record<string, { name?: string | null; avatar_url?: string | null }> = {};
+
+  // Batch-fetch host trust scores for rankCandidates' authorTrustScore signal.
+  // Missing scores contribute 0 to rank — never a crash (portavaRank spec §42).
+  const hostTrustMap = new Map<string, number>();
+
   if (hostIds.length > 0) {
-    const { data: hps } = await sc.from("profiles").select("id, name, avatar_url").in("id", hostIds);
+    const [hpsResult, trustResult] = await Promise.all([
+      sc.from("profiles").select("id, name, avatar_url").in("id", hostIds),
+      (async () => {
+        try {
+          return await sc
+            .from("trust_profiles")
+            .select("user_id, overall_score")
+            .in("user_id", hostIds);
+        } catch {
+          return { data: null };
+        }
+      })(),
+    ]);
     const allowedNames = await nameVisibilitySet(sc, hostIds);
-    for (const p of (hps as any[]) ?? []) hostProfileMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
+    for (const p of ((hpsResult as any).data as any[]) ?? []) hostProfileMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
+    for (const t of ((trustResult as any).data as any[]) ?? []) hostTrustMap.set(t.user_id as string, t.overall_score as number);
   }
 
+  // ── Portava ranking (spec §42) ────────────────────────────────────────────
+  // Load viewer signals (follows + interest tags) then route the filtered
+  // candidate pool through rankCandidates(). starts_at chronological order
+  // is preserved as a tiebreaker via the actionability kernel — events
+  // starting soon from trusted hosts rank above stale or low-trust events.
+
+  let followedIds = new Set<string>();
+  try {
+    const { data: followRows } = await sc
+      .from("follows")
+      .select("following_id")
+      .eq("follower_id", user.id);
+    for (const row of (followRows as any[]) ?? []) followedIds.add(row.following_id as string);
+  } catch { /* non-fatal */ }
+
+  let interestTags = new Set<string>();
+  try {
+    const { data: prefRow } = await sc
+      .from("compass_user_preferences")
+      .select("interests")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    const interests: string[] = (prefRow as any)?.interests ?? [];
+    interestTags = new Set(interests.map((t: string) => t.toLowerCase()));
+  } catch { /* non-fatal */ }
+
+  const viewerContext: ViewerContext = {
+    userId: user.id,
+    city: city ? city.toLowerCase() : undefined,
+    followedIds,
+    interestTags,
+  };
+
+  type EventCandidate = RankCandidate & { __ev: any };
+  const eventCandidates: EventCandidate[] = filtered.map((ev: any) => ({
+    id: ev.id as string,
+    kind: "event" as const,
+    startsAt: (ev.starts_at as string | null) ?? null,
+    createdAt: (ev.created_at as string | null) ?? null,
+    city: ev.city ? (ev.city as string).toLowerCase() : null,
+    category: (ev.category as string | null) ?? null,
+    authorId: (ev.host_id as string | null) ?? null,
+    authorTrustScore: hostTrustMap.get(ev.host_id as string) ?? null,
+    hasCapacity: ev.max_attendees == null || ((ev.going_count ?? 0) as number) < (ev.max_attendees as number),
+    tags: Array.isArray(ev.tags) ? (ev.tags as string[]).map((t) => t.toLowerCase()) : [],
+    __ev: ev,
+  }));
+
+  const rankedEvents = rankCandidates(eventCandidates, viewerContext)
+    .map((s) => (s.candidate as EventCandidate).__ev);
+
+  // Paginate the ranked result
+  const pagedEvents = rankedEvents.slice(offset, offset + limit);
+
   res.json({
-    events: filtered.map((ev: any) => ({
+    events: pagedEvents.map((ev: any) => ({
       ...formatEvent(ev, user.id, { hostProfile: hostProfileMap[ev.host_id as string] }),
       myRsvp:  rsvpMap[ev.id] ?? null,
       isSaved: savedEventIds.has(ev.id as string),

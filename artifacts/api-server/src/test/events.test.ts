@@ -1130,6 +1130,7 @@ describe("Events — GET /api/events list coverage", () => {
           not:      () => errChain,
           order:    () => errChain,
           range:    () => errChain,
+          limit:    () => errChain,
           ilike:    () => errChain,
           eq:       () => errChain,
           gte:      () => errChain,

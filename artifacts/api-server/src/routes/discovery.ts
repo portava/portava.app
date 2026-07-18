@@ -32,6 +32,8 @@ import { getCompassProfile } from "../compass/CompassProfileService";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine";
 import { rankItemsForDiscovery } from "../compass/CompassFeedBuilder";
 import { isEnabled } from "../compass/flags";
+import { rankCandidates } from "../lib/portavaRank";
+import type { RankCandidate, ViewerContext } from "../lib/portavaRank";
 
 const router = Router();
 
@@ -964,8 +966,72 @@ router.get("/discovery", async (req, res) => {
       }
     }
 
-    // Apply context-aware composite ranking when DiscoveryContext is available
-    const ranked  = discoveryCtx ? scoreWithContext(places, discoveryCtx) : places;
+    // ── Authenticated path: route through portavaRank (spec §42) ─────────────
+    // When a userId is present, map candidates to RankCandidate and call
+    // rankCandidates() so Discovery gets the same trust firewall, diversity/
+    // exploration slots, and feature-weight surface as Pulse.  Missing fields
+    // (no authorId, no distanceKm) contribute 0 to rank — never a crash.
+    // Unauthenticated requests keep the existing distance/saved-count sort.
+    let ranked: DiscoveryPlace[];
+    if (callerUserId) {
+      const rankSc = getServiceClient();
+
+      // Load followed user IDs — social-proximity boost
+      let followedIds = new Set<string>();
+      if (rankSc) {
+        try {
+          const { data: followRows } = await rankSc
+            .from("follows")
+            .select("following_id")
+            .eq("follower_id", callerUserId);
+          for (const row of (followRows as any[]) ?? []) followedIds.add(row.following_id as string);
+        } catch { /* non-fatal */ }
+      }
+
+      // Load interest hashtags from compass preferences — tag-affinity boost
+      let interestTags = new Set<string>();
+      if (rankSc) {
+        try {
+          const { data: prefRow } = await rankSc
+            .from("compass_user_preferences")
+            .select("interests")
+            .eq("user_id", callerUserId)
+            .maybeSingle();
+          const interests: string[] = (prefRow as any)?.interests ?? [];
+          interestTags = new Set(interests.map((t: string) => t.toLowerCase()));
+        } catch { /* non-fatal */ }
+      }
+
+      const viewerContext: ViewerContext = {
+        userId: callerUserId,
+        city: destination.split(",")[0]?.trim().toLowerCase() ?? undefined,
+        followedIds,
+        interestTags,
+      };
+
+      // Map DiscoveryPlace → RankCandidate.
+      // DB-backed places (id prefix "db/") are treated as gems (curated by hosts);
+      // OSM places are kind "place". Both carry savedCount as the likeCount proxy.
+      type PlaceCandidate = RankCandidate & { __place: DiscoveryPlace };
+      const candidates: PlaceCandidate[] = places.map((p) => ({
+        id: p.id,
+        kind: p.id.startsWith("db/") ? "gem" as const : "place" as const,
+        city: destination.split(",")[0]?.trim().toLowerCase() ?? null,
+        category: p.category ?? null,
+        distanceKm: p.distanceKm ?? null,
+        verified: p.id.startsWith("db/") ? true : null,
+        likeCount: p.savedCount ?? null,
+        tags: (p.tags ?? []).map((t) => t.toLowerCase()),
+        __place: p,
+      }));
+
+      const scored = rankCandidates(candidates, viewerContext);
+      ranked = scored.map((s) => (s.candidate as PlaceCandidate).__place);
+    } else {
+      // Unauthenticated: keep existing distance/saved-count ordering
+      ranked = discoveryCtx ? scoreWithContext(places, discoveryCtx) : places;
+    }
+
     const filtered = applyFilters(ranked);
     const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
     res.json({ places: slice, total: filtered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
