@@ -271,6 +271,12 @@ const pin = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 2,
   },
+  // Wider offset for double-digit counts (10–99) so the badge clears the pin icon
+  badgeDouble: {
+    minWidth: 20,
+    right: -10,
+    paddingHorizontal: 3,
+  },
   badgeText: {
     color: '#fff',
     fontSize: 9,
@@ -283,13 +289,20 @@ const pin = StyleSheet.create({
 function StampMarker({ entity, onPress }: { entity: MapEntity<PassportCountryPayload>; onPress: (e: MapEntity) => void }) {
   const cfg = MAP_LAYER_CONFIG.stamps;
   const { stampCount } = entity.payload;
+  const isDouble = stampCount >= 10;
   return (
     <Pressable onPress={() => onPress(entity)} hitSlop={6}>
       <View style={[pin.wrap, { backgroundColor: cfg.color }]}>
         <Stamp size={12} color="#fff" />
       </View>
       {stampCount > 1 && (
-        <View style={[pin.badge, { backgroundColor: cfg.color }]}>
+        <View
+          style={[
+            pin.badge,
+            { backgroundColor: cfg.color },
+            isDouble && pin.badgeDouble,
+          ]}
+        >
           <Text style={pin.badgeText}>{stampCount}</Text>
         </View>
       )}

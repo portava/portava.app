@@ -47,7 +47,6 @@ export function useTrip(id: string | undefined) {
   const [data, setData] = useState<TripRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -58,11 +57,9 @@ export function useTrip(id: string | undefined) {
       .catch((e) => { if (active) setError(e?.message ?? 'Failed to load trip'); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [id, refreshKey]);
+  }, [id]);
 
-  const reload = useCallback(() => setRefreshKey((k) => k + 1), []);
-
-  return { data, loading, error, reload };
+  return { data, loading, error };
 }
 
 export function usePendingTripInvites() {
