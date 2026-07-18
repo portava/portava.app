@@ -26,9 +26,8 @@ import { COUNTRY_CENTROIDS } from '../lib/countryCentroids.ts';
 
 // ── Map style ──────────────────────────────────────────────────────────────────
 
-const MAP_STYLE = process.env.EXPO_PUBLIC_MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${process.env.EXPO_PUBLIC_MAPTILER_KEY}`
-  : 'https://demotiles.maplibre.org/style.json';
+import { MAP_STYLE_URL } from '../constants/mapStyle.ts';
+const MAP_STYLE = MAP_STYLE_URL;
 
 // ── Country-level aggregation ─────────────────────────────────────────────────
 

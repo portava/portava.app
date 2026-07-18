@@ -565,11 +565,18 @@ export default function DiscoveryHub() {
               </Text>
             </Pressable>
             <Pressable
-              style={[styles.toggleBtn, viewMode === 'map' && styles.toggleBtnActive]}
-              onPress={() => setViewMode('map')}
+              style={styles.toggleBtn}
+              onPress={() => {
+                const params: Record<string, string> = { entityTypes: 'places,travelers' };
+                if (destinationLat != null && Number.isFinite(destinationLat)) params.lat = String(destinationLat);
+                if (destinationLng != null && Number.isFinite(destinationLng)) params.lng = String(destinationLng);
+                if (destinationZoom) params.zoom = String(destinationZoom);
+                if (destination) params.title = destination;
+                router.push({ pathname: '/map', params } as any);
+              }}
             >
-              <MapPin size={11} color={viewMode === 'map' ? color.signal : color.mute} />
-              <Text style={[styles.toggleBtnText, viewMode === 'map' && styles.toggleBtnTextActive]}>
+              <MapPin size={11} color={color.mute} />
+              <Text style={styles.toggleBtnText}>
                 Map
               </Text>
             </Pressable>

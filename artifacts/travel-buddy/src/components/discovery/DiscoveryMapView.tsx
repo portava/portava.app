@@ -38,10 +38,8 @@ const TRAVELERS_TOGGLE_KEY = 'discovery_map_travelers';
 
 // ── Map tile style ─────────────────────────────────────────────────────────────
 
-const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '';
-const MAP_STYLE = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`
-  : 'https://demotiles.maplibre.org/style.json';
+import { MAP_STYLE_URL } from '../../constants/mapStyle.ts';
+const MAP_STYLE = MAP_STYLE_URL;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
