@@ -280,7 +280,7 @@ export default function Pulse() {
   }
 
   const Header = (
-    <View>
+    <View style={{ paddingTop: insets.top }}>
       {/* PulseHeader scrolls with the feed — not pinned above it */}
       <PulseHeader
         city={activeCity}
@@ -292,6 +292,49 @@ export default function Pulse() {
         onFilter={() => setSheetOpen(true)}
         onCityPress={openCityPicker}
       />
+
+      {/* Mode toggle + filter chips — scroll with the feed (previously fixed stickyControls) */}
+      <View style={{ paddingVertical: space.sm }}>
+        <Animated.View style={[styles.modeRowClip, animatedModeRow]}>
+          <View style={styles.modeRow}>
+            <Pressable
+              style={[styles.modeBtn, feedMode === 'forYou' && styles.modeBtnActive]}
+              onPress={() => handleFeedMode('forYou')}
+            >
+              <Text style={[styles.modeBtnText, feedMode === 'forYou' && styles.modeBtnTextActive]}>For You</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modeBtn, feedMode === 'following' && styles.modeBtnActive]}
+              onPress={() => handleFeedMode('following')}
+            >
+              <Text style={[styles.modeBtnText, feedMode === 'following' && styles.modeBtnTextActive]}>Following</Text>
+            </Pressable>
+          </View>
+        </Animated.View>
+        {feedMode === 'forYou' && (
+          <Animated.View style={[styles.chipRowClip, animatedChipRow]}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+              {QUICK_FILTERS.map((f) => {
+                const isChipActive = active.includes(f);
+                const label = CHIP_LABELS[f] ?? f;
+                return (
+                  <Pressable
+                    key={f}
+                    style={[styles.chip, isChipActive && styles.chipActive]}
+                    onPress={() => toggleQuick(f)}
+                    hitSlop={{ top: 6, bottom: 6, left: 0, right: 0 }}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isChipActive }}
+                    accessibilityLabel={`${label} filter${isChipActive ? ', selected' : ''}`}
+                  >
+                    <Text style={[styles.chipText, isChipActive && styles.chipTextActive]}>{label}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </Animated.View>
+        )}
+      </View>
 
       {/* Live multi-status banner — computed from real event buckets + availability */}
       <PulseLiveBanner
@@ -419,52 +462,6 @@ export default function Pulse() {
 
   return (
     <View style={{ flex: 1, backgroundColor: pv.navy }}>
-      {/* ── Sticky wall controls: mode toggle + category filter rail ──
-           Both collapse in sync with the floating nav bar on scroll-down:
-           the mode toggle folds away entirely; the rail keeps icons and
-           collapses its labels. Everything restores on scroll-up. */}
-      <View style={[styles.stickyControls, { paddingTop: insets.top + space.sm }]}>
-        <Animated.View style={[styles.modeRowClip, animatedModeRow]}>
-          <View style={styles.modeRow}>
-            <Pressable
-              style={[styles.modeBtn, feedMode === 'forYou' && styles.modeBtnActive]}
-              onPress={() => handleFeedMode('forYou')}
-            >
-              <Text style={[styles.modeBtnText, feedMode === 'forYou' && styles.modeBtnTextActive]}>For You</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.modeBtn, feedMode === 'following' && styles.modeBtnActive]}
-              onPress={() => handleFeedMode('following')}
-            >
-              <Text style={[styles.modeBtnText, feedMode === 'following' && styles.modeBtnTextActive]}>Following</Text>
-            </Pressable>
-          </View>
-        </Animated.View>
-        {feedMode === 'forYou' && (
-          <Animated.View style={[styles.chipRowClip, animatedChipRow]}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-              {QUICK_FILTERS.map((f) => {
-                const isChipActive = active.includes(f);
-                const label = CHIP_LABELS[f] ?? f;
-                return (
-                  <Pressable
-                    key={f}
-                    style={[styles.chip, isChipActive && styles.chipActive]}
-                    onPress={() => toggleQuick(f)}
-                    hitSlop={{ top: 6, bottom: 6, left: 0, right: 0 }}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: isChipActive }}
-                    accessibilityLabel={`${label} filter${isChipActive ? ', selected' : ''}`}
-                  >
-                    <Text style={[styles.chipText, isChipActive && styles.chipTextActive]}>{label}</Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-          </Animated.View>
-        )}
-      </View>
-
       {/* New-posts pill — buffered fresh posts are one tap away, never a scroll jump */}
       {(() => {
         const pendingCount = feedMode === 'following' ? followingFeed.pending.length : realFeed.pending.length;

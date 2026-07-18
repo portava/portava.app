@@ -236,6 +236,8 @@ interface DiscoveryCategoryTabProps {
   /** Reanimated scroll handler forwarded from the parent discovery screen. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onScroll?: any;
+  /** Shared header element from the parent discovery screen — scrolls inside this tab's FlatList. */
+  listHeaderComponent?: React.ReactElement;
 }
 
 export function DiscoveryCategoryTab({
@@ -257,6 +259,7 @@ export function DiscoveryCategoryTab({
   onFiltersChange,
   bottomInset,
   onScroll,
+  listHeaderComponent,
 }: DiscoveryCategoryTabProps) {
   const [places, setPlaces]         = useState<DiscoveryPlace[]>([]);
   const [loading, setLoading]       = useState(false);
@@ -344,35 +347,53 @@ export function DiscoveryCategoryTab({
 
   if (!destination) {
     return (
-      <NoDestinationView
-        onPickPlace={(place) => onPickDestination?.(place)}
-        userLat={userLat}
-        userLng={userLng}
-      />
+      <View style={{ flex: 1 }}>
+        {listHeaderComponent}
+        <NoDestinationView
+          onPickPlace={(place) => onPickDestination?.(place)}
+          userLat={userLat}
+          userLng={userLng}
+        />
+      </View>
     );
   }
 
+  // Combined header: discovery header (from parent) + filter strip — all scrolls together
+  const listHeader = (
+    <View>
+      {listHeaderComponent}
+      <FilterStrip filters={filters} onChange={handleFilterChange} />
+    </View>
+  );
+
   return (
     <View style={{ flex: 1 }}>
-      <FilterStrip filters={filters} onChange={handleFilterChange} />
-
       {loading && places.length === 0 ? (
-        <PlaceSkeletonList count={6} />
+        <>
+          {listHeader}
+          <PlaceSkeletonList count={6} />
+        </>
       ) : error && places.length === 0 ? (
-        <View style={styles.center}>
-          <Text style={styles.emptyTitle}>Couldn't load places</Text>
-          <Text style={styles.emptyDesc}>{error}</Text>
-          <Pressable style={styles.retryBtn} onPress={() => load(1, filters, true)}>
-            <Text style={styles.retryText}>Try again</Text>
-          </Pressable>
-        </View>
+        <>
+          {listHeader}
+          <View style={styles.center}>
+            <Text style={styles.emptyTitle}>Couldn't load places</Text>
+            <Text style={styles.emptyDesc}>{error}</Text>
+            <Pressable style={styles.retryBtn} onPress={() => load(1, filters, true)}>
+              <Text style={styles.retryText}>Try again</Text>
+            </Pressable>
+          </View>
+        </>
       ) : places.length === 0 ? (
-        <View style={styles.center}>
-          <Text style={styles.emptyTitle}>No places found</Text>
-          <Text style={styles.emptyDesc}>
-            Try increasing the search radius or adjust the filters.
-          </Text>
-        </View>
+        <>
+          {listHeader}
+          <View style={styles.center}>
+            <Text style={styles.emptyTitle}>No places found</Text>
+            <Text style={styles.emptyDesc}>
+              Try increasing the search radius or adjust the filters.
+            </Text>
+          </View>
+        </>
       ) : (
         <FlatList
           data={places}
@@ -386,6 +407,7 @@ export function DiscoveryCategoryTab({
               showDistance={filters.sortBy === 'nearest'}
             />
           )}
+          ListHeaderComponent={listHeader}
           contentContainerStyle={[styles.list, bottomInset != null ? { paddingBottom: bottomInset } : undefined]}
           showsVerticalScrollIndicator={false}
           onScroll={onScroll}

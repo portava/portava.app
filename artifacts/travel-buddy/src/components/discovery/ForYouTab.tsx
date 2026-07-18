@@ -46,6 +46,8 @@ interface ForYouTabProps {
   /** Reanimated scroll handler forwarded from the parent discovery screen. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onScroll?: any;
+  /** Shared header element from the parent discovery screen — scrolls inside this tab's FlatList. */
+  listHeaderComponent?: React.ReactElement;
 }
 
 type ForYouItem =
@@ -72,7 +74,7 @@ function compassItemToPlace(item: import('../../services/compass').CompassFeedIt
   };
 }
 
-export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, sortBy, bottomInset, onScroll }: ForYouTabProps) {
+export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, sortBy, bottomInset, onScroll, listHeaderComponent }: ForYouTabProps) {
   const { isAuthed }            = useSession();
   const [items, setItems]       = useState<ForYouItem[]>([]);
   const [loading, setLoading]   = useState(false);
@@ -199,10 +201,17 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     load(true);
   };
 
-  if (!destination) return null;
+  if (!destination) return (
+    listHeaderComponent ? <View style={{ flex: 1 }}>{listHeaderComponent}</View> : null
+  );
 
   if (loading && items.length === 0) {
-    return <PlaceSkeletonList count={5} />;
+    return (
+      <View style={{ flex: 1 }}>
+        {listHeaderComponent}
+        <PlaceSkeletonList count={5} />
+      </View>
+    );
   }
 
   // Virtualized list data — pre-filtered to exclude dismissed items.
@@ -230,6 +239,13 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     </View>
   // eslint-disable-next-line react-hooks/exhaustive-deps
   ), [source, destination]);
+
+  // Combined header: discovery header (from parent) + source label + traveler row.
+  // The discovery header is included inline rather than memoised; it changes whenever
+  // the parent screen state changes, which is the intended behaviour.
+  const combinedHeader = listHeaderComponent ? (
+    <View>{listHeaderComponent}{listHeader}</View>
+  ) : listHeader;
 
   // Stable footer: community sections rendered below the virtualized items.
   const listFooter = useMemo(() => (
@@ -324,7 +340,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         data={listData}
         keyExtractor={(item) => item.place.id}
         renderItem={renderItem}
-        ListHeaderComponent={listHeader}
+        ListHeaderComponent={combinedHeader}
         ListEmptyComponent={
           source === 'none' ? (
             <View style={styles.empty}>

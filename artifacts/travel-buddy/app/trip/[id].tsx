@@ -226,89 +226,89 @@ function TripDetailScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      <View style={[styles.topBar, { paddingTop: insets.top + space.sm }]}>
-        <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
-          <ChevronLeft size={22} color={color.signal} />
-          <Text style={styles.backText}>My Trip</Text>
-        </Pressable>
-        <View style={{ flex: 1 }} />
-        {isAuthed && (
-          <Pressable
-            style={[styles.topBtn, chatLoading && { opacity: 0.5 }]}
-            onPress={handleOpenChat}
-            disabled={chatLoading}
-            hitSlop={6}
-          >
-            {chatLoading
-              ? <ActivityIndicator size="small" color={color.signal} />
-              : (
-                <View style={{ position: 'relative' }}>
-                  <MessageCircle size={15} color={color.signal} />
-                  <View style={styles.unreadDot} />
-                </View>
-              )
-            }
-            <Text style={[styles.topBtnText, { color: color.signal }]}>Chat</Text>
-          </Pressable>
-        )}
-        {isAuthed && realTrip?.ownerId === userId && (
-          <Pressable
-            style={styles.topBtn}
-            onPress={() => setInviteSheetOpen(true)}
-            hitSlop={6}
-          >
-            <Users size={15} color={color.signal} />
-            <Text style={[styles.topBtnText, { color: color.signal }]}>Invite</Text>
-          </Pressable>
-        )}
-        {rentBuddyEnabled && (
-          <Pressable
-            style={styles.topBtn}
-            hitSlop={6}
-            onPress={() => {
-              const params = new URLSearchParams({ tripId: trip.id });
-              if (trip.destinationCity) params.set('city', trip.destinationCity);
-              router.push(`/(rent-a-buddy)/search?${params.toString()}` as any);
-            }}
-          >
-            <Users size={15} color={color.ink} /><Text style={styles.topBtnText}>Rent a Buddy</Text>
-          </Pressable>
-        )}
-        {isAuthed && realTrip?.ownerId === userId && (
-          <Pressable
-            style={[styles.topBtn, shareLoading && { opacity: 0.5 }]}
-            hitSlop={6}
-            disabled={shareLoading}
-            onPress={handleShareTrip}
-          >
-            {shareLoading
-              ? <ActivityIndicator size={14} color={color.ink} />
-              : <Share2 size={15} color={color.ink} />}
-            <Text style={styles.topBtnText}>Share Trip</Text>
-          </Pressable>
-        )}
-        {isAuthed && realTrip?.ownerId === userId && (
-          <Pressable
-            style={styles.topBtn}
-            hitSlop={6}
-            onPress={() => setLinksSheetOpen(true)}
-          >
-            <Link2 size={15} color={color.ink} />
-            <Text style={styles.topBtnText}>Links</Text>
-          </Pressable>
-        )}
-        {isAuthed && realTrip?.ownerId === userId && (
-          <Pressable
-            style={styles.topBtn}
-            hitSlop={6}
-            onPress={() => router.push(`/trip/edit?id=${trip.id}` as any)}
-          >
-            <Pencil size={15} color={color.ink} /><Text style={styles.topBtnText}>Edit Trip</Text>
-          </Pressable>
-        )}
-      </View>
-
       <ScrollView ref={pageScrollRef} contentContainerStyle={{ paddingBottom: bottomInset }} showsVerticalScrollIndicator={false} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
+        {/* Back nav + action bar — scrolls with page content */}
+        <View style={[styles.topBar, { paddingTop: insets.top + space.sm }]}>
+          <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
+            <ChevronLeft size={22} color={color.signal} />
+            <Text style={styles.backText}>My Trip</Text>
+          </Pressable>
+          <View style={{ flex: 1 }} />
+          {isAuthed && (
+            <Pressable
+              style={[styles.topBtn, chatLoading && { opacity: 0.5 }]}
+              onPress={handleOpenChat}
+              disabled={chatLoading}
+              hitSlop={6}
+            >
+              {chatLoading
+                ? <ActivityIndicator size="small" color={color.signal} />
+                : (
+                  <View style={{ position: 'relative' }}>
+                    <MessageCircle size={15} color={color.signal} />
+                    <View style={styles.unreadDot} />
+                  </View>
+                )
+              }
+              <Text style={[styles.topBtnText, { color: color.signal }]}>Chat</Text>
+            </Pressable>
+          )}
+          {isAuthed && realTrip?.ownerId === userId && (
+            <Pressable
+              style={styles.topBtn}
+              onPress={() => setInviteSheetOpen(true)}
+              hitSlop={6}
+            >
+              <Users size={15} color={color.signal} />
+              <Text style={[styles.topBtnText, { color: color.signal }]}>Invite</Text>
+            </Pressable>
+          )}
+          {rentBuddyEnabled && (
+            <Pressable
+              style={styles.topBtn}
+              hitSlop={6}
+              onPress={() => {
+                const params = new URLSearchParams({ tripId: trip.id });
+                if (trip.destinationCity) params.set('city', trip.destinationCity);
+                router.push(`/(rent-a-buddy)/search?${params.toString()}` as any);
+              }}
+            >
+              <Users size={15} color={color.ink} /><Text style={styles.topBtnText}>Rent a Buddy</Text>
+            </Pressable>
+          )}
+          {isAuthed && realTrip?.ownerId === userId && (
+            <Pressable
+              style={[styles.topBtn, shareLoading && { opacity: 0.5 }]}
+              hitSlop={6}
+              disabled={shareLoading}
+              onPress={handleShareTrip}
+            >
+              {shareLoading
+                ? <ActivityIndicator size={14} color={color.ink} />
+                : <Share2 size={15} color={color.ink} />}
+              <Text style={styles.topBtnText}>Share Trip</Text>
+            </Pressable>
+          )}
+          {isAuthed && realTrip?.ownerId === userId && (
+            <Pressable
+              style={styles.topBtn}
+              hitSlop={6}
+              onPress={() => setLinksSheetOpen(true)}
+            >
+              <Link2 size={15} color={color.ink} />
+              <Text style={styles.topBtnText}>Links</Text>
+            </Pressable>
+          )}
+          {isAuthed && realTrip?.ownerId === userId && (
+            <Pressable
+              style={styles.topBtn}
+              hitSlop={6}
+              onPress={() => router.push(`/trip/edit?id=${trip.id}` as any)}
+            >
+              <Pencil size={15} color={color.ink} /><Text style={styles.topBtnText}>Edit Trip</Text>
+            </Pressable>
+          )}
+        </View>
         <TripHero trip={trip} />
 
         {/* ── Trip notes ── */}

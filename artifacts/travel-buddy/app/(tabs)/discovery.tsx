@@ -354,10 +354,15 @@ export default function DiscoveryHub() {
         ? 'location-required'
         : 'loaded';
 
-  return (
-    <SectionErrorBoundary label="DiscoveryHub" fullScreen>
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* ── Header ── */}
+  // ── Shared scrolling header ─────────────────────────────────────────────────
+  // Everything that was previously fixed above the scroll content is captured
+  // here as a plain JSX element and passed to each tab's FlatList as
+  // ListHeaderComponent.  Swiping up causes the full header stack — title,
+  // destination bar, search bar, context-mode chips, category tabs, highlights
+  // and buddy strip — to scroll off-screen so content fills the viewport.
+  const discoveryHeader = (
+    <View style={{ paddingTop: insets.top }}>
+      {/* ── Compass icon + "Discover" title + DestinationBar + share-place button ── */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Compass size={22} color={color.signal} />
@@ -425,83 +430,6 @@ export default function DiscoveryHub() {
           );
         })}
       </ScrollView>
-
-      {/* ── Age filter modal — opened via the filter button in the search row ── */}
-      <Modal
-        visible={agePickerOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setAgePickerOpen(false)}
-      >
-        <Pressable style={styles.ageModalOverlay} onPress={() => setAgePickerOpen(false)} />
-        <View style={styles.ageModalSheet}>
-          <View style={styles.ageModalHandle} />
-          <Text style={styles.ageModalTitle}>Age filter</Text>
-          {([
-            { key: 'any',        label: 'Any age' },
-            { key: 'open_to_me', label: 'Open to me' },
-            { key: '18_plus',    label: '18+' },
-            { key: '21_plus',    label: '21+' },
-            { key: 'under_30',   label: 'Under 30' },
-            { key: '30_plus',    label: '30+' },
-            { key: 'custom',     label: 'Custom range' },
-          ] as { key: DiscoveryAgeFilter; label: string }[]).map((opt) => {
-            const sel = ageFilter === opt.key;
-            return (
-              <Pressable
-                key={opt.key}
-                style={[styles.ageModalItem, sel && styles.ageModalItemActive]}
-                onPress={() => {
-                  setAgeFilter(opt.key);
-                  if (opt.key !== 'custom') {
-                    setCustomAgeRange({ min: null, max: null });
-                    setDebouncedAgeRange({ min: null, max: null });
-                    setAgePickerOpen(false);
-                  }
-                }}
-              >
-                {opt.key === 'open_to_me' && (
-                  <Users size={14} color={sel ? color.signal : color.mute} />
-                )}
-                <Text style={[styles.ageModalItemText, sel && styles.ageModalItemTextActive]}>
-                  {opt.label}
-                </Text>
-                {sel && <Text style={styles.ageModalCheck}>✓</Text>}
-              </Pressable>
-            );
-          })}
-          {ageFilter === 'custom' && (
-            <View style={styles.ageModalCustomRow}>
-              <Text style={styles.ageModalCustomLabel}>Min</Text>
-              <TextInput
-                style={styles.ageModalCustomInput}
-                value={customAgeRange.min != null ? String(customAgeRange.min) : ''}
-                onChangeText={(v) => setCustomAgeRange((prev) => ({ ...prev, min: v ? parseInt(v, 10) || null : null }))}
-                keyboardType="number-pad"
-                placeholder="18"
-                placeholderTextColor={color.mute}
-                maxLength={3}
-              />
-              <Text style={styles.ageModalCustomLabel}>Max</Text>
-              <TextInput
-                style={styles.ageModalCustomInput}
-                value={customAgeRange.max != null ? String(customAgeRange.max) : ''}
-                onChangeText={(v) => setCustomAgeRange((prev) => ({ ...prev, max: v ? parseInt(v, 10) || null : null }))}
-                keyboardType="number-pad"
-                placeholder="35"
-                placeholderTextColor={color.mute}
-                maxLength={3}
-              />
-              <Pressable
-                style={styles.ageModalDoneBtn}
-                onPress={() => setAgePickerOpen(false)}
-              >
-                <Text style={styles.ageModalDoneBtnText}>Done</Text>
-              </Pressable>
-            </View>
-          )}
-        </View>
-      </Modal>
 
       {/* ── Location nudge — shown when no destination is set ── */}
       {screenStatus === 'location-required' && (
@@ -607,86 +535,171 @@ export default function DiscoveryHub() {
         </SectionErrorBoundary>
       )}
 
-      {/* ── Active tab content ── */}
-      <View style={{ flex: 1 }}>
-        {screenStatus === 'loading' ? (
-          <View style={styles.loadingState}>
-            <Text style={styles.loadingStateText}>Finding your location…</Text>
+      {/* ── For You tab: buddy strip + compass picks (hidden on category tabs) ── */}
+      {activeTab === 'for_you' && (availableBuddies.length > 0 || buddyCityNotAvailable) && (
+        <SectionErrorBoundary label="AvailableNow">
+        <View style={buddyStrip.wrap}>
+          <View style={buddyStrip.header}>
+            <Users size={13} color={color.signal} />
+            <Text style={buddyStrip.title}>Buddies Available Now</Text>
+            <Pressable onPress={() => router.push('/(rent-a-buddy)/search' as any)}>
+              <Text style={buddyStrip.seeAll}>See all</Text>
+            </Pressable>
           </View>
-        ) : activeTab === 'for_you' ? (
-          <View style={{ flex: 1 }}>
-            {/* Buddy strip — available-now Buddies in the current city */}
-            {(availableBuddies.length > 0 || buddyCityNotAvailable) && (
-              <SectionErrorBoundary label="AvailableNow">
-              <View style={buddyStrip.wrap}>
-                <View style={buddyStrip.header}>
-                  <Users size={13} color={color.signal} />
-                  <Text style={buddyStrip.title}>Buddies Available Now</Text>
-                  <Pressable onPress={() => router.push('/(rent-a-buddy)/search' as any)}>
-                    <Text style={buddyStrip.seeAll}>See all</Text>
-                  </Pressable>
-                </View>
-                {buddyCityNotAvailable ? (
-                  <View style={buddyStrip.comingSoon}>
-                    <Text style={buddyStrip.comingSoonText}>Coming soon to {currentCity ?? 'your city'}</Text>
+          {buddyCityNotAvailable ? (
+            <View style={buddyStrip.comingSoon}>
+              <Text style={buddyStrip.comingSoonText}>Coming soon to {currentCity ?? 'your city'}</Text>
+            </View>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={buddyStrip.scroll}
+            >
+              {availableBuddies.map(b => (
+                <Pressable
+                  key={b.id}
+                  style={buddyStrip.chip}
+                  onPress={() => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)}
+                >
+                  <View style={buddyStrip.chipAvatar}>
+                    <Text style={buddyStrip.chipInitial}>{b.displayName?.[0]?.toUpperCase() ?? '?'}</Text>
+                    <View style={buddyStrip.liveDot} />
                   </View>
-                ) : (
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={buddyStrip.scroll}
-                  >
-                    {availableBuddies.map(b => (
-                      <Pressable
-                        key={b.id}
-                        style={buddyStrip.chip}
-                        onPress={() => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)}
-                      >
-                        <View style={buddyStrip.chipAvatar}>
-                          <Text style={buddyStrip.chipInitial}>{b.displayName?.[0]?.toUpperCase() ?? '?'}</Text>
-                          <View style={buddyStrip.liveDot} />
-                        </View>
-                        <Text style={buddyStrip.chipName} numberOfLines={1}>{b.displayName ?? 'Buddy'}</Text>
-                        {b.categories?.[0] && (
-                          <Text style={buddyStrip.chipCat} numberOfLines={1}>{b.categories[0]}</Text>
-                        )}
-                      </Pressable>
-                    ))}
-                    <Pressable
-                      style={buddyStrip.moreChip}
-                      onPress={() => router.push('/(rent-a-buddy)/' as any)}
-                    >
-                      <Text style={buddyStrip.moreText}>Browse all</Text>
-                    </Pressable>
-                  </ScrollView>
+                  <Text style={buddyStrip.chipName} numberOfLines={1}>{b.displayName ?? 'Buddy'}</Text>
+                  {b.categories?.[0] && (
+                    <Text style={buddyStrip.chipCat} numberOfLines={1}>{b.categories[0]}</Text>
+                  )}
+                </Pressable>
+              ))}
+              <Pressable
+                style={buddyStrip.moreChip}
+                onPress={() => router.push('/(rent-a-buddy)/' as any)}
+              >
+                <Text style={buddyStrip.moreText}>Browse all</Text>
+              </Pressable>
+            </ScrollView>
+          )}
+        </View>
+        </SectionErrorBoundary>
+      )}
+      {activeTab === 'for_you' && (
+        <SectionErrorBoundary label="CompassPicks">
+          <CompassBuddyRow city={currentCity} />
+        </SectionErrorBoundary>
+      )}
+
+      {/* ── Location-loading placeholder ── */}
+      {screenStatus === 'loading' && (
+        <View style={styles.loadingState}>
+          <Text style={styles.loadingStateText}>Finding your location…</Text>
+        </View>
+      )}
+    </View>
+  );
+
+  return (
+    <SectionErrorBoundary label="DiscoveryHub" fullScreen>
+    <View style={styles.root}>
+      {/* ── Age filter modal — opened via the filter button in the search row ── */}
+      <Modal
+        visible={agePickerOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setAgePickerOpen(false)}
+      >
+        <Pressable style={styles.ageModalOverlay} onPress={() => setAgePickerOpen(false)} />
+        <View style={styles.ageModalSheet}>
+          <View style={styles.ageModalHandle} />
+          <Text style={styles.ageModalTitle}>Age filter</Text>
+          {([
+            { key: 'any',        label: 'Any age' },
+            { key: 'open_to_me', label: 'Open to me' },
+            { key: '18_plus',    label: '18+' },
+            { key: '21_plus',    label: '21+' },
+            { key: 'under_30',   label: 'Under 30' },
+            { key: '30_plus',    label: '30+' },
+            { key: 'custom',     label: 'Custom range' },
+          ] as { key: DiscoveryAgeFilter; label: string }[]).map((opt) => {
+            const sel = ageFilter === opt.key;
+            return (
+              <Pressable
+                key={opt.key}
+                style={[styles.ageModalItem, sel && styles.ageModalItemActive]}
+                onPress={() => {
+                  setAgeFilter(opt.key);
+                  if (opt.key !== 'custom') {
+                    setCustomAgeRange({ min: null, max: null });
+                    setDebouncedAgeRange({ min: null, max: null });
+                    setAgePickerOpen(false);
+                  }
+                }}
+              >
+                {opt.key === 'open_to_me' && (
+                  <Users size={14} color={sel ? color.signal : color.mute} />
                 )}
-              </View>
-              </SectionErrorBoundary>
-            )}
-            {/* Compass buddy recommendations — privacy-safe, city-matched */}
-            <SectionErrorBoundary label="CompassPicks">
-              <CompassBuddyRow city={currentCity} />
-            </SectionErrorBoundary>
-            <SectionErrorBoundary label="ForYou">
-            <ForYouTab
-              key={`${destination}-${contextMode}-${communityRefreshKey}`}
-              destination={destination ?? ''}
-              onAddToPlan={handleAddToPlan}
-              onAddToRoute={handleAddToRoute}
-              contextMode={contextMode}
-              lat={destinationLat}
-              lng={destinationLng}
-              userLat={locationState.coords?.lat ?? null}
-              userLng={locationState.coords?.lng ?? null}
-              fallbackZoom={destinationZoom}
-              sortBy={activeFilters.sortBy ?? null}
-              bottomInset={bottomInset}
-              onScroll={navScrollHandler}
-            />
-            </SectionErrorBoundary>
-          </View>
-        ) : (
-          <SectionErrorBoundary label="CategoryTab">
+                <Text style={[styles.ageModalItemText, sel && styles.ageModalItemTextActive]}>
+                  {opt.label}
+                </Text>
+                {sel && <Text style={styles.ageModalCheck}>✓</Text>}
+              </Pressable>
+            );
+          })}
+          {ageFilter === 'custom' && (
+            <View style={styles.ageModalCustomRow}>
+              <Text style={styles.ageModalCustomLabel}>Min</Text>
+              <TextInput
+                style={styles.ageModalCustomInput}
+                value={customAgeRange.min != null ? String(customAgeRange.min) : ''}
+                onChangeText={(v) => setCustomAgeRange((prev) => ({ ...prev, min: v ? parseInt(v, 10) || null : null }))}
+                keyboardType="number-pad"
+                placeholder="18"
+                placeholderTextColor={color.mute}
+                maxLength={3}
+              />
+              <Text style={styles.ageModalCustomLabel}>Max</Text>
+              <TextInput
+                style={styles.ageModalCustomInput}
+                value={customAgeRange.max != null ? String(customAgeRange.max) : ''}
+                onChangeText={(v) => setCustomAgeRange((prev) => ({ ...prev, max: v ? parseInt(v, 10) || null : null }))}
+                keyboardType="number-pad"
+                placeholder="35"
+                placeholderTextColor={color.mute}
+                maxLength={3}
+              />
+              <Pressable
+                style={styles.ageModalDoneBtn}
+                onPress={() => setAgePickerOpen(false)}
+              >
+                <Text style={styles.ageModalDoneBtnText}>Done</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
+      </Modal>
+
+      {/* ── Active tab — discoveryHeader lives inside each tab's FlatList as ListHeaderComponent ── */}
+      {activeTab === 'for_you' ? (
+        <SectionErrorBoundary label="ForYou">
+          <ForYouTab
+            key={`${destination}-${contextMode}-${communityRefreshKey}`}
+            destination={destination ?? ''}
+            onAddToPlan={handleAddToPlan}
+            onAddToRoute={handleAddToRoute}
+            contextMode={contextMode}
+            lat={destinationLat}
+            lng={destinationLng}
+            userLat={locationState.coords?.lat ?? null}
+            userLng={locationState.coords?.lng ?? null}
+            fallbackZoom={destinationZoom}
+            sortBy={activeFilters.sortBy ?? null}
+            bottomInset={bottomInset}
+            onScroll={navScrollHandler}
+            listHeaderComponent={discoveryHeader}
+          />
+        </SectionErrorBoundary>
+      ) : (
+        <SectionErrorBoundary label="CategoryTab">
           <DiscoveryCategoryTab
             key={`${activeTab}-${destination}-${contextMode}`}
             category={activeTab}
@@ -707,10 +720,10 @@ export default function DiscoveryHub() {
             fallbackZoom={destinationZoom}
             bottomInset={bottomInset}
             onScroll={navScrollHandler}
+            listHeaderComponent={discoveryHeader}
           />
-          </SectionErrorBoundary>
-        )}
-      </View>
+        </SectionErrorBoundary>
+      )}
 
       {/* ── Place detail sheet ── */}
       <PlaceDetailSheet
