@@ -58,7 +58,9 @@ import { checkCompassTelegraphAvailable, type CompassTelegraphCard } from '../..
 import { CompassCardMessage } from '../../src/components/CompassCardMessage';
 import { CircleStatusCardMessage } from '../../src/components/CircleStatusCardMessage';
 import { checkCircleMembership } from '../../src/services/circle';
-import { sendMessage } from '../../src/services/messaging';
+import { sendMessage, sendMediaMessage } from '../../src/services/messaging';
+import { useMessageMediaPicker } from '../../src/hooks/useMessageMediaPicker';
+import { MessageMediaBubble } from '../../src/components/MessageMediaBubble';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { RentABuddyThreadHeader } from '../../src/components/rentabuddy/BookingThreadHeader';
@@ -1120,6 +1122,8 @@ export default function TelegraphThread() {
   const [memberCount, setMemberCount] = useState<number | null>(null);
   const listRef = useRef<FlatList>(null);
   const shouldAnimateMessage = useMessageEntranceGate();
+  const mediaPicker = useMessageMediaPicker();
+  const [showMediaPickerSheet, setShowMediaPickerSheet] = useState(false);
 
   function handleBlockPress() {
     if (!otherUserId || blockingUser) return;
@@ -1355,7 +1359,7 @@ export default function TelegraphThread() {
   const [showJumpFab, setShowJumpFab] = useState(false);
 
   // Send button springs in/out with input content
-  const hasInput = input.trim().length > 0;
+  const hasInput = input.trim().length > 0 || mediaPicker.media !== null;
   const sendAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.spring(sendAnim, {
@@ -1396,6 +1400,38 @@ export default function TelegraphThread() {
 
   async function handleSend() {
     const text = input.trim();
+
+    // ── Media send path ───────────────────────────────────────────────────
+    if (mediaPicker.media !== null && id) {
+      notifyTyping(false);
+      setSendFailed(false);
+      let uploadRes = mediaPicker.uploadResult;
+      if (!uploadRes) {
+        uploadRes = await mediaPicker.upload();
+      }
+      if (!uploadRes) {
+        // upload was cancelled or failed — mediaPicker already set state to 'failed'
+        return;
+      }
+      const res = await sendMediaMessage(id, {
+        mediaUrl: uploadRes.url,
+        mediaType: uploadRes.mediaType,
+        thumbnailUrl: uploadRes.thumbnailUrl,
+        durationSeconds: uploadRes.durationSeconds,
+        body: text || undefined,
+      });
+      if (res.ok) {
+        mediaPicker.clearMedia();
+        if (text) setInput('');
+        listRef.current?.scrollToEnd({ animated: true });
+        reload();
+      } else {
+        setSendFailed(true);
+      }
+      return;
+    }
+
+    // ── Text send path ────────────────────────────────────────────────────
     if (!text || sending) return;
     notifyTyping(false);
     setInput('');
@@ -1651,6 +1687,29 @@ export default function TelegraphThread() {
               </MessageEntrance>
             );
           }
+          // Media messages — image or video
+          if (m.msgType === 'media' && m.mediaUrl) {
+            return (
+              <MessageEntrance
+                animate={shouldAnimateMessage(m.clientId ?? m.id, m.createdAt)}
+                style={[styles.bubbleRow, mine && styles.bubbleRowMine]}
+              >
+                <MessageMediaBubble
+                  mediaType={(m.mediaType as 'image' | 'video') ?? 'image'}
+                  mediaUrl={m.mediaUrl}
+                  thumbnailUrl={m.mediaThumbnailUrl}
+                  durationSeconds={m.mediaDurationSeconds}
+                  mine={mine}
+                  senderName={!mine && isGroupThread ? m.senderName : null}
+                  createdAt={m.createdAt}
+                  uploadState={m.uploadState ?? null}
+                  uploadProgress={m.uploadProgress ?? 0}
+                  onCancel={m.uploadState === 'uploading' ? () => mediaPicker.cancel() : undefined}
+                  onRetry={m.uploadState === 'failed' ? () => mediaPicker.retry() : undefined}
+                />
+              </MessageEntrance>
+            );
+          }
           // System event messages (non-meetup, non-rich-card) render as centred pill labels
           if (m.msgType === 'system' && m.subtype !== 'discovery_card' && m.subtype !== 'compass_card' && !parseMeetupCard(m.body ?? '', m)) {
             return (
@@ -1770,6 +1829,29 @@ export default function TelegraphThread() {
         onSelect={(s) => mentionRef.current?.insertTag(s)}
       />
 
+      {/* Media attachment preview chip — shown above compose when media is pending */}
+      {mediaPicker.media && (
+        <View style={styles.attachPreviewBar}>
+          <View style={styles.attachPreviewChip}>
+            {mediaPicker.media.mediaType === 'video' ? (
+              <Text style={styles.attachPreviewIcon}>🎬</Text>
+            ) : (
+              <Text style={styles.attachPreviewIcon}>🖼️</Text>
+            )}
+            <Text style={styles.attachPreviewLabel} numberOfLines={1}>
+              {mediaPicker.state === 'uploading'
+                ? `Uploading… ${Math.round((mediaPicker.uploadProgress ?? 0) * 100)}%`
+                : mediaPicker.state === 'failed'
+                ? 'Upload failed — tap retry'
+                : mediaPicker.media.mediaType === 'video' ? 'Video attached' : 'Image attached'}
+            </Text>
+          </View>
+          <Pressable onPress={mediaPicker.clearMedia} hitSlop={8}>
+            <X size={16} color={color.mute} />
+          </Pressable>
+        </View>
+      )}
+
       {replyingTo && (
         <View style={styles.replyBar}>
           <View style={styles.replyBarAccent} />
@@ -1786,10 +1868,40 @@ export default function TelegraphThread() {
           </Pressable>
         </View>
       )}
+
+      {/* Media picker bottom sheet */}
+      <Modal
+        visible={showMediaPickerSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowMediaPickerSheet(false)}
+      >
+        <Pressable style={styles.pickerOverlay} onPress={() => setShowMediaPickerSheet(false)} />
+        <View style={[styles.pickerSheet, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+          <View style={styles.pickerHandle} />
+          <Text style={styles.pickerTitle}>Attach media</Text>
+          <Pressable style={styles.pickerRow} onPress={async () => { setShowMediaPickerSheet(false); await mediaPicker.pickFromLibrary(); }}>
+            <Text style={styles.pickerRowIcon}>🖼️</Text>
+            <Text style={styles.pickerRowLabel}>Photo Library</Text>
+          </Pressable>
+          <Pressable style={styles.pickerRow} onPress={async () => { setShowMediaPickerSheet(false); await mediaPicker.pickFromCamera(); }}>
+            <Text style={styles.pickerRowIcon}>📷</Text>
+            <Text style={styles.pickerRowLabel}>Camera</Text>
+          </Pressable>
+          <Pressable style={styles.pickerRow} onPress={async () => { setShowMediaPickerSheet(false); await mediaPicker.pickVideo(); }}>
+            <Text style={styles.pickerRowIcon}>🎬</Text>
+            <Text style={styles.pickerRowLabel}>Video Library</Text>
+          </Pressable>
+          <Pressable style={styles.pickerCancelRow} onPress={() => setShowMediaPickerSheet(false)}>
+            <Text style={styles.pickerCancelLabel}>Cancel</Text>
+          </Pressable>
+        </View>
+      </Modal>
+
       <View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-        {/* Attachment stub */}
-        <Pressable style={styles.composeIconBtn} onPress={() => Alert.alert('Attach', 'File attachments coming soon.')} hitSlop={6}>
-          <Paperclip size={18} color={color.mute} />
+        {/* Media attachment button */}
+        <Pressable style={styles.composeIconBtn} onPress={() => setShowMediaPickerSheet(true)} hitSlop={6}>
+          <Paperclip size={18} color={mediaPicker.media ? color.signal : color.mute} />
         </Pressable>
 
         {/* Plan meetup button */}
@@ -2134,6 +2246,57 @@ const styles = StyleSheet.create({
   replyBarAccent: { width: 3, height: 32, borderRadius: 2, backgroundColor: color.deep },
   replyBarSender: { ...t.stamp, color: color.deep, fontWeight: '600', marginBottom: 1 },
   replyBarBody: { ...t.small, color: color.mute, fontSize: 12 },
+
+  // Media attach preview bar
+  attachPreviewBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: 8,
+    backgroundColor: color.paperRaised,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: color.haze,
+  },
+  attachPreviewChip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: color.signal + '12',
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: color.signal + '30',
+    paddingHorizontal: space.md,
+    paddingVertical: 6,
+  },
+  attachPreviewIcon: { fontSize: 14 },
+  attachPreviewLabel: { ...t.small, color: color.signal, fontSize: 12, flex: 1 },
+
+  // Media picker sheet
+  pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
+  pickerSheet: {
+    backgroundColor: color.paperRaised,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: space.lg,
+    paddingTop: space.sm,
+    gap: 2,
+  },
+  pickerHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: color.haze, alignSelf: 'center', marginBottom: space.md },
+  pickerTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700', fontSize: 15, marginBottom: space.sm },
+  pickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    paddingVertical: 14,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: color.haze,
+  },
+  pickerRowIcon: { fontSize: 20 },
+  pickerRowLabel: { ...t.body, color: color.ink },
+  pickerCancelRow: { paddingVertical: 14, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.haze, marginTop: 4 },
+  pickerCancelLabel: { ...t.body, color: color.mute },
 
   replyQuote: {
     flexDirection: 'row',

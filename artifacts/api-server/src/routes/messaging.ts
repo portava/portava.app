@@ -1329,7 +1329,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   let query = sc
     .from('messages')
-    .select(`id, thread_id, sender_id, body, deleted_at, created_at, edited_at, original_language, msg_type, subtype, profile:profiles!messages_sender_id_fkey(${PROFILE_PUBLIC})`)
+    .select(`id, thread_id, sender_id, body, deleted_at, created_at, edited_at, original_language, msg_type, subtype, media_url, media_type, media_thumbnail_url, media_duration_seconds, profile:profiles!messages_sender_id_fkey(${PROFILE_PUBLIC})`)
     .eq('thread_id', threadId)
     .order('created_at', { ascending: false })
     .limit(limit);
@@ -1467,6 +1467,11 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       replyToId: replyToIdMap[m.id] ?? null,
       replyToBody: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.body ?? null) : null,
       replyToSenderName: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.senderName ?? null) : null,
+      // Media fields (migration 0152_messages_media.sql)
+      mediaUrl: (m as any).media_url ?? null,
+      mediaType: (m as any).media_type ?? null,
+      mediaThumbnailUrl: (m as any).media_thumbnail_url ?? null,
+      mediaDurationSeconds: (m as any).media_duration_seconds ?? null,
     };
   });
 
@@ -1736,6 +1741,144 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     logger: req.log,
   }).catch(() => {
     // Outer safety net — translateMessageForThread already catches internally.
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * POST /api/threads/:threadId/media
+ * ---------------------------------------------------------------------------
+ * Create a media message in a thread.
+ * The client has already uploaded the file via POST /api/media/upload and
+ * passes back the returned URL.  This route inserts the message row with
+ * the media fields (migration 0152_messages_media.sql) and returns the
+ * full message object.
+ */
+router.post('/threads/:threadId/media', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { threadId } = req.params;
+  if (!isUuid(threadId)) { sendError(res, 'invalid_payload', 'Invalid thread id'); return; }
+
+  const mediaUrl = typeof req.body?.mediaUrl === 'string' ? req.body.mediaUrl.trim() : '';
+  if (!mediaUrl) { sendError(res, 'invalid_payload', 'mediaUrl is required'); return; }
+
+  const mediaTypeRaw = typeof req.body?.mediaType === 'string' ? req.body.mediaType : null;
+  if (mediaTypeRaw !== 'image' && mediaTypeRaw !== 'video') {
+    sendError(res, 'invalid_payload', "mediaType must be 'image' or 'video'");
+    return;
+  }
+
+  const thumbnailUrl = typeof req.body?.thumbnailUrl === 'string' ? req.body.thumbnailUrl.trim() : null;
+  const durationSecondsRaw = req.body?.durationSeconds;
+  const durationSeconds =
+    typeof durationSecondsRaw === 'number' && Number.isFinite(durationSecondsRaw) && durationSecondsRaw >= 0
+      ? Math.round(durationSecondsRaw)
+      : null;
+
+  // Optional caption
+  const body = typeof req.body?.body === 'string' ? req.body.body.trim().slice(0, 4000) : null;
+
+  const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId.slice(0, 64) : null;
+
+  // Emergency kill switch
+  const flagSc = getServiceClient();
+  if (flagSc && await isFlagEnabled(flagSc, 'disable_messaging')) {
+    sendError(res, 'feature_disabled', 'Messaging is temporarily disabled');
+    return;
+  }
+
+  // Verify thread membership
+  const { data: membership } = await client
+    .from('message_thread_members')
+    .select('user_id, left_at')
+    .eq('thread_id', threadId)
+    .eq('user_id', user.id)
+    .is('left_at', null)
+    .maybeSingle();
+
+  if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
+  if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
+
+  const sc = client;
+  const now = new Date().toISOString();
+
+  const { data: msg, error: msgErr } = await sc
+    .from('messages')
+    .insert({
+      thread_id: threadId,
+      sender_id: user.id,
+      body: body ?? '',
+      created_at: now,
+      msg_type: 'media',
+      media_url: mediaUrl,
+      media_type: mediaTypeRaw,
+      media_thumbnail_url: thumbnailUrl,
+      media_duration_seconds: durationSeconds,
+    })
+    .select('id, thread_id, sender_id, body, created_at, msg_type, media_url, media_type, media_thumbnail_url, media_duration_seconds')
+    .single();
+
+  if (msgErr || !msg) {
+    req.log.error({ err: msgErr }, 'media message insert failed');
+    sendError(res, 'db_error', msgErr?.message ?? 'Failed to insert media message');
+    return;
+  }
+
+  // Update thread last_message_at (best-effort)
+  try {
+    await sc
+      .from('message_threads')
+      .update({ last_message_at: now })
+      .eq('id', threadId);
+  } catch { /* non-fatal */ }
+
+  // Publish real-time event to thread members
+  try {
+    await publishToThread(sc, threadId, {
+      type: 'message.created',
+      payload: {
+        id: msg.id,
+        threadId: msg.thread_id,
+        senderId: msg.sender_id,
+        body: msg.body ?? '',
+        msgType: 'media',
+        mediaUrl: (msg as any).media_url,
+        mediaType: (msg as any).media_type,
+        mediaThumbnailUrl: (msg as any).media_thumbnail_url ?? null,
+        mediaDurationSeconds: (msg as any).media_duration_seconds ?? null,
+        createdAt: msg.created_at,
+        clientId,
+      },
+    });
+  } catch (err) {
+    req.log.warn({ err }, 'media message realtime publish failed (non-fatal)');
+  }
+
+  res.status(201).json({
+    id: msg.id,
+    threadId: msg.thread_id,
+    senderId: msg.sender_id,
+    body: msg.body ?? '',
+    deleted: false,
+    createdAt: msg.created_at,
+    editedAt: null,
+    displayBody: msg.body ?? '',
+    originalBody: msg.body ?? '',
+    originalLanguage: null,
+    translated: false,
+    translationStatus: null,
+    translationLabel: null,
+    canShowOriginal: false,
+    msgType: 'media',
+    subtype: null,
+    clientId,
+    replyToId: null,
+    mediaUrl: (msg as any).media_url,
+    mediaType: (msg as any).media_type,
+    mediaThumbnailUrl: (msg as any).media_thumbnail_url ?? null,
+    mediaDurationSeconds: (msg as any).media_duration_seconds ?? null,
   });
 });
 
