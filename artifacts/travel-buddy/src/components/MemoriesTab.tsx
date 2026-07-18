@@ -7,6 +7,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
 import { SharedVideoPlayer } from './ui/SharedVideoPlayer.tsx';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
+import { MediaSourceSheet } from './ui/MediaSourceSheet.tsx';
 import { MapPin, Lock, Globe, Users, Eye, Camera, X, Pencil, Video } from 'lucide-react-native';
 import { Plus } from 'lucide-react-native';
 import { VIDEO_MAX_DURATION_SECONDS } from '../constants/mediaLimits.ts';
@@ -83,6 +84,7 @@ function EditMemoryModal({ visible, memory, onClose, onSaved }: EditMemoryModalP
   const [removePhoto, setRemovePhoto] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
+  const [photoSheetOpen, setPhotoSheetOpen] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -101,23 +103,12 @@ function EditMemoryModal({ visible, memory, onClose, onSaved }: EditMemoryModalP
       setSaving(false);
       setUploadError('');
       setError('');
+      setPhotoSheetOpen(false);
     }
   }, [visible, memory]);
 
-  async function pickPhoto() {
+  function handleEditPhotoResult(asset: ImagePicker.ImagePickerAsset) {
     setUploadError('');
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      setUploadError('Photo library permission required to add a photo.');
-      return;
-    }
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.85,
-      allowsEditing: true,
-    });
-    if (res.canceled || !res.assets?.[0]) return;
-    const asset = res.assets[0];
     setPhotoUri(asset.uri);
     setPhotoMime(asset.mimeType ?? 'image/jpeg');
     setRemovePhoto(false);
@@ -273,7 +264,7 @@ function EditMemoryModal({ visible, memory, onClose, onSaved }: EditMemoryModalP
                   <X size={14} color="#fff" />
                 </Pressable>
               )}
-              <Pressable style={cm.photoChangeBtn} onPress={pickPhoto} disabled={isBusy}>
+              <Pressable style={cm.photoChangeBtn} onPress={() => setPhotoSheetOpen(true)} disabled={isBusy}>
                 <Text style={cm.photoChangeBtnText}>Change</Text>
               </Pressable>
             </View>
@@ -285,11 +276,19 @@ function EditMemoryModal({ visible, memory, onClose, onSaved }: EditMemoryModalP
               </Pressable>
             </View>
           ) : (
-            <Pressable style={cm.photoPickerBtn} onPress={pickPhoto} disabled={isBusy}>
+            <Pressable style={cm.photoPickerBtn} onPress={() => setPhotoSheetOpen(true)} disabled={isBusy}>
               <Camera size={18} color={color.signal} />
               <Text style={cm.photoPickerText}>Add photo</Text>
             </Pressable>
           )}
+
+          <MediaSourceSheet
+            visible={photoSheetOpen}
+            onClose={() => setPhotoSheetOpen(false)}
+            onResult={handleEditPhotoResult}
+            allowsVideo={false}
+            title="Add memory photo"
+          />
 
           {uploadError ? (
             <View style={cm.uploadErrorBox}>
@@ -434,22 +433,10 @@ export function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalPr
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
+  const [mediaSheetOpen, setMediaSheetOpen] = useState(false);
 
-  async function pickMedia() {
+  function handleCreateMediaResult(asset: ImagePicker.ImagePickerAsset) {
     setUploadError('');
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      setUploadError('Media library permission required to add a photo or video.');
-      return;
-    }
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images', 'videos'],
-      quality: 0.85,
-      allowsEditing: true,
-      videoMaxDuration: VIDEO_MAX_DURATION_SECONDS.memory,
-    });
-    if (res.canceled || !res.assets?.[0]) return;
-    const asset = res.assets[0];
     const isVideo = asset.type === 'video' || (asset.mimeType ?? '').startsWith('video/');
     setPhotoUri(asset.uri);
     setPhotoMime(asset.mimeType ?? (isVideo ? 'video/mp4' : 'image/jpeg'));
@@ -610,16 +597,25 @@ export function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalPr
                   <X size={14} color="#fff" />
                 </Pressable>
               )}
-              <Pressable style={cm.photoChangeBtn} onPress={pickMedia} disabled={isBusy}>
+              <Pressable style={cm.photoChangeBtn} onPress={() => setMediaSheetOpen(true)} disabled={isBusy}>
                 <Text style={cm.photoChangeBtnText}>Change</Text>
               </Pressable>
             </View>
           ) : (
-            <Pressable style={cm.photoPickerBtn} onPress={pickMedia} disabled={isBusy}>
+            <Pressable style={cm.photoPickerBtn} onPress={() => setMediaSheetOpen(true)} disabled={isBusy}>
               <Camera size={18} color={color.signal} />
               <Text style={cm.photoPickerText}>Add photo or video</Text>
             </Pressable>
           )}
+
+          <MediaSourceSheet
+            visible={mediaSheetOpen}
+            onClose={() => setMediaSheetOpen(false)}
+            onResult={handleCreateMediaResult}
+            allowsVideo
+            videoMaxDuration={VIDEO_MAX_DURATION_SECONDS.memory}
+            title="Add photo or video"
+          />
 
           {uploadError ? (
             <View style={cm.uploadErrorBox}>
