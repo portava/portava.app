@@ -539,4 +539,42 @@ describe('ActivityCenter (Notifications) — scroll architecture', () => {
 
     expect(titleCrossesScrollBoundary(firstChild)).toBe(false);
   });
+
+  it('All-tab empty state — "Activity Center" header stays inside the primary ScrollView after useFocusEffect fires a second time (deep-link re-entry)', async () => {
+    // Arrange: default All-tab, notifications=[], loading=false — triggers the
+    // FlatList branch (notifications.tsx lines ~286-326) with ListHeaderComponent
+    // containing sharedHeader and ListEmptyComponent showing EmptyState.
+    // The beforeEach already sets this state; we set it explicitly for clarity.
+    mockUseNotifications.mockReturnValue({
+      notifications:  [],
+      loading:        false,
+      loadingMore:    false,
+      unreadCount:    0,
+      reload:         jest.fn(),
+      loadMore:       jest.fn(),
+      markRead:       jest.fn(),
+      markAllRead:    jest.fn(),
+      dismiss:        jest.fn(),
+    });
+
+    const { toJSON } = await render(<ActivityCenter />);
+    await act(async () => {});
+
+    // Simulate navigation returning from a deep link: useFocusEffect fires again.
+    // capturedFocusCallback holds the latest callback registered by ActivityCenter.
+    await act(async () => {
+      if (capturedFocusCallback) capturedFocusCallback();
+    });
+
+    const tree = toJSON() as any;
+    const scrollViews = findScrollViews(tree);
+
+    // There must be at least one ScrollView / FlatList in the tree.
+    expect(scrollViews.length).toBeGreaterThan(0);
+
+    // The "Activity Center" title must live inside a ScrollView subtree —
+    // i.e. it is FlatList's ListHeaderComponent, not a pinned sibling View.
+    const titleInScroll = scrollViews.some((sv) => subtreeHasText(sv, 'Activity Center'));
+    expect(titleInScroll).toBe(true);
+  });
 });
