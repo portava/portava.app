@@ -187,10 +187,10 @@ jest.mock('../../utils/compassFormat', () => ({
 // NOTE: intentionally exhaustive — the real context depends on expo-location
 // native internals that are not safe under jest.
 jest.mock('../../context/LocationContext', () => ({
-  useLocationContext: () => ({
+  useLocationContext: jest.fn(() => ({
     locationState: { permissionStatus: 'granted', coords: null, place: null },
     requireLocation: jest.fn(),
-  }),
+  })),
 }));
 jest.mock('../../services/discovery', () => ({
   ...jest.requireActual('../../services/discovery'),
@@ -224,14 +224,16 @@ jest.mock('../../components/map/MapCarousel', () => ({
   MapCarousel: require('react').forwardRef(() => null),
 }));
 // NOTE: intentionally exhaustive — DiscoveryMapView depends on @maplibre native
-// internals that are not safe under jest.
+// internals that are not safe under jest.  Using jest.fn() so prop-capture tests
+// can install a one-shot mockImplementationOnce without affecting other tests.
 jest.mock('../../components/discovery/DiscoveryMapView', () => ({
-  DiscoveryMapView: () => null,
+  DiscoveryMapView: jest.fn(() => null),
 }));
 
 // ── Imports (after mocks are hoisted) ──────────────────────────────────────────
 
 import { router, useLocalSearchParams } from 'expo-router';
+import { useLocationContext } from '../../context/LocationContext.tsx';
 import { EventCard } from '../EventCard.tsx';
 import { TripMapPreview } from '../TripPage.tsx';
 import { MapTab } from '../MapTab';
@@ -243,6 +245,7 @@ import FullScreenMapScreen from '../../../app/map/index';
 
 const mockPush                 = router.push as jest.Mock;
 const mockUseLocalSearchParams = useLocalSearchParams as jest.Mock;
+const mockUseLocationContext   = useLocationContext as jest.Mock;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -264,6 +267,14 @@ function makeEvent(id = 'evt-1') {
 beforeEach(() => {
   mockPush.mockClear();
   mockUseLocalSearchParams.mockReturnValue({});
+  // Reset DiscoveryMapView spy so prop-capture tests start clean.
+  const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
+  (DiscoveryMapView as jest.Mock).mockClear();
+  // Reset LocationContext to the safe default (no coords, granted permission).
+  mockUseLocationContext.mockImplementation(() => ({
+    locationState: { permissionStatus: 'granted', coords: null, place: null },
+    requireLocation: jest.fn(),
+  }));
 });
 
 // ── 1. EventCard "View on map" ─────────────────────────────────────────────────
@@ -462,5 +473,106 @@ describe('FullScreenMapScreen — focusId with no matching entity', () => {
     await expect(
       act(async () => { await render(<FullScreenMapScreen />); }),
     ).resolves.not.toThrow();
+  });
+});
+
+// ── 7. Camera initialised from explicit query params ──────────────────────────
+//
+// When lat/lng/zoom params are present, DiscoveryMapView must receive those
+// values as fallbackLat, fallbackLng, and fallbackZoom — not [0,0] or the
+// LocationContext defaults.
+
+describe('FullScreenMapScreen — camera initialised from explicit query params', () => {
+  it('passes fallbackLat, fallbackLng, and fallbackZoom from params to DiscoveryMapView', async () => {
+    const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
+    let capturedProps: Record<string, any> | null = null;
+    (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
+      capturedProps = props;
+      return null;
+    });
+
+    mockUseLocalSearchParams.mockReturnValue({ lat: '10.317', lng: '123.891', zoom: '13' });
+
+    await act(async () => { await render(<FullScreenMapScreen />); });
+
+    expect(capturedProps).not.toBeNull();
+    expect(capturedProps!.fallbackLat).toBeCloseTo(10.317);
+    expect(capturedProps!.fallbackLng).toBeCloseTo(123.891);
+    expect(capturedProps!.fallbackZoom).toBe(13);
+  });
+
+  it('clamps fallbackZoom to the valid [1–22] range', async () => {
+    const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
+    let capturedProps: Record<string, any> | null = null;
+    (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
+      capturedProps = props;
+      return null;
+    });
+
+    mockUseLocalSearchParams.mockReturnValue({ lat: '10.317', lng: '123.891', zoom: '99' });
+
+    await act(async () => { await render(<FullScreenMapScreen />); });
+
+    expect(capturedProps).not.toBeNull();
+    expect(capturedProps!.fallbackZoom).toBe(22);
+  });
+});
+
+// ── 8. Camera falls back to LocationContext when params are absent ─────────────
+//
+// When no lat/lng params are in the URL, the screen must use the user's GPS
+// coords from LocationContext — not leave the camera at [0,0].
+
+describe('FullScreenMapScreen — camera falls back to LocationContext coords', () => {
+  it('uses LocationContext coords as fallbackLat/fallbackLng when params are absent', async () => {
+    const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
+    let capturedProps: Record<string, any> | null = null;
+    (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
+      capturedProps = props;
+      return null;
+    });
+
+    mockUseLocationContext.mockReturnValueOnce({
+      locationState: {
+        permissionStatus: 'granted',
+        coords: { lat: 48.8566, lng: 2.3522 },
+        place: null,
+      },
+      requireLocation: jest.fn(),
+    });
+
+    // No lat/lng in params — screen must fall back to LocationContext.
+    mockUseLocalSearchParams.mockReturnValue({});
+
+    await act(async () => { await render(<FullScreenMapScreen />); });
+
+    expect(capturedProps).not.toBeNull();
+    expect(capturedProps!.fallbackLat).toBeCloseTo(48.8566);
+    expect(capturedProps!.fallbackLng).toBeCloseTo(2.3522);
+  });
+
+  it('sets fallbackZoom to the default 11 when no zoom param is provided', async () => {
+    const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
+    let capturedProps: Record<string, any> | null = null;
+    (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
+      capturedProps = props;
+      return null;
+    });
+
+    mockUseLocationContext.mockReturnValueOnce({
+      locationState: {
+        permissionStatus: 'granted',
+        coords: { lat: 48.8566, lng: 2.3522 },
+        place: null,
+      },
+      requireLocation: jest.fn(),
+    });
+
+    mockUseLocalSearchParams.mockReturnValue({});
+
+    await act(async () => { await render(<FullScreenMapScreen />); });
+
+    expect(capturedProps).not.toBeNull();
+    expect(capturedProps!.fallbackZoom).toBe(11);
   });
 });
