@@ -416,11 +416,14 @@ export default function DiscoveryHub() {
       >
         {CONTEXT_MODES.map((m) => {
           const active = m.key === contextMode;
+          const chipsDisabled = screenStatus === 'location-required';
           return (
             <Pressable
               key={m.key}
-              style={[styles.modeChip, active && styles.modeChipActive]}
+              style={[styles.modeChip, active && styles.modeChipActive, chipsDisabled && styles.modeChipDisabled]}
               onPress={() => setContextMode(m.key)}
+              disabled={chipsDisabled}
+              accessibilityState={{ disabled: chipsDisabled }}
             >
               <m.Icon size={12} color={active ? color.signal : color.mute} />
               <Text style={[styles.modeChipLabel, active && styles.modeChipLabelActive]}>
@@ -975,6 +978,9 @@ const styles = StyleSheet.create({
   },
   modeChipLabelActive: {
     color: color.signal,
+  },
+  modeChipDisabled: {
+    opacity: 0.4,
   },
   ageModalOverlay: {
     flex: 1,
