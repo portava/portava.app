@@ -21,7 +21,7 @@ const TRANSFORM_ALLOW = [
 module.exports = {
   preset: 'jest-expo',
   testMatch: [
-    '<rootDir>/src/**/*.component.test.{ts,tsx}',
+    '<rootDir>/src/**/*.test.{ts,tsx}',
     '<rootDir>/app/**/*.test.{ts,tsx}',
   ],
   // Match both flat npm/yarn layout (node_modules/<pkg>) and pnpm's nested
