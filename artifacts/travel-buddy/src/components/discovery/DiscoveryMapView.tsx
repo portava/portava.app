@@ -31,6 +31,9 @@ import { TravelerClusterMarkers } from './TravelerMapLayer.tsx';
 import { TravelerPreviewCard } from './TravelerPreviewCard.tsx';
 import type { MapTraveler } from '../../services/mapTravelers.ts';
 import { SectionErrorBoundary } from './SectionErrorBoundary.tsx';
+import { EntityMapLayers } from '../map/EntityMarkers.tsx';
+import { MapEntityPreviewCard } from '../map/MapEntityPreviewCard.tsx';
+import type { MapEntity, ToggleableEntityType } from '../../types/mapTypes.ts';
 export type { MapFilter } from './discoverMapFilterStorage.ts';
 
 /** AsyncStorage key for the travelers-layer toggle ('1' on / '0' off). */
@@ -58,6 +61,14 @@ export interface DiscoveryMapViewProps {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   externalCameraRef?: React.RefObject<any>;
+  /** Entity data from useMapEntities — Buddies, Events, Gems, Trips, Friends. */
+  entities?: MapEntity[];
+  /** Which toggleable layers are currently on. */
+  enabledEntityLayers?: ToggleableEntityType[];
+  /** Called when a non-traveler entity marker is tapped. */
+  onSelectEntity?: (entity: MapEntity) => void;
+  /** Called when a cluster bubble is tapped — caller should zoom in. */
+  onPressEntityCluster?: (lat: number, lng: number, currentZoom: number) => void;
 }
 
 // ── Category pin colours ──────────────────────────────────────────────────────
@@ -142,7 +153,20 @@ function computeViewport(places: DiscoveryPlace[]) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, fallbackZoom, userLat, userLng, externalCameraRef }: DiscoveryMapViewProps) {
+export function DiscoveryMapView({
+  places,
+  onSelectPlace,
+  fallbackLat,
+  fallbackLng,
+  fallbackZoom,
+  userLat,
+  userLng,
+  externalCameraRef,
+  entities = [],
+  enabledEntityLayers = [],
+  onSelectEntity,
+  onPressEntityCluster,
+}: DiscoveryMapViewProps) {
   // Lazy initialiser reads the module-level memory cache synchronously so
   // remounts (e.g. Expo Router tab navigation) start with the correct filter
   // value and never flash to 'all' while waiting for AsyncStorage to resolve.
@@ -219,6 +243,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
   const [mapCenter, setMapCenter] = useState<[number, number] | null>(null);
   const zoomAt = useRef(0);
   const [selectedTraveler, setSelectedTraveler] = useState<MapTraveler | null>(null);
+  const [selectedEntity, setSelectedEntity] = useState<MapEntity | null>(null);
   const [emptyHint, setEmptyHint] = useState(false);
   const emptyHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -333,13 +358,29 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
           <TravelerClusterMarkers
             travelers={travelers}
             zoom={zoom ?? safeZoom}
-            onPressTraveler={setSelectedTraveler}
+            onPressTraveler={(t) => { setSelectedEntity(null); setSelectedTraveler(t); }}
             onPressCluster={(c) => {
               cameraRef.current?.setCamera({
                 centerCoordinate: [c.lng, c.lat],
                 zoomLevel: Math.min((zoom ?? safeZoom) + 1.8, 17),
                 animationDuration: 450,
               });
+            }}
+          />
+        )}
+        {entities.length > 0 && enabledEntityLayers.length > 0 && (
+          <EntityMapLayers
+            entities={entities}
+            enabledLayers={enabledEntityLayers}
+            zoom={zoom ?? safeZoom}
+            onSelectEntity={(e) => { setSelectedTraveler(null); setSelectedEntity(e); onSelectEntity?.(e); }}
+            onPressCluster={(lat, lng, currentZoom) => {
+              cameraRef.current?.setCamera({
+                centerCoordinate: [lng, lat],
+                zoomLevel: Math.min(currentZoom + 1.8, 17),
+                animationDuration: 450,
+              });
+              onPressEntityCluster?.(lat, lng, currentZoom);
             }}
           />
         )}
@@ -483,6 +524,14 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
         <TravelerPreviewCard
           traveler={selectedTraveler}
           onClose={() => setSelectedTraveler(null)}
+        />
+      )}
+
+      {/* ── Entity preview card (Buddy / Event / Gem / Trip / Friend) ───────── */}
+      {selectedEntity && (
+        <MapEntityPreviewCard
+          entity={selectedEntity}
+          onClose={() => setSelectedEntity(null)}
         />
       )}
     </View>
