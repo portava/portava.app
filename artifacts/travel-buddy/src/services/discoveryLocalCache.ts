@@ -16,7 +16,7 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { DiscoveryCategory } from './discovery';
+import type { DiscoveryCategory } from './discovery.ts';
 
 const TTL_MS    = 60 * 60 * 1_000; // 1 hour
 const KEY_VER   = 'v1';

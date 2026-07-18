@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useRef } from 'react';
-import { supabase } from '../lib/supabase.ts';
+import { freshToken } from '../services/apiToken.ts';
 
 type Surface = 'pulse' | 'discovery' | 'events';
 type Outcome = 'tap' | 'save' | 'join' | 'rsvp' | 'attended';
@@ -34,15 +34,15 @@ export function fireRankOutcome(
   if (!base) return;
   (async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) return;
+      const token = await freshToken();
+      if (!token) return;
       const body: Record<string, string> = { item_id: itemId, surface, outcome };
       if (sessionId) body.session_id = sessionId;
       fetch(`${base}/api/rank-events/outcome`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(body),
       }).catch(() => {});

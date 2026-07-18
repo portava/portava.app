@@ -87,6 +87,13 @@ jest.mock('../../../src/context/LocationContext', () => ({
       place:  { city: 'Manila', country: 'Philippines' },
       permissionStatus: 'granted',
     },
+    // resolvedLocation — required by FullScreenMapScreen after location unification.
+    resolvedLocation: {
+      place:  { city: 'Manila', country: 'Philippines' },
+      coords: { lat: 14.5995, lng: 120.9842 },
+      source: 'home',
+      freshness: 'live',
+    },
     requireLocation: jest.fn(),
   }),
 }));

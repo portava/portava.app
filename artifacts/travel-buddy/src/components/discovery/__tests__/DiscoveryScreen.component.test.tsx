@@ -86,7 +86,18 @@ jest.mock('../../../context/SessionContext', () => ({
 // runner; spreading requireActual would crash the suite.  Each test drives
 // location state through the mockLocation variable instead.
 jest.mock('../../../context/LocationContext', () => ({
-  useLocationContext: () => mockLocation,
+  useLocationContext: () => ({
+    ...mockLocation,
+    // resolvedLocation — required by discovery.tsx after location unification.
+    // Computed at call time so beforeEach mutations to mockLocation.locationState
+    // are reflected in the next render.
+    resolvedLocation: {
+      place:  mockLocation.locationState.place ?? { city: null, country: null },
+      coords: mockLocation.locationState.coords ?? null,
+      source: 'home',
+      freshness: 'unavailable',
+    },
+  }),
 }));
 
 // NOTE: intentionally exhaustive — stubbed highlights hook.

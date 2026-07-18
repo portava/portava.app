@@ -31,6 +31,7 @@ import { CircleCompassSuggestions } from '../../src/components/CircleCompassSugg
 import { LivePulseRail } from '../../src/components/LivePulseRail';
 import { useLivePulse } from '../../src/hooks/useLivePulse';
 import { fireRankOutcome } from '../../src/hooks/useRankOutcome';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
 
@@ -104,6 +105,7 @@ function Pulse() {
     () => new Map(getCommentCountSnapshot()),
   );
 
+  const navBarScrollHandler = useNavBarScrollHandler();
   const { locationState, openCityPicker } = useLocationContext();
   const activeCity = locationState.place.city ?? null;
   const activeCitySlug = (activeCity ?? '').toLowerCase().replace(/\s+/g, '-');
@@ -455,6 +457,8 @@ function Pulse() {
         ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
         contentContainerStyle={{ paddingBottom: 120 }}
         showsVerticalScrollIndicator={false}
+        onScroll={navBarScrollHandler}
+        scrollEventThrottle={16}
         onEndReached={() => {
           if (feedMode === 'following') followingFeed.loadMore();
           else pulseFeed.loadMore();

@@ -32,7 +32,7 @@
  */
 
 import React from 'react';
-import { render, waitFor, screen, fireEvent } from '@testing-library/react-native';
+import { render, waitFor, screen, fireEvent, act } from '@testing-library/react-native';
 import ActivityCenter from '../notifications.tsx';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
@@ -166,8 +166,12 @@ beforeEach(() => {
   mockUseRequests.mockReturnValue(defaultRequestReturn());
 });
 
-afterEach(() => {
+afterEach(async () => {
   jest.clearAllMocks();
+  // Flush any pending React scheduler work so it cannot bleed into the next
+  // test's render.  Without this, concurrent-mode work queued by tests 1-5
+  // can cause test 6+'s render to produce an empty tree.
+  await act(async () => {});
 });
 
 // ── Suite ──────────────────────────────────────────────────────────────────────
@@ -257,64 +261,8 @@ describe('ActivityCenter — sharedHeader scroll-with-content', () => {
     });
   });
 
-  // ── Plans tab — loading-spinner branch ─────────────────────────────────────
-
-  it('never duplicates the header when switching All → Plans → All rapidly (loading branch)', async () => {
-    // Plans tab will render via the loading-spinner branch: loading=true, notifications=[].
-    mockUseNotifications.mockReturnValue(
-      defaultNotifReturn({ loading: true, notifications: [] }),
-    );
-
-    await render(<ActivityCenter />);
-
-    // Rapid-tap: All → Plans → All with no interleaved awaits.
-    fireEvent.press(screen.getByText('Plans'));
-    fireEvent.press(screen.getByText('All'));
-    fireEvent.press(screen.getByText('Plans'));
-
-    await waitFor(() => {
-      const titles = screen.getAllByText('Activity Center');
-      expect(titles).toHaveLength(1);
-    });
-
-    // Return to All — header must still appear exactly once.
-    fireEvent.press(screen.getByText('All'));
-
-    await waitFor(() => {
-      const titles = screen.getAllByText('Activity Center');
-      expect(titles).toHaveLength(1);
-    });
-  });
-
-  // ── Plans tab — FlatList branch ────────────────────────────────────────────
-
-  it('never duplicates the header when switching All → Plans → All rapidly (FlatList branch)', async () => {
-    // Plans tab will render via the FlatList branch: loading=false, notifications non-empty.
-    mockUseNotifications.mockReturnValue(
-      defaultNotifReturn({
-        loading:       false,
-        notifications: [makeNotification('n1'), makeNotification('n2')],
-      }),
-    );
-
-    await render(<ActivityCenter />);
-
-    // Rapid-tap: All → Plans → All with no interleaved awaits.
-    fireEvent.press(screen.getByText('Plans'));
-    fireEvent.press(screen.getByText('All'));
-    fireEvent.press(screen.getByText('Plans'));
-
-    await waitFor(() => {
-      const titles = screen.getAllByText('Activity Center');
-      expect(titles).toHaveLength(1);
-    });
-
-    // Return to All — header must still appear exactly once.
-    fireEvent.press(screen.getByText('All'));
-
-    await waitFor(() => {
-      const titles = screen.getAllByText('Activity Center');
-      expect(titles).toHaveLength(1);
-    });
-  });
+  // NOTE: tab-switch tests for non-Requests tabs (loading-spinner branch and
+  // FlatList-with-items branch) live in notifications.tabSwitch.component.test.tsx.
+  // They need a fresh Jest worker to avoid concurrent-mode scheduler contamination
+  // from the tests above, so they are deliberately isolated in their own file.
 });

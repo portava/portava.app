@@ -156,6 +156,44 @@ jest.mock('../ui/VideoThumbnail.tsx', () => ({
 // (Supabase + API token stack); pulling requireActual would cause OOM.
 jest.mock('../SaveButton', () => ({ SaveButton: () => null }));
 
+// NOTE: intentionally exhaustive — MediaSourceSheet renders a bottom sheet UI
+// (ActionSheet + native picker buttons) that requires user interaction in the
+// real app.  The stub bypasses the sheet and immediately drives the already-
+// mocked expo-image-picker, so tests exercise the real upload code path.
+jest.mock('../ui/MediaSourceSheet', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const React = require('react');
+  return {
+    MediaSourceSheet: ({
+      visible,
+      onResult,
+      onClose,
+    }: {
+      visible: boolean;
+      onResult: (asset: unknown) => void;
+      onClose: () => void;
+    }) => {
+      React.useEffect(() => {
+        if (!visible) return;
+        let cancelled = false;
+        // Resolve via the already-mocked expo-image-picker so per-test
+        // mockResolvedValue / mockResolvedValueOnce overrides are honoured.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const ImagePicker = require('expo-image-picker');
+        ImagePicker.launchImageLibraryAsync({}).then(
+          (result: { canceled: boolean; assets?: Array<{ uri: string; mimeType?: string }> }) => {
+            if (cancelled) return;
+            if (result.canceled || !result.assets?.length) { onClose(); return; }
+            onResult(result.assets[0]);
+          },
+        );
+        return () => { cancelled = true; };
+      }, [visible]);
+      return null;
+    },
+  };
+});
+
 // ── Typed mocks ────────────────────────────────────────────────────────────────
 
 const uploadMediaMock          = uploadMedia          as jest.Mock;

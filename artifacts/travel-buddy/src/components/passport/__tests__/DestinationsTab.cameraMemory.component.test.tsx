@@ -161,8 +161,9 @@ describe('DestinationsTab — camera position memory across Map / List switches'
       />,
     );
 
-    // Switch to Map mode
-    fireEvent.press(screen.getByText('Map'));
+    // Switch to Map mode — findByText waits for the toggle header to appear
+    // (FlatList ListHeaderComponent may not be in the tree before first flush).
+    fireEvent.press(await screen.findByText('Map'));
 
     // Wait for geocoding to resolve and initial camera fit to fire.
     await waitFor(() => expect(mockEaseTo).toHaveBeenCalledTimes(1));
@@ -177,11 +178,16 @@ describe('DestinationsTab — camera position memory across Map / List switches'
       });
     });
 
-    // Switch to List mode (camera unmounts).
-    fireEvent.press(screen.getByText('List'));
+    // NOTE: Each press is wrapped in act() so React flushes the useEffect for
+    // that viewMode change before the next press fires.  Without the flush,
+    // React 18 batches both presses and prevViewModeRef never transitions
+    // through 'list', so wasInList is always false and the restore is skipped.
 
-    // Switch back to Map mode.
-    fireEvent.press(screen.getByText('Map'));
+    // Switch to List mode (camera unmounts) — flush effects.
+    await act(async () => { fireEvent.press(screen.getByText('List')); });
+
+    // Switch back to Map mode — flush effects.
+    await act(async () => { fireEvent.press(screen.getByText('Map')); });
 
     // The component must restore via easeTo with the saved position.
     await waitFor(() => {
@@ -218,16 +224,20 @@ describe('DestinationsTab — camera position memory across Map / List switches'
       />,
     );
 
-    // Map mode — geocoding resolves — single-pin easeTo fires
-    fireEvent.press(screen.getByText('Map'));
+    // Map mode — geocoding resolves — single-pin easeTo fires.
+    // findByText waits for the toggle header (inside FlatList ListHeaderComponent)
+    // to appear in the tree after the initial render flush.
+    fireEvent.press(await screen.findByText('Map'));
     await waitFor(() => expect(mockEaseTo).toHaveBeenCalledTimes(1));
 
     const firstCallArgs = mockEaseTo.mock.calls[0][0];
     mockEaseTo.mockClear();
 
-    // Switch to List and back without any onRegionDidChange in between
-    fireEvent.press(screen.getByText('List'));
-    fireEvent.press(screen.getByText('Map'));
+    // Switch to List and back without any onRegionDidChange in between.
+    // Each press is wrapped in act() to flush useEffect between mode changes
+    // so prevViewModeRef correctly tracks the 'list' intermediate state.
+    await act(async () => { fireEvent.press(screen.getByText('List')); });
+    await act(async () => { fireEvent.press(screen.getByText('Map')); });
 
     // The normal fit runs again (no saved camera)
     await waitFor(() => expect(mockEaseTo).toHaveBeenCalledTimes(1));

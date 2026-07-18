@@ -96,7 +96,12 @@ const publicProfile = {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('PassportIdentityCard — Saved shortcut', () => {
-  it('calls onSavedPress exactly once when the Saved button is pressed (isOwner=true)', async () => {
+  // NOTE: The Saved shortcut was removed from the identity card header; it now
+  // lives in the ⋯ overflow menu.  These tests confirm the button is absent in
+  // the rendered card for both the owner and public views so a future refactor
+  // can't accidentally re-add it to the header without review.
+
+  it('saved-btn is absent from the header in the owner view (Saved moved to ⋯ menu)', async () => {
     const onSavedPress = jest.fn();
 
     render(
@@ -107,12 +112,9 @@ describe('PassportIdentityCard — Saved shortcut', () => {
       />,
     );
 
-    // waitFor is required under React 19 + RNTL 14 to avoid a race between
-    // the async-act scope and the screen query's internal polling setup.
-    const savedBtn = await waitFor(() => screen.getByTestId('saved-btn'));
-    fireEvent.press(savedBtn);
-
-    expect(onSavedPress).toHaveBeenCalledTimes(1);
+    // The Saved shortcut must not exist in the owner card header — it moved.
+    await waitFor(() => expect(screen.queryByTestId('saved-btn')).toBeNull());
+    expect(onSavedPress).not.toHaveBeenCalled();
   });
 
   it('does NOT call onSavedPress when isOwner=false (public view shows Follow pill instead)', async () => {

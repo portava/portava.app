@@ -290,6 +290,7 @@ beforeEach(() => {
   // Reset LocationContext to the safe default (no coords, granted permission).
   mockUseLocationContext.mockImplementation(() => ({
     locationState: { permissionStatus: 'granted', coords: null, place: null },
+    resolvedLocation: { place: null, coords: null, source: 'none', freshness: 'unavailable' },
     requireLocation: jest.fn(),
   }));
 });
@@ -555,6 +556,7 @@ describe('FullScreenMapScreen — camera falls back to LocationContext coords', 
         coords: { lat: 48.8566, lng: 2.3522 },
         place: null,
       },
+      resolvedLocation: { place: null, coords: { lat: 48.8566, lng: 2.3522 }, source: 'gps', freshness: 'live' },
       requireLocation: jest.fn(),
     });
 
@@ -582,6 +584,7 @@ describe('FullScreenMapScreen — camera falls back to LocationContext coords', 
         coords: { lat: 48.8566, lng: 2.3522 },
         place: null,
       },
+      resolvedLocation: { place: null, coords: { lat: 48.8566, lng: 2.3522 }, source: 'gps', freshness: 'live' },
       requireLocation: jest.fn(),
     });
 
@@ -657,8 +660,11 @@ describe('EventCard — city coords forwarded in the /map push URL', () => {
 
 describe('FullScreenMapScreen — PermissionPrompt shown when denied with no coords', () => {
   it('shows "Location access needed" when permission is denied and no lat/lng available', async () => {
-    mockUseLocationContext.mockReturnValueOnce({
+    // Use mockReturnValue (not Once) so every render — including re-renders
+    // triggered by internal state flushes — sees the denied state.
+    mockUseLocationContext.mockReturnValue({
       locationState: { permissionStatus: 'denied', coords: null, place: null },
+      resolvedLocation: { place: null, coords: null, source: 'none', freshness: 'unavailable' },
       requireLocation: jest.fn(),
     });
     // No lat/lng in URL params either.
@@ -673,8 +679,11 @@ describe('FullScreenMapScreen — PermissionPrompt shown when denied with no coo
     const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
     (DiscoveryMapView as jest.Mock).mockClear();
 
-    mockUseLocationContext.mockReturnValueOnce({
+    // Use mockReturnValue (not Once) so every render — including re-renders
+    // triggered by internal state flushes — sees the denied state.
+    mockUseLocationContext.mockReturnValue({
       locationState: { permissionStatus: 'denied', coords: null, place: null },
+      resolvedLocation: { place: null, coords: null, source: 'none', freshness: 'unavailable' },
       requireLocation: jest.fn(),
     });
     mockUseLocalSearchParams.mockReturnValue({});
@@ -696,6 +705,7 @@ describe('FullScreenMapScreen — PermissionPrompt shown when denied with no coo
 
     mockUseLocationContext.mockReturnValueOnce({
       locationState: { permissionStatus: 'denied', coords: null, place: null },
+      resolvedLocation: { place: null, coords: null, source: 'none', freshness: 'unavailable' },
       requireLocation: jest.fn(),
     });
     // City coords come from the URL — e.g. pushed by a TripPage/EventCard that
@@ -740,6 +750,7 @@ describe('FullScreenMapScreen — invalid lat/lng strings silently discarded', (
         coords: contextCoords,
         place: null,
       },
+      resolvedLocation: { place: null, coords: contextCoords, source: 'gps', freshness: 'live' },
       requireLocation: jest.fn(),
     });
 
@@ -803,6 +814,7 @@ describe('FullScreenMapScreen — invalid lat/lng strings silently discarded', (
 
     mockUseLocationContext.mockReturnValueOnce({
       locationState: { permissionStatus: 'granted', coords: null, place: null },
+      resolvedLocation: { place: null, coords: null, source: 'none', freshness: 'unavailable' },
       requireLocation: jest.fn(),
     });
     mockUseLocalSearchParams.mockReturnValue({ lat: 'abc', lng: 'abc' });

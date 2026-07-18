@@ -100,6 +100,13 @@ let mockLocationState: {
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
     locationState:   mockLocationState,
+    // resolvedLocation — required by discovery.tsx after location unification.
+    resolvedLocation: {
+      place:  mockLocationState.place,
+      coords: mockLocationState.coords,
+      source: 'home',
+      freshness: 'unavailable',
+    },
     showCityPicker:  false,
     openCityPicker:  jest.fn(),
     closeCityPicker: jest.fn(),
