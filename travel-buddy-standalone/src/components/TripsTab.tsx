@@ -17,6 +17,7 @@ import { MapPin, Calendar, ChevronRight, Luggage } from 'lucide-react-native';
 import type { TripRow } from '../services/trips.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { useBottomInset } from '../hooks/useBottomInset.ts';
+import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 
 const STATUS_COLOR: Record<string, string> = {
   planning: color.mute,
@@ -183,7 +184,9 @@ export function TripsTab({
             accessibilityRole="button"
             accessibilityLabel={`${featuredBucket === 'ongoing' ? 'Ongoing' : 'Upcoming'} trip: ${featured!.title || featured!.destinationCity}`}
           >
-            {featured!.coverUrl ? (
+            {featured!.coverMediaType === 'video' && featured!.coverUrl ? (
+              <VideoThumbnail posterUri={featured!.coverUrl} style={tr.featuredImg} />
+            ) : featured!.coverUrl ? (
               <Image source={{ uri: featured!.coverUrl }} style={tr.featuredImg} resizeMode="cover" />
             ) : (
               <View style={[tr.featuredImg, tr.featuredFallback]}>
