@@ -44,7 +44,9 @@ import { TelegraphSystemNotice } from './TelegraphSystemNotice.tsx';
 import { TranslationSettingsSheet } from './TranslationSettingsSheet.tsx';
 import { TripMembersSheet } from './TripMembersSheet.tsx';
 import type { Message } from '../services/messaging.ts';
-import { deleteMessage, saveMessage } from '../services/messaging.ts';
+import { deleteMessage, saveMessage, sendMediaMessage } from '../services/messaging.ts';
+import { useMessageMediaPicker } from '../hooks/useMessageMediaPicker.ts';
+import { MessageMediaBubble } from './MessageMediaBubble.tsx';
 import { reportContent, type ReasonCode } from '../services/reports.ts';
 import { getTripMembers, getCircleMembers, type FriendUser } from '../services/friends.ts';
 import * as Haptics from 'expo-haptics';
@@ -440,17 +442,19 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   const { userId } = useSession();
   const { state, thread, messages, sending, errorMessage, reload, send, retrySend, notifyTyping, typingUserIds } = useGroupChat(type, id);
   const [input, setInput] = useState('');
+  const mediaPicker = useMessageMediaPicker();
+  const [showMediaPickerSheet, setShowMediaPickerSheet] = useState(false);
 
   // Send button springs in/out with input content
   const sendAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.spring(sendAnim, {
-      toValue: input.trim().length > 0 ? 1 : 0,
+      toValue: (input.trim().length > 0 || mediaPicker.media !== null) ? 1 : 0,
       useNativeDriver: true,
       friction: 6,
       tension: 120,
     }).start();
-  }, [input, sendAnim]);
+  }, [input, sendAnim, mediaPicker.media]);
   const [sendFailed, setSendFailed] = useState(false);
   const [lastSentText, setLastSentText] = useState<string | undefined>(undefined);
   const mentionRef = useRef<MentionInputHandle>(null);
@@ -554,7 +558,37 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
 
   async function handleSend() {
     const text = input.trim();
-    if (!text || sending || isNoAccess) return;
+    if (isNoAccess) return;
+
+    // ── Media send path ───────────────────────────────────────────────────
+    if (mediaPicker.media !== null && thread?.id) {
+      notifyTyping(false);
+      setSendFailed(false);
+      let uploadRes = mediaPicker.uploadResult;
+      if (!uploadRes) {
+        uploadRes = await mediaPicker.upload();
+      }
+      if (!uploadRes) return; // cancelled or failed
+      const res = await sendMediaMessage(thread.id, {
+        mediaUrl: uploadRes.url,
+        mediaType: uploadRes.mediaType,
+        thumbnailUrl: uploadRes.thumbnailUrl,
+        durationSeconds: uploadRes.durationSeconds,
+        body: text || undefined,
+      });
+      if (res.ok) {
+        mediaPicker.clearMedia();
+        if (text) setInput('');
+        listRef.current?.scrollToEnd({ animated: true });
+        reload();
+      } else {
+        setSendFailed(true);
+      }
+      return;
+    }
+
+    // ── Text send path ────────────────────────────────────────────────────
+    if (!text || sending) return;
     notifyTyping(false);
     setInput('');
     setLastSentText(text);
@@ -754,6 +788,29 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
               </MessageEntrance>
             );
           }
+          // Media messages — image or video
+          if (m.msgType === 'media' && m.mediaUrl) {
+            return (
+              <MessageEntrance
+                animate={shouldAnimateMessage(m.clientId ?? m.id, m.createdAt)}
+                style={[styles.bubbleRow, mine && styles.bubbleRowMine]}
+              >
+                <MessageMediaBubble
+                  mediaType={(m.mediaType as 'image' | 'video') ?? 'image'}
+                  mediaUrl={m.mediaUrl}
+                  thumbnailUrl={m.mediaThumbnailUrl}
+                  durationSeconds={m.mediaDurationSeconds}
+                  mine={mine}
+                  senderName={!mine ? m.senderName : null}
+                  createdAt={m.createdAt}
+                  uploadState={m.uploadState ?? null}
+                  uploadProgress={m.uploadProgress ?? 0}
+                  onCancel={m.uploadState === 'uploading' ? () => mediaPicker.cancel() : undefined}
+                  onRetry={m.uploadState === 'failed' ? () => mediaPicker.retry() : undefined}
+                />
+              </MessageEntrance>
+            );
+          }
           return (
             <MessageEntrance
               animate={shouldAnimateMessage(m.clientId ?? m.id, m.createdAt)}
@@ -831,6 +888,27 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
         onSelect={(s) => mentionRef.current?.insertTag(s)}
       />
 
+      {/* Media attachment preview chip */}
+      {mediaPicker.media && (
+        <View style={styles.attachPreviewBar}>
+          <View style={styles.attachPreviewChip}>
+            <Text style={styles.attachPreviewIcon}>
+              {mediaPicker.media.mediaType === 'video' ? '🎬' : '🖼️'}
+            </Text>
+            <Text style={styles.attachPreviewLabel} numberOfLines={1}>
+              {mediaPicker.state === 'uploading'
+                ? `Uploading… ${Math.round((mediaPicker.uploadProgress ?? 0) * 100)}%`
+                : mediaPicker.state === 'failed'
+                ? 'Upload failed — tap retry'
+                : mediaPicker.media.mediaType === 'video' ? 'Video attached' : 'Image attached'}
+            </Text>
+          </View>
+          <Pressable onPress={mediaPicker.clearMedia} hitSlop={8}>
+            <X size={16} color={color.mute} />
+          </Pressable>
+        </View>
+      )}
+
       {replyingTo && (
         <View style={styles.replyBar}>
           <View style={styles.replyBarAccent} />
@@ -847,6 +925,36 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           </Pressable>
         </View>
       )}
+
+      {/* Media picker bottom sheet */}
+      <Modal
+        visible={showMediaPickerSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowMediaPickerSheet(false)}
+      >
+        <Pressable style={styles.pickerOverlay} onPress={() => setShowMediaPickerSheet(false)} />
+        <View style={[styles.pickerSheet, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+          <View style={styles.pickerHandle} />
+          <Text style={styles.pickerTitle}>Attach media</Text>
+          <Pressable style={styles.pickerRow} onPress={async () => { setShowMediaPickerSheet(false); await mediaPicker.pickFromLibrary(); }}>
+            <Text style={styles.pickerRowIcon}>🖼️</Text>
+            <Text style={styles.pickerRowLabel}>Photo Library</Text>
+          </Pressable>
+          <Pressable style={styles.pickerRow} onPress={async () => { setShowMediaPickerSheet(false); await mediaPicker.pickFromCamera(); }}>
+            <Text style={styles.pickerRowIcon}>📷</Text>
+            <Text style={styles.pickerRowLabel}>Camera</Text>
+          </Pressable>
+          <Pressable style={styles.pickerRow} onPress={async () => { setShowMediaPickerSheet(false); await mediaPicker.pickVideo(); }}>
+            <Text style={styles.pickerRowIcon}>🎬</Text>
+            <Text style={styles.pickerRowLabel}>Video Library</Text>
+          </Pressable>
+          <Pressable style={styles.pickerCancelRow} onPress={() => setShowMediaPickerSheet(false)}>
+            <Text style={styles.pickerCancelLabel}>Cancel</Text>
+          </Pressable>
+        </View>
+      </Modal>
+
       <View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         {isNoAccess ? (
           <View style={styles.noAccessBar}>
@@ -856,10 +964,10 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           <>
             <Pressable
               style={styles.composeIconBtn}
-              onPress={() => Alert.alert('Attach', 'File attachments coming soon.')}
+              onPress={() => setShowMediaPickerSheet(true)}
               hitSlop={6}
             >
-              <Paperclip size={18} color={color.mute} />
+              <Paperclip size={18} color={mediaPicker.media ? color.signal : color.mute} />
             </Pressable>
             <Pressable
               style={styles.composeIconBtn}
@@ -903,15 +1011,15 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
               <Pressable
                 style={[
                   styles.sendBtn,
-                  (input.trim() && !sending) ? styles.sendBtnActive : styles.sendBtnDisabled,
+                  ((input.trim() || mediaPicker.media) && !sending) ? styles.sendBtnActive : styles.sendBtnDisabled,
                 ]}
                 onPress={handleSend}
-                disabled={!input.trim() || sending}
+                disabled={(!input.trim() && !mediaPicker.media) || sending}
               >
                 {sending ? (
                   <ActivityIndicator size="small" color={color.onInk} />
                 ) : (
-                  <Send size={16} color={input.trim() ? '#FFFFFF' : color.faint} />
+                  <Send size={16} color={(input.trim() || mediaPicker.media) ? '#FFFFFF' : color.faint} />
                 )}
               </Pressable>
             </Animated.View>
@@ -1177,6 +1285,57 @@ const styles = StyleSheet.create({
   replyBarAccent: { width: 3, height: 32, borderRadius: 2, backgroundColor: color.deep },
   replyBarSender: { ...t.stamp, color: color.deep, fontWeight: '600', marginBottom: 1 },
   replyBarBody: { ...t.small, color: color.mute, fontSize: 12 },
+
+  // Media attach preview bar
+  attachPreviewBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: 8,
+    backgroundColor: color.paperRaised,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: color.haze,
+  },
+  attachPreviewChip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: color.signal + '12',
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: color.signal + '30',
+    paddingHorizontal: space.md,
+    paddingVertical: 6,
+  },
+  attachPreviewIcon: { fontSize: 14 },
+  attachPreviewLabel: { ...t.small, color: color.signal, fontSize: 12, flex: 1 },
+
+  // Media picker sheet
+  pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
+  pickerSheet: {
+    backgroundColor: color.paperRaised,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: space.lg,
+    paddingTop: space.sm,
+    gap: 2,
+  },
+  pickerHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: color.haze, alignSelf: 'center', marginBottom: space.md },
+  pickerTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700', fontSize: 15, marginBottom: space.sm },
+  pickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    paddingVertical: 14,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: color.haze,
+  },
+  pickerRowIcon: { fontSize: 20 },
+  pickerRowLabel: { ...t.body, color: color.ink },
+  pickerCancelRow: { paddingVertical: 14, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.haze, marginTop: 4 },
+  pickerCancelLabel: { ...t.body, color: color.mute },
 
   replyQuote: {
     flexDirection: 'row',

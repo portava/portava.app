@@ -145,6 +145,15 @@ export interface Message {
   replyToId?: string | null;
   replyToBody?: string | null;
   replyToSenderName?: string | null;
+  /** Media fields — null for text-only messages (migration 0152_messages_media.sql). */
+  mediaUrl?: string | null;
+  mediaType?: 'image' | 'video' | null;
+  mediaThumbnailUrl?: string | null;
+  mediaDurationSeconds?: number | null;
+  /** Local-only upload state for optimistic media messages. */
+  uploadState?: 'uploading' | 'failed' | null;
+  /** 0–1 upload progress fraction (local only). */
+  uploadProgress?: number;
 }
 
 export type MsgErrorKind =
@@ -522,6 +531,27 @@ export async function openDirectThread(
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
   }
+}
+
+// ── Media messages ────────────────────────────────────────────────────────────
+
+/**
+ * Create a media message in a thread.
+ * The caller must first upload the media via uploadMedia() and pass back the result URL.
+ * This route creates the message row with the media fields.
+ */
+export async function sendMediaMessage(
+  threadId: string,
+  opts: {
+    mediaUrl: string;
+    mediaType: 'image' | 'video';
+    thumbnailUrl?: string | null;
+    durationSeconds?: number | null;
+    body?: string;
+    clientId?: string;
+  },
+): Promise<MsgResult<Message>> {
+  return apiPost(`/api/threads/${threadId}/media`, opts);
 }
 
 export async function deleteMessage(
