@@ -17,7 +17,7 @@ import {
 import { router } from 'expo-router';
 import { MapPin, List, Map as MapIcon } from 'lucide-react-native';
 import { Map as MapView, Camera, Marker } from '@maplibre/maplibre-react-native';
-import type { CameraRef, LngLatBounds } from '@maplibre/maplibre-react-native';
+import type { CameraRef, LngLat, LngLatBounds } from '@maplibre/maplibre-react-native';
 import { MAP_STYLE_URL } from '../../constants/mapStyle.ts';
 import type { PassportMemory } from '../../services/passportStamps.ts';
 import type { PassportStamp, PassportPostcard } from '../../types/models.ts';
@@ -268,6 +268,10 @@ export function DestinationsTab({ memories, stamps, postcards, trips }: Props) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const cameraRef = useRef<CameraRef>(null);
   const geocodeStartedRef = useRef(false);
+  /** Persists the last camera position so switching Map→List→Map restores it. */
+  const savedCameraRef = useRef<{ center: LngLat; zoom: number } | null>(null);
+  /** Tracks the viewMode value from the previous effect run to detect List→Map returns. */
+  const prevViewModeRef = useRef<ViewMode>('list');
 
   const groups = useMemo(
     () => groupByDestination(memories, stamps, postcards, trips),
@@ -329,9 +333,23 @@ export function DestinationsTab({ memories, stamps, postcards, trips }: Props) {
       .finally(() => setGeocoding(false));
   }, [viewMode, groups]);
 
-  // Fit camera to filtered resolved pins
+  // Fit camera to filtered resolved pins — or restore the saved position when
+  // the user returns from List mode having previously panned / zoomed the map.
   useEffect(() => {
+    // Track the previous viewMode so we can detect a List→Map return.
+    const wasInList = prevViewModeRef.current === 'list';
+    prevViewModeRef.current = viewMode;
+
     if (!cameraRef.current || viewMode !== 'map') return;
+
+    // If the user is returning from List mode and has a saved camera position,
+    // restore that position instead of running fitBounds again.
+    if (wasInList && savedCameraRef.current) {
+      const { center, zoom } = savedCameraRef.current;
+      cameraRef.current.easeTo({ center, zoom, duration: 300 });
+      return;
+    }
+
     const resolved = filteredGroups
       .map((g) => coordsMap[`${g.city.toLowerCase()}|${(g.country ?? '').toLowerCase()}`])
       .filter((c): c is [number, number] => c != null);
@@ -436,7 +454,16 @@ export function DestinationsTab({ memories, stamps, postcards, trips }: Props) {
 
         {/* Map container */}
         <View style={[s.mapWrap, { height: mapHeight }]}>
-          <MapView mapStyle={MAP_STYLE_URL} style={s.mapView}>
+          <MapView
+            mapStyle={MAP_STYLE_URL}
+            style={s.mapView}
+            onRegionDidChange={(e) => {
+              savedCameraRef.current = {
+                center: e.nativeEvent.center,
+                zoom: e.nativeEvent.zoom,
+              };
+            }}
+          >
             <Camera
               ref={cameraRef}
               initialViewState={{ center: [10, 20], zoom: 1 }}
