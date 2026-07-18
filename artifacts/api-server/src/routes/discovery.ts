@@ -35,6 +35,12 @@ import { isEnabled } from "../compass/flags";
 import { rankCandidates } from "../lib/portavaRank";
 import type { RankCandidate, ViewerContext, ScoredCandidate } from "../lib/portavaRank";
 import { logImpression } from "../lib/rankLog";
+import {
+  readPlacesFromDb,
+  writePlacesToDb,
+  readGeocodeFromDb,
+  writeGeocodeToDb,
+} from "../lib/discoveryPersistentCache";
 
 const router = Router();
 
@@ -151,16 +157,18 @@ async function geocode(location: string): Promise<{ lat: number; lng: number; di
 }
 
 /**
- * Geocode with a 24-hour in-memory cache and in-flight deduplication.
+ * Geocode with a 24-hour two-level cache (L1: in-process Map, L2: Postgres)
+ * and in-flight deduplication.
  *
  * When N category-count requests arrive in parallel for the same city this
  * ensures only ONE Nominatim call is made — the rest await the same promise.
- * This respects Nominatim's 1 req/s fair-use policy and dramatically cuts
- * cold-start latency.
+ * L2 (Postgres) allows a fresh instance to skip Nominatim on cold start for
+ * any city that has been queried within the last 24 hours.
  */
 function geocodeCached(location: string): Promise<{ lat: number; lng: number; display: string } | null> {
   const key = location.toLowerCase().trim();
 
+  // L1: in-process memory (zero network round-trip)
   const mem = _geocodeMemory.get(key);
   if (mem && Date.now() - mem.at < GEOCODE_CACHE_TTL) return Promise.resolve(mem.r);
 
@@ -168,16 +176,22 @@ function geocodeCached(location: string): Promise<{ lat: number; lng: number; di
   const existing = _geocodePending.get(key);
   if (existing) return existing;
 
-  const p = geocode(location)
-    .then((r) => {
-      _geocodeMemory.set(key, { r, at: Date.now() });
-      _geocodePending.delete(key);
-      return r;
-    })
-    .catch((e) => {
-      _geocodePending.delete(key);
-      throw e;
-    });
+  const p = (async () => {
+    // L2: Postgres geocode cache (survives restarts; strict TTL enforced in DB)
+    const dbResult = await readGeocodeFromDb(key);
+    if (dbResult) {
+      _geocodeMemory.set(key, { r: dbResult, at: Date.now() });
+      return dbResult;
+    }
+    // Miss: call Nominatim and persist to both levels.
+    const r = await geocode(location);
+    _geocodeMemory.set(key, { r, at: Date.now() });
+    if (r) void writeGeocodeToDb(key, r);
+    return r;
+  })().finally(() => {
+    _geocodePending.delete(key);
+  });
+
   _geocodePending.set(key, p);
   return p;
 }
@@ -656,6 +670,7 @@ function contextModeLabel(mode: string, city: string | null): string {
 }
 
 router.get("/discovery", async (req, res) => {
+  const t0 = Date.now(); // ← Step-1 instrumentation; used in timings throughout handler.
   const destinationParam = (req.query.destination as string | undefined)?.trim() || undefined;
   const latParam  = req.query.lat  ? parseFloat(req.query.lat  as string) : null;
   const lngParam  = req.query.lng  ? parseFloat(req.query.lng  as string) : null;
@@ -849,33 +864,81 @@ router.get("/discovery", async (req, res) => {
     bounds: ageFilterBounds(),
   };
 
-  if (cached && isFresh(cached)) {
-    // OSM results are cached; DB places are always re-queried (they change more often).
-    // Use userCoords for distance computation so DB places are measured from the user's
-    // actual position when userCoords are present; fall back to clientCoords otherwise.
+  // ── Cache lookup helper ────────────────────────────────────────────────────
+  // Shared by L1 (in-memory) and L2 (Postgres) hit paths.  OSM places are
+  // served from cache; community DB places are always re-queried (they change
+  // more often and are not part of the OSM cache key).
+  async function serveCachedPlaces(osmPlaces: DiscoveryPlace[], cacheLevel: string): Promise<void> {
     const distRef = userCoords ?? clientCoords;
-    const dbPlaces = await queryDbPlaces(destination, category, distRef?.lat ?? null, distRef?.lng ?? null);
-    // When sortBy=nearest and user coords are available, recompute distanceKm from
-    // the user's actual position — cached OSM places store distance from destination centre.
+    // destination! — narrowed by the guard above; TypeScript can't see it through the closure.
+    const dbPlaces = await queryDbPlaces(destination!, category, distRef?.lat ?? null, distRef?.lng ?? null);
     const osmWithDist = sortBy === "nearest" && distRef
-      ? cached.places.map((p) =>
+      ? osmPlaces.map((p) =>
           p.lat != null && p.lng != null
             ? { ...p, distanceKm: Math.round(haversineKm(distRef.lat, distRef.lng, p.lat, p.lng) * 10) / 10 }
             : p,
         )
-      : cached.places;
+      : osmPlaces;
     const merged   = mergeAndDedup(osmWithDist, dbPlaces);
     const filtered = applyFilters(merged);
     const slice    = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+    const totalMs  = Date.now() - t0;
+    req.log.info({ cacheLevel, destination, category, totalMs }, "discovery: cache hit");
     res.json({
       places: slice, total: filtered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
-      sourceSummary: { seededDbCount: dbPlaces.length, osmCount: cached.places.length, userCreatedCount: 0 },
+      sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
+      meta: { cacheLevel, timings: { totalMs } },
     });
+  }
+
+  // ── L1: in-process memory (fastest — zero network) ─────────────────────────
+  if (cached && isFresh(cached)) {
+    await serveCachedPlaces(cached.places, "L1");
     return;
   }
 
+  // ── L2: Postgres (survives restarts; stale-while-revalidate) ───────────────
+  //
+  // Fresh L2 entry → serve immediately (only DB places query, not Overpass).
+  // Stale L2 entry → respond immediately with last-known data while a background
+  //   goroutine re-fetches from Nominatim + Overpass and updates both caches.
+  //   This eliminates cold-start blocking after a deploy or autoscale event.
+  const dbCacheEntry = await readPlacesFromDb(key);
+  if (dbCacheEntry) {
+    // Populate L1 so the next in-process request skips the DB round-trip.
+    cache.set(key, { places: dbCacheEntry.entry.places as DiscoveryPlace[], cachedAt: dbCacheEntry.entry.cachedAt });
+
+    if (!dbCacheEntry.isStale) {
+      await serveCachedPlaces(dbCacheEntry.entry.places as DiscoveryPlace[], "L2_fresh");
+      return;
+    }
+
+    // Stale: kick off background OSM revalidation, then serve stale data.
+    // The background job does NOT block the response — only queryDbPlaces does.
+    void (async () => {
+      try {
+        // Always geocode by destination name (not clientCoords) so the background
+        // refresh stores a stable city coordinate with a display name in L2.
+        const freshCoords = await geocodeCached(destination!);
+        if (!freshCoords) return;
+        const freshOsm = await queryOverpass(freshCoords.lat, freshCoords.lng, radiusM, category);
+        const enriched  = freshOsm.length > 0 ? await enrichOsmSavedCounts(freshOsm) : freshOsm;
+        if (enriched.length > 0) {
+          cache.set(key, { places: enriched, cachedAt: Date.now() });
+          void writePlacesToDb(key, destination!, category, radiusKm, enriched, freshCoords);
+        }
+      } catch { /* non-fatal background revalidation */ }
+    })();
+
+    await serveCachedPlaces(dbCacheEntry.entry.places as DiscoveryPlace[], "L2_stale");
+    return;
+  }
+
+  // ── Cache miss: full pipeline (Nominatim → Overpass → DB) ──────────────────
   try {
+    const geocodeT0 = Date.now();
     const coords = clientCoords ?? await geocodeCached(destination);
+    const geocodeMs = clientCoords ? 0 : Date.now() - geocodeT0;
     if (!coords) {
       res.json({ places: [], total: 0, destination, context: ctxLabel, cached: false, ageFilterMeta,
         sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 } });
@@ -887,10 +950,12 @@ router.get("/discovery", async (req, res) => {
     // sort measures from the user's actual position. OSM always queries from
     // the destination centre — this is what gets cached and must not use user coords.
     const distRef = userCoords ?? coords;
+    const osmT0 = Date.now();
     const [osmPlaces, dbPlaces] = await Promise.all([
       queryOverpass(coords.lat, coords.lng, radiusM, category),
       queryDbPlaces(destination, category, distRef.lat, distRef.lng),
     ]);
+    const osmMs = Date.now() - osmT0;
 
     // Enrich OSM places with real save counts from discovery_places before
     // merging and caching.  A single batch SELECT by osm_id attaches savedCount
@@ -919,6 +984,8 @@ router.get("/discovery", async (req, res) => {
     // 2 hours if Overpass timed out or returned nothing transiently.
     if (enrichedOsm.length > 0) {
       cache.set(key, { places: enrichedOsm, cachedAt: Date.now() });
+      // L2 write (fire-and-forget) — persists across restarts for warm cold starts.
+      void writePlacesToDb(key, destination!, category, radiusKm, enrichedOsm, coords);
     }
 
     // COMPASS_V1_RULE_BASED_ENABLED: for for_you tab, use Compass pipeline scoring
@@ -1046,12 +1113,22 @@ router.get("/discovery", async (req, res) => {
         .filter((s): s is ScoredCandidate<RankCandidate> => s !== undefined);
       void logImpression(servedScored, callerUserId, "discovery");
     }
+    const totalMs = Date.now() - t0;
+    req.log.info(
+      { destination, category, geocodeMs, osmMs, totalMs, cacheLevel: "miss",
+        osmCount: osmPlaces.length, dbCount: dbPlaces.length },
+      "discovery: cold fetch",
+    );
     res.json({ places: slice, total: filtered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
-      sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
+      sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
+      meta: { cacheLevel: "miss", timings: { geocodeMs, osmMs, totalMs } },
+    });
   } catch (err) {
     req.log.error({ err }, "discovery route failed");
     res.json({ places: [], total: 0, destination, context: ctxLabel ?? null, cached: false, ageFilterMeta: null,
-      sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 } });
+      sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
+      meta: { cacheLevel: "error", timings: { totalMs: Date.now() - t0 } },
+    });
   }
 });
 

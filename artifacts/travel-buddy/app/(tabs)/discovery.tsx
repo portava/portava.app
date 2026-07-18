@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, Pressable, ScrollView, StyleSheet, TextInput, Modal,
+  View, Text, Pressable, ScrollView, StyleSheet, TextInput, Modal, InteractionManager,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
@@ -34,6 +34,7 @@ import { RouteBuilderSheet } from '../../src/components/RouteBuilderSheet';
 import type { RouteStopDraft } from '../../src/components/RouteBuilderSheet';
 import { SubmitPlaceSheet } from '../../src/components/discovery/SubmitPlaceSheet';
 import { SectionErrorBoundary } from '../../src/components/discovery/SectionErrorBoundary';
+import { loadCachedCounts, saveCachedCounts } from '../../src/services/discoveryLocalCache';
 
 /** Returns the value only when it is a real, finite number — otherwise null. */
 function finiteOrNull(v: number | null | undefined): number | null {
@@ -150,6 +151,31 @@ export default function DiscoveryHub() {
   const [buddyStripLoading, setBuddyStripLoading] = useState(false);
   const [buddyCityNotAvailable, setBuddyCityNotAvailable] = useState(false);
 
+  // ── Step-1 instrumentation + Step-4 cache-first paint ─────────────────────
+  const mountedAt          = useRef(Date.now());
+  const firstContentLogged = useRef(false);
+
+  // On mount, load cached category counts from AsyncStorage so the tab bar
+  // badges render instantly on the second open (< 300 ms from storage).
+  // Network fetch still runs in parallel and overwrites when it resolves.
+  const initialCity = useRef(destination);
+  useEffect(() => {
+    const city = initialCity.current;
+    if (!city) return;
+    loadCachedCounts(city)
+      .then((cached) => {
+        if (cached && !firstContentLogged.current) {
+          setCategoryCounts(cached);
+          if (__DEV__) {
+            console.log(
+              `[Discovery] cache-first paint: ${Date.now() - mountedAt.current}ms city=${city}`,
+            );
+          }
+        }
+      })
+      .catch(() => {});
+  }, []); // run once on mount only
+
   const handleAddToRoute = useCallback((draft: RouteStopDraft) => {
     setRouteBuilderDraft(draft);
     setRouteBuilderOpen(true);
@@ -165,26 +191,30 @@ export default function DiscoveryHub() {
   }, [locationState.place.city]);
 
   // Load available buddies for the current city (for_you buddy strip).
+  // Step-5: deferred until after first paint — the strip is below fold.
   useEffect(() => {
     if (!currentCity) return;
     let cancelled = false;
-    setBuddyStripLoading(true);
-    setBuddyCityNotAvailable(false);
-    getAvailableNow(currentCity).then(res => {
+    const task = InteractionManager.runAfterInteractions(() => {
       if (cancelled) return;
-      setBuddyStripLoading(false);
-      if (!res.ok) {
-        if (res.error?.includes('city_not_available')) setBuddyCityNotAvailable(true);
-        return;
-      }
-      // Normalize at the boundary: missing/invalid array → [].
-      setAvailableBuddies((res.data?.buddies ?? []).slice(0, 8));
-    }).catch((err) => {
-      if (cancelled) return;
-      setBuddyStripLoading(false);
-      if (__DEV__) console.error('[Discovery] available-now buddies failed:', err);
+      setBuddyStripLoading(true);
+      setBuddyCityNotAvailable(false);
+      getAvailableNow(currentCity).then(res => {
+        if (cancelled) return;
+        setBuddyStripLoading(false);
+        if (!res.ok) {
+          if (res.error?.includes('city_not_available')) setBuddyCityNotAvailable(true);
+          return;
+        }
+        // Normalize at the boundary: missing/invalid array → [].
+        setAvailableBuddies((res.data?.buddies ?? []).slice(0, 8));
+      }).catch((err) => {
+        if (cancelled) return;
+        setBuddyStripLoading(false);
+        if (__DEV__) console.error('[Discovery] available-now buddies failed:', err);
+      });
     });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; task.cancel(); };
   }, [currentCity]);
 
   // Debounce custom age inputs (500 ms) so that each keystroke while the user
@@ -243,7 +273,21 @@ export default function DiscoveryHub() {
       : getDiscoveryCategoryCounts(destination, activeFilters, contextMode, ageFilter, debouncedAgeRange.min, debouncedAgeRange.max);
 
     fetchCounts.then((counts) => {
-      if (!cancelled) { setCategoryCounts(counts); setCountsLoading(false); }
+      if (!cancelled) {
+        setCategoryCounts(counts);
+        setCountsLoading(false);
+        // Step-4: persist for instant second-open (< 300 ms from AsyncStorage).
+        if (destination) void saveCachedCounts(destination, counts);
+        // Step-1: first-content timing (dev only).
+        if (!firstContentLogged.current) {
+          firstContentLogged.current = true;
+          if (__DEV__) {
+            console.log(
+              `[Discovery] first-content (network): ${Date.now() - mountedAt.current}ms city=${destination}`,
+            );
+          }
+        }
+      }
     }).catch(() => {
       if (!cancelled) setCountsLoading(false);
     });
@@ -318,6 +362,8 @@ export default function DiscoveryHub() {
   // MapTiler geocode on load:
   //  - If a city is set but coords missing -> geocode the city (zoom 11).
   //  - If no city but a country is known -> geocode the country (country-level zoom 4).
+  // Step-5: deferred via InteractionManager — map coordinates are not needed
+  // for place card rendering, only for the map toggle and full-screen map.
   React.useEffect(() => {
     if (destinationLat != null || destinationLng != null) return;
     const key = process.env.EXPO_PUBLIC_MAPTILER_KEY;
@@ -326,22 +372,25 @@ export default function DiscoveryHub() {
     const query = destination || country;
     if (!query) return;
     const isCountryView = !destination && !!country;
-    let cancelled = false;
     const types = isCountryView ? 'country' : '';
     const url = `https://api.maptiler.com/geocoding/${encodeURIComponent(query)}.json?key=${key}&limit=1${types ? `&types=${types}` : ''}`;
-    fetch(url)
-      .then((r) => r.json())
-      .then((data) => {
-        if (cancelled) return;
-        const c = data?.features?.[0]?.center;
-        if (Array.isArray(c) && c.length === 2 && Number.isFinite(c[0]) && Number.isFinite(c[1])) {
-          setDestinationLng(c[0]);
-          setDestinationLat(c[1]);
-          setDestinationZoom(isCountryView ? 4 : 11);
-        }
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
+    let cancelled = false;
+    const task = InteractionManager.runAfterInteractions(() => {
+      if (cancelled) return;
+      fetch(url)
+        .then((r) => r.json())
+        .then((data) => {
+          if (cancelled) return;
+          const c = data?.features?.[0]?.center;
+          if (Array.isArray(c) && c.length === 2 && Number.isFinite(c[0]) && Number.isFinite(c[1])) {
+            setDestinationLng(c[0]);
+            setDestinationLat(c[1]);
+            setDestinationZoom(isCountryView ? 4 : 11);
+          }
+        })
+        .catch(() => {});
+    });
+    return () => { cancelled = true; task.cancel(); };
   }, [destination, destinationLat, destinationLng, locationState.place.country]);
 
   const handleSelectPlaceFromBar = useCallback((place: Place) => {

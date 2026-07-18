@@ -1,0 +1,193 @@
+/**
+ * discoveryPersistentCache — Postgres-backed L2 cache for Discovery routes.
+ *
+ * The in-memory Maps (cache, _geocodeMemory) in discovery.ts are the L1 layer:
+ * fast but ephemeral.  This module is the L2 layer: slightly slower (1–5 ms DB
+ * round-trip) but survives restarts and is shared across autoscale instances.
+ *
+ * All functions are non-blocking: errors are swallowed so a DB failure never
+ * breaks a live request.
+ *
+ * TTLs mirror the in-memory constants:
+ *   places   — 2 hours  (CACHE_TTL_MS in discovery.ts)
+ *   geocode  — 24 hours (GEOCODE_CACHE_TTL in discovery.ts)
+ */
+
+import { getServiceClient } from "./supabase.js";
+import { logger } from "./logger.js";
+
+const PLACE_TTL_MS   = 2  * 60 * 60 * 1_000;  // 2 h
+const GEOCODE_TTL_MS = 24 * 60 * 60 * 1_000;  // 24 h
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+export interface DbPlaceEntry {
+  places:         unknown[];
+  cachedAt:       number;       // Unix ms — matches CacheEntry.cachedAt
+  geocodeLat:     number | null;
+  geocodeLng:     number | null;
+  geocodeDisplay: string | null;
+}
+
+export interface DbGeocodeEntry {
+  lat:     number;
+  lng:     number;
+  display: string;
+}
+
+// ── Place cache ──────────────────────────────────────────────────────────────
+
+/**
+ * Read a place result from the DB cache.
+ *
+ * Returns `{ entry, isStale }` when a row exists regardless of freshness —
+ * callers implement stale-while-revalidate themselves.
+ * Returns `null` when no row is found.
+ */
+export async function readPlacesFromDb(
+  key: string,
+): Promise<{ entry: DbPlaceEntry; isStale: boolean } | null> {
+  try {
+    const sc = getServiceClient();
+    if (!sc) return null;
+
+    const { data, error } = await sc
+      .from("discovery_cache")
+      .select("places, cached_at, expires_at, geocode_lat, geocode_lng, geocode_display")
+      .eq("cache_key", key)
+      .maybeSingle();
+
+    if (error || !data) return null;
+
+    const row       = data as any;
+    const cachedAt  = new Date(row.cached_at  as string).getTime();
+    const expiresAt = new Date(row.expires_at as string).getTime();
+
+    return {
+      entry: {
+        places:         (row.places          as unknown[]) ?? [],
+        cachedAt,
+        geocodeLat:     (row.geocode_lat     as number | null) ?? null,
+        geocodeLng:     (row.geocode_lng     as number | null) ?? null,
+        geocodeDisplay: (row.geocode_display as string | null) ?? null,
+      },
+      isStale: Date.now() > expiresAt,
+    };
+  } catch (e) {
+    logger.debug({ err: e, key }, "discoveryPersistentCache: readPlacesFromDb error");
+    return null;
+  }
+}
+
+/**
+ * Write (upsert) a place result into the DB cache.  Fire-and-forget safe.
+ */
+export async function writePlacesToDb(
+  key:         string,
+  destination: string,
+  category:    string,
+  radiusKm:    number,
+  places:      unknown[],
+  geocode:     { lat: number; lng: number; display?: string } | null,
+): Promise<void> {
+  try {
+    const sc = getServiceClient();
+    if (!sc) return;
+
+    const now       = new Date();
+    const expiresAt = new Date(now.getTime() + PLACE_TTL_MS);
+
+    const { error } = await sc.from("discovery_cache").upsert(
+      {
+        cache_key:       key,
+        destination,
+        category,
+        radius_km:       radiusKm,
+        places,
+        geocode_lat:     geocode?.lat     ?? null,
+        geocode_lng:     geocode?.lng     ?? null,
+        geocode_display: geocode?.display ?? null,
+        cached_at:       now.toISOString(),
+        expires_at:      expiresAt.toISOString(),
+      },
+      { onConflict: "cache_key" },
+    );
+
+    if (error) {
+      logger.debug({ err: error, key }, "discoveryPersistentCache: writePlacesToDb error");
+    }
+  } catch (e) {
+    logger.debug({ err: e, key }, "discoveryPersistentCache: writePlacesToDb exception");
+  }
+}
+
+// ── Geocode cache ─────────────────────────────────────────────────────────────
+
+/**
+ * Read a geocode result from the DB cache.  Returns null on miss or expiry.
+ * Geocode cache is strict-TTL (no stale-while-revalidate) — Nominatim results
+ * are stable; returning stale coords for a renamed place would be rare.
+ */
+export async function readGeocodeFromDb(
+  key: string,
+): Promise<DbGeocodeEntry | null> {
+  try {
+    const sc = getServiceClient();
+    if (!sc) return null;
+
+    const { data, error } = await sc
+      .from("discovery_geocode_cache")
+      .select("lat, lng, display_name, expires_at")
+      .eq("location_key", key)
+      .maybeSingle();
+
+    if (error || !data) return null;
+
+    const row       = data as any;
+    const expiresAt = new Date(row.expires_at as string).getTime();
+    if (Date.now() > expiresAt) return null;
+
+    return {
+      lat:     row.lat         as number,
+      lng:     row.lng         as number,
+      display: row.display_name as string,
+    };
+  } catch (e) {
+    logger.debug({ err: e, key }, "discoveryPersistentCache: readGeocodeFromDb error");
+    return null;
+  }
+}
+
+/**
+ * Write (upsert) a geocode result into the DB cache.  Fire-and-forget safe.
+ */
+export async function writeGeocodeToDb(
+  key:    string,
+  result: DbGeocodeEntry,
+): Promise<void> {
+  try {
+    const sc = getServiceClient();
+    if (!sc) return;
+
+    const now       = new Date();
+    const expiresAt = new Date(now.getTime() + GEOCODE_TTL_MS);
+
+    const { error } = await sc.from("discovery_geocode_cache").upsert(
+      {
+        location_key: key,
+        lat:          result.lat,
+        lng:          result.lng,
+        display_name: result.display,
+        cached_at:    now.toISOString(),
+        expires_at:   expiresAt.toISOString(),
+      },
+      { onConflict: "location_key" },
+    );
+
+    if (error) {
+      logger.debug({ err: error, key }, "discoveryPersistentCache: writeGeocodeToDb error");
+    }
+  } catch (e) {
+    logger.debug({ err: e, key }, "discoveryPersistentCache: writeGeocodeToDb exception");
+  }
+}

@@ -8,7 +8,7 @@ import { startSafeReturnScheduler } from "./lib/safeReturnScheduler";
 import { startTripCrewLiveShareScheduler } from "./lib/tripCrewLiveShareScheduler";
 import { startDelayedPostPublisher } from "./lib/delayedPostPublisher";
 import { startCompassAbuseScanScheduler } from "./lib/compassAbuseScanScheduler";
-import { warmUpDiscoveryCache } from "./lib/discoveryWarmup";
+import { startDiscoveryCacheWarmer } from "./lib/discoveryWarmup";
 import { startPushRetryWorker, queryPushRetryHealth } from "./lib/pushRetryWorker";
 import { startZombieTokenSweeper } from "./lib/zombieTokenSweeper";
 import { startEventWaitlistSweeper } from "./lib/eventWaitlistSweeper";
@@ -59,9 +59,9 @@ app.listen(port, (err) => {
   startTripReminderScheduler();
   startInviteSlotReconciler();
   startInviteSlotSweeper();
-  warmUpDiscoveryCache(port).catch((e) =>
-    logger.warn({ err: e }, "discovery warm-up: unhandled error"),
-  );
+  // startDiscoveryCacheWarmer calls warmUpDiscoveryCache immediately on startup
+  // then repeats hourly so the Postgres L2 cache stays warm across restarts.
+  startDiscoveryCacheWarmer(port);
 
   // Stamp generation worker — only when explicitly enabled via env var
   if (process.env.STAMP_WORKER_ENABLED === "true") {

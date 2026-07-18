@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useRef } from 'react';
-import { supabase } from '../services/supabase';
+import { supabase } from '../lib/supabase.ts';
 
 type Surface = 'pulse' | 'discovery' | 'events';
 type Outcome = 'tap' | 'save' | 'join' | 'rsvp' | 'attended';
