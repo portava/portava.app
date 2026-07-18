@@ -21,7 +21,14 @@ import { UniversalStampArtwork } from './stamps/UniversalStampArtwork.tsx';
 import { StampDetailModal } from './stamps/StampDetailModal.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 
-/** Client-side category filter — maps new category slugs to stamp fields. */
+/** Client-side category filter — maps filter pills to actual DB category values.
+ *
+ * DB stamp_definitions.category values: 'trip', 'location', 'community',
+ * 'event', 'safety', 'trust', 'special', 'rent_buddy'.
+ *
+ * Filter pill values: 'location', 'trips', 'events', 'social', 'safety',
+ * 'rent_buddy'. Note the plural/singular mismatch and 'social' vs 'community'.
+ */
 function matchesCategory(stamp: PassportStampNew, cat: StampCategory): boolean {
   if (!cat) return true;
   const definitionCat = stamp.definition?.category ?? '';
@@ -29,27 +36,46 @@ function matchesCategory(stamp: PassportStampNew, cat: StampCategory): boolean {
 
   if (cat === 'location') {
     return (
-      ['city', 'neighborhood', 'check_in'].includes(sType) ||
+      // stamp_type values: 'location' (v2) or legacy 'city'/'neighborhood'/'check_in'
+      ['location', 'city', 'neighborhood', 'check_in'].includes(sType) ||
       definitionCat === 'location'
     );
   }
   if (cat === 'trips') {
     return (
-      ['trip_crew', 'plan', 'trip'].includes(sType) ||
-      definitionCat === 'trips'
+      // stamp_type values: 'trip' (v2) or legacy 'trip_crew'/'plan'
+      ['trip', 'trip_crew', 'plan'].includes(sType) ||
+      // DB category stores 'trip' (singular); also accept 'trips' for forward compat
+      definitionCat === 'trip' || definitionCat === 'trips'
     );
   }
   if (cat === 'events') {
-    return sType === 'event' || definitionCat === 'events';
+    // stamp_type: 'event'; DB category: 'event' (singular)
+    return sType === 'event' || definitionCat === 'event' || definitionCat === 'events';
   }
   if (cat === 'social') {
-    return sType === 'social' || definitionCat === 'social';
+    // stamp_type: 'social'; DB category: 'community' — also accept legacy 'social'
+    return (
+      sType === 'social' ||
+      definitionCat === 'community' || definitionCat === 'social'
+    );
   }
   if (cat === 'safety') {
-    return sType === 'safe_return' || definitionCat === 'safety';
+    // stamp_type: 'safety' (v2) or legacy 'safe_return'
+    // 'trust' stamps (verified_traveler) are verification/safety-adjacent
+    return (
+      sType === 'safety' || sType === 'safe_return' ||
+      definitionCat === 'safety' || definitionCat === 'trust'
+    );
   }
   if (cat === 'rent_buddy') {
-    return sType === 'host' || definitionCat === 'rent_buddy';
+    // stamp_type: 'rent_buddy' (v2) or legacy 'host'
+    // 'special' stamps (early_adopter, founding_member) have no dedicated pill;
+    // group them under rent_buddy as a catch-all
+    return (
+      sType === 'rent_buddy' || sType === 'host' ||
+      definitionCat === 'rent_buddy' || definitionCat === 'special'
+    );
   }
   return true;
 }
