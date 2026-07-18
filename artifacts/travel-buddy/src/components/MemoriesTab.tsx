@@ -3,13 +3,16 @@ import {
   View, Text, StyleSheet, Pressable, Image, ScrollView,
   ActivityIndicator, Modal, TextInput,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
-import { MapPin, Lock, Globe, Users, Eye, EyeOff, Plus, X } from 'lucide-react-native';
+import { MapPin, Lock, Globe, Users, Eye, Camera, X } from 'lucide-react-native';
+import { Plus } from 'lucide-react-native';
 import type { PassportMemory, MemoryVisibility } from '../services/passportStamps.ts';
 import {
   createPassportMemory,
   updatePassportMemory,
 } from '../services/passportStamps.ts';
+import { uploadMedia } from '../services/media.ts';
 import { SaveButton } from './SaveButton.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 
@@ -132,10 +135,69 @@ function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // Photo state
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [photoMime, setPhotoMime] = useState<string>('image/jpeg');
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+
+  async function pickPhoto() {
+    setUploadError('');
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      setUploadError('Photo library permission required to add a photo.');
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.85,
+      allowsEditing: true,
+    });
+    if (res.canceled || !res.assets?.[0]) return;
+    const asset = res.assets[0];
+    setPhotoUri(asset.uri);
+    setPhotoMime(asset.mimeType ?? 'image/jpeg');
+  }
+
+  function removePhoto() {
+    setPhotoUri(null);
+    setUploadError('');
+  }
+
+  function resetForm() {
+    setTitle('');
+    setDescription('');
+    setCity('');
+    setCountry('');
+    setCategory('city');
+    setVisibility('private');
+    setPhotoUri(null);
+    setPhotoMime('image/jpeg');
+    setUploadError('');
+    setError('');
+  }
+
   const handleSave = async () => {
     if (!title.trim()) { setError('Title is required'); return; }
     setSaving(true);
     setError('');
+    setUploadError('');
+
+    let photoUrl: string | undefined;
+
+    // Upload photo first if one was selected
+    if (photoUri) {
+      setUploading(true);
+      const up = await uploadMedia({ uri: photoUri, mimeType: photoMime, type: 'image' });
+      setUploading(false);
+      if (!up.ok || !up.url) {
+        setUploadError(up.message ?? 'Photo upload failed. You can save without a photo or try again.');
+        setSaving(false);
+        return;
+      }
+      photoUrl = up.url;
+    }
+
     const res = await createPassportMemory({
       title: title.trim(),
       description: description.trim() || undefined,
@@ -143,38 +205,45 @@ function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalProps) {
       country: country.trim() || undefined,
       category,
       visibility,
+      photoUrl,
     });
     setSaving(false);
     if (!res.ok) { setError(res.message); return; }
     onCreated(res.data);
-    setTitle(''); setDescription(''); setCity(''); setCountry('');
-    setCategory('city'); setVisibility('private');
+    resetForm();
     onClose();
   };
 
+  const handleClose = () => {
+    resetForm();
+    onClose();
+  };
+
+  const isBusy = saving || uploading;
+
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={handleClose}>
       <KeyboardSafeView>
         <View style={cm.header}>
           <Text style={cm.title}>New Memory</Text>
-          <Pressable onPress={onClose} hitSlop={8}><X size={22} color={color.ink} /></Pressable>
+          <Pressable onPress={handleClose} hitSlop={8}><X size={22} color={color.ink} /></Pressable>
         </View>
         <View style={cm.body}>
           <Text style={cm.label}>Title *</Text>
-          <TextInput style={cm.input} value={title} onChangeText={setTitle} placeholder="A memorable moment…" placeholderTextColor={color.faint} maxLength={200} />
+          <TextInput style={cm.input} value={title} onChangeText={setTitle} placeholder="A memorable moment…" placeholderTextColor={color.faint} maxLength={200} editable={!isBusy} />
 
           <Text style={cm.label}>Description</Text>
-          <TextInput style={[cm.input, cm.multiline]} value={description} onChangeText={setDescription} placeholder="Tell the story…" placeholderTextColor={color.faint} multiline maxLength={1000} textAlignVertical="top" />
+          <TextInput style={[cm.input, cm.multiline]} value={description} onChangeText={setDescription} placeholder="Tell the story…" placeholderTextColor={color.faint} multiline maxLength={1000} textAlignVertical="top" editable={!isBusy} />
 
           <View style={cm.row}>
             <View style={{ flex: 1 }}>
               <Text style={cm.label}>City</Text>
-              <TextInput style={cm.input} value={city} onChangeText={setCity} placeholder="City" placeholderTextColor={color.faint} maxLength={100} />
+              <TextInput style={cm.input} value={city} onChangeText={setCity} placeholder="City" placeholderTextColor={color.faint} maxLength={100} editable={!isBusy} />
             </View>
             <View style={{ width: space.md }} />
             <View style={{ flex: 1 }}>
               <Text style={cm.label}>Country</Text>
-              <TextInput style={cm.input} value={country} onChangeText={setCountry} placeholder="Country" placeholderTextColor={color.faint} maxLength={100} />
+              <TextInput style={cm.input} value={country} onChangeText={setCountry} placeholder="Country" placeholderTextColor={color.faint} maxLength={100} editable={!isBusy} />
             </View>
           </View>
 
@@ -185,6 +254,7 @@ function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalProps) {
                 key={c.key}
                 style={[cm.chip, category === c.key && cm.chipActive]}
                 onPress={() => setCategory(c.key)}
+                disabled={isBusy}
               >
                 <Text style={[cm.chipText, category === c.key && cm.chipTextActive]}>{c.label}</Text>
               </Pressable>
@@ -198,6 +268,7 @@ function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalProps) {
                 key={v}
                 style={[cm.visOption, visibility === v && cm.visOptionActive]}
                 onPress={() => setVisibility(v)}
+                disabled={isBusy}
               >
                 {visibilityIcon(v)}
                 <Text style={[cm.visOptionText, visibility === v && cm.visOptionTextActive]}>
@@ -207,9 +278,47 @@ function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalProps) {
             ))}
           </View>
 
+          {/* Photo picker */}
+          <Text style={cm.label}>Photo</Text>
+          {photoUri ? (
+            <View style={cm.photoPreviewWrap}>
+              <Image source={{ uri: photoUri }} style={cm.photoPreview} resizeMode="cover" />
+              {uploading && (
+                <View style={cm.photoUploadingOverlay}>
+                  <ActivityIndicator color="#fff" size="small" />
+                  <Text style={cm.photoUploadingText}>Uploading…</Text>
+                </View>
+              )}
+              {!uploading && (
+                <Pressable style={cm.photoRemoveBtn} onPress={removePhoto} hitSlop={8} disabled={isBusy}>
+                  <X size={14} color="#fff" />
+                </Pressable>
+              )}
+              <Pressable style={cm.photoChangeBtn} onPress={pickPhoto} disabled={isBusy}>
+                <Text style={cm.photoChangeBtnText}>Change</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable style={cm.photoPickerBtn} onPress={pickPhoto} disabled={isBusy}>
+              <Camera size={18} color={color.signal} />
+              <Text style={cm.photoPickerText}>Add photo</Text>
+            </Pressable>
+          )}
+
+          {uploadError ? (
+            <View style={cm.uploadErrorBox}>
+              <Text style={cm.uploadErrorText}>{uploadError}</Text>
+              <Pressable onPress={() => setUploadError('')} hitSlop={8}>
+                <Text style={cm.uploadErrorDismiss}>Dismiss</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
           {error ? <Text style={cm.error}>{error}</Text> : null}
-          <Pressable style={[cm.saveBtn, saving && cm.saveBtnDisabled]} onPress={handleSave} disabled={saving}>
-            {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={cm.saveBtnText}>Save Memory</Text>}
+          <Pressable style={[cm.saveBtn, isBusy && cm.saveBtnDisabled]} onPress={handleSave} disabled={isBusy}>
+            {isBusy
+              ? <ActivityIndicator color="#fff" size="small" />
+              : <Text style={cm.saveBtnText}>Save Memory</Text>}
           </Pressable>
         </View>
       </KeyboardSafeView>
@@ -385,6 +494,19 @@ const cm = StyleSheet.create({
   visOptionActive: { borderColor: color.signal, backgroundColor: '#FFF0F3' },
   visOptionText: { ...t.small, color: color.mute, fontWeight: '600' },
   visOptionTextActive: { color: color.signal },
+  // Photo picker
+  photoPickerBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderWidth: 1.5, borderColor: color.haze, borderStyle: 'dashed', borderRadius: radius.md, paddingVertical: 14, backgroundColor: color.paperRaised },
+  photoPickerText: { ...t.small, color: color.signal, fontWeight: '700' },
+  photoPreviewWrap: { position: 'relative', borderRadius: radius.md, overflow: 'hidden' },
+  photoPreview: { width: '100%', height: 160, backgroundColor: color.haze },
+  photoUploadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  photoUploadingText: { ...t.small, color: '#fff', fontWeight: '600' },
+  photoRemoveBtn: { position: 'absolute', top: 8, right: 8, width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(17,17,15,0.6)', alignItems: 'center', justifyContent: 'center' },
+  photoChangeBtn: { position: 'absolute', bottom: 8, right: 8, backgroundColor: 'rgba(17,17,15,0.6)', borderRadius: radius.pill, paddingHorizontal: 10, paddingVertical: 4 },
+  photoChangeBtnText: { ...t.small, color: '#fff', fontWeight: '700' },
+  uploadErrorBox: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#FEF2F2', borderRadius: radius.md, padding: space.md, marginTop: space.sm, gap: space.sm },
+  uploadErrorText: { ...t.small, color: color.signal, fontWeight: '600', flex: 1 },
+  uploadErrorDismiss: { ...t.small, color: color.signal, fontWeight: '700' },
   error: { ...t.small, color: color.signal, marginTop: space.sm },
   saveBtn: { backgroundColor: color.signal, borderRadius: radius.pill, paddingVertical: space.md + 2, alignItems: 'center', marginTop: space.xl },
   saveBtnDisabled: { opacity: 0.5 },
