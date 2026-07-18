@@ -141,6 +141,16 @@ function subtreeHasText(node: any, text: string): boolean {
   return (node.children ?? []).some((c: any) => subtreeHasText(c, text));
 }
 
+function subtreeHasType(node: any, type: string): boolean {
+  if (!node || typeof node !== 'object') return false;
+  if (node.type === type) return true;
+  return (node.children ?? []).some((c: any) => subtreeHasType(c, type));
+}
+
+function isScrollNode(node: any): boolean {
+  return node?.type === 'ScrollView' || node?.type === 'RCTScrollView';
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('ActivityCenter (Notifications) — scroll architecture', () => {
@@ -196,5 +206,68 @@ describe('ActivityCenter (Notifications) — scroll architecture', () => {
 
     expect(foundScrollView).toBe(true);
     expect(nonOverlayBeforeScroll).toBe(false);
+  });
+
+  it('loading branch — "Activity Center" header and spinner share the same non-scroll container', async () => {
+    // Override the default mock: loading=true, notifications=[] triggers the
+    // plain-View branch (lines ~278-284 of notifications.tsx), which wraps
+    // sharedHeader + ActivityIndicator in a single <View style={{ flex: 1 }}>.
+    mockUseNotifications.mockReturnValue({
+      notifications:  [],
+      loading:        true,
+      loadingMore:    false,
+      unreadCount:    0,
+      reload:         jest.fn(),
+      loadMore:       jest.fn(),
+      markRead:       jest.fn(),
+      markAllRead:    jest.fn(),
+      dismiss:        jest.fn(),
+    });
+
+    const { toJSON } = await render(<ActivityCenter />);
+    await act(async () => {});
+
+    const tree = toJSON() as any;
+
+    // The outer root View wraps everything; its first child in the loading
+    // branch should be a plain View — not a FlatList / ScrollView.
+    const rootChildren: any[] = Array.isArray(tree?.children) ? tree.children : [];
+    const firstChild = rootChildren[0];
+
+    expect(firstChild).toBeTruthy();
+    // The container must not itself be a scroll node.
+    expect(isScrollNode(firstChild)).toBe(false);
+
+    // The "Activity Center" title must live somewhere inside this container.
+    expect(subtreeHasText(firstChild, 'Activity Center')).toBe(true);
+
+    // The ActivityIndicator (the loading spinner) must also live inside
+    // this same container — confirming header + spinner are co-located.
+    expect(subtreeHasType(firstChild, 'ActivityIndicator')).toBe(true);
+
+    // Guard: there must be NO scroll node that sits between the root container
+    // and the header title — i.e. the title is not tucked inside a nested
+    // FlatList / ScrollView within the loading branch container.
+    function titleCrossesScrollBoundary(node: any): boolean {
+      // Returns true if "Activity Center" can only be reached by passing
+      // through a scroll node descendant of `node`.
+      if (typeof node === 'string') return false;
+      if (!node || typeof node !== 'object') return false;
+      for (const child of (node.children ?? [])) {
+        if (isScrollNode(child)) {
+          // If the title is only under this scroll child, it crossed a boundary.
+          if (subtreeHasText(child, 'Activity Center') &&
+              !(node.children ?? []).some(
+                (c: any) => !isScrollNode(c) && subtreeHasText(c, 'Activity Center'),
+              )) {
+            return true;
+          }
+        }
+        if (titleCrossesScrollBoundary(child)) return true;
+      }
+      return false;
+    }
+
+    expect(titleCrossesScrollBoundary(firstChild)).toBe(false);
   });
 });
