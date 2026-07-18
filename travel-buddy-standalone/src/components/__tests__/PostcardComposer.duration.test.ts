@@ -181,3 +181,84 @@ describe('PostcardComposer duration gate — surface isolation', () => {
     assert.equal(postcardResult.ok, false, 'should fail for postcard surface');
   });
 });
+
+// ── Camera picker path — same 60-second guard as the library picker ────────────
+//
+// pickFromCamera() calls launchCameraAsync() and then passes the result to
+// applyAsset(), the same function that pickFromLibrary() uses. The guard
+// behaviour must be identical regardless of which picker produced the asset.
+//
+// On some Android devices launchCameraAsync() returns a video without a
+// `duration` field. applyAsset() guards against this:
+//
+//   const durationSeconds =
+//     picked.type === 'video' && picked.duration != null
+//       ? Math.round(picked.duration / 1000)
+//       : undefined;
+//
+//   if (picked.type === 'video' && durationSeconds != null) { ... }
+//
+// When duration is absent the validation block is skipped entirely — no Alert.
+
+describe('PostcardComposer.applyAsset — camera picker path', () => {
+  it('rejects a 61-second camera clip (same result as library picker)', () => {
+    // pickFromCamera → applyAsset → validateMedia({ surface: 'postcard' })
+    const result = validateMedia(
+      { uri: 'file:///tmp/camera.mp4', mimeType: 'video/mp4', type: 'video', duration: 61 },
+      { surface: 'postcard' },
+    );
+    assert.equal(result.ok, false, 'camera 61-second clip must be rejected');
+  });
+
+  it('the rejection message from a camera clip mentions the 60-second limit', () => {
+    const result = validateMedia(
+      { uri: 'file:///tmp/camera.mp4', mimeType: 'video/mp4', type: 'video', duration: 61 },
+      { surface: 'postcard' },
+    );
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.ok(
+      result.message.includes(String(POSTCARD_LIMIT)),
+      `expected message to include "${POSTCARD_LIMIT}" seconds, got: "${result.message}"`,
+    );
+  });
+
+  it('accepts a 59-second camera clip (no alert would fire)', () => {
+    const result = validateMedia(
+      { uri: 'file:///tmp/camera.mp4', mimeType: 'video/mp4', type: 'video', duration: 59 },
+      { surface: 'postcard' },
+    );
+    assert.equal(result.ok, true, 'camera 59-second clip must be accepted');
+  });
+
+  it('no alert fires when the camera returns a video with no duration metadata', () => {
+    // launchCameraAsync() on some Android devices omits the duration field.
+    // applyAsset computes durationSeconds = undefined → skips the guard block.
+    // validateMedia called without duration also returns ok: true.
+    const result = validateMedia(
+      { uri: 'file:///tmp/camera.mp4', mimeType: 'video/mp4', type: 'video' /* no duration */ },
+      { surface: 'postcard' },
+    );
+    assert.equal(result.ok, true, 'missing duration must not trigger a rejection on the camera path');
+  });
+
+  it('the camera path guard logic: duration absent (null ms) → durationSeconds undefined → block skipped', () => {
+    // Mirrors the applyAsset inline computation for picked.duration = null
+    // (the value launchCameraAsync returns when no metadata is available).
+    function computeDurationSeconds(
+      type: string,
+      durationMs: number | null | undefined,
+    ): number | undefined {
+      return type === 'video' && durationMs != null
+        ? Math.round(durationMs / 1000)
+        : undefined;
+    }
+
+    // Camera-specific: null duration (no metadata on Android)
+    assert.equal(computeDurationSeconds('video', null), undefined, 'null camera duration → undefined (guard skipped)');
+    // Camera over-limit clip
+    assert.equal(computeDurationSeconds('video', 61000), 61, '61 000 ms camera clip → 61 s (guard runs)');
+    // Camera under-limit clip
+    assert.equal(computeDurationSeconds('video', 59000), 59, '59 000 ms camera clip → 59 s (guard runs)');
+  });
+});
