@@ -162,6 +162,13 @@ jest.mock('../../components/HighlightViewer', () => ({
 // NOTE: intentionally exhaustive — the real module is a large JSON blob with no
 // re-exported logic; requireActual is not needed here.
 jest.mock('../../lib/countryCentroids', () => ({ COUNTRY_CENTROIDS: {} }));
+// NOTE: intentionally exhaustive — CITY_CENTROIDS is a plain static record with
+// no re-exported logic; requireActual would import the full city list and make
+// the test sensitive to which cities are present.  A trimmed fixture containing
+// only 'Cebu City' (the city used in makeEvent) is deliberately minimal.
+jest.mock('../../lib/cityCentroids', () => ({
+  CITY_CENTROIDS: { 'Cebu City': [10.3157, 123.8854] },
+}));
 // NOTE: intentionally exhaustive — the real module reads EXPO_PUBLIC_MAPTILER_KEY
 // at import time; a fixed string is safer and avoids env-var coupling in tests.
 jest.mock('../../constants/mapStyle', () => ({ MAP_STYLE_URL: 'https://example.com/style.json' }));
@@ -587,17 +594,34 @@ describe('FullScreenMapScreen — camera falls back to LocationContext coords', 
   });
 });
 
-// ── 9. EventCard "View on map" — lat/lng intentionally omitted ─────────────────
+// ── 9. EventCard "View on map" — city coords forwarded in the push URL ──────────
 //
-// EventCard constructs the /map URL with only entityTypes and focusId. No lat/lng
-// is derived from the event's city field at push time. The map screen resolves the
-// camera position via the focusId snap (entity list → entity.lat/lng) or via
-// LocationContext fallback.  This test documents that intentional omission so a
-// future refactor doesn't silently break the assumption either way.
+// EventCard derives lat/lng from the event's city via CITY_CENTROIDS and appends
+// them to the /map push URL.  This gives the map camera an immediate starting
+// position (the city view) while useMapEntities is still loading and the focusId
+// snap hasn't resolved yet — preventing a blank-ocean first frame.
+//
+// When the city is not in the centroid map the params are omitted so the map
+// falls back to the user's GPS location as normal.
 
-describe('EventCard — lat/lng not included in the /map push URL', () => {
-  it('does not include a lat or lng param in the /map push URL', async () => {
+describe('EventCard — city coords forwarded in the /map push URL', () => {
+  it('includes lat and lng in the /map push URL for an event with a known city', async () => {
+    // makeEvent uses city: 'Cebu City', which is present in the mocked CITY_CENTROIDS.
     await render(<EventCard ev={makeEvent('lat-check-id')} />);
+
+    fireEvent.press(screen.getByText('View on map'));
+
+    const url = mockPush.mock.calls[0][0] as string;
+    expect(url).toMatch(/[?&]lat=/);
+    expect(url).toMatch(/[?&]lng=/);
+    // The values must match the Cebu City centroid from the mock.
+    expect(url).toContain('lat=10.3157');
+    expect(url).toContain('lng=123.8854');
+  });
+
+  it('omits lat and lng when the city is not in the centroid map', async () => {
+    const unknownCityEvent = { ...makeEvent('no-coords-id'), city: 'Atlantis' };
+    await render(<EventCard ev={unknownCityEvent} />);
 
     fireEvent.press(screen.getByText('View on map'));
 
@@ -606,16 +630,18 @@ describe('EventCard — lat/lng not included in the /map push URL', () => {
     expect(url).not.toMatch(/[?&]lng=/);
   });
 
-  it('passes focusId so the map can snap to the event entity instead of needing coords', async () => {
+  it('still includes focusId alongside the city coords', async () => {
     await render(<EventCard ev={makeEvent('snap-id-42')} />);
 
     fireEvent.press(screen.getByText('View on map'));
 
     const url = mockPush.mock.calls[0][0] as string;
-    // The map screen resolves position via entity.lat/lng from useMapEntities —
-    // this only works when focusId is present in the URL.
+    // focusId must still be present so the map can snap to the entity once loaded.
     expect(url).toContain('focusId=');
     expect(decodeURIComponent(url)).toContain('snap-id-42');
+    // And city coords must also be present for the immediate camera position.
+    expect(url).toMatch(/[?&]lat=/);
+    expect(url).toMatch(/[?&]lng=/);
   });
 });
 
