@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, ActivityIndicator, RefreshControl } from 'react-native';
 import { getCommentCountSnapshot, subscribeCommentCount } from '../../src/lib/commentCountStore';
 import { router, useFocusEffect } from 'expo-router';
+import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import { PostCard } from '../../src/components/PostCard';
 import { PulseHeader } from '../../src/components/PulseHeader';
 import { FitsCard, FlexibleStrip } from '../../src/components/PulseFits';
@@ -84,7 +85,7 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-export default function Pulse() {
+function Pulse() {
   const [feedMode, setFeedMode] = useState<FeedMode>('forYou');
   const [active, setActive] = useState<PulseFilter[]>(['All']);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -413,6 +414,9 @@ export default function Pulse() {
         ) : followingItems.length === 0 ? (
           FollowingEmpty
         ) : null
+      ) : pulseFeed.loading && feed.length === 0 ? (
+        // Initial For You load — spinner, not a misleading empty state.
+        <View style={styles.loadingWrap}><ActivityIndicator size="large" color={color.signal} /></View>
       ) : pulseFeed.error ? (
         ForYouError
       ) : feed.length === 0 ? (
@@ -541,3 +545,14 @@ const styles = StyleSheet.create({
   },
   cityCtaText: { flex: 1, ...t.small, fontWeight: '600', color: color.signal, fontSize: 13, lineHeight: 18 },
 });
+
+// Wrapped: a render throw anywhere in Pulse (the default landing tab) must
+// show the recoverable error screen, never a white screen. Matches
+// discovery.tsx / trips.tsx / trip/[id].tsx.
+export default function PulseScreen() {
+  return (
+    <ScreenErrorBoundary>
+      <Pulse />
+    </ScreenErrorBoundary>
+  );
+}

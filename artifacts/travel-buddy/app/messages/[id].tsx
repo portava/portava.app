@@ -1609,7 +1609,8 @@ export default function TelegraphThread() {
     if (threadType === 'circle' && contextId) {
       return (
         <View style={styles.quickBar}>
-          <Pressable style={styles.quickBtn} onPress={() => router.push(`/circle/${contextId}` as any)}>
+          {/* /circle/<id> is not a route — the circle screen is /circle (beta-audit fix) */}
+          <Pressable style={styles.quickBtn} onPress={() => router.push('/circle' as any)}>
             <Users size={12} color={color.signal} />
             <Text style={styles.quickBtnText}>View Circle</Text>
           </Pressable>
@@ -1636,7 +1637,20 @@ export default function TelegraphThread() {
     return (
       <View style={{ flex: 1, backgroundColor: color.paper }}>
         <ThreadHeader compact />
-        <View style={styles.center}><Text style={styles.errText}>{error}</Text></View>
+        <View style={styles.center}>
+          <Text style={styles.errText}>{error}</Text>
+          <Pressable
+            style={{
+              marginTop: space.md, paddingHorizontal: space.xl, paddingVertical: space.sm,
+              borderRadius: radius.pill, borderWidth: 1, borderColor: color.signal,
+            }}
+            onPress={reload}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading messages"
+          >
+            <Text style={{ ...t.bodyStrong, color: color.signal }}>Try again</Text>
+          </Pressable>
+        </View>
       </View>
     );
   }

@@ -387,7 +387,7 @@ export default function ApplyToBeBuddy() {
               onPress={() => {
                 // Navigate to the relevant management screen for this item
                 if (item.done) return;
-                if (['services', 'pricing'].includes(item.key)) router.push('/(rent-a-buddy)/buddy-dashboard/services' as any);
+                if (['services', 'pricing'].includes(item.key)) router.push('/(rent-a-buddy)/buddy-dashboard/packages' as any); // services screen doesn't exist (beta-audit fix)
                 else if (item.key === 'availability') router.push('/(rent-a-buddy)/buddy-dashboard/availability' as any);
                 else router.push('/(rent-a-buddy)/buddy-dashboard' as any);
               }}

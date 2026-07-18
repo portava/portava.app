@@ -37,18 +37,31 @@ export function LiveShareSheet({ visible, tripId, members, onDismiss, onStarted 
   const [duration, setDuration] = useState<ShareDuration>('30m');
   const [visibility, setVisibility] = useState<'city_only' | 'neighborhood' | 'nearby'>('neighborhood');
   const [shareWithAll, setShareWithAll] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const eligibleMembers = members.filter((m) => !m.ghostMode && m.statusLabel !== 'location_hidden');
 
+  function toggleMember(userId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+    setError(null);
+  }
+
   async function handleStart() {
+    // Honor the user's choice: "share with all" sends to every eligible crew
+    // member; otherwise ONLY the explicitly selected members receive the share.
     const allowedIds = shareWithAll
       ? eligibleMembers.map((m) => m.userId)
-      : eligibleMembers.map((m) => m.userId); // simplified: always all for now
+      : eligibleMembers.filter((m) => selectedIds.has(m.userId)).map((m) => m.userId);
 
     if (allowedIds.length === 0) {
-      setError('No crew members to share with');
+      setError(shareWithAll ? 'No crew members to share with' : 'Select at least one crew member');
       return;
     }
 
@@ -125,14 +138,39 @@ export function LiveShareSheet({ visible, tripId, members, onDismiss, onStarted 
         <View style={s.toggleRow}>
           <View style={{ flex: 1 }}>
             <Text style={s.toggleLabel}>Share with all {eligibleMembers.length} crew members</Text>
-            <Text style={s.toggleSub}>You can manage individual access in settings</Text>
+            <Text style={s.toggleSub}>Turn off to choose specific crew members</Text>
           </View>
           <Switch
             value={shareWithAll}
-            onValueChange={setShareWithAll}
+            onValueChange={(v) => { setShareWithAll(v); setError(null); }}
             trackColor={{ true: color.signal }}
           />
         </View>
+
+        {/* Per-member selection — shown when not sharing with everyone */}
+        {!shareWithAll ? (
+          <View style={s.memberList}>
+            {eligibleMembers.map((m) => {
+              const on = selectedIds.has(m.userId);
+              const label = m.name ?? (m.handle ? `@${m.handle}` : 'Crew member');
+              return (
+                <Pressable
+                  key={m.userId}
+                  style={s.memberRow}
+                  onPress={() => toggleMember(m.userId)}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: on }}
+                  accessibilityLabel={`Share with ${label}`}
+                >
+                  <View style={[s.memberCheck, on && s.memberCheckOn]}>
+                    {on ? <Text style={s.memberCheckMark}>✓</Text> : null}
+                  </View>
+                  <Text style={s.memberName} numberOfLines={1}>{label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
 
         {error ? <Text style={s.error}>{error}</Text> : null}
 
@@ -191,6 +229,20 @@ const s = StyleSheet.create({
   toggleLabel: { ...t.small, fontWeight: '600', color: color.ink },
   toggleSub: { ...t.small, color: color.mute, fontSize: 11, marginTop: 2 },
   error: { ...t.small, color: '#DC2626', marginBottom: space.sm },
+
+  memberList: { marginBottom: space.sm, gap: 2 },
+  memberRow: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    minHeight: 40, paddingHorizontal: 4,
+  },
+  memberCheck: {
+    width: 20, height: 20, borderRadius: 6,
+    borderWidth: 1.5, borderColor: color.haze,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  memberCheckOn: { backgroundColor: color.signal, borderColor: color.signal },
+  memberCheckMark: { color: color.onInk, fontSize: 12, fontWeight: '700' },
+  memberName: { ...t.body, color: color.ink, flex: 1 },
   cta: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
     backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: 14, marginTop: space.md,

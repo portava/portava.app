@@ -44,7 +44,7 @@ function TripDetailScreen() {
   const navBarScrollHandler = useNavBarScrollHandler();
   const bottomInset = useBottomInset();
   const live = configured && isAuthed;
-  const { data: realTrip, loading } = useTrip(live ? id : undefined);
+  const { data: realTrip, loading, error: tripError, reload: reloadTrip } = useTrip(live ? id : undefined);
   const { invites } = usePendingTripInvites();
   const isPendingInvite = live ? invites.some((inv) => inv.tripId === id) : false;
   const pageScrollRef    = useRef<ScrollView>(null);
@@ -178,6 +178,26 @@ function TripDetailScreen() {
 
   if (loading) {
     return <View style={{ flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={color.signal} /></View>;
+  }
+
+  // Network/API failure is NOT "trip not found" — show an honest error with
+  // retry instead of the misleading not-found copy (beta-audit fix).
+  if (!realTrip && tripError) {
+    return (
+      <View style={{ flex: 1, backgroundColor: color.paper, alignItems: 'center', justifyContent: 'center', padding: space.xl }}>
+        <Text style={{ ...t.bodyStrong, color: color.ink, marginBottom: space.sm }}>Couldn't load this trip</Text>
+        <Text style={{ ...t.small, color: color.mute, textAlign: 'center' }}>Check your connection and try again.</Text>
+        <Pressable
+          style={{ marginTop: space.lg, paddingHorizontal: space.lg, paddingVertical: space.sm, borderRadius: radius.pill, backgroundColor: color.signal }}
+          onPress={reloadTrip}
+        >
+          <Text style={{ color: '#fff', fontWeight: '700' }}>Try again</Text>
+        </Pressable>
+        <Pressable style={{ marginTop: space.sm, padding: space.sm }} onPress={() => router.back()}>
+          <Text style={{ ...t.small, color: color.mute }}>Go back</Text>
+        </Pressable>
+      </View>
+    );
   }
 
   if (!realTrip) {
