@@ -135,6 +135,17 @@ describe('CITY_CENTROIDS — key-level spot checks for new cities', () => {
   check('Dushanbe',     38.5598,   68.7733);
   check('Ashgabat',     37.9601,   58.3261);
 
+  // Scandinavian & Baltic secondary cities
+  check('Aarhus',       56.1629,   10.2039);
+  check('Gdańsk',       54.3520,   18.6466);
+  check('Gothenburg',   57.7089,   11.9746);
+  check('Kaunas',       54.8985,   23.9036);
+  check('Malmö',        55.6050,   13.0038);
+  check('Reykjavik',    64.1355,  -21.8954);
+  check('Tampere',      61.4978,   23.7610);
+  check('Tartu',        58.3780,   26.7290);
+  check('Turku',        60.4518,   22.2666);
+
   // Eastern European & Balkan cities
   check('Kyiv',         50.4501,   30.5234);
 
