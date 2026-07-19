@@ -26,6 +26,14 @@ const PAGE_SIZE = 20;
  */
 export const FEED_FOCUS_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * How long Pulse and event-detail data stays "fresh" after a load. Focus-driven
+ * reloads are skipped within this window so rapid tab switches don't fire
+ * redundant network requests (60 s — shorter than the 5-min feed TTL because
+ * these screens carry more time-sensitive, ephemeral content).
+ */
+export const FOCUS_REFETCH_TTL_MS = 60_000;
+
 /** Global social feed (public standalone posts). */
 export function useGlobalFeed() {
   const [data, setData] = useState<PostRow[]>([]);
