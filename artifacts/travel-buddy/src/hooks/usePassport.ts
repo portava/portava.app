@@ -1,22 +1,34 @@
 /**
  * usePassport — loads the owner's full passport data.
- * Calls GET /api/me/profile + GET /api/me/passport/postcards + GET /api/me/stamps
+ * Calls GET /api/me/profile + GET /api/me/passport/postcards + GET /api/stamps/me
  * + GET /api/me/passport/memories + GET /api/me/passport/suggestions in parallel.
+ *
+ * Stamps: a SINGLE paginated pipeline (GET /api/stamps/me) feeds every stamp
+ * consumer on the passport screen — the Stamps grid (v2 shape with artwork),
+ * the stamp-collection preview and full view (legacy shape via toLegacyStamp),
+ * and the Destinations grouping. This replaces the old dual pipeline where
+ * usePassport paged /api/me/passport/stamps while StampsTab separately paged
+ * /api/stamps/me, downloading the same stamps twice.
+ *
  * Falls back to mock data if backend is not configured.
  */
 import { useState, useEffect, useCallback, useRef, type MutableRefObject } from 'react';
 import type { OwnProfile, PassportPostcard, PassportStamp } from '../types/models.ts';
-import type { PassportMemory } from '../services/passportStamps.ts';
+import type { PassportMemory, PassportStampNew } from '../services/passportStamps.ts';
 import { useSnapshotCache } from './useSnapshotCache.ts';
-import { getMyProfile, getMyPassportPostcards, getMyStamps } from '../services/profile.ts';
-import { getMyPassportMemories, getMyPassportSuggestions } from '../services/passportStamps.ts';
+import { getMyProfile, getMyPassportPostcards } from '../services/profile.ts';
+import { getMyPassportMemories, getMyPassportSuggestions, getMyPassportStamps } from '../services/passportStamps.ts';
+import { toLegacyStamp } from '../services/passportStampMappers.ts';
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { mockPassport } from '../data/passport.ts';
 
 export interface PassportState {
   profile: OwnProfile | null;
   postcards: PassportPostcard[];
+  /** Legacy-shaped stamps derived from stampsNew (single fetch pipeline). */
   stamps: PassportStamp[];
+  /** v2 stamps (with definitions/artwork) — the canonical fetched list. */
+  stampsNew: PassportStampNew[];
   memories: PassportMemory[];
   suggestions: PassportMemory[];
   loading: boolean;
@@ -27,6 +39,8 @@ export interface PassportState {
   loadingMoreStamps: boolean;
   /** Fetch the next page of stamps (no-op when all loaded or already fetching). */
   loadMoreStamps: () => void;
+  /** Replace one stamp in the shared list (e.g. after a visibility change). */
+  updateStamp: (updated: PassportStampNew) => void;
   reload: () => void;
   /** Ref stamped with Date.now() only after a successful fetch. Stays 0 until
    *  the first successful load. Screens use this for focus-TTL guards so that
@@ -38,7 +52,8 @@ export interface PassportState {
 type PassportSnapshot = {
   profile: OwnProfile;
   postcards: PassportPostcard[];
-  stamps: PassportStamp[];
+  /** v2 stamps — legacy shape is derived on apply. */
+  stamps: PassportStampNew[];
   memories: PassportMemory[];
 };
 
@@ -46,6 +61,7 @@ export function usePassport(): PassportState {
   const [profile, setProfile] = useState<OwnProfile | null>(null);
   const [postcards, setPostcards] = useState<PassportPostcard[]>([]);
   const [stamps, setStamps] = useState<PassportStamp[]>([]);
+  const [stampsNew, setStampsNew] = useState<PassportStampNew[]>([]);
   const [memories, setMemories] = useState<PassportMemory[]>([]);
   const [suggestions, setSuggestions] = useState<PassportMemory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,7 +70,7 @@ export function usePassport(): PassportState {
   const [loadingMoreStamps, setLoadingMoreStamps] = useState(false);
   // Refs mirror stamps/total so loadMoreStamps has no stale closures and can
   // guard against concurrent fetches.
-  const stampsRef = useRef<PassportStamp[]>([]);
+  const stampsRef = useRef<PassportStampNew[]>([]);
   const stampsTotalRef = useRef(0);
   const loadingMoreRef = useRef(false);
   const [tick, setTick] = useState(0);
@@ -72,17 +88,28 @@ export function usePassport(): PassportState {
 
   const reload = useCallback(() => setTick((t) => t + 1), []);
 
+  /** Single place the stamp list is written — keeps the v2 list, the derived
+   *  legacy list, and the pagination ref in lockstep. */
+  const applyStamps = useCallback((list: PassportStampNew[]) => {
+    stampsRef.current = list;
+    setStampsNew(list);
+    setStamps(list.map(toLegacyStamp));
+  }, []);
+
+  const updateStamp = useCallback((updated: PassportStampNew) => {
+    applyStamps(stampsRef.current.map((s) => (s.id === updated.id ? updated : s)));
+  }, [applyStamps]);
+
   const loadMoreStamps = useCallback(() => {
     if (loadingMoreRef.current) return;
     // Sentinel: server-reported total. When we already have everything, stop.
     if (stampsRef.current.length >= stampsTotalRef.current) return;
     loadingMoreRef.current = true;
     setLoadingMoreStamps(true);
-    getMyStamps(stampsRef.current.length)
+    getMyPassportStamps({ offset: stampsRef.current.length })
       .then((res) => {
         if (res.ok && res.data && res.data.length > 0) {
-          stampsRef.current = [...stampsRef.current, ...res.data];
-          setStamps(stampsRef.current);
+          applyStamps([...stampsRef.current, ...res.data]);
         }
         if (typeof res.total === 'number') {
           stampsTotalRef.current = res.total;
@@ -99,11 +126,13 @@ export function usePassport(): PassportState {
         loadingMoreRef.current = false;
         setLoadingMoreStamps(false);
       });
-  }, []);
+  }, [applyStamps]);
 
   // Stale-while-revalidate: pre-populate from AsyncStorage so the passport
   // content paints immediately on second+ opens before the network resolves.
-  const { snapshot: passportSnapshot, save: savePassportSnapshot } = useSnapshotCache<PassportSnapshot>('passport');
+  // Key bumped to passport-v2 when the snapshot's stamps switched to the v2
+  // shape — old `passport` snapshots (legacy-shaped stamps) are ignored.
+  const { snapshot: passportSnapshot, save: savePassportSnapshot } = useSnapshotCache<PassportSnapshot>('passport-v2');
 
   // Apply snapshot data the first time it arrives from AsyncStorage.
   // Skipped once real data has loaded (hasDataRef.current = true).
@@ -111,8 +140,7 @@ export function usePassport(): PassportState {
     if (!passportSnapshot || hasDataRef.current) return;
     setProfile(passportSnapshot.profile);
     setPostcards(passportSnapshot.postcards);
-    setStamps(passportSnapshot.stamps);
-    stampsRef.current = passportSnapshot.stamps;
+    applyStamps(passportSnapshot.stamps);
     stampsTotalRef.current = passportSnapshot.stamps.length;
     setStampsTotal(passportSnapshot.stamps.length);
     setMemories(passportSnapshot.memories);
@@ -183,10 +211,12 @@ export function usePassport(): PassportState {
         if (alive) {
           setProfile(mockProfile);
           setPostcards([]);
+          // Mock stamps are legacy-shaped; there is no v2 mock data.
           setStamps(mock.stamps ?? []);
-          stampsRef.current = mock.stamps ?? [];
-          stampsTotalRef.current = stampsRef.current.length;
-          setStampsTotal(stampsRef.current.length);
+          setStampsNew([]);
+          stampsRef.current = [];
+          stampsTotalRef.current = 0;
+          setStampsTotal((mock.stamps ?? []).length);
           setMemories([]);
           setSuggestions([]);
           lastLoadedAt.current = Date.now();
@@ -199,7 +229,7 @@ export function usePassport(): PassportState {
     Promise.all([
       getMyProfile(),
       getMyPassportPostcards(),
-      getMyStamps(),
+      getMyPassportStamps(),
       getMyPassportMemories(),
       getMyPassportSuggestions(),
     ]).then(([pRes, pcRes, stRes, memRes, sugRes]) => {
@@ -214,8 +244,7 @@ export function usePassport(): PassportState {
       }
       setPostcards(pcRes.ok ? (pcRes.data ?? []) : []);
       const firstPage = stRes.ok ? (stRes.data ?? []) : [];
-      setStamps(firstPage);
-      stampsRef.current = firstPage;
+      applyStamps(firstPage);
       const total = stRes.ok && typeof stRes.total === 'number' ? stRes.total : firstPage.length;
       stampsTotalRef.current = total;
       setStampsTotal(total);
@@ -227,7 +256,7 @@ export function usePassport(): PassportState {
         savePassportSnapshot({
           profile: pRes.data as OwnProfile,
           postcards: pcRes.ok ? (pcRes.data ?? []) : [],
-          stamps: stRes.ok ? (stRes.data ?? []) : [],
+          stamps: firstPage,
           memories: memRes.ok ? memRes.data : [],
         });
       }
@@ -241,5 +270,5 @@ export function usePassport(): PassportState {
     return () => { alive = false; };
   }, [tick]);
 
-  return { profile, postcards, stamps, memories, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, reload, lastLoadedAt };
+  return { profile, postcards, stamps, stampsNew, memories, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, updateStamp, reload, lastLoadedAt };
 }

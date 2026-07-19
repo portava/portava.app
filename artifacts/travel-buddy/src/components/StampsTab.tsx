@@ -92,9 +92,31 @@ interface StampsTabProps {
    * user nears the bottom. Guards itself: in-flight and total-sentinel checks.
    */
   loadMoreRef?: React.MutableRefObject<(() => void) | null>;
+  /**
+   * Externally-owned stamp data (owner passport screen): when provided, the
+   * tab renders this list instead of fetching its own — the parent hook
+   * (usePassport) is the single stamps pipeline. `loadMoreRef` is then bound
+   * to `onLoadMore` so the parent scroll view pages the shared pipeline.
+   */
+  data?: PassportStampNew[];
+  /** Server-reported total for `data` (pagination sentinel / header count). */
+  dataTotal?: number;
+  /** True while the parent pipeline is fetching the next page. */
+  dataLoadingMore?: boolean;
+  /** Parent pipeline's load-more (guards itself: in-flight + total sentinel). */
+  onLoadMore?: () => void;
+  /** Propagate a stamp edit (e.g. visibility change) back to the parent store. */
+  onStampUpdated?: (updated: PassportStampNew) => void;
+  /** Retry handler for the external pipeline (grid error state). */
+  onRetry?: () => void;
 }
 
-export function StampsTab({ stamps: _legacyStamps = [], viewingUsername, viewingUserId, isOwner = false, loadMoreRef }: StampsTabProps) {
+export function StampsTab({
+  stamps: _legacyStamps = [], viewingUsername, viewingUserId, isOwner = false, loadMoreRef,
+  data, dataTotal, dataLoadingMore, onLoadMore, onStampUpdated, onRetry,
+}: StampsTabProps) {
+  // External mode: parent owns fetching/pagination; this tab is render-only.
+  const external = data !== undefined;
   // All hooks must be declared before any early return (Rules of Hooks).
   const { blockedIds, blockerIds } = useBlockedIds();
   const [allStamps, setAllStamps]     = useState<PassportStampNew[]>([]);
@@ -117,6 +139,7 @@ export function StampsTab({ stamps: _legacyStamps = [], viewingUsername, viewing
   if (isBlocked) return null;
 
   const load = useCallback(async () => {
+    if (external) return; // parent pipeline owns the data
     setLoading(true);
     setError(null);
     const res = viewingUsername
@@ -134,7 +157,7 @@ export function StampsTab({ stamps: _legacyStamps = [], viewingUsername, viewing
     } else {
       setError(res.message);
     }
-  }, [viewingUsername]);
+  }, [viewingUsername, external]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -172,19 +195,28 @@ export function StampsTab({ stamps: _legacyStamps = [], viewingUsername, viewing
       });
   }, [viewingUsername]);
 
-  // Expose loadMore to the parent scroll container.
+  // Expose loadMore to the parent scroll container. In external mode this is
+  // the parent pipeline's own load-more, so scrolling triggers exactly one
+  // paged request per page (single fetch pipeline).
   useEffect(() => {
     if (!loadMoreRef) return;
-    loadMoreRef.current = loadMore;
+    loadMoreRef.current = external ? (onLoadMore ?? null) : loadMore;
     return () => { loadMoreRef.current = null; };
-  }, [loadMoreRef, loadMore]);
+  }, [loadMoreRef, loadMore, external, onLoadMore]);
 
   useEffect(() => {
     if (!isOwner || viewingUsername) return;
     getMyProgress().then((res) => { if (res.ok) setProgress(res.data); }).catch(() => {});
   }, [isOwner, viewingUsername]);
 
-  const displayed = allStamps.filter((s) => {
+  // Effective values — external mode reads the parent-owned pipeline.
+  const effStamps      = external ? data! : allStamps;
+  const effLoading     = external ? false : loading;
+  const effError       = external ? null : error;
+  const effLoadingMore = external ? !!dataLoadingMore : loadingMore;
+  const effTotal       = external ? Math.max(dataTotal ?? 0, data!.length) : serverTotal;
+
+  const displayed = effStamps.filter((s) => {
     if (viewingUsername && (s.isRevoked || s.visibility === 'private')) return false;
     return matchesCategory(s, category);
   });
@@ -199,17 +231,21 @@ export function StampsTab({ stamps: _legacyStamps = [], viewingUsername, viewing
   const gridStamps = featured ? displayed.filter((s) => s.id !== featured.id) : displayed;
 
   const totalCount = viewingUsername
-    ? allStamps.filter((s) => !s.isRevoked && s.visibility !== 'private').length
-    : Math.max(serverTotal, allStamps.length);
+    ? effStamps.filter((s) => !s.isRevoked && s.visibility !== 'private').length
+    : Math.max(effTotal, effStamps.length);
 
   const handleStampUpdated = useCallback((updated: PassportStampNew) => {
-    setAllStamps((prev) => {
-      const next = prev.map((s) => s.id === updated.id ? updated : s);
-      allStampsRef.current = next;
-      return next;
-    });
+    if (external) {
+      onStampUpdated?.(updated);
+    } else {
+      setAllStamps((prev) => {
+        const next = prev.map((s) => s.id === updated.id ? updated : s);
+        allStampsRef.current = next;
+        return next;
+      });
+    }
     setSelected((prev) => prev?.id === updated.id ? updated : prev);
-  }, []);
+  }, [external, onStampUpdated]);
 
   const emptyTitle = category
     ? 'No stamps in this category'
@@ -227,7 +263,7 @@ export function StampsTab({ stamps: _legacyStamps = [], viewingUsername, viewing
     <View style={styles.wrap}>
       {/* Header: stamp count + next-stamp progress (owner only) */}
       <View style={styles.header}>
-        {loading && allStamps.length === 0 ? (
+        {effLoading && effStamps.length === 0 ? (
           <ActivityIndicator size="small" color={color.signal} />
         ) : (
           <Text style={styles.count}>
@@ -296,17 +332,17 @@ export function StampsTab({ stamps: _legacyStamps = [], viewingUsername, viewing
       {/* Stamp grid */}
       <StampGrid
         stamps={gridStamps}
-        loading={loading}
-        error={error}
+        loading={effLoading}
+        error={effError}
         isOwner={isOwner}
-        onRetry={load}
+        onRetry={external ? (onRetry ?? (() => {})) : load}
         onStampPress={setSelected}
         emptyTitle={emptyTitle}
         emptySub={emptySub}
       />
 
       {/* Next-page loading indicator (infinite scroll) */}
-      {loadingMore && (
+      {effLoadingMore && (
         <View style={styles.loadingMore} testID="stamps-loading-more">
           <ActivityIndicator size="small" color={color.signal} />
         </View>

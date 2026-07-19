@@ -27,30 +27,10 @@ const VISIBILITY_LABEL: Record<string, string> = {
   trip_crew:    'Crew',
 };
 
-export function toLegacy(s: PassportStampNew): PassportStamp {
-  const label =
-    s.titleOverride ?? s.definition?.name ?? s.city ?? s.country ?? s.stampType.replace(/_/g, ' ').toUpperCase();
-  const kind = (
-    s.stampType === 'city'        ? 'city'
-    : s.stampType === 'plan'      ? 'plan'
-    : s.stampType === 'hidden_gem'? 'gem'
-    : s.stampType === 'safe_return'? 'safe'
-    : s.stampType === 'host'      ? 'host'
-    : 'city'
-  ) as any;
-  const sub: string[] = [];
-  if (s.city && s.country) sub.push(s.country);
-  if (s.earnedAt) sub.push(new Date(s.earnedAt).getFullYear().toString());
-  return {
-    id: s.id,
-    kind,
-    label,
-    sublabel: sub.join(' · ') || undefined,
-    earnedAt: s.earnedAt,
-    locked: s.isRevoked,
-    universalArtworkUrl: s.definition?.universalArtworkUrl ?? undefined,
-  };
-}
+// Re-exported for existing importers — implementation lives in the pure
+// mappers module so hooks can use it without pulling in component code.
+export { toLegacyStamp as toLegacy } from '../../services/passportStampMappers.ts';
+import { toLegacyStamp as toLegacy } from '../../services/passportStampMappers.ts';
 
 interface Props {
   stamp: PassportStampNew;

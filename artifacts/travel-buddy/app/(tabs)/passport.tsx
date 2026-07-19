@@ -57,7 +57,7 @@ import { resolveAvailabilityChip } from '../../src/lib/availabilityChip';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 
 export default function PassportScreen() {
-  const { profile, postcards, stamps, memories, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, reload, lastLoadedAt } = usePassport();
+  const { profile, postcards, stamps, stampsNew, memories, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, updateStamp, reload, lastLoadedAt } = usePassport();
   const { markFirstContent, epoch } = useScreenTiming('Passport');
   const { userId: ownUserId } = useSession();
   const [tab, setTab] = useState<PassportTabKey>('postcards');
@@ -241,6 +241,8 @@ export default function PassportScreen() {
         profile={profile}
         postcards={localPostcards}
         stamps={stamps}
+        stampsNew={stampsNew}
+        onStampUpdated={updateStamp}
         memories={memories}
         trips={trips}
         tab={tab}
@@ -323,7 +325,7 @@ export default function PassportScreen() {
 // ─── PassportContent ──────────────────────────────────────────────────────────
 
 function PassportContent({
-  profile, postcards, stamps, memories, trips, tab, setTab,
+  profile, postcards, stamps, stampsNew, onStampUpdated, memories, trips, tab, setTab,
   menuOpen, setMenuOpen,
   openSettings, actions, handleEditProfile, handleViewAsPublic,
   reload, stampsTotal, loadingMoreStamps, loadMoreStamps,
@@ -335,6 +337,10 @@ function PassportContent({
   profile: OwnProfile;
   postcards: PassportPostcard[];
   stamps: import('../../src/types/models').PassportStamp[];
+  /** v2 stamps from the single usePassport pipeline — feeds the Stamps grid. */
+  stampsNew: import('../../src/services/passportStamps').PassportStampNew[];
+  /** Propagates stamp edits (visibility) back into the shared pipeline. */
+  onStampUpdated: (updated: import('../../src/services/passportStamps').PassportStampNew) => void;
   memories: PassportMemory[];
   trips: TripRow[];
   tab: PassportTabKey;
@@ -451,20 +457,18 @@ function PassportContent({
     navScrollHandler(e);
     setStatsIconOnly(e.nativeEvent.contentOffset.y > 60);
     // Infinite scroll for passport stamps: when the stamps tab is active and
-    // the user nears the bottom, fetch the next page. Both load-more paths
-    // guard themselves (in-flight + stamps.length === total sentinel), so
-    // calling them on every near-bottom scroll event is safe.
+    // the user nears the bottom, fetch the next page. StampsTab binds the ref
+    // to the SINGLE shared pipeline (usePassport.loadMoreStamps), which guards
+    // itself (in-flight + stamps.length === total sentinel), so calling it on
+    // every near-bottom scroll event is safe and issues exactly one paged
+    // request per page.
     if (tab === 'stamps') {
       const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
       if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 400) {
-        // Grid data rendered by StampsTab (v2 stamps with artwork).
         stampsLoadMoreRef.current?.();
-        // usePassport legacy stamp list — keeps destination grouping and the
-        // stamp-collection preview complete for users with >100 stamps.
-        loadMoreStamps();
       }
     }
-  }, [navScrollHandler, tab, loadMoreStamps]);
+  }, [navScrollHandler, tab]);
 
   const renderTabsSection = () => (
     <>
@@ -506,12 +510,20 @@ function PassportContent({
         {tab === 'stamps' && (
           <StampsTab
             stamps={[]}
-            // Owner mode: no viewingUsername so StampsTab uses the paginated
-            // /stamps/me path (a truthy username forces the public-profile
-            // fetch and disables load-more).
+            // Owner mode: no viewingUsername so StampsTab stays on the
+            // paginated /stamps/me pipeline (a truthy username forces the
+            // public-profile fetch and disables load-more). Data is owned by
+            // usePassport (single fetch pipeline) and passed in via `data`;
+            // loadMoreRef is bound by StampsTab to that same pipeline.
             isOwner
             viewingUserId={profile.id}
             loadMoreRef={stampsLoadMoreRef}
+            data={stampsNew}
+            dataTotal={stampsTotal}
+            dataLoadingMore={loadingMoreStamps}
+            onLoadMore={loadMoreStamps}
+            onStampUpdated={onStampUpdated}
+            onRetry={reload}
           />
         )}
         {tab === 'map' && (

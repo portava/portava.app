@@ -41,7 +41,6 @@ jest.mock('../useSnapshotCache.ts', () => ({
 jest.mock('../../services/profile.ts', () => ({
   getMyProfile:           jest.fn(),
   getMyPassportPostcards: jest.fn(),
-  getMyStamps:            jest.fn(),
 }));
 
 // ── services/passportStamps ───────────────────────────────────────────────────
@@ -50,6 +49,7 @@ jest.mock('../../services/profile.ts', () => ({
 jest.mock('../../services/passportStamps.ts', () => ({
   getMyPassportMemories:    jest.fn(),
   getMyPassportSuggestions: jest.fn(),
+  getMyPassportStamps:      jest.fn(),
 }));
 
 // ── lib/supabase — isSupabaseConfigured = true ────────────────────────────────
@@ -75,10 +75,10 @@ jest.mock('../../data/passport.ts', () => ({
 const { useSnapshotCache }         = require('../useSnapshotCache.ts');
 const mockUseSnapshotCache         = useSnapshotCache as jest.Mock;
 
-const { getMyProfile, getMyPassportPostcards, getMyStamps } =
+const { getMyProfile, getMyPassportPostcards } =
   require('../../services/profile.ts');
 
-const { getMyPassportMemories, getMyPassportSuggestions } =
+const { getMyPassportMemories, getMyPassportSuggestions, getMyPassportStamps } =
   require('../../services/passportStamps.ts');
 
 // ── Shared fixture data ───────────────────────────────────────────────────────
@@ -168,7 +168,7 @@ function setupSnapshotMock() {
 /** Stub subsidiary calls with empty success so they don't affect assertions. */
 function setupSubsidiaryMocks() {
   (getMyPassportPostcards  as jest.Mock).mockResolvedValue({ ok: true, data: [] });
-  (getMyStamps             as jest.Mock).mockResolvedValue({ ok: true, data: [] });
+  (getMyPassportStamps     as jest.Mock).mockResolvedValue({ ok: true, data: [], total: 0 });
   (getMyPassportMemories   as jest.Mock).mockResolvedValue({ ok: true, data: [] });
   (getMyPassportSuggestions as jest.Mock).mockResolvedValue({ ok: true, data: [] });
 }
