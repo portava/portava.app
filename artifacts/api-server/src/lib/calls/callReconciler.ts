@@ -38,6 +38,14 @@ export interface RoomAdminPort {
    * guessing; the 4h cap remains the hard backstop.
    */
   roomExists?(roomName: string): Promise<boolean>;
+  /**
+   * Batched ghost healing probe: ALL room names LiveKit currently knows about,
+   * fetched with ONE API call. When present, the sweep prefers this over
+   * per-room `roomExists` probes so a tick costs O(1) LiveKit calls no matter
+   * how many calls are live (see docs/calling-load-review.md). Same fail-closed
+   * contract: if it throws, ghost healing is skipped for the whole sweep.
+   */
+  listRoomNames?(): Promise<Set<string>>;
 }
 
 export async function applyEvent(
@@ -106,6 +114,23 @@ export async function sweepOpenSessions(
   const nowIso = new Date(nowMs).toISOString();
   let missed = 0, capped = 0, ghosted = 0;
   const open = await store.listOpenSessions();
+
+  // Batched ghost probe: ONE listRoomNames call per sweep, fetched lazily only
+  // when at least one active session is past the grace window (ringing
+  // sessions and fresh actives never trigger it). `null` = probe unavailable
+  // or failed → fail closed, no ghost healing this tick (4h cap backstops).
+  let liveRooms: Set<string> | null | undefined; // undefined = not fetched yet
+  const getLiveRooms = async (): Promise<Set<string> | null> => {
+    if (liveRooms !== undefined) return liveRooms;
+    if (!admin.listRoomNames) return (liveRooms = null);
+    try {
+      liveRooms = await admin.listRoomNames();
+    } catch {
+      liveRooms = null; // probe failure must never end a live call
+    }
+    return liveRooms;
+  };
+
   for (const session of open) {
     if (ringExpired(session, nowMs)) {
       await applyEvent(store, admin, session, { type: 'RING_TIMEOUT' }, nowIso);
@@ -113,7 +138,7 @@ export async function sweepOpenSessions(
     } else if (maxDurationReached(session, nowMs)) {
       await applyEvent(store, admin, session, { type: 'MAX_DURATION' }, nowIso);
       capped++;
-    } else if (await isGhostActiveSession(admin, session, nowMs)) {
+    } else if (await isGhostActiveSession(admin, session, nowMs, getLiveRooms)) {
       // Ghost healing: active session, dead room (client killed / room
       // reaped without a webhook reaching us). ROOM_FINISHED semantics —
       // the room is already gone, so no re-termination attempt.
@@ -133,10 +158,18 @@ async function isGhostActiveSession(
   admin: RoomAdminPort,
   session: CallSession & { roomName: string },
   nowMs: number,
+  getLiveRooms: () => Promise<Set<string> | null>,
 ): Promise<boolean> {
-  if (session.status !== 'active' || !admin.roomExists) return false;
+  if (session.status !== 'active') return false;
   const anchor = new Date(session.connectedAt ?? session.startedAt).getTime();
   if (!Number.isFinite(anchor) || nowMs - anchor < CALL_CONFIG.GHOST_ACTIVE_GRACE_MS) return false;
+  // Preferred: batched diff against the single listRoomNames snapshot.
+  if (admin.listRoomNames) {
+    const live = await getLiveRooms();
+    return live !== null && !live.has(session.roomName);
+  }
+  // Fallback: per-room probe (small deployments / legacy admin ports).
+  if (!admin.roomExists) return false;
   try {
     return !(await admin.roomExists(session.roomName));
   } catch {

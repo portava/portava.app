@@ -204,7 +204,9 @@ describe('CreateMemoryModal — upload success', () => {
       fireEvent.press(screen.getByText('Add photo or video'));
       await new Promise<void>((r) => setTimeout(r, 30));
     });
-    screen.getByText('Change');
+    // Under full-suite load the picker continuation can land later than the
+    // fixed 30ms sleep above — poll instead of asserting synchronously.
+    await waitFor(() => screen.getByText('Change'), { timeout: 5_000 });
 
     await act(async () => { fireEvent.press(screen.getByText('Save Memory')); });
     expect(uploadMediaMock).toHaveBeenCalledTimes(1);

@@ -248,6 +248,101 @@ describe('ghost healing', () => {
   });
 });
 
+// ── Batched ghost healing (one listRooms diff per sweep) ────────────────────
+
+describe('batched ghost healing', () => {
+  /** Multi-session CAS store for sweep-wide batching assertions. */
+  function makeMultiStore(sessions: any[]) {
+    const store: CallStore = {
+      getSessionByRoom: async (r) => sessions.find((s) => s.roomName === r) ?? null,
+      getSession: async (id) => sessions.find((s) => s.id === id) ?? null,
+      applyTransition: async (id, from, to, patch) => {
+        const s = sessions.find((x) => x.id === id);
+        if (!s || s.status !== from) return false;
+        s.status = to;
+        if (patch.endedAt) s.endedAt = patch.endedAt;
+        if (patch.connectedAt) s.connectedAt = patch.connectedAt;
+        return true;
+      },
+      markParticipantJoined: async () => {},
+      markParticipantLeft: async () => {},
+      listOpenSessions: async () => sessions.filter((s) => !isTerminal(s.status)).map((s) => ({ ...s })),
+      writeCallHistoryMessage: async () => {},
+    };
+    return { store, sessions };
+  }
+
+  const pastGrace = new Date(NOW - CALL_CONFIG.GHOST_ACTIVE_GRACE_MS - 1_000).toISOString();
+  const activeSession = (id: string) => directSession({
+    id, roomName: `pcall_${id}`, status: 'active', startedAt: pastGrace, connectedAt: pastGrace,
+  });
+
+  it('one listRoomNames call heals all ghosts in a sweep — no per-room probes', async () => {
+    const { store, sessions } = makeMultiStore([
+      activeSession('a'), activeSession('b'), activeSession('c'),
+    ]);
+    let listCalls = 0, existsCalls = 0;
+    const admin: RoomAdminPort = {
+      endRoom: async () => {},
+      roomExists: async () => { existsCalls++; return true; },
+      listRoomNames: async () => { listCalls++; return new Set(['pcall_b']); },
+    };
+    const res = await sweepOpenSessions(store, admin, NOW);
+    assert.equal(listCalls, 1, 'exactly ONE listRooms call regardless of session count');
+    assert.equal(existsCalls, 0, 'batched path must replace per-room probes');
+    assert.equal(res.ghosted, 2);
+    assert.equal(sessions.find((s) => s.id === 'a')!.status, 'ended');
+    assert.equal(sessions.find((s) => s.id === 'b')!.status, 'active', 'room still live → untouched');
+    assert.equal(sessions.find((s) => s.id === 'c')!.status, 'ended');
+  });
+
+  it('listRoomNames failure fails closed — no session is ended', async () => {
+    const { store, sessions } = makeMultiStore([activeSession('a'), activeSession('b')]);
+    const admin: RoomAdminPort = {
+      endRoom: async () => {},
+      listRoomNames: async () => { throw new Error('LiveKit down'); },
+    };
+    const res = await sweepOpenSessions(store, admin, NOW);
+    assert.equal(res.ghosted, 0);
+    assert.ok(sessions.every((s) => s.status === 'active'), 'probe failure must never end a live call');
+  });
+
+  it('listRoomNames is not called at all when no active session is past grace', async () => {
+    let listCalls = 0;
+    const fresh = directSession({
+      id: 'f', roomName: 'pcall_f', status: 'active',
+      startedAt: ISO, connectedAt: ISO,
+    });
+    const ringing = directSession({ id: 'r', roomName: 'pcall_r' });
+    const { store } = makeMultiStore([fresh, ringing]);
+    const admin: RoomAdminPort = {
+      endRoom: async () => {},
+      listRoomNames: async () => { listCalls++; return new Set<string>(); },
+    };
+    await sweepOpenSessions(store, admin, NOW);
+    assert.equal(listCalls, 0, 'ringing/fresh sessions never trigger the batch probe');
+    assert.equal(fresh.status, 'active');
+    assert.equal(ringing.status, 'ringing');
+  });
+
+  it('4h cap still wins over the batched ghost path', async () => {
+    const overCap = new Date(NOW - CALL_CONFIG.MAX_CALL_DURATION_MS - 1_000).toISOString();
+    const s = directSession({
+      id: 'x', roomName: 'pcall_x', status: 'active', startedAt: overCap, connectedAt: overCap,
+    });
+    const { store } = makeMultiStore([s]);
+    const endedRooms: string[] = [];
+    const admin: RoomAdminPort = {
+      endRoom: async (r) => { endedRooms.push(r); },
+      listRoomNames: async () => new Set<string>(),
+    };
+    const res = await sweepOpenSessions(store, admin, NOW);
+    assert.equal(res.capped, 1);
+    assert.equal(res.ghosted, 0);
+    assert.deepEqual(endedRooms, ['pcall_x']);
+  });
+});
+
 // ── Abuse protections ────────────────────────────────────────────────────────
 
 describe('abuse — redial cooldown and rate-limit boundaries', () => {

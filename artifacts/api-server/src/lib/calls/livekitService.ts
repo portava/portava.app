@@ -79,6 +79,7 @@ export async function mintCallToken(opts: {
 /** Server-side room termination — the DB session state is the source of truth. */
 export function makeRoomAdmin(env: LivekitEnv): {
   roomExists(roomName: string): Promise<boolean>;
+  listRoomNames(): Promise<Set<string>>;
   endRoom(roomName: string): Promise<void>;
   removeParticipant(roomName: string, userId: string): Promise<void>;
   muteParticipantAudio(roomName: string, userId: string): Promise<void>;
@@ -89,6 +90,12 @@ export function makeRoomAdmin(env: LivekitEnv): {
       // listRooms with a name filter — read-only probe for ghost healing.
       const rooms = await svc.listRooms([roomName]);
       return rooms.some((r: any) => r.name === roomName);
+    },
+    async listRoomNames() {
+      // ONE unfiltered listRooms per sweep — O(1) LiveKit calls regardless of
+      // active-call count (calling-load-review.md). Callers fail closed on throw.
+      const rooms = await svc.listRooms();
+      return new Set(rooms.map((r: any) => r.name as string));
     },
     async endRoom(roomName) {
       try { await svc.deleteRoom(roomName); } catch (e: any) {

@@ -24,3 +24,5 @@ description: Canonical-tree rule between artifacts/travel-buddy and travel-buddy
 - Known fork difference: standalone enables `experiments.typedRoutes` (main does not), so dynamic `router.push(\`/x/\${id}\`)` template literals fail its tsc — cast per the fork's existing convention (`as any` at the call site).
 - Install gotcha: the mirror has its own package.json/node_modules; after merges add new deps there too — "Cannot find module" from its tsc usually means the dep was never installed in `travel-buddy-standalone/` (e.g. `@livekit/react-native`, July 2026).
 - Delegating a port to a subagent works well when the task spells out: diff-first rule, which files replace wholesale vs append, and "run standalone tsc; fix only ported files."
+
+**Sync-drift contract:** standalone screens intentionally diverge; they have fork-tailored TEST TWINS (ledger-protected) asserting standalone behavior. When synced monorepo tests fail in standalone, the fix is restoring/adapting fork twin tests — NOT porting canonical screen behavior into the fork. Porting creates code/test contradictions with the protected twins.
