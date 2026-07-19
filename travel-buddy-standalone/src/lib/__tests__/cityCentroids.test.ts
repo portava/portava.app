@@ -137,6 +137,14 @@ describe('CITY_CENTROIDS — key-level spot checks for new cities', () => {
 
   // Eastern European & Balkan cities
   check('Kyiv',         50.4501,   30.5234);
+
+  it('Kiev (alternate spelling) resolves to the same coordinates as Kyiv', () => {
+    const kyiv = CITY_CENTROIDS['Kyiv'];
+    const kiev = CITY_CENTROIDS['Kiev'];
+    assert.ok(kyiv !== undefined, 'Kyiv is missing from CITY_CENTROIDS');
+    assert.ok(kiev !== undefined, 'Kiev is missing from CITY_CENTROIDS');
+    assert.deepEqual(kiev, kyiv, 'Kiev and Kyiv should have identical coordinates');
+  });
   check('Minsk',        53.9045,   27.5615);
   check('Chisinau',     47.0105,   28.8638);
   check('Belgrade',     44.8176,   20.4569);
