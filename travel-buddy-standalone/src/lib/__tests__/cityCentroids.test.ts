@@ -156,6 +156,14 @@ describe('CITY_CENTROIDS — key-level spot checks for new cities', () => {
     assert.ok(kiev !== undefined, 'Kiev is missing from CITY_CENTROIDS');
     assert.deepEqual(kiev, kyiv, 'Kiev and Kyiv should have identical coordinates');
   });
+
+  it('Odessa (alternate spelling) resolves to the same coordinates as Odesa', () => {
+    const odesa = CITY_CENTROIDS['Odesa'];
+    const odessa = CITY_CENTROIDS['Odessa'];
+    assert.ok(odesa !== undefined, 'Odesa is missing from CITY_CENTROIDS');
+    assert.ok(odessa !== undefined, 'Odessa is missing from CITY_CENTROIDS');
+    assert.deepEqual(odessa, odesa, 'Odessa and Odesa should have identical coordinates');
+  });
   check('Minsk',        53.9045,   27.5615);
   check('Chisinau',     47.0105,   28.8638);
   check('Belgrade',     44.8176,   20.4569);
