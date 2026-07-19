@@ -85,6 +85,10 @@ function Harness() {
           });
         }}
       />
+      <Pressable
+        testID="noteAccepted"
+        onPress={() => actions.noteAccepted(SESSION.id)}
+      />
     </>
   );
 }
@@ -123,15 +127,21 @@ describe('CallContext.dismissIncoming', () => {
       </CallProvider>,
     );
 
+    // startDirectCall connects to the room immediately but waits in
+    // outgoing_ringing until the server publishes call.accepted — the phase
+    // never reaches 'connected' on the caller side without noteAccepted.
+    // The active session is already live at outgoing_ringing, so dismissing
+    // a stale incoming banner must not hang it up.
     fireEvent.press(screen.getByTestId('start'));
     await act(async () => {}); // flush startDirectCall + connectMedia
-    expect(screen.getByTestId('phase').props.children).toBe('connected');
+    expect(screen.getByTestId('phase').props.children).toBe('outgoing_ringing');
     expect(screen.getByTestId('session').props.children).toBe(SESSION.id);
 
-    // A stale banner-dismiss arrives while the unrelated call is live.
+    // A stale banner-dismiss arrives while the outgoing call is in-progress.
     fireEvent.press(screen.getByTestId('dismiss'));
 
-    expect(screen.getByTestId('phase').props.children).toBe('connected');
+    // Phase and session are unchanged; bridge and API are untouched.
+    expect(screen.getByTestId('phase').props.children).toBe('outgoing_ringing');
     expect(screen.getByTestId('session').props.children).toBe(SESSION.id);
     expect(bridge.disconnect).not.toHaveBeenCalled();
     expect(mockEndCall).not.toHaveBeenCalled();
