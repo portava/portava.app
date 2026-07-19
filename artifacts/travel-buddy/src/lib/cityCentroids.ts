@@ -296,16 +296,49 @@ function normaliseCityKey(raw: string): string {
 }
 
 /**
+ * Split a compound city string into candidate tokens to try against the index.
+ *
+ * Some event records store compound strings like "Kyiv/Kiev", "Bangkok (Thailand)",
+ * or "New York, NY".  We extract the primary city token(s) by splitting on the
+ * common separators '/', ',', and '(' (opening parenthesis).  Each resulting
+ * fragment is trimmed before lookup; the first fragment is tried first so that
+ * "Kyiv/Kiev" resolves to Kyiv rather than Kiev.
+ *
+ * Returns an array of one or more non-empty trimmed tokens.  If splitting
+ * produces only empty fragments (unlikely with real data) we fall back to the
+ * original string so the caller always has something to look up.
+ */
+function splitCityTokens(raw: string): string[] {
+  const tokens = raw
+    .split(/[/,(]/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+  return tokens.length > 0 ? tokens : [raw];
+}
+
+/**
  * Look up the [latitude, longitude] centroid for a city name.
  *
  * Accepts city strings with arbitrary casing or surrounding whitespace
  * (e.g. "tashkent", "QUITO ", "  Ho Chi Minh City  ", "xi'an", "são paulo")
- * and normalises them before consulting CITY_CENTROIDS.  Returns `undefined`
- * when the city is genuinely unknown.
+ * and normalises them before consulting CITY_CENTROIDS.  Also handles compound
+ * city strings such as "Kyiv/Kiev", "Bangkok (Thailand)", and "New York, NY"
+ * by trying each slash-, comma-, or parenthesis-separated token in order.
+ * Returns `undefined` when the city is genuinely unknown.
  */
 export function getCityCentroid(city: string): [number, number] | undefined {
   // Fast path: exact match (most callers pass a correctly-cased string).
   if (CITY_CENTROIDS[city] !== undefined) return CITY_CENTROIDS[city];
-  // Fallback: case- and whitespace-insensitive lookup via the lower index.
-  return _lowerIndex.get(normaliseCityKey(city));
+
+  // Split on compound separators and try each token in turn.
+  const tokens = splitCityTokens(city);
+  for (const token of tokens) {
+    // Exact match on token.
+    if (CITY_CENTROIDS[token] !== undefined) return CITY_CENTROIDS[token];
+    // Case- and whitespace-insensitive lookup via the lower index.
+    const result = _lowerIndex.get(normaliseCityKey(token));
+    if (result !== undefined) return result;
+  }
+
+  return undefined;
 }

@@ -361,3 +361,29 @@ describe('getCityCentroid — accent-stripped inputs resolve via alias keys', ()
     assert.deepEqual(accentedBog, strippedBog, 'Bogotá and Bogota should have identical coordinates');
   });
 });
+
+describe('getCityCentroid — compound / parenthesised / suffixed city strings', () => {
+  it('resolves slash-separated "Kyiv/Kiev" to the Kyiv centroid', () => {
+    const coords = getCityCentroid('Kyiv/Kiev');
+    assert.ok(coords !== undefined, '"Kyiv/Kiev" returned undefined — slash splitting failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 50.4501) < 2, `lat ${lat} implausibly far from Kyiv`);
+    assert.ok(Math.abs(lng - 30.5234) < 2, `lng ${lng} implausibly far from Kyiv`);
+  });
+
+  it('resolves parenthesised "Bangkok (Thailand)" to the Bangkok centroid', () => {
+    const coords = getCityCentroid('Bangkok (Thailand)');
+    assert.ok(coords !== undefined, '"Bangkok (Thailand)" returned undefined — parenthesis splitting failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 13.7563) < 2, `lat ${lat} implausibly far from Bangkok`);
+    assert.ok(Math.abs(lng - 100.5018) < 2, `lng ${lng} implausibly far from Bangkok`);
+  });
+
+  it('resolves comma-suffixed "New York, NY" to the New York centroid', () => {
+    const coords = getCityCentroid('New York, NY');
+    assert.ok(coords !== undefined, '"New York, NY" returned undefined — comma splitting failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 40.7128) < 2, `lat ${lat} implausibly far from New York`);
+    assert.ok(Math.abs(lng - (-74.0060)) < 2, `lng ${lng} implausibly far from New York`);
+  });
+});
