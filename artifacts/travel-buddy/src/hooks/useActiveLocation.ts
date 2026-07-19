@@ -16,7 +16,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { getCurrentGps, reverseGeocodeToPlace, checkLocationPermission } from '../services/location.ts';
 import type { Place } from '../lib/location/placeTypes.ts';
 import { isSupabaseConfigured } from '../lib/supabase.ts';
-import { buildManualCityState, buildManualCityPayload, buildGpsState } from './activeLocation.state';
+import { buildManualCityState, buildManualCityPayload, buildGpsState, buildGpsRevokedState } from './activeLocation.state';
 import { _loadHomeFromProfile } from './activeLocation.homeProfile.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -269,13 +269,7 @@ export function useActiveLocation(): UseActiveLocationResult {
       if (!gps.granted) {
         const permStatus: PermissionStatus = gps.error === 'permission_denied' ? 'denied' : 'unavailable';
         if (!mountedRef.current) return;
-        setLocationState((prev) => ({
-          ...prev,
-          permissionStatus: permStatus,
-          userMessage: permStatus === 'denied'
-            ? 'Location is off. You can still use Travel Buddy by choosing a city manually.'
-            : 'GPS timed out. Try again or choose city manually.',
-        }));
+        setLocationState((prev) => buildGpsRevokedState(prev, permStatus));
         await saveLocationToApi({ permissionStatus: permStatus });
         return;
       }
@@ -291,7 +285,7 @@ export function useActiveLocation(): UseActiveLocationResult {
       setLocationState(next);
 
       await saveLocationToApi({
-        source,
+        source: next.source,
         permissionStatus: 'granted',
         coords: { lat: gps.lat, lng: gps.lng, accuracyMeters: gps.accuracyMeters },
         place: next.place,

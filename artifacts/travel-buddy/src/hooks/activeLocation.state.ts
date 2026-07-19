@@ -18,7 +18,7 @@
  *     /api/me/location-state; it always carries the full place plus the
  *     legacy manualCity/manualCountry columns.
  */
-import type { ActiveLocationState, LocationSource, LocationFreshness } from './useActiveLocation.ts';
+import type { ActiveLocationState, LocationSource, LocationFreshness, PermissionStatus } from './useActiveLocation.ts';
 import type { Place } from '../lib/location/placeTypes.ts';
 
 /**
@@ -85,6 +85,51 @@ export function buildManualCityPayload(place: Place): {
     manualCity: place.city ?? place.name,
     manualCountry: place.country ?? null,
     place,
+  };
+}
+
+/**
+ * State transition applied when `requestLocation` is called but permission is
+ * denied or unavailable — i.e. the user revoked GPS access after it was live.
+ *
+ * When the previous source was a GPS source ('gps_fresh', 'gps_cached', 'gps'),
+ * the stale GPS coords and place are cleared so the UI never shows a location
+ * the user has actively blocked.  Non-GPS sources (home, manual_city, etc.)
+ * are left intact — only the permissionStatus is updated.
+ */
+export function buildGpsRevokedState(
+  prev: ActiveLocationState,
+  permStatus: PermissionStatus,
+): ActiveLocationState {
+  const isGpsSource =
+    prev.source === 'gps_fresh' ||
+    prev.source === 'gps_cached' ||
+    prev.source === 'gps';
+
+  if (!isGpsSource) {
+    // Non-GPS location (home city, manual, etc.) is still valid — just update status.
+    return {
+      ...prev,
+      permissionStatus: permStatus,
+      userMessage:
+        permStatus === 'denied'
+          ? 'Location is off. You can still use Travel Buddy by choosing a city manually.'
+          : 'GPS timed out. Try again or choose city manually.',
+    };
+  }
+
+  // GPS was the active source — clear it to avoid showing a blocked location.
+  return {
+    ...prev,
+    ok: false,
+    permissionStatus: permStatus,
+    source: 'none',
+    freshness: 'unavailable',
+    coords: null,
+    userMessage:
+      permStatus === 'denied'
+        ? 'Location is off. You can still use Travel Buddy by choosing a city manually.'
+        : 'GPS timed out. Try again or choose city manually.',
   };
 }
 
