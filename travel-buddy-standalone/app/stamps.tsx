@@ -8,7 +8,8 @@ import { getMyPassportStamps, updateStampVisibility } from '../src/services/pass
 import type { PassportStampNew, StampVisibility } from '../src/services/passportStamps';
 import type { PassportStamp } from '../src/types/models';
 import { color, space, radius, type as t } from '../src/theme/tokens';
-import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../src/hooks/useBottomInset';
 
 const FILTERS: { label: string; kind?: string }[] = [
   { label: 'All' },
@@ -133,7 +134,7 @@ export default function StampsPage() {
           {shown.length === 0 && (
             <View style={styles.empty}><Text style={styles.emptyText}>No stamps in this category yet.</Text></View>
           )}
-          <NavBarFiller />
+          <PlainBottomFiller />
         </ScrollView>
       )}
 

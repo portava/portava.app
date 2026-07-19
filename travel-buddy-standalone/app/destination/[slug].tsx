@@ -22,6 +22,7 @@ import { listGems, type HiddenGem } from '../../src/services/hiddenGems';
 import { listEvents, type EventListItem } from '../../src/services/events';
 import { getPulseData, type PulsePost } from '../../src/services/pulse';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 
 type SectionState<T> = { status: 'loading' | 'ready' | 'error'; items: T[] };
 
@@ -33,6 +34,7 @@ function fmtEventDate(iso: string | null): string {
 }
 
 export default function Destination() {
+  const plainInset = usePlainBottomInset();
   const { slug } = useLocalSearchParams<{ slug: string }>();
   const cityName = slug
     ? slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
@@ -99,7 +101,7 @@ export default function Destination() {
         <View style={{ width: 32 }} />
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 90 }} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={{ paddingBottom: plainInset }} showsVerticalScrollIndicator={false}>
         {/* City hero strip */}
         <View style={s.hero}>
           <MapPin size={16} color={color.deep} />

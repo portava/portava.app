@@ -20,7 +20,8 @@ import {
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { useCompassPreferences } from '../src/hooks/compass/useCompassPreferences';
 import { putCompassBoostVisibility } from '../src/services/compass';
-import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../src/hooks/useBottomInset';
 
 // ── Option constants ──────────────────────────────────────────────────────────
 
@@ -434,7 +435,7 @@ export default function CompassPreferencesScreen() {
           )}
         </Section>
 
-        <NavBarFiller />
+        <PlainBottomFiller />
 
       </ScrollView>
     </View>

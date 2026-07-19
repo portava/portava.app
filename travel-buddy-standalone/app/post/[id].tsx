@@ -20,7 +20,8 @@ import { getPostById, type PostRow } from '../../src/services/posts';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { emitCommentCount } from '../../src/lib/commentCountStore';
-import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 
 const UNDO_WINDOW_MS = 5000;
 
@@ -300,7 +301,7 @@ export default function PostDetail() {
               />
             </View>
           )}
-          <NavBarFiller />
+          <PlainBottomFiller />
         </ScrollView>
       </KeyboardSafeScrollView>
 

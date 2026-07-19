@@ -14,7 +14,8 @@ import { color, space, radius, type as t } from '../src/theme/tokens';
 import { getHistory, type SafeReturnSession, type SafeReturnSessionEvents } from '../src/services/safeReturn';
 import { SafeReturnSetupSheet } from '../src/components/safeReturn/SafeReturnSetupSheet';
 import { useSession } from '../src/context/SessionContext';
-import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../src/hooks/useBottomInset';
 
 // ── Status display map ────────────────────────────────────────────────────────
 
@@ -238,7 +239,7 @@ export default function SafetyHistoryScreen() {
           </View>
 
           {sessions.map((s) => <SessionRow key={s.id} session={s} />)}
-          <NavBarFiller />
+          <PlainBottomFiller />
         </ScrollView>
       )}
 

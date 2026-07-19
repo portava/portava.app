@@ -11,6 +11,7 @@ import {
   StyleSheet, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { Shield, Clock, MapPin, AlertTriangle, Plane, Coffee, Building, Compass, Bookmark, CalendarPlus, Users, Send, PlaneTakeoff, Route as RouteIcon } from 'lucide-react-native';
+import { usePlainBottomInset } from '../../hooks/useBottomInset.ts';
 import {
   getRecommendations,
   getSessionSafety,
@@ -178,6 +179,7 @@ function RecCard({ rec, onAskCompass, onSafeReturn, onAddToPlan, onAddToRoute, o
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function LayoverRecommendationScreen({ sessionId, onAskCompass, onSafeReturn, onAddToPlan, onAddToRoute, onInviteCrew, onSendTelegraph }: Props) {
+  const plainInset = usePlainBottomInset();
   const [recs, setRecs]           = useState<LayoverRecommendation[]>([]);
   const [safety, setSafety]       = useState<LayoverSafetyResult | null>(null);
   const [loading, setLoading]     = useState(true);
@@ -220,7 +222,7 @@ export function LayoverRecommendationScreen({ sessionId, onAskCompass, onSafeRet
   return (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[styles.content, { paddingBottom: plainInset }]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} />}
     >
       {/* Overall safety banner */}
@@ -278,7 +280,7 @@ export function LayoverRecommendationScreen({ sessionId, onAskCompass, onSafeRet
 
 const styles = StyleSheet.create({
   container:   { flex: 1, backgroundColor: '#f8f8f8' },
-  content:     { padding: 16, paddingBottom: 120 },
+  content:     { padding: 16 },
   centered:    { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 },
   loadingText: { marginTop: 12, color: '#888', fontSize: 14 },
 

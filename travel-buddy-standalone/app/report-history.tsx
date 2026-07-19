@@ -8,7 +8,8 @@ import { ArrowLeft } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { fetchMyReports, type MyReport } from '../src/services/reports';
-import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../src/hooks/useBottomInset';
 
 const STATUS_LABEL: Record<string, string> = {
   pending:    'Under review',
@@ -156,7 +157,7 @@ export default function ReportHistoryScreen() {
                   <ActivityIndicator size="small" color={color.mute} />
                 </View>
               ) : null}
-              <NavBarFiller />
+              <PlainBottomFiller />
             </>
           }
           renderItem={({ item }) => <ReportCard report={item} />}

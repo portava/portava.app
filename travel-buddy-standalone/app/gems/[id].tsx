@@ -21,7 +21,8 @@ import { TripWishlistPicker, type AddToTripPayload } from '../../src/components/
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { GemMapPreview } from '../../src/components/discovery/GemMapPreview';
 import { useSession } from '../../src/context/SessionContext';
-import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 import { ReasonPromptModal } from '../../src/components/ReasonPromptModal';
 
 // ── Privacy section ────────────────────────────────────────────────────────────
@@ -474,7 +475,7 @@ export default function GemDetailScreen() {
             <Text style={[styles.actionBtnText, { color: '#FF6B6B' }]}>Report</Text>
           </TouchableOpacity>
         </View>
-        <NavBarFiller />
+        <PlainBottomFiller />
       </ScrollView>
 
       {/* Modals */}

@@ -10,6 +10,7 @@ import { buildOnboardingSaveAlert } from '../../src/services/profileSaveFlow';
 import { getCurrentGps, reverseGeocodeToPlace } from '../../src/services/location';
 import { runFillHomeFromGps } from '../../src/services/fillHomeFromGps.machine';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
+import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 
 const INTERESTS: Interest[] = ['nightlife','beach','food','luxury','backpacking','culture','adventure','shopping','photography','business','dating','wellness','events'];
 const STYLES: TravelStyle[] = ['solo','couple','group','business'];
@@ -17,6 +18,7 @@ const TOTAL_STEPS = 4;
 const DISPLAY_NAME_MAX = 30;
 
 export default function Onboarding() {
+  const plainInset = usePlainBottomInset();
   const [step, setStep] = useState(0);
   const [checking, setChecking] = useState(true);
 
@@ -140,7 +142,7 @@ export default function Onboarding() {
       </View>
 
       <ScrollView
-        contentContainerStyle={{ padding: space.lg, paddingTop: space.xl, gap: space.xl, paddingBottom: 120 }}
+        contentContainerStyle={{ padding: space.lg, paddingTop: space.xl, gap: space.xl, paddingBottom: plainInset }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >

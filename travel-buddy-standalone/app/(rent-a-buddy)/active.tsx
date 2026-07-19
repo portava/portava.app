@@ -11,6 +11,7 @@ import { color, space, radius, type as t, shadow, layout } from '../../src/theme
 import { TravelLoadingState, TravelErrorState } from '../../src/components/primitives';
 import { getBooking, addExtraTime, reportBooking, safetyCheckin, feelUnsafe, endBookingEarly, type BuddyBooking } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useStickyBarInset } from '../../src/hooks/useBottomInset';
 
 function pad(n: number) { return String(n).padStart(2, '0'); }
 
@@ -76,6 +77,7 @@ function EndModal({ visible, onClose, onEnd }: { visible: boolean; onClose: () =
 
 export default function RentABuddyActive() {
   const insets = useSafeAreaInsets();
+  const { inset: barInset, onBarLayout } = useStickyBarInset();
   const params = useLocalSearchParams<{ bookingId?: string }>();
   const bookingId = params.bookingId ?? '';
 
@@ -151,7 +153,7 @@ export default function RentABuddyActive() {
 
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={{ paddingBottom: 120 + insets.bottom }}
+        contentContainerStyle={{ paddingBottom: barInset }}
         showsVerticalScrollIndicator={false}
       >
         {/* Buddy card */}
@@ -316,7 +318,7 @@ export default function RentABuddyActive() {
       </ScrollView>
 
       {/* Bottom actions */}
-      <View style={[styles.bottomBar, { paddingBottom: insets.bottom + space.sm }]}>
+      <View style={[styles.bottomBar, { paddingBottom: insets.bottom + space.sm }]} onLayout={onBarLayout}>
         <Pressable
           style={({ pressed }) => [styles.addTimeBtn, pressed && { opacity: layout.pressedOpacity }]}
           onPress={() => setAddTimeVisible(true)}

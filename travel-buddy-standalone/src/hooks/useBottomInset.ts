@@ -1,24 +1,121 @@
 /**
- * useBottomInset — returns the total bottom clearance required to keep
- * scroll content fully visible above the floating tab bar.
+ * Bottom-inset module — unified end-of-scroll clearance for every finite
+ * scroll surface in the app.
  *
- * Calculation:
- *   NAV_BAR_FILLER_HEIGHT (64 pill + 12 offset + 20 clearance = 96)
- *   + insets.bottom (iOS home indicator / Android nav bar)
+ * The floating tab pill renders ONLY inside the tabs layout and never overlays
+ * pushed stack routes, so bottom clearance is tiered:
  *
- * Usage:
- *   const bottomInset = useBottomInset();
- *   <FlatList contentContainerStyle={{ paddingBottom: bottomInset }} ... />
- *   <ScrollView contentContainerStyle={{ paddingBottom: bottomInset }} ... />
+ *  ── Tier 1 · Tab surfaces (pill floats over content) ──────────────────────
+ *     const bottomInset = useBottomInset();
+ *     <FlatList contentContainerStyle={{ paddingBottom: bottomInset }} ... />
+ *     // or place <NavBarFiller /> (from useNavBarCollapse) as the last child.
+ *     Value: NAV_BAR_FILLER_HEIGHT (96 = 64 pill + 12 offset + 20 clearance)
+ *            + insets.bottom.
+ *     For paginated feeds put the spacer AFTER the loading footer so the last
+ *     loaded item stays clear of the pill while the spinner shows.
  *
- * On desktop (sidebar layout) insets.bottom is typically 0 and the
- * tab bar is hidden, so the returned value is still safe to use — it
- * just adds the standard 96 px clearance with no safe-area addition.
+ *  ── Tier 2 · Stack screens with their own sticky bottom bar ───────────────
+ *     const { inset: barInset, onBarLayout } = useStickyBarInset();
+ *     <ScrollView contentContainerStyle={{ paddingBottom: barInset }} ... />
+ *     <View style={styles.stickyBar} onLayout={onBarLayout}>…</View>
+ *     Value: measured bar height (which already includes its own safe-area
+ *            padding) + BOTTOM_BREATHING_ROOM. Until first layout, a sensible
+ *            fallback (fallbackBarHeight + insets.bottom) is used.
+ *
+ *  ── Tier 3 · Plain stack screens, forms, and modal/bottom sheets ──────────
+ *     const plainInset = usePlainBottomInset();
+ *     <ScrollView contentContainerStyle={{ paddingBottom: plainInset }} ... />
+ *     Value: insets.bottom + BOTTOM_BREATHING_ROOM — a modest, deliberate
+ *            buffer; no oversized void where nothing floats.
+ *
+ *  ── Keyboard compatibility ─────────────────────────────────────────────────
+ *     KeyboardAvoidingView adds its own padding while the keyboard is open,
+ *     so large static insets can stack into a dead gap above the keyboard.
+ *     Consumers that show a keyboard can suppress the inset while it is open:
+ *
+ *     const keyboardVisible = useKeyboardVisible();
+ *     const inset = useBottomInset();
+ *     paddingBottom: keyboardVisible ? space.md : inset
+ *
+ * On desktop (sidebar layout) insets.bottom is typically 0 and the pill is
+ * hidden, so all returned values remain safe to use.
  */
+import React, { useCallback, useEffect, useState } from 'react';
+import { Keyboard, View, type LayoutChangeEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NAV_BAR_FILLER_HEIGHT } from './useNavBarCollapse.ts';
 
+/** Breathing room added below the last content item on non-pill surfaces. */
+export const BOTTOM_BREATHING_ROOM = 24;
+
+/**
+ * Tier 1 — full floating-pill clearance for tab-layout surfaces.
+ * (96 px pill clearance + safe-area inset.)
+ */
 export function useBottomInset(): number {
   const insets = useSafeAreaInsets();
   return NAV_BAR_FILLER_HEIGHT + insets.bottom;
+}
+
+/**
+ * Tier 3 — modest buffer for bar-less stack screens, forms, and sheets.
+ * (safe-area inset + BOTTOM_BREATHING_ROOM.)
+ */
+export function usePlainBottomInset(): number {
+  const insets = useSafeAreaInsets();
+  return insets.bottom + BOTTOM_BREATHING_ROOM;
+}
+
+/**
+ * Tier 3 spacer twin of usePlainBottomInset — drop-in last child for scroll
+ * containers on bar-less stack screens and sheets (the modest-buffer sibling
+ * of NavBarFiller, which is reserved for tab surfaces under the pill).
+ */
+export function PlainBottomFiller() {
+  const inset = usePlainBottomInset();
+  return React.createElement(View, { style: { height: inset } });
+}
+
+export interface StickyBarInset {
+  /** paddingBottom for the scroll container behind the bar. */
+  inset: number;
+  /** Attach to the sticky bar's outer <View onLayout={…}> to measure it. */
+  onBarLayout: (e: LayoutChangeEvent) => void;
+}
+
+/**
+ * Tier 2 — clearance matched to a screen's own fixed bottom bar.
+ *
+ * Measures the bar via onLayout so the scroll clearance always equals the
+ * actual bar height (including the safe-area padding the bar applies to
+ * itself) plus breathing room. Before the first layout event a fallback of
+ * `fallbackBarHeight + insets.bottom` is used so content is never covered
+ * on first paint.
+ */
+export function useStickyBarInset(fallbackBarHeight = 76): StickyBarInset {
+  const insets = useSafeAreaInsets();
+  const [barHeight, setBarHeight] = useState<number | null>(null);
+
+  const onBarLayout = useCallback((e: LayoutChangeEvent) => {
+    const h = Math.round(e.nativeEvent.layout.height);
+    setBarHeight((prev) => (prev === h ? prev : h));
+  }, []);
+
+  const inset =
+    (barHeight ?? fallbackBarHeight + insets.bottom) + BOTTOM_BREATHING_ROOM;
+  return { inset, onBarLayout };
+}
+
+/**
+ * True while the software keyboard is open. Use to suppress a static bottom
+ * inset so it never stacks with KeyboardAvoidingView padding.
+ */
+export function useKeyboardVisible(): boolean {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', () => setVisible(true));
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => setVisible(false));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
+  return visible;
 }

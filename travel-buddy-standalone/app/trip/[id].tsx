@@ -34,7 +34,7 @@ import { updateTrip, createInviteLink } from '../../src/services/trips';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
-import { useBottomInset } from '../../src/hooks/useBottomInset';
+import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 
 function TripDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -44,7 +44,7 @@ function TripDetailScreen() {
   const { markFirstContent, epoch } = useScreenTiming('TripDetail');
   const { checkForNewStamps } = useStampToast();
   const navBarScrollHandler = useNavBarScrollHandler();
-  const bottomInset = useBottomInset();
+  const bottomInset = usePlainBottomInset();
   const live = configured && isAuthed;
   const { data: realTrip, loading, error: tripError, reload: reloadTrip } = useTrip(live ? id : undefined);
 

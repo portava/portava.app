@@ -28,7 +28,8 @@ import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { RichText } from '../../src/components/RichText';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { addMeetupToCalendar } from '../../src/services/calendar';
-import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 
 const TODAY_START = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
 
@@ -916,7 +917,7 @@ export default function MeetupScreen() {
           </Pressable>
         )}
 
-        <NavBarFiller />
+        <PlainBottomFiller />
       </ScrollView>
 
       {/* Success toast */}

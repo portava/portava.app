@@ -20,6 +20,7 @@ import { EventDiscoveryCard } from '../../src/components/EventDiscoveryCard';
 import { EventComposerSheet } from '../../src/components/EventComposerSheet';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
+import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 
 const STATES: { key: EventState | 'all'; label: string }[] = [
   { key: 'open',    label: 'Open' },
@@ -28,6 +29,7 @@ const STATES: { key: EventState | 'all'; label: string }[] = [
 ];
 
 export default function EventsScreen() {
+  const plainInset = usePlainBottomInset();
   const insets = useSafeAreaInsets();
   const { isAuthed, configured } = useSession();
 
@@ -144,7 +146,7 @@ export default function EventsScreen() {
         </View>
       ) : (
         <ScrollView
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[styles.list, { paddingBottom: plainInset }]}
           refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={color.signal} />}
         >
           {events.map((ev) => (
@@ -196,5 +198,5 @@ const styles = StyleSheet.create({
   emptySub:     { ...t.body, color: color.mute, textAlign: 'center', maxWidth: 280 },
   emptyBtn:     { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: color.signal, paddingHorizontal: space.lg, paddingVertical: space.md, borderRadius: radius.pill, marginTop: space.sm, ...shadow.card },
   emptyBtnText: { ...t.body, color: color.onInk, fontWeight: '700' },
-  list:         { padding: space.lg, gap: space.md, paddingBottom: 100 },
+  list:         { padding: space.lg, gap: space.md },
 });

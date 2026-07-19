@@ -62,6 +62,7 @@ import { sendMessage, sendMediaMessage } from '../../src/services/messaging';
 import { useMessageMediaPicker } from '../../src/hooks/useMessageMediaPicker';
 import { MessageMediaBubble } from '../../src/components/MessageMediaBubble';
 import * as Haptics from 'expo-haptics';
+import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 import * as Clipboard from 'expo-clipboard';
 import { RentABuddyThreadHeader } from '../../src/components/rentabuddy/BookingThreadHeader';
 import { MessageEntrance, useMessageEntranceGate } from '../../src/components/MessageEntrance';
@@ -143,6 +144,7 @@ function LongPressActionSheet({
   onReply: (msg: Message) => void;
   onSave: (msg: Message) => void;
 }) {
+  const plainInsetForSheets = usePlainBottomInset();
   const [showReport, setShowReport] = useState(false);
   const [reportReason, setReportReason] = useState<ReasonCode | null>(null);
   const [reportDetail, setReportDetail] = useState('');
@@ -173,7 +175,7 @@ function LongPressActionSheet({
   return (
     <Modal visible animationType="slide" transparent onRequestClose={onClose}>
       <Pressable style={las.overlay} onPress={onClose} />
-      <View style={las.sheet}>
+      <View style={[las.sheet, { paddingBottom: plainInsetForSheets }]}>
         <View style={las.handle} />
         {showReport ? (
           <>
@@ -1016,6 +1018,7 @@ function AddToPlanSheet({
   onClose: () => void;
   onConfirm: (tripId: string) => void;
 }) {
+  const plainInsetForSheets = usePlainBottomInset();
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
 
   if (!suggestion) return null;
@@ -1032,7 +1035,7 @@ function AddToPlanSheet({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={sheetStyles.overlay} onPress={onClose} />
-      <View style={sheetStyles.sheet}>
+      <View style={[sheetStyles.sheet, { paddingBottom: plainInsetForSheets }]}>
         <View style={sheetStyles.handle} />
         <Text style={sheetStyles.title}>Add to Trip Plan</Text>
         <Text style={sheetStyles.subtitle} numberOfLines={2}>

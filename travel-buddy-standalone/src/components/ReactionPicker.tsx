@@ -14,6 +14,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { color, space, radius, shadow } from '../theme/tokens.ts';
+import { useBottomInset } from '../hooks/useBottomInset.ts';
 
 export const REACTION_EMOJIS = ['❤️', '😂', '😮', '😢', '😡', '👍', '🔥', '✈️'] as const;
 export type ReactionEmoji = typeof REACTION_EMOJIS[number];
@@ -32,6 +33,9 @@ interface Props {
 }
 
 export function ReactionPicker({ visible, myReaction, onSelect, onRemove, onClose }: Props) {
+  // Pill clearance + breathing room: the picker can open over tab surfaces
+  // where the floating nav pill sits, so anchor it safely above it.
+  const bottomInset = useBottomInset();
   const handlePress = useCallback(
     (emoji: string) => {
       if (emoji === myReaction) {
@@ -53,7 +57,7 @@ export function ReactionPicker({ visible, myReaction, onSelect, onRemove, onClos
       statusBarTranslucent
     >
       <Pressable style={s.backdrop} onPress={onClose} />
-      <View style={s.pickerWrap} pointerEvents="box-none">
+      <View style={[s.pickerWrap, { paddingBottom: bottomInset + space.xl }]} pointerEvents="box-none">
         <View style={s.picker}>
           {REACTION_EMOJIS.map((emoji) => (
             <Pressable
@@ -114,7 +118,6 @@ const s = StyleSheet.create({
   pickerWrap: {
     flex: 1,
     justifyContent: 'flex-end',
-    paddingBottom: 160,
     paddingHorizontal: space.lg,
   },
   picker: {

@@ -18,6 +18,7 @@ import {
 } from '../../../src/services/rentABuddy';
 import { reportContent } from '../../../src/services/reports';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useStickyBarInset } from '../../../src/hooks/useBottomInset';
 import { UserOverflowMenu } from '../../../src/components/interaction/UserOverflowMenu';
 import { MeetupAreaPreview } from '../../../src/components/location/MeetupAreaPreview';
 import { formatAwayRange, upcomingAwayRanges } from '../../../src/lib/awayDates';
@@ -122,6 +123,7 @@ function PackageCard({ pkg, onBook }: { pkg: BuddyPackage; onBook: () => void })
 
 export default function BuddyProfileScreen() {
   const insets = useSafeAreaInsets();
+  const { inset: barInset, onBarLayout } = useStickyBarInset();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [data, setData] = useState<{
     buddy: BuddyProfileType | null;
@@ -177,7 +179,7 @@ export default function BuddyProfileScreen() {
 
   return (
     <View style={styles.page}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 + insets.bottom }}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: barInset }}>
         {/* Hero */}
         <View style={styles.heroBox}>
           {buddy.coverPhotoUrl ? (
@@ -433,7 +435,7 @@ export default function BuddyProfileScreen() {
       </ScrollView>
 
       {/* Sticky Book */}
-      <View style={[styles.stickyBottom, { paddingBottom: insets.bottom + space.md }]}>
+      <View style={[styles.stickyBottom, { paddingBottom: insets.bottom + space.md }]} onLayout={onBarLayout}>
         <View style={{ flex: 1 }}>
           <Text style={styles.priceLabel}>Starting from</Text>
           <Text style={styles.priceValue}>

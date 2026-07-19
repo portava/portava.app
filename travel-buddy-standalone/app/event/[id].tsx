@@ -54,7 +54,8 @@ import { color, space, radius, type as t, shadow } from '../../src/theme/tokens'
 import { primaryIdentityText } from '../../src/lib/displayIdentity';
 import { getWaitlistUiState } from '../../src/lib/waitlistState';
 import { getAttendeeActionSet, type EventLifecycleState } from '../../src/lib/eventRoleActions';
-import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useStickyBarInset } from '../../src/hooks/useBottomInset';
 import { FOCUS_REFETCH_TTL_MS } from '../../src/hooks/usePosts';
 
 const STATE_BADGE: Record<string, { label: string; bg: string; fg: string }> = {
@@ -113,6 +114,7 @@ function openMap(locationName: string | null, lat: number | null, lng: number | 
 
 export default function EventDetailScreen() {
   const insets = useSafeAreaInsets();
+  const { inset: barInset, onBarLayout } = useStickyBarInset();
   const { id, tripId: tripIdParam } = useLocalSearchParams<{ id: string; tripId?: string }>();
   const { userId } = useSession();
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
@@ -421,7 +423,7 @@ export default function EventDetailScreen() {
           </View>
         </>
       ) : event ? (
-        <ScrollView contentContainerStyle={styles.scroll} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
+        <ScrollView contentContainerStyle={{ paddingBottom: barInset }} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
           {/* Header scrolls with event content */}
           <View style={[styles.header, { paddingTop: insets.top + space.sm }]}>
             <Pressable style={styles.headerBtn} onPress={() => router.back()} hitSlop={8}>
@@ -823,13 +825,12 @@ export default function EventDetailScreen() {
               />
             )}
           </View>
-          <NavBarFiller />
         </ScrollView>
       ) : null}
 
       {/* RSVP / action bar */}
       {event && !isBanned && !loading && (
-        <View style={[styles.actionBar, { paddingBottom: insets.bottom + space.md }]}>
+        <View style={[styles.actionBar, { paddingBottom: insets.bottom + space.md }]} onLayout={onBarLayout}>
           {event.state === 'completed' ? (
             /* ① Ended — show no actions; reviews are shown in the scroll body */
             <View style={styles.cancelledNote}>
@@ -985,7 +986,6 @@ const styles = StyleSheet.create({
   errorText:          { ...t.body, color: color.mute, textAlign: 'center' },
   retryBtn:           { paddingHorizontal: space.lg, paddingVertical: space.sm, backgroundColor: color.signal, borderRadius: radius.pill },
   retryText:          { ...t.small, color: color.onInk, fontWeight: '700' },
-  scroll:             { paddingBottom: 120 },
   cover:              { width: '100%', height: 220 },
   coverPlaceholder:   { backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
   promoVideoBadge:    { backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: space.md, paddingVertical: 4, alignSelf: 'flex-start', marginLeft: space.lg, marginTop: -28, borderRadius: radius.pill, zIndex: 1 },

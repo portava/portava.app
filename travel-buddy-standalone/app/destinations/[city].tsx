@@ -14,7 +14,7 @@ import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, MapPin } from 'lucide-react-native';
 import { usePassport } from '../../src/hooks/usePassport.ts';
-import { useBottomInset } from '../../src/hooks/useBottomInset.ts';
+import { usePlainBottomInset } from '../../src/hooks/useBottomInset.ts';
 import { listMyTrips, type TripRow } from '../../src/services/trips.ts';
 import {
   groupByDestination,
@@ -129,7 +129,7 @@ function EmptySection({ label }: { label: string }) {
 export default function DestinationDetailScreen() {
   const { city: cityParam } = useLocalSearchParams<{ city: string }>();
   const insets = useSafeAreaInsets();
-  const bottomInset = useBottomInset();
+  const bottomInset = usePlainBottomInset();
   const { memories, stamps, postcards, loading } = usePassport();
   const [trips, setTrips] = useState<TripRow[]>([]);
   const [tripsLoaded, setTripsLoaded] = useState(false);

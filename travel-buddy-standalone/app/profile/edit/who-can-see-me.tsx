@@ -23,7 +23,8 @@ import {
   type CircleWatcher,
 } from '../../../src/services/circle';
 import { useSession } from '../../../src/context/SessionContext';
-import { NavBarFiller, useNavBarScrollHandler } from '../../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../../../src/hooks/useBottomInset';
 
 interface ContextGroup {
   contextType: 'trip' | 'event';
@@ -325,7 +326,7 @@ export default function WhoCanSeeMeScreen() {
             </Pressable>
           </View>
 
-          <NavBarFiller />
+          <PlainBottomFiller />
         </ScrollView>
       )}
     </View>

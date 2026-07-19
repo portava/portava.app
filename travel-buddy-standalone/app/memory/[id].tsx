@@ -24,7 +24,8 @@ import {
 import { useSession } from '../../src/context/SessionContext';
 import { EngagementUserListSheet } from '../../src/components/EngagementUserListSheet';
 import * as ImagePicker from 'expo-image-picker';
-import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -383,7 +384,7 @@ export default function MemoryDetailScreen() {
           </View>
         </View>
 
-        <NavBarFiller />
+        <PlainBottomFiller />
       </ScrollView>
 
       {likerSheetOpen && (

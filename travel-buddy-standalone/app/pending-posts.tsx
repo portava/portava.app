@@ -35,7 +35,8 @@ import {
   changeLocationPrivacy,
   type PendingPostRow,
 } from '../src/services/posts';
-import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../src/hooks/useBottomInset';
 
 function statusLabel(post: PendingPostRow): string {
   switch (post.postStatus) {
@@ -248,7 +249,7 @@ export default function PendingPostsScreen() {
           )}
           onScroll={navBarScrollHandler}
           scrollEventThrottle={16}
-          ListFooterComponent={<NavBarFiller />}
+          ListFooterComponent={<PlainBottomFiller />}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}

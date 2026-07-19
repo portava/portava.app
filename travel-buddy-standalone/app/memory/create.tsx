@@ -17,7 +17,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { X, Camera, ImageIcon, Globe, Users, Lock, Eye, Trash2, MapPin, ChevronDown } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { createMemory, addMemoryItem, type MemoryVisibility } from '../../src/services/memories';
-import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import { placeToLocationFields } from '../../src/lib/location/locationPayload';
 import type { Place } from '../../src/lib/location/placeTypes';
@@ -352,7 +353,7 @@ export default function CreateMemoryScreen() {
 
         {error ? <Text style={s.error}>{error}</Text> : null}
 
-        <NavBarFiller />
+        <PlainBottomFiller />
       </ScrollView>
 
       <GlobalPlacePicker

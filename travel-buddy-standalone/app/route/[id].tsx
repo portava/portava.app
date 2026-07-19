@@ -33,7 +33,8 @@ import { RouteFullMapModal } from '../../src/components/RouteFullMapModal';
 import { SafeReturnSetupSheet } from '../../src/components/safeReturn/SafeReturnSetupSheet';
 import { useLocationContext } from '../../src/context/LocationContext';
 import type { RouteStop, RouteLeg } from '../../src/services/routePlan';
-import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useStickyBarInset } from '../../src/hooks/useBottomInset';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -98,6 +99,7 @@ export default function ActiveRouteScreen() {
 
   const { userId: currentUserId } = useSession();
   const navBarScrollHandler = useNavBarScrollHandler();
+  const { inset: barInset, onBarLayout } = useStickyBarInset();
 
   const { locationState, requestLocation, resolvedLocation } = useLocationContext();
   const [compassExpanded, setCompassExpanded]   = useState(false);
@@ -298,7 +300,7 @@ export default function ActiveRouteScreen() {
       <Stack.Screen options={{ title: plan.title, headerBackTitle: 'Back' }} />
 
       <View style={styles.root}>
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
+        <ScrollView contentContainerStyle={[styles.content, { paddingBottom: barInset }]} showsVerticalScrollIndicator={false} onScroll={navBarScrollHandler} scrollEventThrottle={16}>
           {/* Mini-map — expand opens full-screen modal */}
           <View style={styles.mapWrapper}>
             <RouteMinimapView
@@ -498,11 +500,10 @@ export default function ActiveRouteScreen() {
               </View>
             );
           })}
-          <NavBarFiller />
         </ScrollView>
 
         {/* Action bar */}
-        <View style={styles.actionBar}>
+        <View style={styles.actionBar} onLayout={onBarLayout}>
           {!routeStarted ? (
             <Pressable style={styles.startBtn} onPress={handleStartRoute}>
               <Route size={16} color="#fff" />
@@ -574,7 +575,7 @@ const styles = StyleSheet.create({
   errorText: { ...t.body, color: color.signal, textAlign: 'center' },
   backBtn: { marginTop: space.lg },
   backBtnText: { ...t.bodyStrong, color: color.deep },
-  content: { paddingBottom: 120 },
+  content: {},
   mapWrapper: { margin: space.md },
   progressRow: {
     flexDirection: 'row', alignItems: 'center', gap: space.sm,

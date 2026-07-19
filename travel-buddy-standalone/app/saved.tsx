@@ -20,7 +20,8 @@ import {
   type Collection, type CollectionItem,
 } from '../src/services/collections';
 import { withOptimisticRemoveBool } from '../src/utils/optimisticRemove';
-import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../src/hooks/useBottomInset';
 import {
   Bookmark, FolderPlus, Folder, Trash2, X, ChevronRight,
   ChevronLeft, MapPin, User, Image as ImageIcon, Hash, CalendarDays,
@@ -223,7 +224,7 @@ function CollectionItemsView({ collection, onBack }: CollectionItemsViewProps) {
                   <ActivityIndicator color={color.signal} />
                 </View>
               ) : null}
-              <NavBarFiller />
+              <PlainBottomFiller />
             </>
           }
         />
@@ -462,7 +463,7 @@ export default function SavedScreen() {
                   </Pressable>
                 ))}
               </View>
-              <NavBarFiller />
+              <PlainBottomFiller />
             </ScrollView>
           ) : (
             <FlatList
@@ -488,7 +489,7 @@ export default function SavedScreen() {
                   onRename={col.isDefault ? undefined : () => setRenameTarget(col)}
                 />
               )}
-              ListFooterComponent={<NavBarFiller />}
+              ListFooterComponent={<PlainBottomFiller />}
             />
           )}
         </>

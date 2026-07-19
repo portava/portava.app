@@ -25,7 +25,8 @@ import {
 import type { PassportStampNew, NewStampVisibility } from '../../src/services/stamps';
 import { stampToLegacy, makeStampShareLinks } from '../../src/services/stampShareUtils';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
-import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 
 const RARITY_COLORS: Record<string, string> = {
   common:    '#6B7280',
@@ -231,7 +232,7 @@ function StampDetailContent({
             </Pressable>
           </View>
         )}
-        <NavBarFiller />
+        <PlainBottomFiller />
       </ScrollView>
 
       <View ref={cardRef} style={styles.offscreen} collapsable={false}>
