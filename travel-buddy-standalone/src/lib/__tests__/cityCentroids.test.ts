@@ -346,6 +346,24 @@ describe('getCityCentroid — accent-stripped inputs resolve via alias keys', ()
     assert.ok(Math.abs(lng - 28.8638) < 2, `lng ${lng} implausibly far from Chișinău`);
   });
 
+  it('"goteborg" (no alias) resolves via NFD fallback from "Göteborg"', () => {
+    // 'Goteborg' is NOT an explicit alias key in CITY_CENTROIDS — only 'Göteborg'
+    // exists.  This must resolve via the NFD diacritic-strip tier.
+    const coords = getCityCentroid('goteborg');
+    assert.ok(coords !== undefined, '"goteborg" returned undefined — NFD fallback failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 57.7089) < 2, `lat ${lat} implausibly far from Göteborg`);
+    assert.ok(Math.abs(lng - 11.9746) < 2, `lng ${lng} implausibly far from Göteborg`);
+  });
+
+  it('"GOTEBORG" (uppercase, no alias) resolves via NFD fallback', () => {
+    const coords = getCityCentroid('GOTEBORG');
+    assert.ok(coords !== undefined, '"GOTEBORG" returned undefined — NFD fallback failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 57.7089) < 2, `lat ${lat} implausibly far from Göteborg`);
+    assert.ok(Math.abs(lng - 11.9746) < 2, `lng ${lng} implausibly far from Göteborg`);
+  });
+
   it('accent-stripped and accented forms both resolve to identical coordinates', () => {
     // São Paulo / Sao Paulo
     const accented = getCityCentroid('São Paulo');
