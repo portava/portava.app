@@ -168,7 +168,13 @@ router.get("/calls/active", async (req, res) => {
   if (!auth) return;
   const store = deps().makeStore(auth.client);
   const session = await store.findActiveSessionForUser(auth.user.id);
-  res.json({ session: session ? sessionDto(session) : null });
+  if (!session) return res.json({ session: null });
+  // A restored ring must look like the live call.incoming event: include the
+  // caller's privacy-safe identity when the viewer is not the caller.
+  const caller = session.startedBy !== auth.user.id
+    ? await callerIdentity(auth.client, session.startedBy)
+    : null;
+  return res.json({ session: sessionDto(session), ...(caller ? { caller } : {}) });
 });
 
 // ── Start ────────────────────────────────────────────────────────────────────

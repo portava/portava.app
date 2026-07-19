@@ -96,6 +96,8 @@ function Probe() {
       <Text testID="phase">{s.phase}</Text>
       <Text testID="incoming-call-id">{s.incoming?.callId ?? 'none'}</Text>
       <Text testID="incoming-caller-id">{s.incoming?.caller.id ?? 'none'}</Text>
+      <Text testID="incoming-caller-name">{s.incoming?.caller.name ?? 'null'}</Text>
+      <Text testID="incoming-caller-avatar">{s.incoming?.caller.avatarUrl ?? 'null'}</Text>
     </View>
   );
 }
@@ -140,6 +142,38 @@ describe('incoming call survives an SSE reconnect', () => {
     expect(screen.getByTestId('incoming-caller-id').props.children).toBe(CALLER_ID);
     // A ringing restore must never try to join the room before accept.
     expect(mockJoinCall).not.toHaveBeenCalled();
+  });
+
+  it('the restored banner shows the caller name and photo from the enriched response', async () => {
+    mockGetActiveCall.mockResolvedValue({
+      ok: true,
+      data: {
+        session: ringingSession,
+        caller: { id: CALLER_ID, name: 'Sam Rivera', avatarUrl: 'https://cdn.test/sam.jpg', handle: 'wanderlust_sam' },
+      },
+    });
+    await mountApp();
+
+    await reconnect();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('phase').props.children).toBe('incoming_ringing');
+    });
+    expect(screen.getByTestId('incoming-caller-name').props.children).toBe('Sam Rivera');
+    expect(screen.getByTestId('incoming-caller-avatar').props.children).toBe('https://cdn.test/sam.jpg');
+  });
+
+  it('a response without a caller block still rings with a null-identity banner', async () => {
+    mockGetActiveCall.mockResolvedValue({ ok: true, data: { session: ringingSession } });
+    await mountApp();
+
+    await reconnect();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('phase').props.children).toBe('incoming_ringing');
+    });
+    expect(screen.getByTestId('incoming-caller-name').props.children).toBe('null');
+    expect(screen.getByTestId('incoming-caller-avatar').props.children).toBe('null');
   });
 
   it('the caller of a ringing session does NOT get an incoming banner', async () => {

@@ -283,12 +283,19 @@ export function CallProvider({
           me = data?.user?.id ?? null;
         } catch { me = null; }
         if (!me || session.startedBy === me) return;
+        // GET /calls/active includes the caller's privacy-safe identity when
+        // the viewer is the callee — the restored banner matches call.incoming.
+        const caller = res.ok ? res.data?.caller ?? null : null;
         presentIncoming({
           callId: session.id,
           callType: session.callType,
           contextType: session.contextType,
           threadId: session.threadId,
-          caller: { id: session.startedBy, name: null, avatarUrl: null },
+          caller: {
+            id: session.startedBy,
+            name: caller?.name ?? null,
+            avatarUrl: caller?.avatarUrl ?? null,
+          },
         });
         return;
       }

@@ -91,6 +91,37 @@ function makeFakeAuthClient() {
   } as any;
 }
 
+/**
+ * Fake auth client whose profiles/profile_privacy_settings tables return real
+ * rows for CALLER_ID, so callerIdentity can enrich GET /calls/active.
+ */
+function makeProfileAuthClient(opts: { showRealName: boolean }) {
+  const base = makeFakeAuthClient();
+  const profileRow = {
+    id: CALLER_ID, username: "wanderlust_sam", display_name: "Sam Rivera",
+    name: "Samuel Rivera", avatar_url: "https://cdn.test/sam.jpg",
+  };
+  function tableBuilder(table: string): any {
+    const b: any = new Proxy(function () {}, {
+      get(_t, prop) {
+        if (prop === "then") {
+          const data = table === "profile_privacy_settings" && opts.showRealName
+            ? [{ user_id: CALLER_ID }] : [];
+          return (onF: any) => Promise.resolve({ data, error: null, count: data.length }).then(onF);
+        }
+        if (prop === "maybeSingle" || prop === "single") {
+          return () => Promise.resolve({
+            data: table === "profiles" ? profileRow : null, error: null,
+          });
+        }
+        return () => b;
+      },
+    });
+    return b;
+  }
+  return { ...base, from: (table: string) => tableBuilder(table) } as any;
+}
+
 // ── Fake gateway (permissive defaults; tests override per-case) ─────────────
 
 function makeFakeGateway(overrides: Partial<CallContextGateway> = {}): CallContextGateway {
@@ -409,6 +440,39 @@ describe("call routes", () => {
       assert.equal(r.body.session.id, s.body.session.id);
       assert.equal(r.body.session.status, "ringing");
       assert.equal(r.body.session.startedBy, CALLER_ID, "client uses startedBy to detect it is the callee");
+    });
+
+    it("active includes the caller's identity for the callee on a ringing session", async () => {
+      _setTestClient(makeProfileAuthClient({ showRealName: true }), true);
+      const s = await req("POST", "/api/calls", startBody);
+      assert.equal(s.status, 201);
+      const r = await req("GET", "/api/calls/active", undefined, CALLEE_TOKEN);
+      assert.equal(r.status, 200);
+      assert.equal(r.body.session.status, "ringing");
+      assert.equal(r.body.caller.id, CALLER_ID);
+      assert.equal(r.body.caller.name, "Sam Rivera");
+      assert.equal(r.body.caller.avatarUrl, "https://cdn.test/sam.jpg");
+      assert.equal(r.body.caller.handle, "wanderlust_sam");
+    });
+
+    it("active redacts the caller's name when they have not opted in (privacy rule)", async () => {
+      _setTestClient(makeProfileAuthClient({ showRealName: false }), true);
+      const s = await req("POST", "/api/calls", startBody);
+      assert.equal(s.status, 201);
+      const r = await req("GET", "/api/calls/active", undefined, CALLEE_TOKEN);
+      assert.equal(r.status, 200);
+      assert.equal(r.body.caller.name, null, "name hidden without opt-in");
+      assert.equal(r.body.caller.handle, "wanderlust_sam", "handle still available for the banner");
+      assert.equal(r.body.caller.avatarUrl, "https://cdn.test/sam.jpg", "avatar not affected by name rule");
+    });
+
+    it("active does NOT include a caller block for the caller themself", async () => {
+      const s = await req("POST", "/api/calls", startBody);
+      assert.equal(s.status, 201);
+      const r = await req("GET", "/api/calls/active");
+      assert.equal(r.status, 200);
+      assert.equal(r.body.session.id, s.body.session.id);
+      assert.equal("caller" in r.body, false);
     });
 
     it("GET /:callId returns session + participants for a participant", async () => {
