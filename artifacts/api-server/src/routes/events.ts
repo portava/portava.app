@@ -635,8 +635,17 @@ router.get("/events", async (req, res) => {
   // sensible rows before ranking applies the actionability kernel.
   const RANK_POOL_SIZE = 200;
   let query = sc
+    // perf-trim: explicit column list replaces SELECT * — only columns consumed by formatEvent
+    // and the ranking pipeline are fetched; unused DB columns stay server-side
     .from("events")
-    .select("*")
+    .select(
+      "id, host_id, title, description, location_name, location_lat, location_lng, " +
+      "starts_at, ends_at, cover_url, cover_media_type, max_attendees, age_min, age_max, " +
+      "trust_score_min, verified_only, visibility, state, chat_enabled, chat_thread_id, " +
+      "waitlist_enabled, price_type, price_url, safety_notes, rsvp_options, going_count, " +
+      "waitlist_count, category, city, country, show_exact_location, rsvp_closed, " +
+      "tags, created_at, updated_at",
+    )
     .in("state", state === "all" ? ["open","full","waitlist","started","completed"] : [state])
     .in("visibility", ["public", "friends_only"])
     .order("starts_at", { ascending: true, nullsFirst: false })
@@ -891,9 +900,17 @@ router.get("/events/city/:city", async (req, res) => {
   const offset   = (page - 1) * limit;
   const category = (req.query.category as string) ?? null;
 
+  // perf-trim: explicit column list replaces SELECT * — only formatEvent fields fetched
   let query = sc
     .from("events")
-    .select("*")
+    .select(
+      "id, host_id, title, description, location_name, location_lat, location_lng, " +
+      "starts_at, ends_at, cover_url, cover_media_type, max_attendees, age_min, age_max, " +
+      "trust_score_min, verified_only, visibility, state, chat_enabled, chat_thread_id, " +
+      "waitlist_enabled, price_type, price_url, safety_notes, rsvp_options, going_count, " +
+      "waitlist_count, category, city, country, show_exact_location, rsvp_closed, " +
+      "tags, created_at, updated_at",
+    )
     .not("state", "in", '("draft","cancelled","archived")')
     .in("visibility", ["public","friends_only"])
     .ilike("city", `%${city}%`)
@@ -3295,7 +3312,7 @@ function formatEvent(ev: any, viewerId: string, opts?: { goingRsvp?: boolean; ho
     country:             ev.country ?? null,
     showExactLocation:   ev.show_exact_location ?? false,
     rsvpClosed:          ev.rsvp_closed ?? false,
-    isRecurring:         ev.is_recurring ?? false,
+    // perf-trim: isRecurring omitted — field not present in client EventSummary/EventDetail types
     tags:                ev.tags ?? [],
     isHost,
     createdAt:           ev.created_at,

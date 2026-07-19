@@ -660,7 +660,8 @@ router.get("/pulse", async (req, res) => {
     }
   } catch { /* non-fatal — place cards degrade gracefully */ }
 
-  res.json({ posts: orderedPosts, total: orderedPosts.length, tab, prompts, placeCards, rankedCandidates, sessionId });
+  // perf-trim: rankedCandidates stripped — not rendered by any client component; internal ranking state only
+  res.json({ posts: orderedPosts, total: orderedPosts.length, tab, prompts, placeCards, sessionId });
 });
 
 /* ===========================================================================

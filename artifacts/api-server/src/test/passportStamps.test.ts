@@ -105,6 +105,7 @@ function makeFakeClient(state: FakeState, userId: string) {
       },
       order() { return builder; },
       limit() { return builder; },
+      range() { return builder; },
       maybeSingle() { return resolveSingle(true); },
       single() {
         if (pendingInsert) {
@@ -613,6 +614,7 @@ describe("Passport Stamps — dedup with null city", () => {
           in() { return builder; },
           order() { return builder; },
           limit() { return builder; },
+          range() { return builder; },
           maybeSingle() {
             // Simulate finding existing stamp
             if (table === "passport_stamps") return Promise.resolve({ data: { id: "existing-plan-stamp" }, error: null });
@@ -654,6 +656,7 @@ describe("Passport Stamps — dedup with null city", () => {
           in() { return builder; },
           order() { return builder; },
           limit() { return builder; },
+          range() { return builder; },
           maybeSingle() {
             // No existing stamp found / no prefs
             return Promise.resolve({ data: null, error: null });

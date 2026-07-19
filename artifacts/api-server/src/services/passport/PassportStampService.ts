@@ -205,18 +205,25 @@ export async function loadStamps(
     city?: string;
     stampType?: string;
     visibility?: VisibilityTier;
+    /** Number of stamps to return. Default 100, max 200. */
+    limit?: number;
+    /** Zero-based offset for pagination. Default 0. */
+    offset?: number;
   } = {},
 ): Promise<any[]> {
+  const limit  = Math.min(200, Math.max(1, filters.limit  ?? 100));
+  const offset = Math.max(0, filters.offset ?? 0);
+
   let query = db
     .from("passport_stamps")
     .select("id, stamp_type, country, city, neighborhood, place_id, plan_id, trip_id, source_type, verification_level, visibility, earned_at, created_at")
     .eq("user_id", userId)
     .order("earned_at", { ascending: false })
-    .limit(200);
+    .range(offset, offset + limit - 1);
 
-  if (filters.country) query = (query as any).eq("country", filters.country);
-  if (filters.city) query = (query as any).eq("city", filters.city);
-  if (filters.stampType) query = (query as any).eq("stamp_type", filters.stampType);
+  if (filters.country)    query = (query as any).eq("country",    filters.country);
+  if (filters.city)       query = (query as any).eq("city",       filters.city);
+  if (filters.stampType)  query = (query as any).eq("stamp_type", filters.stampType);
   if (filters.visibility) query = (query as any).eq("visibility", filters.visibility);
 
   const { data, error } = await query;

@@ -115,8 +115,11 @@ const patchVisibilityPrefsSchema = z.object({
 
 /**
  * GET /me/passport/stamps
- * Returns the caller's stamps with optional filters.
- * ?country= ?city= ?type= ?visibility=
+ * Returns the caller's stamps with optional filters and pagination.
+ * ?country= ?city= ?type= ?visibility= ?limit= ?offset=
+ *
+ * Pagination: limit defaults to 100 (max 200), offset defaults to 0.
+ * Response: { stamps: Stamp[], total: number }
  */
 router.get("/me/passport/stamps", async (req, res) => {
   if (!await isFlagEnabled("passport_stamps_enabled")) {
@@ -128,32 +131,52 @@ router.get("/me/passport/stamps", async (req, res) => {
   if (!auth) return;
   const { client, user } = auth;
 
+  // perf-trim: pagination added — limit defaults to 100 (max 200) to cap page size
+  const limitVal  = Math.min(200, Math.max(1, parseInt(String(req.query.limit  ?? "100"), 10) || 100));
+  const offsetVal = Math.max(0,              parseInt(String(req.query.offset ?? "0"),   10) || 0);
+
   const filters: Record<string, string> = {};
-  if (req.query.country) filters.country = String(req.query.country);
-  if (req.query.city) filters.city = String(req.query.city);
-  if (req.query.type) filters.stampType = String(req.query.type);
+  if (req.query.country)    filters.country    = String(req.query.country);
+  if (req.query.city)       filters.city       = String(req.query.city);
+  if (req.query.type)       filters.stampType  = String(req.query.type);
   if (req.query.visibility) filters.visibility = String(req.query.visibility) as VisibilityTier;
 
-  const rows = await loadStamps(client, user.id, filters as any);
+  // Total count (before pagination) — uses the same DB-level filters
+  let total = 0;
+  try {
+    let cq = client
+      .from("passport_stamps")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id);
+    if (filters.country)    cq = (cq as any).eq("country",    filters.country);
+    if (filters.city)       cq = (cq as any).eq("city",       filters.city);
+    if (filters.stampType)  cq = (cq as any).eq("stamp_type", filters.stampType);
+    if (filters.visibility) cq = (cq as any).eq("visibility", filters.visibility);
+    const { count } = await cq;
+    total = count ?? 0;
+  } catch { /* non-fatal — total defaults to 0 */ }
+
+  const rows = await loadStamps(client, user.id, { ...filters, limit: limitVal, offset: offsetVal } as any);
   // Owner sees all their own stamps
   const stamps = filterStamps(rows as any, "owner");
 
   res.json({
     stamps: stamps.map((s) => ({
-      id: s.id,
-      stampType: s.stamp_type,
-      country: s.country,
-      city: s.city,
-      neighborhood: s.neighborhood,
-      placeId: s.place_id,
-      planId: s.plan_id,
-      tripId: s.trip_id,
-      sourceType: s.source_type,
+      id:                s.id,
+      stampType:         s.stamp_type,
+      country:           s.country,
+      city:              s.city,
+      neighborhood:      s.neighborhood,
+      placeId:           s.place_id,
+      planId:            s.plan_id,
+      tripId:            s.trip_id,
+      sourceType:        s.source_type,
       verificationLevel: s.verification_level,
-      visibility: s.visibility,
-      earnedAt: s.earned_at,
-      createdAt: s.created_at,
+      visibility:        s.visibility,
+      earnedAt:          s.earned_at,
+      createdAt:         s.created_at,
     })),
+    total,
   });
 });
 

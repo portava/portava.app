@@ -1187,9 +1187,15 @@ router.get("/trips/:tripId/plan", async (req, res) => {
   const editAllowed = await canEditPlan(client, tripId, user.id);
   const canEdit = editAllowed === true;
 
+  // perf-trim: explicit column list replaces SELECT * — only columns consumed by toCamel()
+  // are fetched; removed_at is a filter (WHERE), not needed in the result set
   const { data, error } = await client
     .from("trip_plan_items")
-    .select("*")
+    .select(
+      "id, trip_id, creator_id, title, category, status, source_type, source_id, " +
+      "day_date, starts_at, ends_at, location_name, notes, sort_order, visibility, " +
+      "location_is_private, lat, lng, created_at, updated_at",
+    )
     .eq("trip_id", tripId)
     .is("removed_at", null)
     .order("day_date", { ascending: true, nullsFirst: false })
@@ -1198,7 +1204,9 @@ router.get("/trips/:tripId/plan", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "get trip plan"); sendError(res, "db_error", error.message); return; }
 
-  const rows = data ?? [];
+  // Cast to any[] — explicit SELECT string causes Supabase TS to infer GenericStringError
+  // for narrowed column sets; the DB-side trim is still in effect at runtime.
+  const rows = (data as any[]) ?? [];
 
   // Fetch cancelled meetup IDs for cancelled_source advisory warning
   const meetupSourceIds = rows
