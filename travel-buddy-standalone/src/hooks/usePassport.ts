@@ -21,6 +21,12 @@ export interface PassportState {
   suggestions: PassportMemory[];
   loading: boolean;
   error: string | null;
+  /** Server-reported total stamp count — the pagination sentinel. */
+  stampsTotal: number;
+  /** True while a next-page stamps fetch is in flight. */
+  loadingMoreStamps: boolean;
+  /** Fetch the next page of stamps (no-op when all loaded or already fetching). */
+  loadMoreStamps: () => void;
   reload: () => void;
   /** Ref stamped with Date.now() only after a successful fetch. Stays 0 until
    *  the first successful load. Screens use this for focus-TTL guards so that
@@ -44,6 +50,13 @@ export function usePassport(): PassportState {
   const [suggestions, setSuggestions] = useState<PassportMemory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [stampsTotal, setStampsTotal] = useState(0);
+  const [loadingMoreStamps, setLoadingMoreStamps] = useState(false);
+  // Refs mirror stamps/total so loadMoreStamps has no stale closures and can
+  // guard against concurrent fetches.
+  const stampsRef = useRef<PassportStamp[]>([]);
+  const stampsTotalRef = useRef(0);
+  const loadingMoreRef = useRef(false);
   const [tick, setTick] = useState(0);
   // Ref tracks whether we already have data — always current, no stale closure.
   const hasDataRef = useRef(false);
@@ -59,6 +72,35 @@ export function usePassport(): PassportState {
 
   const reload = useCallback(() => setTick((t) => t + 1), []);
 
+  const loadMoreStamps = useCallback(() => {
+    if (loadingMoreRef.current) return;
+    // Sentinel: server-reported total. When we already have everything, stop.
+    if (stampsRef.current.length >= stampsTotalRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMoreStamps(true);
+    getMyStamps(stampsRef.current.length)
+      .then((res) => {
+        if (res.ok && res.data && res.data.length > 0) {
+          stampsRef.current = [...stampsRef.current, ...res.data];
+          setStamps(stampsRef.current);
+        }
+        if (typeof res.total === 'number') {
+          stampsTotalRef.current = res.total;
+          setStampsTotal(res.total);
+        } else if (!res.ok || !res.data || res.data.length === 0) {
+          // Defensive: an empty/failed page without a total would otherwise
+          // retry forever — clamp the sentinel to what we have.
+          stampsTotalRef.current = stampsRef.current.length;
+          setStampsTotal(stampsRef.current.length);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        loadingMoreRef.current = false;
+        setLoadingMoreStamps(false);
+      });
+  }, []);
+
   // Stale-while-revalidate: pre-populate from AsyncStorage so the passport
   // content paints immediately on second+ opens before the network resolves.
   const { snapshot: passportSnapshot, save: savePassportSnapshot } = useSnapshotCache<PassportSnapshot>('passport');
@@ -70,6 +112,9 @@ export function usePassport(): PassportState {
     setProfile(passportSnapshot.profile);
     setPostcards(passportSnapshot.postcards);
     setStamps(passportSnapshot.stamps);
+    stampsRef.current = passportSnapshot.stamps;
+    stampsTotalRef.current = passportSnapshot.stamps.length;
+    setStampsTotal(passportSnapshot.stamps.length);
     setMemories(passportSnapshot.memories);
     setLoading(false);
   }, [passportSnapshot]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -139,6 +184,9 @@ export function usePassport(): PassportState {
           setProfile(mockProfile);
           setPostcards([]);
           setStamps(mock.stamps ?? []);
+          stampsRef.current = mock.stamps ?? [];
+          stampsTotalRef.current = stampsRef.current.length;
+          setStampsTotal(stampsRef.current.length);
           setMemories([]);
           setSuggestions([]);
           lastLoadedAt.current = Date.now();
@@ -165,7 +213,12 @@ export function usePassport(): PassportState {
         setError(pRes.message ?? 'Could not load profile');
       }
       setPostcards(pcRes.ok ? (pcRes.data ?? []) : []);
-      setStamps(stRes.ok ? (stRes.data ?? []) : []);
+      const firstPage = stRes.ok ? (stRes.data ?? []) : [];
+      setStamps(firstPage);
+      stampsRef.current = firstPage;
+      const total = stRes.ok && typeof stRes.total === 'number' ? stRes.total : firstPage.length;
+      stampsTotalRef.current = total;
+      setStampsTotal(total);
       setMemories(memRes.ok ? memRes.data : []);
       setSuggestions(sugRes.ok ? sugRes.data : []);
       setLoading(false);
@@ -188,5 +241,5 @@ export function usePassport(): PassportState {
     return () => { alive = false; };
   }, [tick]);
 
-  return { profile, postcards, stamps, memories, suggestions, loading, error, reload, lastLoadedAt };
+  return { profile, postcards, stamps, memories, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, reload, lastLoadedAt };
 }

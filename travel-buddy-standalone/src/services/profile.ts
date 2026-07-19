@@ -362,19 +362,24 @@ export async function getPublicPostcards(username: string): Promise<ProfileResul
 
 /* ---------- Own stamps ---------- */
 
-export async function getMyStamps(): Promise<ProfileResult<PassportStamp[]>> {
+/** ProfileResult plus the server-reported total stamp count (pagination sentinel). */
+export type StampsPageResult = ProfileResult<PassportStamp[]> & { total?: number };
+
+export async function getMyStamps(offset = 0): Promise<StampsPageResult> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
   const token = await freshToken();
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated', message: 'Please sign in' };
 
   try {
-    // perf-trim: request first page (limit=100) via paginated endpoint; total available via body.total
-    const res = await fetch(`${apiBase()}/api/me/passport/stamps?limit=100`, {
+    // perf-trim: paginated endpoint — limit=100 per page; body.total is the
+    // authoritative sentinel for infinite scroll (no heuristics).
+    const res = await fetch(`${apiBase()}/api/me/passport/stamps?limit=100&offset=${offset}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) return { ok: true, data: [] };
     const body = await res.json();
-    return { ok: true, data: body.stamps ?? [] };
+    const stamps: PassportStamp[] = body.stamps ?? [];
+    return { ok: true, data: stamps, total: typeof body.total === 'number' ? body.total : stamps.length };
   } catch {
     return { ok: true, data: [] };
   }

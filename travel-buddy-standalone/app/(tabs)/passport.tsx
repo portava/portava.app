@@ -57,7 +57,7 @@ import { resolveAvailabilityChip } from '../../src/lib/availabilityChip';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 
 export default function PassportScreen() {
-  const { profile, postcards, stamps, memories, suggestions, loading, error, reload, lastLoadedAt } = usePassport();
+  const { profile, postcards, stamps, memories, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, reload, lastLoadedAt } = usePassport();
   const { markFirstContent, epoch } = useScreenTiming('Passport');
   const { userId: ownUserId } = useSession();
   const [tab, setTab] = useState<PassportTabKey>('postcards');
@@ -252,6 +252,9 @@ export default function PassportScreen() {
         handleEditProfile={handleEditProfile}
         handleViewAsPublic={handleViewAsPublic}
         reload={reload}
+        stampsTotal={stampsTotal}
+        loadingMoreStamps={loadingMoreStamps}
+        loadMoreStamps={loadMoreStamps}
         lastLoadedAt={lastLoadedAt}
         insets={insets}
         hasHighlights={hasOwnHighlights}
@@ -323,7 +326,8 @@ function PassportContent({
   profile, postcards, stamps, memories, trips, tab, setTab,
   menuOpen, setMenuOpen,
   openSettings, actions, handleEditProfile, handleViewAsPublic,
-  reload, lastLoadedAt, insets, hasHighlights, allHighlightsViewed, highlights,
+  reload, stampsTotal, loadingMoreStamps, loadMoreStamps,
+  lastLoadedAt, insets, hasHighlights, allHighlightsViewed, highlights,
   onHighlightRingPress, onNewHighlightPress, onHighlightBubblePress, onAddPostcard,
   stampsViewOpen, setStampsViewOpen, verificationLevels, noSafetyFlags, cardRef, share, sharing,
   sectionOrder, onArrangeSections, tabOrder, onArrangeTabs,
@@ -341,6 +345,12 @@ function PassportContent({
   handleEditProfile: () => void;
   handleViewAsPublic: () => void;
   reload: () => void;
+  /** Server-reported total stamp count (pagination sentinel). */
+  stampsTotal: number;
+  /** True while a next stamps page is being fetched. */
+  loadingMoreStamps: boolean;
+  /** Fetch the next page of stamps (no-op when all loaded). */
+  loadMoreStamps: () => void;
   /** Ref from usePassport stamped only on successful fetch — used for focus TTL. */
   lastLoadedAt: React.MutableRefObject<number>;
   insets: { top: number; bottom: number };
@@ -435,10 +445,26 @@ function PassportContent({
   const navScrollHandler = useNavBarScrollHandler();
   const bottomInset = useBottomInset();
   const [statsIconOnly, setStatsIconOnly] = useState(false);
+  // Filled by StampsTab with its load-more function (paginated grid data).
+  const stampsLoadMoreRef = React.useRef<(() => void) | null>(null);
   const handleScroll = useCallback((e: any) => {
     navScrollHandler(e);
     setStatsIconOnly(e.nativeEvent.contentOffset.y > 60);
-  }, [navScrollHandler]);
+    // Infinite scroll for passport stamps: when the stamps tab is active and
+    // the user nears the bottom, fetch the next page. Both load-more paths
+    // guard themselves (in-flight + stamps.length === total sentinel), so
+    // calling them on every near-bottom scroll event is safe.
+    if (tab === 'stamps') {
+      const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
+      if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 400) {
+        // Grid data rendered by StampsTab (v2 stamps with artwork).
+        stampsLoadMoreRef.current?.();
+        // usePassport legacy stamp list — keeps destination grouping and the
+        // stamp-collection preview complete for users with >100 stamps.
+        loadMoreStamps();
+      }
+    }
+  }, [navScrollHandler, tab, loadMoreStamps]);
 
   const renderTabsSection = () => (
     <>
@@ -480,8 +506,12 @@ function PassportContent({
         {tab === 'stamps' && (
           <StampsTab
             stamps={[]}
-            viewingUsername={profile.username ?? undefined}
+            // Owner mode: no viewingUsername so StampsTab uses the paginated
+            // /stamps/me path (a truthy username forces the public-profile
+            // fetch and disables load-more).
+            isOwner
             viewingUserId={profile.id}
+            loadMoreRef={stampsLoadMoreRef}
           />
         )}
         {tab === 'map' && (

@@ -120,6 +120,9 @@ export function makePassportMock(overrides: PassportMockOverrides = {}): Passpor
     suggestions:  overrides.suggestions  ?? [],
     loading:      overrides.loading      ?? false,
     error:        overrides.error        ?? null,
+    stampsTotal:  0,
+    loadingMoreStamps: false,
+    loadMoreStamps: noop,
     reload:       overrides.reload       ?? noop,
     // Default to { current: 0 } — represents "never loaded", which makes the
     // focus-TTL guard treat the first focus as stale.  Tests that want
