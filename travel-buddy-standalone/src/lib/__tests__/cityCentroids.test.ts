@@ -675,3 +675,92 @@ describe('getCityCentroid — NFD diacritic-strip fallback (no explicit alias ke
     assert.equal(getCityCentroid('springfield'), undefined);
   });
 });
+
+describe('getCityCentroid — Nordic and Eastern European diacritic ↔ ASCII equivalence', () => {
+  /**
+   * For cities whose official names include Nordic or Eastern European
+   * diacritics, both the accented form and the ASCII-stripped form must
+   * resolve to exactly the same coordinates.  Partner APIs and user input
+   * commonly omit diacritics, so both spellings must be present.
+   */
+
+  it('Göteborg and Goteborg resolve to identical coordinates', () => {
+    const accented = getCityCentroid('Göteborg');
+    const stripped = getCityCentroid('Goteborg');
+    assert.ok(accented !== undefined, '"Göteborg" should resolve');
+    assert.ok(stripped !== undefined, '"Goteborg" should resolve');
+    assert.deepEqual(accented, stripped, 'Göteborg and Goteborg must have identical coordinates');
+  });
+
+  it('Gdańsk and Gdansk resolve to identical coordinates', () => {
+    const accented = getCityCentroid('Gdańsk');
+    const stripped = getCityCentroid('Gdansk');
+    assert.ok(accented !== undefined, '"Gdańsk" should resolve');
+    assert.ok(stripped !== undefined, '"Gdansk" should resolve');
+    assert.deepEqual(accented, stripped, 'Gdańsk and Gdansk must have identical coordinates');
+  });
+
+  it('Malmö and Malmo resolve to identical coordinates', () => {
+    const accented = getCityCentroid('Malmö');
+    const stripped = getCityCentroid('Malmo');
+    assert.ok(accented !== undefined, '"Malmö" should resolve');
+    assert.ok(stripped !== undefined, '"Malmo" should resolve');
+    assert.deepEqual(accented, stripped, 'Malmö and Malmo must have identical coordinates');
+  });
+
+  it('Reykjavík and Reykjavik resolve to identical coordinates', () => {
+    const accented = getCityCentroid('Reykjavík');
+    const stripped = getCityCentroid('Reykjavik');
+    assert.ok(accented !== undefined, '"Reykjavík" should resolve');
+    assert.ok(stripped !== undefined, '"Reykjavik" should resolve');
+    assert.deepEqual(accented, stripped, 'Reykjavík and Reykjavik must have identical coordinates');
+  });
+
+  it('"göteborg" (lowercase, accented) resolves to Göteborg centroid', () => {
+    const coords = getCityCentroid('göteborg');
+    assert.ok(coords !== undefined, '"göteborg" returned undefined — lowercase diacritic lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 57.7089) < 2, `lat ${lat} implausibly far from Göteborg`);
+    assert.ok(Math.abs(lng - 11.9746) < 2, `lng ${lng} implausibly far from Göteborg`);
+  });
+
+  it('"goteborg" (lowercase, ASCII) resolves to Göteborg centroid via NFD fallback', () => {
+    const coords = getCityCentroid('goteborg');
+    assert.ok(coords !== undefined, '"goteborg" returned undefined — NFD diacritic-strip fallback failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 57.7089) < 2, `lat ${lat} implausibly far from Göteborg`);
+    assert.ok(Math.abs(lng - 11.9746) < 2, `lng ${lng} implausibly far from Göteborg`);
+  });
+
+  it('"gdańsk" (lowercase, accented) resolves to Gdańsk centroid', () => {
+    const coords = getCityCentroid('gdańsk');
+    assert.ok(coords !== undefined, '"gdańsk" returned undefined — lowercase diacritic lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 54.3520) < 2, `lat ${lat} implausibly far from Gdańsk`);
+    assert.ok(Math.abs(lng - 18.6466) < 2, `lng ${lng} implausibly far from Gdańsk`);
+  });
+
+  it('"gdansk" (lowercase, ASCII) resolves to Gdańsk centroid', () => {
+    const coords = getCityCentroid('gdansk');
+    assert.ok(coords !== undefined, '"gdansk" returned undefined — ASCII alias lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 54.3520) < 2, `lat ${lat} implausibly far from Gdańsk`);
+    assert.ok(Math.abs(lng - 18.6466) < 2, `lng ${lng} implausibly far from Gdańsk`);
+  });
+
+  it('"malmö" (lowercase, accented) resolves to Malmö centroid', () => {
+    const coords = getCityCentroid('malmö');
+    assert.ok(coords !== undefined, '"malmö" returned undefined — lowercase diacritic lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 55.6050) < 2, `lat ${lat} implausibly far from Malmö`);
+    assert.ok(Math.abs(lng - 13.0038) < 2, `lng ${lng} implausibly far from Malmö`);
+  });
+
+  it('"malmo" (lowercase, ASCII) resolves to Malmö centroid', () => {
+    const coords = getCityCentroid('malmo');
+    assert.ok(coords !== undefined, '"malmo" returned undefined — ASCII alias lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 55.6050) < 2, `lat ${lat} implausibly far from Malmö`);
+    assert.ok(Math.abs(lng - 13.0038) < 2, `lng ${lng} implausibly far from Malmö`);
+  });
+});
