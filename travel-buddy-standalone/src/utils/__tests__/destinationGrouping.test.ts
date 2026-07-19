@@ -239,4 +239,25 @@ describe('groupByDestination', () => {
     );
     assert.equal(result.length, 0);
   });
+
+  it('merges a memory and trip that share an accented city in different Unicode forms (NFC vs NFD)', () => {
+    // 'Bogotá' in NFC (precomposed U+00E1) vs NFD (a + combining U+0301) —
+    // visually identical but different byte sequences.  groupByDestination must
+    // normalise to NFC before keying so they land in the same group.
+    const nfcCity = 'Bogot\u00E1';        // precomposed á
+    const nfdCity = 'Bogota\u0301';       // a + combining acute accent
+    assert.notEqual(nfcCity, nfdCity, 'pre-condition: raw strings differ');
+
+    const result = groupByDestination(
+      [makeMemory({ id: 'm-bog', city: nfcCity, country: 'CO' })],
+      [],
+      [],
+      [makeTrip({ id: 't-bog', destinationCity: nfdCity, destinationCountry: 'CO' })],
+    );
+
+    assert.equal(result.length, 1, 'NFC and NFD forms of the same city must merge into one group');
+    assert.equal(result[0].memories.length, 1);
+    assert.equal(result[0].trips.length, 1);
+    assert.equal(result[0].totalCount, 2);
+  });
 });

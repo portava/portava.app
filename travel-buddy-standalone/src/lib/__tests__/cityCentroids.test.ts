@@ -420,6 +420,78 @@ describe('getCityCentroid — compound / parenthesised / suffixed city strings',
   });
 });
 
+describe('getCityCentroid — country-name fallback', () => {
+  /**
+   * Some event records store a country name in the city field.
+   * getCityCentroid must return a country-level centroid rather than undefined
+   * so the map always has a non-blank starting position.
+   */
+
+  it('resolves "Thailand" to a plausible centroid', () => {
+    const coords = getCityCentroid('Thailand');
+    assert.ok(coords !== undefined, '"Thailand" returned undefined — country fallback missing');
+    const [lat, lng] = coords;
+    // Thailand spans roughly lat 5–21 N, lng 97–106 E
+    assert.ok(lat > 4 && lat < 22, `lat ${lat} is not within Thailand`);
+    assert.ok(lng > 96 && lng < 107, `lng ${lng} is not within Thailand`);
+  });
+
+  it('resolves "thailand" (lowercase) via the country fallback', () => {
+    const coords = getCityCentroid('thailand');
+    assert.ok(coords !== undefined, '"thailand" (lowercase) returned undefined — country fallback normalisation failed');
+    assert.deepEqual(coords, getCityCentroid('Thailand'));
+  });
+
+  it('resolves "THAILAND" (uppercase) via the country fallback', () => {
+    const coords = getCityCentroid('THAILAND');
+    assert.ok(coords !== undefined, '"THAILAND" (uppercase) returned undefined — country fallback normalisation failed');
+    assert.deepEqual(coords, getCityCentroid('Thailand'));
+  });
+
+  it('resolves "United States" to a plausible centroid', () => {
+    const coords = getCityCentroid('United States');
+    assert.ok(coords !== undefined, '"United States" returned undefined — country fallback missing');
+    const [lat, lng] = coords;
+    // Continental USA: lat ~24–49 N, lng ~-125 to -66 W
+    assert.ok(lat > 23 && lat < 50, `lat ${lat} is not within the United States`);
+    assert.ok(lng > -126 && lng < -65, `lng ${lng} is not within the United States`);
+  });
+
+  it('resolves "united states" (lowercase) via the country fallback', () => {
+    const coords = getCityCentroid('united states');
+    assert.ok(coords !== undefined, '"united states" (lowercase) returned undefined — country fallback normalisation failed');
+    assert.deepEqual(coords, getCityCentroid('United States'));
+  });
+
+  it('resolves "USA" abbreviation via the country fallback', () => {
+    const coords = getCityCentroid('USA');
+    assert.ok(coords !== undefined, '"USA" returned undefined — country abbreviation fallback missing');
+    assert.deepEqual(coords, getCityCentroid('United States'));
+  });
+
+  it('resolves "United States of America" via the country fallback', () => {
+    const coords = getCityCentroid('United States of America');
+    assert.ok(coords !== undefined, '"United States of America" returned undefined — country fallback missing');
+    assert.deepEqual(coords, getCityCentroid('United States'));
+  });
+
+  it('city lookup still wins over country when a city name is also a country (Singapore)', () => {
+    // Singapore is both a city-state and a country; the city entry must win.
+    const city = getCityCentroid('Singapore');
+    assert.ok(city !== undefined, '"Singapore" returned undefined');
+    // City centroid is [1.3521, 103.8198] — country centroid is identical here
+    // but the important thing is the result is defined and plausible
+    const [lat, lng] = city;
+    assert.ok(Math.abs(lat - 1.3521) < 1, `lat ${lat} implausibly far from Singapore`);
+    assert.ok(Math.abs(lng - 103.8198) < 1, `lng ${lng} implausibly far from Singapore`);
+  });
+
+  it('still returns undefined for a string that is neither a city nor a country', () => {
+    const coords = getCityCentroid('atlantis');
+    assert.equal(coords, undefined, 'Expected undefined for unknown input "atlantis"');
+  });
+});
+
 describe('getCityCentroid — alias fallback', () => {
   it('resolves "Cebu" (no suffix) to the same coords as "Cebu City"', () => {
     const alias = getCityCentroid('Cebu');

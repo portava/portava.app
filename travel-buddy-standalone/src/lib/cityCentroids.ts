@@ -282,6 +282,157 @@ export const CITY_CENTROIDS: Record<string, [number, number]> = {
 };
 
 /**
+ * Country-level centroids — a last-resort fallback for event records that
+ * store a country name (e.g. "Thailand", "United States") in the city field
+ * instead of an actual city.  These values are approximate geographic centres
+ * of the country, sufficient to give the map a non-blank starting position.
+ *
+ * Keys are common English country names (and a few ISO-3166 short forms).
+ * The lookup is case-insensitive via the same normalisation applied to cities.
+ */
+export const COUNTRY_CENTROIDS: Record<string, [number, number]> = {
+  // ── Asia ─────────────────────────────────────────────────────────────────────
+  'Afghanistan':            [33.9391,   67.7100],
+  'Bangladesh':             [23.6850,   90.3563],
+  'Cambodia':               [12.5657,  104.9910],
+  'China':                  [35.8617,  104.1954],
+  'India':                  [20.5937,   78.9629],
+  'Indonesia':              [-0.7893,  113.9213],
+  'Japan':                  [36.2048,  138.2529],
+  'Kazakhstan':             [48.0196,   66.9237],
+  'Laos':                   [19.8563,  102.4955],
+  'Malaysia':               [ 4.2105,  101.9758],
+  'Mongolia':               [46.8625,  103.8467],
+  'Myanmar':                [21.9162,   95.9560],
+  'Nepal':                  [28.3949,   84.1240],
+  'North Korea':            [40.3399,  127.5101],
+  'Pakistan':               [30.3753,   69.3451],
+  'Philippines':            [12.8797,  121.7740],
+  'Singapore':              [ 1.3521,  103.8198],
+  'South Korea':            [35.9078,  127.7669],
+  'Sri Lanka':              [ 7.8731,   80.7718],
+  'Taiwan':                 [23.6978,  120.9605],
+  'Thailand':               [15.8700,  100.9925],
+  'Vietnam':                [14.0583,  108.2772],
+  // ── Middle East ──────────────────────────────────────────────────────────────
+  'Bahrain':                [26.0275,   50.5500],
+  'Iran':                   [32.4279,   53.6880],
+  'Iraq':                   [33.2232,   43.6793],
+  'Israel':                 [31.0461,   34.8516],
+  'Jordan':                 [30.5852,   36.2384],
+  'Kuwait':                 [29.3117,   47.4818],
+  'Lebanon':                [33.8547,   35.8623],
+  'Oman':                   [21.4735,   55.9754],
+  'Qatar':                  [25.3548,   51.1839],
+  'Saudi Arabia':           [23.8859,   45.0792],
+  'Syria':                  [34.8021,   38.9968],
+  'Turkey':                 [38.9637,   35.2433],
+  'UAE':                    [23.4241,   53.8478],
+  'United Arab Emirates':   [23.4241,   53.8478],
+  'Yemen':                  [15.5527,   48.5164],
+  // ── Europe ───────────────────────────────────────────────────────────────────
+  'Albania':                [41.1533,   20.1683],
+  'Austria':                [47.5162,   14.5501],
+  'Belgium':                [50.5039,    4.4699],
+  'Bosnia and Herzegovina': [43.9159,   17.6791],
+  'Bulgaria':               [42.7339,   25.4858],
+  'Croatia':                [45.1000,   15.2000],
+  'Cyprus':                 [35.1264,   33.4299],
+  'Czech Republic':         [49.8175,   15.4730],
+  'Czechia':                [49.8175,   15.4730],
+  'Denmark':                [56.2639,    9.5018],
+  'Estonia':                [58.5953,   25.0136],
+  'Finland':                [61.9241,   25.7482],
+  'France':                 [46.2276,    2.2137],
+  'Germany':                [51.1657,   10.4515],
+  'Greece':                 [39.0742,   21.8243],
+  'Hungary':                [47.1625,   19.5033],
+  'Iceland':                [64.9631,  -19.0208],
+  'Ireland':                [53.1424,   -7.6921],
+  'Italy':                  [41.8719,   12.5674],
+  'Kosovo':                 [42.6026,   20.9030],
+  'Latvia':                 [56.8796,   24.6032],
+  'Lithuania':              [55.1694,   23.8813],
+  'Luxembourg':             [49.8153,    6.1296],
+  'Malta':                  [35.9375,   14.3754],
+  'Moldova':                [47.4116,   28.3699],
+  'Montenegro':             [42.7087,   19.3744],
+  'Netherlands':            [52.1326,    5.2913],
+  'North Macedonia':        [41.6086,   21.7453],
+  'Norway':                 [60.4720,    8.4689],
+  'Poland':                 [51.9194,   19.1451],
+  'Portugal':               [39.3999,   -8.2245],
+  'Romania':                [45.9432,   24.9668],
+  'Russia':                 [61.5240,  105.3188],
+  'Serbia':                 [44.0165,   21.0059],
+  'Slovakia':               [48.6690,   19.6990],
+  'Slovenia':               [46.1512,   14.9955],
+  'Spain':                  [40.4637,   -3.7492],
+  'Sweden':                 [60.1282,   18.6435],
+  'Switzerland':            [46.8182,    8.2275],
+  'Ukraine':                [48.3794,   31.1656],
+  'United Kingdom':         [55.3781,   -3.4360],
+  'UK':                     [55.3781,   -3.4360],
+  // ── Africa ───────────────────────────────────────────────────────────────────
+  'Algeria':                [28.0339,    1.6596],
+  'Angola':                 [-11.2027,  17.8739],
+  'Cameroon':               [ 7.3697,   12.3547],
+  'Democratic Republic of the Congo': [-4.0383, 21.7587],
+  'DR Congo':               [-4.0383,   21.7587],
+  'DRC':                    [-4.0383,   21.7587],
+  'Egypt':                  [26.8206,   30.8025],
+  'Ethiopia':               [ 9.1450,   40.4897],
+  'Ghana':                  [ 7.9465,   -1.0232],
+  'Ivory Coast':            [ 7.5400,   -5.5471],
+  "Côte d'Ivoire":          [ 7.5400,   -5.5471],
+  'Kenya':                  [-0.0236,   37.9062],
+  'Morocco':                [31.7917,   -7.0926],
+  'Mozambique':             [-18.6657,  35.5296],
+  'Nigeria':                [ 9.0820,    8.6753],
+  'Rwanda':                 [-1.9403,   29.8739],
+  'Senegal':                [14.4974,  -14.4524],
+  'South Africa':           [-30.5595,  22.9375],
+  'Sudan':                  [12.8628,   30.2176],
+  'Tanzania':               [-6.3690,   34.8888],
+  'Tunisia':                [33.8869,    9.5375],
+  'Uganda':                 [ 1.3733,   32.2903],
+  'Zambia':                 [-13.1339,  27.8493],
+  'Zimbabwe':               [-19.0154,  29.1549],
+  // ── Americas ─────────────────────────────────────────────────────────────────
+  'Argentina':              [-38.4161,  -63.6167],
+  'Bolivia':                [-16.2902,  -63.5887],
+  'Brazil':                 [-14.2350,  -51.9253],
+  'Canada':                 [56.1304,   -106.3468],
+  'Chile':                  [-35.6751,  -71.5430],
+  'Colombia':               [ 4.5709,   -74.2973],
+  'Costa Rica':             [ 9.7489,   -83.7534],
+  'Cuba':                   [21.5218,   -77.7812],
+  'Dominican Republic':     [18.7357,   -70.1627],
+  'Ecuador':                [-1.8312,   -78.1834],
+  'El Salvador':            [13.7942,   -88.8965],
+  'Guatemala':              [15.7835,   -90.2308],
+  'Honduras':               [15.2000,   -86.2419],
+  'Jamaica':                [18.1096,   -77.2975],
+  'Mexico':                 [23.6345,   -102.5528],
+  'Nicaragua':              [12.8654,   -85.2072],
+  'Panama':                 [ 8.5380,   -80.7821],
+  'Paraguay':               [-23.4425,  -58.4438],
+  'Peru':                   [-9.1900,   -75.0152],
+  'Puerto Rico':            [18.2208,   -66.5901],
+  'Trinidad and Tobago':    [10.6918,   -61.2225],
+  'United States':          [37.0902,   -95.7129],
+  'United States of America': [37.0902, -95.7129],
+  'USA':                    [37.0902,   -95.7129],
+  'Uruguay':                [-32.5228,  -55.7658],
+  'Venezuela':              [ 6.4238,   -66.5897],
+  // ── Oceania ──────────────────────────────────────────────────────────────────
+  'Australia':              [-25.2744,  133.7751],
+  'Fiji':                   [-17.7134,  178.0650],
+  'New Zealand':            [-40.9006,  174.8860],
+  'Papua New Guinea':       [-6.3150,   143.9555],
+};
+
+/**
  * Alternate-spelling aliases that are NOT already direct entries in
  * CITY_CENTROIDS.  Each key is the lowercased alias; the value is the
  * corresponding canonical CITY_CENTROIDS key.
@@ -377,6 +528,17 @@ const _lowerIndex = new Map<string, [number, number]>(
 );
 
 /**
+ * Case-insensitive lookup index for COUNTRY_CENTROIDS, built once at module
+ * load.  Used as the final fallback when no city match is found.
+ */
+const _countryLowerIndex = new Map<string, [number, number]>(
+  Object.entries(COUNTRY_CENTROIDS).map(([k, v]) => [
+    k.trim().replace(/\s+/g, ' ').toLowerCase(),
+    v,
+  ]),
+);
+
+/**
  * Normalise a raw city string to the form used as the index key:
  *   1. Trim leading/trailing whitespace
  *   2. Collapse internal runs of whitespace to a single space
@@ -419,7 +581,12 @@ function splitCityTokens(raw: string): string[] {
  *      that partner APIs or user input may supply (e.g. "Cebu" → "Cebu City",
  *      "HCMC" → "Ho Chi Minh City").
  *
- * Returns `undefined` when the city is genuinely unknown after all steps.
+ * If no city match is found after all tokens are exhausted, a final country-
+ * level fallback is attempted on the full input string (step 4).  This covers
+ * event records that store a country name (e.g. "Thailand", "United States")
+ * in the city field — preventing the map from jumping to null island.
+ *
+ * Returns `undefined` when the input is genuinely unknown after all steps.
  */
 export function getCityCentroid(city: string): [number, number] | undefined {
   // Fast path: exact match on the full string.
@@ -442,6 +609,15 @@ export function getCityCentroid(city: string): [number, number] | undefined {
       const aliased = _lowerIndex.get(normaliseCityKey(canonicalName));
       if (aliased !== undefined) return aliased;
     }
+  }
+
+  // Step 4: country-level fallback — try each token against COUNTRY_CENTROIDS.
+  // This handles event records where the city field holds a country name
+  // (e.g. "Thailand", "United States") rather than an actual city.
+  for (const token of tokens) {
+    const normKey = normaliseCityKey(token);
+    const country = _countryLowerIndex.get(normKey);
+    if (country !== undefined) return country;
   }
 
   return undefined;
