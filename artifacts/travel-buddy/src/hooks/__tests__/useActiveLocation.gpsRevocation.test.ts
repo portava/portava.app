@@ -28,7 +28,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildGpsRevokedState } from '../activeLocation.state.ts';
+import { buildGpsRevokedState, shouldRestorePersistedState } from '../activeLocation.state.ts';
 import type { ActiveLocationState } from '../useActiveLocation.ts';
 import type { Place } from '../../lib/location/placeTypes.ts';
 
@@ -231,5 +231,73 @@ describe('buildGpsRevokedState — userMessage matches the denial reason', () =>
     assert.ok(
       typeof next.userMessage === 'string' && next.userMessage.includes('timed out'),
     );
+  });
+});
+
+// ── shouldRestorePersistedState — on-mount cascade guard ─────────────────────
+//
+// Covers the bug: on app restart after GPS revocation, the mount cascade was
+// re-applying server-persisted GPS coords (source:'last_known') even though
+// permission was now 'denied'. The guard must block that restore.
+
+const LAST_KNOWN_STATE: ActiveLocationState = {
+  ok: true,
+  permissionStatus: 'granted',
+  source: 'last_known',
+  freshness: 'stale',
+  coords: { lat: 34.6937, lng: 135.5022, accuracyMeters: 10 },
+  place: GPS_PLACE,
+  lastUpdatedAt: '2026-07-19T08:00:00.000Z',
+  userMessage: null,
+};
+
+const MANUAL_CITY_STATE: ActiveLocationState = {
+  ok: true,
+  permissionStatus: 'granted',
+  source: 'manual_city',
+  freshness: 'live',
+  coords: null,
+  place: HOME_PLACE,
+  lastUpdatedAt: '2026-07-19T09:00:00.000Z',
+  userMessage: null,
+};
+
+describe('shouldRestorePersistedState — blocks GPS state when permission is denied', () => {
+  it('returns false for source:last_known when permission is denied — stale GPS must not be restored', () => {
+    const result = shouldRestorePersistedState('denied', LAST_KNOWN_STATE);
+    assert.equal(result, false,
+      'server-persisted GPS coords must not be re-applied after permission is revoked');
+  });
+
+  it('returns true for source:last_known when permission is granted — normal restore path', () => {
+    const result = shouldRestorePersistedState('granted', LAST_KNOWN_STATE);
+    assert.equal(result, true);
+  });
+
+  it('returns true for source:last_known when permission is unknown — not yet checked, allow restore', () => {
+    const result = shouldRestorePersistedState('unknown', LAST_KNOWN_STATE);
+    assert.equal(result, true);
+  });
+
+  it('returns true for source:manual_city when permission is denied — manual location is unaffected by GPS revocation', () => {
+    const result = shouldRestorePersistedState('denied', MANUAL_CITY_STATE);
+    assert.equal(result, true,
+      'a manually-set city must survive GPS revocation');
+  });
+
+  it('returns true for source:manual_city when permission is granted', () => {
+    const result = shouldRestorePersistedState('granted', MANUAL_CITY_STATE);
+    assert.equal(result, true);
+  });
+
+  it('returns true for source:none (no saved coords) when permission is denied — nothing to block', () => {
+    const emptyState: ActiveLocationState = {
+      ...LAST_KNOWN_STATE,
+      ok: false,
+      source: 'none',
+      coords: null,
+    };
+    const result = shouldRestorePersistedState('denied', emptyState);
+    assert.equal(result, true);
   });
 });
