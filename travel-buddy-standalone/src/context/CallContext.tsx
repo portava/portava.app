@@ -55,6 +55,7 @@ export type CallPhase =
 export interface CallPeerInfo {
   id: string;
   name: string | null;
+  handle: string | null;
   avatarUrl: string | null;
   verified?: boolean;
 }
@@ -226,7 +227,7 @@ export function CallProvider({
       }
       patch({
         phase: 'outgoing_ringing', session: res.data.session, error: null,
-        peer: input.peer ?? { id: input.calleeId, name: null, avatarUrl: null },
+        peer: input.peer ?? { id: input.calleeId, name: null, handle: null, avatarUrl: null },
       });
       sessionRef.current = res.data.session;
       const grant = res.data;
@@ -350,6 +351,7 @@ export function CallProvider({
           caller: {
             id: session.startedBy,
             name: caller?.name ?? null,
+            handle: caller?.handle ?? null,
             avatarUrl: caller?.avatarUrl ?? null,
           },
         });

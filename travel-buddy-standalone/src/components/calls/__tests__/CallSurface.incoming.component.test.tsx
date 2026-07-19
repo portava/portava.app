@@ -73,7 +73,7 @@ beforeEach(() => {
     session: null,
     incoming: {
       callId: 'c1', callType: 'video', contextType: 'telegraph_dm', threadId: 't1',
-      caller: { id: 'u2', name: 'Alex Rivera', avatarUrl: null },
+      caller: { id: 'u2', name: 'Alex Rivera', handle: null, avatarUrl: null },
     },
     peer: null,
     minimized: false, micMuted: false, cameraOn: false, speakerOn: false,
