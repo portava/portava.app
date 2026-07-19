@@ -106,6 +106,9 @@ export interface BuddyBooking {
   updatedAt: string;
   routePlan: Array<{ location: string; description?: string }>;
   telegraphThreadId: string | null;
+  /** Post-completion reconnect flags — both true means the pair opted to stay connected. */
+  stayConnectedTraveler?: boolean;
+  stayConnectedBuddy?: boolean;
 }
 
 export interface BuddyReview {

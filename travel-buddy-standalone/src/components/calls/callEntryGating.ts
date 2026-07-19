@@ -11,9 +11,9 @@
  * Booking statuses whose Telegraph conversation shows call buttons.
  * Mirrors the server: a RAB thread exists from `confirmed` onward and stays
  * live through the active and dispute states. `completed` is intentionally
- * absent — post-completion calls are only allowed server-side when both
- * parties opted to stay connected, and the client cannot see those flags,
- * so it stays conservative and hides the buttons.
+ * absent from this list — post-completion calls are only allowed when both
+ * parties opted to stay connected, which is checked separately via the
+ * booking's stay-connected flags (see canShowThreadCallButtons).
  */
 export const RAB_CALL_ELIGIBLE_STATUSES: readonly string[] = [
   'confirmed',
@@ -37,6 +37,8 @@ export function threadCallContextType(
  * - RAB booking threads: additionally requires a call-eligible booking
  *   status. While the status is still loading (null/undefined) the buttons
  *   stay hidden — never flash a call button that a tap would deny.
+ *   `completed` bookings show buttons only when BOTH parties opted to stay
+ *   connected (mirrors the server's isRabBookingCallEligible rule).
  * - Group threads (trip/circle): never (1:1 calling only).
  */
 export function canShowThreadCallButtons(opts: {
@@ -44,12 +46,21 @@ export function canShowThreadCallButtons(opts: {
   otherUserId: string | null | undefined;
   isWaitingForReply: boolean;
   rabBookingStatus?: string | null;
+  rabStayConnectedTraveler?: boolean | null;
+  rabStayConnectedBuddy?: boolean | null;
 }): boolean {
-  const { threadType, otherUserId, isWaitingForReply, rabBookingStatus } = opts;
+  const {
+    threadType, otherUserId, isWaitingForReply, rabBookingStatus,
+    rabStayConnectedTraveler, rabStayConnectedBuddy,
+  } = opts;
   if (!otherUserId || isWaitingForReply) return false;
   if (threadType === 'direct') return true;
   if (threadType === 'rent_buddy_booking') {
-    return rabBookingStatus != null && RAB_CALL_ELIGIBLE_STATUSES.includes(rabBookingStatus);
+    if (rabBookingStatus == null) return false;
+    if (rabBookingStatus === 'completed') {
+      return !!rabStayConnectedTraveler && !!rabStayConnectedBuddy;
+    }
+    return RAB_CALL_ELIGIBLE_STATUSES.includes(rabBookingStatus);
   }
   return false;
 }

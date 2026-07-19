@@ -1337,17 +1337,26 @@ export default function TelegraphThread() {
   const callActions = useCallActions();
   // RAB booking status drives entry-point gating (and Call back eligibility).
   const [rabBookingStatus, setRabBookingStatus] = useState<string | null>(null);
+  const [rabStayConnected, setRabStayConnected] = useState<{ traveler: boolean; buddy: boolean }>({ traveler: false, buddy: false });
   useEffect(() => {
     if (threadType !== 'rent_buddy_booking' || !contextId) return;
     let alive = true;
     getBooking(contextId).then((res) => {
-      if (alive && res.ok && res.data?.booking) setRabBookingStatus(res.data.booking.status);
+      if (alive && res.ok && res.data?.booking) {
+        setRabBookingStatus(res.data.booking.status);
+        setRabStayConnected({
+          traveler: !!res.data.booking.stayConnectedTraveler,
+          buddy: !!res.data.booking.stayConnectedBuddy,
+        });
+      }
     }).catch(() => {});
     return () => { alive = false; };
   }, [threadType, contextId]);
   const callContextType = threadCallContextType(threadType);
   const canShowCallButtons = canShowThreadCallButtons({
     threadType, otherUserId, isWaitingForReply, rabBookingStatus,
+    rabStayConnectedTraveler: rabStayConnected.traveler,
+    rabStayConnectedBuddy: rabStayConnected.buddy,
   });
 
   const startThreadCall = useCallback(async (requested: 'voice' | 'video') => {
