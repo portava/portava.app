@@ -22,7 +22,7 @@ export async function runCallSweep(opts: {
   client?: any;
   admin?: RoomAdminPort;
   nowMs?: number;
-} = {}): Promise<{ missed: number; capped: number } | null> {
+} = {}): Promise<{ missed: number; capped: number; ghosted: number } | null> {
   const client = opts.client ?? getServiceClient();
   if (!client) return null;
   let admin = opts.admin;
@@ -36,7 +36,7 @@ export async function runCallSweep(opts: {
   // Track missed sessions for analytics before the sweep flips them.
   const open = await store.listOpenSessions();
   const result = await sweepOpenSessions(store, admin, nowMs);
-  if (result.missed > 0 || result.capped > 0) {
+  if (result.missed > 0 || result.capped > 0 || result.ghosted > 0) {
     logger.info(result, "call sweep applied transitions");
     for (const s of open) {
       const fresh = await store.getSession(s.id);

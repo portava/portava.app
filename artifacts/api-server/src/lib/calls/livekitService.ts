@@ -78,12 +78,18 @@ export async function mintCallToken(opts: {
 
 /** Server-side room termination — the DB session state is the source of truth. */
 export function makeRoomAdmin(env: LivekitEnv): {
+  roomExists(roomName: string): Promise<boolean>;
   endRoom(roomName: string): Promise<void>;
   removeParticipant(roomName: string, userId: string): Promise<void>;
   muteParticipantAudio(roomName: string, userId: string): Promise<void>;
 } {
   const svc = new RoomServiceClient(env.url, env.apiKey, env.apiSecret);
   return {
+    async roomExists(roomName: string) {
+      // listRooms with a name filter — read-only probe for ghost healing.
+      const rooms = await svc.listRooms([roomName]);
+      return rooms.some((r: any) => r.name === roomName);
+    },
     async endRoom(roomName) {
       try { await svc.deleteRoom(roomName); } catch (e: any) {
         // Room already gone = success for our purposes (idempotent teardown).

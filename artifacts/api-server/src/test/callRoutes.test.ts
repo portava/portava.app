@@ -1413,3 +1413,67 @@ describe("callStoreAdapter participant projection", () => {
     assert.equal(rows[0]!.handRaisedAt, "2026-07-19T00:00:00.000Z");
   });
 });
+
+// ── Phase 6 hardening: route-level race & security cases ────────────────────
+
+describe("direct-call double-tap dedupe", () => {
+  beforeEach(() => wireDeps());
+
+  it("a second start while the first is still ringing reuses the SAME session (no second ring)", async () => {
+    let pushes = 0;
+    _setTestPushDeps({
+      getPrefs: async () => ({
+        whoCanCall: "people_i_message", allowRentABuddyCalls: true,
+        allowVideoCalls: true, incomingCallNotifications: true,
+      } as any),
+      notify: async () => { pushes++; },
+    });
+    try {
+      const first = await req("POST", "/api/calls", startBody);
+      assert.equal(first.status, 201);
+      const second = await req("POST", "/api/calls", startBody);
+      assert.equal(second.status, 200, "dedupe returns a grant, not a new creation");
+      assert.equal(second.body.session.id, first.body.session.id);
+      assert.equal(store.__sessions.size, 1, "exactly one session exists");
+      // Give the fire-and-forget push a beat, then confirm one delivery max.
+      await new Promise((r) => setTimeout(r, 20));
+      assert.ok(pushes <= 1, `duplicate start must not re-push (got ${pushes})`);
+    } finally {
+      _setTestPushDeps(null);
+    }
+  });
+
+  it("after the call ends, a new start creates a fresh session again", async () => {
+    const first = await req("POST", "/api/calls", startBody);
+    await req("POST", `/api/calls/${first.body.session.id}/end`, undefined, CALLER_TOKEN);
+    const again = await req("POST", "/api/calls", startBody);
+    assert.equal(again.status, 201);
+    assert.notEqual(again.body.session.id, first.body.session.id);
+  });
+});
+
+describe("block landing mid-ring", () => {
+  beforeEach(() => wireDeps());
+
+  it("accept is denied with 'blocked' when a block lands between start and accept", async () => {
+    const r = await req("POST", "/api/calls", startBody);
+    assert.equal(r.status, 201);
+    const id = r.body.session.id;
+    // The block lands mid-ring: the engine's join-time re-check must catch it.
+    wireDepsKeepStore({ isBlockedEither: async () => true });
+    const accept = await req("POST", `/api/calls/${id}/accept`, {}, CALLEE_TOKEN);
+    assert.equal(accept.status, 403);
+    assert.equal(accept.body.reason, "blocked");
+    assert.equal(store.__sessions.get(id)!.status, "ringing", "session stays for the block hook / sweep to settle");
+  });
+
+  it("an ended session can never be reused for a fresh grant", async () => {
+    const r = await req("POST", "/api/calls", startBody);
+    const id = r.body.session.id;
+    await req("POST", `/api/calls/${id}/accept`, {}, CALLEE_TOKEN);
+    await req("POST", `/api/calls/${id}/end`, undefined, CALLER_TOKEN);
+    const again = await req("POST", `/api/calls/${id}/accept`, {}, CALLEE_TOKEN);
+    assert.equal(again.status, 403);
+    assert.equal(again.body.reason, "room_terminated");
+  });
+});

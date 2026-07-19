@@ -72,6 +72,13 @@ export const CALL_CONFIG = {
   MAX_STARTS_PER_HOUR: 30,
   /** Cadence of the periodic open-session sweep (ring expiry / 4h cap). */
   SWEEP_INTERVAL_MS: 30_000,
+  /**
+   * Ghost healing: an `active` session whose LiveKit room no longer exists is
+   * force-ended once it has been active at least this long. The grace period
+   * covers room-creation latency (LiveKit creates rooms lazily on first join),
+   * so a just-accepted call is never reaped before its room materializes.
+   */
+  GHOST_ACTIVE_GRACE_MS: 2 * 60_000,
   /** Delay before the first sweep after server boot. */
   SWEEP_STARTUP_DELAY_MS: 20_000,
 } as const;

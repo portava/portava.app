@@ -307,7 +307,7 @@ describe('reconciler', () => {
     // nothing to expire (ring not overdue, cap not reached) → session stays active.
     const res = await sweepOpenSessions(store, admin, NOW);
     assert.equal(session.status, 'active');
-    assert.deepEqual(res, { missed: 0, capped: 0 });
+    assert.deepEqual(res, { missed: 0, capped: 0, ghosted: 0 });
     assert.equal(calls.length, 0); // no transition, no history line written
 
     // But a NEW start attempt on the now-cancelled booking is denied.

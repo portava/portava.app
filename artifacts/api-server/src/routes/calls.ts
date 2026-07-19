@@ -357,6 +357,16 @@ router.post("/calls", async (req, res) => {
     });
     if (!verdict.allowed) return sendDeny(res, verdict.reason);
 
+    // Double-tap dedupe: if this caller already has an OPEN direct session
+    // with this callee in this thread, return a grant into it instead of
+    // creating a duplicate session (which would ring/push the callee twice).
+    const dupes = await store.findOpenDirectSessionsBetween(userId, input.calleeId);
+    const dupe = dupes.find((s) => s.startedBy === userId && s.threadId === input.threadId);
+    if (dupe) {
+      const grant = await grantFor(d, dupe, userId, dupe.callType === "video");
+      return res.status(200).json(grant);
+    }
+
     const contextId = await resolveDirectContextId(auth.client, input.contextType, input.threadId);
     const session = await store.createSession({
       callType: input.callType,

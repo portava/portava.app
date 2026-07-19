@@ -12,7 +12,7 @@
  * is unit-testable without a database.
  */
 import { transition, ringExpired, maxDurationReached, type CallEvent } from './callStateMachine';
-import type { CallSession } from './callTypes';
+import { CALL_CONFIG, type CallSession } from './callTypes';
 
 export interface CallStore {
   getSessionByRoom(roomName: string): Promise<(CallSession & { roomName: string }) | null>;
@@ -32,6 +32,12 @@ export interface CallStore {
 
 export interface RoomAdminPort {
   endRoom(roomName: string): Promise<void>;
+  /**
+   * Ghost healing probe: does the LiveKit room still exist? Optional — when
+   * absent (or when it throws) the sweep skips ghost healing rather than
+   * guessing; the 4h cap remains the hard backstop.
+   */
+  roomExists?(roomName: string): Promise<boolean>;
 }
 
 export async function applyEvent(
@@ -96,9 +102,9 @@ export async function reconcileWebhookEvent(
 
 export async function sweepOpenSessions(
   store: CallStore, admin: RoomAdminPort, nowMs: number,
-): Promise<{ missed: number; capped: number }> {
+): Promise<{ missed: number; capped: number; ghosted: number }> {
   const nowIso = new Date(nowMs).toISOString();
-  let missed = 0, capped = 0;
+  let missed = 0, capped = 0, ghosted = 0;
   const open = await store.listOpenSessions();
   for (const session of open) {
     if (ringExpired(session, nowMs)) {
@@ -107,7 +113,33 @@ export async function sweepOpenSessions(
     } else if (maxDurationReached(session, nowMs)) {
       await applyEvent(store, admin, session, { type: 'MAX_DURATION' }, nowIso);
       capped++;
+    } else if (await isGhostActiveSession(admin, session, nowMs)) {
+      // Ghost healing: active session, dead room (client killed / room
+      // reaped without a webhook reaching us). ROOM_FINISHED semantics —
+      // the room is already gone, so no re-termination attempt.
+      await applyEvent(store, admin, session, { type: 'ROOM_FINISHED' }, nowIso);
+      ghosted++;
     }
   }
-  return { missed, capped };
+  return { missed, capped, ghosted };
+}
+
+/**
+ * True when an `active` session past the grace window has a room LiveKit no
+ * longer knows about. Fails CLOSED to "not a ghost": no probe, probe error,
+ * or a still-live room all leave the session alone (4h cap is the backstop).
+ */
+async function isGhostActiveSession(
+  admin: RoomAdminPort,
+  session: CallSession & { roomName: string },
+  nowMs: number,
+): Promise<boolean> {
+  if (session.status !== 'active' || !admin.roomExists) return false;
+  const anchor = new Date(session.connectedAt ?? session.startedAt).getTime();
+  if (!Number.isFinite(anchor) || nowMs - anchor < CALL_CONFIG.GHOST_ACTIVE_GRACE_MS) return false;
+  try {
+    return !(await admin.roomExists(session.roomName));
+  } catch {
+    return false; // probe failure must never end a live call
+  }
 }

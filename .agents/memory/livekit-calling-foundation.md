@@ -5,6 +5,11 @@ description: Durable lessons from the calling-system audit — SDK enum gotcha, 
 
 # LiveKit calling foundation
 
+## Phase 6 hardening decisions
+- Ghost healing is fail-closed: the sweep only ends an `active` session when a `roomExists` probe positively says the room is gone, after `GHOST_ACTIVE_GRACE_MS`; probe absence/error/live-room all leave the call alone — the 4h cap is the permanent-active backstop. **Why:** a LiveKit API outage must never hang up live calls.
+- Direct-start double-tap is deduped server-side: an open direct session (same caller/callee/thread, startedBy=caller) returns a 200 grant into the existing session instead of creating a second ring/push. Client `sessionRef` guard alone was not enough.
+- Load review for sweeps/webhooks/tokens lives at `artifacts/api-server/docs/calling-load-review.md`.
+
 - `livekit-server-sdk` v2 rejects string values for `canPublishSources` — use the `TrackSource` enum (`TrackSource.MICROPHONE`); a string throws "Cannot convert TrackSource ... to string" at token mint.
   **Why:** an audio-only grant written with `'microphone' as any` fails at runtime while typechecking clean.
   **How to apply:** any LiveKit grant code — import and use the enum.
