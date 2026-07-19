@@ -123,6 +123,37 @@ it('sessionId is undefined during the debounce window after switching cities', a
   }, { timeout: 500 });
 });
 
+it('sessionId stays undefined after the city-switch fetch errors — old session is not replayed', async () => {
+  // City A fetch resolves with a known sessionId.
+  (fetchCityEvents as jest.Mock).mockResolvedValue({
+    events:    [],
+    sessionId: 'sess-city-a',
+  });
+
+  const { result, rerender } = await renderHook(
+    ({ slug }: { slug: string }) =>
+      useCityPulse({ currentCitySlug: slug, ttlMs: TTL_LARGE }),
+    { initialProps: { slug: 'cebu' } },
+  );
+
+  // Wait for city A to complete and sessionId to be set.
+  await waitFor(() => {
+    expect(result.current.sessionId).toBe('sess-city-a');
+  }, { timeout: 500 });
+
+  // City B fetch rejects — simulates a network or server error.
+  (fetchCityEvents as jest.Mock).mockRejectedValue(new Error('network error'));
+
+  // Switch to city B — the hook clears sessionId synchronously then debounces.
+  rerender({ slug: 'manila' });
+
+  // After the debounce fires and city B's fetch rejects, sessionId must remain
+  // undefined — it must not fall back to city A's stale 'sess-city-a' value.
+  await waitFor(() => {
+    expect(result.current.sessionId).toBeUndefined();
+  }, { timeout: 500 });
+});
+
 it('sessionId is set to the new value once the replacement fetch resolves', async () => {
   // City A fetch resolves with its own sessionId.
   (fetchCityEvents as jest.Mock).mockResolvedValue({
