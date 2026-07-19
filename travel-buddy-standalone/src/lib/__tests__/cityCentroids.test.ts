@@ -216,6 +216,7 @@ describe('getCityCentroid — normalisation (casing & whitespace)', () => {
   });
 
   it('exact-match keys bypass normalisation (no double-transform)', () => {
+    // 'Tashkent' already matches exactly — ensure it still resolves
     const exact = getCityCentroid('Tashkent');
     assert.ok(exact !== undefined, '"Tashkent" (exact key) should always resolve');
   });
