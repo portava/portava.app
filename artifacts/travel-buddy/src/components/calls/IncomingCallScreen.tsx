@@ -35,7 +35,7 @@ export function IncomingCallScreen({
           )}
           <View style={s.nameRow}>
             <Text style={s.name} numberOfLines={1}>{name}</Text>
-            {info.caller.verified ? <PassportVerificationStamp /> : null}
+            {info.caller.verified ? <PassportVerificationStamp status="verified" /> : null}
           </View>
           <Text style={s.kind}>
             {isVideo ? 'Incoming video call' : 'Incoming voice call'}
