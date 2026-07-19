@@ -4,6 +4,9 @@ import {
   Image, ActivityIndicator, Switch,
 } from 'react-native';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
+// (KeyboardSafeScrollView is the bare KAV wrapper — the composer page brings
+// its own single ScrollView so the submit footer can sit below it, inside the
+// KAV, and rise above the keyboard.)
 import { MentionInput, type MentionInputHandle } from './MentionInput.tsx';
 import { MentionSuggestionList } from './MentionSuggestionList.tsx';
 import type { AnyMentionSuggestion, TagSpan } from '../services/tagging.ts';
@@ -157,11 +160,9 @@ export function PulseFilterSheet({
 
 /* ── Unified post composer ── */
 export function UnifiedPostComposer({
-  visible,
   onClose,
   onSuccess,
 }: {
-  visible: boolean;
   onClose: () => void;
   onSuccess?: () => void;
 }) {
@@ -234,27 +235,9 @@ export function UnifiedPostComposer({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationPrivacyMode]);
 
-  useEffect(() => {
-    if (visible) {
-      setSelectedType(null);
-      setSelectedCategory(null);
-      setText('');
-      setPlaceName('');
-      setMedia(null);
-      setVis('public');
-      setSelectedPlace(null);
-      setLocationPickerOpen(false);
-      setLocationPrivacyMode('none');
-      setScheduledTime(null);
-      setAddToPassport(false);
-      setError(null);
-      setHighlightComposerOpen(false);
-      setFilterEditorOpen(false);
-      setFilterEditorPending(null);
-      setFilterId('original');
-      setFilterIntensity(100);
-    }
-  }, [visible]);
+  // No reset-on-open effect: the composer is a full-screen /create page, so
+  // every navigation mounts a fresh instance whose useState initializers
+  // already provide clean state.
 
   async function pickMedia() {
     setError(null);
@@ -410,32 +393,28 @@ export function UnifiedPostComposer({
   const dismiss = createComposerDismissHandlers(onClose);
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={dismiss.onRequestClose}>
-      {/* Backdrop — absolutely positioned so it doesn't compete with the
-          sheet in the flex layout. Tap dismisses the sheet. */}
-      <Pressable
-        testID="post-composer-backdrop"
-        style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(17,17,15,0.45)' }]}
-        onPress={dismiss.onBackdropPress}
-      />
+    <View style={uc.page}>
+      {/* Full-screen page header — safe-area aware. Dismiss = X button
+          (Android hardware back pops the /create route via the router). */}
+      <View style={[uc.head, { paddingTop: insets.top + 8 }]}>
+        <Text style={uc.headTitle}>What are you sharing?</Text>
+        <Pressable testID="post-composer-close-btn" onPress={dismiss.onCloseButtonPress} hitSlop={8} style={uc.closeBtn}>
+          <X size={18} color={color.ink} />
+        </Pressable>
+      </View>
 
-      {/* KAV anchored to the bottom of the screen. Positioning it absolutely
-          gives the inner sheet a defined height so the ScrollView (flex: 1)
-          can measure itself — without this the type grid collapses to 0 on
-          Android when the keyboard is not open. */}
-      <KeyboardSafeScrollView style={uc.kav}>
-        <View style={[uc.sheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-          {/* drag handle + header */}
-          <View style={uc.grab} />
-          <View style={uc.head}>
-            <Text style={uc.headTitle}>What are you sharing?</Text>
-            <Pressable testID="post-composer-close-btn" onPress={dismiss.onCloseButtonPress} hitSlop={8} style={uc.closeBtn}>
-              <X size={18} color={color.ink} />
-            </Pressable>
-          </View>
-
-          {/* type grid + form */}
-          <View style={uc.scroll}>
+      {/* Scrollable body — bare KAV + a single ScrollView, with the sticky
+          submit footer as a sibling inside the KAV so it rises above the
+          keyboard. (The old bottom-sheet presentation capped height at 88%
+          without a scroll container, which clipped the form.) */}
+      <KeyboardSafeScrollView style={uc.body}>
+        <View style={uc.bodyInner}>
+          <ScrollView
+            style={uc.bodyScroll}
+            contentContainerStyle={uc.scroll}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
             {/* When a type is selected show a compact chip; otherwise show the full 2-col grid.
                 This keeps the form fields visible even when the keyboard is open. */}
             {selectedType ? (
@@ -727,11 +706,12 @@ export function UnifiedPostComposer({
                 <Text style={uc.errorText}>{error}</Text>
               </View>
             )}
-          </View>
+          </ScrollView>
 
-          {/* sticky submit — hidden for dedicated composers */}
+          {/* sticky submit — hidden for dedicated composers; sibling of the
+              ScrollView inside the KAV so it stays above the keyboard */}
           {selectedType && !DEDICATED_COMPOSERS[selectedType] && (
-            <View style={uc.footer}>
+            <View style={[uc.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
               <Pressable
                 style={[uc.submitBtn, !canSubmit && uc.submitBtnDisabled]}
                 onPress={handleSubmit}
@@ -789,7 +769,7 @@ export function UnifiedPostComposer({
           }}
         />
       )}
-    </Modal>
+    </View>
   );
 }
 
@@ -813,26 +793,20 @@ const fs = StyleSheet.create({
 });
 
 const uc = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(17,17,15,0.45)' },
-  kav: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    maxHeight: '88%',
-  },
-  sheet: {
+  /* full-screen page chrome */
+  page: { flex: 1, backgroundColor: color.paper },
+  body: { flex: 1 },
+  bodyInner: { flex: 1 },
+  bodyScroll: { flex: 1 },
+  head: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: space.lg, paddingBottom: 10,
+    borderBottomWidth: 1, borderBottomColor: color.haze,
     backgroundColor: color.paper,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    flex: 1,
-    ...shadow.float,
   },
-  grab: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: color.haze, marginTop: 10, marginBottom: 4 },
-  head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.lg, paddingVertical: 10 },
   headTitle: { ...t.heading, color: color.ink, flex: 1 },
   closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
-  scroll: { paddingHorizontal: space.lg, paddingBottom: space.lg },
+  scroll: { paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: space.lg },
 
   /* selected-type compact chip (replaces full grid once a type is picked) */
   typeChip: {

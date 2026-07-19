@@ -101,7 +101,7 @@ export default function RootLayout() {
                       >
                         <Stack.Screen name="(tabs)" />
                         <Stack.Screen name="(auth)" />
-                        <Stack.Screen name="create" options={{ presentation: 'modal' }} />
+                        <Stack.Screen name="create" />
                         <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
                         <Stack.Screen name="compass-preferences" options={{ presentation: 'card' }} />
                       </Stack>

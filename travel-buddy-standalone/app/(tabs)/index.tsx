@@ -7,7 +7,7 @@ import { PostCard } from '../../src/components/PostCard';
 import { PulseHeader } from '../../src/components/PulseHeader';
 import { FitsCard, FlexibleStrip } from '../../src/components/PulseFits';
 import { PulseFeedCard } from '../../src/components/PulseFeedCard';
-import { PulseFilterSheet, UnifiedPostComposer } from '../../src/components/PulseCreate';
+import { PulseFilterSheet } from '../../src/components/PulseCreate';
 import { Chip } from '../../src/components/ui';
 import { TravelEmptyState } from '../../src/components/primitives';
 import { useCityPulse } from '../../src/hooks/useCityPulse';
@@ -89,7 +89,6 @@ function Pulse() {
   const [feedMode, setFeedMode] = useState<FeedMode>('forYou');
   const [active, setActive] = useState<PulseFilter[]>(['All']);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
   const [layoverSheetOpen, setLayoverSheetOpen] = useState(false);
   const [categoryAffinities, setCategoryAffinities] = useState<Record<string, number>>({});
   const [peopleRefreshKey, setPeopleRefreshKey] = useState(0);
@@ -475,7 +474,9 @@ function Pulse() {
         onClear={() => setActive(['All'])}
         onClose={() => setSheetOpen(false)}
       />
-      <UnifiedPostComposer visible={createOpen} onClose={() => setCreateOpen(false)} onSuccess={() => pulseFeed.reload()} />
+      {/* Post composer lives on the full-screen /create route (pushed by the
+          tab-bar POST button and the various "Add Post" CTAs); the feed
+          refreshes via the focus-effect reload when the page pops back. */}
 
       {/* Location overlays */}
       <LocationPermissionPrompt />
