@@ -31,6 +31,7 @@
 
 import React from 'react';
 import { render, fireEvent, screen } from '@testing-library/react-native';
+import { router } from 'expo-router';
 
 // ── Module mocks (hoisted before imports) ────────────────────────────────────
 
@@ -152,5 +153,23 @@ describe('EventCard — sessionId forwarding', () => {
     fireEvent.press(screen.getByText('View on map'));
 
     expect(mockFireRankOutcome).not.toHaveBeenCalled();
+  });
+
+  test('router.push is still called even when fireRankOutcome throws synchronously', async () => {
+    // Simulate a future regression where fireRankOutcome throws instead of
+    // being truly fire-and-forget.  router.push must still be reached.
+    mockFireRankOutcome.mockImplementation(() => {
+      throw new Error('outcome endpoint unreachable');
+    });
+
+    const pushSpy = jest.spyOn(router, 'push');
+
+    await render(<EventCard ev={MOCK_EVENT} sessionId="sess-abc-123" />);
+
+    fireEvent.press(screen.getByText('Sunset Mixer'));
+
+    expect(pushSpy).toHaveBeenCalledWith('/(tabs)/trips');
+
+    pushSpy.mockRestore();
   });
 });
