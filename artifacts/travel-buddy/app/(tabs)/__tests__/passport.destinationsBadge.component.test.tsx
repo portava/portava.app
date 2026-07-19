@@ -22,12 +22,11 @@ import PassportScreen from '../../../app/(tabs)/passport.tsx';
 import { makePassportMock, MINIMAL_OWN_PROFILE } from '../../../src/components/__tests__/testUtils.ts';
 
 // ── expo-router — intentionally exhaustive ───────────────────────────────────
-// expo-router is a native package; requireActual drags in native modules that
-// crash the jest-expo runner.
-jest.mock('expo-router', () => {
-  const React = require('react');
-  return {
-    router: {
+// moduleNameMapper redirects expo-router to src/__mocks__/expo-router.tsx, so
+// jest.requireActual is safe here (it resolves through the mapper, not native).
+jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
+  router: {
       push:     jest.fn(),
       replace:  jest.fn(),
       back:     jest.fn(),
@@ -39,7 +38,7 @@ jest.mock('expo-router', () => {
     usePathname:          () => '/',
     useSegments:          () => [],
     useFocusEffect: (cb: () => (() => void) | void) => {
-      React.useEffect(() => { cb(); }, []);
+      require('react').useEffect(() => { cb(); }, []);
     },
     useNavigation: () => ({
       navigate:    jest.fn(),
@@ -51,8 +50,7 @@ jest.mock('expo-router', () => {
     Redirect: (_props: { href: unknown }) => null,
     Stack:    { Screen: (_props: unknown) => null },
     Tabs:     { Screen: (_props: unknown) => null },
-  };
-});
+}));
 
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual('react-native-safe-area-context'),
