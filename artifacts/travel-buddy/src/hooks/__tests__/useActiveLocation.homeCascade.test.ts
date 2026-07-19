@@ -28,6 +28,8 @@
  *  11. GPS grant after home fallback: source advances to 'gps_fresh', place is replaced
  *  12. GPS cached fix after home fallback: source becomes 'gps_cached'
  *  13. Home place city is NOT present in the GPS place (full replacement, not merge)
+ *  14. Cached GPS fix starting from source:'home': source='gps_cached', freshness='recent',
+ *      place.city matches geocoded result, place.id no longer the home-city id
  *
  * Run (auto-discovered by scripts/run-node-tests.mjs):
  *   node --import tsx/esm --test src/hooks/__tests__/useActiveLocation.homeCascade.test.ts
@@ -288,5 +290,59 @@ describe('buildGpsState — home-city cleared when GPS is granted', () => {
       typeof next.userMessage === 'string' && next.userMessage.includes('Osaka'),
       'cached fix userMessage should reference the geocoded city',
     );
+  });
+});
+
+// ── Focused: cached GPS fix replaces home-city fallback ───────────────────────
+
+describe('buildGpsState — cached fix (gps_cached) clears home-city fallback', () => {
+  // Simulate the transition: user was on source:'home' (HOME_STATE), then
+  // getLastKnownPositionAsync returned a cached fix (isCached=true).
+  // buildGpsState must produce a fully-replaced state — no home-city remnants.
+
+  it('source is gps_cached — not home or gps_fresh', () => {
+    const next = buildGpsState(34.6937, 135.5022, 20, true, GPS_PLACE, NOW_ISO);
+    assert.equal(next.source, 'gps_cached',
+      'a cached GPS fix starting from home must yield source:gps_cached');
+    assert.notEqual(next.source, 'home');
+    assert.notEqual(next.source, 'gps_fresh');
+  });
+
+  it('freshness is recent — not stale (home) or live (gps_fresh)', () => {
+    const next = buildGpsState(34.6937, 135.5022, 20, true, GPS_PLACE, NOW_ISO);
+    assert.equal(next.freshness, 'recent',
+      'isCached=true must set freshness:recent regardless of prior home-city state');
+    assert.notEqual(next.freshness, 'stale',
+      'the home-city stale freshness must not carry over');
+  });
+
+  it('place.city matches the geocoded city — not the home city', () => {
+    const next = buildGpsState(34.6937, 135.5022, 20, true, GPS_PLACE, NOW_ISO);
+    assert.equal(next.place.city, GPS_PLACE.city,
+      'geocoded city must be present in the result');
+    assert.notEqual(next.place.city, HOME_PLACE.city,
+      'home city must not survive the cached GPS fix');
+  });
+
+  it('place.id is the GPS place id — home-city id is gone', () => {
+    const next = buildGpsState(34.6937, 135.5022, 20, true, GPS_PLACE, NOW_ISO);
+    assert.equal(next.place.id, GPS_PLACE.id,
+      'GPS place id must be used');
+    assert.notEqual(next.place.id, HOME_PLACE.id,
+      `home-city id '${HOME_PLACE.id}' must not appear in the cached GPS state`);
+  });
+
+  it('ok is true and permissionStatus is granted', () => {
+    const next = buildGpsState(34.6937, 135.5022, 20, true, GPS_PLACE, NOW_ISO);
+    assert.equal(next.ok, true);
+    assert.equal(next.permissionStatus, 'granted');
+  });
+
+  it('coords are populated from the GPS fix', () => {
+    const next = buildGpsState(34.6937, 135.5022, 20, true, GPS_PLACE, NOW_ISO);
+    assert.ok(next.coords !== null, 'coords must not be null after a cached GPS fix');
+    assert.equal(next.coords!.lat, 34.6937);
+    assert.equal(next.coords!.lng, 135.5022);
+    assert.equal(next.coords!.accuracyMeters, 20);
   });
 });
