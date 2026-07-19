@@ -56,7 +56,7 @@
  */
 
 import React from 'react';
-import { act, render, screen, fireEvent } from '@testing-library/react-native';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { CreateMemoryModal } from '../MemoriesTab.tsx';
 import { uploadMedia } from '../../services/media.ts';
 import { createPassportMemory } from '../../services/passportStamps.ts';
@@ -281,7 +281,11 @@ describe('CreateMemoryModal — upload error clears on re-pick', () => {
       await new Promise<void>((r) => setTimeout(r, 30));
     });
 
-    screen.getByText('Change'); // photoUri committed — photo preview + Change visible
+    // photoUri committed — photo preview + Change visible. Under full-suite
+    // load the pick's effect chain (sheet visible → launchImageLibraryAsync
+    // .then() → onResult → setPhotoUri commit) can outlive the 30 ms act()
+    // window above, so poll instead of asserting synchronously.
+    await waitFor(() => screen.getByText('Change'), { timeout: 5000, interval: 50 });
     expect((global as Record<string, unknown>).__testOnResultCount).toBe(1);
 
     // ── Save → suspended at uploadMedia ────────────────────────────────────────

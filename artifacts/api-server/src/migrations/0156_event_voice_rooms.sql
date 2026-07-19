@@ -18,3 +18,9 @@ CREATE TABLE IF NOT EXISTS call_moderation_actions (
 
 CREATE INDEX IF NOT EXISTS idx_call_moderation_actions_call
   ON call_moderation_actions (call_id, created_at DESC);
+
+-- Service-role-only audit log: RLS enabled with NO policies, so anon/auth
+-- PostgREST clients can neither read nor write it (the API server's service
+-- role bypasses RLS). Added in the Phase 7 readiness audit — the original
+-- version of this file omitted it.
+ALTER TABLE call_moderation_actions ENABLE ROW LEVEL SECURITY;

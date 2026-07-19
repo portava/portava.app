@@ -238,6 +238,26 @@ STANDALONE_OWNED_FILES=(
   "src/screens/admin/__tests__/featureFlags.machine.test.ts"
   # FlagHistorySheet machine-layer tests — test is standalone-only
   "src/screens/admin/__tests__/flagHistory.machine.test.ts"
+  # Screen-suite tests tailored to the standalone fork's owned screens
+  # (discovery.tsx / index.tsx are STANDALONE_OWNED; search.tsx reads
+  # useActiveLocation, not the monorepo resolvedLocation cascade — the
+  # monorepo versions of these suites assert architecture the fork lacks).
+  "app/(tabs)/__tests__/Discovery.navBarScrollHandler.component.test.tsx"
+  "app/(tabs)/__tests__/Discovery.scrollArchitecture.component.test.tsx"
+  "app/(tabs)/__tests__/discovery.contextModeChips.component.test.tsx"
+  "app/(tabs)/__tests__/discovery.dimmedChipOpensCityPicker.component.test.tsx"
+  "app/(tabs)/__tests__/discovery.enabledChips.component.test.tsx"
+  "app/(tabs)/__tests__/discovery.mapShortcut.component.test.tsx"
+  "app/(tabs)/__tests__/discovery.mapShortcutGeocode.component.test.tsx"
+  "app/(tabs)/__tests__/Pulse.navBarScrollHandler.component.test.tsx"
+  "app/(tabs)/__tests__/Pulse.sessionIdToTapOutcome.component.test.tsx"
+  "app/__tests__/search.homeCityCoords.component.test.tsx"
+  "app/__tests__/search.lastKnownCoords.component.test.tsx"
+  "app/__tests__/search.sessionLocationCoords.component.test.tsx"
+  "app/__tests__/search.sourceSwitchCoords.component.test.tsx"
+  "src/components/discovery/__tests__/DiscoveryScreen.component.test.tsx"
+  # Standalone copy keeps the DestinationsTab maplibre mock (ESM import crash)
+  "src/components/__tests__/PassportContent.focusTTL.component.test.tsx"
 )
 
 # Returns 0 (success/true) if the given standalone-relative path is protected.

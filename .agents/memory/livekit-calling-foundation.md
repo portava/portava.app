@@ -18,6 +18,12 @@ description: Durable lessons from the calling-system audit — SDK enum gotcha, 
 - RAB bookings' `buddy_id` is the buddy *profile* id, not a user id — always resolve `rent_buddy_profiles.user_id` before comparing against users.
 - Full Phase-0 binding table lives in `artifacts/api-server/docs/calling-foundation-audit.md`.
 
+## Phase 7 readiness lessons (2026-07-19)
+- The production deployment can lag the repo by days: prod served old routes (`/api/stamps/*` fine) while every `/api/calls/*` 404'd. **Why:** autoscale serves the last published build, not HEAD. **How to apply:** before claiming any endpoint "live", curl the production domain — a webhook registration against an unpublished route silently drops every event.
+- A LiveKit webhook round-trip can be self-tested without the dashboard: sign the exact body (JWT `sha256` claim via `AccessToken`) and POST it — expect 200 signed / 401 unsigned / 401 tampered. Use a nonexistent `pcall_*` room so reconciliation is a no-op.
+- Watch RLS on follow-up migrations: 0155 enabled RLS everywhere, but 0156's new audit table shipped without it (fixed live in the readiness audit — enable RLS with zero policies for service-role-only tables).
+- Release-readiness report lives at `artifacts/api-server/docs/calling-release-readiness.md`; open gates there: republish, LiveKit Cloud webhook registration, device-test gate.
+
 ## Group (trip_crew) room semantics — Phase 4 decisions
 - Group rooms have NO ring phase: start creates the session and immediately transitions CONNECTED (starter joined, role host). Joiners never re-ring anyone.
 - Concurrent start resolves server-side: POST /calls for group finds the open session for (contextType, contextId) and returns a 200 join grant into it — never a second room.
