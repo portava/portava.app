@@ -86,9 +86,15 @@ interface StampsTabProps {
   /** UUID of the profile being viewed — used for block detection. */
   viewingUserId?: string;
   isOwner?: boolean;
+  /**
+   * Ref filled with the tab's load-more function so the parent scroll view
+   * (which owns the scroll events) can trigger the next stamps page when the
+   * user nears the bottom. Guards itself: in-flight and total-sentinel checks.
+   */
+  loadMoreRef?: React.MutableRefObject<(() => void) | null>;
 }
 
-export function StampsTab({ stamps: _legacyStamps = [], viewingUsername, viewingUserId, isOwner = false }: StampsTabProps) {
+export function StampsTab({ stamps: _legacyStamps = [], viewingUsername, viewingUserId, isOwner = false, loadMoreRef }: StampsTabProps) {
   // All hooks must be declared before any early return (Rules of Hooks).
   const { blockedIds, blockerIds } = useBlockedIds();
   const [allStamps, setAllStamps]     = useState<PassportStampNew[]>([]);
@@ -97,6 +103,12 @@ export function StampsTab({ stamps: _legacyStamps = [], viewingUsername, viewing
   const [category, setCategory]       = useState<StampCategory>('');
   const [selected, setSelected]       = useState<PassportStampNew | null>(null);
   const [progress, setProgress]       = useState<StampProgress | null>(null);
+  // Pagination (owner view only — the public profile endpoint is unpaginated).
+  const [serverTotal, setServerTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const allStampsRef   = React.useRef<PassportStampNew[]>([]);
+  const serverTotalRef = React.useRef(0);
+  const loadingMoreRef = React.useRef(false);
 
   // If either party has blocked the other, hide the section entirely.
   // Computed after hooks so hook order is stable across renders.
@@ -113,12 +125,59 @@ export function StampsTab({ stamps: _legacyStamps = [], viewingUsername, viewing
     setLoading(false);
     if (res.ok) {
       setAllStamps(res.data);
+      allStampsRef.current = res.data;
+      const total = !viewingUsername && typeof (res as any).total === 'number'
+        ? (res as any).total
+        : res.data.length;
+      serverTotalRef.current = total;
+      setServerTotal(total);
     } else {
       setError(res.message);
     }
   }, [viewingUsername]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Fetch the next page of stamps (owner view). Sentinel: server-reported
+  // total — when allStamps.length === total there is nothing left to fetch.
+  const loadMore = useCallback(() => {
+    if (viewingUsername) return; // public endpoint is unpaginated
+    if (loadingMoreRef.current) return;
+    if (allStampsRef.current.length >= serverTotalRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    getMyPassportStamps({ offset: allStampsRef.current.length })
+      .then((res) => {
+        if (res.ok) {
+          if (res.data.length > 0) {
+            allStampsRef.current = [...allStampsRef.current, ...res.data];
+            setAllStamps(allStampsRef.current);
+          }
+          if (typeof res.total === 'number') {
+            serverTotalRef.current = res.total;
+            setServerTotal(res.total);
+          }
+          if (res.data.length === 0) {
+            // Defensive: an empty page means the server has no more rows —
+            // clamp the sentinel so we never loop.
+            serverTotalRef.current = allStampsRef.current.length;
+            setServerTotal(allStampsRef.current.length);
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      });
+  }, [viewingUsername]);
+
+  // Expose loadMore to the parent scroll container.
+  useEffect(() => {
+    if (!loadMoreRef) return;
+    loadMoreRef.current = loadMore;
+    return () => { loadMoreRef.current = null; };
+  }, [loadMoreRef, loadMore]);
 
   useEffect(() => {
     if (!isOwner || viewingUsername) return;
@@ -141,10 +200,14 @@ export function StampsTab({ stamps: _legacyStamps = [], viewingUsername, viewing
 
   const totalCount = viewingUsername
     ? allStamps.filter((s) => !s.isRevoked && s.visibility !== 'private').length
-    : allStamps.length;
+    : Math.max(serverTotal, allStamps.length);
 
   const handleStampUpdated = useCallback((updated: PassportStampNew) => {
-    setAllStamps((prev) => prev.map((s) => s.id === updated.id ? updated : s));
+    setAllStamps((prev) => {
+      const next = prev.map((s) => s.id === updated.id ? updated : s);
+      allStampsRef.current = next;
+      return next;
+    });
     setSelected((prev) => prev?.id === updated.id ? updated : prev);
   }, []);
 
@@ -242,6 +305,13 @@ export function StampsTab({ stamps: _legacyStamps = [], viewingUsername, viewing
         emptySub={emptySub}
       />
 
+      {/* Next-page loading indicator (infinite scroll) */}
+      {loadingMore && (
+        <View style={styles.loadingMore} testID="stamps-loading-more">
+          <ActivityIndicator size="small" color={color.signal} />
+        </View>
+      )}
+
       {/* Detail modal */}
       <StampDetailModal
         stamp={selected}
@@ -292,6 +362,7 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   progressSub: { ...t.small, color: color.mute, fontSize: 11 },
+  loadingMore: { paddingVertical: space.md, alignItems: 'center' },
 
   featured: {
     flexDirection: 'row',

@@ -203,19 +203,27 @@ function mapMemory(r: any): PassportMemory {
 
 // ── Stamps ─────────────────────────────────────────────────────────────────
 
+/** ApiResult plus the server-reported total stamp count (pagination sentinel). */
+export type StampsPageResult = ApiResult<PassportStampNew[]> & { total?: number };
+
 export async function getMyPassportStamps(filters?: {
   country?: string;
   city?: string;
   type?: string;
-}): Promise<ApiResult<PassportStampNew[]>> {
+  /** Pagination offset — pages are 100 stamps (server default). */
+  offset?: number;
+}): Promise<StampsPageResult> {
   const params = new URLSearchParams();
   if (filters?.country) params.set('country', filters.country);
   if (filters?.city) params.set('city', filters.city);
   if (filters?.type) params.set('type', filters.type);
+  if (filters?.offset) params.set('offset', String(filters.offset));
   const qs = params.toString();
-  const res = await apiGet<{ stamps: any[] }>(`/stamps/me${qs ? `?${qs}` : ''}`);
+  const res = await apiGet<{ stamps: any[]; total?: number }>(`/stamps/me${qs ? `?${qs}` : ''}`);
   if (!res.ok) return { ok: false, message: res.message };
-  return { ok: true, data: ((res.data as any)?.stamps ?? []).map(mapStamp) };
+  const stamps = ((res.data as any)?.stamps ?? []).map(mapStamp);
+  const rawTotal = (res.data as any)?.total;
+  return { ok: true, data: stamps, total: typeof rawTotal === 'number' ? rawTotal : stamps.length };
 }
 
 export async function getUserStampsByUsername(

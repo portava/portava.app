@@ -30,7 +30,11 @@ import { makePassportMock, MINIMAL_OWN_PROFILE } from './testUtils.ts';
 // ── Controlled useFocusEffect ─────────────────────────────────────────────────
 // Capture the callback so tests can re-trigger focus manually.
 
-let capturedFocusCallback: (() => void) | null = null;
+// Multiple components in the passport tree register focus effects (screen
+// timing, availability refresh, PassportContent's TTL guard) — capture ALL of
+// them and re-fire every one, mirroring what a real tab re-focus does.
+const capturedFocusCallbacks: Array<() => void> = [];
+const capturedFocusCallback = () => { capturedFocusCallbacks.forEach((cb) => cb()); };
 
 // NOTE: intentionally exhaustive — expo-router is a native package; pulling
 // requireActual would drag in native modules that crash the jest-expo runner.
@@ -53,7 +57,7 @@ jest.mock('expo-router', () => {
       // Fire once on mount (mirrors the file-level stub) and capture for
       // re-triggering in later test steps.
       React.useEffect(() => {
-        capturedFocusCallback = () => { cb(); };
+        capturedFocusCallbacks.push(() => { cb(); });
         cb();
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, []);
@@ -286,7 +290,7 @@ describe('PassportContent — focus TTL guard: reload suppressed within TTL', ()
 
   beforeEach(() => {
     jest.clearAllMocks();
-    capturedFocusCallback = null;
+    capturedFocusCallbacks.length = 0;
     setupPassportMock();
 
     // Freeze Date.now() at BASE_TIME for the initial mount.
@@ -354,7 +358,7 @@ describe('PassportContent — unconditional lightweight calls on every focus', (
 
   beforeEach(() => {
     jest.clearAllMocks();
-    capturedFocusCallback = null;
+    capturedFocusCallbacks.length = 0;
     setupPassportMock();
 
     dateSpy = jest.spyOn(Date, 'now').mockReturnValue(BASE_TIME);

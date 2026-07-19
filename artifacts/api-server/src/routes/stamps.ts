@@ -196,13 +196,36 @@ router.get("/stamps/me", async (req, res) => {
   const city    = req.query.city as string | undefined;
   const country = req.query.country as string | undefined;
 
+  // Pagination: limit defaults to 100 (max 200), offset defaults to 0.
+  // Response: { stamps, total } — total is the sentinel for client infinite scroll.
+  const limitVal  = Math.min(200, Math.max(1, parseInt(String(req.query.limit  ?? "100"), 10) || 100));
+  const offsetVal = Math.max(0,              parseInt(String(req.query.offset ?? "0"),   10) || 0);
+
+  // Total count (before pagination) — same DB-level filters as the page query.
+  // If the count fails, the sentinel is repaired from the page data below so
+  // the response never claims total < rows returned (that would strand
+  // infinite-scroll clients on the first page).
+  let total = 0;
+  let countFailed = false;
+  try {
+    let cq = sc
+      .from("user_stamps")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id);
+    if (city)    cq = (cq as any).eq("city", city);
+    if (country) cq = (cq as any).eq("country", country);
+    const { count, error: countError } = await cq;
+    if (countError || typeof count !== "number") countFailed = true;
+    else total = count;
+  } catch { countFailed = true; }
+
   // Owner sees all stamps including revoked and hidden — use full column set with metadata
   let query = sc
     .from("user_stamps")
     .select(OWNER_STAMP_COLS + ", stamp_definitions(slug, name, icon_url" + (await artCol(sc)) + ", rarity, stamp_type, category)")
     .eq("user_id", user.id)
     .order("earned_at", { ascending: false })
-    .limit(200);
+    .range(offsetVal, offsetVal + limitVal - 1);
 
   if (city)    query = (query as any).eq("city", city);
   if (country) query = (query as any).eq("country", country);
@@ -211,14 +234,23 @@ router.get("/stamps/me", async (req, res) => {
   if (error) {
     // PGRST205/PGRST200 = relation does not exist (migration not yet applied)
     if ((error as any).code === "PGRST205" || (error as any).code === "PGRST200") {
-      res.json({ stamps: [] });
+      res.json({ stamps: [], total: 0 });
       return;
     }
     sendError(res, "db_error", error.message);
     return;
   }
 
-  res.json({ stamps: await formatStamps(sc, data ?? []) });
+  const rows = data ?? [];
+  // Contract repair: total must never be smaller than the rows we're serving
+  // (offset + page length). When the count failed (or drifted low) and the
+  // page came back full, advertise at least one more row so clients keep
+  // paging — they clamp on the first short/empty page.
+  if (countFailed || total < offsetVal + rows.length) {
+    total = offsetVal + rows.length + (rows.length === limitVal ? 1 : 0);
+  }
+
+  res.json({ stamps: await formatStamps(sc, rows), total });
 });
 
 // ── GET /stamps/me/progress ───────────────────────────────────────────────────

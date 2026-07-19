@@ -124,7 +124,7 @@ Added `limit` (default 100, max 200) and `offset` (default 0) query params. Resp
 | Estimated payload for power user (150 stamps × 200 B) | ~30 KB | ~20 KB |
 | Client updated | `getMyStamps()` → `/api/me/passport/stamps?limit=100` | ✓ |
 
-Future work: add infinite-scroll on the Passport stamps tab using `total` and `offset`.
+Infinite scroll (2026-07-19): the Passport stamps tab now pages through all stamps. `usePassport` exposes `loadMoreStamps()` / `loadingMoreStamps` / `stampsTotal`; scrolling near the bottom of the stamps tab fetches the next page via `offset`, and the server-reported `total` is the stop sentinel (`stamps.length === total`).
 
 ### 3. `GET /api/events` — `SELECT *` → explicit columns + strip `isRecurring`
 

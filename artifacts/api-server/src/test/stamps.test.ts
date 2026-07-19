@@ -945,4 +945,74 @@ describe("Stamp system v2 — smoke tests", async () => {
       assert.equal(body.skipped, 1,  `Expected skipped=1, got ${body.skipped}`);
     });
   });
+
+  // ── M. GET /stamps/me pagination contract ─────────────────────────────────────
+  // total is the infinite-scroll stop sentinel: it must never be smaller than
+  // the rows served, even when the count query itself fails.
+
+  describe("M. GET /stamps/me pagination total sentinel", () => {
+    const ownStamp = {
+      id: STAMP_ID, user_id: ALICE_ID, stamp_definition_id: DEF_ID,
+      is_revoked: false, visibility: "public", earned_at: "2026-07-01T00:00:00Z",
+    };
+
+    after(() => {
+      _setTestClient(makeClient({ currentUserId: ALICE_ID }), true);
+    });
+
+    it("returns total >= stamps.length when the count query fails but data succeeds", async () => {
+      const inner = makeClient({
+        currentUserId: ALICE_ID,
+        stampDefinitions: [baseDef],
+        userStamps: [ownStamp],
+      });
+      // Wrap: head-count selects on user_stamps fail; page selects pass through.
+      const client = {
+        ...inner,
+        from(table: string) {
+          const chain = inner.from(table);
+          if (table === "user_stamps") {
+            const origSelect = chain.select;
+            chain.select = (cols?: string, opts?: any) => {
+              if (opts?.count === "exact" && opts?.head) {
+                const failing: any = {
+                  eq: () => failing,
+                  then: (resolve: any) =>
+                    Promise.resolve().then(() =>
+                      resolve({ data: null, error: { message: "simulated count failure" }, count: null })),
+                };
+                return failing;
+              }
+              return origSelect(cols, opts);
+            };
+          }
+          return chain;
+        },
+      };
+      _setTestClient(client, true);
+
+      const res = await fetch(`${base()}/stamps/me`, { headers: authHeaders(ALICE_ID) });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.stamps.length, 1);
+      assert.ok(
+        typeof body.total === "number" && body.total >= body.stamps.length,
+        `total (${body.total}) must be >= stamps.length (${body.stamps.length})`,
+      );
+    });
+
+    it("returns the exact total when the count query works", async () => {
+      _setTestClient(makeClient({
+        currentUserId: ALICE_ID,
+        stampDefinitions: [baseDef],
+        userStamps: [ownStamp],
+      }), true);
+
+      const res = await fetch(`${base()}/stamps/me`, { headers: authHeaders(ALICE_ID) });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.stamps.length, 1);
+      assert.equal(body.total, 1);
+    });
+  });
 });
