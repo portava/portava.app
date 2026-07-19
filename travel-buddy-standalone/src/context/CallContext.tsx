@@ -380,8 +380,15 @@ function friendlyStartError(reason: string | undefined): string {
     case 'callee_calls_disabled':
     case 'callee_video_disabled':
     case 'not_permitted':
+    case 'messaging_not_permitted':
     case 'blocked':
       return "This person can't receive calls right now.";
+    case 'rab_context_ineligible':
+      return 'Calls are available while you have an active booking together.';
+    case 'rab_calls_disabled':
+      return "They aren't taking calls about bookings right now. You can still message here.";
+    case 'video_calls_disabled':
+      return 'They only take voice calls. Try a voice call instead.';
     case 'callee_busy':
       return 'They are on another call. Try again later.';
     case 'rate_limited':
