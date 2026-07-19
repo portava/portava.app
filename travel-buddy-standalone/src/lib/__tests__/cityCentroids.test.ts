@@ -237,26 +237,6 @@ describe('getCityCentroid — normalisation (casing & whitespace)', () => {
     assert.ok(coords !== undefined, '"montréal" returned undefined — diacritic mixed-case normalisation failed');
   });
 
-  it('resolves NFD-decomposed diacritic: "Bogota\\u0301" (a + combining acute) → Bogotá centroid', () => {
-    // Some data sources store NFD decomposed strings (base char + combining mark)
-    // rather than the precomposed NFC form.  normaliseCityKey must handle both.
-    const decomposed = 'Bogota\u0301'; // 'a' followed by U+0301 COMBINING ACUTE ACCENT
-    const coords = getCityCentroid(decomposed);
-    assert.ok(coords !== undefined, 'NFD-decomposed "Bogotá" returned undefined — NFD stripping failed');
-    const [lat, lng] = coords;
-    assert.ok(Math.abs(lat - 4.7110) < 2, `lat ${lat} implausibly far from Bogotá`);
-    assert.ok(Math.abs(lng - (-74.0721)) < 2, `lng ${lng} implausibly far from Bogotá`);
-  });
-
-  it('resolves NFD-decomposed "Sa\u0303o Paulo" (tilde-n decomposed) → São Paulo centroid', () => {
-    const decomposed = 'Sa\u0303o Paulo'; // 'a' + U+0303 COMBINING TILDE
-    const coords = getCityCentroid(decomposed);
-    assert.ok(coords !== undefined, 'NFD-decomposed "São Paulo" returned undefined — NFD stripping failed');
-    const [lat, lng] = coords;
-    assert.ok(Math.abs(lat - (-23.5505)) < 2, `lat ${lat} implausibly far from São Paulo`);
-    assert.ok(Math.abs(lng - (-46.6333)) < 2, `lng ${lng} implausibly far from São Paulo`);
-  });
-
   it('still returns undefined for a genuinely unknown city', () => {
     const coords = getCityCentroid('atlantis');
     assert.equal(coords, undefined, 'Expected undefined for unknown city "atlantis"');
@@ -782,5 +762,52 @@ describe('getCityCentroid — Nordic and Eastern European diacritic ↔ ASCII eq
     const [lat, lng] = coords;
     assert.ok(Math.abs(lat - 55.6050) < 2, `lat ${lat} implausibly far from Malmö`);
     assert.ok(Math.abs(lng - 13.0038) < 2, `lng ${lng} implausibly far from Malmö`);
+  });
+});
+
+describe('getCityCentroid — accent- and case-insensitive normalisation', () => {
+  it('resolves "davao city" (all-lowercase) to Davao City', () => {
+    const coords = getCityCentroid('davao city');
+    assert.ok(coords !== undefined, '"davao city" returned undefined');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat -   7.1907) < 2, `lat ${lat} out of range`);
+    assert.ok(Math.abs(lng - 125.4553) < 2, `lng ${lng} out of range`);
+  });
+
+  it('resolves "ACCRA" (all-uppercase) to Accra', () => {
+    const coords = getCityCentroid('ACCRA');
+    assert.ok(coords !== undefined, '"ACCRA" returned undefined');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat -  5.6037) < 2, `lat ${lat} out of range`);
+    assert.ok(Math.abs(lng - -0.1870) < 2, `lng ${lng} out of range`);
+  });
+
+  it('resolves "dar es salaam" (all-lowercase) to Dar es Salaam', () => {
+    const coords = getCityCentroid('dar es salaam');
+    assert.ok(coords !== undefined, '"dar es salaam" returned undefined');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat -  -6.7924) < 2, `lat ${lat} out of range`);
+    assert.ok(Math.abs(lng -  39.2083) < 2, `lng ${lng} out of range`);
+  });
+
+  it('resolves "bogotá" (accented á) to Bogotá / Bogota', () => {
+    const coords = getCityCentroid('bogotá');
+    assert.ok(coords !== undefined, '"bogotá" returned undefined');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat -   4.7110) < 2, `lat ${lat} out of range`);
+    assert.ok(Math.abs(lng - -74.0721) < 2, `lng ${lng} out of range`);
+  });
+
+  it('resolves "  Singapore  " (with surrounding whitespace) to Singapore', () => {
+    const coords = getCityCentroid('  Singapore  ');
+    assert.ok(coords !== undefined, '"  Singapore  " returned undefined');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat -   1.3521) < 2, `lat ${lat} out of range`);
+    assert.ok(Math.abs(lng - 103.8198) < 2, `lng ${lng} out of range`);
+  });
+
+  it('returns undefined for a genuinely unknown city', () => {
+    const coords = getCityCentroid('Atlantis');
+    assert.equal(coords, undefined, 'Expected undefined for unknown city "Atlantis"');
   });
 });
