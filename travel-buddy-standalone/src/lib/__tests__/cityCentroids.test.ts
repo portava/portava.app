@@ -394,6 +394,30 @@ describe('getCityCentroid — compound / parenthesised / suffixed city strings',
     assert.ok(Math.abs(lat - 40.7128) < 2, `lat ${lat} implausibly far from New York`);
     assert.ok(Math.abs(lng - (-74.0060)) < 2, `lng ${lng} implausibly far from New York`);
   });
+
+  it('resolves country-suffixed "Tampere, Finland" to the Tampere centroid', () => {
+    const coords = getCityCentroid('Tampere, Finland');
+    assert.ok(coords !== undefined, '"Tampere, Finland" returned undefined — country-suffix stripping failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 61.4978) < 2, `lat ${lat} implausibly far from Tampere`);
+    assert.ok(Math.abs(lng - 23.7610) < 2, `lng ${lng} implausibly far from Tampere`);
+  });
+
+  it('resolves country-suffixed "Aarhus, Denmark" to the Aarhus centroid', () => {
+    const coords = getCityCentroid('Aarhus, Denmark');
+    assert.ok(coords !== undefined, '"Aarhus, Denmark" returned undefined — country-suffix stripping failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 56.1629) < 2, `lat ${lat} implausibly far from Aarhus`);
+    assert.ok(Math.abs(lng - 10.2039) < 2, `lng ${lng} implausibly far from Aarhus`);
+  });
+
+  it('resolves country-suffixed with lowercase "tampere, finland"', () => {
+    const coords = getCityCentroid('tampere, finland');
+    assert.ok(coords !== undefined, '"tampere, finland" returned undefined — lowercase country-suffix stripping failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 61.4978) < 2, `lat ${lat} implausibly far from Tampere`);
+    assert.ok(Math.abs(lng - 23.7610) < 2, `lng ${lng} implausibly far from Tampere`);
+  });
 });
 
 describe('getCityCentroid — alias fallback', () => {
