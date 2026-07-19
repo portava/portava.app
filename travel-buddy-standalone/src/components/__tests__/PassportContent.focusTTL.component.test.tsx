@@ -227,6 +227,10 @@ jest.mock('../PostcardsTab',          () => ({ PostcardsTab:          Null }));
 jest.mock('../StampsTab',             () => ({ StampsTab:             Null }));
 // NOTE: intentionally exhaustive — MapTab imports native map modules.
 jest.mock('../MapTab', () => ({ MapTab: Null }));
+// NOTE: intentionally exhaustive — DestinationsTab imports
+// @maplibre/maplibre-react-native (ESM native map modules) which is not
+// transformed under jest-expo and crashes the whole suite at import time.
+jest.mock('../passport/DestinationsTab', () => ({ DestinationsTab: Null }));
 
 // NOTE: intentionally exhaustive — passport sub-components import SVG and
 // native image libraries that crash under jest-expo.

@@ -1,18 +1,18 @@
 /**
- * Discovery (app/(tabs)/discovery.tsx) — nav-bar collapse handler wiring test.
+ * Discovery (app/(tabs)/discovery.tsx) — tab-routing / no-collapse architecture test.
  *
- * The scroll-architecture tests (Task #1523) verify the discoveryHeader lives
- * inside the tab's list container, but they stub useNavBarScrollHandler to a
- * no-op. This test confirms that:
- *   - ForYouTab (the default active tab) receives the handler as its onScroll prop.
- *   - DiscoveryCategoryTab (all non-ForYou tabs) also receives the same handler —
- *     so removing the wiring from either branch would fail here.
+ * DIVERGENCE FROM THE MOBILE TREE (rule 13 rewrite):
+ * The mobile Discovery screen wires a `useNavBarScrollHandler()` result into the
+ * `onScroll` prop of ForYouTab / DiscoveryCategoryTab so the floating tab pill
+ * collapses as the tab scrolls. The STANDALONE fork does NOT use that mechanism
+ * — app/(tabs)/discovery.tsx does not import `useNavBarScrollHandler`, and it
+ * passes NO `onScroll` prop into either tab component.
  *
- * Strategy:
- *   1. Mock useNavBarScrollHandler to return a jest.fn() spy.
- *   2. Stub ForYouTab and DiscoveryCategoryTab to each capture the onScroll prop.
- *   3. After render, assert that the captured onScroll is the spy — confirming
- *      the screen passes the collapse handler into the scroll container.
+ * This test therefore pins the standalone's ACTUAL contract:
+ *   1. The default tab (for_you) renders ForYouTab, which receives NO onScroll.
+ *   2. Any non-ForYou `category` param renders DiscoveryCategoryTab, which also
+ *      receives NO onScroll — confirming there is no scroll-driven collapse in
+ *      this fork regardless of which tab is active.
  *
  * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
  */
@@ -57,14 +57,12 @@ jest.mock('expo-router', () => ({
   },
 }));
 
-// ── Nav-bar collapse — spy factory ────────────────────────────────────────────
-// The spy is the exact value returned by useNavBarScrollHandler. Discovery
-// passes it directly as onScroll to ForYouTab / DiscoveryCategoryTab, so
-// identity comparison is reliable.
-const mockScrollHandlerSpy = jest.fn();
+// ── Nav-bar collapse ──────────────────────────────────────────────────────────
+// Standalone discovery.tsx does NOT import useNavBarScrollHandler; this stub is
+// only defensive in case a transitive import pulls the module in.
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
-  useNavBarScrollHandler: () => mockScrollHandlerSpy,
+  useNavBarScrollHandler: () => () => {},
   NavBarFiller: () => null,
   NAV_BAR_FILLER_HEIGHT: 96,
 }));
@@ -143,27 +141,31 @@ jest.mock('../../../src/services/rentABuddy', () => ({
   getAvailableNow: jest.fn().mockResolvedValue({ ok: false }),
 }));
 
-// ── ForYouTab stub — captures onScroll prop ───────────────────────────────────
-let capturedOnScroll: ((...args: any[]) => any) | null = null;
+// ── ForYouTab stub — captures its full props ──────────────────────────────────
+let capturedForYouProps: Record<string, any> | null = null;
+let forYouRendered = false;
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/ForYouTab', () => ({
-  ForYouTab: ({ onScroll }: { onScroll?: (...args: any[]) => any }) => {
-    capturedOnScroll = onScroll ?? null;
+  ForYouTab: (props: Record<string, any>) => {
+    capturedForYouProps = props;
+    forYouRendered = true;
     return null;
   },
 }));
 
-// ── DiscoveryCategoryTab stub — captures onScroll prop ────────────────────────
-// Discovery renders DiscoveryCategoryTab for every non-ForYou tab with
-// onScroll={navScrollHandler}. This stub captures what is actually passed so
-// tests can assert identity against the spy.
-let capturedCategoryOnScroll: ((...args: any[]) => any) | null = null;
+// ── DiscoveryCategoryTab stub — captures its full props ───────────────────────
+let capturedCategoryProps: Record<string, any> | null = null;
+let categoryRendered = false;
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/DiscoveryCategoryTab', () => ({
-  DiscoveryCategoryTab: ({ onScroll }: { onScroll?: (...args: any[]) => any }) => {
-    capturedCategoryOnScroll = onScroll ?? null;
+  DiscoveryCategoryTab: (props: Record<string, any>) => {
+    capturedCategoryProps = props;
+    categoryRendered = true;
     return null;
   },
+  // discovery.tsx also imports FilterStrip + SORT_LABELS from this module.
+  FilterStrip: () => null,
+  SORT_LABELS: {},
 }));
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -196,94 +198,68 @@ import DiscoveryHub from '../discovery.tsx';
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('Discovery screen — nav-bar scroll handler wiring (ForYouTab)', () => {
+describe('Discovery screen — ForYouTab has no scroll-driven collapse (standalone)', () => {
   beforeEach(() => {
     mockSearchParams = {}; // default tab: for_you
-    capturedOnScroll = null;
-    mockScrollHandlerSpy.mockClear();
+    capturedForYouProps = null;
+    forYouRendered = false;
   });
 
-  it('ForYouTab receives the useNavBarScrollHandler result as its onScroll prop', async () => {
+  it('ForYouTab renders as the default tab and receives NO onScroll prop', async () => {
     await render(<DiscoveryHub />);
     await act(async () => {});
 
-    // The handler must be passed through — not dropped or replaced with undefined.
-    expect(capturedOnScroll).toBe(mockScrollHandlerSpy);
-  });
-
-  it('calling the captured onScroll invokes the collapse handler', async () => {
-    await render(<DiscoveryHub />);
-    await act(async () => {});
-
-    expect(capturedOnScroll).not.toBeNull();
-    capturedOnScroll!({ nativeEvent: { contentOffset: { y: 80 } } } as any);
-    expect(mockScrollHandlerSpy).toHaveBeenCalledTimes(1);
+    expect(forYouRendered).toBe(true);
+    expect(capturedForYouProps).not.toBeNull();
+    // Standalone fork has no nav-bar collapse: no onScroll is wired to the tab.
+    expect(capturedForYouProps!.onScroll).toBeUndefined();
   });
 });
 
-// ── DiscoveryCategoryTab wiring ───────────────────────────────────────────────
-// Switching to any non-ForYou tab causes Discovery to render DiscoveryCategoryTab
-// instead of ForYouTab. This suite confirms the collapse handler is also wired
-// there — catching any accidental removal of onScroll={navScrollHandler} from
-// the DiscoveryCategoryTab branch.
+// ── DiscoveryCategoryTab routing ──────────────────────────────────────────────
+// Any non-ForYou `category` param causes Discovery to render DiscoveryCategoryTab
+// instead of ForYouTab. This suite confirms that branch renders and — matching
+// the standalone architecture — receives NO onScroll prop.
 
-describe('Discovery screen — nav-bar scroll handler wiring (DiscoveryCategoryTab)', () => {
+describe('Discovery screen — DiscoveryCategoryTab has no scroll-driven collapse (standalone)', () => {
   beforeEach(() => {
-    // Start on the 'places' tab so Discovery renders DiscoveryCategoryTab, not ForYouTab.
     mockSearchParams = { category: 'places' };
-    capturedCategoryOnScroll = null;
-    mockScrollHandlerSpy.mockClear();
+    capturedCategoryProps = null;
+    categoryRendered = false;
   });
 
-  it('DiscoveryCategoryTab receives the useNavBarScrollHandler result as its onScroll prop', async () => {
+  it('DiscoveryCategoryTab renders for a non-ForYou category and receives NO onScroll prop', async () => {
     await render(<DiscoveryHub />);
     await act(async () => {});
 
-    // The same collapse handler must reach DiscoveryCategoryTab — identity check.
-    expect(capturedCategoryOnScroll).toBe(mockScrollHandlerSpy);
-  });
-
-  it('calling the captured DiscoveryCategoryTab onScroll invokes the collapse handler', async () => {
-    await render(<DiscoveryHub />);
-    await act(async () => {});
-
-    expect(capturedCategoryOnScroll).not.toBeNull();
-    capturedCategoryOnScroll!({ nativeEvent: { contentOffset: { y: 120 } } } as any);
-    expect(mockScrollHandlerSpy).toHaveBeenCalledTimes(1);
+    expect(categoryRendered).toBe(true);
+    expect(capturedCategoryProps).not.toBeNull();
+    expect(capturedCategoryProps!.onScroll).toBeUndefined();
   });
 });
 
-// ── Parametrized: handler reaches every non-ForYou tab ────────────────────────
-// Iterates over several TABS entries (places, events, beaches, nightlife) to
-// confirm that onScroll={navScrollHandler} is wired regardless of which
-// category is active. A per-category rendering branch that accidentally drops
-// the prop for some tabs would fail here.
+// ── Parametrized: every non-ForYou tab routes to DiscoveryCategoryTab ──────────
+// Iterates several category params to confirm the routing branch is stable and
+// that none of them accidentally introduce an onScroll collapse wiring.
 
 const NON_FOR_YOU_CATEGORIES = ['places', 'events', 'beaches', 'nightlife'] as const;
 
 describe.each(NON_FOR_YOU_CATEGORIES)(
-  'Discovery screen — collapse handler reaches DiscoveryCategoryTab (category=%s)',
+  'Discovery screen — category %s routes to DiscoveryCategoryTab (no collapse)',
   (category) => {
     beforeEach(() => {
       mockSearchParams = { category };
-      capturedCategoryOnScroll = null;
-      mockScrollHandlerSpy.mockClear();
+      capturedCategoryProps = null;
+      categoryRendered = false;
     });
 
-    it(`[${category}] DiscoveryCategoryTab receives the collapse handler as onScroll`, async () => {
+    it(`[${category}] renders DiscoveryCategoryTab with no onScroll prop`, async () => {
       await render(<DiscoveryHub />);
       await act(async () => {});
 
-      expect(capturedCategoryOnScroll).toBe(mockScrollHandlerSpy);
-    });
-
-    it(`[${category}] invoking the captured onScroll calls the collapse handler`, async () => {
-      await render(<DiscoveryHub />);
-      await act(async () => {});
-
-      expect(capturedCategoryOnScroll).not.toBeNull();
-      capturedCategoryOnScroll!({ nativeEvent: { contentOffset: { y: 80 } } } as any);
-      expect(mockScrollHandlerSpy).toHaveBeenCalledTimes(1);
+      expect(categoryRendered).toBe(true);
+      expect(capturedCategoryProps).not.toBeNull();
+      expect(capturedCategoryProps!.onScroll).toBeUndefined();
     });
   },
 );

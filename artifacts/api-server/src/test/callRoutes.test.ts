@@ -374,6 +374,39 @@ describe("call routes", () => {
       assert.equal(r.body.reason, "rate_limited");
     });
 
+    // ── Multi-instance hardening ────────────────────────────────────────────
+    // The in-memory checkRateLimit backstop is per-process (best-effort).
+    // These tests prove the DB-authoritative checks alone are a hard ceiling
+    // on a FRESH instance whose in-memory limiter has no history — the
+    // situation every additional server instance is in.
+
+    it("DB hourly ceiling denies at the limit even when the in-memory limiter has no history (fresh instance)", async () => {
+      wireDeps({ startsInLastHour: async () => CALL_CONFIG.MAX_STARTS_PER_HOUR });
+      _resetRateLimit(); // simulate a freshly booted instance: zero in-memory buckets
+      const r = await req("POST", "/api/calls", startBody);
+      assert.equal(r.status, 429);
+      assert.equal(r.body.reason, "rate_limited");
+      assert.equal(store.__sessions.size, 0, "no session persisted at the ceiling");
+    });
+
+    it("DB hourly ceiling also holds for group starts on a fresh instance", async () => {
+      wireDeps({ startsInLastHour: async () => CALL_CONFIG.MAX_STARTS_PER_HOUR });
+      _resetRateLimit();
+      const r = await req("POST", "/api/calls", {
+        contextType: "trip_crew", callType: "group_voice", contextId: "trip-1",
+      });
+      assert.equal(r.status, 429);
+      assert.equal(r.body.reason, "rate_limited");
+    });
+
+    it("redial cooldown (DB-backed lastDeclineAt) holds on a fresh instance", async () => {
+      wireDeps({ lastDeclineAt: async () => Date.now() - 1_000 });
+      _resetRateLimit();
+      const r = await req("POST", "/api/calls", startBody);
+      assert.equal(r.status, 429);
+      assert.equal(r.body.reason, "redial_cooldown");
+    });
+
     it("group start authorizes via canUserStartGroupCall (not_crew_member 403)", async () => {
       wireDeps({ isActiveCrewMember: async () => false });
       const r = await req("POST", "/api/calls", {

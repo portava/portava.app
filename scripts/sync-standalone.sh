@@ -127,6 +127,27 @@ done
 # Add any file here that you intend to maintain exclusively in standalone.
 # ---------------------------------------------------------------------------
 STANDALONE_OWNED_FILES=(
+  # Tests for standalone-owned screens — the canonical refactors of these
+  # suites target the monorepo's screen architecture and fail against the
+  # standalone-owned components below; standalone keeps its own versions.
+  "app/(tabs)/__tests__/discovery.contextModeChips.component.test.tsx"
+  "app/(tabs)/__tests__/Discovery.navBarScrollHandler.component.test.tsx"
+  "app/(tabs)/__tests__/Discovery.scrollArchitecture.component.test.tsx"
+  "app/(tabs)/__tests__/Pulse.navBarScrollHandler.component.test.tsx"
+  "app/(tabs)/__tests__/Pulse.sessionIdToTapOutcome.component.test.tsx"
+  "app/__tests__/search.homeCityCoords.component.test.tsx"
+  "app/__tests__/search.lastKnownCoords.component.test.tsx"
+  "app/__tests__/search.sessionLocationCoords.component.test.tsx"
+  "app/__tests__/search.sourceSwitchCoords.component.test.tsx"
+  "src/components/discovery/__tests__/DiscoveryScreen.component.test.tsx"
+  "src/components/__tests__/PassportContent.focusTTL.component.test.tsx"
+  # Canonical-only suites: they test the monorepo discovery screen's city
+  # picker / map shortcut wiring, which the standalone-owned discovery.tsx
+  # does not share. Deliberately absent from the standalone tree.
+  "app/(tabs)/__tests__/discovery.dimmedChipOpensCityPicker.component.test.tsx"
+  "app/(tabs)/__tests__/discovery.enabledChips.component.test.tsx"
+  "app/(tabs)/__tests__/discovery.mapShortcut.component.test.tsx"
+  "app/(tabs)/__tests__/discovery.mapShortcutGeocode.component.test.tsx"
   "app/(tabs)/discovery.tsx"
   "app/(tabs)/index.tsx"
   "src/components/discovery/DiscoveryMapView.tsx"

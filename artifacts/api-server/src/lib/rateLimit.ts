@@ -1,6 +1,15 @@
 /**
  * In-memory sliding-window rate limiter.
  *
+ * SCOPE — PER-PROCESS, BEST-EFFORT ONLY. Buckets live in this process's
+ * memory, so with N server instances a client effectively gets N× the
+ * budget, and a restart clears all history. Any limit that must be a hard
+ * ceiling across instances MUST be enforced against shared state (e.g. the
+ * DB) — see the call-start limit: this limiter is only a cheap first-line
+ * backstop there, while the permission engine's DB-counted
+ * `startsInLastHour` check (callPermissionEngine.ts) is the authoritative
+ * cross-instance ceiling.
+ *
  * Each (key, limiterId) pair gets its own bucket: { count, windowStart }.
  * When the elapsed time since windowStart exceeds windowMs the bucket resets.
  *

@@ -95,41 +95,28 @@ jest.mock('expo-router', () => {
   };
 });
 
-// NOTE: intentionally exhaustive — LocationContext pulls in useActiveLocation
-// which imports expo-location native modules unavailable in the jest-expo runner.
-// The mock drives source='last_known' / freshness='stale' with last-known GPS
-// coords in resolvedLocation, simulating a user whose live GPS fix has lapsed.
-jest.mock('../../src/context/LocationContext', () => ({
-  useLocationContext: () => ({
+// NOTE: intentionally exhaustive — the standalone search.tsx reads location via
+// useActiveLocation() (a local-state hook), NOT the mobile-tree useLocationContext.
+// The real hook imports expo-location native modules unavailable in the jest-expo
+// runner, so we stub it. This is a DIVERGENT FORK: the standalone userCoords memo
+// surfaces coords from locationState.coords only when permissionStatus === 'granted'
+// — there is no resolvedLocation cascade (mobile-only). We model a stale last-known
+// fix as a granted locationState whose coords are the cached last-known values.
+// NOTE: exhaustive factory (see above) — no requireActual to avoid loading
+// expo-location native modules.
+jest.mock('../../src/hooks/useActiveLocation', () => ({
+  useActiveLocation: () => ({
     locationState: {
       permissionStatus: 'granted',
       ok: true,
-      coords: null,
-      place: { city: LAST_KNOWN_CITY, country: 'JP' },
+      coords: { lat: LAST_KNOWN_LAT, lng: LAST_KNOWN_LNG, accuracyMeters: 50 },
+      place: { city: LAST_KNOWN_CITY, country: 'JP', lat: LAST_KNOWN_LAT, lng: LAST_KNOWN_LNG },
       source: 'last_known',
       freshness: 'stale',
     },
     requestLocation: jest.fn(),
     setManualCity: jest.fn(),
-    showPermissionPrompt: false,
-    showCityPicker: false,
-    requireLocation: jest.fn(),
-    dismissPermissionPrompt: jest.fn(),
-    openCityPicker: jest.fn(),
-    closeCityPicker: jest.fn(),
-    locationPrefs: {},
-    locationPrefsLoading: false,
-    refreshLocationPrefs: jest.fn(),
-    setSessionLocation: jest.fn(),
-    clearSessionLocation: jest.fn(),
-    // resolvedLocation carries last-known GPS coords even though the live fix
-    // has lapsed (freshness='stale').
-    resolvedLocation: {
-      place: { city: LAST_KNOWN_CITY, country: 'JP', lat: LAST_KNOWN_LAT, lng: LAST_KNOWN_LNG },
-      coords: { lat: LAST_KNOWN_LAT, lng: LAST_KNOWN_LNG, accuracyMeters: 50 },
-      source: 'last_known',
-      freshness: 'stale',
-    },
+    isLoading: false,
   }),
 }));
 

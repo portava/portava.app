@@ -244,6 +244,13 @@ router.post("/calls", async (req, res) => {
   const userId = auth.user.id;
 
   // In-memory backstop on top of the engine's DB-authoritative hourly count.
+  // BEST-EFFORT ONLY: this limiter is per-process, so with N instances a
+  // spammer gets N× this budget and a restart clears it. The hard ceiling
+  // across instances is the engine's DB-counted startsInLastHour check
+  // (canUserStartCall / canUserStartGroupCall below) — every start attempt
+  // reaches it regardless of which instance serves the request. Same story
+  // for the redial cooldown: lastDeclineAt is read from call_sessions, so it
+  // holds across instances too.
   const rl = checkRateLimit("call_start", userId, CALL_CONFIG.MAX_STARTS_PER_HOUR, 60 * 60 * 1_000);
   if (!rl.allowed) return sendDeny(res, "rate_limited");
 

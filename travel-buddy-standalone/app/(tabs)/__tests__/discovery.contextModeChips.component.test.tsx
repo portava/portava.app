@@ -11,30 +11,12 @@
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import DiscoveryHub from '../discovery.tsx';
+import { color } from '../../../src/theme/tokens';
+
+const mockForYouModes: (string | undefined)[] = [];
+const mockOpenCityPicker = jest.fn();
 
 // ── expo-router ───────────────────────────────────────────────────────────────
-// react-native Proxy mock — DiscoveryHub mounts a raw <Modal> (age filter).
-// Modal's animation lifecycle leaves a floating async act() scope inside
-// RNTL's render() promise; the next act() collides with it, corrupting the
-// act-scope depth so every later render in this file commits an EMPTY tree.
-// Stubbing Modal as a plain conditional View keeps the lifecycle synchronous.
-// ActivityIndicator must be stubbed too: through the Proxy its getter re-enters
-// with `this === Proxy` and can hit uninitialised native-module stubs.
-jest.mock('react-native', () => {
-  const actual = jest.requireActual('react-native');
-  const R = require('react');
-  const MockModal = ({ children, visible }: { children?: React.ReactNode; visible?: boolean }) =>
-    visible ? R.createElement(actual.View, null, children) : null;
-  const MockActivityIndicator = () => null;
-  return new Proxy(actual, {
-    get(target, prop, receiver) {
-      if (prop === 'Modal') return MockModal;
-      if (prop === 'ActivityIndicator') return MockActivityIndicator;
-      return Reflect.get(target, prop, receiver);
-    },
-  });
-});
-
 jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
   router: {
@@ -148,7 +130,7 @@ jest.mock('../../../src/context/LocationContext', () => ({
       freshness: 'unavailable',
     },
     showCityPicker:  false,
-    openCityPicker:  jest.fn(),
+    openCityPicker:  mockOpenCityPicker,
     closeCityPicker: jest.fn(),
     setManualCity:   jest.fn().mockResolvedValue(undefined),
     isLoading:       false,
@@ -164,20 +146,33 @@ jest.mock('../../../src/components/PlanPickerController', () => ({
 // ── Heavy sub-components ──────────────────────────────────────────────────────
 const Null = () => null;
 
-// The tabs render discoveryHeader (chips, search bar, nudge, tab row) inside
-// their FlatList via listHeaderComponent. Rendering it from the stub keeps the
-// header UI in the test tree without pulling in the tabs' native deps.
-const HeaderOnly = ({ listHeaderComponent }: { listHeaderComponent?: React.ReactElement | null }) =>
-  listHeaderComponent ?? null;
-
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/layover/LayoverModeSheet',        () => ({ LayoverModeSheet:      Null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/discovery/DiscoveryCategoryTab',  () => ({ DiscoveryCategoryTab:  HeaderOnly }));
+// NOTE: intentional stub — must stay exhaustive; the screen imports
+// FilterStrip + SORT_LABELS from this module too (missing exports crash
+// the filters panel into its SectionErrorBoundary).
+jest.mock('../../../src/components/discovery/DiscoveryCategoryTab',  () => ({
+  DiscoveryCategoryTab: Null,
+  // The screen also imports FilterStrip + SORT_LABELS from this module —
+  // omitting them makes the expanded filters panel crash into its
+  // SectionErrorBoundary (undefined element type).
+  FilterStrip: Null,
+  SORT_LABELS: {},
+}));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/PlaceDetailSheet',      () => ({ PlaceDetailSheet:      Null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/discovery/ForYouTab',             () => ({ ForYouTab:             HeaderOnly }));
+// NOTE: intentional capture stub — records the contextMode prop on every
+// render; the tab is the real
+// consumer of contextMode, and prop capture works even when this
+// renderer's visual commits stall (renders still execute).
+jest.mock('../../../src/components/discovery/ForYouTab', () => ({
+  ForYouTab: (props: { contextMode?: string }) => {
+    mockForYouModes.push(props.contextMode);
+    return null;
+  },
+}));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/DestinationBar',        () => ({ DestinationBar:        Null }));
 // NOTE: intentional stub — not under test here.
@@ -204,46 +199,49 @@ const CHIP_LABELS = ['Near Me', 'In City', 'Going Soon', 'Around Crew', 'Safe Ne
 describe('DiscoveryHub — context mode chips', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockForYouModes.length = 0;
     mockLocationState = { place: { city: null, country: null }, coords: null };
   });
 
-  // Single consolidated test: this renderer (React 19 + RNTL v14) only
-  // reliably dispatches presses on the FIRST component instance per file and
-  // kills press dispatch on instances mounted after a post-press act()
-  // flush.  Scenario 2 (destination set) therefore runs as initial-render
-  // queries on a key-swap instance — honest, because accessibilityState
-  // .disabled and the press-handler branch are driven by the same
-  // `chipsDisabled` conditional and cannot regress separately.
-  it('chips are disabled (and inert) without a destination, enabled with one', async () => {
-    // ── Instance 0: no destination → all chips disabled and inert ──
-    const view = await render(<DiscoveryHub key="location-required" />);
+  // NOTE (standalone fork): unlike the mobile tree, this screen has no
+  // dimmed-chip / city-picker / nudge-banner behaviour — the context chips
+  // live inside the collapsible filters panel ({filtersExpanded && ...} in
+  // ../discovery.tsx), are always enabled, and simply switch contextMode.
+  // The former mobile-derived tests asserted features that do not exist
+  // here; this test covers the ACTUAL behaviour.
+  // Renderer constraint (React 19 + RNTL v14): single test, single
+  // instance; press → act() flush → re-query for committed style updates.
+  // Renderer constraint (React 19 + RNTL v14 + jest-expo): only ONE
+  // press-derived state commit is available per file, and these chips only
+  // exist behind the filters-panel expand press — so the expand consumes it.
+  // A second press (or even a direct handler call) after the expand never
+  // renders, so the press-switches-mode scenario is NOT testable in this
+  // tree's panel-gated layout.  Chip-press mode switching is covered in the
+  // mobile tree (artifacts/travel-buddy), where the chips render un-gated.
+  it('expanding filters reveals always-enabled chips wired to contextMode', async () => {
+    const ACTIVE_BG = color.signal + '14';
+
+    const view = await render(<DiscoveryHub />);
     await act(async () => {});
 
-    for (const label of CHIP_LABELS) {
-      const chip = view.getByText(label);
-      expect(chip).toBeTruthy();
-      expect(chip.parent?.props?.accessibilityState?.disabled).toBe(true);
-      // Pressing a disabled chip must not throw or switch contextMode.
-      fireEvent.press(chip);
-    }
+    // Chips are hidden while the filters panel is collapsed, and the tab
+    // already receives the default mode.
+    expect(view.queryByText('Near Me')).toBeNull();
+    expect(mockForYouModes).toContain('in_city');
 
-    // NOTE: no act() flush after these presses — a post-press flush stops
-    // the next key-swap instance from committing (queries would then hit
-    // this stale tree).  The disabled-regression guarantee comes from the
-    // accessibilityState assertions above: RN skips onPress entirely for
-    // disabled Pressables, and `chipsDisabled` drives both the a11y flag
-    // and the handler gate.
-
-    // ── Instance 1: destination set → chips enabled (queries only) ──
-    mockLocationState = {
-      place:  { city: 'Rome', country: 'Italy' },
-      coords: { lat: 41.9028, lng: 12.4964 },
-    };
-    await view.rerender(<DiscoveryHub key="dest-set" />);
+    // Expand the filters panel (SlidersHorizontal toggle button —
+    // fireEvent.press walks up from the icon stub to the Pressable).
+    fireEvent.press(view.getByTestId('icon-SlidersHorizontal'));
     await act(async () => {});
 
+    // All chips render; default mode is 'in_city' → 'In City' is active,
+    // others are not, and nothing here is disabled or city-picker-gated.
     for (const label of CHIP_LABELS) {
-      expect(view.getByText(label).parent?.props?.accessibilityState?.disabled).toBeFalsy();
+      expect(view.getByText(label)).toBeTruthy();
     }
+    expect(view.getByText('In City').parent).toHaveStyle({ backgroundColor: ACTIVE_BG });
+    expect(view.getByText('Near Me').parent).not.toHaveStyle({ backgroundColor: ACTIVE_BG });
+    expect(view.getByText('Near Me').parent?.props?.accessibilityState?.disabled).not.toBe(true);
+    expect(mockOpenCityPicker).not.toHaveBeenCalled();
   });
 });

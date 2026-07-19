@@ -97,41 +97,30 @@ jest.mock('expo-router', () => {
   };
 });
 
-// NOTE: intentionally exhaustive — LocationContext pulls in useActiveLocation
-// which imports expo-location native modules. locationState carries GPS coords
-// for Manila; resolvedLocation carries the session override (Tokyo, manual_city).
-// The component must read from resolvedLocation so searchUnified gets Tokyo coords.
-jest.mock('../../src/context/LocationContext', () => ({
-  useLocationContext: () => ({
+// NOTE: intentionally exhaustive — the standalone search.tsx reads location via
+// useActiveLocation() (a local-state hook), NOT the mobile-tree useLocationContext.
+// The real hook imports expo-location native modules unavailable in the jest-expo
+// runner, so we stub it. This is a DIVERGENT FORK: search.tsx has no separate
+// session-override channel — it reads coords straight from locationState.coords /
+// locationState.place.city whenever permissionStatus === 'granted'. A city-picker
+// override in this tree lands in that same locationState (via setManualCity), so we
+// model the picked session city (Tokyo, source='manual_city') as the active
+// locationState and assert those coords flow through to searchUnified.
+// NOTE: exhaustive factory (see above) — no requireActual to avoid loading
+// expo-location native modules.
+jest.mock('../../src/hooks/useActiveLocation', () => ({
+  useActiveLocation: () => ({
     locationState: {
       permissionStatus: 'granted',
       ok: true,
-      coords: { lat: GPS_LAT, lng: GPS_LNG, accuracyMeters: 20 },
-      place: { city: GPS_CITY, country: 'PH', lat: GPS_LAT, lng: GPS_LNG },
-      source: 'gps',
+      coords: { lat: SESSION_LAT, lng: SESSION_LNG, accuracyMeters: null },
+      place: { city: SESSION_CITY, country: 'JP', lat: SESSION_LAT, lng: SESSION_LNG },
+      source: 'manual_city',
       freshness: 'live',
     },
     requestLocation: jest.fn(),
     setManualCity: jest.fn(),
-    showPermissionPrompt: false,
-    showCityPicker: false,
-    requireLocation: jest.fn(),
-    dismissPermissionPrompt: jest.fn(),
-    openCityPicker: jest.fn(),
-    closeCityPicker: jest.fn(),
-    locationPrefs: {},
-    locationPrefsLoading: false,
-    refreshLocationPrefs: jest.fn(),
-    setSessionLocation: jest.fn(),
-    clearSessionLocation: jest.fn(),
-    // resolvedLocation is the session override (city picker → Tokyo).
-    // This is what search.tsx must read coords from.
-    resolvedLocation: {
-      place: { city: SESSION_CITY, country: 'JP', lat: SESSION_LAT, lng: SESSION_LNG },
-      coords: { lat: SESSION_LAT, lng: SESSION_LNG, accuracyMeters: null },
-      source: 'manual_city',
-      freshness: 'live',
-    },
+    isLoading: false,
   }),
 }));
 
