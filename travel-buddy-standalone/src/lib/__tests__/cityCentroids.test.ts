@@ -486,6 +486,7 @@ describe('getCityCentroid — compound / parenthesised / suffixed city strings',
     const coords = getCityCentroid('Helsinki, FI');
     assert.ok(coords !== undefined, '"Helsinki, FI" returned undefined — ISO-code suffix not stripped');
     const [lat, lng] = coords;
+    // Helsinki: ~60.17 N, 24.94 E
     assert.ok(Math.abs(lat - 60.1699) < 2, `lat ${lat} implausibly far from Helsinki`);
     assert.ok(Math.abs(lng - 24.9384) < 2, `lng ${lng} implausibly far from Helsinki`);
   });
