@@ -79,7 +79,7 @@ export function EventCard({ ev, dim, initialSaved, sessionId }: {
 }
 
 /** Collapsed "When you're flexible · N" — dimmed, labeled with why. */
-export function FlexibleSection({ events }: { events: CityEvent[] }) {
+export function FlexibleSection({ events, sessionId }: { events: CityEvent[]; sessionId?: string }) {
   const [open, setOpen] = useState(false);
   if (!events.length) return null;
   return (
@@ -94,7 +94,7 @@ export function FlexibleSection({ events }: { events: CityEvent[] }) {
       {open && (
         <View style={styles.flexBody}>
           <Text style={styles.flexNote}>Outside your set availability — shown in case your plans flex.</Text>
-          {events.map((e) => <EventCard key={e.id} ev={e} dim />)}
+          {events.map((e) => <EventCard key={e.id} ev={e} dim sessionId={sessionId} />)}
         </View>
       )}
     </View>
