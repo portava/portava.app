@@ -87,6 +87,8 @@ jest.mock('../../../context/SessionContext', () => ({
 // location state through the mockLocation variable instead.
 jest.mock('../../../context/LocationContext', () => ({
   useLocationContext: () => ({
+    setSessionLocation: jest.fn(),
+    clearSessionLocation: jest.fn(),
     ...mockLocation,
     // resolvedLocation — required by discovery.tsx after location unification.
     // Computed at call time so beforeEach mutations to mockLocation.locationState
@@ -115,14 +117,31 @@ jest.mock('../../../hooks/useFollowingHighlights', () => ({
 // NOTE: intentionally exhaustive — each stub replaces a component whose real
 // implementation pulls maps/reanimated/etc. that are not safe under jest.
 
+// NOTE: the real tabs render the screen's shared header (title "Discover",
+// trending/buddy/CompassPicks sections) via the `listHeaderComponent` prop —
+// discovery.tsx moved the header stack inside each tab's FlatList.  The stub
+// MUST render that prop, otherwise the screen shell (and the assertions that
+// query it) never appears.
 jest.mock('../ForYouTab', () => {
   const RN = jest.requireActual('react-native');
-  return { ForYouTab: () => <RN.Text testID="stub-for-you">ForYouTab</RN.Text> };
+  return {
+    ForYouTab: ({ listHeaderComponent }: { listHeaderComponent?: React.ReactNode }) => (
+      <RN.View>
+        <RN.Text testID="stub-for-you">ForYouTab</RN.Text>
+        {listHeaderComponent}
+      </RN.View>
+    ),
+  };
 });
 
 jest.mock('../DiscoveryCategoryTab', () => {
   const RN = jest.requireActual('react-native');
-  const Stub = () => <RN.Text testID="stub-category-tab">DiscoveryCategoryTab</RN.Text>;
+  const Stub = ({ listHeaderComponent }: { listHeaderComponent?: React.ReactNode }) => (
+    <RN.View>
+      <RN.Text testID="stub-category-tab">DiscoveryCategoryTab</RN.Text>
+      {listHeaderComponent}
+    </RN.View>
+  );
   return { DiscoveryCategoryTab: Stub, default: Stub };
 });
 

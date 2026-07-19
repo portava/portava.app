@@ -177,7 +177,7 @@ describe('ActivityCenter — tab-switch header duplication (non-Requests tabs)',
       expect(screen.getAllByText('Activity Center')).toHaveLength(1);
     });
 
-    unmount();
+    await unmount();
 
     // Drain any deferred real-timer scheduler work left by waitFor's
     // IS_REACT_ACT_ENVIRONMENT=false polling window.  Without this, the work

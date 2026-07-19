@@ -16,7 +16,7 @@
 
 import React from 'react';
 import { Text, Pressable } from 'react-native';
-import { render, screen, act, fireEvent } from '@testing-library/react-native';
+import { render, screen, act, fireEvent, waitFor } from '@testing-library/react-native';
 
 const mockStartCall = jest.fn();
 const mockEndCall = jest.fn();

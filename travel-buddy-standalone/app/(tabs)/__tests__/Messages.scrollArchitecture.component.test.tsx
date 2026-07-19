@@ -43,6 +43,11 @@ jest.mock('expo-router', () => ({
 
 // ── Bottom inset ──────────────────────────────────────────────────────────────
 jest.mock('../../../src/hooks/useBottomInset', () => ({
+  usePlainBottomInset: () => 130,
+  PlainBottomFiller: () => null,
+  BOTTOM_BREATHING_ROOM: 24,
+  useStickyBarInset: () => ({ inset: 130, onBarLayout: () => {} }),
+  useKeyboardVisible: () => false,
   useBottomInset: () => 130,
 }));
 

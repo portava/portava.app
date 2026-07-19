@@ -34,7 +34,5 @@ it('wraps the sheet body in a KeyboardAvoidingView', async () => {
   const kavs = tr.root.findAllByType(KeyboardAvoidingView);
   expect(kavs.length).toBe(1);
   expect(kavs[0].props.behavior).toBe(expectedBehavior);
-  await act(async () => {
-    tr.unmount();
-  });
+  await tr.unmount();
 });

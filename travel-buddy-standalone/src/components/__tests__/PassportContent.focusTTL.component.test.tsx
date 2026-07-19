@@ -227,6 +227,10 @@ jest.mock('../PostcardsTab',          () => ({ PostcardsTab:          Null }));
 jest.mock('../StampsTab',             () => ({ StampsTab:             Null }));
 // NOTE: intentionally exhaustive — MapTab imports native map modules.
 jest.mock('../MapTab', () => ({ MapTab: Null }));
+// NOTE: intentionally exhaustive — DestinationsTab imports
+// @maplibre/maplibre-react-native (ESM native map modules) which is not
+// transformed under jest-expo and crashes the whole suite at import time.
+jest.mock('../passport/DestinationsTab', () => ({ DestinationsTab: Null }));
 
 // NOTE: intentionally exhaustive — passport sub-components import SVG and
 // native image libraries that crash under jest-expo.
@@ -309,7 +313,7 @@ describe('PassportContent — focus TTL guard: reload suppressed within TTL', ()
   });
 
   it('does NOT call reload() on the first focus — data was just loaded (within TTL)', async () => {
-    const { unmount } = await render(<PassportScreen />);
+    await render(<PassportScreen />);
 
     // Allow the initial useFocusEffect (fired on mount) to settle.
     await act(async () => {});
@@ -318,11 +322,10 @@ describe('PassportContent — focus TTL guard: reload suppressed within TTL', ()
     // callback fires at the same mock time, so elapsed = 0 < TTL.
     expect(mockReload).not.toHaveBeenCalled();
 
-    await act(async () => { unmount(); });
   });
 
   it('does NOT call reload() when refocused while still within the TTL window', async () => {
-    const { unmount } = await render(<PassportScreen />);
+    await render(<PassportScreen />);
     await act(async () => {});
 
     // Advance time by 1 minute — well within the 5-minute TTL.
@@ -333,11 +336,10 @@ describe('PassportContent — focus TTL guard: reload suppressed within TTL', ()
 
     expect(mockReload).not.toHaveBeenCalled();
 
-    await act(async () => { unmount(); });
   });
 
   it('calls reload() exactly once when refocused after the TTL has expired', async () => {
-    const { unmount } = await render(<PassportScreen />);
+    await render(<PassportScreen />);
     await act(async () => {});
 
     // Advance time past the TTL (5 min + 1 ms).
@@ -348,7 +350,6 @@ describe('PassportContent — focus TTL guard: reload suppressed within TTL', ()
 
     expect(mockReload).toHaveBeenCalledTimes(1);
 
-    await act(async () => { unmount(); });
   });
 });
 
@@ -376,7 +377,7 @@ describe('PassportContent — unconditional lightweight calls on every focus', (
   });
 
   it('calls getPendingPosts unconditionally on every focus — even within the TTL', async () => {
-    const { unmount } = await render(<PassportScreen />);
+    await render(<PassportScreen />);
 
     // Initial mount focus (within TTL).
     await act(async () => {});
@@ -387,11 +388,10 @@ describe('PassportContent — unconditional lightweight calls on every focus', (
     await act(async () => { capturedFocusCallback?.(); });
     expect(mockGetPendingPosts).toHaveBeenCalledTimes(2);
 
-    await act(async () => { unmount(); });
   });
 
   it('calls getMyBuddyProfile unconditionally on every focus — even within the TTL', async () => {
-    const { unmount } = await render(<PassportScreen />);
+    await render(<PassportScreen />);
 
     // Initial mount focus (within TTL).
     await act(async () => {});
@@ -402,11 +402,10 @@ describe('PassportContent — unconditional lightweight calls on every focus', (
     await act(async () => { capturedFocusCallback?.(); });
     expect(mockGetMyBuddyProfile).toHaveBeenCalledTimes(2);
 
-    await act(async () => { unmount(); });
   });
 
   it('calls both getPendingPosts and getMyBuddyProfile on the stale-TTL focus too', async () => {
-    const { unmount } = await render(<PassportScreen />);
+    await render(<PassportScreen />);
     await act(async () => {});
 
     // Focus after TTL expires — reload fires AND lightweight calls re-fire.
@@ -417,6 +416,5 @@ describe('PassportContent — unconditional lightweight calls on every focus', (
     expect(mockGetPendingPosts).toHaveBeenCalledTimes(2);
     expect(mockGetMyBuddyProfile).toHaveBeenCalledTimes(2);
 
-    await act(async () => { unmount(); });
   });
 });

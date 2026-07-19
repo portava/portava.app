@@ -27,6 +27,11 @@ import type { TripRow } from '../../services/trips.ts';
 // which calls makeMutable() (reanimated) at module scope; requireActual would
 // execute that import chain and crash the JSDOM suite.
 jest.mock('../../hooks/useBottomInset.ts', () => ({
+  usePlainBottomInset: () => 130,
+  PlainBottomFiller: () => null,
+  BOTTOM_BREATHING_ROOM: 24,
+  useStickyBarInset: () => ({ inset: 130, onBarLayout: () => {} }),
+  useKeyboardVisible: () => false,
   useBottomInset: () => 130,
 }));
 

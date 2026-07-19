@@ -1,9 +1,20 @@
 /**
- * Discovery (app/(tabs)/discovery.tsx) — scroll-architecture regression test.
+ * Discovery (app/(tabs)/discovery.tsx) — header/tab architecture regression test.
  *
- * Confirms that after Task #1519, the discovery header (title + search bar +
- * filters) is passed INTO the ForYouTab as the `listHeaderComponent` prop —
- * NOT rendered as a sibling View above the tab.
+ * DIVERGENCE FROM THE MOBILE TREE (rule 13 rewrite):
+ * The mobile Discovery screen passes its header (title + search + filters) INTO
+ * ForYouTab as a `listHeaderComponent` prop so the header scrolls with the list.
+ * The STANDALONE fork does NOT do this — app/(tabs)/discovery.tsx renders a
+ * fixed chrome layout: a search entry bar, a header row (Compass icon +
+ * "Discover" title + DestinationBar), then a content area containing the active
+ * tab (ForYouTab / DiscoveryCategoryTab) with floating chrome (tab bar + filter
+ * panel) overlaid on top. ForYouTab receives NO `listHeaderComponent` prop.
+ *
+ * This test pins the standalone's ACTUAL contract:
+ *   1. ForYouTab renders (the default active tab) and receives NO
+ *      listHeaderComponent prop (the header is fixed chrome, not in-list).
+ *   2. The "Discover" title renders in the tree as fixed header chrome.
+ *   3. The tab content area is a distinct sibling below the header chrome.
  *
  * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
  */
@@ -57,6 +68,11 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
 
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useBottomInset', () => ({
+  usePlainBottomInset: () => 130,
+  PlainBottomFiller: () => null,
+  BOTTOM_BREATHING_ROOM: 24,
+  useStickyBarInset: () => ({ inset: 130, onBarLayout: () => {} }),
+  useKeyboardVisible: () => false,
   useBottomInset: () => 130,
 }));
 
@@ -124,12 +140,16 @@ jest.mock('../../../src/services/rentABuddy', () => ({
   getAvailableNow: jest.fn().mockResolvedValue({ ok: false }),
 }));
 
-// ── ForYouTab stub — captures listHeaderComponent prop ────────────────────────
-let capturedListHeaderComponent: React.ReactNode = null;
+// ── ForYouTab stub — captures its full props ──────────────────────────────────
+// The standalone fork does NOT pass a listHeaderComponent; we capture all props
+// so the test can assert that key is genuinely absent (not merely null).
+let capturedForYouProps: Record<string, any> | null = null;
+let forYouRendered = false;
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/ForYouTab', () => ({
-  ForYouTab: ({ listHeaderComponent }: { listHeaderComponent?: React.ReactNode }) => {
-    capturedListHeaderComponent = listHeaderComponent ?? null;
+  ForYouTab: (props: Record<string, any>) => {
+    capturedForYouProps = props;
+    forYouRendered = true;
     return null;
   },
 }));
@@ -166,45 +186,44 @@ import DiscoveryHub from '../discovery.tsx';
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('DiscoveryHub screen — scroll architecture', () => {
+describe('DiscoveryHub screen — header/tab architecture (standalone)', () => {
   beforeEach(() => {
-    capturedListHeaderComponent = null;
+    capturedForYouProps = null;
+    forYouRendered = false;
   });
 
-  it('ForYouTab receives a non-null listHeaderComponent — header is inside the scroll container', async () => {
+  it('ForYouTab renders as the default tab and receives NO listHeaderComponent (header is fixed chrome)', async () => {
     await render(<DiscoveryHub />);
     await act(async () => {});
 
-    // The discovery header (title, search, filters) must be passed INTO the
-    // tab's list as its scrollable header — not rendered as an independent
-    // sibling above the tab component.
-    expect(capturedListHeaderComponent).not.toBeNull();
+    // The default active tab is 'for_you', so ForYouTab must render.
+    expect(forYouRendered).toBe(true);
+    expect(capturedForYouProps).not.toBeNull();
+    // The standalone fork renders the header as fixed chrome — it does NOT pass
+    // the header into ForYouTab as a scrollable listHeaderComponent.
+    expect('listHeaderComponent' in (capturedForYouProps as Record<string, any>)).toBe(false);
   });
 
-  it('listHeaderComponent contains the "Discover" title when rendered standalone', async () => {
-    await render(<DiscoveryHub />);
+  it('"Discover" title renders as fixed header chrome in the main tree', async () => {
+    // ForYouTab is stubbed to null, so the only place "Discover" can appear is
+    // the fixed header row rendered by discovery.tsx itself.
+    const view = await render(<DiscoveryHub />);
     await act(async () => {});
 
-    // ForYouTab is stubbed (returns null), so discoveryHeader never appears in
-    // the main DOM tree.  Render the captured prop in isolation to confirm the
-    // "Discover" title is present inside the header block.
-    expect(capturedListHeaderComponent).not.toBeNull();
-
-    const { getByText } = await render(
-      capturedListHeaderComponent as React.ReactElement,
-    );
-    expect(getByText('Discover')).toBeTruthy();
+    expect(view.getByText('Discover')).toBeTruthy();
   });
 
-  it('root View has no non-overlay header sibling above the tab component', async () => {
+  it('the tab content area is a distinct sibling below the fixed header chrome', async () => {
     const { toJSON } = await render(<DiscoveryHub />);
     await act(async () => {});
 
     const tree = toJSON() as any;
     const rootChildren: any[] = Array.isArray(tree?.children) ? tree.children : [];
 
-    // Modal hosts are acceptable overlays; skip them.
-    // Any remaining non-absolute child above the tab is a fixed header split.
+    // The standalone root View lays out: search entry bar, header row, then the
+    // content area — all as fixed (non-absolute) chrome siblings. Confirm there
+    // is MORE than one non-overlay sibling, i.e. the header is NOT folded into
+    // the tab list (which is the mobile architecture this fork diverges from).
     let nonOverlaySiblings = 0;
     for (const child of rootChildren) {
       if (!child || typeof child !== 'object') continue;
@@ -216,7 +235,6 @@ describe('DiscoveryHub screen — scroll architecture', () => {
       if (flat.position !== 'absolute') nonOverlaySiblings += 1;
     }
 
-    // At most one non-overlay root child: the tab container.
-    expect(nonOverlaySiblings).toBeLessThanOrEqual(1);
+    expect(nonOverlaySiblings).toBeGreaterThan(1);
   });
 });

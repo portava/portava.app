@@ -42,6 +42,27 @@ jest.mock('react-native', () => {
   });
 });
 
+// ── Safe-area ─────────────────────────────────────────────────────────────────
+// index.tsx calls useBottomInset() → useSafeAreaInsets(); without a mocked
+// provider it throws "No safe area value available". Stub the insets.
+jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual('react-native-safe-area-context'),
+  useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
+  SafeAreaProvider: ({ children }: any) => children,
+}));
+
+// ── Screen timing / snapshot cache — stub ─────────────────────────────────────
+// index.tsx gained useScreenTiming + useSnapshotCache; stub both to inert values
+// (not under test here) so no setState loops / device-module access occurs.
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/hooks/useScreenTiming', () => ({
+  useScreenTiming: () => ({ markFirstContent: () => {}, epoch: 0 }),
+}));
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/hooks/useSnapshotCache', () => ({
+  useSnapshotCache: () => ({ snapshot: null, isStale: false, save: () => {}, clear: () => {} }),
+}));
+
 // ── expo-router ───────────────────────────────────────────────────────────────
 jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),

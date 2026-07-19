@@ -166,7 +166,7 @@ describe('ReviewsSection — place entity (gem detail screen)', () => {
     expect(getPlaceReviews).toHaveBeenCalledTimes(1);
 
     // User navigates to the review composer then comes back
-    await act(async () => { unmount(); });
+    await unmount();
 
     // ── User returns — useFocusEffect fires again via re-mount ────────────────
     const { findByText: findByText2 } = await mountPlaceSection();

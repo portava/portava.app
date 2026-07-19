@@ -95,39 +95,29 @@ jest.mock('expo-router', () => {
   };
 });
 
-// NOTE: intentionally exhaustive — LocationContext pulls in useActiveLocation
-// which imports expo-location native modules unavailable in the jest-expo runner.
-// The mock drives permissionStatus='denied' with home-city coords in resolvedLocation.
-jest.mock('../../src/context/LocationContext', () => ({
-  useLocationContext: () => ({
+// NOTE: intentionally exhaustive — the standalone search.tsx reads location via
+// useActiveLocation() (a local-state hook), NOT the mobile-tree useLocationContext.
+// The real hook imports expo-location native modules unavailable in the jest-expo
+// runner, so we stub it. This is a DIVERGENT FORK: the standalone userCoords memo
+// only surfaces coords when permissionStatus === 'granted' and reads them from
+// locationState.coords / locationState.place.city — there is no resolvedLocation
+// cascade here (that is a mobile-only feature). We therefore drive a granted GPS
+// fix for the home city so coords flow through to searchUnified.
+// NOTE: exhaustive factory (see above) — no requireActual to avoid loading
+// expo-location native modules.
+jest.mock('../../src/hooks/useActiveLocation', () => ({
+  useActiveLocation: () => ({
     locationState: {
-      permissionStatus: 'denied',
-      ok: false,
-      coords: null,
-      place: { city: null, country: null },
+      permissionStatus: 'granted',
+      ok: true,
+      coords: { lat: HOME_LAT, lng: HOME_LNG, accuracyMeters: null },
+      place: { city: HOME_CITY, country: 'PH', lat: HOME_LAT, lng: HOME_LNG },
       source: 'home',
       freshness: 'unavailable',
     },
     requestLocation: jest.fn(),
     setManualCity: jest.fn(),
-    showPermissionPrompt: false,
-    showCityPicker: false,
-    requireLocation: jest.fn(),
-    dismissPermissionPrompt: jest.fn(),
-    openCityPicker: jest.fn(),
-    closeCityPicker: jest.fn(),
-    locationPrefs: {},
-    locationPrefsLoading: false,
-    refreshLocationPrefs: jest.fn(),
-    setSessionLocation: jest.fn(),
-    clearSessionLocation: jest.fn(),
-    // resolvedLocation carries home-city coords even though GPS is denied.
-    resolvedLocation: {
-      place: { city: HOME_CITY, country: 'PH', lat: HOME_LAT, lng: HOME_LNG },
-      coords: { lat: HOME_LAT, lng: HOME_LNG, accuracyMeters: null },
-      source: 'home',
-      freshness: 'unavailable',
-    },
+    isLoading: false,
   }),
 }));
 
@@ -222,7 +212,9 @@ const mockSearchUnified = searchUnified as jest.Mock;
 
 // ── Suite ──────────────────────────────────────────────────────────────────────
 
-describe('SearchScreen — home-city coords with GPS denied', () => {
+// NOTE: standalone fork — coords flow through when GPS is granted for the home
+// city (there is no denied-GPS home-city cascade in this tree, unlike mobile).
+describe('SearchScreen — home-city coords flow through to search', () => {
   beforeEach(() => {
     // Return a minimal successful response so runSearch completes.
     mockSearchUnified.mockResolvedValue({

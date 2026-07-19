@@ -115,7 +115,7 @@ it('sessionId is undefined during the debounce window after switching cities', a
   // Switch to a new city slug — the hook's useEffect cleanup runs and a new
   // effect fires, which synchronously calls setSessionId(undefined) before
   // the debounce timer or fetch has a chance to run.
-  rerender({ slug: 'manila' });
+  await rerender({ slug: 'manila' });
 
   // sessionId must be cleared immediately; city B's fetch is still pending.
   await waitFor(() => {
@@ -145,7 +145,7 @@ it('sessionId stays undefined after the city-switch fetch errors — old session
   (fetchCityEvents as jest.Mock).mockRejectedValue(new Error('network error'));
 
   // Switch to city B — the hook clears sessionId synchronously then debounces.
-  rerender({ slug: 'manila' });
+  await rerender({ slug: 'manila' });
 
   // After the debounce fires and city B's fetch rejects, sessionId must remain
   // undefined — it must not fall back to city A's stale 'sess-city-a' value.
@@ -173,7 +173,7 @@ it('sessionId is cleared when currentCitySlug is set to undefined', async () => 
   }, { timeout: 500 });
 
   // Set slug to undefined (e.g. user closes the city picker).
-  rerender({ slug: undefined });
+  await rerender({ slug: undefined });
 
   // sessionId must be cleared immediately — not frozen on the last city's value.
   await waitFor(() => {
@@ -205,7 +205,7 @@ it('sessionId is set to the new value once the replacement fetch resolves', asyn
     sessionId: 'sess-city-b',
   });
 
-  rerender({ slug: 'manila' });
+  await rerender({ slug: 'manila' });
 
   // sessionId is cleared synchronously on city switch (before debounce fires).
   await waitFor(() => {

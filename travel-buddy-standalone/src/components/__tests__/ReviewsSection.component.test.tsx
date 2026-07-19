@@ -139,7 +139,7 @@ describe('ReviewsSection — avgRating focus-refetch lifecycle', () => {
     // Simulate user navigating away to write a review
     // Wrap in act() so React processes cleanup effects synchronously
     // and doesn't overlap with any subsequent act() scope.
-    await act(async () => { unmount(); });
+    await unmount();
 
     // ── User returns (re-mount → useFocusEffect fires again) ─────────────────
     const { findByText: findByText2 } = await mountSection();

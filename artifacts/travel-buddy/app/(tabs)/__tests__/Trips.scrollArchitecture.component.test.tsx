@@ -55,6 +55,21 @@ jest.mock('../../../src/hooks/useBackend', () => ({
   usePendingTripInvites: () => ({ invites: [], reload: jest.fn() }),
 }));
 
+// ── Perf hooks — inert stubs ─────────────────────────────────────────────────
+// trips.tsx gained useScreenTiming + useSnapshotCache after this test was
+// written. The real useSnapshotCache returns a save() that setStates; with
+// the fresh [] identity from the useMyTrips stub above, the persistence
+// effect loops → heap exhaustion → worker SIGTERM (same root cause as the
+// fixed sibling Trips.navBarScrollHandler).
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/hooks/useScreenTiming', () => ({
+  useScreenTiming: () => ({ markFirstContent: () => {}, epoch: 0 }),
+}));
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/hooks/useSnapshotCache', () => ({
+  useSnapshotCache: () => ({ snapshot: null, isStale: false, save: () => {}, clear: () => {} }),
+}));
+
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useMessaging', () => ({
   useUnreadCounts: () => ({ meetups: 0 }),

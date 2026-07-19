@@ -84,7 +84,6 @@ describe('ReviewsSection — file-level useFocusEffect stub (no double-fetch)', 
     expect(getTripReviews).toHaveBeenCalledTimes(1);
     expect(getTripReviews).toHaveBeenCalledWith(TRIP_ID, 1, 5);
 
-    await act(async () => { unmount(); });
   });
 
   it('calls getTripReviews exactly once per mount — no double-fetch across two mount cycles', async () => {
@@ -103,7 +102,7 @@ describe('ReviewsSection — file-level useFocusEffect stub (no double-fetch)', 
     expect(getTripReviews).toHaveBeenCalledTimes(1);
 
     // Simulate navigating away
-    await act(async () => { unmount(); });
+    await unmount();
 
     // ── Second mount (simulates screen re-focus) ──────────────────────────────
     const { findByText: find2 } = await render(
@@ -139,7 +138,6 @@ describe('ReviewsSection — file-level useFocusEffect stub (place entity type)'
     expect(getPlaceReviews).toHaveBeenCalledTimes(1);
     expect(getPlaceReviews).toHaveBeenCalledWith('stub-place-1', 1, 5);
 
-    await act(async () => { unmount(); });
   });
 
   it('calls getPlaceReviews exactly once per mount — no double-fetch across two mount cycles', async () => {
@@ -158,7 +156,7 @@ describe('ReviewsSection — file-level useFocusEffect stub (place entity type)'
     expect(getPlaceReviews).toHaveBeenCalledTimes(1);
 
     // Simulate navigating away
-    await act(async () => { unmount(); });
+    await unmount();
 
     // ── Second mount (simulates screen re-focus) ──────────────────────────────
     const { findByText: find2 } = await render(
@@ -211,7 +209,6 @@ describe('ReviewsSection — file-level useFocusEffect stub (event entity type)'
     expect(getEventReviews).toHaveBeenCalledTimes(1);
     expect(getEventReviews).toHaveBeenCalledWith('stub-event-1', 1, 5);
 
-    await act(async () => { unmount(); });
   });
 
   it('calls getEventReviews exactly once per mount — no double-fetch across two mount cycles', async () => {
@@ -230,7 +227,7 @@ describe('ReviewsSection — file-level useFocusEffect stub (event entity type)'
     expect(getEventReviews).toHaveBeenCalledTimes(1);
 
     // Simulate navigating away
-    await act(async () => { unmount(); });
+    await unmount();
 
     // ── Second mount (simulates screen re-focus) ──────────────────────────────
     const { findByText: find2 } = await render(

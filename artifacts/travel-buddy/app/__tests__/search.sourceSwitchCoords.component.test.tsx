@@ -290,7 +290,7 @@ describe('SearchScreen — GPS coords reach search after source switches mid-ses
 
     // Rerender to propagate the new context value into the component.
     await act(async () => {
-      rerender(<SearchScreen />);
+      await rerender(<SearchScreen />);
     });
 
     // The userCoords memo must re-derive and the debounced effect must re-fire.
@@ -332,7 +332,7 @@ describe('SearchScreen — GPS coords reach search after source switches mid-ses
     };
 
     await act(async () => {
-      rerender(<SearchScreen />);
+      await rerender(<SearchScreen />);
     });
 
     await waitFor(
@@ -363,7 +363,7 @@ describe('SearchScreen — GPS coords reach search after source switches mid-ses
     };
 
     await act(async () => {
-      rerender(<SearchScreen />);
+      await rerender(<SearchScreen />);
     });
 
     await waitFor(

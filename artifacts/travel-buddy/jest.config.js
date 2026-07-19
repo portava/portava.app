@@ -24,6 +24,20 @@ module.exports = {
     '<rootDir>/src/**/*.test.{ts,tsx}',
     '<rootDir>/app/**/*.test.{ts,tsx}',
   ],
+  // Exclude src/test/ — those files are node:test runners (e.g. compassComponents,
+  // stampGracefulDegradation) and crash Jest with "no tests found" or OOM when
+  // Jest tries to load them as Jest suites.
+  testPathIgnorePatterns: [
+    '/node_modules/',
+    '<rootDir>/src/test/',
+  ],
+  // Cap workers so the full component suite doesn't exhaust the heap.
+  // Without this limit Jest spawns one worker per CPU and OOMs on large suites.
+  maxWorkers: 1,
+  // Restart the worker process when its idle heap exceeds the limit. jest-expo
+  // suites leak heap across test files; a single capped worker keeps the whole
+  // run inside container memory instead of being SIGTERM-killed by the OOM killer.
+  workerIdleMemoryLimit: '1200MB',
   // Match both flat npm/yarn layout (node_modules/<pkg>) and pnpm's nested
   // layout (node_modules/.pnpm/<hash>/node_modules/<pkg>) with the optional
   // (.+/node_modules/) group.

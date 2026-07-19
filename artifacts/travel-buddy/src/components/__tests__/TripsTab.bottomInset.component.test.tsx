@@ -45,6 +45,11 @@ let mockBottomInset = NAV_BAR_FILLER + IPHONE_BOTTOM; // default: iPhone 14
 // execute that import chain and crash the JSDOM suite.  Only useBottomInset is
 // needed here; the controlled `mockBottomInset` variable drives each scenario.
 jest.mock('../../hooks/useBottomInset.ts', () => ({
+  usePlainBottomInset: () => 130,
+  PlainBottomFiller: () => null,
+  BOTTOM_BREATHING_ROOM: 24,
+  useStickyBarInset: () => ({ inset: 130, onBarLayout: () => {} }),
+  useKeyboardVisible: () => false,
   useBottomInset: () => mockBottomInset,
 }));
 

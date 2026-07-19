@@ -13,6 +13,28 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import DiscoveryHub from '../discovery.tsx';
 
 // ── expo-router ───────────────────────────────────────────────────────────────
+// react-native Proxy mock — DiscoveryHub mounts a raw <Modal> (age filter).
+// Modal's animation lifecycle leaves a floating async act() scope inside
+// RNTL's render() promise; the next act() collides with it, corrupting the
+// act-scope depth so every later render in this file commits an EMPTY tree.
+// Stubbing Modal as a plain conditional View keeps the lifecycle synchronous.
+// ActivityIndicator must be stubbed too: through the Proxy its getter re-enters
+// with `this === Proxy` and can hit uninitialised native-module stubs.
+jest.mock('react-native', () => {
+  const actual = jest.requireActual('react-native');
+  const R = require('react');
+  const MockModal = ({ children, visible }: { children?: React.ReactNode; visible?: boolean }) =>
+    visible ? R.createElement(actual.View, null, children) : null;
+  const MockActivityIndicator = () => null;
+  return new Proxy(actual, {
+    get(target, prop, receiver) {
+      if (prop === 'Modal') return MockModal;
+      if (prop === 'ActivityIndicator') return MockActivityIndicator;
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+});
+
 jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
   router: {
@@ -83,6 +105,11 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
 
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useBottomInset', () => ({
+  usePlainBottomInset: () => 130,
+  PlainBottomFiller: () => null,
+  BOTTOM_BREATHING_ROOM: 24,
+  useStickyBarInset: () => ({ inset: 130, onBarLayout: () => {} }),
+  useKeyboardVisible: () => false,
   useBottomInset: () => 130,
 }));
 
@@ -110,6 +137,8 @@ let mockLocationState: {
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
+    setSessionLocation: jest.fn(),
+    clearSessionLocation: jest.fn(),
     locationState:   mockLocationState,
     // resolvedLocation — required by discovery.tsx after location unification.
     resolvedLocation: {
@@ -135,14 +164,20 @@ jest.mock('../../../src/components/PlanPickerController', () => ({
 // ── Heavy sub-components ──────────────────────────────────────────────────────
 const Null = () => null;
 
+// The tabs render discoveryHeader (chips, search bar, nudge, tab row) inside
+// their FlatList via listHeaderComponent. Rendering it from the stub keeps the
+// header UI in the test tree without pulling in the tabs' native deps.
+const HeaderOnly = ({ listHeaderComponent }: { listHeaderComponent?: React.ReactElement | null }) =>
+  listHeaderComponent ?? null;
+
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/layover/LayoverModeSheet',        () => ({ LayoverModeSheet:      Null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/discovery/DiscoveryCategoryTab',  () => ({ DiscoveryCategoryTab:  Null }));
+jest.mock('../../../src/components/discovery/DiscoveryCategoryTab',  () => ({ DiscoveryCategoryTab:  HeaderOnly }));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/PlaceDetailSheet',      () => ({ PlaceDetailSheet:      Null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/discovery/ForYouTab',             () => ({ ForYouTab:             Null }));
+jest.mock('../../../src/components/discovery/ForYouTab',             () => ({ ForYouTab:             HeaderOnly }));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/DestinationBar',        () => ({ DestinationBar:        Null }));
 // NOTE: intentional stub — not under test here.
@@ -172,62 +207,43 @@ describe('DiscoveryHub — context mode chips', () => {
     mockLocationState = { place: { city: null, country: null }, coords: null };
   });
 
-  it('none of the chips call setContextMode when no destination is set', async () => {
-    // No city → screenStatus === 'location-required' → all chips disabled.
-    const { unmount } = await render(<DiscoveryHub />);
+  // Single consolidated test: this renderer (React 19 + RNTL v14) only
+  // reliably dispatches presses on the FIRST component instance per file and
+  // kills press dispatch on instances mounted after a post-press act()
+  // flush.  Scenario 2 (destination set) therefore runs as initial-render
+  // queries on a key-swap instance — honest, because accessibilityState
+  // .disabled and the press-handler branch are driven by the same
+  // `chipsDisabled` conditional and cannot regress separately.
+  it('chips are disabled (and inert) without a destination, enabled with one', async () => {
+    // ── Instance 0: no destination → all chips disabled and inert ──
+    const view = await render(<DiscoveryHub key="location-required" />);
     await act(async () => {});
 
     for (const label of CHIP_LABELS) {
-      const chip = screen.getByText(label);
-      // The chip must be in the tree.
+      const chip = view.getByText(label);
       expect(chip).toBeTruthy();
-      // Pressing a disabled Pressable must not trigger router navigation or
-      // any state update. We verify indirectly: fireEvent.press must not
-      // throw, and the contextMode remains at the default ('in_city'), which
-      // means the 'In City' chip is the only one with an active style and
-      // pressing any chip does not change the rendered label set.
+      expect(chip.parent?.props?.accessibilityState?.disabled).toBe(true);
+      // Pressing a disabled chip must not throw or switch contextMode.
       fireEvent.press(chip);
     }
 
-    // All chip labels still rendered unchanged — no contextMode switch occurred.
-    for (const label of CHIP_LABELS) {
-      expect(screen.getByText(label)).toBeTruthy();
-    }
+    // NOTE: no act() flush after these presses — a post-press flush stops
+    // the next key-swap instance from committing (queries would then hit
+    // this stale tree).  The disabled-regression guarantee comes from the
+    // accessibilityState assertions above: RN skips onPress entirely for
+    // disabled Pressables, and `chipsDisabled` drives both the a11y flag
+    // and the handler gate.
 
-    await act(async () => { unmount(); });
-  });
-
-  it('all chips are marked disabled when no destination is set', async () => {
-    const { unmount } = await render(<DiscoveryHub />);
-    await act(async () => {});
-
-    for (const label of CHIP_LABELS) {
-      // The Pressable wrapping each chip label should have accessibilityState.disabled = true.
-      const chip = screen.getByText(label);
-      // Walk up to find the Pressable — it is the direct parent in the rendered tree.
-      const pressable = chip.parent;
-      expect(pressable?.props?.accessibilityState?.disabled).toBe(true);
-    }
-
-    await act(async () => { unmount(); });
-  });
-
-  it('chips are NOT disabled when a destination is set', async () => {
+    // ── Instance 1: destination set → chips enabled (queries only) ──
     mockLocationState = {
       place:  { city: 'Rome', country: 'Italy' },
       coords: { lat: 41.9028, lng: 12.4964 },
     };
-
-    const { unmount } = await render(<DiscoveryHub />);
+    await view.rerender(<DiscoveryHub key="dest-set" />);
     await act(async () => {});
 
     for (const label of CHIP_LABELS) {
-      const chip = screen.getByText(label);
-      const pressable = chip.parent;
-      // disabled must be absent or false when a city is available.
-      expect(pressable?.props?.accessibilityState?.disabled).toBeFalsy();
+      expect(view.getByText(label).parent?.props?.accessibilityState?.disabled).toBeFalsy();
     }
-
-    await act(async () => { unmount(); });
   });
 });

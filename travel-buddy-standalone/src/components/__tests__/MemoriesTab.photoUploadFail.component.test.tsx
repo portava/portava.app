@@ -214,7 +214,7 @@ describe('CreateMemoryModal — upload failure', () => {
       ok: false, url: null, mediaType: null, message: 'Upload failed',
     });
 
-    const { unmount } = await render(
+    await render(
       <CreateMemoryModal visible onClose={jest.fn()} onCreated={jest.fn()} />,
     );
 
@@ -245,6 +245,5 @@ describe('CreateMemoryModal — upload failure', () => {
     // when the upload fails (no valid photoUrl to pass to the API).
     expect(createPassportMemoryMock).not.toHaveBeenCalled();
 
-    await act(async () => { unmount(); });
   });
 });

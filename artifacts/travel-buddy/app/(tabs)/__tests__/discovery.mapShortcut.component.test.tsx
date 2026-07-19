@@ -19,6 +19,28 @@ import DiscoveryHub from '../discovery.tsx';
 
 // ── expo-router ───────────────────────────────────────────────────────────────
 // Override the moduleNameMapper entry so we can capture the router.push spy.
+// react-native Proxy mock — DiscoveryHub mounts a raw <Modal> (age filter).
+// Modal's animation lifecycle leaves a floating async act() scope inside
+// RNTL's render() promise; the next act() collides with it, corrupting the
+// act-scope depth so every later render in this file commits an EMPTY tree.
+// Stubbing Modal as a plain conditional View keeps the lifecycle synchronous.
+// ActivityIndicator must be stubbed too: through the Proxy its getter re-enters
+// with `this === Proxy` and can hit uninitialised native-module stubs.
+jest.mock('react-native', () => {
+  const actual = jest.requireActual('react-native');
+  const R = require('react');
+  const MockModal = ({ children, visible }: { children?: React.ReactNode; visible?: boolean }) =>
+    visible ? R.createElement(actual.View, null, children) : null;
+  const MockActivityIndicator = () => null;
+  return new Proxy(actual, {
+    get(target, prop, receiver) {
+      if (prop === 'Modal') return MockModal;
+      if (prop === 'ActivityIndicator') return MockActivityIndicator;
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+});
+
 jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
   router: {
@@ -89,6 +111,11 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
 
 // NOTE: intentionally exhaustive — depends on native inset calculations.
 jest.mock('../../../src/hooks/useBottomInset', () => ({
+  usePlainBottomInset: () => 130,
+  PlainBottomFiller: () => null,
+  BOTTOM_BREATHING_ROOM: 24,
+  useStickyBarInset: () => ({ inset: 130, onBarLayout: () => {} }),
+  useKeyboardVisible: () => false,
   useBottomInset: () => 130,
 }));
 
@@ -116,6 +143,8 @@ let mockLocationState: {
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
+    setSessionLocation: jest.fn(),
+    clearSessionLocation: jest.fn(),
     locationState:  mockLocationState,
     // resolvedLocation — required by discovery.tsx after location unification.
     resolvedLocation: {
@@ -143,14 +172,20 @@ jest.mock('../../../src/components/PlanPickerController', () => ({
 // jest-expo runner. Stub as null renders to isolate the Map shortcut logic.
 const Null = () => null;
 
+// The tabs render discoveryHeader (chips, search bar, nudge, tab row) inside
+// their FlatList via listHeaderComponent. Rendering it from the stub keeps the
+// header UI in the test tree without pulling in the tabs' native deps.
+const HeaderOnly = ({ listHeaderComponent }: { listHeaderComponent?: React.ReactElement | null }) =>
+  listHeaderComponent ?? null;
+
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/layover/LayoverModeSheet',    () => ({ LayoverModeSheet:    Null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/discovery/DiscoveryCategoryTab', () => ({ DiscoveryCategoryTab: Null }));
+jest.mock('../../../src/components/discovery/DiscoveryCategoryTab', () => ({ DiscoveryCategoryTab: HeaderOnly }));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/PlaceDetailSheet',  () => ({ PlaceDetailSheet:  Null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/discovery/ForYouTab',         () => ({ ForYouTab:         Null }));
+jest.mock('../../../src/components/discovery/ForYouTab',         () => ({ ForYouTab:         HeaderOnly }));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/DestinationBar',    () => ({ DestinationBar:    Null }));
 // NOTE: intentional stub — not under test here.
@@ -180,20 +215,24 @@ const mockRouterPush = require('expo-router').router.push as jest.Mock;
 describe('DiscoveryHub — Map shortcut', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    // Reset location state; each test sets what it needs.
     mockLocationState = { place: { city: null, country: null }, coords: null };
   });
 
-  it('passes lat, lng, title, and category when destination and coords are set', async () => {
+  // Single consolidated test on ONE instance: this renderer (React 19 +
+  // RNTL v14) only reliably dispatches presses on the first instance per
+  // file.  The geocode / coords-null / disabled scenarios (which need
+  // different pre-mount location states) live in
+  // discovery.mapShortcutGeocode.component.test.tsx.
+  it('forwards title, coords, zoom, and the active tab as category', async () => {
     mockLocationState = {
       place:  { city: 'Paris', country: 'France' },
       coords: { lat: 48.8566, lng: 2.3522 },
     };
 
-    const { unmount } = await render(<DiscoveryHub />);
+    const view = await render(<DiscoveryHub />);
     await act(async () => {});
 
-    fireEvent.press(screen.getByText('Map'));
+    fireEvent.press(view.getByText('Map'));
 
     expect(mockRouterPush).toHaveBeenCalledTimes(1);
     const call = mockRouterPush.mock.calls[0][0] as {
@@ -211,117 +250,18 @@ describe('DiscoveryHub — Map shortcut', () => {
     // Default active tab
     expect(call.params.category).toBe('for_you');
 
-    await act(async () => { unmount(); });
-  });
-
-  it('passes zoom 4 when only country is set — country-level geocode', async () => {
-    mockLocationState = {
-      place:  { city: null, country: 'France' },
-      coords: null,
-    };
-
-    // Stub fetch so the MapTiler geocode effect resolves (key guard passes below).
-    const origFetch = global.fetch;
-    global.fetch = jest.fn().mockResolvedValue({
-      json: () => Promise.resolve({
-        features: [{ center: [2.3514, 46.2276] }],
-      }),
-    } as unknown as Response);
-
-    // Allow the geocode effect to proceed past the key guard.
-    const origKey = process.env.EXPO_PUBLIC_MAPTILER_KEY;
-    process.env.EXPO_PUBLIC_MAPTILER_KEY = 'test-key';
-
-    const { unmount } = await render(<DiscoveryHub />);
-    // Flush the geocode fetch + state update.
+    // Switch to the Food tab, then hit the Map shortcut again — the active
+    // tab must be forwarded as category.
+    fireEvent.press(view.getByText('Food'));
     await act(async () => {});
 
-    fireEvent.press(screen.getByText('Map'));
+    fireEvent.press(view.getByText('Map'));
 
-    expect(mockRouterPush).toHaveBeenCalledTimes(1);
-    const call = mockRouterPush.mock.calls[0][0] as {
-      pathname: string;
-      params: Record<string, string | undefined>;
-    };
-    expect(call.pathname).toBe('/map');
-    // Country-level geocode sets zoom to 4.
-    expect(call.params.zoom).toBe('4');
-
-    // Restore globals.
-    process.env.EXPO_PUBLIC_MAPTILER_KEY = origKey;
-    global.fetch = origFetch;
-
-    await act(async () => { unmount(); });
-  });
-
-  it('still navigates when coords are null — title and category present, lat/lng absent', async () => {
-    mockLocationState = {
-      place:  { city: 'Tokyo', country: 'Japan' },
-      coords: null,
-    };
-
-    const { unmount } = await render(<DiscoveryHub />);
-    await act(async () => {});
-
-    fireEvent.press(screen.getByText('Map'));
-
-    expect(mockRouterPush).toHaveBeenCalledTimes(1);
-    const call = mockRouterPush.mock.calls[0][0] as {
-      pathname: string;
-      params: Record<string, string | undefined>;
-    };
-    expect(call.pathname).toBe('/map');
-    // City and category are still forwarded
-    expect(call.params.title).toBe('Tokyo');
-    expect(call.params.category).toBe('for_you');
-    // Lat/lng must be absent — not set to 'null' or 'undefined'
-    expect(call.params.lat).toBeUndefined();
-    expect(call.params.lng).toBeUndefined();
-
-    await act(async () => { unmount(); });
-  });
-
-  it('does NOT call router.push when destination is null — button is disabled', async () => {
-    // mockLocationState is reset to no-city/no-coords in beforeEach — use as-is.
-    const { unmount } = await render(<DiscoveryHub />);
-    await act(async () => {});
-
-    // The Map button should be present but disabled.
-    const mapButton = screen.getByRole('button', { name: 'Map view' });
-    expect(mapButton).toBeTruthy();
-
-    // fireEvent.press on a disabled Pressable must not trigger onPress.
-    fireEvent.press(mapButton);
-
-    expect(mockRouterPush).not.toHaveBeenCalled();
-
-    await act(async () => { unmount(); });
-  });
-
-  it('forwards the active tab as category when the user has switched tabs', async () => {
-    mockLocationState = {
-      place:  { city: 'London', country: 'UK' },
-      coords: { lat: 51.5074, lng: -0.1278 },
-    };
-
-    const { unmount } = await render(<DiscoveryHub />);
-    await act(async () => {});
-
-    // Switch to the Food tab
-    fireEvent.press(screen.getByText('Food'));
-    await act(async () => {});
-
-    fireEvent.press(screen.getByText('Map'));
-
-    // router.push may have been called once for the search bar or similar —
-    // check the LAST call, which is from the Map shortcut.
     const lastCall = mockRouterPush.mock.calls[mockRouterPush.mock.calls.length - 1][0] as {
       pathname: string;
       params: Record<string, string | undefined>;
     };
     expect(lastCall.pathname).toBe('/map');
     expect(lastCall.params.category).toBe('food');
-
-    await act(async () => { unmount(); });
   });
 });

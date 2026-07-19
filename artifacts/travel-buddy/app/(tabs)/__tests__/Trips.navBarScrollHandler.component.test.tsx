@@ -68,6 +68,20 @@ jest.mock('../../../src/hooks/useMessaging', () => ({
   useUnreadCounts: () => ({ meetups: 0 }),
 }));
 
+// ── Screen timing / snapshot cache — stub ─────────────────────────────────────
+// trips.tsx gained useScreenTiming + useSnapshotCache. The real useSnapshotCache
+// returns a `save` that calls setState, and the persistence effect fires on every
+// render (useMyTrips returns a fresh []), so the unmocked pair drives an infinite
+// setState loop → OOM. Stub both to inert values (not under test here).
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/hooks/useScreenTiming', () => ({
+  useScreenTiming: () => ({ markFirstContent: () => {}, epoch: 0 }),
+}));
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/hooks/useSnapshotCache', () => ({
+  useSnapshotCache: () => ({ snapshot: null, isStale: false, save: () => {}, clear: () => {} }),
+}));
+
 // ── Services ──────────────────────────────────────────────────────────────────
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/compass', () => ({

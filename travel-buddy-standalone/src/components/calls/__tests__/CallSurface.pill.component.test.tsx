@@ -77,6 +77,8 @@ beforeEach(() => {
     peer: { id: 'u2', name: 'Alex', handle: null, avatarUrl: null },
     minimized: true, micMuted: false, cameraOn: false, speakerOn: false,
     elapsedSec: 263, error: null,
+    // Group-room roster fields (EventRoomScreen filters participants unconditionally).
+    participants: [], participantCount: 0, activeSpeakerIds: [],
   };
 });
 

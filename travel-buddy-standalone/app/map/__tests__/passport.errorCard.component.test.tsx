@@ -87,6 +87,8 @@ jest.mock('../../../src/services/discovery', () => ({
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
+    setSessionLocation: jest.fn(),
+    clearSessionLocation: jest.fn(),
     locationState: {
       coords: { lat: 14.5995, lng: 120.9842 },
       place:  { city: 'Manila', country: 'Philippines' },
@@ -221,24 +223,31 @@ describe('FullScreenMapScreen — passport error-card state machine', () => {
   });
 
   it('shows the loading card while the passport fetch is in-flight', async () => {
-    // Never-resolving promise — fetch stays pending for the duration of the test.
+    // Never-resolving promise — fetch stays pending, so the loading state stays
+    // latched (setPassportLoading(false) is never reached).
     mockGetPassportMap.mockReturnValue(new Promise(() => {}));
 
-    const { unmount } = await render(<FullScreenMapScreen />);
+    const view = await render(<FullScreenMapScreen />);
 
-    // Loading card must be visible immediately after mount.
-    expect(screen.getByText('Loading your stamps…')).toBeTruthy();
+    // The loading card is deliberately deferred behind a real 150 ms setTimeout
+    // in product code (only shown if the fetch takes longer than 150 ms). Sleep
+    // past that timer inside act so the setPassportLoading(true) commit lands.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 150 + 400));
+    });
+
+    // Loading card must now be visible while the fetch is still in-flight.
+    expect(view.getByText('Loading your stamps…')).toBeTruthy();
 
     // Error card must not be shown while still loading.
-    expect(screen.queryByText("Couldn't load your stamps")).toBeNull();
+    expect(view.queryByText("Couldn't load your stamps")).toBeNull();
 
-    await act(async () => { unmount(); });
   });
 
   it('shows the error card when getPassportMap rejects', async () => {
     mockGetPassportMap.mockRejectedValue(new Error('Network timeout'));
 
-    const { unmount } = await render(<FullScreenMapScreen />);
+    await render(<FullScreenMapScreen />);
 
     // Wait for the rejection to propagate through the useEffect.
     await waitFor(() => {
@@ -248,13 +257,12 @@ describe('FullScreenMapScreen — passport error-card state machine', () => {
     // Loading card must be gone once the error is set.
     expect(screen.queryByText('Loading your stamps…')).toBeNull();
 
-    await act(async () => { unmount(); });
   });
 
   it('shows the error card when getPassportMap returns ok:false', async () => {
     mockGetPassportMap.mockResolvedValue({ ok: false, message: 'Service unavailable' });
 
-    const { unmount } = await render(<FullScreenMapScreen />);
+    await render(<FullScreenMapScreen />);
 
     await waitFor(() => {
       expect(screen.getByText("Couldn't load your stamps")).toBeTruthy();
@@ -262,7 +270,6 @@ describe('FullScreenMapScreen — passport error-card state machine', () => {
 
     expect(screen.queryByText('Loading your stamps…')).toBeNull();
 
-    await act(async () => { unmount(); });
   });
 
   it('clears the error card and renders stamp entities after a successful retry', async () => {
@@ -288,7 +295,7 @@ describe('FullScreenMapScreen — passport error-card state machine', () => {
       },
     });
 
-    const { unmount } = await render(<FullScreenMapScreen />);
+    await render(<FullScreenMapScreen />);
 
     // Wait for the initial failure to surface.
     await waitFor(() => {
@@ -308,6 +315,5 @@ describe('FullScreenMapScreen — passport error-card state machine', () => {
     // getPassportMap must have been called exactly twice (initial + retry).
     expect(mockGetPassportMap).toHaveBeenCalledTimes(2);
 
-    await act(async () => { unmount(); });
   });
 });

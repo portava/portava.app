@@ -59,6 +59,7 @@ jest.mock('../../../constants/mapStyle', () => ({
 // Resolves to an empty Map so no pins are placed; this lets us assert on the
 // map empty-overlay text which differs by active filter.
 jest.mock('../../../services/cityGeocode', () => ({
+  preloadGeocodeCache: jest.fn().mockResolvedValue(undefined),
   batchGeocodeCities: jest.fn().mockResolvedValue(new Map()),
 }));
 

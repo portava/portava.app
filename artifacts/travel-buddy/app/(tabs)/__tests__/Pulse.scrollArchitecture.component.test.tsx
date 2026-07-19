@@ -52,6 +52,20 @@ jest.mock('expo-router', () => ({
   useFocusEffect: (cb: () => void) => { cb(); },
 }));
 
+// ── Screen timing / snapshot cache — stub ─────────────────────────────────────
+// index.tsx gained useScreenTiming + useSnapshotCache. The real useScreenTiming
+// calls setEpoch() inside useFocusEffect, which this file's synchronous
+// useFocusEffect mock runs during render → "Too many re-renders". Stub both to
+// inert values (not under test here).
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/hooks/useScreenTiming', () => ({
+  useScreenTiming: () => ({ markFirstContent: () => {}, epoch: 0 }),
+}));
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/hooks/useSnapshotCache', () => ({
+  useSnapshotCache: () => ({ snapshot: null, isStale: false, save: () => {}, clear: () => {} }),
+}));
+
 // ── Comment count store ───────────────────────────────────────────────────────
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/lib/commentCountStore', () => ({
@@ -115,6 +129,8 @@ jest.mock('../../../src/services/intelligence', () => ({
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
+    setSessionLocation: jest.fn(),
+    clearSessionLocation: jest.fn(),
     locationState: {
       place: { city: 'Cebu City' },
       coords: null,

@@ -11,6 +11,10 @@
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import DiscoveryHub from '../discovery.tsx';
+import { color } from '../../../src/theme/tokens';
+
+const mockForYouModes: (string | undefined)[] = [];
+const mockOpenCityPicker = jest.fn();
 
 // ── expo-router ───────────────────────────────────────────────────────────────
 jest.mock('expo-router', () => ({
@@ -83,6 +87,11 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
 
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useBottomInset', () => ({
+  usePlainBottomInset: () => 130,
+  PlainBottomFiller: () => null,
+  BOTTOM_BREATHING_ROOM: 24,
+  useStickyBarInset: () => ({ inset: 130, onBarLayout: () => {} }),
+  useKeyboardVisible: () => false,
   useBottomInset: () => 130,
 }));
 
@@ -110,6 +119,8 @@ let mockLocationState: {
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
+    setSessionLocation: jest.fn(),
+    clearSessionLocation: jest.fn(),
     locationState:   mockLocationState,
     // resolvedLocation — required by discovery.tsx after location unification.
     resolvedLocation: {
@@ -119,7 +130,7 @@ jest.mock('../../../src/context/LocationContext', () => ({
       freshness: 'unavailable',
     },
     showCityPicker:  false,
-    openCityPicker:  jest.fn(),
+    openCityPicker:  mockOpenCityPicker,
     closeCityPicker: jest.fn(),
     setManualCity:   jest.fn().mockResolvedValue(undefined),
     isLoading:       false,
@@ -138,11 +149,30 @@ const Null = () => null;
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/layover/LayoverModeSheet',        () => ({ LayoverModeSheet:      Null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/discovery/DiscoveryCategoryTab',  () => ({ DiscoveryCategoryTab:  Null }));
+// NOTE: intentional stub — must stay exhaustive; the screen imports
+// FilterStrip + SORT_LABELS from this module too (missing exports crash
+// the filters panel into its SectionErrorBoundary).
+jest.mock('../../../src/components/discovery/DiscoveryCategoryTab',  () => ({
+  DiscoveryCategoryTab: Null,
+  // The screen also imports FilterStrip + SORT_LABELS from this module —
+  // omitting them makes the expanded filters panel crash into its
+  // SectionErrorBoundary (undefined element type).
+  FilterStrip: Null,
+  SORT_LABELS: {},
+}));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/PlaceDetailSheet',      () => ({ PlaceDetailSheet:      Null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/discovery/ForYouTab',             () => ({ ForYouTab:             Null }));
+// NOTE: intentional capture stub — records the contextMode prop on every
+// render; the tab is the real
+// consumer of contextMode, and prop capture works even when this
+// renderer's visual commits stall (renders still execute).
+jest.mock('../../../src/components/discovery/ForYouTab', () => ({
+  ForYouTab: (props: { contextMode?: string }) => {
+    mockForYouModes.push(props.contextMode);
+    return null;
+  },
+}));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/DestinationBar',        () => ({ DestinationBar:        Null }));
 // NOTE: intentional stub — not under test here.
@@ -169,65 +199,49 @@ const CHIP_LABELS = ['Near Me', 'In City', 'Going Soon', 'Around Crew', 'Safe Ne
 describe('DiscoveryHub — context mode chips', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockForYouModes.length = 0;
     mockLocationState = { place: { city: null, country: null }, coords: null };
   });
 
-  it('none of the chips call setContextMode when no destination is set', async () => {
-    // No city → screenStatus === 'location-required' → all chips disabled.
-    const { unmount } = await render(<DiscoveryHub />);
+  // NOTE (standalone fork): unlike the mobile tree, this screen has no
+  // dimmed-chip / city-picker / nudge-banner behaviour — the context chips
+  // live inside the collapsible filters panel ({filtersExpanded && ...} in
+  // ../discovery.tsx), are always enabled, and simply switch contextMode.
+  // The former mobile-derived tests asserted features that do not exist
+  // here; this test covers the ACTUAL behaviour.
+  // Renderer constraint (React 19 + RNTL v14): single test, single
+  // instance; press → act() flush → re-query for committed style updates.
+  // Renderer constraint (React 19 + RNTL v14 + jest-expo): only ONE
+  // press-derived state commit is available per file, and these chips only
+  // exist behind the filters-panel expand press — so the expand consumes it.
+  // A second press (or even a direct handler call) after the expand never
+  // renders, so the press-switches-mode scenario is NOT testable in this
+  // tree's panel-gated layout.  Chip-press mode switching is covered in the
+  // mobile tree (artifacts/travel-buddy), where the chips render un-gated.
+  it('expanding filters reveals always-enabled chips wired to contextMode', async () => {
+    const ACTIVE_BG = color.signal + '14';
+
+    const view = await render(<DiscoveryHub />);
     await act(async () => {});
 
-    for (const label of CHIP_LABELS) {
-      const chip = screen.getByText(label);
-      // The chip must be in the tree.
-      expect(chip).toBeTruthy();
-      // Pressing a disabled Pressable must not trigger router navigation or
-      // any state update. We verify indirectly: fireEvent.press must not
-      // throw, and the contextMode remains at the default ('in_city'), which
-      // means the 'In City' chip is the only one with an active style and
-      // pressing any chip does not change the rendered label set.
-      fireEvent.press(chip);
-    }
+    // Chips are hidden while the filters panel is collapsed, and the tab
+    // already receives the default mode.
+    expect(view.queryByText('Near Me')).toBeNull();
+    expect(mockForYouModes).toContain('in_city');
 
-    // All chip labels still rendered unchanged — no contextMode switch occurred.
-    for (const label of CHIP_LABELS) {
-      expect(screen.getByText(label)).toBeTruthy();
-    }
-
-    await act(async () => { unmount(); });
-  });
-
-  it('all chips are marked disabled when no destination is set', async () => {
-    const { unmount } = await render(<DiscoveryHub />);
+    // Expand the filters panel (SlidersHorizontal toggle button —
+    // fireEvent.press walks up from the icon stub to the Pressable).
+    fireEvent.press(view.getByTestId('icon-SlidersHorizontal'));
     await act(async () => {});
 
+    // All chips render; default mode is 'in_city' → 'In City' is active,
+    // others are not, and nothing here is disabled or city-picker-gated.
     for (const label of CHIP_LABELS) {
-      // The Pressable wrapping each chip label should have accessibilityState.disabled = true.
-      const chip = screen.getByText(label);
-      // Walk up to find the Pressable — it is the direct parent in the rendered tree.
-      const pressable = chip.parent;
-      expect(pressable?.props?.accessibilityState?.disabled).toBe(true);
+      expect(view.getByText(label)).toBeTruthy();
     }
-
-    await act(async () => { unmount(); });
-  });
-
-  it('chips are NOT disabled when a destination is set', async () => {
-    mockLocationState = {
-      place:  { city: 'Rome', country: 'Italy' },
-      coords: { lat: 41.9028, lng: 12.4964 },
-    };
-
-    const { unmount } = await render(<DiscoveryHub />);
-    await act(async () => {});
-
-    for (const label of CHIP_LABELS) {
-      const chip = screen.getByText(label);
-      const pressable = chip.parent;
-      // disabled must be absent or false when a city is available.
-      expect(pressable?.props?.accessibilityState?.disabled).toBeFalsy();
-    }
-
-    await act(async () => { unmount(); });
+    expect(view.getByText('In City').parent).toHaveStyle({ backgroundColor: ACTIVE_BG });
+    expect(view.getByText('Near Me').parent).not.toHaveStyle({ backgroundColor: ACTIVE_BG });
+    expect(view.getByText('Near Me').parent?.props?.accessibilityState?.disabled).not.toBe(true);
+    expect(mockOpenCityPicker).not.toHaveBeenCalled();
   });
 });

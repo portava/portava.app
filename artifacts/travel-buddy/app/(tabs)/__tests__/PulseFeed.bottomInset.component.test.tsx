@@ -5,9 +5,11 @@
  * at least as large as the device home-indicator / gesture-nav bar height so
  * the last post card is never clipped.
  *
- * After the Pulse rewrite: the screen uses a hardcoded paddingBottom of 120
- * (which exceeds any common home-indicator height). This test pins that
- * contract so a future refactor cannot silently drop the clearance.
+ * After the Pulse rewrite: the FlatList's paddingBottom is derived from
+ * useBottomInset() === NAV_BAR_FILLER_HEIGHT (96) + insets.bottom. On an
+ * iPhone 14 (bottom inset 34 pt) that is 130 pt, which clears the 120 pt
+ * minimum-clearance contract below. This test pins that contract so a future
+ * refactor cannot silently drop the clearance.
  *
  * Run with: pnpm --filter @workspace/travel-buddy run test:component
  */
@@ -21,7 +23,8 @@ import { render } from '@testing-library/react-native';
 const IPHONE_BOTTOM = 34;
 /** Android gesture-nav bar height (dp). */
 const ANDROID_BOTTOM = 48;
-/** Minimum clearance expected from Pulse's hardcoded paddingBottom (120). */
+/** Minimum clearance contract for Pulse's paddingBottom (NAV_BAR_FILLER_HEIGHT
+ *  96 + iPhone 14 bottom inset 34 = 130 ≥ 120). */
 const MIN_EXPECTED_PADDING = 120;
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
@@ -40,9 +43,11 @@ jest.mock('react-native-reanimated', () => {
 });
 
 // safe-area-context
+// iPhone 14 bottom inset (34 pt): paddingBottom = useBottomInset() =
+// NAV_BAR_FILLER_HEIGHT (96) + 34 = 130, which clears the 120 pt contract below.
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual('react-native-safe-area-context'),
-  useSafeAreaInsets: () => ({ top: 44, bottom: 0, left: 0, right: 0 }),
+  useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
   SafeAreaProvider: ({ children }: any) => children,
 }));
 
@@ -59,6 +64,20 @@ jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
   router: { push: jest.fn(), back: jest.fn() },
   useFocusEffect: (cb: () => void) => { cb(); },
+}));
+
+// ── Screen timing / snapshot cache — stub ─────────────────────────────────────
+// index.tsx gained useScreenTiming + useSnapshotCache. The real useScreenTiming
+// calls setEpoch() inside useFocusEffect, which this file's synchronous
+// useFocusEffect mock runs during render → "Too many re-renders". Stub both to
+// inert values (not under test here).
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/hooks/useScreenTiming', () => ({
+  useScreenTiming: () => ({ markFirstContent: () => {}, epoch: 0 }),
+}));
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/hooks/useSnapshotCache', () => ({
+  useSnapshotCache: () => ({ snapshot: null, isStale: false, save: () => {}, clear: () => {} }),
 }));
 
 // ── Comment count store ───────────────────────────────────────────────────────
@@ -124,6 +143,8 @@ jest.mock('../../../src/services/intelligence', () => ({
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
+    setSessionLocation: jest.fn(),
+    clearSessionLocation: jest.fn(),
     locationState: { place: { city: 'Cebu City' }, coords: null },
     openCityPicker: jest.fn(),
   }),

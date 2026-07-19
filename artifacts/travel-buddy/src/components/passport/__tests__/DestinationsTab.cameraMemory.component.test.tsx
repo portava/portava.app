@@ -79,6 +79,7 @@ jest.mock('../../../constants/mapStyle', () => ({
 // geocoding network calls that cannot run in the jest-expo JSDOM env. We
 // resolve to a known coordinate so the camera fit effect actually fires.
 jest.mock('../../../services/cityGeocode', () => ({
+  preloadGeocodeCache: jest.fn().mockResolvedValue(undefined),
   batchGeocodeCities: jest.fn().mockResolvedValue(
     new Map([['rome|italy', [41.9, 12.5]]]),
   ),

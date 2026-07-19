@@ -246,7 +246,7 @@ describe('Passport — Destinations tab badge', () => {
       }),
     );
 
-    const { unmount } = await render(<PassportScreen />);
+    await render(<PassportScreen />);
     await act(async () => {});
 
     // Should show the plain label with no badge.
@@ -254,7 +254,6 @@ describe('Passport — Destinations tab badge', () => {
     // The "· 0" variant must not appear anywhere.
     expect(screen.queryByText(/DESTINATIONS\s*·/)).toBeNull();
 
-    await act(async () => { unmount(); });
   });
 
   it('shows "DESTINATIONS · 1" when the user has exactly one city', async () => {
@@ -288,11 +287,10 @@ describe('Passport — Destinations tab badge', () => {
       }),
     );
 
-    const { unmount } = await render(<PassportScreen />);
+    await render(<PassportScreen />);
     await act(async () => {});
 
     expect(screen.getByText('DESTINATIONS · 1')).toBeTruthy();
 
-    await act(async () => { unmount(); });
   });
 });

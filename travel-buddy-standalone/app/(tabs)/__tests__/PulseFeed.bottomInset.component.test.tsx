@@ -5,9 +5,12 @@
  * at least as large as the device home-indicator / gesture-nav bar height so
  * the last post card is never clipped.
  *
- * After the Pulse rewrite: the screen uses a hardcoded paddingBottom of 120
- * (which exceeds any common home-indicator height). This test pins that
- * contract so a future refactor cannot silently drop the clearance.
+ * Current contract (standalone): the root FlatList's contentContainerStyle
+ * paddingBottom is `useBottomInset()` === NAV_BAR_FILLER_HEIGHT (96) +
+ * insets.bottom. With a mocked bottom inset of 34 (iPhone 14 home indicator)
+ * this yields 130, which exceeds the 120 minimum clearance the last post card
+ * needs to clear the floating tab pill. This test pins that contract so a
+ * future refactor cannot silently drop the clearance.
  *
  * Run with: pnpm --filter @workspace/travel-buddy run test:component
  */
@@ -21,7 +24,7 @@ import { render } from '@testing-library/react-native';
 const IPHONE_BOTTOM = 34;
 /** Android gesture-nav bar height (dp). */
 const ANDROID_BOTTOM = 48;
-/** Minimum clearance expected from Pulse's hardcoded paddingBottom (120). */
+/** Minimum clearance expected from Pulse's paddingBottom (NAV_BAR_FILLER_HEIGHT 96 + inset). */
 const MIN_EXPECTED_PADDING = 120;
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
@@ -42,7 +45,7 @@ jest.mock('react-native-reanimated', () => {
 // safe-area-context
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual('react-native-safe-area-context'),
-  useSafeAreaInsets: () => ({ top: 44, bottom: 0, left: 0, right: 0 }),
+  useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
   SafeAreaProvider: ({ children }: any) => children,
 }));
 
@@ -124,6 +127,8 @@ jest.mock('../../../src/services/intelligence', () => ({
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
+    setSessionLocation: jest.fn(),
+    clearSessionLocation: jest.fn(),
     locationState: { place: { city: 'Cebu City' }, coords: null },
     openCityPicker: jest.fn(),
   }),

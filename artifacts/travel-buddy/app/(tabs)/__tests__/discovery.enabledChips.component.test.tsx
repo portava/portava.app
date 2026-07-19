@@ -13,11 +13,33 @@
  */
 
 import React from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import DiscoveryHub from '../discovery.tsx';
 import { color } from '../../../src/theme/tokens';
 
 // ── expo-router ───────────────────────────────────────────────────────────────
+// react-native Proxy mock — DiscoveryHub mounts a raw <Modal> (age filter).
+// Modal's animation lifecycle leaves a floating async act() scope inside
+// RNTL's render() promise; the next act() collides with it, corrupting the
+// act-scope depth so every later render in this file commits an EMPTY tree.
+// Stubbing Modal as a plain conditional View keeps the lifecycle synchronous.
+// ActivityIndicator must be stubbed too: through the Proxy its getter re-enters
+// with `this === Proxy` and can hit uninitialised native-module stubs.
+jest.mock('react-native', () => {
+  const actual = jest.requireActual('react-native');
+  const R = require('react');
+  const MockModal = ({ children, visible }: { children?: React.ReactNode; visible?: boolean }) =>
+    visible ? R.createElement(actual.View, null, children) : null;
+  const MockActivityIndicator = () => null;
+  return new Proxy(actual, {
+    get(target, prop, receiver) {
+      if (prop === 'Modal') return MockModal;
+      if (prop === 'ActivityIndicator') return MockActivityIndicator;
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+});
+
 jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
   router: {
@@ -88,6 +110,11 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
 
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useBottomInset', () => ({
+  usePlainBottomInset: () => 130,
+  PlainBottomFiller: () => null,
+  BOTTOM_BREATHING_ROOM: 24,
+  useStickyBarInset: () => ({ inset: 130, onBarLayout: () => {} }),
+  useKeyboardVisible: () => false,
   useBottomInset: () => 130,
 }));
 
@@ -144,14 +171,20 @@ jest.mock('../../../src/components/PlanPickerController', () => ({
 // ── Heavy sub-components ──────────────────────────────────────────────────────
 const Null = () => null;
 
+// The tabs render discoveryHeader (chips, search bar, nudge, tab row) inside
+// their FlatList via listHeaderComponent. Rendering it from the stub keeps the
+// header UI in the test tree without pulling in the tabs' native deps.
+const HeaderOnly = ({ listHeaderComponent }: { listHeaderComponent?: React.ReactElement | null }) =>
+  listHeaderComponent ?? null;
+
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/layover/LayoverModeSheet',        () => ({ LayoverModeSheet:      Null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/discovery/DiscoveryCategoryTab',  () => ({ DiscoveryCategoryTab:  Null }));
+jest.mock('../../../src/components/discovery/DiscoveryCategoryTab',  () => ({ DiscoveryCategoryTab:  HeaderOnly }));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/PlaceDetailSheet',      () => ({ PlaceDetailSheet:      Null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/discovery/ForYouTab',             () => ({ ForYouTab:             Null }));
+jest.mock('../../../src/components/discovery/ForYouTab',             () => ({ ForYouTab:             HeaderOnly }));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/DestinationBar',        () => ({ DestinationBar:        Null }));
 // NOTE: intentional stub — not under test here.
@@ -182,163 +215,39 @@ const CHIP_LABELS = ['Near Me', 'In City', 'Going Soon', 'Around Crew', 'Safe Ne
 /** The `locationNudgeHighlighted` backgroundColor value from the stylesheet. */
 const NUDGE_HIGHLIGHTED_BG = color.signal + '28';
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+/** Accessibility label of the location-nudge banner in the discovery header. */
+const BANNER_LABEL = 'Set your location to discover nearby places';
 
-describe('DiscoveryHub — dimmed chip tap opens city picker', () => {
+// ── Tests ─────────────────────────────────────────────────────────────────────
+// Split from discovery.dimmedChipOpensCityPicker.component.test.tsx: the
+// renderer there exhausts its reliable-press budget on the dimmed-chip and
+// nudge-lifecycle assertions (see that file's constraints comment), so the
+// destination-set scenario runs here on a fresh renderer where its presses
+// are live and the coverage is honest.
+
+describe('DiscoveryHub — enabled chips when a destination is set', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockLocationState = { place: { city: null, country: null }, coords: null };
+    mockLocationState = {
+      place:  { city: 'Tokyo', country: 'Japan' },
+      coords: { lat: 35.6895, lng: 139.6917 },
+    };
   });
 
-  describe('when no destination is set (location-required)', () => {
-    beforeEach(() => {
-      jest.useFakeTimers();
-    });
+  it('chips are enabled, no nudge banner, and taps do not open the city picker', async () => {
+    const view = await render(<DiscoveryHub />);
+    await act(async () => {});
 
-    afterEach(() => {
-      jest.runOnlyPendingTimers();
-      jest.useRealTimers();
-    });
+    // No nudge banner when a destination is set.
+    expect(view.queryByLabelText(BANNER_LABEL)).toBeNull();
 
-    it('tapping a dimmed chip calls openCityPicker', async () => {
-      const { unmount } = await render(<DiscoveryHub />);
-      await act(async () => {});
-
-      const chip = screen.getByText('Near Me');
-      fireEvent.press(chip);
-
-      expect(mockOpenCityPicker).toHaveBeenCalledTimes(1);
-
-      await act(async () => { unmount(); });
-    });
-
-    it('tapping any dimmed chip calls openCityPicker', async () => {
-      const { unmount } = await render(<DiscoveryHub />);
-      await act(async () => {});
-
-      for (const label of CHIP_LABELS) {
-        mockOpenCityPicker.mockClear();
-        fireEvent.press(screen.getByText(label));
-        expect(mockOpenCityPicker).toHaveBeenCalledTimes(1);
-      }
-
-      await act(async () => { unmount(); });
-    });
-
-    it('nudge banner receives highlighted style immediately after tap', async () => {
-      const { unmount } = await render(<DiscoveryHub />);
-      await act(async () => {});
-
-      const nudgeBanner = screen.getByLabelText('Set your location to discover nearby places');
-
-      // Before tap: no highlighted background.
-      expect(nudgeBanner).not.toHaveStyle({ backgroundColor: NUDGE_HIGHLIGHTED_BG });
-
-      fireEvent.press(screen.getByText('In City'));
-
-      // After tap: highlighted background must be applied immediately.
-      expect(nudgeBanner).toHaveStyle({ backgroundColor: NUDGE_HIGHLIGHTED_BG });
-
-      await act(async () => { unmount(); });
-    });
-
-    it('highlighted style is cleared after the 1800 ms timeout', async () => {
-      const { unmount } = await render(<DiscoveryHub />);
-      await act(async () => {});
-
-      const nudgeBanner = screen.getByLabelText('Set your location to discover nearby places');
-
-      fireEvent.press(screen.getByText('Going Soon'));
-
-      // Highlight is active immediately.
-      expect(nudgeBanner).toHaveStyle({ backgroundColor: NUDGE_HIGHLIGHTED_BG });
-
-      // Advance past the 1800 ms timeout.
-      act(() => { jest.advanceTimersByTime(1800); });
-
-      // Highlight must be cleared after the timeout elapses.
-      expect(nudgeBanner).not.toHaveStyle({ backgroundColor: NUDGE_HIGHLIGHTED_BG });
-
-      await act(async () => { unmount(); });
-    });
-
-    it('highlight has not cleared before the timeout elapses', async () => {
-      const { unmount } = await render(<DiscoveryHub />);
-      await act(async () => {});
-
-      const nudgeBanner = screen.getByLabelText('Set your location to discover nearby places');
-
-      fireEvent.press(screen.getByText('Around Crew'));
-
-      act(() => { jest.advanceTimersByTime(1799); });
-
-      // Still highlighted just before the deadline.
-      expect(nudgeBanner).toHaveStyle({ backgroundColor: NUDGE_HIGHLIGHTED_BG });
-
-      await act(async () => { unmount(); });
-    });
-
-    it('a rapid double-tap on a dimmed chip only calls openCityPicker once', async () => {
-      const { unmount } = await render(<DiscoveryHub />);
-      await act(async () => {});
-
-      const chip = screen.getByText('Near Me');
-
-      // Fire two presses back-to-back without any await between them.
-      fireEvent.press(chip);
-      fireEvent.press(chip);
-
-      // The picker must have been opened exactly once — the second tap is a no-op
-      // because the guard (`cityPickerPendingRef`) is already set.
-      expect(mockOpenCityPicker).toHaveBeenCalledTimes(1);
-
-      await act(async () => { unmount(); });
-    });
-
-    it('a rapid double-tap on different dimmed chips still only calls openCityPicker once', async () => {
-      const { unmount } = await render(<DiscoveryHub />);
-      await act(async () => {});
-
-      // Tap two different chips in rapid succession.
-      fireEvent.press(screen.getByText('In City'));
-      fireEvent.press(screen.getByText('Going Soon'));
-
-      expect(mockOpenCityPicker).toHaveBeenCalledTimes(1);
-
-      await act(async () => { unmount(); });
-    });
-  });
-
-  describe('when a destination IS set', () => {
-    beforeEach(() => {
-      mockLocationState = {
-        place:  { city: 'Tokyo', country: 'Japan' },
-        coords: { lat: 35.6895, lng: 139.6917 },
-      };
-    });
-
-    it('tapping a chip does NOT call openCityPicker', async () => {
-      const { unmount } = await render(<DiscoveryHub />);
-      await act(async () => {});
-
-      for (const label of CHIP_LABELS) {
-        fireEvent.press(screen.getByText(label));
-      }
-
-      expect(mockOpenCityPicker).not.toHaveBeenCalled();
-
-      await act(async () => { unmount(); });
-    });
-
-    it('nudge banner is not rendered when a destination is set', async () => {
-      const { unmount } = await render(<DiscoveryHub />);
-      await act(async () => {});
-
-      expect(
-        screen.queryByLabelText('Set your location to discover nearby places'),
-      ).toBeNull();
-
-      await act(async () => { unmount(); });
-    });
+    // Every chip is enabled (not a11y-disabled), and pressing each one
+    // switches context mode instead of opening the picker.
+    for (const label of CHIP_LABELS) {
+      const a11y = view.getByText(label).parent?.props?.accessibilityState;
+      expect(a11y?.disabled ?? false).toBe(false);
+      fireEvent.press(view.getByText(label));
+    }
+    expect(mockOpenCityPicker).not.toHaveBeenCalled();
   });
 });

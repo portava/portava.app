@@ -46,6 +46,14 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
 
 // ── Session ───────────────────────────────────────────────────────────────────
 // NOTE: intentional stub — not under test here.
+// EventVoiceRoomCard reads useCallState/useCallActions (needs CallProvider);
+// irrelevant to scroll-architecture assertions here.
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/components/events/EventVoiceRoomCard.tsx', () => ({
+  EventVoiceRoomCard: () => null,
+}));
+
+// NOTE: intentional exhaustive stub — only session identity is consumed here.
 jest.mock('../../../src/context/SessionContext', () => ({
   useSession: () => ({ userId: 'u1' }),
 }));

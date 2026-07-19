@@ -107,7 +107,6 @@ describe('StampStudioIndex — file-level focus stub fires exactly once per moun
     // Exactly one call — the useFocusEffect path was suppressed by firstFocusRef.
     expect(mockGetCatalog).toHaveBeenCalledTimes(1);
 
-    await act(async () => { unmount(); });
   });
 
   it('increments the call count by exactly one on remount — not two', async () => {
@@ -123,7 +122,7 @@ describe('StampStudioIndex — file-level focus stub fires exactly once per moun
     // Exactly 1 call after the first mount.
     expect(mockGetCatalog).toHaveBeenCalledTimes(1);
 
-    await act(async () => { unmount(); });
+    await unmount();
 
     // ── Second mount (new component instance — firstFocusRef resets) ──────────
     const { findByText: find2 } = await render(<StampStudioIndex />);

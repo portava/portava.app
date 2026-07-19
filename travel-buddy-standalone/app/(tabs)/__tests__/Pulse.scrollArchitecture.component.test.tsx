@@ -115,6 +115,8 @@ jest.mock('../../../src/services/intelligence', () => ({
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
+    setSessionLocation: jest.fn(),
+    clearSessionLocation: jest.fn(),
     locationState: {
       place: { city: 'Cebu City' },
       coords: null,

@@ -78,6 +78,8 @@ beforeEach(() => {
     peer: null,
     minimized: false, micMuted: false, cameraOn: false, speakerOn: false,
     elapsedSec: 0, error: null,
+    // Group-room roster fields (EventRoomScreen filters participants unconditionally).
+    participants: [], participantCount: 0, activeSpeakerIds: [],
   };
 });
 

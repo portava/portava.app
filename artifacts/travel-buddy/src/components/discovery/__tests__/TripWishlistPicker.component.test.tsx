@@ -344,10 +344,10 @@ describe('TripWishlistPicker — re-open stale-state retention', () => {
     mockGetSavedListIds.mockReturnValueOnce(deferred);
 
     await act(async () => {
-      rerender(<TripWishlistPicker place={PLACE} visible={false} onClose={onClose} />);
+      await rerender(<TripWishlistPicker place={PLACE} visible={false} onClose={onClose} />);
     });
     await act(async () => {
-      rerender(<TripWishlistPicker place={PLACE} visible={true} onClose={onClose} />);
+      await rerender(<TripWishlistPicker place={PLACE} visible={true} onClose={onClose} />);
       await Promise.resolve(); // flush synchronous effect work
     });
 
@@ -379,10 +379,10 @@ describe('TripWishlistPicker — re-open stale-state retention', () => {
     expect(mockGetSavedListIds).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      rerender(<TripWishlistPicker place={PLACE} visible={false} onClose={onClose} />);
+      await rerender(<TripWishlistPicker place={PLACE} visible={false} onClose={onClose} />);
     });
     await act(async () => {
-      rerender(<TripWishlistPicker place={PLACE} visible={true} onClose={onClose} />);
+      await rerender(<TripWishlistPicker place={PLACE} visible={true} onClose={onClose} />);
     });
 
     await waitFor(() => expect(mockGetSavedListIds).toHaveBeenCalledTimes(2));
@@ -404,10 +404,10 @@ describe('TripWishlistPicker — re-open stale-state retention', () => {
     // Re-open: now both trips are saved.
     mockGetSavedListIds.mockResolvedValueOnce(new Set(['trip-a', 'trip-b']));
     await act(async () => {
-      rerender(<TripWishlistPicker place={PLACE} visible={false} onClose={onClose} />);
+      await rerender(<TripWishlistPicker place={PLACE} visible={false} onClose={onClose} />);
     });
     await act(async () => {
-      rerender(<TripWishlistPicker place={PLACE} visible={true} onClose={onClose} />);
+      await rerender(<TripWishlistPicker place={PLACE} visible={true} onClose={onClose} />);
     });
 
     await waitFor(() => expect(queryAllByText('Already saved')).toHaveLength(2));

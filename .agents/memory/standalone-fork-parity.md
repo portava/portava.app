@@ -16,3 +16,10 @@ description: Canonical-tree rule between artifacts/travel-buddy and travel-buddy
 - Preserved-by-design mirror files (never synced): package.json, tsconfig.json, lockfile, `.npmrc`, `pnpm-workspace.yaml` (`packages: []`), jest.config.js (flat vs pnpm-nested transformIgnorePatterns), `.env*`, README, `e2e/`.
 - Lockfile drift check compares BARE versions; pnpm peer-context suffixes legitimately differ between workspace and standalone installs (`[peer-context]` notes are non-actionable).
 - Run the mirror's own `pnpm run typecheck` after porting ledger-file changes; EAS builds run from the mirror only after sync checks pass.
+
+**Porting mechanics for ledger (diverged) files:**
+- Port edits anchored on the standalone file's own text, never blind-copy; for big diffs, `git diff` the main-tree change and `git apply -p3` / `patch -p3` onto the fork — hunks outside divergent regions apply cleanly.
+- Twin component tests may assert MOBILE-ONLY features never ported to the fork's diverged screens (e.g. dimmed-chip city picker, /map shortcut, Pulse tap→rank wiring). Rewrite the twin to the standalone screen's actual behavior — or delete it if the feature is wholly absent — never port mobile assertions blind.
+- Known fork difference: standalone enables `experiments.typedRoutes` (main does not), so dynamic `router.push(\`/x/\${id}\`)` template literals fail its tsc — cast per the fork's existing convention (`as any` at the call site).
+- Install gotcha: the mirror has its own package.json/node_modules; after merges add new deps there too — "Cannot find module" from its tsc usually means the dep was never installed in `travel-buddy-standalone/` (e.g. `@livekit/react-native`, July 2026).
+- Delegating a port to a subagent works well when the task spells out: diff-first rule, which files replace wholesale vs append, and "run standalone tsc; fix only ported files."

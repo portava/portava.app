@@ -59,7 +59,7 @@ jest.mock('../ui', () => ({
 
 // ── Subject under test ───────────────────────────────────────────────────────
 
-import { EventCard, FlexibleSection } from '../EventCard.tsx';
+import { EventCard } from '../EventCard.tsx';
 import { fireRankOutcome } from '../../hooks/useRankOutcome.ts';
 import type { CityEvent } from '../../types/models.ts';
 
@@ -174,40 +174,9 @@ describe('EventCard — sessionId forwarding', () => {
   });
 });
 
-describe('FlexibleSection — sessionId forwarding', () => {
-  beforeEach(() => {
-    mockFireRankOutcome.mockClear();
-    getMockSaveButton().mockClear();
-  });
-
-  test('pressing a dimmed card inside FlexibleSection calls fireRankOutcome with the correct sessionId', async () => {
-    await render(<FlexibleSection events={[MOCK_EVENT]} sessionId="sess-flex-456" />);
-
-    // Expand the collapsed section first.
-    fireEvent.press(screen.getByText("When you're flexible"));
-
-    // Now press the dimmed event card inside.
-    fireEvent.press(screen.getByText('Sunset Mixer'));
-
-    expect(mockFireRankOutcome).toHaveBeenCalledWith(
-      'ev-test-1',
-      'events',
-      'tap',
-      'sess-flex-456',
-    );
-  });
-
-  test('pressing a dimmed card inside FlexibleSection without a sessionId calls fireRankOutcome with undefined', async () => {
-    await render(<FlexibleSection events={[MOCK_EVENT]} />);
-
-    fireEvent.press(screen.getByText("When you're flexible"));
-    fireEvent.press(screen.getByText('Sunset Mixer'));
-
-    expect(mockFireRankOutcome).toHaveBeenCalledWith(
-      'ev-test-1',
-      'events',
-      'tap',
-      undefined,
-    );
-  });
-});
+// NOTE: the two FlexibleSection scenarios each need an expand press + an
+// inner-card press. Per the per-file press budget (cumulative fireEvent.press
+// degradation under React 19 + RNTL v14), they were moved into two fresh-
+// renderer sibling files so each mounts once with a clean press budget:
+//   EventCard.sessionId.flexible.component.test.tsx          (with sessionId)
+//   EventCard.sessionId.flexibleNoSession.component.test.tsx (without sessionId)

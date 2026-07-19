@@ -99,7 +99,7 @@ describe('StampStrip — count badge stays accurate after earning a new stamp', 
     });
 
     // Parent re-renders with a larger array — simulates a new earn event.
-    rerender(<StampStrip stamps={AFTER_EARN_STAMPS} />);
+    await rerender(<StampStrip stamps={AFTER_EARN_STAMPS} />);
 
     // Badge must update to the new count, not stay frozen at 2.
     await waitFor(() => {
@@ -130,7 +130,7 @@ describe('StampStrip — count badge stays accurate after earning a new stamp', 
       makeStamp('locked-city', false), // now unlocked
     ];
 
-    rerender(<StampStrip stamps={afterUnlock} />);
+    await rerender(<StampStrip stamps={afterUnlock} />);
 
     // Count must rise to 3 once the stamp is unlocked.
     await waitFor(() => {

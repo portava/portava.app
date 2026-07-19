@@ -12,6 +12,15 @@
  *   a useEffect(cb, []) that fires once on mount.  We spy on the mock's
  *   useFocusEffect export to capture the callback and fire it manually,
  *   letting us simulate additional focus events without remounting the hook.
+ *
+ * RNTL v14 + React 19 notes (see src/components/__tests__/TESTING.md):
+ *   - renderHook() is async and MUST be awaited.
+ *   - result.current is populated by an effect inside RNTL's TestComponent;
+ *     always flush with an empty async act() after renderHook before reading
+ *     result.current, or it may still be null.
+ *   - Focus simulation uses async act() so state updates from the focus
+ *     callback flush inside a properly awaited act scope — sync act() here
+ *     interleaves with RNTL's internal async act and poisons later tests.
  */
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
@@ -24,10 +33,15 @@ import * as ExpoRouter from 'expo-router';
 let capturedFocusCb: (() => void) | undefined;
 
 /** Call to simulate the screen gaining focus (fires the hook's focus handler). */
-function triggerFocus() {
-  act(() => {
+async function triggerFocus() {
+  await act(async () => {
     capturedFocusCb?.();
   });
+}
+
+/** Flush pending effects so RNTL's TestComponent populates result.current. */
+async function flushEffects() {
+  await act(async () => {});
 }
 
 // ── setup ─────────────────────────────────────────────────────────────────────
@@ -52,11 +66,12 @@ afterEach(() => {
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
-it('logs cold= on the first markFirstContent after focus', () => {
-  const { result } = renderHook(() => useScreenTiming('TestScreen'));
+it('logs cold= on the first markFirstContent after focus', async () => {
+  const { result } = await renderHook(() => useScreenTiming('TestScreen'));
+  await flushEffects();
 
-  triggerFocus();
-  act(() => { result.current.markFirstContent(); });
+  await triggerFocus();
+  await act(async () => { result.current.markFirstContent(); });
 
   expect(logSpy).toHaveBeenCalledTimes(1);
   expect(logSpy).toHaveBeenCalledWith(
@@ -64,44 +79,47 @@ it('logs cold= on the first markFirstContent after focus', () => {
   );
 });
 
-it('logs warm= after a blur/refocus cycle even without data mutation', () => {
-  const { result } = renderHook(() => useScreenTiming('TestScreen'));
+it('logs warm= after a blur/refocus cycle even without data mutation', async () => {
+  const { result } = await renderHook(() => useScreenTiming('TestScreen'));
+  await flushEffects();
 
   // First focus — cold open
-  triggerFocus();
-  act(() => { result.current.markFirstContent(); });
+  await triggerFocus();
+  await act(async () => { result.current.markFirstContent(); });
   expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('cold='));
   logSpy.mockClear();
 
   // Simulate blur + re-focus (data has NOT changed; only epoch changes)
-  triggerFocus();
+  await triggerFocus();
 
   // markFirstContent re-fires — should log warm, not cold
-  act(() => { result.current.markFirstContent(); });
+  await act(async () => { result.current.markFirstContent(); });
   expect(logSpy).toHaveBeenCalledTimes(1);
   expect(logSpy).toHaveBeenCalledWith(
     expect.stringMatching(/\[PerfTiming\] TestScreen warm=\d+ms/),
   );
 });
 
-it('does not log twice within the same focus cycle', () => {
-  const { result } = renderHook(() => useScreenTiming('TestScreen'));
+it('does not log twice within the same focus cycle', async () => {
+  const { result } = await renderHook(() => useScreenTiming('TestScreen'));
+  await flushEffects();
 
-  triggerFocus();
-  act(() => { result.current.markFirstContent(); });
-  act(() => { result.current.markFirstContent(); }); // second call — no-op
+  await triggerFocus();
+  await act(async () => { result.current.markFirstContent(); });
+  await act(async () => { result.current.markFirstContent(); }); // second call — no-op
 
   expect(logSpy).toHaveBeenCalledTimes(1);
 });
 
-it('epoch starts at 0 and increments by 1 on each focus so screens can use it as a dep', () => {
-  const { result } = renderHook(() => useScreenTiming('TestScreen'));
+it('epoch starts at 0 and increments by 1 on each focus so screens can use it as a dep', async () => {
+  const { result } = await renderHook(() => useScreenTiming('TestScreen'));
+  await flushEffects();
 
   expect(result.current.epoch).toBe(0);
 
-  triggerFocus();
+  await triggerFocus();
   expect(result.current.epoch).toBe(1);
 
-  triggerFocus();
+  await triggerFocus();
   expect(result.current.epoch).toBe(2);
 });
