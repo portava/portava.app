@@ -48,6 +48,12 @@ export interface CallContextGateway {
    */
   eventRoomIneligibility(eventId: string, userId: string):
     Promise<null | 'not_event_eligible' | 'age_ineligible' | 'trust_ineligible'>;
+  /**
+   * Event staff role from the canonical event tables: 'host' for the event's
+   * host, 'cohost' for co_host/moderator rows, null otherwise. Drives the
+   * host-only room start rule and the moderation matrix.
+   */
+  eventStaffRole(eventId: string, userId: string): Promise<'host' | 'cohost' | null>;
   /** Platform moderation: is the user suspended/restricted from calling? */
   isCallRestricted(userId: string): Promise<boolean>;
   /** Active session lookups for join/anti-abuse checks. */
@@ -146,7 +152,46 @@ export async function canUserStartGroupCall(
   if ((await gw.startsInLastHour(input.userId)) >= CALL_CONFIG.MAX_STARTS_PER_HOUR) {
     return deny('rate_limited');
   }
-  return checkGroupMembership(gw, input.contextType, input.contextId, input.userId);
+  const membership = await checkGroupMembership(gw, input.contextType, input.contextId, input.userId);
+  if (!membership.allowed) return membership;
+  // Event rooms are never opened by attendees: only the event's host or
+  // co-hosts may start the room (spec Phase 5). Trip crew rooms stay open
+  // to any active member.
+  if (input.contextType === 'event') {
+    const staff = await gw.eventStaffRole(input.contextId, input.userId);
+    if (!staff) return deny('not_event_host');
+  }
+  return ALLOW;
+}
+
+// ── Moderate (event voice rooms) ─────────────────────────────────────────────
+
+export interface ModerateCallInput {
+  userId: string | null;
+  callId: string;
+  contextType: CallContextType;
+  /** eventId for event rooms. */
+  contextId: string;
+  nowMs: number;
+}
+
+/**
+ * THE moderation authorization — added additively beside canUserStartCall /
+ * canUserJoinCall so routes keep exactly ONE decision matrix. Moderation
+ * rights exist only inside event voice rooms, only for that event's own
+ * host/co-hosts, and only while the room is alive.
+ */
+export async function canUserModerateCall(
+  gw: CallContextGateway, input: ModerateCallInput,
+): Promise<CallPermissionResult> {
+  if (!input.userId) return deny('unauthenticated');
+  if (await gw.isSessionTerminated(input.callId)) return deny('room_terminated');
+  if (input.contextType !== 'event') return deny('not_room_moderator');
+  // Full event eligibility still applies to moderators (bans, blocks, trust).
+  const ineligible = await gw.eventRoomIneligibility(input.contextId, input.userId);
+  if (ineligible) return deny(ineligible);
+  const staff = await gw.eventStaffRole(input.contextId, input.userId);
+  return staff ? ALLOW : deny('not_room_moderator');
 }
 
 // ── Join (any call/room) ─────────────────────────────────────────────────────

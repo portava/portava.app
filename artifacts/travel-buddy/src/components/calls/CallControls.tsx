@@ -10,7 +10,7 @@ import {
 import { color } from '../../theme/tokens.ts';
 
 export function CallControls({
-  micMuted, cameraOn, speakerOn, showVideoControls,
+  micMuted, cameraOn, speakerOn, showVideoControls, muteDisabled,
   onToggleMute, onToggleCamera, onFlipCamera, onToggleSpeaker, onHangUp, onMinimize,
 }: {
   micMuted: boolean;
@@ -18,6 +18,8 @@ export function CallControls({
   speakerOn: boolean;
   /** Video controls hidden on voice-only calls. */
   showVideoControls: boolean;
+  /** Event-room listeners: mic control disabled (publishing denied server-side). */
+  muteDisabled?: boolean;
   onToggleMute: () => void;
   onToggleCamera: () => void;
   onFlipCamera: () => void;
@@ -30,6 +32,7 @@ export function CallControls({
       <Ctl
         label={micMuted ? 'Unmute microphone' : 'Mute microphone'}
         active={micMuted}
+        disabled={muteDisabled}
         onPress={onToggleMute}
       >
         {micMuted ? <MicOff size={22} color="#fff" /> : <Mic size={22} color="#fff" />}
@@ -77,16 +80,17 @@ export function CallControls({
   );
 }
 
-function Ctl({ label, active, onPress, children }: {
-  label: string; active?: boolean; onPress: () => void; children: React.ReactNode;
+function Ctl({ label, active, disabled, onPress, children }: {
+  label: string; active?: boolean; disabled?: boolean; onPress: () => void; children: React.ReactNode;
 }) {
   return (
     <Pressable
-      style={[s.ctl, active && s.ctlActive]}
+      style={[s.ctl, active && s.ctlActive, disabled && s.ctlDisabled]}
       onPress={onPress}
+      disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityState={{ selected: !!active }}
+      accessibilityState={{ selected: !!active, disabled: !!disabled }}
       hitSlop={6}
     >
       {children}
@@ -105,6 +109,7 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   ctlActive: { backgroundColor: 'rgba(255,255,255,0.38)' },
+  ctlDisabled: { opacity: 0.4 },
   endBtn: {
     width: 60, height: 60, borderRadius: 30,
     backgroundColor: '#DC2626',

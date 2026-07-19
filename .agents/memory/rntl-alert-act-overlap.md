@@ -10,3 +10,6 @@ In travel-buddy component tests (React 19 + RNTL + jest-expo), wrapping an async
 **How to apply:** invoke the Alert button's `onPress()` WITHOUT act, then assert outcomes with `waitFor(...)`. Also note existing suites that use the awaited-act pattern may already be silently failing later tests.
 
 Also: mobile jest testMatch covers both `src/**` and `app/**` `*.component.test.{ts,tsx}` (app/ was added for co-located screen tests).
+
+## Render-order poisoning (July 2026, event-room tests)
+Under React 19 + RNTL, some component tests corrupt the act environment for ALL later renders in the same file — subsequent `render()` calls never flush effects (mount fetches show 0 calls) or SectionList rows never appear. Flushing with extra `act()` / real-timer sleeps does NOT fix it. Observed polluters: an Alert-driven moderation flow, and rendering a card while the mocked call state holds a foreign in-progress session. Fix: reorder the file so polluting tests run LAST (leave a NOTE comment explaining why).

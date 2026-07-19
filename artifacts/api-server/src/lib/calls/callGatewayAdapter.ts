@@ -217,6 +217,28 @@ export function makeCallGateway(sc: SupabaseClient): CallContextGateway {
       return s === "going" || s === "maybe" ? null : "not_event_eligible";
     },
 
+    async eventStaffRole(eventId, userId) {
+      try {
+        const { data: ev } = await sc
+          .from("events")
+          .select("host_id")
+          .eq("id", eventId)
+          .maybeSingle();
+        if (!ev) return null;
+        if ((ev as any).host_id === userId) return "host";
+        const { data: staff } = await sc
+          .from("event_roles")
+          .select("role")
+          .eq("event_id", eventId)
+          .eq("user_id", userId)
+          .in("role", ["co_host", "moderator"])
+          .maybeSingle();
+        return staff ? "cohost" : null;
+      } catch {
+        return null; // fail closed — no staff powers on error
+      }
+    },
+
     async isCallRestricted(userId) {
       const state = await getRestrictionState(sc, userId);
       return !state.canMessage; // audit M3: messaging restriction implies calling restriction

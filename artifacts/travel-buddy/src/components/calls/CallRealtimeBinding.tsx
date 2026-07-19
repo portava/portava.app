@@ -69,6 +69,15 @@ export function CallRealtimeBinding() {
           a.noteAccepted(callId);
           return;
         }
+        case 'call.role_changed': {
+          const p = payload as { userId?: string; role?: string };
+          if (p.userId && p.role) a.noteRoleChanged(callId, p.userId, p.role);
+          return;
+        }
+        case 'call.removed_from_room': {
+          a.noteRemovedFromRoom(callId);
+          return;
+        }
         case 'call.canceled':
         case 'call.declined':
         case 'call.missed':

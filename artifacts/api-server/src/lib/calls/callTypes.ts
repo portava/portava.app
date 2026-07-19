@@ -47,7 +47,13 @@ export interface CallParticipant {
   invitedAt: string | null;
   joinedAt: string | null;
   leftAt: string | null;
+  /** Event voice rooms: when the listener raised a hand (null = not raised). */
+  handRaisedAt?: string | null;
 }
+
+/** Moderation actions recorded in the audit log (event voice rooms). */
+export type CallModerationAction =
+  | 'promote_speaker' | 'demote_speaker' | 'mute' | 'remove' | 'end_room';
 
 // ── Central configuration (spec addendum B: no scattered magic numbers) ──────
 
@@ -89,6 +95,8 @@ export type CallDenyReason =
   | 'caller_restricted'
   | 'room_terminated'
   | 'removed_from_room'
+  | 'not_event_host'
+  | 'not_room_moderator'
   | 'redial_cooldown'
   | 'rate_limited';
 

@@ -12,15 +12,20 @@ import { useSession } from '../../context/SessionContext.tsx';
 import { IncomingCallScreen } from './IncomingCallScreen.tsx';
 import { OutgoingCallScreen } from './OutgoingCallScreen.tsx';
 import { GroupCallScreen } from './GroupCallScreen.tsx';
+import { EventRoomScreen } from './EventRoomScreen.tsx';
 import { ActiveCallPill } from './ActiveCallPill.tsx';
 import { ensureCallMediaPermissions } from '../../services/callPermissions.ts';
+import {
+  setParticipantRole as apiSetRole, muteParticipant as apiMuteParticipant,
+  removeParticipant as apiRemoveParticipant, endCall as apiEndCall,
+} from '../../services/calls.ts';
 
 const IN_CALL_PHASES = new Set(['outgoing_ringing', 'connecting', 'connected', 'reconnecting']);
 
 export function CallSurface() {
   const state = useCallState();
   const actions = useCallActions();
-  const { isAuthed } = useSession();
+  const { isAuthed, userId } = useSession();
   const insets = useSafeAreaInsets();
 
   // Restore an in-progress call after app relaunch (once per sign-in).
@@ -45,11 +50,16 @@ export function CallSurface() {
   const inCall = IN_CALL_PHASES.has(state.phase);
   const isVideo = state.session?.callType === 'video';
   const isGroup = state.session?.callType === 'group_voice';
+  const isEventRoom = isGroup && state.session?.contextType === 'event';
   const peerName = state.peer?.name ?? 'Traveler';
   const groupCount = Math.max(state.participantCount, 1);
-  const pillLabel = isGroup
-    ? `Crew Call · ${groupCount} ${groupCount === 1 ? 'person' : 'people'}`
-    : `Call with ${peerName}`;
+  const pillLabel = isEventRoom
+    ? `Voice Room · ${groupCount} listening`
+    : isGroup
+      ? `Crew Call · ${groupCount} ${groupCount === 1 ? 'person' : 'people'}`
+      : `Call with ${peerName}`;
+  const callId = state.session?.id ?? null;
+  const canModerate = state.myRole === 'host' || state.myRole === 'cohost';
 
   async function acceptWith(asVideo: boolean) {
     const inc = state.incoming;
@@ -70,8 +80,33 @@ export function CallSurface() {
         onDecline={() => { void actions.decline(); }}
       />
 
+      <EventRoomScreen
+        visible={inCall && !state.minimized && !!isEventRoom}
+        phase={state.phase}
+        elapsedSec={state.elapsedSec}
+        participants={state.participants}
+        activeSpeakerIds={state.activeSpeakerIds}
+        myRole={state.myRole}
+        myUserId={userId}
+        handRaised={state.handRaised}
+        micMuted={state.micMuted}
+        speakerOn={state.speakerOn}
+        onToggleMute={() => { void actions.toggleMute(); }}
+        onToggleSpeaker={() => { void actions.toggleSpeaker(); }}
+        onToggleHand={() => { void actions.setHandRaised(!state.handRaised); }}
+        onHangUp={() => { void actions.hangUp(); }}
+        onMinimize={() => actions.setMinimized(true)}
+        moderation={canModerate && callId ? {
+          promote: (uid) => { void apiSetRole(callId, uid, 'speaker'); },
+          demote: (uid) => { void apiSetRole(callId, uid, 'listener'); },
+          mute: (uid) => { void apiMuteParticipant(callId, uid); },
+          remove: (uid) => { void apiRemoveParticipant(callId, uid); },
+          endRoom: () => { void apiEndCall(callId).then(() => actions.endLocallyWithNotice(null)); },
+        } : undefined}
+      />
+
       <GroupCallScreen
-        visible={inCall && !state.minimized && isGroup}
+        visible={inCall && !state.minimized && isGroup && !isEventRoom}
         phase={state.phase}
         elapsedSec={state.elapsedSec}
         participants={state.participants}

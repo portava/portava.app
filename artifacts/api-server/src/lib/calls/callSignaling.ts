@@ -26,7 +26,10 @@ export type CallSignalType =
   | "call.ended"
   | "call.missed"
   | "call.group_started"
-  | "call.group_ended";
+  | "call.group_ended"
+  | "call.room_updated"     // raise-hand / roster changes in event rooms
+  | "call.role_changed"     // promote/demote — target refreshes its grant
+  | "call.removed_from_room";
 
 /** Public DTO shape shared with the mobile client. */
 export function sessionDto(s: CallSession): Record<string, unknown> {
@@ -268,6 +271,111 @@ export function announceCrewCallEnded(sc: SupabaseClient, session: CallSession):
   void getCrewMemberIds(sc, session.contextId)
     .then((ids) => publishCallEvent("call.group_ended", ids, session))
     .catch((err) => logger.warn({ err }, "crew-call ended announce failed (non-critical)"));
+}
+
+// ── Event voice-room signaling ───────────────────────────────────────────────
+
+/**
+ * The event-context audience: host + event staff + going/maybe RSVPs. Room
+ * presence is visible only within this set (never public listening).
+ */
+export async function getEventAudienceIds(sc: SupabaseClient, eventId: string): Promise<string[]> {
+  try {
+    const ids = new Set<string>();
+    const { data: ev } = await sc.from("events").select("host_id").eq("id", eventId).maybeSingle();
+    if ((ev as any)?.host_id) ids.add((ev as any).host_id);
+    const { data: staff } = await sc
+      .from("event_roles")
+      .select("user_id")
+      .eq("event_id", eventId)
+      .in("role", ["co_host", "moderator"]);
+    for (const r of (staff as any[]) ?? []) ids.add(r.user_id);
+    const { data: rsvps } = await sc
+      .from("event_rsvps")
+      .select("user_id, status")
+      .eq("event_id", eventId)
+      .in("status", ["going", "maybe"]);
+    for (const r of (rsvps as any[]) ?? []) ids.add(r.user_id);
+    return [...ids];
+  } catch {
+    return [];
+  }
+}
+
+export interface EventAnnounceDeps {
+  getPrefs: typeof getFullCallPreferences;
+  notify: (sc: SupabaseClient, input: {
+    userId: string;
+    eventType: "call.event_room_started";
+    sourceType: "call";
+    sourceId: string;
+    params: Record<string, string>;
+  }) => Promise<void>;
+}
+
+const defaultEventDeps: EventAnnounceDeps = {
+  getPrefs: getFullCallPreferences,
+  async notify(sc, input) {
+    const { NotificationService } = await import("../../services/notifications/NotificationService.js");
+    const { NotificationRouter } = await import("../../services/notifications/NotificationRouter.js");
+    const ns = new NotificationService(sc);
+    const nr = new NotificationRouter(sc);
+    const row = await ns.create(input);
+    if (row) await nr.route(row);
+  },
+};
+
+let testEventDeps: EventAnnounceDeps | null = null;
+/** Test-only: inject fakes for the event-room start notification pipeline. */
+export function _setTestEventDeps(d: EventAnnounceDeps | null): void { testEventDeps = d; }
+
+/**
+ * Announce a newly opened Event Voice Room (spec Phase 5):
+ *  - realtime `call.group_started` to the event audience only,
+ *  - ONE restrained "«Event name» has a live voice room." notification per
+ *    eligible member (never per join), respecting
+ *    call_preferences.incoming_call_notifications.
+ * Best-effort: failures are logged, never fail the start request.
+ */
+export async function announceEventRoomStarted(
+  sc: SupabaseClient,
+  session: CallSession,
+  starterId: string,
+): Promise<void> {
+  const deps = testEventDeps ?? defaultEventDeps;
+  const eventId = session.contextId;
+  const audience = await getEventAudienceIds(sc, eventId);
+
+  publishCallEvent("call.group_started", audience, session);
+
+  let eventTitle = "";
+  try {
+    const { data: ev } = await sc.from("events").select("title").eq("id", eventId).maybeSingle();
+    eventTitle = (ev as any)?.title ?? "";
+  } catch { /* title is cosmetic */ }
+
+  await Promise.allSettled(
+    audience
+      .filter((uid) => uid !== starterId)
+      .map(async (uid) => {
+        const prefs = await deps.getPrefs(sc, uid);
+        if (!prefs.incomingCallNotifications) return;
+        await deps.notify(sc, {
+          userId: uid,
+          eventType: "call.event_room_started",
+          sourceType: "call",
+          sourceId: session.id,
+          params: { eventId, eventTitle },
+        });
+      }),
+  );
+}
+
+/** Realtime `call.group_ended` to the event audience so entry states refresh. */
+export function announceEventRoomEnded(sc: SupabaseClient, session: CallSession): void {
+  void getEventAudienceIds(sc, session.contextId)
+    .then((ids) => publishCallEvent("call.group_ended", ids, session))
+    .catch((err) => logger.warn({ err }, "event-room ended announce failed (non-critical)"));
 }
 
 /** Privacy-safe operational analytics — event + type metadata only. */

@@ -163,6 +163,15 @@ export const TEMPLATES: NotificationTemplate[] = [
     body: () => 'Your Trip Crew started a voice call.',
     actionUrl: ({ tripId }) => (tripId ? `/trip/${tripId}` : '/notifications'),
   }),
+  tpl({
+    eventType: 'call.event_room_started',
+    category: 'trip_crew',
+    defaultPriority: 'normal',
+    defaultChannels: ['in_app', 'push'],
+    title: ({ eventTitle }) => `${eventTitle || 'An event'} has a live voice room.`,
+    body: () => 'Join to listen in.',
+    actionUrl: ({ eventId }) => (eventId ? `/event/${eventId}` : '/notifications'),
+  }),
 
   // ── Telegraph ──────────────────────────────────────────────────────────────
   tpl({

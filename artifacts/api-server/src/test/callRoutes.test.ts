@@ -136,6 +136,7 @@ function makeFakeGateway(overrides: Partial<CallContextGateway> = {}): CallConte
     isEligibleRabConversation: async () => true,
     isActiveCrewMember: async () => true,
     eventRoomIneligibility: async () => null,
+    eventStaffRole: async (_eventId, userId) => (userId === CALLER_ID ? "host" : null),
     isCallRestricted: async () => false,
     isSessionTerminated: async () => false,
     wasRemovedFromCall: async () => false,
@@ -153,9 +154,14 @@ function makeMemStore() {
   let seq = 0;
   const historyWrites: string[] = [];
 
-  const store: CallStoreEx & { __sessions: typeof sessions; __history: string[] } = {
+  const auditLog: Array<{ callId: string; actorId: string; targetId: string | null; action: string }> = [];
+
+  const store: CallStoreEx & {
+    __sessions: typeof sessions; __history: string[]; __audit: typeof auditLog;
+  } = {
     __sessions: sessions,
     __history: historyWrites,
+    __audit: auditLog,
     async createSession(input) {
       const id = `call-${++seq}`;
       const s: StoredCallSession = {
@@ -227,6 +233,15 @@ function makeMemStore() {
         s.contextType === contextType && s.contextId === contextId,
       ) ?? null;
     },
+    async setParticipantRole(callId, userId, role) {
+      const p = (participants.get(callId) ?? []).find((x) => x.userId === userId);
+      if (p) { p.role = role; p.handRaisedAt = null; }
+    },
+    async setHandRaised(callId, userId, raised) {
+      const p = (participants.get(callId) ?? []).find((x) => x.userId === userId);
+      if (p) p.handRaisedAt = raised ? new Date().toISOString() : null;
+    },
+    async logModerationAction(entry) { auditLog.push({ ...entry }); },
     async findOpenDirectSessionsBetween(a, b) {
       return [...sessions.values()].filter((s) => {
         if (s.status !== "ringing" && s.status !== "active") return false;
@@ -244,19 +259,33 @@ function makeMemStore() {
 let gateway: CallContextGateway;
 let store: ReturnType<typeof makeMemStore>;
 const endedRooms: string[] = [];
+const mutedInRoom: Array<{ room: string; userId: string }> = [];
+const removedInRoom: Array<{ room: string; userId: string }> = [];
+/** Every mintToken call — lets tests assert listener grants are subscribe-only. */
+const mintedTokens: Array<{ userId: string; canPublishAudio?: boolean }> = [];
 
 function wireDeps(gwOverrides: Partial<CallContextGateway> = {}) {
   gateway = makeFakeGateway(gwOverrides);
   store = makeMemStore();
   endedRooms.length = 0;
+  mutedInRoom.length = 0;
+  removedInRoom.length = 0;
+  mintedTokens.length = 0;
   // The call-start limiter is module-global in-memory state — reset it so
   // per-test start counts never bleed across cases.
   _resetRateLimit();
   _setTestCallDeps({
     makeGateway: () => gateway,
     makeStore: () => store,
-    roomAdmin: () => ({ endRoom: async (room: string) => { endedRooms.push(room); } }),
-    mintToken: async () => "test-token",
+    roomAdmin: () => ({
+      endRoom: async (room: string) => { endedRooms.push(room); },
+      muteParticipantAudio: async (room: string, userId: string) => { mutedInRoom.push({ room, userId }); },
+      removeParticipant: async (room: string, userId: string) => { removedInRoom.push({ room, userId }); },
+    }),
+    mintToken: async (opts: any) => {
+      mintedTokens.push({ userId: opts.userId, canPublishAudio: opts.canPublishAudio });
+      return "test-token";
+    },
     livekitUrl: () => "wss://livekit.test",
   });
 }
@@ -765,8 +794,15 @@ function wireDepsKeepStore(gwOverrides: Partial<CallContextGateway>) {
   _setTestCallDeps({
     makeGateway: () => gateway,
     makeStore: () => keep,
-    roomAdmin: () => ({ endRoom: async (room: string) => { endedRooms.push(room); } }),
-    mintToken: async () => "test-token",
+    roomAdmin: () => ({
+      endRoom: async (room: string) => { endedRooms.push(room); },
+      muteParticipantAudio: async (room: string, userId: string) => { mutedInRoom.push({ room, userId }); },
+      removeParticipant: async (room: string, userId: string) => { removedInRoom.push({ room, userId }); },
+    }),
+    mintToken: async (opts: any) => {
+      mintedTokens.push({ userId: opts.userId, canPublishAudio: opts.canPublishAudio });
+      return "test-token";
+    },
     livekitUrl: () => "wss://livekit.test",
   });
 }
@@ -1018,5 +1054,362 @@ describe("call sweep", () => {
     assert.equal(store.__sessions.get(ringing.id)!.status, "missed");
     assert.equal(store.__sessions.get(longCall.id)!.status, "ended");
     assert.ok(endedRooms.includes("pcall_long"));
+  });
+});
+
+// ── Event voice rooms (Phase 5) ──────────────────────────────────────────────
+
+const EVENT_ID = "aabbccdd-1001-2002-3003-aabbccddeeee";
+const eventStartBody = { contextType: "event", callType: "group_voice", contextId: EVENT_ID };
+
+/** Start an event room as CALLER (host by fake-gateway default). */
+async function startEventRoom() {
+  const r = await req("POST", "/api/calls", eventStartBody);
+  assert.equal(r.status, 201);
+  return r.body.session.id as string;
+}
+
+describe("event voice rooms", () => {
+  beforeEach(() => {
+    _setTestClient(makeFakeAuthClient(), true);
+    _setTestServiceClient(makeFakeAuthClient());
+    wireDeps();
+  });
+
+  describe("start", () => {
+    it("event host starts the room and gets a publish-capable host grant", async () => {
+      const r = await req("POST", "/api/calls", eventStartBody);
+      assert.equal(r.status, 201);
+      assert.equal(r.body.role, "host");
+      assert.equal(r.body.canPublishAudio, true);
+      assert.equal(mintedTokens.at(-1)!.canPublishAudio, true);
+      assert.ok(String(r.body.session.id).length > 0);
+    });
+
+    it("attendees (non-staff) cannot start the room — not_event_host", async () => {
+      wireDeps({ eventStaffRole: async () => null });
+      const r = await req("POST", "/api/calls", eventStartBody);
+      assert.equal(r.status, 403);
+      assert.equal(r.body.reason, "not_event_host");
+    });
+
+    it("staff who fail event eligibility cannot start", async () => {
+      wireDeps({ eventRoomIneligibility: async () => "trust_ineligible" });
+      const r = await req("POST", "/api/calls", eventStartBody);
+      assert.equal(r.status, 403);
+      assert.equal(r.body.reason, "trust_ineligible");
+    });
+  });
+
+  describe("join eligibility (canonical engine, server-side)", () => {
+    it("an approved attendee joins as a subscribe-only listener", async () => {
+      const id = await startEventRoom();
+      wireDepsKeepStore({ eventStaffRole: async () => null }); // CALLEE = plain attendee
+      const r = await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+      assert.equal(r.status, 200);
+      assert.equal(r.body.role, "listener");
+      assert.equal(r.body.canPublishAudio, false);
+      // Enforced at the token grant — not just the response payload.
+      assert.deepEqual(mintedTokens.at(-1), { userId: CALLEE_ID, canPublishAudio: false });
+    });
+
+    it("a non-attendee / private-event outsider is denied", async () => {
+      const id = await startEventRoom();
+      wireDepsKeepStore({ eventRoomIneligibility: async () => "not_event_eligible" });
+      const r = await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+      assert.equal(r.status, 403);
+      assert.equal(r.body.reason, "not_event_eligible");
+    });
+
+    it("an age-ineligible user is denied", async () => {
+      const id = await startEventRoom();
+      wireDepsKeepStore({ eventRoomIneligibility: async () => "age_ineligible" });
+      const r = await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+      assert.equal(r.status, 403);
+      assert.equal(r.body.reason, "age_ineligible");
+    });
+
+    it("a trust-ineligible user is denied", async () => {
+      const id = await startEventRoom();
+      wireDepsKeepStore({ eventRoomIneligibility: async () => "trust_ineligible" });
+      const r = await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+      assert.equal(r.status, 403);
+      assert.equal(r.body.reason, "trust_ineligible");
+    });
+
+    it("a removed participant can never rejoin", async () => {
+      const id = await startEventRoom();
+      wireDepsKeepStore({ eventStaffRole: async (_e, u) => (u === CALLER_ID ? "host" : null) });
+      assert.equal((await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN)).status, 200);
+      const rm = await req("POST", `/api/calls/${id}/participants/${CALLEE_ID}/remove`, {});
+      assert.equal(rm.status, 200);
+      wireDepsKeepStore({
+        eventStaffRole: async (_e, u) => (u === CALLER_ID ? "host" : null),
+        wasRemovedFromCall: async () => true,
+      });
+      const r = await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+      assert.equal(r.status, 403);
+      assert.equal(r.body.reason, "removed_from_room");
+    });
+  });
+
+  describe("raise hand", () => {
+    it("a joined listener raises and lowers a hand; state shows in GET /calls/:id", async () => {
+      const id = await startEventRoom();
+      wireDepsKeepStore({ eventStaffRole: async (_e, u) => (u === CALLER_ID ? "host" : null) });
+      await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+      const up = await req("POST", `/api/calls/${id}/hand`, { raised: true }, CALLEE_TOKEN);
+      assert.equal(up.status, 200);
+      const got = await req("GET", `/api/calls/${id}`);
+      const callee = got.body.participants.find((p: any) => p.userId === CALLEE_ID);
+      assert.ok(callee.handRaisedAt);
+      const down = await req("POST", `/api/calls/${id}/hand`, { raised: false }, CALLEE_TOKEN);
+      assert.equal(down.status, 200);
+      const got2 = await req("GET", `/api/calls/${id}`);
+      assert.equal(got2.body.participants.find((p: any) => p.userId === CALLEE_ID).handRaisedAt, null);
+    });
+
+    it("non-participants cannot raise a hand (call invisible to them)", async () => {
+      const id = await startEventRoom();
+      const r = await req("POST", `/api/calls/${id}/hand`, { raised: true }, CALLEE_TOKEN);
+      assert.equal(r.status, 404);
+    });
+  });
+
+  describe("moderation (engine-authorized, audit-logged)", () => {
+    async function roomWithListener() {
+      const id = await startEventRoom();
+      wireDepsKeepStore({ eventStaffRole: async (_e, u) => (u === CALLER_ID ? "host" : null) });
+      const j = await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+      assert.equal(j.status, 200);
+      return id;
+    }
+
+    it("host promotes a listener to speaker (audit) and demotion revokes publish", async () => {
+      const id = await roomWithListener();
+      const up = await req("POST", `/api/calls/${id}/participants/${CALLEE_ID}/role`, { role: "speaker" });
+      assert.equal(up.status, 200);
+      assert.deepEqual(store.__audit.at(-1), {
+        callId: id, actorId: CALLER_ID, targetId: CALLEE_ID, action: "promote_speaker",
+      });
+      // Promoted speaker rejoins → publish-capable token.
+      const rejoin = await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+      assert.equal(rejoin.body.role, "speaker");
+      assert.equal(mintedTokens.at(-1)!.canPublishAudio, true);
+
+      const down = await req("POST", `/api/calls/${id}/participants/${CALLEE_ID}/role`, { role: "listener" });
+      assert.equal(down.status, 200);
+      assert.equal(store.__audit.at(-1)!.action, "demote_speaker");
+      assert.deepEqual(mutedInRoom.at(-1)!.userId, CALLEE_ID); // live tracks silenced
+      const rejoin2 = await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+      assert.equal(rejoin2.body.role, "listener");
+      assert.equal(mintedTokens.at(-1)!.canPublishAudio, false);
+    });
+
+    it("listeners cannot moderate — not_room_moderator, no audit entry", async () => {
+      const id = await roomWithListener();
+      const auditBefore = store.__audit.length;
+      const r = await req("POST", `/api/calls/${id}/participants/${CALLER_ID}/role`, { role: "listener" }, CALLEE_TOKEN);
+      assert.equal(r.status, 403);
+      assert.equal(r.body.reason, "not_room_moderator");
+      assert.equal(store.__audit.length, auditBefore);
+    });
+
+    it("moderation in non-event group rooms is refused", async () => {
+      const r0 = await req("POST", "/api/calls", {
+        contextType: "trip_crew", callType: "group_voice", contextId: THREAD_ID,
+      });
+      const r = await req("POST", `/api/calls/${r0.body.session.id}/participants/${CALLEE_ID}/mute`, {});
+      assert.equal(r.status, 403);
+      assert.equal(r.body.reason, "not_room_moderator");
+    });
+
+    it("host mutes a participant — LiveKit admin called and audit written", async () => {
+      const id = await roomWithListener();
+      const r = await req("POST", `/api/calls/${id}/participants/${CALLEE_ID}/mute`, {});
+      assert.equal(r.status, 200);
+      assert.equal(mutedInRoom.at(-1)!.userId, CALLEE_ID);
+      assert.deepEqual(store.__audit.at(-1), {
+        callId: id, actorId: CALLER_ID, targetId: CALLEE_ID, action: "mute",
+      });
+    });
+
+    it("host removes a participant — kicked from room, audited, status removed", async () => {
+      const id = await roomWithListener();
+      const r = await req("POST", `/api/calls/${id}/participants/${CALLEE_ID}/remove`, {});
+      assert.equal(r.status, 200);
+      assert.equal(removedInRoom.at(-1)!.userId, CALLEE_ID);
+      assert.equal(store.__audit.at(-1)!.action, "remove");
+      const row = (await store.getParticipants(id)).find((p) => p.userId === CALLEE_ID)!;
+      assert.equal(row.status, "removed");
+    });
+
+    it("staff are never moderation targets — cohost cannot remove the host, host cannot mute/remove a cohost", async () => {
+      const id = await startEventRoom();
+      // CALLEE joins as a cohost (staff).
+      wireDepsKeepStore({
+        eventStaffRole: async (_e, u) => (u === CALLER_ID ? "host" : "cohost"),
+      });
+      const j = await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+      assert.equal(j.status, 200);
+      assert.equal(j.body.role, "cohost");
+      const auditBefore = store.__audit.length;
+
+      // Cohost → host: remove and mute both refused.
+      const rmHost = await req("POST", `/api/calls/${id}/participants/${CALLER_ID}/remove`, {}, CALLEE_TOKEN);
+      assert.equal(rmHost.status, 400);
+      assert.equal(rmHost.body.reason, "cannot_moderate_staff");
+      const muteHost = await req("POST", `/api/calls/${id}/participants/${CALLER_ID}/mute`, {}, CALLEE_TOKEN);
+      assert.equal(muteHost.status, 400);
+      assert.equal(muteHost.body.reason, "cannot_moderate_staff");
+
+      // Host → cohost: also refused (moderation flows only downward).
+      const rmCohost = await req("POST", `/api/calls/${id}/participants/${CALLEE_ID}/remove`, {});
+      assert.equal(rmCohost.status, 400);
+      assert.equal(rmCohost.body.reason, "cannot_moderate_staff");
+      const muteCohost = await req("POST", `/api/calls/${id}/participants/${CALLEE_ID}/mute`, {});
+      assert.equal(muteCohost.status, 400);
+      assert.equal(muteCohost.body.reason, "cannot_moderate_staff");
+
+      // No audit entries, no LiveKit admin calls, host still joinable state.
+      assert.equal(store.__audit.length, auditBefore);
+      const host = (await store.getParticipants(id)).find((p) => p.userId === CALLER_ID)!;
+      assert.notEqual(host.status, "removed");
+    });
+
+    it("listeners cannot end the room; the host can (audited end_room)", async () => {
+      const id = await roomWithListener();
+      const denied = await req("POST", `/api/calls/${id}/end`, {}, CALLEE_TOKEN);
+      assert.equal(denied.status, 403);
+      assert.equal(denied.body.reason, "not_room_moderator");
+      assert.equal(store.__sessions.get(id)!.status, "active");
+
+      const ended = await req("POST", `/api/calls/${id}/end`, {});
+      assert.equal(ended.status, 200);
+      assert.equal(store.__sessions.get(id)!.status, "ended");
+      assert.equal(store.__audit.at(-1)!.action, "end_room");
+      assert.ok(endedRooms.length >= 1);
+    });
+  });
+
+  describe("event room presence (GET /api/calls/group/event/:id)", () => {
+    it("returns the live room + listening count to eligible users", async () => {
+      const id = await startEventRoom();
+      wireDepsKeepStore({ eventStaffRole: async (_e, u) => (u === CALLER_ID ? "host" : null) });
+      await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+      const r = await req("GET", `/api/calls/group/event/${EVENT_ID}`, undefined, CALLEE_TOKEN);
+      assert.equal(r.status, 200);
+      assert.equal(r.body.session.id, id);
+      assert.equal(r.body.participantCount, 2);
+      assert.equal(r.body.canStart, false);
+      const host = await req("GET", `/api/calls/group/event/${EVENT_ID}`);
+      assert.equal(host.body.canStart, true);
+    });
+
+    it("room state is invisible outside the event context", async () => {
+      await startEventRoom();
+      wireDepsKeepStore({ eventRoomIneligibility: async () => "not_event_eligible" });
+      const r = await req("GET", `/api/calls/group/event/${EVENT_ID}`, undefined, CALLEE_TOKEN);
+      assert.equal(r.status, 403);
+      assert.equal(r.body.reason, "not_event_eligible");
+    });
+
+    it("no open room → session null, count 0, canStart still present (host true)", async () => {
+      const r = await req("GET", `/api/calls/group/event/${EVENT_ID}`);
+      assert.equal(r.status, 200);
+      assert.equal(r.body.session, null);
+      assert.equal(r.body.participantCount, 0);
+      assert.equal(r.body.canStart, true, "host must see the Start affordance when no room exists");
+    });
+
+    it("no open room → plain attendee gets canStart false", async () => {
+      wireDeps({ eventStaffRole: async () => null });
+      const r = await req("GET", `/api/calls/group/event/${EVENT_ID}`, undefined, CALLEE_TOKEN);
+      assert.equal(r.status, 200);
+      assert.equal(r.body.session, null);
+      assert.equal(r.body.canStart, false);
+    });
+  });
+
+  describe("start notification (restrained, preference-gated)", () => {
+    it("announceEventRoomStarted notifies the audience once, excluding the starter and opted-out users", async () => {
+      const { announceEventRoomStarted, _setTestEventDeps } = await import("../lib/calls/callSignaling.js");
+      const AUD_A = "aabbccdd-1001-2002-3003-aabbccdd2001";
+      const AUD_B = "aabbccdd-1001-2002-3003-aabbccdd2002";
+      // Fake sc serving the event audience tables.
+      function tableBuilder(table: string): any {
+        const rows =
+          table === "event_roles" ? [{ user_id: AUD_A }]
+          : table === "event_rsvps" ? [{ user_id: AUD_B, status: "going" }]
+          : [];
+        const b: any = new Proxy(function () {}, {
+          get(_t, prop) {
+            if (prop === "then") return (onF: any) => Promise.resolve({ data: rows, error: null }).then(onF);
+            if (prop === "maybeSingle" || prop === "single") {
+              return () => Promise.resolve({
+                data: table === "events" ? { host_id: CALLER_ID, title: "Sunset Rooftop Mixer" } : null,
+                error: null,
+              });
+            }
+            return () => b;
+          },
+        });
+        return b;
+      }
+      const sc: any = { from: (t: string) => tableBuilder(t) };
+      const notified: any[] = [];
+      _setTestEventDeps({
+        getPrefs: async (_sc: any, uid: string) => ({
+          whoCanCall: "people_i_message", allowRentABuddyCalls: true, allowVideoCalls: true,
+          incomingCallNotifications: uid !== AUD_B, // B opted out
+        }),
+        notify: async (_sc: any, input: any) => { notified.push(input); },
+      } as any);
+      try {
+        await announceEventRoomStarted(sc, {
+          id: "call-evt-1", callType: "group_voice", contextType: "event", contextId: EVENT_ID,
+          threadId: null, startedBy: CALLER_ID, status: "active",
+          startedAt: new Date().toISOString(), connectedAt: new Date().toISOString(),
+          endedAt: null, roomName: "pcall_evt",
+        } as any, CALLER_ID);
+        // Starter (host) excluded; AUD_B opted out → exactly one notification.
+        assert.equal(notified.length, 1);
+        assert.equal(notified[0].userId, AUD_A);
+        assert.equal(notified[0].eventType, "call.event_room_started");
+        assert.equal(notified[0].params.eventTitle, "Sunset Rooftop Mixer");
+      } finally {
+        _setTestEventDeps(null);
+      }
+    });
+  });
+});
+
+// ── Real store adapter projection guard ──────────────────────────────────────
+// The reviewer-flagged bug class: hand_raised_at written by /hand but missing
+// from the read projection. This pins the LIVE adapter's participant select.
+describe("callStoreAdapter participant projection", () => {
+  it("getParticipants selects hand_raised_at and maps it to handRaisedAt", async () => {
+    const { makeCallStore } = await import("../lib/calls/callStoreAdapter.js");
+    let selected = "";
+    const sc: any = {
+      from: () => ({
+        select: (cols: string) => {
+          selected = cols;
+          return {
+            eq: async () => ({
+              data: [{
+                call_id: "c1", user_id: "u1", role: "listener", status: "joined",
+                invited_at: null, joined_at: null, left_at: null,
+                hand_raised_at: "2026-07-19T00:00:00.000Z",
+              }],
+              error: null,
+            }),
+          };
+        },
+      }),
+    };
+    const rows = await makeCallStore(sc).getParticipants("c1");
+    assert.ok(selected.includes("hand_raised_at"), "participant read projection must include hand_raised_at");
+    assert.equal(rows[0]!.handRaisedAt, "2026-07-19T00:00:00.000Z");
   });
 });

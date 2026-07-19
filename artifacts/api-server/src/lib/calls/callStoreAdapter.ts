@@ -10,7 +10,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CallStore } from "./callReconciler";
 import { callHistoryLine, groupCallEndLine } from "./callStateMachine";
-import type { CallParticipant, CallSession, CallStatus } from "./callTypes";
+import type { CallModerationAction, CallParticipant, CallSession, CallStatus } from "./callTypes";
 
 export type StoredCallSession = CallSession & { roomName: string };
 
@@ -39,6 +39,7 @@ export function mapParticipantRow(r: any): CallParticipant {
     invitedAt: r.invited_at ?? null,
     joinedAt: r.joined_at ?? null,
     leftAt: r.left_at ?? null,
+    handRaisedAt: r.hand_raised_at ?? null,
   };
 }
 
@@ -75,6 +76,17 @@ export interface CallStoreEx extends CallStore {
     contextType: "trip_crew" | "event",
     contextId: string,
   ): Promise<StoredCallSession | null>;
+  /** Event rooms: promote/demote — the role drives publish grants. */
+  setParticipantRole(callId: string, userId: string, role: CallParticipant["role"]): Promise<void>;
+  /** Event rooms: raise-hand state (null clears). */
+  setHandRaised(callId: string, userId: string, raised: boolean): Promise<void>;
+  /** Append one immutable moderation audit entry. */
+  logModerationAction(entry: {
+    callId: string;
+    actorId: string;
+    targetId: string | null;
+    action: CallModerationAction;
+  }): Promise<void>;
 }
 
 /**
@@ -253,7 +265,7 @@ export function makeCallStore(sc: SupabaseClient): CallStoreEx {
     async getParticipants(callId) {
       const { data } = await sc
         .from("call_participants")
-        .select("call_id, user_id, role, status, invited_at, joined_at, left_at")
+        .select("call_id, user_id, role, status, invited_at, joined_at, left_at, hand_raised_at")
         .eq("call_id", callId);
       return (((data as any[]) ?? [])).map(mapParticipantRow);
     },
@@ -319,6 +331,36 @@ export function makeCallStore(sc: SupabaseClient): CallStoreEx {
         byCall.get(p.call_id)!.add(p.user_id);
       }
       return open.filter((s) => (byCall.get(s.id)?.size ?? 0) === 2);
+    },
+
+    async setParticipantRole(callId, userId, role) {
+      const { error } = await sc
+        .from("call_participants")
+        .update({ role, hand_raised_at: null })
+        .eq("call_id", callId)
+        .eq("user_id", userId);
+      if (error) throw new Error(`setParticipantRole failed: ${error.message}`);
+    },
+
+    async setHandRaised(callId, userId, raised) {
+      const { error } = await sc
+        .from("call_participants")
+        .update({ hand_raised_at: raised ? new Date().toISOString() : null })
+        .eq("call_id", callId)
+        .eq("user_id", userId);
+      if (error) throw new Error(`setHandRaised failed: ${error.message}`);
+    },
+
+    async logModerationAction(entry) {
+      const { error } = await sc.from("call_moderation_actions").insert({
+        call_id: entry.callId,
+        actor_id: entry.actorId,
+        target_id: entry.targetId,
+        action: entry.action,
+      });
+      // Audit writes must be loud: a moderation action without its audit
+      // entry is a spec violation, so surface the failure to the route.
+      if (error) throw new Error(`logModerationAction failed: ${error.message}`);
     },
 
     async findOpenGroupSession(contextType, contextId) {

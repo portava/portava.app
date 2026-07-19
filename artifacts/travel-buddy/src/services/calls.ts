@@ -28,6 +28,10 @@ export interface CallJoinGrant {
   /** LiveKit connection details — short-TTL, single-purpose. */
   livekitUrl: string;
   token: string;
+  /** Event rooms: the caller's room role (host | cohost | speaker | listener). */
+  role?: string;
+  /** Event rooms: listener grants are subscribe-only (server-enforced). */
+  canPublishAudio?: boolean;
 }
 
 export interface CallResult<T = null> {
@@ -105,6 +109,8 @@ export interface CallParticipantDto {
   status: string;
   joinedAt: string | null;
   leftAt: string | null;
+  /** Event rooms: set while the participant's hand is raised. */
+  handRaisedAt?: string | null;
   name: string | null;
   handle: string | null;
   avatarUrl: string | null;
@@ -118,6 +124,33 @@ export async function getCall(callId: string): Promise<CallResult<{ session: Cal
 /** The live crew room for a trip, if any (members only). */
 export async function getCrewCall(tripId: string): Promise<CallResult<{ session: CallSessionDto | null; participantCount: number }>> {
   return api(`/api/calls/group/trip_crew/${encodeURIComponent(tripId)}`, 'GET');
+}
+
+/** The live voice room for an event, if any (event-eligible users only). */
+export async function getEventRoom(eventId: string): Promise<CallResult<{
+  session: CallSessionDto | null; participantCount: number; canStart?: boolean;
+}>> {
+  return api(`/api/calls/group/event/${encodeURIComponent(eventId)}`, 'GET');
+}
+
+/** Raise or lower a hand in an event voice room. */
+export async function setHandRaised(callId: string, raised: boolean): Promise<CallResult<{ ok: boolean }>> {
+  return api(`/api/calls/${encodeURIComponent(callId)}/hand`, 'POST', { raised });
+}
+
+/** Moderation (event room hosts/co-hosts only — server authorizes). */
+export async function setParticipantRole(
+  callId: string, userId: string, role: 'speaker' | 'listener',
+): Promise<CallResult<{ ok: boolean }>> {
+  return api(`/api/calls/${encodeURIComponent(callId)}/participants/${encodeURIComponent(userId)}/role`, 'POST', { role });
+}
+
+export async function muteParticipant(callId: string, userId: string): Promise<CallResult<{ ok: boolean }>> {
+  return api(`/api/calls/${encodeURIComponent(callId)}/participants/${encodeURIComponent(userId)}/mute`, 'POST');
+}
+
+export async function removeParticipant(callId: string, userId: string): Promise<CallResult<{ ok: boolean }>> {
+  return api(`/api/calls/${encodeURIComponent(callId)}/participants/${encodeURIComponent(userId)}/remove`, 'POST');
 }
 
 /** Privacy-safe caller identity attached to a restored ringing session. */

@@ -46,6 +46,7 @@ import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useEventRsvp } from '../../src/hooks/useEventRsvp';
 import { HostDashboardPanel } from '../../src/components/HostDashboardPanel';
+import { EventVoiceRoomCard } from '../../src/components/events/EventVoiceRoomCard.tsx';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { SharedVideoPlayer } from '../../src/components/ui/SharedVideoPlayer';
 import { Avatar } from '../../src/components/ui';
@@ -602,6 +603,9 @@ export default function EventDetailScreen() {
                 )}
               </View>
             )}
+
+            {/* Live voice room entry (visible only inside the event context) */}
+            <EventVoiceRoomCard eventId={event.id} />
 
             {/* Host */}
             {event.host && (
