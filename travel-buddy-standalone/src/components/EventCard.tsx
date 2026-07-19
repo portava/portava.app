@@ -30,7 +30,7 @@ export function EventCard({ ev, dim, initialSaved, sessionId }: {
     <Pressable
       style={[styles.card, dim && styles.dim]}
       onPress={() => {
-        fireRankOutcome(ev.id, 'events', 'tap', sessionId);
+        try { fireRankOutcome(ev.id, 'events', 'tap', sessionId); } catch { /* fire-and-forget */ }
         router.push('/(tabs)/trips');
       }}
     >
