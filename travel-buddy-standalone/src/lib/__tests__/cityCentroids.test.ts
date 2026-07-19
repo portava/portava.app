@@ -179,6 +179,7 @@ describe('CITY_CENTROIDS — key-level spot checks for new cities', () => {
   check('Ljubljana',    46.0569,   14.5058);
   check('Bratislava',   48.1486,   17.1077);
   check('Krakow',       50.0647,   19.9450);
+  check('Łódź',        51.7592,   19.4560);
   check('Lviv',         49.8397,   24.0297);
 });
 
