@@ -114,6 +114,7 @@ export const CITY_CENTROIDS: Record<string, [number, number]> = {
   'Florence':         [43.7696,   11.2558],
   'Frankfurt':        [50.1109,    8.6821],
   'Geneva':           [46.2044,    6.1432],
+  'Helsinki':         [60.1699,   24.9384],
   'Lisbon':           [38.7169,   -9.1395],
   'London':           [51.5074,   -0.1278],
   'Madrid':           [40.4168,   -3.7038],

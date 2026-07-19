@@ -460,6 +460,51 @@ describe('getCityCentroid — compound / parenthesised / suffixed city strings',
     assert.ok(suffixed !== undefined, '"Singapore, Singapore" should resolve');
     assert.deepEqual(suffixed, bare, '"Singapore, Singapore" must produce the same coordinates as "Singapore"');
   });
+
+  // ISO-code suffix variants — some event APIs suffix city names with the
+  // two-letter ISO 3166-1 alpha-2 country code instead of the full country
+  // name (e.g. "Stockholm, SE", "Helsinki, FI", "Oslo, NO").  The comma-split
+  // logic resolves the city token first so these must always find the centroid.
+
+  it('resolves ISO-suffixed "Stockholm, SE" to the Stockholm centroid', () => {
+    const coords = getCityCentroid('Stockholm, SE');
+    assert.ok(coords !== undefined, '"Stockholm, SE" returned undefined — ISO-code suffix not stripped');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 59.3293) < 2, `lat ${lat} implausibly far from Stockholm`);
+    assert.ok(Math.abs(lng - 18.0686) < 2, `lng ${lng} implausibly far from Stockholm`);
+  });
+
+  it('"Stockholm, SE" resolves to identical coords as bare "Stockholm"', () => {
+    const bare = getCityCentroid('Stockholm');
+    const suffixed = getCityCentroid('Stockholm, SE');
+    assert.ok(bare !== undefined, '"Stockholm" should resolve');
+    assert.ok(suffixed !== undefined, '"Stockholm, SE" should resolve');
+    assert.deepEqual(suffixed, bare, '"Stockholm, SE" must produce the same coordinates as "Stockholm"');
+  });
+
+  it('resolves ISO-suffixed "Helsinki, FI" to the Helsinki centroid', () => {
+    const coords = getCityCentroid('Helsinki, FI');
+    assert.ok(coords !== undefined, '"Helsinki, FI" returned undefined — ISO-code suffix not stripped');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 60.1699) < 2, `lat ${lat} implausibly far from Helsinki`);
+    assert.ok(Math.abs(lng - 24.9384) < 2, `lng ${lng} implausibly far from Helsinki`);
+  });
+
+  it('resolves ISO-suffixed "Oslo, NO" to the Oslo centroid', () => {
+    const coords = getCityCentroid('Oslo, NO');
+    assert.ok(coords !== undefined, '"Oslo, NO" returned undefined — ISO-code suffix not stripped');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 59.9139) < 2, `lat ${lat} implausibly far from Oslo`);
+    assert.ok(Math.abs(lng - 10.7522) < 2, `lng ${lng} implausibly far from Oslo`);
+  });
+
+  it('resolves ISO-suffixed "oslo, no" (lowercase) to the Oslo centroid', () => {
+    const coords = getCityCentroid('oslo, no');
+    assert.ok(coords !== undefined, '"oslo, no" returned undefined — lowercase ISO-code suffix not stripped');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 59.9139) < 2, `lat ${lat} implausibly far from Oslo`);
+    assert.ok(Math.abs(lng - 10.7522) < 2, `lng ${lng} implausibly far from Oslo`);
+  });
 });
 
 describe('getCityCentroid — country-name fallback', () => {
