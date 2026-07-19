@@ -17,6 +17,7 @@ import callsRouter, { _setTestCallDeps } from "../routes/calls.js";
 import { callsWebhookHandler, callsWebhookRawParser, _setTestWebhookDeps } from "../routes/callsWebhook.js";
 import type { CallContextGateway } from "../lib/calls/callPermissionEngine.js";
 import type { CallStoreEx, StoredCallSession } from "../lib/calls/callStoreAdapter.js";
+import { _setTestPushDeps, deliverIncomingCallPush } from "../lib/calls/callSignaling.js";
 import type { CallParticipant } from "../lib/calls/callTypes.js";
 import { CALL_CONFIG } from "../lib/calls/callTypes.js";
 
@@ -400,6 +401,16 @@ describe("call routes", () => {
       assert.equal(r.body.session.id, s.body.session.id);
     });
 
+    it("active returns the still-RINGING session for the callee (reconnect restore path)", async () => {
+      const s = await req("POST", "/api/calls", startBody);
+      assert.equal(s.status, 201);
+      const r = await req("GET", "/api/calls/active", undefined, CALLEE_TOKEN);
+      assert.equal(r.status, 200);
+      assert.equal(r.body.session.id, s.body.session.id);
+      assert.equal(r.body.session.status, "ringing");
+      assert.equal(r.body.session.startedBy, CALLER_ID, "client uses startedBy to detect it is the callee");
+    });
+
     it("GET /:callId returns session + participants for a participant", async () => {
       const s = await req("POST", "/api/calls", startBody);
       const r = await req("GET", `/api/calls/${s.body.session.id}`);
@@ -421,6 +432,102 @@ function wireDepsKeepStore(gwOverrides: Partial<CallContextGateway>) {
     livekitUrl: () => "wss://livekit.test",
   });
 }
+
+// ── Incoming-call push preference gate ───────────────────────────────────────
+
+describe("incoming-call push preference gate", () => {
+  beforeEach(() => {
+    _setTestClient(makeFakeAuthClient(), true);
+    _setTestServiceClient(makeFakeAuthClient());
+    wireDeps();
+  });
+
+  it("POST /api/calls sends the incoming push when preferences allow", async () => {
+    const notified: any[] = [];
+    let resolveNotify!: () => void;
+    const done = new Promise<void>((r) => { resolveNotify = r; });
+    _setTestPushDeps({
+      getPrefs: async () => ({
+        whoCanCall: "people_i_message", allowRentABuddyCalls: true,
+        allowVideoCalls: true, incomingCallNotifications: true,
+      }),
+      notify: async (_sc, input) => { notified.push(input); resolveNotify(); },
+    });
+    try {
+      const r = await req("POST", "/api/calls", startBody);
+      assert.equal(r.status, 201);
+      await done; // push is fire-and-forget — wait for delivery
+      assert.equal(notified.length, 1);
+      assert.equal(notified[0].userId, CALLEE_ID);
+      assert.equal(notified[0].eventType, "call.incoming");
+      assert.equal(notified[0].sourceId, r.body.session.id);
+      assert.equal(notified[0].params.callKind, "call");
+      assert.equal(notified[0].params.threadId, THREAD_ID);
+    } finally {
+      _setTestPushDeps(null);
+    }
+  });
+
+  it("POST /api/calls SKIPS the push when incoming_call_notifications is disabled", async () => {
+    const notified: any[] = [];
+    let resolvePrefs!: () => void;
+    const prefsRead = new Promise<void>((r) => { resolvePrefs = r; });
+    _setTestPushDeps({
+      getPrefs: async () => {
+        resolvePrefs();
+        return {
+          whoCanCall: "people_i_message", allowRentABuddyCalls: true,
+          allowVideoCalls: true, incomingCallNotifications: false,
+        };
+      },
+      notify: async (_sc, input) => { notified.push(input); },
+    });
+    try {
+      const r = await req("POST", "/api/calls", startBody);
+      assert.equal(r.status, 201, "disabled push never blocks the call itself");
+      await prefsRead;
+      await new Promise((r2) => setImmediate(r2)); // drain the fire-and-forget chain
+      assert.equal(notified.length, 0, "no notification when the callee opted out");
+    } finally {
+      _setTestPushDeps(null);
+    }
+  });
+
+  it("deliverIncomingCallPush reports sent/skipped explicitly", async () => {
+    const session: any = {
+      id: "call-x", callType: "video", contextType: "telegraph_dm",
+      contextId: THREAD_ID, threadId: THREAD_ID, startedBy: CALLER_ID,
+      status: "ringing", startedAt: new Date().toISOString(), connectedAt: null, endedAt: null,
+    };
+    const notified: any[] = [];
+    _setTestPushDeps({
+      getPrefs: async () => ({
+        whoCanCall: "everyone", allowRentABuddyCalls: true,
+        allowVideoCalls: true, incomingCallNotifications: true,
+      }),
+      notify: async (_sc, input) => { notified.push(input); },
+    });
+    try {
+      const sent = await deliverIncomingCallPush({} as any, CALLEE_ID, session, "@ana");
+      assert.equal(sent, true);
+      assert.equal(notified[0].params.callKind, "video call");
+      assert.equal(notified[0].params.actor, "@ana");
+
+      _setTestPushDeps({
+        getPrefs: async () => ({
+          whoCanCall: "everyone", allowRentABuddyCalls: true,
+          allowVideoCalls: true, incomingCallNotifications: false,
+        }),
+        notify: async (_sc, input) => { notified.push(input); },
+      });
+      const sent2 = await deliverIncomingCallPush({} as any, CALLEE_ID, session, "@ana");
+      assert.equal(sent2, false);
+      assert.equal(notified.length, 1, "notify not called when disabled");
+    } finally {
+      _setTestPushDeps(null);
+    }
+  });
+});
 
 // ── Webhook ──────────────────────────────────────────────────────────────────
 

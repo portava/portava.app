@@ -18,6 +18,7 @@ import {
   endCall as apiEnd, joinCall as apiJoin, leaveCall as apiLeave, getActiveCall,
   type CallJoinGrant, type CallSessionDto, type CallContextType as CallCtxType, type CallType,
 } from '../services/calls.ts';
+import { supabase } from '../lib/supabase.ts';
 
 /** Ring window mirror of the server's CALL_CONFIG.RING_TIMEOUT_MS. */
 const RING_TIMEOUT_MS = 45_000;
@@ -167,6 +168,15 @@ export function CallProvider({
     return true;
   }, [bridge, clearTimers, patch, teardown]);
 
+  const presentIncoming = useCallback((info: IncomingCallInfo) => {
+    if (sessionRef.current) return; // already in a call → server marks missed
+    patch({ phase: 'incoming_ringing', incoming: info, error: null });
+    if (ringTimer.current) clearTimeout(ringTimer.current);
+    ringTimer.current = setTimeout(() => {
+      setState((s) => (s.phase === 'incoming_ringing' ? { ...INITIAL } : s));
+    }, RING_TIMEOUT_MS);
+  }, [patch]);
+
   const actions = useMemo<CallActions>(() => ({
     async startDirectCall(input) {
       if (sessionRef.current) return false; // §23 — never silently drop a call
@@ -187,14 +197,7 @@ export function CallProvider({
       return connectMedia(grant, input.callType === 'video');
     },
 
-    presentIncomingCall(info) {
-      if (sessionRef.current) return; // already in a call → server marks missed
-      patch({ phase: 'incoming_ringing', incoming: info, error: null });
-      ringTimer.current && clearTimeout(ringTimer.current);
-      ringTimer.current = setTimeout(() => {
-        setState((s) => (s.phase === 'incoming_ringing' ? { ...INITIAL } : s));
-      }, RING_TIMEOUT_MS);
-    },
+    presentIncomingCall(info) { presentIncoming(info); },
 
     dismissIncoming() {
       // Only the incoming-ring timer belongs to the banner; when a session is
@@ -267,14 +270,37 @@ export function CallProvider({
     async restoreActiveCall() {
       if (sessionRef.current) return;
       const res = await getActiveCall();
-      if (!res.ok || !res.data?.session || res.data.session.status !== 'active') return;
-      const joined = await apiJoin(res.data.session.id);
+      const session = res.ok ? res.data?.session ?? null : null;
+      if (!session) return;
+
+      if (session.status === 'ringing') {
+        // Reconnect landed mid-ring (SSE was down when the call started).
+        // If we're the callee, surface the incoming banner — not silence.
+        // The caller's own ringing session is handled by its live UI.
+        let me: string | null = null;
+        try {
+          const { data } = await supabase.auth.getUser();
+          me = data?.user?.id ?? null;
+        } catch { me = null; }
+        if (!me || session.startedBy === me) return;
+        presentIncoming({
+          callId: session.id,
+          callType: session.callType,
+          contextType: session.contextType,
+          threadId: session.threadId,
+          caller: { id: session.startedBy, name: null, avatarUrl: null },
+        });
+        return;
+      }
+
+      if (session.status !== 'active') return;
+      const joined = await apiJoin(session.id);
       if (joined.ok && joined.data) {
         await connectMedia(joined.data, false);
         patch({ minimized: true });
       }
     },
-  }), [bridge, clearTimers, connectMedia, patch, state.cameraOn, state.incoming, state.micMuted, state.speakerOn, teardown]);
+  }), [bridge, clearTimers, connectMedia, patch, presentIncoming, state.cameraOn, state.incoming, state.micMuted, state.speakerOn, teardown]);
 
   return (
     <StateCtx.Provider value={state}>

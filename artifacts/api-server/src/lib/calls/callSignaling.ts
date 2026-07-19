@@ -80,6 +80,64 @@ export async function callerIdentity(
   }
 }
 
+// ── Incoming-call push (testable seam) ───────────────────────────────────────
+
+export interface IncomingPushDeps {
+  getPrefs: typeof getFullCallPreferences;
+  /** Creates the notification row and routes it to push channels. */
+  notify: (sc: SupabaseClient, input: {
+    userId: string;
+    eventType: "call.incoming";
+    sourceType: "call";
+    sourceId: string;
+    params: Record<string, string>;
+  }) => Promise<void>;
+}
+
+const defaultPushDeps: IncomingPushDeps = {
+  getPrefs: getFullCallPreferences,
+  async notify(sc, input) {
+    const { NotificationService } = await import("../../services/notifications/NotificationService.js");
+    const { NotificationRouter } = await import("../../services/notifications/NotificationRouter.js");
+    const ns = new NotificationService(sc);
+    const nr = new NotificationRouter(sc);
+    const row = await ns.create(input);
+    if (row) await nr.route(row);
+  },
+};
+
+let testPushDeps: IncomingPushDeps | null = null;
+/** Test-only: inject fakes for the preference lookup + notification pipeline. */
+export function _setTestPushDeps(d: IncomingPushDeps | null): void { testPushDeps = d; }
+
+/**
+ * Deliver the incoming-call push to the callee, respecting
+ * call_preferences.incoming_call_notifications.
+ * Returns true when the push was sent, false when the preference disabled it.
+ */
+export async function deliverIncomingCallPush(
+  sc: SupabaseClient,
+  calleeId: string,
+  session: CallSession,
+  callerLabel: string,
+): Promise<boolean> {
+  const deps = testPushDeps ?? defaultPushDeps;
+  const prefs = await deps.getPrefs(sc, calleeId);
+  if (!prefs.incomingCallNotifications) return false;
+  await deps.notify(sc, {
+    userId: calleeId,
+    eventType: "call.incoming",
+    sourceType: "call",
+    sourceId: session.id,
+    params: {
+      actor: callerLabel,
+      callKind: session.callType === "video" ? "video call" : "call",
+      threadId: session.threadId ?? "",
+    },
+  });
+  return true;
+}
+
 /**
  * Fire-and-forget incoming-call push to the callee, respecting
  * call_preferences.incoming_call_notifications. Never fails the request.
@@ -90,30 +148,9 @@ export function sendIncomingCallPush(
   session: CallSession,
   callerLabel: string,
 ): void {
-  void (async () => {
-    try {
-      const prefs = await getFullCallPreferences(sc, calleeId);
-      if (!prefs.incomingCallNotifications) return;
-      const { NotificationService } = await import("../../services/notifications/NotificationService.js");
-      const { NotificationRouter } = await import("../../services/notifications/NotificationRouter.js");
-      const ns = new NotificationService(sc);
-      const nr = new NotificationRouter(sc);
-      const row = await ns.create({
-        userId: calleeId,
-        eventType: "call.incoming",
-        sourceType: "call",
-        sourceId: session.id,
-        params: {
-          actor: callerLabel,
-          callKind: session.callType === "video" ? "video call" : "call",
-          threadId: session.threadId ?? "",
-        },
-      });
-      if (row) await nr.route(row);
-    } catch (err) {
-      logger.warn({ err }, "incoming-call push failed (non-critical)");
-    }
-  })();
+  void deliverIncomingCallPush(sc, calleeId, session, callerLabel).catch((err) => {
+    logger.warn({ err }, "incoming-call push failed (non-critical)");
+  });
 }
 
 /** Privacy-safe operational analytics — event + type metadata only. */

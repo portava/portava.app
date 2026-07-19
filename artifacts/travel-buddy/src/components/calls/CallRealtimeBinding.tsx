@@ -8,7 +8,9 @@
  *   matching incoming banner or tear down the matching in-progress call.
  */
 import { useEffect, useRef } from 'react';
-import { telegraphRealtime, type TelegraphEvent } from '../../services/telegraphRealtimeService.ts';
+import {
+  telegraphRealtime, type TelegraphEvent, type RealtimeStatus,
+} from '../../services/telegraphRealtimeService.ts';
 import { useCallActions, useCallState, type IncomingCallInfo } from '../../context/CallContext.tsx';
 import type { CallSessionDto } from '../../services/calls.ts';
 
@@ -73,6 +75,22 @@ export function CallRealtimeBinding() {
         }
         default:
           return;
+      }
+    });
+    return unsub;
+  }, []);
+
+  // Reconnect catch-up: if the SSE stream was down while a call started
+  // (backgrounded app, flaky network), the call.incoming event was lost.
+  // When the stream reopens, ask the server for any still-open call so a
+  // mid-ring session surfaces the incoming banner instead of silence.
+  const lastStatus = useRef<RealtimeStatus | null>(null);
+  useEffect(() => {
+    const unsub = telegraphRealtime.onStatus((status) => {
+      const prev = lastStatus.current;
+      lastStatus.current = status;
+      if (status === 'open' && prev !== null && prev !== 'open') {
+        void actionsRef.current.restoreActiveCall();
       }
     });
     return unsub;
