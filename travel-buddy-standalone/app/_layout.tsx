@@ -23,6 +23,9 @@ import { NotificationToastProvider } from '../src/components/NotificationToast';
 import { StampEarnedToastProvider } from '../src/components/stamps/StampEarnedToast';
 import { setNotificationHandler } from '../src/lib/safeNotifications';
 import { BlockedIdsProvider } from '../src/context/BlockedIdsContext';
+import { CallProvider } from '../src/context/CallContext';
+import { CallRealtimeBinding } from '../src/components/calls/CallRealtimeBinding';
+import { createLiveKitBridge } from '../src/services/livekitBridge';
 import { AccountStatusGate } from '../src/components/AccountStatusGate';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { reportCrash } from '@/src/lib/crashReporter';
@@ -74,6 +77,10 @@ function PushSetup() {
   return null;
 }
 
+// Created once at module scope — null in Expo Go/web, where CallContext then
+// fails gracefully ("Calling is not available in this build yet.").
+const livekitBridge = createLiveKitBridge();
+
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -89,6 +96,8 @@ export default function RootLayout() {
                 <StampEarnedToastProvider>
                   <RootCrashHandler>
                     <AccountStatusGate>
+                      <CallProvider bridge={livekitBridge}>
+                      <CallRealtimeBinding />
                       <PushSetup />
                       <CompassFrontloadSetup />
                       <StatusBar style="dark" />
@@ -105,6 +114,7 @@ export default function RootLayout() {
                         <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
                         <Stack.Screen name="compass-preferences" options={{ presentation: 'card' }} />
                       </Stack>
+                      </CallProvider>
                     </AccountStatusGate>
                   </RootCrashHandler>
                 </StampEarnedToastProvider>

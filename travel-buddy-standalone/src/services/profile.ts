@@ -360,30 +360,12 @@ export async function getPublicPostcards(username: string): Promise<ProfileResul
   }
 }
 
-/* ---------- Own stamps ---------- */
-
-/** ProfileResult plus the server-reported total stamp count (pagination sentinel). */
-export type StampsPageResult = ProfileResult<PassportStamp[]> & { total?: number };
-
-export async function getMyStamps(offset = 0): Promise<StampsPageResult> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated', message: 'Please sign in' };
-
-  try {
-    // perf-trim: paginated endpoint — limit=100 per page; body.total is the
-    // authoritative sentinel for infinite scroll (no heuristics).
-    const res = await fetch(`${apiBase()}/api/me/passport/stamps?limit=100&offset=${offset}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return { ok: true, data: [] };
-    const body = await res.json();
-    const stamps: PassportStamp[] = body.stamps ?? [];
-    return { ok: true, data: stamps, total: typeof body.total === 'number' ? body.total : stamps.length };
-  } catch {
-    return { ok: true, data: [] };
-  }
-}
+/* ---------- Own stamps ----------
+ * getMyStamps (GET /api/me/passport/stamps) was removed: the passport screen
+ * now has a single stamps pipeline — usePassport pages GET /api/stamps/me via
+ * services/passportStamps.getMyPassportStamps and derives legacy shapes from
+ * it, so the same stamps are no longer downloaded twice from two endpoints.
+ */
 
 /* ---------- Own passport postcards ---------- */
 

@@ -4,6 +4,37 @@
  * unit-tested in Node directly.
  */
 import type { StampDefinition, PassportStampNew } from './passportStamps.ts';
+import type { PassportStamp } from '../types/models.ts';
+
+/**
+ * Convert a v2 PassportStampNew into the legacy PassportStamp shape used by
+ * older passport UI (stamp collection strip, full view, destination grouping).
+ * Single source of truth — StampCard re-exports this as `toLegacy`.
+ */
+export function toLegacyStamp(s: PassportStampNew): PassportStamp {
+  const label =
+    s.titleOverride ?? s.definition?.name ?? s.city ?? s.country ?? s.stampType.replace(/_/g, ' ').toUpperCase();
+  const kind = (
+    s.stampType === 'city'        ? 'city'
+    : s.stampType === 'plan'      ? 'plan'
+    : s.stampType === 'hidden_gem'? 'gem'
+    : s.stampType === 'safe_return'? 'safe'
+    : s.stampType === 'host'      ? 'host'
+    : 'city'
+  ) as PassportStamp['kind'];
+  const sub: string[] = [];
+  if (s.city && s.country) sub.push(s.country);
+  if (s.earnedAt) sub.push(new Date(s.earnedAt).getFullYear().toString());
+  return {
+    id: s.id,
+    kind,
+    label,
+    sublabel: sub.join(' · ') || undefined,
+    earnedAt: s.earnedAt,
+    locked: s.isRevoked,
+    universalArtworkUrl: s.definition?.universalArtworkUrl ?? undefined,
+  };
+}
 
 export function mapDefinition(d: any): StampDefinition | null {
   if (!d) return null;
