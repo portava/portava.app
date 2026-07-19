@@ -1028,3 +1028,107 @@ describe('FullScreenMapScreen — camera snaps to entity pin after entities load
     expect(capturedProps!.fallbackLng).toBeCloseTo(123.8854);
   });
 });
+
+// ── 13. Camera snap fires when entities arrive asynchronously ──────────────────
+//
+// In production useMapEntities fetches data, so entities is [] on the first render
+// and the real list arrives in a later render cycle.  The focusId effect must fire
+// when the entities array transitions from empty → non-empty, not only when
+// entities is already populated on the very first render.
+//
+// Approach:
+//   - useMapEntities returns [] on the first render call (loading state).
+//   - A rerender() is issued to simulate the async data arriving; the mock now
+//     returns the entity.
+//   - The useEffect([entities]) fires again; setCamera must be called with the
+//     entity's coordinates.
+
+describe('FullScreenMapScreen — camera snap fires on async entity arrival', () => {
+  it('calls setCamera with entity coords when entities arrive in a second render cycle', async () => {
+    const { useMapEntities } = require('../../hooks/useMapEntities.ts');
+    const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
+
+    const entityLat = 10.0;
+    const entityLng = 124.5;
+
+    const asyncEntity = {
+      id: 'event:evt-async-load',
+      type: 'events',
+      lat: entityLat,
+      lng: entityLng,
+      title: 'Async Load Event',
+      data: {},
+    };
+
+    // First render: hook is still loading — entities is empty.
+    (useMapEntities as jest.Mock).mockReturnValueOnce({ entities: [] });
+    // Second render (async data arrives): hook now returns the entity.
+    (useMapEntities as jest.Mock).mockReturnValueOnce({ entities: [asyncEntity] });
+
+    const mockSetCamera = jest.fn();
+
+    // Install setCamera on the ref on every render so it persists across rerenders.
+    (DiscoveryMapView as jest.Mock).mockImplementation((props: any) => {
+      if (props.externalCameraRef) {
+        props.externalCameraRef.current = { setCamera: mockSetCamera };
+      }
+      return null;
+    });
+
+    mockUseLocalSearchParams.mockReturnValue({
+      entityTypes: 'events',
+      focusId: 'event:evt-async-load',
+    });
+
+    const { rerender } = await render(<FullScreenMapScreen />);
+
+    // After the first render entities is [], so the focusId effect finds nothing
+    // and must NOT have called setCamera yet.
+    expect(mockSetCamera).not.toHaveBeenCalled();
+
+    // Simulate the async load completing: trigger a re-render so the hook now
+    // returns the entity list.
+    await act(async () => {
+      rerender(<FullScreenMapScreen />);
+    });
+
+    // The useEffect([entities]) must have fired with the new non-empty list and
+    // called setCamera with the entity's coordinates.
+    expect(mockSetCamera).toHaveBeenCalled();
+
+    const snapCall = mockSetCamera.mock.calls.find(
+      ([arg]: [any]) =>
+        Array.isArray(arg?.centerCoordinate) &&
+        Math.abs(arg.centerCoordinate[0] - entityLng) < 0.001 &&
+        Math.abs(arg.centerCoordinate[1] - entityLat) < 0.001,
+    );
+
+    expect(snapCall).toBeDefined();
+  });
+
+  it('does not call setCamera on the first render when entities is still empty', async () => {
+    const { useMapEntities } = require('../../hooks/useMapEntities.ts');
+    const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
+
+    // Entities never arrive in this test — we only care about the first render.
+    (useMapEntities as jest.Mock).mockReturnValue({ entities: [] });
+
+    const mockSetCamera = jest.fn();
+    (DiscoveryMapView as jest.Mock).mockImplementation((props: any) => {
+      if (props.externalCameraRef) {
+        props.externalCameraRef.current = { setCamera: mockSetCamera };
+      }
+      return null;
+    });
+
+    mockUseLocalSearchParams.mockReturnValue({
+      entityTypes: 'events',
+      focusId: 'event:evt-not-yet-loaded',
+    });
+
+    await act(async () => { await render(<FullScreenMapScreen />); });
+
+    // With an empty entity list the focusId effect bails early — no snap yet.
+    expect(mockSetCamera).not.toHaveBeenCalled();
+  });
+});
