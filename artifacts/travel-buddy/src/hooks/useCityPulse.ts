@@ -72,7 +72,12 @@ export function useCityPulse({
 
   useEffect(() => {
     const city = currentCitySlug?.replace(/-/g, ' ') ?? '';
-    if (!city) return;
+    if (!city) {
+      // Clear stale sessionId so consumers don't see a value from the previous
+      // city when the slug is unset (e.g. the user closes the city picker).
+      setSessionId(undefined);
+      return;
+    }
     const base = apiBase();
     if (!base) {
       if (__DEV__) setEvents(mockEvents);
