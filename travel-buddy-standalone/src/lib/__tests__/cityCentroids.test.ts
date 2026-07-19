@@ -237,6 +237,26 @@ describe('getCityCentroid — normalisation (casing & whitespace)', () => {
     assert.ok(coords !== undefined, '"montréal" returned undefined — diacritic mixed-case normalisation failed');
   });
 
+  it('resolves NFD-decomposed diacritic: "Bogota\\u0301" (a + combining acute) → Bogotá centroid', () => {
+    // Some data sources store NFD decomposed strings (base char + combining mark)
+    // rather than the precomposed NFC form.  normaliseCityKey must handle both.
+    const decomposed = 'Bogota\u0301'; // 'a' followed by U+0301 COMBINING ACUTE ACCENT
+    const coords = getCityCentroid(decomposed);
+    assert.ok(coords !== undefined, 'NFD-decomposed "Bogotá" returned undefined — NFD stripping failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 4.7110) < 2, `lat ${lat} implausibly far from Bogotá`);
+    assert.ok(Math.abs(lng - (-74.0721)) < 2, `lng ${lng} implausibly far from Bogotá`);
+  });
+
+  it('resolves NFD-decomposed "Sa\u0303o Paulo" (tilde-n decomposed) → São Paulo centroid', () => {
+    const decomposed = 'Sa\u0303o Paulo'; // 'a' + U+0303 COMBINING TILDE
+    const coords = getCityCentroid(decomposed);
+    assert.ok(coords !== undefined, 'NFD-decomposed "São Paulo" returned undefined — NFD stripping failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - (-23.5505)) < 2, `lat ${lat} implausibly far from São Paulo`);
+    assert.ok(Math.abs(lng - (-46.6333)) < 2, `lng ${lng} implausibly far from São Paulo`);
+  });
+
   it('still returns undefined for a genuinely unknown city', () => {
     const coords = getCityCentroid('atlantis');
     assert.equal(coords, undefined, 'Expected undefined for unknown city "atlantis"');

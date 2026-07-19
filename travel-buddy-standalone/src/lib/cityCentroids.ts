@@ -518,41 +518,39 @@ export const CITY_ALIASES: Record<string, string> = {
 };
 
 /**
- * Case-insensitive lookup index built once at module load.
- *
- * Keys are the canonical CITY_CENTROIDS keys lowercased and whitespace-
- * normalised (trim + collapse runs).  We intentionally avoid title-casing
- * the raw input because regex word-boundary title-casing corrupts names that
- * contain apostrophes (Xi'an → Xi'An) or diacritics (São Paulo → SãO Paulo).
- * Lowercasing both sides is safe for every Unicode city name we store.
- */
-const _lowerIndex = new Map<string, [number, number]>(
-  Object.entries(CITY_CENTROIDS).map(([k, v]) => [
-    k.trim().replace(/\s+/g, ' ').toLowerCase(),
-    v,
-  ]),
-);
-
-/**
- * Case-insensitive lookup index for COUNTRY_CENTROIDS, built once at module
- * load.  Used as the final fallback when no city match is found.
- */
-const _countryLowerIndex = new Map<string, [number, number]>(
-  Object.entries(COUNTRY_CENTROIDS).map(([k, v]) => [
-    k.trim().replace(/\s+/g, ' ').toLowerCase(),
-    v,
-  ]),
-);
-
-/**
  * Normalise a raw city string to the form used as the index key:
  *   1. Trim leading/trailing whitespace
  *   2. Collapse internal runs of whitespace to a single space
- *   3. Lowercase (Unicode-safe — avoids apostrophe/diacritic corruption)
+ *   3. NFD-decompose and strip combining diacritical marks so that
+ *      "Bogotá" → "bogota", "Côte" → "cote", "São Paulo" → "sao paulo".
+ *   4. Lowercase (Unicode-safe — avoids apostrophe/diacritic corruption)
  */
 function normaliseCityKey(raw: string): string {
-  return raw.trim().replace(/\s+/g, ' ').toLowerCase();
+  return raw
+    .trim()
+    .replace(/\s+/g, ' ')
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase();
 }
+
+/**
+ * Case- and accent-insensitive lookup index built once at module load.
+ *
+ * Keys are the canonical CITY_CENTROIDS keys run through normaliseCityKey
+ * (trim + whitespace-collapse + NFD diacritic strip + lowercase).
+ */
+const _lowerIndex = new Map<string, [number, number]>(
+  Object.entries(CITY_CENTROIDS).map(([k, v]) => [normaliseCityKey(k), v]),
+);
+
+/**
+ * Case- and accent-insensitive lookup index for COUNTRY_CENTROIDS, built once
+ * at module load.  Used as the final fallback when no city match is found.
+ */
+const _countryLowerIndex = new Map<string, [number, number]>(
+  Object.entries(COUNTRY_CENTROIDS).map(([k, v]) => [normaliseCityKey(k), v]),
+);
 
 /**
  * Split a compound city string into candidate tokens to try against the index.
