@@ -24,8 +24,11 @@ import {
   ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight,
   CheckCircle, MoreVertical, Info, VolumeX, Languages, Paperclip, Compass,
   Bot, Reply, Copy, Trash2, Flag, CheckCheck, AlertCircle, Search, BookmarkPlus,
-  RefreshCw, Clock, ChevronDown, X,
+  RefreshCw, Clock, ChevronDown, X, Phone, Video,
 } from 'lucide-react-native';
+import { useCallState, useCallActions } from '../../src/context/CallContext';
+import { ensureCallMediaPermissions } from '../../src/services/callPermissions';
+import { CallHistoryMessage } from '../../src/components/calls/CallHistoryMessage';
 import { useThreadMessages, useLanguageSettings, useOutgoingRequestStatus, markThreadRead } from '../../src/hooks/useMessaging';
 import { useTrip } from '../../src/hooks/useBackend';
 import { useSession } from '../../src/context/SessionContext';
@@ -1325,6 +1328,48 @@ export default function TelegraphThread() {
 
   const headerTitle = title && title.trim() ? title : 'Chat';
 
+  // ── Calling (Phase 2) — Telegraph DM entry points ──────────────────────────
+  // Buttons appear on eligible Telegraph DMs only; hiding them is UX — the
+  // server remains the authorization for every call attempt.
+  const callState = useCallState();
+  const callActions = useCallActions();
+  const canShowCallButtons = threadType === 'direct' && !!otherUserId && !isWaitingForReply;
+
+  const startThreadCall = useCallback(async (requested: 'voice' | 'video') => {
+    if (!id || !otherUserId) return;
+    // Multiple-call prevention (§23) — never silently terminate a call.
+    if (callState.phase !== 'idle') {
+      Alert.alert(
+        "You're already in a call.",
+        'What would you like to do?',
+        [
+          { text: 'Return to current call', onPress: () => callActions.setMinimized(false) },
+          {
+            text: 'Leave and join new call',
+            style: 'destructive',
+            onPress: async () => {
+              await callActions.hangUp();
+              const allowed = await ensureCallMediaPermissions(requested);
+              if (allowed === null) return;
+              await callActions.startDirectCall({
+                threadId: id, calleeId: otherUserId, contextType: 'telegraph_dm', callType: allowed,
+                peer: { id: otherUserId, name: dmProfile?.name ?? headerTitle, avatarUrl: dmProfile?.avatarUrl ?? null },
+              });
+            },
+          },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+      );
+      return;
+    }
+    const allowed = await ensureCallMediaPermissions(requested);
+    if (allowed === null) return; // mic denied — explained by the permission alert
+    await callActions.startDirectCall({
+      threadId: id, calleeId: otherUserId, contextType: 'telegraph_dm', callType: allowed,
+      peer: { id: otherUserId, name: dmProfile?.name ?? headerTitle, avatarUrl: dmProfile?.avatarUrl ?? null },
+    });
+  }, [id, otherUserId, callState.phase, callActions, dmProfile?.name, dmProfile?.avatarUrl, headerTitle]);
+
   useEffect(() => {
     if (messages.length > 0) {
       listRef.current?.scrollToEnd({ animated: true });
@@ -1577,6 +1622,28 @@ export default function TelegraphThread() {
             {false ? <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Thread info', 'Members, shared media, and settings — coming soon.')}>
               <Info size={18} color={color.mute} />
             </Pressable> : null}
+            {canShowCallButtons && (
+              <>
+                <Pressable
+                  hitSlop={8}
+                  style={styles.headerIconBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Start voice call"
+                  onPress={() => { void startThreadCall('voice'); }}
+                >
+                  <Phone size={18} color={color.signal} />
+                </Pressable>
+                <Pressable
+                  hitSlop={8}
+                  style={styles.headerIconBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Start video call"
+                  onPress={() => { void startThreadCall('video'); }}
+                >
+                  <Video size={18} color={color.signal} />
+                </Pressable>
+              </>
+            )}
             <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => setShowTranslationSheet(true)}>
               <Languages size={18} color={autoTranslate ? color.signal : color.mute} />
             </Pressable>
@@ -1704,6 +1771,23 @@ export default function TelegraphThread() {
           }
           const m = item.data;
           const mine = m.senderId === userId;
+          // Call history lines (missed / declined / canceled / duration)
+          if (m.msgType === 'system' && m.subtype?.startsWith('call_')) {
+            return (
+              <MessageEntrance animate={shouldAnimateMessage(m.clientId ?? m.id, m.createdAt)}>
+                <CallHistoryMessage
+                  subtype={m.subtype}
+                  body={m.body ?? null}
+                  mine={mine}
+                  onCallBack={
+                    m.subtype === 'call_missed' && !mine && canShowCallButtons
+                      ? (kind) => { void startThreadCall(kind); }
+                      : undefined
+                  }
+                />
+              </MessageEntrance>
+            );
+          }
           // Rent a Buddy milestone banners
           if (m.msgType === 'system' && m.subtype?.startsWith('rent_buddy_')) {
             return (

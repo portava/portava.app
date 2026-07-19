@@ -3,9 +3,11 @@
  * client call manager (CallContext). Mounted once inside CallProvider in the
  * root layout; renders nothing.
  *
- * - call.incoming  → presentIncomingCall (banner shown by Phase-2 UI)
+ * - call.incoming  → presentIncomingCall (full-screen UI via CallSurface)
+ * - call.accepted  → outgoing ringing → connected (caller side)
  * - call.canceled / call.declined / call.missed / call.ended → clear a
- *   matching incoming banner or tear down the matching in-progress call.
+ *   matching incoming banner or end the matching in-progress call with an
+ *   honest outcome notice ("Call declined", "No answer", …).
  */
 import { useEffect, useRef } from 'react';
 import {
@@ -13,6 +15,13 @@ import {
 } from '../../services/telegraphRealtimeService.ts';
 import { useCallActions, useCallState, type IncomingCallInfo } from '../../context/CallContext.tsx';
 import type { CallSessionDto } from '../../services/calls.ts';
+
+/** Outcome copy for a remote termination of OUR outgoing/active call. */
+function outcomeNotice(evtType: string, phase: string): string | null {
+  if (evtType === 'call.declined') return 'Call declined';
+  if (evtType === 'call.missed') return phase === 'outgoing_ringing' ? 'No answer' : null;
+  return null; // canceled / ended — the other side simply hung up
+}
 
 export function CallRealtimeBinding() {
   const actions = useCallActions();
@@ -55,21 +64,25 @@ export function CallRealtimeBinding() {
           a.presentIncomingCall(info);
           return;
         }
+        case 'call.accepted': {
+          a.noteAccepted(callId);
+          return;
+        }
         case 'call.canceled':
         case 'call.declined':
         case 'call.missed':
         case 'call.ended': {
           // Remote party ended/declined/canceled — dismiss a matching incoming
-          // banner, or hang up a matching in-progress call.
+          // banner, or end a matching in-progress call with an outcome notice.
           if (s.incoming?.callId === callId) {
             // Incoming banner for a call that no longer rings: clear only the
-            // banner state — never hangUp(), which would end an unrelated
-            // in-progress call if one exists.
+            // banner state — never hangUp()/teardown, which would end an
+            // unrelated in-progress call if one exists.
             a.dismissIncoming();
             return;
           }
-          if (s.session?.id === callId && evt.type !== 'call.missed') {
-            void a.hangUp();
+          if (s.session?.id === callId) {
+            a.endLocallyWithNotice(outcomeNotice(evt.type, s.phase));
           }
           return;
         }

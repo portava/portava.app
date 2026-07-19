@@ -25,6 +25,7 @@ import { setNotificationHandler } from '../src/lib/safeNotifications';
 import { BlockedIdsProvider } from '../src/context/BlockedIdsContext';
 import { CallProvider } from '../src/context/CallContext';
 import { CallRealtimeBinding } from '../src/components/calls/CallRealtimeBinding';
+import { CallSurface } from '../src/components/calls/CallSurface';
 import { createLiveKitBridge } from '../src/services/livekitBridge';
 import { AccountStatusGate } from '../src/components/AccountStatusGate';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -114,6 +115,8 @@ export default function RootLayout() {
                         <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
                         <Stack.Screen name="compass-preferences" options={{ presentation: 'card' }} />
                       </Stack>
+                      {/* Root-level call UI — overlays any screen, survives navigation */}
+                      <CallSurface />
                       </CallProvider>
                     </AccountStatusGate>
                   </RootCrashHandler>
