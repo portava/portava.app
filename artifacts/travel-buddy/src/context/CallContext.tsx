@@ -120,6 +120,8 @@ export interface CallActions {
   noteRoleChanged(callId: string, userId: string, role: string): void;
   /** Realtime: I was removed from the room — leave immediately. */
   noteRemovedFromRoom(callId: string): void;
+  /** Realtime: room state changed (raise-hand / roster) — refresh immediately. */
+  noteRoomUpdated(callId: string): void;
   /** Realtime layer delivers incoming-call events here (spec §11). */
   presentIncomingCall(info: IncomingCallInfo): void;
   /**
@@ -391,6 +393,13 @@ export function CallProvider({
     noteRemovedFromRoom(callId) {
       if (sessionRef.current?.id !== callId) return;
       void teardown('You were removed from this room.');
+    },
+
+    noteRoomUpdated(callId) {
+      // Raise-hand / roster signal for OUR current room — refresh the roster
+      // now instead of waiting for the periodic group poll.
+      if (sessionRef.current?.id !== callId) return;
+      void refreshGroupRoster(callId);
     },
 
     presentIncomingCall(info) { presentIncoming(info); },

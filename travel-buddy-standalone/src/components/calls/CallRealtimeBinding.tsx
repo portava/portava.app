@@ -74,6 +74,12 @@ export function CallRealtimeBinding() {
           if (p.userId && p.role) a.noteRoleChanged(callId, p.userId, p.role);
           return;
         }
+        case 'call.room_updated': {
+          // Raise-hand / roster change in the room — refresh immediately so
+          // hosts see raised hands without waiting for the periodic poll.
+          a.noteRoomUpdated(callId);
+          return;
+        }
         case 'call.removed_from_room': {
           a.noteRemovedFromRoom(callId);
           return;
