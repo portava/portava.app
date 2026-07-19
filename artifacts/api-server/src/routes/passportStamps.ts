@@ -145,7 +145,7 @@ router.get("/me/passport/stamps", async (req, res) => {
   // If the count query errors or returns a null count, we do NOT default to 0
   // (a page full of stamps with total=0 breaks client "load more" logic).
   // Instead we fall back to a lower bound derived from the page we did fetch.
-  let total: number | null = null;
+  let countedTotal: number | null = null;
   try {
     let cq = client
       .from("passport_stamps")
@@ -156,16 +156,23 @@ router.get("/me/passport/stamps", async (req, res) => {
     if (filters.stampType)  cq = (cq as any).eq("stamp_type", filters.stampType);
     if (filters.visibility) cq = (cq as any).eq("visibility", filters.visibility);
     const { count, error: countError } = await cq;
-    if (!countError && typeof count === "number") total = count;
-  } catch { /* non-fatal — fallback below */ }
+    if (countError) {
+      console.error("[passport/stamps] count query failed:", countError.message ?? countError);
+    } else if (typeof count === "number") {
+      countedTotal = count;
+    }
+  } catch (e) {
+    console.error("[passport/stamps] count query threw:", e instanceof Error ? e.message : e);
+  }
 
   const rows = await loadStamps(client, user.id, { ...filters, limit: limitVal, offset: offsetVal } as any);
   // Owner sees all their own stamps
   const stamps = filterStamps(rows as any, "owner");
 
-  // Count unavailable → best-effort lower bound so total is never smaller than
-  // the stamps the client can already see.
-  if (total === null) total = offsetVal + stamps.length;
+  // Never report a total smaller than what this page proves exists — if the
+  // count query failed, fall back to offset + returned rows so the response
+  // can't claim `total: 0` while returning stamps.
+  const total = Math.max(countedTotal ?? 0, offsetVal + stamps.length);
 
   res.json({
     stamps: stamps.map((s) => ({

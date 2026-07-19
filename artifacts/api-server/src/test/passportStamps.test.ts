@@ -74,6 +74,8 @@ interface FakeState {
   contributions?: Record<string, any>[];
   locationPrefs?: Record<string, any>[];
   visibilityPrefs?: Record<string, any>[];
+  /** When true, count-requesting queries resolve with an error and no count. */
+  countError?: boolean;
 }
 
 function makeFakeClient(state: FakeState, userId: string) {
@@ -86,8 +88,13 @@ function makeFakeClient(state: FakeState, userId: string) {
     let pendingUpdate: any = null;
     let pendingUpsert: any = null;
 
+    let countRequested = false;
+
     const builder: any = {
-      select() { return builder; },
+      select(_cols?: string, opts?: { count?: string; head?: boolean }) {
+        if (opts?.count) countRequested = true;
+        return builder;
+      },
       insert(row: any) { pendingInsert = row; inserted.push({ table, row }); return builder; },
       update(patch: any) { pendingUpdate = patch; updated.push({ table, patch }); return builder; },
       upsert(row: any) { pendingUpsert = row; return builder; },
@@ -143,6 +150,12 @@ function makeFakeClient(state: FakeState, userId: string) {
     }
 
     function resolveList() {
+      if (countRequested) {
+        if (state.countError) {
+          return Promise.resolve({ data: null, error: { message: "count query failed" }, count: null });
+        }
+        return Promise.resolve({ data: rows(), error: null, count: rows().length });
+      }
       return Promise.resolve({ data: rows(), error: null });
     }
 
@@ -231,6 +244,52 @@ describe("Passport Stamps — load and filter", () => {
     const safeReturn = r.body.stamps.find((s: any) => s.stampType === "safe_return");
     assert.ok(safeReturn, "safe_return stamp should be present for owner");
     assert.equal(safeReturn.visibility, "private");
+  });
+});
+
+describe("Passport Stamps — total/stamps consistency", () => {
+  const TWO_STAMPS = [
+    { id: "tc-1", user_id: USER_ID, stamp_type: "city", country: "Japan", city: "Tokyo", neighborhood: null, place_id: null, plan_id: null, trip_id: null, source_type: "gps", verification_level: "gps", visibility: "public", earned_at: "2026-01-01T00:00:00Z", created_at: "2026-01-01T00:00:00Z" },
+    { id: "tc-2", user_id: USER_ID, stamp_type: "city", country: "Japan", city: "Osaka", neighborhood: null, place_id: null, plan_id: null, trip_id: null, source_type: "gps", verification_level: "gps", visibility: "public", earned_at: "2026-01-02T00:00:00Z", created_at: "2026-01-02T00:00:00Z" },
+  ];
+
+  it("total matches the stamp count when the count query succeeds", async () => {
+    const client = makeFakeClient(
+      {
+        featureFlags: { passport_stamps_enabled: true },
+        stamps: TWO_STAMPS,
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("GET", "/api/me/passport/stamps");
+    assert.equal(r.status, 200);
+    assert.equal(r.body.stamps.length, 2);
+    assert.equal(r.body.total, 2, "total must equal the number of matching stamps");
+  });
+
+  it("count-query failure never yields total: 0 alongside non-empty stamps", async () => {
+    const client = makeFakeClient(
+      {
+        featureFlags: { passport_stamps_enabled: true },
+        stamps: TWO_STAMPS,
+        countError: true,
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("GET", "/api/me/passport/stamps");
+    assert.equal(r.status, 200);
+    assert.equal(r.body.stamps.length, 2, "stamps must still be returned when only the count fails");
+    assert.ok(
+      r.body.total >= r.body.stamps.length,
+      `total (${r.body.total}) must never be smaller than the stamps returned (${r.body.stamps.length})`,
+    );
+    assert.equal(r.body.total, 2, "fallback total should reflect the rows this page proves exist");
   });
 });
 
