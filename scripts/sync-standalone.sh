@@ -796,17 +796,42 @@ for (const [pkg, standaloneVer] of standaloneDeps) {
   }
 }
 
+// pnpm appends a peer-context suffix to resolved versions, e.g.
+// "2.20.1(@types/dom-mediacapture-record@1.0.22)" or a digest like
+// "6.0.24(2b9a2435f5dce2ef9407ffdd4d322efd)". A workspace-hoisted install and
+// a standalone install legitimately resolve different peer CONTEXTS for the
+// same package version, and `pnpm install` can never converge them. Only the
+// bare version matters for EAS native-build reproducibility, so compare that;
+// peer-suffix-only differences are surfaced as informational notes below.
+const bareVersion = (v) => v.split('(')[0];
+// pnpm patches surface as a "(patch_hash=...)" suffix — unlike peer-context
+// suffixes, a patch difference DOES change the installed package contents,
+// so it must fail the check even when the bare version matches.
+const hasPatch = (v) => v.includes('patch_hash=');
+const peerOnlyDiffs = [];
 for (const [pkg, monoVer] of monorepoDeps) {
   if (!standaloneDeps.has(pkg)) {
     mismatches.push({ type: 'missing', pkg, monoVer });
-  } else if (standaloneDeps.get(pkg) !== monoVer) {
-    mismatches.push({ type: 'mismatch', pkg, monoVer, standaloneVer: standaloneDeps.get(pkg) });
+    continue;
+  }
+  const saVer = standaloneDeps.get(pkg);
+  const bareDiffers = bareVersion(saVer) !== bareVersion(monoVer);
+  const patchDiffers = saVer !== monoVer && (hasPatch(saVer) || hasPatch(monoVer));
+  if (bareDiffers || patchDiffers) {
+    mismatches.push({ type: 'mismatch', pkg, monoVer, standaloneVer: saVer });
+  } else if (saVer !== monoVer) {
+    peerOnlyDiffs.push({ pkg });
   }
 }
 
 // Standalone-only: informational only, never a failure.
 for (const { pkg, standaloneVer } of standaloneOnly) {
   console.log(`  [standalone-only] ${pkg}: ${standaloneVer} (no action required)`);
+}
+
+// Same bare version, different pnpm peer-context suffix: informational only.
+for (const { pkg } of peerOnlyDiffs) {
+  console.log(`  [peer-context] ${pkg}: same version, different pnpm peer suffix (no action required)`);
 }
 
 if (mismatches.length === 0) {

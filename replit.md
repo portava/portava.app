@@ -4,14 +4,21 @@
 
 A social travel passport mobile app — log trips, track destinations, and share your travel story.
 
-## Active mobile development target
+## Canonical mobile tree (single source of truth)
 
 ```
-~/workspace/travel-buddy-standalone      ← ALL mobile dev work goes here
-~/workspace/artifacts/travel-buddy       ← BACKUP / reference only (do not run)
+~/workspace/artifacts/travel-buddy       ← CANONICAL — all mobile dev work happens here
+~/workspace/travel-buddy-standalone      ← generated EAS build mirror — do not edit directly
 ```
 
-**Important:** The Replit preview pane runs the `artifacts/travel-buddy` Expo workflow (managed by the artifact system). Standalone development happens via the command line or a physical device:
+**The rule (settled July 2026):** `artifacts/travel-buddy` is the single canonical source tree — every code change lands there. `travel-buddy-standalone` is a build/deploy mirror regenerated from canonical by `scripts/sync-standalone.sh`; it exists only because EAS native builds need a hoisted, workspace-isolated tree. Updates flow OUTWARD from canonical, never backward:
+
+- **Web app output** — the Replit preview and web deployments serve the canonical tree directly (Expo web). No sync step; the web app is always current.
+- **Native/EAS output** — the mirror is auto-synced after every task merge (`scripts/post-merge.sh`: apply-deps → full sync → mirror `pnpm install` → drift checks). Manual propagation during device dev: `bash scripts/sync-standalone.sh --fix-source` (fast file copy). EAS builds run from the mirror AFTER checks pass — see [docs/eas-runbook.md](docs/eas-runbook.md).
+- **Never edit the mirror directly.** The only sanctioned divergence is the `STANDALONE_OWNED_FILES` ledger inside `scripts/sync-standalone.sh` (target-specific files + the legacy graduation backlog — inventory in [docs/tree-sync-audit-2026-07-19.md](docs/tree-sync-audit-2026-07-19.md)). Do not add new ledger entries for shared cross-platform code; land shared code in canonical and let the sync propagate it.
+- **Drift gate** — `sync-standalone.sh --check-source / --check-deps / --check-lockfile` fail the pre-release checks and the post-merge hook whenever the mirror unexpectedly diverges.
+
+Physical-device dev loop (Metro serves the mirror): edit canonical, run `bash scripts/sync-standalone.sh --fix-source`, and Metro hot-reloads:
 
 ```bash
 cd ~/workspace/travel-buddy-standalone
@@ -79,8 +86,8 @@ To verify the check scripts themselves are not broken (i.e. they correctly detec
 
 ## Where things live
 
-- `travel-buddy-standalone/` — **active Expo mobile app** (`app/`, `src/services/`, `src/lib/supabase.ts`, `src/context/SessionContext.tsx`)
-- `artifacts/travel-buddy/` — **BACKUP / reference only** — do not edit or run
+- `artifacts/travel-buddy/` — **CANONICAL Expo mobile app** (`app/`, `src/services/`, `src/lib/supabase.ts`, `src/context/SessionContext.tsx`) — all edits happen here
+- `travel-buddy-standalone/` — **generated EAS build mirror** — never edit directly; auto-synced from canonical (exceptions: `STANDALONE_OWNED_FILES` ledger in `scripts/sync-standalone.sh`)
 - `artifacts/api-server/` — Express API server (`src/routes/trips.ts`, `src/lib/supabase.ts`, `.env`)
 
 ## Architecture decisions
