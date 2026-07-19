@@ -258,6 +258,9 @@ export function useMyThreads() {
 
 export function useThreadMessages(threadId: string | null) {
   const { userId } = useSession();
+  // Use a stable placeholder key when threadId is null so the hook call is unconditional.
+  const snapshotKey = threadId ? `messages:thread:${threadId}` : 'messages:thread:__none__';
+  const { snapshot, save: saveSnapshot, clear: clearSnapshot } = useSnapshotCache<Message[]>(snapshotKey);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -267,6 +270,29 @@ export function useThreadMessages(threadId: string | null) {
   const sendingRef = useRef(false);
   const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const lastTypingSentRef = useRef(0);
+  // True once the first network response has been applied for the current thread;
+  // prevents the snapshot from overwriting fresher network data if AsyncStorage is slow.
+  const networkFetchedRef = useRef(false);
+  const mountedAtRef = useRef(Date.now());
+
+  // Reset per-thread tracking whenever the thread changes.
+  useEffect(() => {
+    networkFetchedRef.current = false;
+    mountedAtRef.current = Date.now();
+  }, [threadId]);
+
+  // Paint snapshot immediately when AsyncStorage read completes (second open).
+  useEffect(() => {
+    if (snapshot === null) return;
+    if (networkFetchedRef.current) return; // network already painted fresher data
+    setMessages(snapshot);
+    setLoading(false);
+    if (__DEV__) {
+      const elapsed = Date.now() - mountedAtRef.current;
+      // eslint-disable-next-line no-console
+      console.log(`[PerfTiming] Thread second=${elapsed}ms`);
+    }
+  }, [snapshot]);
 
   const reload = useCallback(async () => {
     if (!threadId) return;
@@ -274,12 +300,19 @@ export function useThreadMessages(threadId: string | null) {
     setError(null);
     const res = await getThreadMessages(threadId);
     if (res.ok && res.data) {
-      setMessages([...(res.data.messages ?? [])].reverse());
+      const msgs = [...(res.data.messages ?? [])].reverse();
+      setMessages(msgs);
+      // Only cache confirmed server messages — exclude optimistic entries.
+      const toCache = msgs.filter(
+        (m) => m.deliveryStatus !== 'sending' && m.deliveryStatus !== 'failed',
+      );
+      saveSnapshot(toCache);
     } else {
       setError(res.message ?? 'Failed to load messages');
     }
+    networkFetchedRef.current = true;
     setLoading(false);
-  }, [threadId]);
+  }, [threadId, saveSnapshot]);
 
   const silentPoll = useCallback(async () => {
     if (!threadId || appStateRef.current !== 'active' || sendingRef.current) return;
@@ -505,6 +538,31 @@ export function useThreadMessages(threadId: string | null) {
     [],
   );
 
+  /**
+   * Pull-to-refresh: wipe the per-thread snapshot so the next mount starts
+   * fresh, then do a full network reload.
+   */
+  const refresh = useCallback(async () => {
+    if (!threadId) return;
+    clearSnapshot();
+    networkFetchedRef.current = false;
+    setLoading(true);
+    setError(null);
+    const res = await getThreadMessages(threadId);
+    if (res.ok && res.data) {
+      const msgs = [...(res.data.messages ?? [])].reverse();
+      setMessages(msgs);
+      const toCache = msgs.filter(
+        (m) => m.deliveryStatus !== 'sending' && m.deliveryStatus !== 'failed',
+      );
+      saveSnapshot(toCache);
+    } else {
+      setError(res.message ?? 'Failed to load messages');
+    }
+    networkFetchedRef.current = true;
+    setLoading(false);
+  }, [threadId, clearSnapshot, saveSnapshot]);
+
   return {
     messages,
     loading,
@@ -512,6 +570,7 @@ export function useThreadMessages(threadId: string | null) {
     sending,
     typingUserIds,
     reload,
+    refresh,
     send,
     retrySend,
     notifyTyping,
