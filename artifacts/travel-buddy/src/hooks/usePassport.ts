@@ -15,7 +15,10 @@
 import { useState, useEffect, useCallback, useRef, type MutableRefObject } from 'react';
 import type { OwnProfile, PassportPostcard, PassportStamp } from '../types/models.ts';
 import type { PassportMemory, PassportStampNew } from '../services/passportStamps.ts';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useSession } from '../context/SessionContext.tsx';
 import { useSnapshotCache } from './useSnapshotCache.ts';
+import { _clearSnapshot } from './snapshotCacheUtils.ts';
 import { getMyProfile, getMyPassportPostcards } from '../services/profile.ts';
 import { getMyPassportMemories, getMyPassportSuggestions, getMyPassportStamps } from '../services/passportStamps.ts';
 import { toLegacyStamp } from '../services/passportStampMappers.ts';
@@ -133,6 +136,15 @@ export function usePassport(): PassportState {
   // Key bumped to passport-v2 when the snapshot's stamps switched to the v2
   // shape — old `passport` snapshots (legacy-shaped stamps) are ignored.
   const { snapshot: passportSnapshot, save: savePassportSnapshot } = useSnapshotCache<PassportSnapshot>('passport-v2');
+
+  // One-time cleanup: delete the orphaned legacy `passport` snapshot for the
+  // current user. It is never read anymore (key bumped to passport-v2) and
+  // would otherwise sit in AsyncStorage forever (up to 128 KB per user).
+  const { userId } = useSession();
+  useEffect(() => {
+    if (!userId) return;
+    _clearSnapshot(AsyncStorage, 'passport', userId);
+  }, [userId]);
 
   // Apply snapshot data the first time it arrives from AsyncStorage.
   // Skipped once real data has loaded (hasDataRef.current = true).
