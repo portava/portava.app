@@ -253,3 +253,44 @@ export const CITY_CENTROIDS: Record<string, [number, number]> = {
   'Melbourne':        [-37.8136,  144.9631],
   'Sydney':           [-33.8688,  151.2093],
 };
+
+/**
+ * Case-insensitive lookup index built once at module load.
+ *
+ * Keys are the canonical CITY_CENTROIDS keys lowercased and whitespace-
+ * normalised (trim + collapse runs).  We intentionally avoid title-casing
+ * the raw input because regex word-boundary title-casing corrupts names that
+ * contain apostrophes (Xi'an → Xi'An) or diacritics (São Paulo → SãO Paulo).
+ * Lowercasing both sides is safe for every Unicode city name we store.
+ */
+const _lowerIndex = new Map<string, [number, number]>(
+  Object.entries(CITY_CENTROIDS).map(([k, v]) => [
+    k.trim().replace(/\s+/g, ' ').toLowerCase(),
+    v,
+  ]),
+);
+
+/**
+ * Normalise a raw city string to the form used as the index key:
+ *   1. Trim leading/trailing whitespace
+ *   2. Collapse internal runs of whitespace to a single space
+ *   3. Lowercase (Unicode-safe — avoids apostrophe/diacritic corruption)
+ */
+function normaliseCityKey(raw: string): string {
+  return raw.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/**
+ * Look up the [latitude, longitude] centroid for a city name.
+ *
+ * Accepts city strings with arbitrary casing or surrounding whitespace
+ * (e.g. "tashkent", "QUITO ", "  Ho Chi Minh City  ", "xi'an", "são paulo")
+ * and normalises them before consulting CITY_CENTROIDS.  Returns `undefined`
+ * when the city is genuinely unknown.
+ */
+export function getCityCentroid(city: string): [number, number] | undefined {
+  // Fast path: exact match (most callers pass a correctly-cased string).
+  if (CITY_CENTROIDS[city] !== undefined) return CITY_CENTROIDS[city];
+  // Fallback: case- and whitespace-insensitive lookup via the lower index.
+  return _lowerIndex.get(normaliseCityKey(city));
+}

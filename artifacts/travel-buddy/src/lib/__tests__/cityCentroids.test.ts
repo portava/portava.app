@@ -12,7 +12,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { CITY_CENTROIDS } from '../cityCentroids.ts';
+import { CITY_CENTROIDS, getCityCentroid } from '../cityCentroids.ts';
 
 describe('CITY_CENTROIDS — coordinate validity', () => {
   const entries = Object.entries(CITY_CENTROIDS);
@@ -153,4 +153,71 @@ describe('CITY_CENTROIDS — key-level spot checks for new cities', () => {
   check('Bratislava',   48.1486,   17.1077);
   check('Krakow',       50.0647,   19.9450);
   check('Lviv',         49.8397,   24.0297);
+});
+
+describe('getCityCentroid — normalisation (casing & whitespace)', () => {
+  it('resolves lowercase city name: "tashkent" → Tashkent centroid', () => {
+    const coords = getCityCentroid('tashkent');
+    assert.ok(coords !== undefined, '"tashkent" returned undefined — normalisation failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 41.2995) < 2, `lat ${lat} implausibly far from Tashkent`);
+    assert.ok(Math.abs(lng - 69.2401) < 2, `lng ${lng} implausibly far from Tashkent`);
+  });
+
+  it('resolves all-caps city name: "QUITO" → Quito centroid', () => {
+    const coords = getCityCentroid('QUITO');
+    assert.ok(coords !== undefined, '"QUITO" returned undefined — normalisation failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - (-0.2295)) < 2, `lat ${lat} implausibly far from Quito`);
+    assert.ok(Math.abs(lng - (-78.5243)) < 2, `lng ${lng} implausibly far from Quito`);
+  });
+
+  it('resolves city name with leading/trailing spaces: "  Bangkok  "', () => {
+    const coords = getCityCentroid('  Bangkok  ');
+    assert.ok(coords !== undefined, '"  Bangkok  " returned undefined — trim failed');
+  });
+
+  it('resolves mixed-case multi-word city: "ho chi minh city"', () => {
+    const coords = getCityCentroid('ho chi minh city');
+    assert.ok(coords !== undefined, '"ho chi minh city" returned undefined — normalisation failed');
+  });
+
+  it('resolves apostrophe city name: "xi\'an" → Xi\'an centroid', () => {
+    const coords = getCityCentroid("xi'an");
+    assert.ok(coords !== undefined, '"xi\'an" returned undefined — apostrophe normalisation failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 34.3416) < 2, `lat ${lat} implausibly far from Xi'an`);
+    assert.ok(Math.abs(lng - 108.9398) < 2, `lng ${lng} implausibly far from Xi'an`);
+  });
+
+  it('resolves diacritic city in lowercase: "são paulo" → São Paulo centroid', () => {
+    const coords = getCityCentroid('são paulo');
+    assert.ok(coords !== undefined, '"são paulo" returned undefined — diacritic normalisation failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - (-23.5505)) < 2, `lat ${lat} implausibly far from São Paulo`);
+    assert.ok(Math.abs(lng - (-46.6333)) < 2, `lng ${lng} implausibly far from São Paulo`);
+  });
+
+  it('resolves diacritic city in uppercase: "ASUNCIÓN" → Asunción centroid', () => {
+    const coords = getCityCentroid('ASUNCIÓN');
+    assert.ok(coords !== undefined, '"ASUNCIÓN" returned undefined — diacritic uppercase normalisation failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - (-25.2867)) < 2, `lat ${lat} implausibly far from Asunción`);
+  });
+
+  it('resolves diacritic city mixed-case: "montréal" → Montréal centroid', () => {
+    const coords = getCityCentroid('montréal');
+    assert.ok(coords !== undefined, '"montréal" returned undefined — diacritic mixed-case normalisation failed');
+  });
+
+  it('still returns undefined for a genuinely unknown city', () => {
+    const coords = getCityCentroid('atlantis');
+    assert.equal(coords, undefined, 'Expected undefined for unknown city "atlantis"');
+  });
+
+  it('exact-match keys bypass normalisation (no double-transform)', () => {
+    // 'Tashkent' already matches exactly — ensure it still resolves
+    const exact = getCityCentroid('Tashkent');
+    assert.ok(exact !== undefined, '"Tashkent" (exact key) should always resolve');
+  });
 });

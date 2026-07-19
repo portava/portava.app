@@ -6,7 +6,7 @@ import type { CityEvent } from '../types/models.ts';
 import { Stamp, Avatar } from './ui.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { SaveButton } from './SaveButton.tsx';
-import { CITY_CENTROIDS } from '../lib/cityCentroids.ts';
+import { getCityCentroid } from '../lib/cityCentroids.ts';
 import { fireRankOutcome } from '../hooks/useRankOutcome.ts';
 
 function timeLabel(iso: string) {
@@ -55,7 +55,7 @@ export function EventCard({ ev, dim, initialSaved, sessionId }: {
             // Pass the prefixed form so the focusId snap matches exactly.
             // Also include the city's centroid coords so the map camera has an
             // immediate starting position while useMapEntities is still loading.
-            const cityCoords = CITY_CENTROIDS[ev.city];
+            const cityCoords = getCityCentroid(ev.city);
             // zoom=12 gives a city-street view that keeps venue pins visible;
             // without an explicit zoom the map screen defaults to 11 (same
             // district level) but stating it here makes the intent unambiguous.
