@@ -279,6 +279,12 @@ export const CITY_CENTROIDS: Record<string, [number, number]> = {
   'Minneapolis':      [44.9778,   -93.2650],
   'Phoenix':          [33.4484,  -112.0740],
   'Portland':         [45.5051,  -122.6750],
+
+  // ── Additional European cities (accented canonical form; no stripped alias) ─
+  // These rely on the NFD diacritic-strip fallback in getCityCentroid rather
+  // than a hand-maintained accent-stripped alias key.
+  'Köln':             [50.9333,    6.9500],
+  'Düsseldorf':       [51.2217,    6.7762],
 };
 
 /**
@@ -570,6 +576,37 @@ function splitCityTokens(raw: string): string[] {
 }
 
 /**
+ * Strip Unicode combining characters (diacritics) from a string that has
+ * already been NFD-decomposed.  Used as a fourth lookup tier so that
+ * accent-stripped user input (e.g. "Koln") resolves to a city whose
+ * canonical key uses diacritics (e.g. "Köln") without needing a hand-
+ * maintained alias entry.
+ *
+ * The regex covers the full Unicode "Combining Diacritical Marks" block
+ * (U+0300–U+036F).
+ */
+function stripDiacritics(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+/**
+ * Diacritic-strip index: keys are the accent-stripped, lowercased, whitespace-
+ * normalised forms of every canonical CITY_CENTROIDS key.  Populated once at
+ * module load and used as the fourth (and final) lookup tier.
+ *
+ * When multiple canonical keys reduce to the same stripped form (e.g.
+ * "Göteborg" and "Gothenburg" both strip to "goteborg" / "gothenburg") the
+ * last one wins — in practice this is fine because all aliases for a city
+ * share identical coordinates.
+ */
+const _nfdIndex = new Map<string, [number, number]>(
+  Object.entries(CITY_CENTROIDS).map(([k, v]) => [
+    stripDiacritics(k.trim().replace(/\s+/g, ' ').toLowerCase()),
+    v,
+  ]),
+);
+
+/**
  * Look up the [latitude, longitude] centroid for a city name.
  *
  * Resolution order — applied to each token produced by splitting compound
@@ -580,6 +617,9 @@ function splitCityTokens(raw: string): string[] {
  *   3. Alias lookup via CITY_ALIASES — catches common alternate spellings
  *      that partner APIs or user input may supply (e.g. "Cebu" → "Cebu City",
  *      "HCMC" → "Ho Chi Minh City").
+ *   4. NFD diacritic-strip fallback via _nfdIndex — resolves accent-stripped
+ *      input (e.g. "Koln") to a city whose canonical key has diacritics
+ *      (e.g. "Köln") without requiring a hand-maintained alias.
  *
  * If no city match is found after all tokens are exhausted, a final country-
  * level fallback is attempted on the full input string (step 4).  This covers
@@ -592,7 +632,7 @@ export function getCityCentroid(city: string): [number, number] | undefined {
   // Fast path: exact match on the full string.
   if (CITY_CENTROIDS[city] !== undefined) return CITY_CENTROIDS[city];
 
-  // Split compound strings and try each token with all three resolution steps.
+  // Split compound strings and try each token with all four resolution steps.
   const tokens = splitCityTokens(city);
   for (const token of tokens) {
     // Step 1: exact match on token.
@@ -609,6 +649,11 @@ export function getCityCentroid(city: string): [number, number] | undefined {
       const aliased = _lowerIndex.get(normaliseCityKey(canonicalName));
       if (aliased !== undefined) return aliased;
     }
+
+    // Step 4: NFD diacritic-strip fallback — handles accent-stripped inputs
+    // whose stripped form is not an explicit alias key.
+    const nfd = _nfdIndex.get(stripDiacritics(normKey));
+    if (nfd !== undefined) return nfd;
   }
 
   // Step 4: country-level fallback — try each token against COUNTRY_CENTROIDS.

@@ -579,3 +579,57 @@ describe('getCityCentroid — alias fallback', () => {
     assert.deepEqual(bad, [], `Broken aliases:\n${bad.join('\n')}`);
   });
 });
+
+describe('getCityCentroid — NFD diacritic-strip fallback (no explicit alias key)', () => {
+  /**
+   * Cities in CITY_CENTROIDS that have ONLY the accented canonical form —
+   * there is no hand-maintained stripped alias.  These must resolve via the
+   * fourth lookup tier (NFD + strip combining marks) and would previously have
+   * silently returned undefined.
+   */
+
+  it('"Koln" resolves to Köln via NFD fallback', () => {
+    const accented = getCityCentroid('Köln');
+    const stripped = getCityCentroid('Koln');
+    assert.ok(accented !== undefined, '"Köln" (canonical) should resolve');
+    assert.ok(stripped !== undefined, '"Koln" returned undefined — NFD fallback failed');
+    assert.deepEqual(stripped, accented, '"Koln" and "Köln" should resolve to identical coordinates');
+  });
+
+  it('"koln" (lowercase) resolves via NFD fallback', () => {
+    const coords = getCityCentroid('koln');
+    assert.ok(coords !== undefined, '"koln" returned undefined — NFD fallback failed');
+    const [lat] = coords;
+    assert.ok(Math.abs(lat - 50.9333) < 2, `lat ${lat} implausibly far from Köln`);
+  });
+
+  it('"KOLN" (uppercase) resolves via NFD fallback', () => {
+    const coords = getCityCentroid('KOLN');
+    assert.ok(coords !== undefined, '"KOLN" returned undefined — NFD fallback failed');
+    const [lat] = coords;
+    assert.ok(Math.abs(lat - 50.9333) < 2, `lat ${lat} implausibly far from Köln`);
+  });
+
+  it('"Dusseldorf" resolves to Düsseldorf via NFD fallback', () => {
+    const accented = getCityCentroid('Düsseldorf');
+    const stripped = getCityCentroid('Dusseldorf');
+    assert.ok(accented !== undefined, '"Düsseldorf" (canonical) should resolve');
+    assert.ok(stripped !== undefined, '"Dusseldorf" returned undefined — NFD fallback failed');
+    assert.deepEqual(stripped, accented, '"Dusseldorf" and "Düsseldorf" should resolve to identical coordinates');
+  });
+
+  it('"goteborg" (no alias, only "Göteborg" in map) resolves via NFD fallback', () => {
+    // Verify "Goteborg" is NOT an explicit alias so this truly exercises tier 4.
+    const directAlias = (CITY_CENTROIDS as Record<string, [number, number]>)['Goteborg'];
+    assert.equal(directAlias, undefined, '"Goteborg" should NOT be an explicit alias key');
+    const coords = getCityCentroid('Goteborg');
+    assert.ok(coords !== undefined, '"Goteborg" returned undefined — NFD fallback failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 57.7089) < 2, `lat ${lat} implausibly far from Göteborg`);
+    assert.ok(Math.abs(lng - 11.9746) < 2, `lng ${lng} implausibly far from Göteborg`);
+  });
+
+  it('still returns undefined for a genuinely unknown city (no accent confusion)', () => {
+    assert.equal(getCityCentroid('springfield'), undefined);
+  });
+});
