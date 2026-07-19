@@ -98,7 +98,15 @@ export async function leaveCall(callId: string): Promise<CallResult<{ status: Ca
   return api(`/api/calls/${encodeURIComponent(callId)}/leave`, 'POST');
 }
 
+/** Privacy-safe caller identity attached to a restored ringing session. */
+export interface CallCallerIdentity {
+  id: string;
+  name: string | null;
+  avatarUrl: string | null;
+  handle: string | null;
+}
+
 /** The viewer's currently open call, if any (rejoin/minimized-pill restore). */
-export async function getActiveCall(): Promise<CallResult<{ session: CallSessionDto | null }>> {
+export async function getActiveCall(): Promise<CallResult<{ session: CallSessionDto | null; caller?: CallCallerIdentity | null }>> {
   return api('/api/calls/active', 'GET');
 }
