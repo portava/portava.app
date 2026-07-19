@@ -350,6 +350,12 @@ export interface PassportStamp {
   locked?: boolean;     // show as not-yet-earned (faint)
   /** AI-generated universal stamp artwork image URL (from the stamp definition). */
   universalArtworkUrl?: string;
+  /**
+   * Source city name for city-kind stamps (from the v2 pipeline).
+   * Destination grouping matches on this when present, so display labels
+   * (definition names / title overrides) can diverge from the city name.
+   */
+  city?: string | null;
 }
 
 export interface TravelStats {

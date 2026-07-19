@@ -33,6 +33,7 @@ export function toLegacyStamp(s: PassportStampNew): PassportStamp {
     earnedAt: s.earnedAt,
     locked: s.isRevoked,
     universalArtworkUrl: s.definition?.universalArtworkUrl ?? undefined,
+    city: s.city ?? null,
   };
 }
 
