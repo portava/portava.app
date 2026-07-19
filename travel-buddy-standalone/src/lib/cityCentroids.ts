@@ -245,6 +245,7 @@ export const CITY_CENTROIDS: Record<string, [number, number]> = {
   'Krakow':           [50.0647,   19.9450],
   'Kraków':           [50.0647,   19.9450],
   'Lviv':             [49.8397,   24.0297],
+  'Łódź':            [51.7592,   19.4560],
   'Odesa':            [46.4825,   30.7233],
   'Odessa':           [46.4825,   30.7233],
 
@@ -587,12 +588,29 @@ export const CITY_ALIASES: Record<string, string> = {
 };
 
 /**
+ * Stroked / slashed letters that NFD decomposition does NOT remove — these are
+ * base-letter modifications, not combining marks.  Map both the uppercase and
+ * lowercase forms so the replacement is safe regardless of input case.
+ *
+ * Ł / ł  (Polish, Croatian …)  → L / l
+ * Ø / ø  (Danish, Norwegian …) → O / o
+ * Đ / đ  (Vietnamese, Serbian) → D / d
+ */
+const STROKED_TRANSLIT: Record<string, string> = {
+  'Ł': 'L', 'ł': 'l',
+  'Ø': 'O', 'ø': 'o',
+  'Đ': 'D', 'đ': 'd',
+};
+
+/**
  * Normalise a raw city string to the form used as the index key:
  *   1. Trim leading/trailing whitespace
  *   2. Collapse internal runs of whitespace to a single space
  *   3. NFD-decompose and strip combining diacritical marks so that
  *      "Bogotá" → "bogota", "Côte" → "cote", "São Paulo" → "sao paulo".
- *   4. Lowercase (Unicode-safe — avoids apostrophe/diacritic corruption)
+ *   4. Replace stroked/slashed letters that NFD does not decompose
+ *      (Ł→l, Ø→o, Đ→d and their lowercase equivalents).
+ *   5. Lowercase (Unicode-safe — avoids apostrophe/diacritic corruption)
  */
 function normaliseCityKey(raw: string): string {
   return raw
@@ -600,6 +618,7 @@ function normaliseCityKey(raw: string): string {
     .replace(/\s+/g, ' ')
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
+    .replace(/[ŁłØøĐđ]/g, (c) => STROKED_TRANSLIT[c] ?? c)
     .toLowerCase();
 }
 

@@ -952,3 +952,82 @@ describe('getCityCentroid — region-name fallback (step 5)', () => {
     assert.equal(coords, undefined, 'Expected undefined for unknown input "atlantis"');
   });
 });
+
+describe('getCityCentroid — stroked-letter transliteration (Ł→L, Ø→O, Đ→D)', () => {
+  /**
+   * Ł, Ø, and Đ are base-letter modifications — NFD decomposition does NOT
+   * remove them as it does with combining-mark diacritics (umlauts, accents).
+   * The normalisation step now applies a supplementary transliteration map so
+   * that stripped inputs resolve to the correct city.
+   */
+
+  // ── Ł → L (Łódź, Poland) ────────────────────────────────────────────────
+
+  it('Łódź is present in CITY_CENTROIDS with plausible coordinates', () => {
+    const coords = getCityCentroid('Łódź');
+    assert.ok(coords !== undefined, '"Łódź" is missing from CITY_CENTROIDS');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 51.7592) < 2, `lat ${lat} implausibly far from Łódź`);
+    assert.ok(Math.abs(lng - 19.4560) < 2, `lng ${lng} implausibly far from Łódź`);
+  });
+
+  it('"lodz" (Ł→L, ó→o, ź→z stripped) resolves to Łódź centroid', () => {
+    const canonical = getCityCentroid('Łódź');
+    const stripped  = getCityCentroid('lodz');
+    assert.ok(canonical !== undefined, '"Łódź" (canonical) should resolve');
+    assert.ok(stripped  !== undefined, '"lodz" returned undefined — stroked-letter transliteration failed');
+    assert.deepEqual(stripped, canonical, '"lodz" and "Łódź" must have identical coordinates');
+  });
+
+  it('"LODZ" (uppercase, stroked+diacritic stripped) resolves to Łódź centroid', () => {
+    const coords = getCityCentroid('LODZ');
+    assert.ok(coords !== undefined, '"LODZ" returned undefined — uppercase stroked-letter transliteration failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 51.7592) < 2, `lat ${lat} implausibly far from Łódź`);
+    assert.ok(Math.abs(lng - 19.4560) < 2, `lng ${lng} implausibly far from Łódź`);
+  });
+
+  it('"łódź" (lowercase, all diacritics present) resolves to Łódź centroid', () => {
+    const coords = getCityCentroid('łódź');
+    assert.ok(coords !== undefined, '"łódź" returned undefined — lowercase stroked-letter normalisation failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 51.7592) < 2, `lat ${lat} implausibly far from Łódź`);
+    assert.ok(Math.abs(lng - 19.4560) < 2, `lng ${lng} implausibly far from Łódź`);
+  });
+
+  // ── Đ → D (Đà Nẵng → resolves via existing "Da Nang" entry) ────────────
+
+  it('"Đà Nẵng" (Vietnamese Đ + combining marks) resolves to Da Nang centroid', () => {
+    // "Da Nang" is an explicit entry; Đ→D + NFD strips à and ẵ → "da nang"
+    const canonical = getCityCentroid('Da Nang');
+    const stroked   = getCityCentroid('Đà Nẵng');
+    assert.ok(canonical !== undefined, '"Da Nang" (canonical) should resolve');
+    assert.ok(stroked   !== undefined, '"Đà Nẵng" returned undefined — Đ→D transliteration failed');
+    assert.deepEqual(stroked, canonical, '"Đà Nẵng" must resolve to the same coords as "Da Nang"');
+  });
+
+  it('"đà nẵng" (lowercase) resolves to Da Nang centroid', () => {
+    const coords = getCityCentroid('đà nẵng');
+    assert.ok(coords !== undefined, '"đà nẵng" returned undefined — lowercase Đ→D transliteration failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 16.0544) < 2, `lat ${lat} implausibly far from Da Nang`);
+    assert.ok(Math.abs(lng - 108.2022) < 2, `lng ${lng} implausibly far from Da Nang`);
+  });
+
+  // ── Ø → O ────────────────────────────────────────────────────────────────
+
+  it('"Øresund" does not crash — normalisation handles Ø even for unknown cities', () => {
+    // Not in the map, but must return undefined cleanly (not throw)
+    const coords = getCityCentroid('Øresund');
+    assert.equal(coords, undefined, 'Unknown city "Øresund" should return undefined, not throw');
+  });
+
+  it('normaliseCityKey handles ø correctly — "malmø" resolves via Malmö entry', () => {
+    // "Malmö" is in the map; ø→o gives "malmo" which hits the explicit alias key
+    const coords = getCityCentroid('malmø');
+    assert.ok(coords !== undefined, '"malmø" returned undefined — Ø→O transliteration failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 55.6050) < 2, `lat ${lat} implausibly far from Malmö`);
+    assert.ok(Math.abs(lng - 13.0038) < 2, `lng ${lng} implausibly far from Malmö`);
+  });
+});
