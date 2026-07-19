@@ -27,4 +27,5 @@
 - [Modal Proxy mock for react-native](modal-proxy-mock.md) — Proxy intercepts only Modal key; two-file rule for async Modal tests.
 - [Events API field names](events-api-field-names.md) — formatEvent() returns camelCase (startsAt/goingCount/maxAttendees); mapApiEvent must read those, not snake_case. No `source` column on events — use tags for demo labelling.
 - [Unified location context pattern](location-context-unified.md) — resolvedLocation (session → GPS → last-known → home) is the single source of truth; component test mocks must include it or FullScreenMapScreen crashes.
+- [Stale ports after merge waves](stale-port-after-merge-waves.md) — EADDRINUSE / Expo stuck at a Y/n port prompt after merges = orphaned old server; kill pid + restart, don't debug code.
 - [Discovery perf: two-level cache + SWR](discovery-perf-cache.md) — L1 (in-memory Map) + L2 (Postgres discovery_cache table) with stale-while-revalidate; baseline cold-miss 5–20s, L2 hit ~15–100ms. Client: AsyncStorage counts cache-first + InteractionManager for buddy strip and MapTiler geocode.
