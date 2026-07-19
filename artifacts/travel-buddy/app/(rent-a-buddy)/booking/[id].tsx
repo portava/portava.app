@@ -18,6 +18,7 @@ import { GlobalCalendarPicker } from '../../../src/components/selectors/GlobalCa
 import { GlobalTimePicker } from '../../../src/components/selectors/GlobalTimePicker';
 import { formatDisplayDate, fromISODate, fromHHmm, formatDisplayTime, toISODate } from '../../../src/lib/dateTime/formatters';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { usePlainBottomInset } from '../../../src/hooks/useBottomInset';
 
 type BookingStatus = BuddyBooking['status'];
 
@@ -358,6 +359,7 @@ const disputeStyles = StyleSheet.create({
 
 export default function BookingDetail() {
   const insets = useSafeAreaInsets();
+  const plainInset = usePlainBottomInset();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [booking, setBooking] = useState<BuddyBooking | null>(null);
   const [loading, setLoading] = useState(true);
@@ -448,7 +450,7 @@ export default function BookingDetail() {
         <StatusBadge status={booking.status} />
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 100 + insets.bottom }} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={{ paddingBottom: plainInset }} showsVerticalScrollIndicator={false}>
         {/* Buddy profile summary */}
         <BuddySummaryRow buddyId={booking.buddyId} city={booking.city} />
 

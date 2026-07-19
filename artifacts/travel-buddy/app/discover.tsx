@@ -11,7 +11,8 @@ import { TravelerRow } from '../src/components/TravelerRow';
 import { TravelerRowSkeleton } from '../src/components/TravelerRowSkeleton';
 import { searchUsers, getSuggestedTravelers, clearSuggestionsSeen, type TravelerSearchResult } from '../src/services/follows';
 import { color, space, radius, type as t } from '../src/theme/tokens';
-import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../src/hooks/useBottomInset';
 
 export default function DiscoverScreen() {
   const navBarScrollHandler = useNavBarScrollHandler();
@@ -164,7 +165,7 @@ export default function DiscoverScreen() {
                       <TravelerRowSkeleton />
                     </View>
                   ) : null}
-                  <NavBarFiller />
+                  <PlainBottomFiller />
                 </>
               }
               renderItem={({ item }) => (
@@ -226,7 +227,7 @@ export default function DiscoverScreen() {
             onScroll={navBarScrollHandler}
             scrollEventThrottle={16}
             renderItem={({ item }) => <TravelerRow user={item} />}
-            ListFooterComponent={<NavBarFiller />}
+            ListFooterComponent={<PlainBottomFiller />}
           />
         )}
       </KeyboardSafeScrollView>

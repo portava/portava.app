@@ -23,7 +23,8 @@ import {
   type EmergencyContactInput,
 } from '../../../src/services/emergencyContacts';
 import { useSession } from '../../../src/context/SessionContext';
-import { NavBarFiller, useNavBarScrollHandler } from '../../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../../../src/hooks/useBottomInset';
 
 // ── Method labels ─────────────────────────────────────────────────────────────
 
@@ -399,7 +400,7 @@ export default function EmergencyContactsScreen() {
             <Text style={styles.limitNote}>Maximum 10 contacts reached.</Text>
           )}
 
-          <NavBarFiller />
+          <PlainBottomFiller />
         </ScrollView>
       )}
 

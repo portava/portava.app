@@ -8,6 +8,7 @@ import { checkSaved, toggleSave } from '../../services/collections.ts';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { categoryColor } from './PlaceCard.tsx';
 import { TripWishlistPicker } from './TripWishlistPicker.tsx';
+import { usePlainBottomInset } from '../../hooks/useBottomInset.ts';
 
 interface PlaceDetailSheetProps {
   place: DiscoveryPlace | null;
@@ -17,6 +18,7 @@ interface PlaceDetailSheetProps {
 }
 
 export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: PlaceDetailSheetProps) {
+  const plainInset = usePlainBottomInset();
   const [saved, setSaved]               = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
 
@@ -103,7 +105,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan }: Place
 
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[styles.content, { paddingBottom: plainInset }]}
           showsVerticalScrollIndicator={false}
         >
           {/* Distance */}

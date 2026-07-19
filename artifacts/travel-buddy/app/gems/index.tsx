@@ -14,7 +14,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useGemList, useSavedGems, useLayoverGems } from '../../src/hooks/useHiddenGems';
 import { verificationBadge, sensitivityLabel, type HiddenGem, type GemCategory } from '../../src/services/hiddenGems';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 
 // ── Category filter chips ─────────────────────────────────────────────────────
 
@@ -205,7 +206,7 @@ function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
             ItemSeparatorComponent={() => <View style={styles.sep} />}
             onScroll={navBarScrollHandler}
             scrollEventThrottle={16}
-            ListFooterComponent={<NavBarFiller />}
+            ListFooterComponent={<PlainBottomFiller />}
           />
         )
       )}
@@ -252,7 +253,7 @@ function SavedTab() {
       ItemSeparatorComponent={() => <View style={styles.sep} />}
       onScroll={navBarScrollHandler}
       scrollEventThrottle={16}
-      ListFooterComponent={<NavBarFiller />}
+      ListFooterComponent={<PlainBottomFiller />}
     />
   );
 }
@@ -311,7 +312,7 @@ function LayoverTab() {
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           onScroll={navBarScrollHandler}
           scrollEventThrottle={16}
-          ListFooterComponent={<NavBarFiller />}
+          ListFooterComponent={<PlainBottomFiller />}
         />
       )}
     </View>

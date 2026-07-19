@@ -17,7 +17,8 @@ import {
   type AppealTargetType,
   type AppealState,
 } from '../src/services/appeals';
-import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../src/hooks/useBottomInset';
 
 // ── State badge ───────────────────────────────────────────────────────────────
 
@@ -217,7 +218,7 @@ export default function AppealsScreen() {
         )}
       </View>
 
-      <NavBarFiller />
+      <PlainBottomFiller />
 
     </ScrollView>
   );

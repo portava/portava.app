@@ -3,7 +3,8 @@ import { View, Text, FlatList, Image, Pressable, StyleSheet, ActivityIndicator }
 import { ScreenHeader } from '../src/components/ScreenHeader';
 import { getRestrictList, unrestrictUser, type RestrictedUser } from '../src/services/restrict';
 import { color, space, radius, type as t } from '../src/theme/tokens';
-import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../src/hooks/useBottomInset';
 
 export default function RestrictedUsersScreen() {
   const [restricted, setRestricted] = useState<RestrictedUser[]>([]);
@@ -41,7 +42,7 @@ export default function RestrictedUsersScreen() {
             keyExtractor={(item) => item.id}
             onScroll={navBarScrollHandler}
             scrollEventThrottle={16}
-            ListFooterComponent={<NavBarFiller />}
+            ListFooterComponent={<PlainBottomFiller />}
             renderItem={({ item }) => (
               <View style={s.row}>
                 {item.avatarUrl ? (

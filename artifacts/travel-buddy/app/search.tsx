@@ -18,7 +18,8 @@ import type { UnifiedSearchResult, SearchHistoryEntry } from '../src/services/di
 import { useLocationContext } from '../src/context/LocationContext';
 import { CompassTravelerRow } from '../src/components/compass/CompassTravelerRow';
 import { color, space, radius, type as t } from '../src/theme/tokens';
-import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../src/hooks/useBottomInset';
 import { SearchSuggestionsPanel } from '../src/components/search/SearchSuggestionsPanel';
 import { useSearchSuggestions } from '../src/hooks/useSearchSuggestions';
 import { resolveRoute } from '../src/components/search/searchNav';
@@ -554,7 +555,7 @@ export default function SearchScreen() {
                 <ActivityIndicator size="small" color={color.signal} />
               </View>
             ) : null}
-            <NavBarFiller />
+            <PlainBottomFiller />
           </>
         }
       />

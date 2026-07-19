@@ -12,6 +12,7 @@
 - [Edit-tool $ metacharacters](edit-tool-metacharacters.md) — never put JS replace patterns ($ followed by &, ', backtick, digit, $) in Edit new_string; they expand and corrupt files. WriteFile is verbatim-safe.
 - [E2E signed-in verification](e2e-signed-in-verification.md) — verify auth-gated flows by creating ephemeral Supabase users via admin API and scripting the local API; no human session needed.
 - [Task validation diff scope](task-validation-diff-scope.md) — completion review diffs against the task base; other tasks' merged breakage becomes yours to fix, not revert.
+- [Bottom inset tiers](bottom-inset-tiers.md) — useBottomInset.ts has three clearance tiers (pill / measured sticky bar / plain); pick by what floats over the surface; no hardcoded ≥90 paddings.
 - [Floating pill vs stack routes](floating-pill-stack-routes.md) — the tab pill never overlays pushed stack routes (verified visually); fixed bottom CTAs on stack screens need no clearance.
 - [Spec alias URL rewrite](spec-alias-rewrite.md) — routers mount under app.use("/api"); only RELATIVE registrations are reachable; absolute /api/... paths land at /api/api/* and are dead through the domain.
 - [Design-subagent restyle audits](design-subagent-restyles.md) — delegated rewrites can silently drop prop wiring (handlers, CTAs) while typechecking clean; grep every prop for render-side usage.

@@ -14,7 +14,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getGuideProfile } from '../../src/services/hiddenGems';
 import { useGemList } from '../../src/hooks/useHiddenGems';
-import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 
 // ── Guide level badges ─────────────────────────────────────────────────────────
 
@@ -169,7 +170,7 @@ export default function GuideProfileScreen() {
             ))}
           </View>
         )}
-        <NavBarFiller />
+        <PlainBottomFiller />
       </ScrollView>
     </SafeAreaView>
   );

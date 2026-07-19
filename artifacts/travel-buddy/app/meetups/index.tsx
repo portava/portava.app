@@ -21,7 +21,8 @@ import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { RsvpBar } from '../../src/components/RsvpBar';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
-import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -247,7 +248,7 @@ export default function MeetupsScreen() {
               {past.map((m) => <MeetupRow key={m.id} meetup={m} />)}
             </>
           )}
-          <NavBarFiller />
+          <PlainBottomFiller />
         </ScrollView>
       )}
 

@@ -15,7 +15,8 @@ import {
   getCloseFriends, addCloseFriend, removeCloseFriend,
   type CloseFriend,
 } from '../src/services/stories';
-import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../src/hooks/useBottomInset';
 
 export default function CloseFriendsScreen() {
   const insets = useSafeAreaInsets();
@@ -137,7 +138,7 @@ export default function CloseFriendsScreen() {
           contentContainerStyle={{ paddingHorizontal: space.md }}
           onScroll={navBarScrollHandler}
           scrollEventThrottle={16}
-          ListFooterComponent={<NavBarFiller />}
+          ListFooterComponent={<PlainBottomFiller />}
         />
       )}
     </View>

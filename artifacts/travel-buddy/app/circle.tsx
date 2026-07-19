@@ -24,8 +24,8 @@ import { UserAvatarButton } from '../src/components/interaction/UserAvatarButton
 import { UserNameButton } from '../src/components/interaction/UserNameButton';
 import { UserOverflowMenu } from '../src/components/interaction/UserOverflowMenu';
 import { useBlockedIds } from '../src/context/BlockedIdsContext';
-import { NavBarFiller, useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
-import { useBottomInset } from '../src/hooks/useBottomInset';
+import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
+import { usePlainBottomInset } from '../src/hooks/useBottomInset';
 
 function CircleUserRow({
   u, reason, tripId,
@@ -133,7 +133,7 @@ function next14Days(): string[] {
 //   <RichText content={circle.description} tags={circle.descriptionTags} hashtagUsages={circle.descriptionHashtags} />
 export default function Circle() {
   const navBarScrollHandler = useNavBarScrollHandler();
-  const bottomInset = useBottomInset();
+  const bottomInset = usePlainBottomInset();
   const { userId, isAuthed, configured } = useSession();
   const { tripId } = useLocalSearchParams<{ tripId?: string }>();
   const [tripTitle, setTripTitle] = useState<string | null>(null);

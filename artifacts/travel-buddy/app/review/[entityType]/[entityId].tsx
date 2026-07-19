@@ -27,7 +27,8 @@ import {
   isNetworkError,
 } from '../../../src/services/reviewDraftStorage';
 import { useSession } from '../../../src/context/SessionContext';
-import { NavBarFiller, useNavBarScrollHandler } from '../../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../../../src/hooks/useBottomInset';
 
 // ── Star rating ───────────────────────────────────────────────────────────────
 
@@ -367,7 +368,7 @@ export default function ReviewComposerScreen() {
         <Text style={s.cancelBtnText}>Go back</Text>
       </TouchableOpacity>
 
-      <NavBarFiller />
+      <PlainBottomFiller />
 
     </KeyboardSafeView>
   );

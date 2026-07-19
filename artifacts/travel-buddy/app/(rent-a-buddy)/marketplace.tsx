@@ -11,6 +11,7 @@ import { TravelErrorState, TravelLoadingState } from '../../src/components/primi
 import { BuddyCard } from '../../src/components/BuddyCard';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import type { Place } from '../../src/lib/location/placeTypes';
+import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 import {
   searchBuddies, type BuddyProfile, type BuddyCategory, type BuddySortBy, type CoordPair,
 } from '../../src/services/rentABuddy';
@@ -59,6 +60,7 @@ const SESSION_MODES: { key: SessionMode; label: string }[] = [
 const PER_PAGE = 10;
 
 export default function Marketplace() {
+  const plainInset = usePlainBottomInset();
   const insets = useSafeAreaInsets();
   const { fromQuiz, city: cityParam } = useLocalSearchParams<{ fromQuiz?: string; city?: string }>();
 
@@ -339,7 +341,7 @@ export default function Marketplace() {
         <ScrollView
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-          contentContainerStyle={s.list}
+          contentContainerStyle={[s.list, { paddingBottom: plainInset }]}
         >
           <Text style={s.resultCount}>{total} Buddies in {city}</Text>
           {buddies.map(buddy => (
@@ -444,7 +446,7 @@ const s = StyleSheet.create({
   },
   qaLabel: { ...t.small, color: color.deep, fontWeight: '600' },
 
-  list: { padding: space.lg, paddingBottom: 100 },
+  list: { padding: space.lg },
   resultCount: { ...t.small, color: color.mute, marginBottom: space.md },
   loadMoreBtn: {
     alignItems: 'center', padding: space.lg,

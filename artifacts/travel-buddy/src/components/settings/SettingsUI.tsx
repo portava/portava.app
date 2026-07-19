@@ -28,7 +28,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, ChevronRight, Check, AlertCircle, RotateCcw } from 'lucide-react-native';
 import { PP } from '../../theme/passportTokens.ts';
 import { space, radius, type as t } from '../../theme/tokens.ts';
-import { NavBarFiller } from '../../hooks/useNavBarCollapse.ts';
+import { PlainBottomFiller } from '../../hooks/useBottomInset.ts';
 
 // ── Post-save success flow ──────────────────────────────────────────────────
 
@@ -132,7 +132,7 @@ export function SettingsScreen({
         contentContainerStyle={[st.content, contentStyle]}
       >
         {children}
-        <NavBarFiller />
+        <PlainBottomFiller />
       </KeyboardSafeView>
     </View>
   );

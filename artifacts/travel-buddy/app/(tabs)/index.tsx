@@ -32,6 +32,7 @@ import { LivePulseRail } from '../../src/components/LivePulseRail';
 import { useLivePulse } from '../../src/hooks/useLivePulse';
 import { fireRankOutcome } from '../../src/hooks/useRankOutcome';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useBottomInset } from '../../src/hooks/useBottomInset';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useSnapshotCache } from '../../src/hooks/useSnapshotCache';
 
@@ -107,6 +108,7 @@ function Pulse() {
   );
 
   const navBarScrollHandler = useNavBarScrollHandler();
+  const bottomInset = useBottomInset();
   const { markFirstContent, epoch } = useScreenTiming('Pulse');
 
   // Stale-while-revalidate: pre-paint the Pulse feed from the previous session's
@@ -501,7 +503,7 @@ function Pulse() {
           </View>
         )}
         ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: bottomInset }}
         showsVerticalScrollIndicator={false}
         onScroll={navBarScrollHandler}
         scrollEventThrottle={16}

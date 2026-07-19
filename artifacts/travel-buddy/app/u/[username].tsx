@@ -37,7 +37,8 @@ import type { PublicProfile } from '../../src/types/models';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { PROFILE_NOT_FOUND_TITLE, PROFILE_NOT_FOUND_SUB } from '../../src/constants/profileScreenCopy';
 import { resolveDisplayName, formatHandle, truncateDisplayName } from '../../src/utils/identity';
-import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 
 type Tab = 'postcards' | 'stamps' | 'map' | 'about';
 const TABS: { key: Tab; label: string; Icon: LucideIcon }[] = [
@@ -1089,7 +1090,7 @@ function PublicPassportScreenNative() {
             </View>
           )}
         </View>
-        <NavBarFiller />
+        <PlainBottomFiller />
       </ScrollView>
     );
   };

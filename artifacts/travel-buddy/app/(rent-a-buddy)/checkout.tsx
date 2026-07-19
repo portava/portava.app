@@ -16,6 +16,7 @@ import {
   type BuddyProfile, type BuddyPackage, type BuddyCategory, type BuddyBlockedRange,
 } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useStickyBarInset } from '../../src/hooks/useBottomInset';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { GlobalCalendarPicker } from '../../src/components/selectors/GlobalCalendarPicker';
 import { GlobalTimePicker } from '../../src/components/selectors/GlobalTimePicker';
@@ -141,6 +142,7 @@ function PolicyAccordion() {
 
 export default function RentABuddyCheckout() {
   const insets = useSafeAreaInsets();
+  const { inset: barInset, onBarLayout } = useStickyBarInset();
   const params = useLocalSearchParams<{ buddyId?: string; packageId?: string }>();
   const buddyId = params.buddyId ?? '';
 
@@ -275,7 +277,7 @@ export default function RentABuddyCheckout() {
         <Text style={styles.headerTitle}>Book a Buddy</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={{ paddingBottom: barInset }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         {/* Buddy summary */}
         <View style={styles.buddyRow}>
           <View style={styles.buddyAvatar}>
@@ -501,12 +503,10 @@ export default function RentABuddyCheckout() {
             I confirm this booking is for cultural, social, or practical travel support only. This platform does not facilitate dating or adult services.
           </Text>
         </Pressable>
-
-        <View style={{ height: 120 + insets.bottom }} />
       </ScrollView>
 
       {/* Confirm button */}
-      <View style={[styles.stickyBottom, { paddingBottom: insets.bottom + space.md }]}>
+      <View style={[styles.stickyBottom, { paddingBottom: insets.bottom + space.md }]} onLayout={onBarLayout}>
         <Pressable
           style={({ pressed }) => [
             styles.confirmBtn,
@@ -569,7 +569,6 @@ const styles = StyleSheet.create({
   },
   backBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { ...t.heading, color: color.ink },
-  scroll: { paddingBottom: 20 },
   buddyRow: {
     flexDirection: 'row', alignItems: 'center', gap: space.md,
     padding: space.lg, backgroundColor: color.paperRaised,

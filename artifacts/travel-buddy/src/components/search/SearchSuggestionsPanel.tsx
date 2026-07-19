@@ -22,7 +22,7 @@ import { TypeIcon } from './searchNav.tsx';
 import type { SuggestGroup } from '../../services/discovery.ts';
 import type { UnifiedSearchResult, SearchHistoryEntry } from '../../services/discovery.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { NavBarFiller } from '../../hooks/useNavBarCollapse.ts';
+import { PlainBottomFiller } from '../../hooks/useBottomInset.ts';
 
 interface Props {
   query: string;
@@ -71,7 +71,7 @@ export function SearchSuggestionsPanel({
   return (
     // Intentionally a plain View — scroll is owned by the outer FlatList.
     // A nested ScrollView here would create a scroll-capture conflict.
-    <View style={{ paddingBottom: 100 }}>
+    <View>
       {/* Always-first: run the full search */}
       <Pressable style={styles.searchForRow} onPress={() => onSubmit(trimmed)}>
         <View style={styles.searchForIcon}>
@@ -133,7 +133,7 @@ export function SearchSuggestionsPanel({
           No quick matches yet — keep typing, or search everything.
         </Text>
       )}
-      <NavBarFiller />
+      <PlainBottomFiller />
     </View>
   );
 }

@@ -46,7 +46,7 @@ import {
 
 import { useSession } from '../src/context/SessionContext';
 import { color, radius, type as t } from '../src/theme/tokens';
-import { useBottomInset } from '../src/hooks/useBottomInset';
+import { usePlainBottomInset } from '../src/hooks/useBottomInset';
 
 type ScreenState =
   | 'loading'
@@ -58,7 +58,7 @@ type ScreenState =
   | 'ok';
 
 export default function CirclePresenceScreen() {
-  const bottomInset = useBottomInset();
+  const bottomInset = usePlainBottomInset();
   const { userId } = useSession();
   const params = useLocalSearchParams<{
     contextType?: string;

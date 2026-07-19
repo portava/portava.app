@@ -5,7 +5,8 @@ import { ScreenHeader } from '../ScreenHeader.tsx';
 import { getBlockList, unblockUser, type BlockedUser } from '../../services/blocks.ts';
 import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { NavBarFiller, useNavBarScrollHandler } from '../../hooks/useNavBarCollapse.ts';
+import { useNavBarScrollHandler } from '../../hooks/useNavBarCollapse.ts';
+import { PlainBottomFiller } from '../../hooks/useBottomInset.ts';
 
 export function SocialSafetyControlsScreen() {
   const { removeBlock } = useBlockedIds();
@@ -48,7 +49,7 @@ export function SocialSafetyControlsScreen() {
             keyExtractor={(item) => item.id}
             onScroll={navBarScrollHandler}
             scrollEventThrottle={16}
-            ListFooterComponent={<NavBarFiller />}
+            ListFooterComponent={<PlainBottomFiller />}
             renderItem={({ item }) => (
               <View style={s.row}>
                 {item.avatarUrl ? (

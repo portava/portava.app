@@ -33,7 +33,7 @@ import { resolveAvailabilityChip } from '../../src/lib/availabilityChip';
 import { PassportIdentityCard, PassportStatsRow } from '../../src/components/passport/PassportIdentityCard';
 import { PassportDivider } from '../../src/components/passport/PassportDivider';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
-import { useBottomInset } from '../../src/hooks/useBottomInset';
+import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 
 // Tab order is resolved from the owner's saved preference at render time.
 
@@ -121,7 +121,7 @@ export default function PassportDeepLinkScreen() {
   const [availStatusSheetOpen, setAvailStatusSheetOpen] = useState(false);
   const insets = useSafeAreaInsets();
   const navBarScrollHandler = useNavBarScrollHandler();
-  const bottomInset = useBottomInset();
+  const bottomInset = usePlainBottomInset();
 
   // Availability chip — computed from public profile fields when the API returns them.
   // homeCity visibility: show only when the profile makes it public (homeCity present).
