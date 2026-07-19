@@ -23,6 +23,7 @@ import {
   startCall as apiStart, acceptCall as apiAccept, declineCall as apiDecline,
   endCall as apiEnd, joinCall as apiJoin, leaveCall as apiLeave, getActiveCall,
   startGroupCall as apiStartGroup, getCall as apiGetCall,
+  setHandRaised as apiSetHand,
   type CallJoinGrant, type CallSessionDto, type CallContextType as CallCtxType, type CallType,
   type CallParticipantDto,
 } from '../services/calls.ts';
@@ -91,6 +92,10 @@ export interface CallState {
   participantCount: number;
   /** Group rooms: user ids currently speaking (active-speaker indicator). */
   activeSpeakerIds: string[];
+  /** Event rooms: my room role (host | cohost | speaker | listener). */
+  myRole: string | null;
+  /** Event rooms: whether my own hand is raised. */
+  handRaised: boolean;
 }
 
 export interface CallActions {
@@ -105,6 +110,16 @@ export interface CallActions {
    * starts: if a room is already live, this lands the caller in it.
    */
   startCrewCall(input: { tripId: string }): Promise<boolean>;
+  /** Host/co-host: open the event's voice room (server enforces host-only). */
+  startEventRoom(input: { eventId: string }): Promise<boolean>;
+  /** Attendees: join a live event voice room by call id (listener by default). */
+  joinEventRoom(input: { callId: string }): Promise<boolean>;
+  /** Event rooms: raise or lower my hand. */
+  setHandRaised(raised: boolean): Promise<void>;
+  /** Realtime: my role changed (promotion/demotion) — refresh grant + media. */
+  noteRoleChanged(callId: string, userId: string, role: string): void;
+  /** Realtime: I was removed from the room — leave immediately. */
+  noteRemovedFromRoom(callId: string): void;
   /** Realtime layer delivers incoming-call events here (spec §11). */
   presentIncomingCall(info: IncomingCallInfo): void;
   /**
@@ -133,6 +148,7 @@ const INITIAL: CallState = {
   phase: 'idle', session: null, incoming: null, peer: null, minimized: false,
   micMuted: false, cameraOn: false, speakerOn: false, elapsedSec: 0, error: null,
   participants: [], participantCount: 0, activeSpeakerIds: [],
+  myRole: null, handRaised: false,
 };
 
 /** Poll cadence for the group participant list while in a crew room. */
@@ -303,6 +319,80 @@ export function CallProvider({
       return true;
     },
 
+    async startEventRoom(input) {
+      if (sessionRef.current) return false; // multiple-call prevention
+      const res = await apiStartGroup({ contextType: 'event', contextId: input.eventId });
+      if (!res.ok || !res.data) {
+        patch({ error: friendlyStartError(res.error) });
+        return false;
+      }
+      const ok = await connectMedia(res.data, false);
+      if (!ok) return false;
+      await bridge?.setSpeakerphone(true).catch(() => {});
+      patch({ speakerOn: true, myRole: res.data.role ?? 'host', handRaised: false });
+      startGroupRosterPoll(res.data.session.id);
+      return true;
+    },
+
+    async joinEventRoom(input) {
+      if (sessionRef.current) return false; // multiple-call prevention
+      const res = await apiJoin(input.callId);
+      if (!res.ok || !res.data) {
+        patch({ error: friendlyStartError(res.error) });
+        return false;
+      }
+      const ok = await connectMedia(res.data, false);
+      if (!ok) return false;
+      // Listeners join subscribe-only; keep the local mic state honest.
+      const listener = res.data.role === 'listener';
+      if (listener) await bridge?.setMicEnabled(false).catch(() => {});
+      await bridge?.setSpeakerphone(true).catch(() => {});
+      patch({
+        speakerOn: true, myRole: res.data.role ?? null,
+        micMuted: listener, handRaised: false,
+      });
+      startGroupRosterPoll(res.data.session.id);
+      return true;
+    },
+
+    async setHandRaised(raised) {
+      const s = sessionRef.current;
+      if (!s) return;
+      const res = await apiSetHand(s.id, raised);
+      if (res.ok) patch({ handRaised: raised });
+    },
+
+    noteRoleChanged(callId, userId, role) {
+      const s = sessionRef.current;
+      if (!s || s.id !== callId) return;
+      void (async () => {
+        let me: string | null = null;
+        try {
+          const { data } = await supabase.auth.getUser();
+          me = data?.user?.id ?? null;
+        } catch { me = null; }
+        if (me && userId === me) {
+          // My grant changed (promotion enables publishing; demotion revokes
+          // it server-side). Re-join for a fresh token and reconnect media.
+          const fresh = await apiJoin(callId);
+          if (fresh.ok && fresh.data && sessionRef.current?.id === callId) {
+            try {
+              await bridge?.connect({ url: fresh.data.livekitUrl, token: fresh.data.token, videoEnabled: false });
+            } catch { /* transport self-heals via onConnectionState */ }
+            const listener = fresh.data.role === 'listener';
+            if (listener) await bridge?.setMicEnabled(false).catch(() => {});
+            patch({ myRole: fresh.data.role ?? null, handRaised: false, micMuted: listener });
+          }
+        }
+        void refreshGroupRoster(callId);
+      })();
+    },
+
+    noteRemovedFromRoom(callId) {
+      if (sessionRef.current?.id !== callId) return;
+      void teardown('You were removed from this room.');
+    },
+
     presentIncomingCall(info) { presentIncoming(info); },
 
     dismissIncoming() {
@@ -436,7 +526,7 @@ export function CallProvider({
         patch({ minimized: true });
       }
     },
-  }), [bridge, clearRing, clearTimers, connectMedia, patch, presentIncoming, ringTimeoutMs, startGroupRosterPoll, state.cameraOn, state.incoming, state.micMuted, state.speakerOn, teardown]);
+  }), [bridge, clearRing, clearTimers, connectMedia, patch, presentIncoming, refreshGroupRoster, ringTimeoutMs, startGroupRosterPoll, state.cameraOn, state.incoming, state.micMuted, state.speakerOn, teardown]);
 
   return (
     <StateCtx.Provider value={state}>
@@ -468,6 +558,18 @@ function friendlyStartError(reason: string | undefined): string {
     case 'Backend not configured':
     case 'Not authenticated':
       return 'Calling is unavailable right now.';
+    case 'not_event_host':
+      return 'Only the event host can start the voice room.';
+    case 'not_event_eligible':
+      return 'This voice room is for event attendees.';
+    case 'age_ineligible':
+      return "This event's voice room isn't available for your age group.";
+    case 'trust_ineligible':
+      return 'Voice rooms need a higher Trust Score.';
+    case 'removed_from_room':
+      return "You can't rejoin this room.";
+    case 'room_terminated':
+      return 'This voice room has ended.';
     default:
       return reason ?? 'Could not start the call.';
   }
