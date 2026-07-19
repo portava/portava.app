@@ -46,8 +46,11 @@ export function EventCard({ ev, dim, initialSaved }: {
             // Also include the city's centroid coords so the map camera has an
             // immediate starting position while useMapEntities is still loading.
             const cityCoords = CITY_CENTROIDS[ev.city];
+            // zoom=12 gives a city-street view that keeps venue pins visible;
+            // without an explicit zoom the map screen defaults to 11 (same
+            // district level) but stating it here makes the intent unambiguous.
             const coordParams = cityCoords
-              ? `&lat=${cityCoords[0]}&lng=${cityCoords[1]}`
+              ? `&lat=${cityCoords[0]}&lng=${cityCoords[1]}&zoom=12`
               : '';
             router.push(
               `/map?entityTypes=events&focusId=${encodeURIComponent(`event:${ev.id}`)}${coordParams}` as any,

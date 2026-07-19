@@ -646,6 +646,31 @@ describe('EventCard — city coords forwarded in the /map push URL', () => {
     expect(url).toMatch(/[?&]lat=/);
     expect(url).toMatch(/[?&]lng=/);
   });
+
+  it('appends zoom=12 alongside city coords so the map opens at city-street level', async () => {
+    // zoom=12 keeps venue pins visible (city-street view).  Without an explicit
+    // zoom the map screen defaults to 11 — close enough, but stating 12 here
+    // makes the intent unambiguous and prevents a future default-change from
+    // silently breaking the fallback experience.
+    await render(<EventCard ev={makeEvent('zoom-check-id')} />);
+
+    fireEvent.press(screen.getByText('View on map'));
+
+    const url = mockPush.mock.calls[0][0] as string;
+    expect(url).toMatch(/[?&]zoom=12(&|$)/);
+  });
+
+  it('omits zoom when the city is not in the centroid map', async () => {
+    // No city coords → no zoom override needed; the map falls back to its own
+    // default and the user's GPS coords as normal.
+    const unknownCityEvent = { ...makeEvent('no-zoom-id'), city: 'Atlantis' };
+    await render(<EventCard ev={unknownCityEvent} />);
+
+    fireEvent.press(screen.getByText('View on map'));
+
+    const url = mockPush.mock.calls[0][0] as string;
+    expect(url).not.toMatch(/[?&]zoom=/);
+  });
 });
 
 // ── 10. PermissionPrompt shown when permission is denied and no coords at all ───
