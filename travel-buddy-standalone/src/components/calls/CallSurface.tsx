@@ -11,6 +11,7 @@ import { useCallState, useCallActions } from '../../context/CallContext.tsx';
 import { useSession } from '../../context/SessionContext.tsx';
 import { IncomingCallScreen } from './IncomingCallScreen.tsx';
 import { OutgoingCallScreen } from './OutgoingCallScreen.tsx';
+import { GroupCallScreen } from './GroupCallScreen.tsx';
 import { ActiveCallPill } from './ActiveCallPill.tsx';
 import { ensureCallMediaPermissions } from '../../services/callPermissions.ts';
 
@@ -43,7 +44,12 @@ export function CallSurface() {
 
   const inCall = IN_CALL_PHASES.has(state.phase);
   const isVideo = state.session?.callType === 'video';
+  const isGroup = state.session?.callType === 'group_voice';
   const peerName = state.peer?.name ?? 'Traveler';
+  const groupCount = Math.max(state.participantCount, 1);
+  const pillLabel = isGroup
+    ? `Crew Call · ${groupCount} ${groupCount === 1 ? 'person' : 'people'}`
+    : `Call with ${peerName}`;
 
   async function acceptWith(asVideo: boolean) {
     const inc = state.incoming;
@@ -64,8 +70,23 @@ export function CallSurface() {
         onDecline={() => { void actions.decline(); }}
       />
 
+      <GroupCallScreen
+        visible={inCall && !state.minimized && isGroup}
+        phase={state.phase}
+        elapsedSec={state.elapsedSec}
+        participants={state.participants}
+        participantCount={state.participantCount}
+        activeSpeakerIds={state.activeSpeakerIds}
+        micMuted={state.micMuted}
+        speakerOn={state.speakerOn}
+        onToggleMute={() => { void actions.toggleMute(); }}
+        onToggleSpeaker={() => { void actions.toggleSpeaker(); }}
+        onHangUp={() => { void actions.hangUp(); }}
+        onMinimize={() => actions.setMinimized(true)}
+      />
+
       <OutgoingCallScreen
-        visible={inCall && !state.minimized}
+        visible={inCall && !state.minimized && !isGroup}
         phase={state.phase}
         isVideo={!!isVideo}
         elapsedSec={state.elapsedSec}
@@ -85,7 +106,7 @@ export function CallSurface() {
       {inCall && state.minimized ? (
         <View style={[s.pillWrap, { top: insets.top }]} pointerEvents="box-none">
           <ActiveCallPill
-            label={`Call with ${peerName}`}
+            label={pillLabel}
             elapsedSec={state.elapsedSec}
             micMuted={state.micMuted}
             reconnecting={state.phase === 'reconnecting'}
