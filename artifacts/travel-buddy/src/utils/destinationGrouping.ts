@@ -99,12 +99,19 @@ export function groupByDestination(
 
   // --- Stamps (city-kind only, matched by label) ---
   const cityStamps = stamps.filter((s) => s.kind === 'city' && !s.locked);
+  const normCity = (v: string) => v.normalize('NFC').toLowerCase();
   for (const s of cityStamps) {
-    // Try to match stamp label to an existing destination (case-insensitive)
-    for (const group of map.values()) {
-      if (group.city.toLowerCase() === s.label.toLowerCase()) {
-        group.stamps.push(s);
-        break;
+    // Prefer matching the stamp's source city (v2 pipeline), falling back to
+    // the display label for legacy stamps that only carry a label.
+    // Labels can diverge from the city name (definition names, title overrides),
+    // so `city` is the authoritative match key when present.
+    const candidates = [s.city, s.label].filter(Boolean) as string[];
+    outer: for (const candidate of candidates) {
+      for (const group of map.values()) {
+        if (normCity(group.city) === normCity(candidate)) {
+          group.stamps.push(s);
+          break outer;
+        }
       }
     }
   }
