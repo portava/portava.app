@@ -436,6 +436,30 @@ describe('getCityCentroid — compound / parenthesised / suffixed city strings',
     assert.ok(Math.abs(lat - 61.4978) < 2, `lat ${lat} implausibly far from Tampere`);
     assert.ok(Math.abs(lng - 23.7610) < 2, `lng ${lng} implausibly far from Tampere`);
   });
+
+  it('"Tampere, Finland" resolves to identical coords as bare "Tampere"', () => {
+    const bare = getCityCentroid('Tampere');
+    const suffixed = getCityCentroid('Tampere, Finland');
+    assert.ok(bare !== undefined, '"Tampere" should resolve');
+    assert.ok(suffixed !== undefined, '"Tampere, Finland" should resolve');
+    assert.deepEqual(suffixed, bare, '"Tampere, Finland" must produce the same coordinates as "Tampere"');
+  });
+
+  it('"Osaka, Japan" resolves to identical coords as bare "Osaka"', () => {
+    const bare = getCityCentroid('Osaka');
+    const suffixed = getCityCentroid('Osaka, Japan');
+    assert.ok(bare !== undefined, '"Osaka" should resolve');
+    assert.ok(suffixed !== undefined, '"Osaka, Japan" should resolve — country suffix not stripped');
+    assert.deepEqual(suffixed, bare, '"Osaka, Japan" must produce the same coordinates as "Osaka"');
+  });
+
+  it('"Singapore, Singapore" resolves to identical coords as bare "Singapore"', () => {
+    const bare = getCityCentroid('Singapore');
+    const suffixed = getCityCentroid('Singapore, Singapore');
+    assert.ok(bare !== undefined, '"Singapore" should resolve');
+    assert.ok(suffixed !== undefined, '"Singapore, Singapore" should resolve');
+    assert.deepEqual(suffixed, bare, '"Singapore, Singapore" must produce the same coordinates as "Singapore"');
+  });
 });
 
 describe('getCityCentroid — country-name fallback', () => {
