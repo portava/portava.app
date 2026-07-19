@@ -152,9 +152,12 @@ export function useCallActions(): CallActions {
 
 export function CallProvider({
   bridge, children,
+  ringTimeoutMs = RING_TIMEOUT_MS,
 }: {
   bridge?: LiveKitBridge | null;
   children: React.ReactNode;
+  /** Override the 45s ring mirror for unit tests (pass a small value). */
+  ringTimeoutMs?: number;
 }) {
   const [state, setState] = useState<CallState>(INITIAL);
   const ringTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -257,8 +260,8 @@ export function CallProvider({
     if (ringTimer.current) clearTimeout(ringTimer.current);
     ringTimer.current = setTimeout(() => {
       setState((s) => (s.phase === 'incoming_ringing' ? { ...INITIAL } : s));
-    }, RING_TIMEOUT_MS);
-  }, [patch]);
+    }, ringTimeoutMs);
+  }, [patch, ringTimeoutMs]);
 
   const actions = useMemo<CallActions>(() => ({
     async startDirectCall(input) {
@@ -279,7 +282,7 @@ export function CallProvider({
       ringTimer.current = setTimeout(() => {
         void apiEnd(grant.session.id).catch(() => {});
         void teardown('No answer');
-      }, RING_TIMEOUT_MS);
+      }, ringTimeoutMs);
       // Caller connects immediately and waits in-room for the callee.
       return connectMedia(grant, input.callType === 'video', { awaitAccept: true });
     },
@@ -323,9 +326,12 @@ export function CallProvider({
       if (sessionRef.current?.id !== callId) return;
       holdRinging.current = false;
       clearRing();
-      setState((s) => (s.phase === 'outgoing_ringing' || s.phase === 'connecting'
-        ? { ...s, phase: 'connected' }
-        : s));
+      // Use patch (unconditional spread) rather than a conditional setState
+      // updater. The sessionRef guard above already ensures we are in
+      // outgoing_ringing when this fires; patch avoids a React 19 concurrent-
+      // mode quirk where a conditional updater whose strict-mode double-invoke
+      // returns the same reference as the first call can defer the commit.
+      patch({ phase: 'connected' });
     },
 
     endLocallyWithNotice(notice) { void teardown(notice); },
@@ -430,7 +436,7 @@ export function CallProvider({
         patch({ minimized: true });
       }
     },
-  }), [bridge, clearRing, clearTimers, connectMedia, patch, presentIncoming, startGroupRosterPoll, state.cameraOn, state.incoming, state.micMuted, state.speakerOn, teardown]);
+  }), [bridge, clearRing, clearTimers, connectMedia, patch, presentIncoming, ringTimeoutMs, startGroupRosterPoll, state.cameraOn, state.incoming, state.micMuted, state.speakerOn, teardown]);
 
   return (
     <StateCtx.Provider value={state}>
