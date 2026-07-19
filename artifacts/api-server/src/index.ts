@@ -12,6 +12,7 @@ import { startDiscoveryCacheWarmer } from "./lib/discoveryWarmup";
 import { startPushRetryWorker, queryPushRetryHealth } from "./lib/pushRetryWorker";
 import { startZombieTokenSweeper } from "./lib/zombieTokenSweeper";
 import { startEventWaitlistSweeper } from "./lib/eventWaitlistSweeper";
+import { startCallSweepScheduler } from "./lib/callSweepScheduler";
 import { startTripReminderScheduler } from "./lib/tripReminderScheduler";
 import { startInviteSlotReconciler } from "./lib/inviteSlotReconciler";
 import { startInviteSlotSweeper } from "./lib/inviteSlotSweeper";
@@ -56,6 +57,7 @@ app.listen(port, (err) => {
   startPushRetryWorker();
   startZombieTokenSweeper();
   startEventWaitlistSweeper();
+  startCallSweepScheduler();
   startTripReminderScheduler();
   startInviteSlotReconciler();
   startInviteSlotSweeper();

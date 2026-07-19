@@ -5,6 +5,7 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 import { specAliasRewrite } from "./lib/specAliasRewrite";
 import { BOOT_HRTIME } from "./lib/bootTime";
+import { callsWebhookHandler, callsWebhookRawParser } from "./routes/callsWebhook";
 
 const app: Express = express();
 
@@ -40,6 +41,9 @@ app.use(
 );
 app.use(coldStartMiddleware);
 app.use(cors());
+// LiveKit webhook needs the RAW body for signature verification — must be
+// registered BEFORE the global JSON parser consumes it.
+app.post("/api/calls/webhook", callsWebhookRawParser, callsWebhookHandler);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

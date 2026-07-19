@@ -77,6 +77,7 @@ import postcardsRouter from "./postcards";
 import engagementRouter from "./engagement";
 import circleRouter from "./circle";
 import rankEventsRouter from "./rankEvents";
+import callsRouter from "./calls";
 
 const router: IRouter = Router();
 
@@ -158,5 +159,6 @@ router.use(searchHistoryRouter);
 router.use(engagementRouter);
 router.use(circleRouter);
 router.use(rankEventsRouter);
+router.use(callsRouter);
 
 export default router;

@@ -343,7 +343,7 @@ async function promoteNextWaitlisted(sc: any, eventId: string): Promise<void> {
 type EligibilityOk   = { ok: true };
 type EligibilityFail = { ok: false; errorCode: string; message: string };
 
-async function checkEventEligibility(
+export async function checkEventEligibility(
   sc: any,
   ev: any,            // full events row (must include host_id, age_min, age_max, trust_score_min, verified_only)
   userId: string,

@@ -11,7 +11,7 @@
  * Requires: `livekit-server-sdk` in api-server dependencies and secrets
  * LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET.
  */
-import { AccessToken, RoomServiceClient, WebhookReceiver } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient, TrackSource, WebhookReceiver } from 'livekit-server-sdk';
 import { randomBytes } from 'node:crypto';
 import { CALL_CONFIG } from './callTypes';
 
@@ -71,7 +71,7 @@ export async function mintCallToken(opts: {
     canPublishData: true,
     canPublishSources: opts.allowVideo
       ? undefined // all sources
-      : ['microphone' as any], // audio-only grant
+      : [TrackSource.MICROPHONE], // audio-only grant (SDK v2 requires the enum)
   });
   return await at.toJwt();
 }

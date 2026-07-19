@@ -144,6 +144,17 @@ export const TEMPLATES: NotificationTemplate[] = [
     actionUrl: ({ tripId }) => `/trip/${tripId}`,
   }),
 
+  // ── Calls ──────────────────────────────────────────────────────────────────
+  tpl({
+    eventType: 'call.incoming',
+    category: 'telegraph',
+    defaultPriority: 'important',
+    defaultChannels: ['in_app', 'push'],
+    title: ({ actor }) => `${actor ?? 'Someone'} is calling you`,
+    body: ({ callKind }) => `Incoming ${callKind ?? 'call'}`,
+    actionUrl: ({ threadId }) => (threadId ? `/messages/${threadId}` : '/notifications'),
+  }),
+
   // ── Telegraph ──────────────────────────────────────────────────────────────
   tpl({
     eventType: 'telegraph.message',

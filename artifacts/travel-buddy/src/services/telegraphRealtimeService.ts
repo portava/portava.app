@@ -30,7 +30,13 @@ export type TelegraphEventType =
   | 'request.created'
   | 'request.accepted'
   | 'request.declined'
-  | 'user.blocked';
+  | 'user.blocked'
+  | 'call.incoming'
+  | 'call.accepted'
+  | 'call.declined'
+  | 'call.canceled'
+  | 'call.ended'
+  | 'call.missed';
 
 export interface TelegraphEvent {
   type: TelegraphEventType;

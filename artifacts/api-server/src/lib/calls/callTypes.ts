@@ -64,6 +64,10 @@ export const CALL_CONFIG = {
   REDIAL_COOLDOWN_MS: 60_000,
   /** Max call starts per caller per hour (rate-limit backstop). */
   MAX_STARTS_PER_HOUR: 30,
+  /** Cadence of the periodic open-session sweep (ring expiry / 4h cap). */
+  SWEEP_INTERVAL_MS: 30_000,
+  /** Delay before the first sweep after server boot. */
+  SWEEP_STARTUP_DELAY_MS: 20_000,
 } as const;
 
 /** Reasons the permission engine can deny with — stable codes for clients/tests. */

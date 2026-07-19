@@ -97,6 +97,21 @@ router.post("/users/:userId/block", async (req, res) => {
     type: "user.blocked",
     payload: { blockedId: target },
   });
+
+  // Blocking mid-call force-ends any open direct call between the two users
+  // (server-side room termination + call.ended to both). Fire-and-forget.
+  if (sc) {
+    void (async () => {
+      try {
+        const { livekitEnvStatus, makeRoomAdmin, readLivekitEnv } = await import("../lib/calls/livekitService.js");
+        if (!livekitEnvStatus().ok) return;
+        const { forceEndDirectCallsBetween } = await import("../lib/calls/callSignaling.js");
+        await forceEndDirectCallsBetween(sc, makeRoomAdmin(readLivekitEnv()), user.id, target);
+      } catch (err) {
+        req.log.warn({ err }, "force-end calls after block failed (non-critical)");
+      }
+    })();
+  }
 });
 
 /* ===========================================================================

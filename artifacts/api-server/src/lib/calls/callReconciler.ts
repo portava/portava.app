@@ -34,7 +34,7 @@ export interface RoomAdminPort {
   endRoom(roomName: string): Promise<void>;
 }
 
-async function applyEvent(
+export async function applyEvent(
   store: CallStore, admin: RoomAdminPort,
   session: CallSession & { roomName: string },
   event: CallEvent, nowIso: string,
@@ -67,6 +67,14 @@ export async function reconcileWebhookEvent(
     case 'participant_joined': {
       const userId = evt.participant?.identity;
       if (userId) await store.markParticipantJoined(session.id, userId, nowIso);
+      // A direct call only becomes `active` when someone OTHER than the caller
+      // joins. The caller's client joins the room immediately after starting
+      // the call, and that self-join must not consume the `ringing` state —
+      // otherwise ring-timeout sweeps (which only sweep `ringing`) can never
+      // mark the call missed, and the callee's DECLINE (invalid from `active`)
+      // is stranded. Group rooms activate on any join by design.
+      const isDirect = session.callType === 'voice' || session.callType === 'video';
+      if (isDirect && (!userId || userId === session.startedBy)) return;
       await applyEvent(store, admin, session, { type: 'CONNECTED' }, nowIso);
       return;
     }

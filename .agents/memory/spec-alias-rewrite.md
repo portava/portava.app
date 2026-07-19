@@ -10,3 +10,6 @@ The API server rewrites alias URL families (e.g. `/api/buddy-bookings/*` → `/a
 **Why:** two parallel change-request/rebook implementations diverged this way; blocked-date checks had to be duplicated and the dead-path copies silently masked which code actually served production.
 
 **How to apply:** when adding/testing rent-a-buddy routes, mount `specAliasRewrite` in the test app and hit the alias URLs the mobile client actually calls; keep one canonical handler per endpoint.
+
+## Routing rule (durable)
+Routers are mounted via `app.use("/api", router)`. Only RELATIVE registrations (`router.get("/calls/...")`) are reachable at `/api/<path>`; absolute `/api/...` registrations land at `/api/api/*` and are dead through the domain/proxy. Always register relative paths and smoke-test through the real dev domain, not localhost (stale local processes can answer on other ports).

@@ -23,6 +23,9 @@
     "lint:ksv": "node scripts/check-ksv-inner-scroll.mjs"
   },
   "dependencies": {
+    "@livekit/react-native": "^2.11.1",
+    "@livekit/react-native-expo-plugin": "^1.0.2",
+    "@livekit/react-native-webrtc": "^144.1.1",
     "@maplibre/maplibre-react-native": "11.3.6",
     "@react-native-community/datetimepicker": "8.4.4",
     "@react-native-community/slider": "5.0.1",

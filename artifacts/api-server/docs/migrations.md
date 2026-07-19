@@ -1,0 +1,14 @@
+# Applied migrations — live database record
+
+The live Supabase database is migrated via the Management API
+(`POST /v1/projects/{ref}/database/query`, token `SUPABASE_ACCESS_TOKEN`);
+direct psql/pooler connections are unreachable from this workspace.
+Record every migration here once applied and verified against
+`information_schema`.
+
+| Migration | Applied | Verified |
+| --- | --- | --- |
+| `0155_calling_system.sql` | 2026-07-19 (Phase 1 — calling integration backbone) | `call_sessions`, `call_participants`, `call_preferences` present with constraints + RLS confirmed via `information_schema` / `pg_policies` |
+
+Earlier migrations (`0001`–`0154`) predate this record and are live; see the
+legacy migration reconciliation notes for the history of the legacy directory.
