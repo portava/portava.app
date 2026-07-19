@@ -329,6 +329,8 @@ function mapBooking(row: any) {
     startedAt: row.started_at,
     completedAt: row.completed_at,
     telegraphThreadId: row.telegraph_thread_id,
+    stayConnectedTraveler: !!row.stay_connected_traveler,
+    stayConnectedBuddy: !!row.stay_connected_buddy,
     isTest: !!row.is_test_booking,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

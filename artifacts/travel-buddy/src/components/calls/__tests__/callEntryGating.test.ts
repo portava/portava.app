@@ -54,6 +54,34 @@ describe('canShowThreadCallButtons — RAB booking threads', () => {
       );
     }
   });
+  it('shows for completed bookings only when BOTH parties stayed connected', () => {
+    const completed = { ...base, threadType: 'rent_buddy_booking', rabBookingStatus: 'completed' };
+    assert.equal(
+      canShowThreadCallButtons({ ...completed, rabStayConnectedTraveler: true, rabStayConnectedBuddy: true }),
+      true,
+    );
+    assert.equal(
+      canShowThreadCallButtons({ ...completed, rabStayConnectedTraveler: true, rabStayConnectedBuddy: false }),
+      false,
+    );
+    assert.equal(
+      canShowThreadCallButtons({ ...completed, rabStayConnectedTraveler: false, rabStayConnectedBuddy: true }),
+      false,
+    );
+    assert.equal(canShowThreadCallButtons(completed), false);
+  });
+  it('stay-connected flags do not unlock non-completed ineligible statuses', () => {
+    for (const status of ['cancelled', 'requested', 'expired']) {
+      assert.equal(
+        canShowThreadCallButtons({
+          ...base, threadType: 'rent_buddy_booking', rabBookingStatus: status,
+          rabStayConnectedTraveler: true, rabStayConnectedBuddy: true,
+        }),
+        false,
+        status,
+      );
+    }
+  });
   it('hides while the booking status is still loading', () => {
     assert.equal(
       canShowThreadCallButtons({ ...base, threadType: 'rent_buddy_booking', rabBookingStatus: null }),
