@@ -12,7 +12,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { CITY_CENTROIDS, getCityCentroid } from '../cityCentroids.ts';
+import { CITY_CENTROIDS, CITY_ALIASES, getCityCentroid } from '../cityCentroids.ts';
 
 describe('CITY_CENTROIDS — coordinate validity', () => {
   const entries = Object.entries(CITY_CENTROIDS);
@@ -393,5 +393,93 @@ describe('getCityCentroid — compound / parenthesised / suffixed city strings',
     const [lat, lng] = coords;
     assert.ok(Math.abs(lat - 40.7128) < 2, `lat ${lat} implausibly far from New York`);
     assert.ok(Math.abs(lng - (-74.0060)) < 2, `lng ${lng} implausibly far from New York`);
+  });
+});
+
+describe('getCityCentroid — alias fallback', () => {
+  it('resolves "Cebu" (no suffix) to the same coords as "Cebu City"', () => {
+    const alias = getCityCentroid('Cebu');
+    const canonical = getCityCentroid('Cebu City');
+    assert.ok(alias !== undefined, '"Cebu" returned undefined — alias lookup failed');
+    assert.deepEqual(alias, canonical, '"Cebu" should resolve to the same coords as "Cebu City"');
+  });
+
+  it('resolves "cebu" (lowercase) via the alias path', () => {
+    const coords = getCityCentroid('cebu');
+    assert.ok(coords !== undefined, '"cebu" (lowercase) returned undefined — alias normalisation failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 10.3157) < 2, `lat ${lat} implausibly far from Cebu City`);
+    assert.ok(Math.abs(lng - 123.8854) < 2, `lng ${lng} implausibly far from Cebu City`);
+  });
+
+  it('resolves "CEBU" (uppercase) via the alias path', () => {
+    const coords = getCityCentroid('CEBU');
+    assert.ok(coords !== undefined, '"CEBU" (uppercase) returned undefined — alias normalisation failed');
+  });
+
+  it('resolves "Davao" to the same coords as "Davao City"', () => {
+    const alias = getCityCentroid('Davao');
+    const canonical = getCityCentroid('Davao City');
+    assert.ok(alias !== undefined, '"Davao" returned undefined — alias lookup failed');
+    assert.deepEqual(alias, canonical);
+  });
+
+  it('resolves "HCMC" to the same coords as "Ho Chi Minh City"', () => {
+    const alias = getCityCentroid('HCMC');
+    const canonical = getCityCentroid('Ho Chi Minh City');
+    assert.ok(alias !== undefined, '"HCMC" returned undefined — alias lookup failed');
+    assert.deepEqual(alias, canonical);
+  });
+
+  it('resolves "Ho Chi Minh" (no "City") via the alias path', () => {
+    const coords = getCityCentroid('Ho Chi Minh');
+    assert.ok(coords !== undefined, '"Ho Chi Minh" returned undefined — alias lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 10.8231) < 2, `lat ${lat} implausibly far from Ho Chi Minh City`);
+    assert.ok(Math.abs(lng - 106.6297) < 2, `lng ${lng} implausibly far from Ho Chi Minh City`);
+  });
+
+  it('resolves "Bombay" to Mumbai coords via the alias path', () => {
+    const alias = getCityCentroid('Bombay');
+    const canonical = getCityCentroid('Mumbai');
+    assert.ok(alias !== undefined, '"Bombay" returned undefined — alias lookup failed');
+    assert.deepEqual(alias, canonical);
+  });
+
+  it('resolves "Madras" to Chennai coords via the alias path', () => {
+    const alias = getCityCentroid('Madras');
+    const canonical = getCityCentroid('Chennai');
+    assert.ok(alias !== undefined, '"Madras" returned undefined — alias lookup failed');
+    assert.deepEqual(alias, canonical);
+  });
+
+  it('resolves "CDMX" to Mexico City coords via the alias path', () => {
+    const alias = getCityCentroid('CDMX');
+    const canonical = getCityCentroid('Mexico City');
+    assert.ok(alias !== undefined, '"CDMX" returned undefined — alias lookup failed');
+    assert.deepEqual(alias, canonical);
+  });
+
+  it('resolves "LA" to Los Angeles coords via the alias path', () => {
+    const alias = getCityCentroid('LA');
+    const canonical = getCityCentroid('Los Angeles');
+    assert.ok(alias !== undefined, '"LA" returned undefined — alias lookup failed');
+    assert.deepEqual(alias, canonical);
+  });
+
+  it('still returns undefined for an unknown alias', () => {
+    const coords = getCityCentroid('atlantis');
+    assert.equal(coords, undefined, 'Expected undefined for unknown city "atlantis"');
+  });
+
+  it('all CITY_ALIASES values resolve to a known CITY_CENTROIDS key', () => {
+    const bad: string[] = [];
+    for (const [alias, canonical] of Object.entries(CITY_ALIASES)) {
+      const coords = getCityCentroid(canonical);
+      if (coords === undefined) {
+        bad.push(`alias "${alias}" → canonical "${canonical}" has no CITY_CENTROIDS entry`);
+      }
+    }
+    assert.deepEqual(bad, [], `Broken aliases:\n${bad.join('\n')}`);
   });
 });

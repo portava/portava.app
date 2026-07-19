@@ -265,8 +265,99 @@ export const CITY_CENTROIDS: Record<string, [number, number]> = {
 
   // ── Oceania ──────────────────────────────────────────────────────────────────
   'Auckland':         [-36.8509,  174.7645],
+  'Brisbane':         [-27.4698,  153.0251],
   'Melbourne':        [-37.8136,  144.9631],
+  'Perth':            [-31.9505,  115.8605],
   'Sydney':           [-33.8688,  151.2093],
+
+  // ── North America (additional) ───────────────────────────────────────────────
+  'Washington DC':    [38.9072,   -77.0369],
+  'Washington D.C.':  [38.9072,   -77.0369],
+  'Atlanta':          [33.7490,   -84.3880],
+  'Dallas':           [32.7767,   -96.7970],
+  'Houston':          [29.7604,   -95.3698],
+  'Minneapolis':      [44.9778,   -93.2650],
+  'Phoenix':          [33.4484,  -112.0740],
+  'Portland':         [45.5051,  -122.6750],
+};
+
+/**
+ * Alternate-spelling aliases that are NOT already direct entries in
+ * CITY_CENTROIDS.  Each key is the lowercased alias; the value is the
+ * corresponding canonical CITY_CENTROIDS key.
+ *
+ * Use this map for short forms, colloquial names, and common partner-API
+ * variants that arrive without the "City" suffix or with a different
+ * romanisation.  Aliases are tried after the full normalised lookup fails,
+ * so there is no risk of shadowing an explicit entry.
+ *
+ * Keys must be pre-lowercased (to match the normalised lookup step).
+ */
+export const CITY_ALIASES: Record<string, string> = {
+  // Philippines — "City" suffix frequently dropped by partner APIs
+  'cebu':            'Cebu City',
+  'davao':           'Davao City',
+  'quezon':          'Quezon City',
+
+  // Vietnam — short colloquial forms
+  'ho chi minh':     'Ho Chi Minh City',
+  'hcmc':            'Ho Chi Minh City',
+  'saigon':          'Ho Chi Minh City',   // also a direct entry, belt-and-suspenders
+
+  // Philippines / Malaysia — alternative romanisations
+  'george town':     'George Town',         // already canonical; kept as example
+
+  // Kazakhstan — renamed capital
+  'nur-sultan':      'Nur-Sultan',          // already canonical; kept for clarity
+  'nursultan':       'Nur-Sultan',
+
+  // Ukraine — legacy romanisation still common in partner data
+  'kiev':            'Kyiv',               // also a direct entry, belt-and-suspenders
+
+  // Indonesia — "Kota" prefix variant
+  'kota bandung':    'Bandung',
+  'kota surabaya':   'Surabaya',
+
+  // India — common abbreviations / alternate romanisations
+  'bengaluru':       'Bangalore',           // also a direct entry; belt-and-suspenders
+  'bombay':          'Mumbai',
+  'madras':          'Chennai',
+  'calcutta':        'Kolkata',             // also a direct entry; belt-and-suspenders
+  'new delhi':       'New Delhi',           // already canonical; kept for clarity
+
+  // Mexico / Central America — full-name variants
+  'cdmx':            'Mexico City',
+  'ciudad de mexico': 'Mexico City',
+
+  // Colombia — diacritic-free variants (partner APIs often strip accents)
+  'medellin':        'Medellín',            // also a direct entry; belt-and-suspenders
+  'bogota':          'Bogotá',              // also a direct entry; belt-and-suspenders
+
+  // Brazil
+  'sao paulo':       'São Paulo',           // also a direct entry; belt-and-suspenders
+
+  // Canada
+  'montreal':        'Montréal',            // also a direct entry; belt-and-suspenders
+
+  // USA — informal short forms
+  'new york city':   'New York',            // already canonical via NYC entry
+  'nyc':             'New York',            // also a direct entry; belt-and-suspenders
+  'la':              'Los Angeles',
+  'sf':              'San Francisco',
+  'chi':             'Chicago',
+  'dc':              'Washington DC',
+
+  // Oceania
+  'brisbane':        'Brisbane',
+
+  // Middle East
+  'jeddah':          'Jeddah',              // already canonical; kept for completeness
+
+  // Poland — diacritic-free variant
+  'krakow':          'Kraków',              // also a direct entry; belt-and-suspenders
+
+  // Moldova — diacritic-free variant
+  'chisinau':        'Chișinău',            // also a direct entry; belt-and-suspenders
 };
 
 /**
@@ -319,25 +410,38 @@ function splitCityTokens(raw: string): string[] {
 /**
  * Look up the [latitude, longitude] centroid for a city name.
  *
- * Accepts city strings with arbitrary casing or surrounding whitespace
- * (e.g. "tashkent", "QUITO ", "  Ho Chi Minh City  ", "xi'an", "são paulo")
- * and normalises them before consulting CITY_CENTROIDS.  Also handles compound
- * city strings such as "Kyiv/Kiev", "Bangkok (Thailand)", and "New York, NY"
- * by trying each slash-, comma-, or parenthesis-separated token in order.
- * Returns `undefined` when the city is genuinely unknown.
+ * Resolution order — applied to each token produced by splitting compound
+ * strings (e.g. "Kyiv/Kiev", "Bangkok (Thailand)", "New York, NY"):
+ *   1. Exact key match against CITY_CENTROIDS (fast path).
+ *   2. Case- and whitespace-insensitive lookup via the pre-built lower index
+ *      (handles "tashkent", "  Bangkok  ", "SÃO PAULO", etc.).
+ *   3. Alias lookup via CITY_ALIASES — catches common alternate spellings
+ *      that partner APIs or user input may supply (e.g. "Cebu" → "Cebu City",
+ *      "HCMC" → "Ho Chi Minh City").
+ *
+ * Returns `undefined` when the city is genuinely unknown after all steps.
  */
 export function getCityCentroid(city: string): [number, number] | undefined {
-  // Fast path: exact match (most callers pass a correctly-cased string).
+  // Fast path: exact match on the full string.
   if (CITY_CENTROIDS[city] !== undefined) return CITY_CENTROIDS[city];
 
-  // Split on compound separators and try each token in turn.
+  // Split compound strings and try each token with all three resolution steps.
   const tokens = splitCityTokens(city);
   for (const token of tokens) {
-    // Exact match on token.
+    // Step 1: exact match on token.
     if (CITY_CENTROIDS[token] !== undefined) return CITY_CENTROIDS[token];
-    // Case- and whitespace-insensitive lookup via the lower index.
-    const result = _lowerIndex.get(normaliseCityKey(token));
-    if (result !== undefined) return result;
+
+    // Step 2: case- and whitespace-insensitive lookup via the lower index.
+    const normKey = normaliseCityKey(token);
+    const direct = _lowerIndex.get(normKey);
+    if (direct !== undefined) return direct;
+
+    // Step 3: alias fallback — map alternate spellings to canonical names.
+    const canonicalName = CITY_ALIASES[normKey];
+    if (canonicalName !== undefined) {
+      const aliased = _lowerIndex.get(normaliseCityKey(canonicalName));
+      if (aliased !== undefined) return aliased;
+    }
   }
 
   return undefined;
