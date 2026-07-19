@@ -179,6 +179,7 @@ describe('CITY_CENTROIDS — key-level spot checks for new cities', () => {
   check('Ljubljana',    46.0569,   14.5058);
   check('Bratislava',   48.1486,   17.1077);
   check('Krakow',       50.0647,   19.9450);
+  check('Łódź',        51.7592,   19.4560);
   check('Lviv',         49.8397,   24.0297);
 });
 
@@ -521,6 +522,30 @@ describe('getCityCentroid — compound / parenthesised / suffixed city strings',
     assert.ok(bare !== undefined, '"Ho Chi Minh City" should resolve');
     assert.ok(suffixed !== undefined, '"Ho Chi Minh City, Vietnam" should resolve — country suffix not stripped');
     assert.deepEqual(suffixed, bare, '"Ho Chi Minh City, Vietnam" must produce the same coordinates as "Ho Chi Minh City"');
+  });
+
+  it('resolves country-suffixed "Łódź, Poland" to the Łódź centroid', () => {
+    const coords = getCityCentroid('Łódź, Poland');
+    assert.ok(coords !== undefined, '"Łódź, Poland" returned undefined — country-suffix stripping with stroked-letter city failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 51.7592) < 2, `lat ${lat} implausibly far from Łódź`);
+    assert.ok(Math.abs(lng - 19.4560) < 2, `lng ${lng} implausibly far from Łódź`);
+  });
+
+  it('resolves transliterated "lodz, poland" to the Łódź centroid', () => {
+    const coords = getCityCentroid('lodz, poland');
+    assert.ok(coords !== undefined, '"lodz, poland" returned undefined — stroked-letter transliteration + country-suffix stripping failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 51.7592) < 2, `lat ${lat} implausibly far from Łódź`);
+    assert.ok(Math.abs(lng - 19.4560) < 2, `lng ${lng} implausibly far from Łódź`);
+  });
+
+  it('"Łódź, Poland" resolves to identical coords as bare "Łódź"', () => {
+    const bare = getCityCentroid('Łódź');
+    const suffixed = getCityCentroid('Łódź, Poland');
+    assert.ok(bare !== undefined, '"Łódź" should resolve');
+    assert.ok(suffixed !== undefined, '"Łódź, Poland" should resolve');
+    assert.deepEqual(suffixed, bare, '"Łódź, Poland" must produce the same coordinates as "Łódź"');
   });
 });
 
