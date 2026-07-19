@@ -291,7 +291,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
   const insets = useSafeAreaInsets();
   const bottomInset = useBottomInset();
   const { isAuthed, userId } = useSession();
-  const { data: threads, loading, error, reload } = useMyThreads();
+  const { data: threads, loading, refreshing, error, reload, refresh } = useMyThreads();
   const { markFirstContent, epoch } = useScreenTiming('Telegraph');
   const {
     data: requests,
@@ -460,12 +460,14 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
     <KeyboardSafeScrollView style={{ backgroundColor: TG.surface }}>
       <FlatList
         data={
-          error || loading || filtered.length === 0
+          error || (loading && !refreshing) || filtered.length === 0
             ? []
             : buildInboxItems(filtered, filter, requestCount)
         }
         keyExtractor={(item) => item._t === 'thread' ? item.thread.id : item.key}
         ListHeaderComponent={listHeader}
+        onRefresh={refresh}
+        refreshing={refreshing}
         ListEmptyComponent={
           error ? (
             <View style={s.center}>
