@@ -7,7 +7,8 @@
  * price/free chip, join/request/save/add-to-trip CTA matrix.
  */
 import React, { useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { CachedImage, withStorageParams } from './CachedImage.tsx';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import {
   CalendarClock, MapPin, Users, ChevronRight,
@@ -93,7 +94,7 @@ export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSave
           onPress={onPress}
         />
       ) : event.coverUrl && !imgFailed ? (
-        <Image source={{ uri: event.coverUrl }} style={styles.thumb} resizeMode="cover" onError={() => setImgFailed(true)} />
+        <CachedImage source={{ uri: withStorageParams(event.coverUrl, 'width=600&quality=80') }} style={styles.thumb} resizeMode="cover" onError={() => setImgFailed(true)} />
       ) : (
         <View style={[styles.thumb, styles.thumbPlaceholder, { backgroundColor: catColor + '22' }]}>
           <CalendarClock size={20} color={catColor} />

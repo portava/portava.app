@@ -2,7 +2,6 @@ import React from 'react';
 import {
   View,
   Text,
-  Image,
   StyleSheet,
   Pressable,
   ViewStyle,
@@ -69,10 +68,12 @@ export function Chip({
   );
 }
 
+import { CachedImage, withStorageParams } from './CachedImage.tsx';
+
 export function Avatar({ uri, size = 36 }: { uri: string; size?: number }) {
   return (
-    <Image
-      source={{ uri }}
+    <CachedImage
+      source={{ uri: withStorageParams(uri, 'width=100&quality=80') }}
       style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color.haze }}
     />
   );

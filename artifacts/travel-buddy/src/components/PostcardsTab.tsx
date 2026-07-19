@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import {
-  View, Text, Image, Pressable, Modal, TextInput, ActivityIndicator,
+  View, Text, Pressable, Modal, TextInput, ActivityIndicator,
   Alert, StyleSheet, ScrollView, useWindowDimensions,
 } from 'react-native';
+import { CachedImage, withStorageParams } from './CachedImage.tsx';
 import { router } from 'expo-router';
 import { MapPin, Pin, MoreHorizontal, Plus, PlayCircle, Clock, AlertCircle, Layers, ChevronDown } from 'lucide-react-native';
 import type { PassportPostcard } from '../types/models.ts';
@@ -167,7 +168,7 @@ function PostcardTile({
     >
       {displayUri ? (
         <>
-          <Image source={{ uri: displayUri }} style={pc.media} resizeMode="cover" />
+          <CachedImage source={{ uri: withStorageParams(displayUri, 'width=400&quality=80') }} style={pc.media} resizeMode="cover" />
           {/* Passport-stamp overlay — parse-gated; malformed data renders nothing */}
           {displayItem ? <MediaStampOverlay raw={displayItem.stamp_overlay} /> : null}
         </>

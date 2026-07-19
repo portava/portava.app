@@ -51,6 +51,10 @@ module.exports = {
     // Per-file jest.mock() factories (e.g. SharedVideoPlayer tests) override
     // this global stub when they need to assert on Video behaviour.
     '^expo-av$': '<rootDir>/src/__mocks__/expo-av.tsx',
+    // expo-image requires native modules unavailable in jest-expo.
+    // The stub renders a plain View with testID forwarded so snapshot tests
+    // and getByTestId queries work. Per-file jest.mock factories override it.
+    '^expo-image$': '<rootDir>/src/__mocks__/expo-image.tsx',
     // Resolve the @/ path alias used in source files (maps to the package root).
     // Without this, Jest cannot find @/components/... imports and test files
     // for screens that use @/ (e.g. Trips, Trip Detail) fail to load.
