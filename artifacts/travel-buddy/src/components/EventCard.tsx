@@ -7,6 +7,7 @@ import { Stamp, Avatar } from './ui.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { SaveButton } from './SaveButton.tsx';
 import { CITY_CENTROIDS } from '../lib/cityCentroids.ts';
+import { fireRankOutcome } from '../hooks/useRankOutcome.ts';
 
 function timeLabel(iso: string) {
   const d = new Date(iso);
@@ -14,15 +15,24 @@ function timeLabel(iso: string) {
 }
 
 /** Compact, utility event/plan card — visually distinct from editorial posts. */
-export function EventCard({ ev, dim, initialSaved }: {
+export function EventCard({ ev, dim, initialSaved, sessionId }: {
   ev: CityEvent;
   dim?: boolean;
   initialSaved?: boolean;
+  /**
+   * Feed session ID returned by /api/events. Forward this from useCityPulse
+   * so the 'tap' outcome row can be joined back to the correct impression
+   * batch in rank_events.
+   */
+  sessionId?: string;
 }) {
   return (
     <Pressable
       style={[styles.card, dim && styles.dim]}
-      onPress={() => router.push('/(tabs)/trips')}
+      onPress={() => {
+        fireRankOutcome(ev.id, 'events', 'tap', sessionId);
+        router.push('/(tabs)/trips');
+      }}
     >
       <View style={styles.left}>
         <Stamp label={ev.category} tone="deep" rotate={0} />
@@ -63,7 +73,7 @@ export function EventCard({ ev, dim, initialSaved }: {
         </Pressable>
       </View>
       {ev.host && <Avatar uri={ev.host.avatarUrl} size={36} />}
-      <SaveButton entityType="event" entityId={ev.id} initialSaved={initialSaved} />
+      <SaveButton entityType="event" entityId={ev.id} initialSaved={initialSaved} sessionId={sessionId} />
     </Pressable>
   );
 }
