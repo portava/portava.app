@@ -16,7 +16,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { getCurrentGps, reverseGeocodeToPlace, checkLocationPermission } from '../services/location.ts';
 import type { Place } from '../lib/location/placeTypes.ts';
 import { isSupabaseConfigured } from '../lib/supabase.ts';
-import { buildManualCityState, buildManualCityPayload, buildGpsState, buildGpsRevokedState } from './activeLocation.state';
+import { buildManualCityState, buildManualCityPayload, buildGpsState, buildGpsRevokedState, shouldRestorePersistedState } from './activeLocation.state';
 import { _loadHomeFromProfile } from './activeLocation.homeProfile.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -234,8 +234,11 @@ export function useActiveLocation(): UseActiveLocationResult {
       ]);
       if (!alive) return;
 
-      if (savedState?.ok) {
-        // Tier 2: server-persisted last-active or manual city
+      if (savedState?.ok && shouldRestorePersistedState(permStatus, savedState)) {
+        // Tier 2: server-persisted last-active or manual city.
+        // shouldRestorePersistedState guards against re-applying stale GPS
+        // coords when permission is currently denied (the user revoked GPS
+        // after the state was last saved to the server).
         setLocationState({
           ...savedState,
           permissionStatus: permStatus,
@@ -270,7 +273,10 @@ export function useActiveLocation(): UseActiveLocationResult {
         const permStatus: PermissionStatus = gps.error === 'permission_denied' ? 'denied' : 'unavailable';
         if (!mountedRef.current) return;
         setLocationState((prev) => buildGpsRevokedState(prev, permStatus));
-        await saveLocationToApi({ permissionStatus: permStatus });
+        // Persist the cleared state so that on the next app launch the
+        // server-persisted coords are gone and the mount cascade cannot
+        // restore a location the user has actively blocked.
+        await saveLocationToApi({ permissionStatus: permStatus, source: 'none', coords: null });
         return;
       }
 

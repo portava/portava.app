@@ -140,3 +140,26 @@ export function buildGpsRevokedState(
 export function deriveUniversalLocation(state: ActiveLocationState): Place | null {
   return state.ok ? state.place : null;
 }
+
+/**
+ * Decides whether a server-persisted location state should be restored on
+ * mount, given the *current* permission status.
+ *
+ * `loadLocationFromApi` maps GPS coords (no manualCity) to source:'last_known'.
+ * When GPS permission is currently denied we must NOT restore that state —
+ * the user revoked access after the coords were saved, and showing them again
+ * would contradict the revocation.
+ *
+ * Manual-city and home-city states are unaffected because:
+ *   - manual_city keeps source:'manual_city' regardless of permission
+ *   - home is loaded from the profile endpoint, never from persisted GPS coords
+ */
+export function shouldRestorePersistedState(
+  permStatus: PermissionStatus,
+  savedState: ActiveLocationState,
+): boolean {
+  if (permStatus === 'denied' && savedState.source === 'last_known') {
+    return false;
+  }
+  return true;
+}
