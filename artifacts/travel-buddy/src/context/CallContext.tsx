@@ -22,7 +22,9 @@ import React, {
 import {
   startCall as apiStart, acceptCall as apiAccept, declineCall as apiDecline,
   endCall as apiEnd, joinCall as apiJoin, leaveCall as apiLeave, getActiveCall,
+  startGroupCall as apiStartGroup, getCall as apiGetCall,
   type CallJoinGrant, type CallSessionDto, type CallContextType as CallCtxType, type CallType,
+  type CallParticipantDto,
 } from '../services/calls.ts';
 import { supabase } from '../lib/supabase.ts';
 
@@ -40,6 +42,8 @@ export interface LiveKitBridge {
   setSpeakerphone(on: boolean): Promise<void>;
   /** Fires on transport changes so the UI can show "Reconnecting…". */
   onConnectionState?(cb: (state: 'connected' | 'reconnecting' | 'disconnected') => void): () => void;
+  /** Fires with the identities currently speaking (group active-speaker ring). */
+  onActiveSpeakers?(cb: (userIds: string[]) => void): () => void;
 }
 
 // ── Public state shape ───────────────────────────────────────────────────────
@@ -81,6 +85,12 @@ export interface CallState {
   /** Elapsed seconds while connected (drives "04:23" in the pill). */
   elapsedSec: number;
   error: string | null;
+  /** Group rooms: participants currently in the room (joined only). */
+  participants: CallParticipantDto[];
+  /** Group rooms: live participant count (drives "Crew Call · N people"). */
+  participantCount: number;
+  /** Group rooms: user ids currently speaking (active-speaker indicator). */
+  activeSpeakerIds: string[];
 }
 
 export interface CallActions {
@@ -90,6 +100,11 @@ export interface CallActions {
     callType: 'voice' | 'video';
     peer?: CallPeerInfo;
   }): Promise<boolean>;
+  /**
+   * Start OR join the trip crew's voice room. The server resolves concurrent
+   * starts: if a room is already live, this lands the caller in it.
+   */
+  startCrewCall(input: { tripId: string }): Promise<boolean>;
   /** Realtime layer delivers incoming-call events here (spec §11). */
   presentIncomingCall(info: IncomingCallInfo): void;
   /**
@@ -117,7 +132,11 @@ export interface CallActions {
 const INITIAL: CallState = {
   phase: 'idle', session: null, incoming: null, peer: null, minimized: false,
   micMuted: false, cameraOn: false, speakerOn: false, elapsedSec: 0, error: null,
+  participants: [], participantCount: 0, activeSpeakerIds: [],
 };
+
+/** Poll cadence for the group participant list while in a crew room. */
+const GROUP_ROSTER_POLL_MS = 15_000;
 
 const StateCtx = createContext<CallState>(INITIAL);
 const ActionsCtx = createContext<CallActions | null>(null);
@@ -141,6 +160,8 @@ export function CallProvider({
   const ringTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tick = useRef<ReturnType<typeof setInterval> | null>(null);
   const unbindConn = useRef<(() => void) | null>(null);
+  const unbindSpeakers = useRef<(() => void) | null>(null);
+  const groupPoll = useRef<ReturnType<typeof setInterval> | null>(null);
   const sessionRef = useRef<CallSessionDto | null>(null);
   /** While true, transport 'connected' events must not override ringing UI. */
   const holdRinging = useRef(false);
@@ -155,18 +176,36 @@ export function CallProvider({
   const clearTimers = useCallback(() => {
     clearRing();
     if (tick.current) { clearInterval(tick.current); tick.current = null; }
+    if (groupPoll.current) { clearInterval(groupPoll.current); groupPoll.current = null; }
   }, [clearRing]);
+
+  /** Refresh the group roster (participant list + live count) from the server. */
+  const refreshGroupRoster = useCallback(async (callId: string) => {
+    const res = await apiGetCall(callId);
+    if (!res.ok || !res.data) return;
+    if (sessionRef.current?.id !== callId) return; // call ended meanwhile
+    const joined = res.data.participants.filter((p) => p.status === 'joined');
+    patch({ participants: joined, participantCount: joined.length });
+  }, [patch]);
+
+  /** Start the periodic roster poll for a group room. */
+  const startGroupRosterPoll = useCallback((callId: string) => {
+    if (groupPoll.current) clearInterval(groupPoll.current);
+    void refreshGroupRoster(callId);
+    groupPoll.current = setInterval(() => { void refreshGroupRoster(callId); }, GROUP_ROSTER_POLL_MS);
+  }, [refreshGroupRoster]);
 
   const teardown = useCallback(async (error: string | null = null) => {
     clearTimers();
     holdRinging.current = false;
     unbindConn.current?.(); unbindConn.current = null;
+    unbindSpeakers.current?.(); unbindSpeakers.current = null;
     sessionRef.current = null;
     try { await bridge?.disconnect(); } catch { /* already down */ }
     setState({ ...INITIAL, error });
   }, [bridge, clearTimers]);
 
-  useEffect(() => () => { clearTimers(); unbindConn.current?.(); }, [clearTimers]);
+  useEffect(() => () => { clearTimers(); unbindConn.current?.(); unbindSpeakers.current?.(); }, [clearTimers]);
 
   const connectMedia = useCallback(async (
     grant: CallJoinGrant,
@@ -192,6 +231,10 @@ export function CallProvider({
       else if (cs === 'connected') {
         if (!holdRinging.current) patch({ phase: 'connected' });
       } else if (cs === 'disconnected') void teardown(null);
+    }) ?? null;
+    unbindSpeakers.current?.();
+    unbindSpeakers.current = bridge.onActiveSpeakers?.((ids) => {
+      patch({ activeSpeakerIds: ids });
     }) ?? null;
     // Elapsed timer runs for the whole call; it only counts while connected.
     if (tick.current) clearInterval(tick.current);
@@ -239,6 +282,22 @@ export function CallProvider({
       }, RING_TIMEOUT_MS);
       // Caller connects immediately and waits in-room for the callee.
       return connectMedia(grant, input.callType === 'video', { awaitAccept: true });
+    },
+
+    async startCrewCall(input) {
+      if (sessionRef.current) return false; // never silently drop a live call
+      const res = await apiStartGroup({ contextType: 'trip_crew', contextId: input.tripId });
+      if (!res.ok || !res.data) {
+        patch({ error: friendlyStartError(res.error) });
+        return false;
+      }
+      const ok = await connectMedia(res.data, false);
+      if (!ok) return false;
+      // Group rooms default to speaker audio routing.
+      await bridge?.setSpeakerphone(true).catch(() => {});
+      patch({ speakerOn: true });
+      startGroupRosterPoll(res.data.session.id);
+      return true;
     },
 
     presentIncomingCall(info) { presentIncoming(info); },
@@ -361,11 +420,17 @@ export function CallProvider({
       if (session.status !== 'active') return;
       const joined = await apiJoin(session.id);
       if (joined.ok && joined.data) {
-        await connectMedia(joined.data, false);
+        const ok = await connectMedia(joined.data, false);
+        if (ok && session.callType === 'group_voice') {
+          await bridge?.setSpeakerphone(true).catch(() => {});
+          patch({ speakerOn: true, minimized: true });
+          startGroupRosterPoll(session.id);
+          return;
+        }
         patch({ minimized: true });
       }
     },
-  }), [bridge, clearRing, clearTimers, connectMedia, patch, presentIncoming, state.cameraOn, state.incoming, state.micMuted, state.speakerOn, teardown]);
+  }), [bridge, clearRing, clearTimers, connectMedia, patch, presentIncoming, startGroupRosterPoll, state.cameraOn, state.incoming, state.micMuted, state.speakerOn, teardown]);
 
   return (
     <StateCtx.Provider value={state}>

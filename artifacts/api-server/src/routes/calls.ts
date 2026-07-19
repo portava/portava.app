@@ -25,10 +25,29 @@ import {
 } from "../lib/calls/livekitService";
 import { CALL_CONFIG, type CallDenyReason } from "../lib/calls/callTypes";
 import { makeCallGateway, getFullCallPreferences, isRabBookingCallEligible } from "../lib/calls/callGatewayAdapter";
-import { makeCallStore, type CallStoreEx, type StoredCallSession } from "../lib/calls/callStoreAdapter";
+import { GroupRoomConflictError, makeCallStore, type CallStoreEx, type StoredCallSession } from "../lib/calls/callStoreAdapter";
+
+// ── Group-start serialization (per-process layer of the one-room guard) ─────
+// Chains concurrent group starts for the same context so lookup+create runs
+// one at a time in this instance; the DB's partial unique index covers
+// cross-instance races. Entries are removed once their chain drains.
+const groupStartLocks = new Map<string, Promise<unknown>>();
+
+function withGroupStartLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prev = groupStartLocks.get(key) ?? Promise.resolve();
+  const run = prev.then(fn, fn);
+  const settled = run.then(() => undefined, () => undefined);
+  groupStartLocks.set(key, settled);
+  void settled.then(() => {
+    if (groupStartLocks.get(key) === settled) groupStartLocks.delete(key);
+  });
+  return run;
+}
 import {
-  callerIdentity, emitCallAnalytics, publishCallEvent, sendIncomingCallPush, sessionDto,
+  announceCrewCallEnded, announceCrewCallStarted, callerIdentity, emitCallAnalytics,
+  publishCallEvent, sendIncomingCallPush, sessionDto,
 } from "../lib/calls/callSignaling";
+import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -207,16 +226,78 @@ router.post("/calls", async (req, res) => {
       });
       if (!verdict.allowed) return sendDeny(res, verdict.reason);
 
-      const session = await store.createSession({
-        callType: "group_voice",
-        contextType: input.contextType,
-        contextId: input.contextId,
-        threadId: null,
-        roomName: generateRoomName(),
-        startedBy: userId,
-        participants: [{ userId, role: "host", status: "invited" }],
-      });
+      // Concurrent-start resolution: if the context already has a live room,
+      // this "start" lands the caller in it instead of forking a second room.
+      const joinExistingRoom = async (existing: StoredCallSession) => {
+        const joinVerdict = await canUserJoinCall(gw, {
+          userId, callId: existing.id, contextType: existing.contextType,
+          contextId: existing.contextId, threadId: existing.threadId, nowMs,
+        });
+        if (!joinVerdict.allowed) return sendDeny(res, joinVerdict.reason);
+        const already = (await store.getParticipants(existing.id)).some((p) => p.userId === userId);
+        if (already) {
+          await store.markParticipantJoined(existing.id, userId, new Date(nowMs).toISOString());
+        } else {
+          await store.upsertParticipant(existing.id, userId, "participant", "joined");
+        }
+        const grant = await grantFor(d, existing, userId, false);
+        return res.status(200).json(grant);
+      };
+
+      const preExisting = await store.findOpenGroupSession(input.contextType, input.contextId);
+      if (preExisting) return joinExistingRoom(preExisting);
+
+      // Atomic one-open-room-per-context guard, two layers:
+      //  1. per-process lock serializes lookup+create so concurrent starts in
+      //     this instance never double-create;
+      //  2. the DB's partial unique index (uniq_open_group_room_per_context)
+      //     rejects cross-instance races — createSession then throws
+      //     GroupRoomConflictError and we join the winning room instead.
+      const outcome = await withGroupStartLock(
+        `${input.contextType}:${input.contextId}`,
+        async (): Promise<{ kind: "existing" | "created"; session: StoredCallSession }> => {
+          const again = await store.findOpenGroupSession(input.contextType, input.contextId);
+          if (again) return { kind: "existing", session: again };
+          try {
+            return {
+              kind: "created",
+              session: await store.createSession({
+                callType: "group_voice",
+                contextType: input.contextType,
+                contextId: input.contextId,
+                threadId: null,
+                roomName: generateRoomName(),
+                startedBy: userId,
+                participants: [{ userId, role: "host", status: "joined" }],
+              }),
+            };
+          } catch (err) {
+            if (err instanceof GroupRoomConflictError) {
+              const winner = await store.findOpenGroupSession(input.contextType, input.contextId);
+              if (winner) return { kind: "existing", session: winner };
+            }
+            throw err;
+          }
+        },
+      );
+      if (outcome.kind === "existing") return joinExistingRoom(outcome.session);
+      const session = outcome.session;
+      // Group rooms have no ring phase — the room is live the moment the
+      // starter is in it (join counts stay truthful without the webhook).
+      const nowIso = new Date(nowMs).toISOString();
+      const live = transition(session, { type: "CONNECTED" }, nowIso);
+      if (live.ok && (await store.applyTransition(session.id, session.status, live.status, live.patch))) {
+        session.status = live.status;
+        session.connectedAt = live.patch.connectedAt ?? nowIso;
+      }
+      await store.markParticipantJoined(session.id, userId, nowIso);
       emitCallAnalytics("started", session);
+      if (input.contextType === "trip_crew") {
+        // Fire-and-forget: system message + single restrained notification.
+        void announceCrewCallStarted(auth.client, session, userId).catch((err) => {
+          logger.warn({ err }, "crew-call start announce failed (non-critical)");
+        });
+      }
       const grant = await grantFor(d, session, userId, false);
       return res.status(201).json(grant);
     }
@@ -397,6 +478,7 @@ router.post("/calls/:callId/join", async (req, res) => {
     ? participants.find((p) => p.userId !== auth.user.id)?.userId ?? null
     : null;
 
+  const nowMs = Date.now(); // single clock read for this request
   const gw = d.makeGateway(auth.client);
   const verdict = await canUserJoinCall(gw, {
     userId: auth.user.id,
@@ -405,12 +487,17 @@ router.post("/calls/:callId/join", async (req, res) => {
     contextId: session.contextId,
     threadId: session.threadId,
     otherPartyId: otherParty,
-    nowMs: Date.now(),
+    nowMs,
   });
   if (!verdict.allowed) return sendDeny(res, verdict.reason);
 
-  if (!isDirect && !participants.some((p) => p.userId === auth.user.id)) {
-    await store.upsertParticipant(session.id, auth.user.id, "participant", "joined");
+  if (!isDirect) {
+    // Group rooms: rejoin keeps the existing row/role; first join inserts one.
+    if (participants.some((p) => p.userId === auth.user.id)) {
+      await store.markParticipantJoined(session.id, auth.user.id, new Date(nowMs).toISOString());
+    } else {
+      await store.upsertParticipant(session.id, auth.user.id, "participant", "joined");
+    }
   }
 
   const grant = await grantFor(d, session, auth.user.id, session.callType === "video");
@@ -438,11 +525,31 @@ router.post("/calls/:callId/leave", async (req, res) => {
     const fresh = (await store.getSession(session.id)) ?? session;
     if (isTerminal(fresh.status)) {
       publishCallEvent("call.ended", loaded.participants.map((p) => p.userId), fresh);
+      if (session.contextType === "trip_crew") announceCrewCallEnded(auth.client, fresh);
       emitCallAnalytics("ended", fresh);
     }
     return res.json({ status: fresh.status });
   }
   res.json({ status: session.status });
+});
+
+// ── Group room presence (crew surfaces: Start vs Join · N people) ───────────
+
+router.get("/calls/group/trip_crew/:contextId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const d = deps();
+  const gw = d.makeGateway(auth.client);
+  // Presence is visible ONLY to active crew members.
+  if (!(await gw.isActiveCrewMember(req.params.contextId, auth.user.id))) {
+    return sendDeny(res, "not_crew_member");
+  }
+  const store = d.makeStore(auth.client);
+  const session = await store.findOpenGroupSession("trip_crew", req.params.contextId);
+  if (!session) return res.json({ session: null, participantCount: 0 });
+  const participants = await store.getParticipants(session.id);
+  const participantCount = participants.filter((p) => p.status === "joined").length;
+  return res.json({ session: sessionDto(session), participantCount });
 });
 
 // ── Get one ──────────────────────────────────────────────────────────────────
@@ -453,9 +560,30 @@ router.get("/calls/:callId", async (req, res) => {
   const store = deps().makeStore(auth.client);
   const loaded = await loadSessionForUser(store, req.params.callId, auth.user.id);
   if (!loaded) return sendDeny(res, "context_not_found");
+
+  // Privacy-safe identities for the in-room participant list (name rule).
+  const ids = loaded.participants.map((p) => p.userId);
+  let profileMap = new Map<string, { name: string | null; handle: string | null; avatarUrl: string | null }>();
+  try {
+    const [{ data: profiles }, allowedNames] = await Promise.all([
+      auth.client.from("profiles").select("id, username, display_name, name, avatar_url").in("id", ids),
+      nameVisibilitySet(auth.client, ids),
+    ]);
+    for (const row of ((profiles as any[]) ?? [])) {
+      profileMap.set(row.id, {
+        name: presentedName(row, allowedNames.has(row.id)),
+        handle: row.username ?? null,
+        avatarUrl: row.avatar_url ?? null,
+      });
+    }
+  } catch { /* identities are cosmetic — never fail the call fetch */ }
+
   res.json({
     session: sessionDto(loaded.session),
-    participants: loaded.participants,
+    participants: loaded.participants.map((p) => ({
+      ...p,
+      ...(profileMap.get(p.userId) ?? { name: null, handle: null, avatarUrl: null }),
+    })),
   });
 });
 

@@ -154,6 +154,15 @@ export const TEMPLATES: NotificationTemplate[] = [
     body: ({ callKind }) => `Incoming ${callKind ?? 'call'}`,
     actionUrl: ({ threadId }) => (threadId ? `/messages/${threadId}` : '/notifications'),
   }),
+  tpl({
+    eventType: 'call.crew_started',
+    category: 'trips',
+    defaultPriority: 'normal',
+    defaultChannels: ['in_app', 'push'],
+    title: ({ tripTitle }) => (tripTitle ? `Crew Call · ${tripTitle}` : 'Crew Call'),
+    body: () => 'Your Trip Crew started a voice call.',
+    actionUrl: ({ tripId }) => (tripId ? `/trip/${tripId}` : '/notifications'),
+  }),
 
   // ── Telegraph ──────────────────────────────────────────────────────────────
   tpl({

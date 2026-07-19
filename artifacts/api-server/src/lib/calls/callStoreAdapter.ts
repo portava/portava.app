@@ -9,7 +9,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CallStore } from "./callReconciler";
-import { callHistoryLine } from "./callStateMachine";
+import { callHistoryLine, groupCallEndLine } from "./callStateMachine";
 import type { CallParticipant, CallSession, CallStatus } from "./callTypes";
 
 export type StoredCallSession = CallSession & { roomName: string };
@@ -67,6 +67,45 @@ export interface CallStoreEx extends CallStore {
   findActiveSessionForUser(userId: string): Promise<StoredCallSession | null>;
   /** Open DIRECT sessions where both users are participants (block force-end). */
   findOpenDirectSessionsBetween(userA: string, userB: string): Promise<StoredCallSession[]>;
+  /**
+   * The open (ringing|active) group room for a context, if one exists.
+   * Concurrent-start resolution: a second "start" lands in this room.
+   */
+  findOpenGroupSession(
+    contextType: "trip_crew" | "event",
+    contextId: string,
+  ): Promise<StoredCallSession | null>;
+}
+
+/**
+ * Resolve the trip's group chat thread (thread_type='trip'). Read-only —
+ * thread creation stays with chatSync; a missing thread just means no
+ * system message target.
+ */
+/**
+ * Thrown by createSession when the DB's one-open-group-room-per-context
+ * unique index rejects a concurrent group start — the caller must re-fetch
+ * the winning open room and join it instead.
+ */
+export class GroupRoomConflictError extends Error {
+  constructor() { super("open group room already exists for this context"); this.name = "GroupRoomConflictError"; }
+}
+
+export async function resolveTripThreadId(
+  sc: SupabaseClient,
+  tripId: string,
+): Promise<string | null> {
+  try {
+    const { data } = await sc
+      .from("message_threads")
+      .select("id")
+      .eq("trip_id", tripId)
+      .eq("thread_type", "trip")
+      .maybeSingle();
+    return (data as any)?.id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function makeCallStore(sc: SupabaseClient): CallStoreEx {
@@ -85,7 +124,13 @@ export function makeCallStore(sc: SupabaseClient): CallStoreEx {
         })
         .select(SESSION_COLS)
         .single();
-      if (error || !data) throw new Error(`createSession failed: ${error?.message ?? "no row"}`);
+      if (error || !data) {
+        // 23505 on the partial unique index = a concurrent group start won.
+        if ((error as any)?.code === "23505" || /duplicate key/i.test(error?.message ?? "")) {
+          throw new GroupRoomConflictError();
+        }
+        throw new Error(`createSession failed: ${error?.message ?? "no row"}`);
+      }
       const session = mapSessionRow(data);
       if (input.participants.length > 0) {
         const { error: pErr } = await sc.from("call_participants").insert(
@@ -137,12 +182,14 @@ export function makeCallStore(sc: SupabaseClient): CallStoreEx {
     },
 
     async markParticipantJoined(callId, userId, atIso) {
+      // "left"/"missed" are re-joinable (group rooms allow rejoin); "removed"
+      // and "declined" are NOT — a removed participant must never resurface.
       await sc
         .from("call_participants")
         .update({ status: "joined", joined_at: atIso })
         .eq("call_id", callId)
         .eq("user_id", userId)
-        .in("status", ["invited", "ringing", "joined"]);
+        .in("status", ["invited", "ringing", "joined", "left", "missed"]);
     },
 
     async markParticipantLeft(callId, userId, atIso) {
@@ -163,6 +210,30 @@ export function makeCallStore(sc: SupabaseClient): CallStoreEx {
     },
 
     async writeCallHistoryMessage(session) {
+      // Group crew rooms: the summary line goes into the trip's group
+      // conversation ("Crew Call ended · 38 min · 7 participants").
+      if (!session.threadId && session.contextType === "trip_crew") {
+        if (session.status !== "ended") return; // no line for failed/canceled rooms
+        try {
+          const threadId = await resolveTripThreadId(sc, session.contextId);
+          if (!threadId) return;
+          const { count } = await sc
+            .from("call_participants")
+            .select("user_id", { count: "exact", head: true })
+            .eq("call_id", session.id)
+            .not("joined_at", "is", null);
+          await sc.from("messages").insert({
+            thread_id: threadId,
+            sender_id: session.startedBy,
+            body: groupCallEndLine(session, count ?? 0),
+            msg_type: "system",
+            subtype: "call_ended",
+          });
+        } catch {
+          /* non-critical — never fail room teardown on a history write */
+        }
+        return;
+      }
       // Contextual history lives in the Telegraph conversation; sessions
       // without a thread (e.g. event rooms) simply have no history line.
       if (!session.threadId) return;
@@ -191,7 +262,13 @@ export function makeCallStore(sc: SupabaseClient): CallStoreEx {
       await sc
         .from("call_participants")
         .upsert(
-          { call_id: callId, user_id: userId, role, status },
+          {
+            call_id: callId,
+            user_id: userId,
+            role,
+            status,
+            ...(status === "joined" ? { joined_at: new Date().toISOString() } : {}),
+          },
           { onConflict: "call_id,user_id" },
         );
     },
@@ -242,6 +319,19 @@ export function makeCallStore(sc: SupabaseClient): CallStoreEx {
         byCall.get(p.call_id)!.add(p.user_id);
       }
       return open.filter((s) => (byCall.get(s.id)?.size ?? 0) === 2);
+    },
+
+    async findOpenGroupSession(contextType, contextId) {
+      const { data } = await sc
+        .from("call_sessions")
+        .select(SESSION_COLS)
+        .eq("context_type", contextType)
+        .eq("context_id", contextId)
+        .in("status", ["ringing", "active"])
+        .order("started_at", { ascending: false })
+        .limit(1);
+      const row = ((data as any[]) ?? [])[0];
+      return row ? mapSessionRow(row) : null;
     },
   };
 }

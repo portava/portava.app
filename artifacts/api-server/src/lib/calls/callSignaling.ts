@@ -24,7 +24,9 @@ export type CallSignalType =
   | "call.declined"
   | "call.canceled"
   | "call.ended"
-  | "call.missed";
+  | "call.missed"
+  | "call.group_started"
+  | "call.group_ended";
 
 /** Public DTO shape shared with the mobile client. */
 export function sessionDto(s: CallSession): Record<string, unknown> {
@@ -151,6 +153,121 @@ export function sendIncomingCallPush(
   void deliverIncomingCallPush(sc, calleeId, session, callerLabel).catch((err) => {
     logger.warn({ err }, "incoming-call push failed (non-critical)");
   });
+}
+
+// ── Crew (trip_crew group room) signaling ────────────────────────────────────
+
+/** Accepted crew member ids for a trip (owner/co_host/member/viewer, accepted). */
+export async function getCrewMemberIds(sc: SupabaseClient, tripId: string): Promise<string[]> {
+  try {
+    const { data } = await sc
+      .from("trip_members")
+      .select("user_id, role, status")
+      .eq("trip_id", tripId);
+    const acceptedRoles = new Set(["owner", "co_host", "member", "viewer"]);
+    return ((data as any[]) ?? [])
+      .filter((r) => acceptedRoles.has(r.role) && (r.status == null || r.status === "accepted"))
+      .map((r) => r.user_id as string);
+  } catch {
+    return [];
+  }
+}
+
+export interface CrewAnnounceDeps {
+  getPrefs: typeof getFullCallPreferences;
+  notify: (sc: SupabaseClient, input: {
+    userId: string;
+    eventType: "call.crew_started";
+    sourceType: "call";
+    sourceId: string;
+    params: Record<string, string>;
+  }) => Promise<void>;
+}
+
+const defaultCrewDeps: CrewAnnounceDeps = {
+  getPrefs: getFullCallPreferences,
+  async notify(sc, input) {
+    const { NotificationService } = await import("../../services/notifications/NotificationService.js");
+    const { NotificationRouter } = await import("../../services/notifications/NotificationRouter.js");
+    const ns = new NotificationService(sc);
+    const nr = new NotificationRouter(sc);
+    const row = await ns.create(input);
+    if (row) await nr.route(row);
+  },
+};
+
+let testCrewDeps: CrewAnnounceDeps | null = null;
+/** Test-only: inject fakes for the crew-start notification pipeline. */
+export function _setTestCrewDeps(d: CrewAnnounceDeps | null): void { testCrewDeps = d; }
+
+/**
+ * Announce a newly opened Crew Call (spec Phase 4):
+ *  - realtime `call.group_started` to every active crew member (presence is
+ *    visible only inside the crew),
+ *  - "«Name» started a Crew Call." system message in the trip conversation,
+ *  - ONE restrained push per member (never per join, never a ring),
+ *    respecting call_preferences.incoming_call_notifications.
+ * Best-effort: failures are logged, never fail the start request.
+ */
+export async function announceCrewCallStarted(
+  sc: SupabaseClient,
+  session: CallSession,
+  starterId: string,
+): Promise<void> {
+  const deps = testCrewDeps ?? defaultCrewDeps;
+  const tripId = session.contextId;
+  const memberIds = await getCrewMemberIds(sc, tripId);
+
+  publishCallEvent("call.group_started", memberIds, session);
+
+  // System message in the crew's group conversation.
+  try {
+    const { resolveTripThreadId } = await import("./callStoreAdapter.js");
+    const threadId = await resolveTripThreadId(sc, tripId);
+    if (threadId) {
+      const starter = await callerIdentity(sc, starterId);
+      const label = starter.name ?? (starter.handle ? `@${starter.handle}` : "A crew member");
+      await sc.from("messages").insert({
+        thread_id: threadId,
+        sender_id: starterId,
+        body: `${label} started a Crew Call.`,
+        msg_type: "system",
+        subtype: "call_started",
+      });
+    }
+  } catch (err) {
+    logger.warn({ err }, "crew-call start system message failed (non-critical)");
+  }
+
+  // One restrained notification per member, excluding the starter.
+  let tripTitle = "";
+  try {
+    const { data: trip } = await sc.from("trips").select("title").eq("id", tripId).maybeSingle();
+    tripTitle = (trip as any)?.title ?? "";
+  } catch { /* title is cosmetic */ }
+
+  await Promise.allSettled(
+    memberIds
+      .filter((uid) => uid !== starterId)
+      .map(async (uid) => {
+        const prefs = await deps.getPrefs(sc, uid);
+        if (!prefs.incomingCallNotifications) return;
+        await deps.notify(sc, {
+          userId: uid,
+          eventType: "call.crew_started",
+          sourceType: "call",
+          sourceId: session.id,
+          params: { tripId, tripTitle },
+        });
+      }),
+  );
+}
+
+/** Realtime `call.group_ended` to the crew so Start/Join surfaces refresh. */
+export function announceCrewCallEnded(sc: SupabaseClient, session: CallSession): void {
+  void getCrewMemberIds(sc, session.contextId)
+    .then((ids) => publishCallEvent("call.group_ended", ids, session))
+    .catch((err) => logger.warn({ err }, "crew-call ended announce failed (non-critical)"));
 }
 
 /** Privacy-safe operational analytics — event + type metadata only. */

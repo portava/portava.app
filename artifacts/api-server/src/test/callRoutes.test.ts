@@ -20,6 +20,7 @@ import type { CallStoreEx, StoredCallSession } from "../lib/calls/callStoreAdapt
 import { _setTestPushDeps, deliverIncomingCallPush } from "../lib/calls/callSignaling.js";
 import type { CallParticipant } from "../lib/calls/callTypes.js";
 import { CALL_CONFIG } from "../lib/calls/callTypes.js";
+import { _resetRateLimit } from "../lib/rateLimit.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
@@ -220,6 +221,12 @@ function makeMemStore() {
       }
       return null;
     },
+    async findOpenGroupSession(contextType, contextId) {
+      return [...sessions.values()].find((s) =>
+        (s.status === "ringing" || s.status === "active") &&
+        s.contextType === contextType && s.contextId === contextId,
+      ) ?? null;
+    },
     async findOpenDirectSessionsBetween(a, b) {
       return [...sessions.values()].filter((s) => {
         if (s.status !== "ringing" && s.status !== "active") return false;
@@ -242,6 +249,9 @@ function wireDeps(gwOverrides: Partial<CallContextGateway> = {}) {
   gateway = makeFakeGateway(gwOverrides);
   store = makeMemStore();
   endedRooms.length = 0;
+  // The call-start limiter is module-global in-memory state — reset it so
+  // per-test start counts never bleed across cases.
+  _resetRateLimit();
   _setTestCallDeps({
     makeGateway: () => gateway,
     makeStore: () => store,
@@ -481,6 +491,270 @@ describe("call routes", () => {
       assert.equal(r.status, 200);
       assert.equal(r.body.participants.length, 2);
     });
+  });
+});
+
+// ── Group crew rooms (Phase 4) ───────────────────────────────────────────────
+
+const groupStartBody = { contextType: "trip_crew", callType: "group_voice", contextId: "trip-1" };
+
+describe("group crew rooms", () => {
+  beforeEach(() => {
+    _setTestClient(makeFakeAuthClient(), true);
+    _setTestServiceClient(makeFakeAuthClient());
+    wireDeps();
+  });
+
+  it("start makes the room live immediately with the starter joined", async () => {
+    const r = await req("POST", "/api/calls", groupStartBody);
+    assert.equal(r.status, 201);
+    const s = store.__sessions.get(r.body.session.id)!;
+    assert.equal(s.status, "active", "group rooms have no ring phase");
+    assert.equal(r.body.session.roomName, undefined, "room name stays opaque");
+    const ps = await store.getParticipants(s.id);
+    assert.equal(ps.length, 1);
+    assert.equal(ps[0].status, "joined");
+    assert.equal(ps[0].role, "host");
+  });
+
+  it("concurrent start lands the second caller in the existing room", async () => {
+    const first = await req("POST", "/api/calls", groupStartBody);
+    assert.equal(first.status, 201);
+    const second = await req("POST", "/api/calls", groupStartBody, CALLEE_TOKEN);
+    assert.equal(second.status, 200, "join-existing, not a fork");
+    assert.equal(second.body.session.id, first.body.session.id);
+    assert.equal(store.__sessions.size, 1, "no second room created");
+    const ps = await store.getParticipants(first.body.session.id);
+    assert.equal(ps.filter((p) => p.status === "joined").length, 2);
+    assert.equal(ps.find((p) => p.userId === CALLEE_ID)!.role, "participant");
+  });
+
+  it("truly parallel starts create ONE room; every caller lands in it", async () => {
+    // Force the read-then-create window open: both lookup and create yield to
+    // the event loop, so without the per-context lock the requests would each
+    // observe "no open room" and fork rooms.
+    const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const realFind = store.findOpenGroupSession.bind(store);
+    const realCreate = store.createSession.bind(store);
+    store.findOpenGroupSession = async (ct, cid) => { await delay(10); return realFind(ct, cid); };
+    store.createSession = async (input) => { await delay(10); return realCreate(input); };
+
+    const results = await Promise.all([
+      req("POST", "/api/calls", groupStartBody),
+      req("POST", "/api/calls", groupStartBody, CALLEE_TOKEN),
+      req("POST", "/api/calls", groupStartBody),
+      req("POST", "/api/calls", groupStartBody, CALLEE_TOKEN),
+    ]);
+
+    assert.equal(store.__sessions.size, 1, "exactly one room despite the race");
+    const ids = new Set(results.map((r) => r.body.session.id));
+    assert.equal(ids.size, 1, "every response grants the same room");
+    assert.equal(results.filter((r) => r.status === 201).length, 1, "one creator");
+    assert.equal(results.filter((r) => r.status === 200).length, 3, "three joiners");
+  });
+
+  it("DB unique-index conflict on create resolves to the winning room (cross-instance race)", async () => {
+    // Simulate another server instance winning the insert between our lookup
+    // and our create: lookups report no room until the conflict is thrown,
+    // then the winner becomes visible.
+    const { GroupRoomConflictError } = await import("../lib/calls/callStoreAdapter.js");
+    const realFind = store.findOpenGroupSession.bind(store);
+    const realCreate = store.createSession.bind(store);
+    let winner: any = null;
+    store.findOpenGroupSession = async (ct, cid) => (winner ? realFind(ct, cid) : null);
+    store.createSession = async (input) => {
+      // The "other instance" inserts first; our insert hits the unique index.
+      winner = await realCreate({ ...input, startedBy: CALLEE_ID, participants: [{ userId: CALLEE_ID, role: "host", status: "joined" }] });
+      await store.applyTransition(winner.id, "ringing", "active", { connectedAt: new Date().toISOString() });
+      throw new GroupRoomConflictError();
+    };
+
+    const r = await req("POST", "/api/calls", groupStartBody);
+    assert.equal(r.status, 200, "start degrades to a join of the winning room");
+    assert.equal(r.body.session.id, winner.id);
+    assert.equal(store.__sessions.size, 1);
+    const ps = await store.getParticipants(winner.id);
+    assert.ok(ps.some((p) => p.userId === CALLER_ID && p.status === "joined"));
+  });
+
+  it("member can join; non-member is denied", async () => {
+    const started = await req("POST", "/api/calls", groupStartBody);
+    const id = started.body.session.id;
+    const ok = await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.token, "test-token");
+
+    wireDepsKeepStore({ isActiveCrewMember: async () => false });
+    const denied = await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+    assert.equal(denied.status, 403);
+    assert.equal(denied.body.reason, "not_crew_member");
+  });
+
+  it("removed member cannot rejoin (removed_from_room)", async () => {
+    const started = await req("POST", "/api/calls", groupStartBody);
+    const id = started.body.session.id;
+    await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+    await store.setParticipantStatus(id, CALLEE_ID, "removed");
+    wireDepsKeepStore({ wasRemovedFromCall: async () => true });
+    const r = await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+    assert.equal(r.status, 403);
+    assert.equal(r.body.reason, "removed_from_room");
+    // Concurrent-start path is equally closed to removed members.
+    const r2 = await req("POST", "/api/calls", groupStartBody, CALLEE_TOKEN);
+    assert.equal(r2.status, 403);
+    assert.equal(r2.body.reason, "removed_from_room");
+  });
+
+  it("room stays open until the LAST participant leaves, then ends with history", async () => {
+    const started = await req("POST", "/api/calls", groupStartBody);
+    const id = started.body.session.id;
+    await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+
+    const firstLeave = await req("POST", `/api/calls/${id}/leave`);
+    assert.equal(firstLeave.status, 200);
+    assert.equal(store.__sessions.get(id)!.status, "active", "room survives a non-final leave");
+    assert.equal(store.__history.includes(id), false);
+
+    const lastLeave = await req("POST", `/api/calls/${id}/leave`, undefined, CALLEE_TOKEN);
+    assert.equal(lastLeave.status, 200);
+    assert.equal(store.__sessions.get(id)!.status, "ended");
+    assert.ok(store.__history.includes(id), "summary line written when the room closes");
+    assert.equal(endedRooms.length, 1, "LiveKit room terminated");
+  });
+
+  it("rejoin after leaving works while the room is live", async () => {
+    const started = await req("POST", "/api/calls", groupStartBody);
+    const id = started.body.session.id;
+    await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+    await req("POST", `/api/calls/${id}/leave`, undefined, CALLEE_TOKEN);
+    const r = await req("POST", `/api/calls/${id}/join`, {}, CALLEE_TOKEN);
+    assert.equal(r.status, 200);
+    const ps = await store.getParticipants(id);
+    assert.equal(ps.find((p) => p.userId === CALLEE_ID)!.status, "joined");
+    assert.equal(ps.find((p) => p.userId === CALLEE_ID)!.role, "participant", "role preserved on rejoin");
+  });
+
+  it("GET group presence returns live session + count for members only", async () => {
+    const none = await req("GET", "/api/calls/group/trip_crew/trip-1");
+    assert.equal(none.status, 200);
+    assert.equal(none.body.session, null);
+    assert.equal(none.body.participantCount, 0);
+
+    const started = await req("POST", "/api/calls", groupStartBody);
+    await req("POST", `/api/calls/${started.body.session.id}/join`, {}, CALLEE_TOKEN);
+    const live = await req("GET", "/api/calls/group/trip_crew/trip-1", undefined, CALLEE_TOKEN);
+    assert.equal(live.status, 200);
+    assert.equal(live.body.session.id, started.body.session.id);
+    assert.equal(live.body.participantCount, 2);
+    assert.equal(live.body.session.roomName, undefined, "presence never leaks the room name");
+
+    wireDepsKeepStore({ isActiveCrewMember: async () => false });
+    const denied = await req("GET", "/api/calls/group/trip_crew/trip-1");
+    assert.equal(denied.status, 403);
+    assert.equal(denied.body.reason, "not_crew_member");
+  });
+});
+
+// ── Crew-call start announcement (system message + single notification) ─────
+
+describe("crew call start announcement", () => {
+  const MEMBER_A = "aabbccdd-1001-2002-3003-aabbccdd2001"; // starter
+  const MEMBER_B = "aabbccdd-1001-2002-3003-aabbccdd2002";
+  const MEMBER_C = "aabbccdd-1001-2002-3003-aabbccdd2003"; // notifications off
+  const REMOVED_D = "aabbccdd-1001-2002-3003-aabbccdd2004";
+
+  function makeCrewClient(insertedMessages: any[]) {
+    const memberRows = [
+      { user_id: MEMBER_A, role: "owner", status: "accepted" },
+      { user_id: MEMBER_B, role: "member", status: null },
+      { user_id: MEMBER_C, role: "member", status: "accepted" },
+      { user_id: REMOVED_D, role: "member", status: "removed" },
+    ];
+    function tableBuilder(table: string): any {
+      const b: any = new Proxy(function () {}, {
+        get(_t, prop) {
+          if (prop === "then") {
+            const data = table === "trip_members" ? memberRows : [];
+            return (onF: any) => Promise.resolve({ data, error: null, count: data.length }).then(onF);
+          }
+          if (prop === "maybeSingle" || prop === "single") {
+            return () => Promise.resolve({
+              data: table === "message_threads" ? { id: "thread-77" }
+                : table === "trips" ? { title: "Lisbon Crew" }
+                : table === "profiles" ? { id: MEMBER_A, username: "sam", display_name: "Sam", name: "Samuel", avatar_url: null }
+                : null,
+              error: null,
+            });
+          }
+          if (prop === "insert") {
+            return (row: any) => { insertedMessages.push({ table, row }); return b; };
+          }
+          return () => b;
+        },
+      });
+      return b;
+    }
+    return { from: (table: string) => tableBuilder(table) } as any;
+  }
+
+  it("writes the start system message and notifies each member ONCE, excluding starter, honoring prefs", async () => {
+    const { announceCrewCallStarted, _setTestCrewDeps } = await import("../lib/calls/callSignaling.js");
+    const inserted: any[] = [];
+    const notified: any[] = [];
+    _setTestCrewDeps({
+      getPrefs: async (_sc: any, uid: string) => ({
+        whoCanCall: "everyone", allowRentABuddyCalls: true, allowVideoCalls: true,
+        incomingCallNotifications: uid !== MEMBER_C,
+      }) as any,
+      notify: async (_sc, input) => { notified.push(input); },
+    });
+    try {
+      const session: any = {
+        id: "call-g1", callType: "group_voice", contextType: "trip_crew",
+        contextId: "trip-1", threadId: null, startedBy: MEMBER_A,
+        status: "active", startedAt: new Date().toISOString(),
+        connectedAt: new Date().toISOString(), endedAt: null,
+      };
+      await announceCrewCallStarted(makeCrewClient(inserted), session, MEMBER_A);
+
+      const msg = inserted.find((i) => i.table === "messages");
+      assert.ok(msg, "system message written to the crew thread");
+      assert.equal(msg.row.thread_id, "thread-77");
+      assert.match(msg.row.body, /started a Crew Call\.$/);
+      assert.equal(msg.row.msg_type, "system");
+
+      // Removed member and starter excluded; opted-out member skipped.
+      assert.equal(notified.length, 1, "exactly one restrained notification");
+      assert.equal(notified[0].userId, MEMBER_B);
+      assert.equal(notified[0].eventType, "call.crew_started");
+      assert.equal(notified[0].params.tripId, "trip-1");
+      assert.equal(notified[0].params.tripTitle, "Lisbon Crew");
+    } finally {
+      _setTestCrewDeps(null);
+    }
+  });
+});
+
+// ── Group end summary line ────────────────────────────────────────────────────
+
+describe("groupCallEndLine", () => {
+  it("formats duration and participant count", async () => {
+    const { groupCallEndLine } = await import("../lib/calls/callStateMachine.js");
+    const startedAt = new Date("2026-07-19T10:00:00Z").toISOString();
+    assert.equal(
+      groupCallEndLine({
+        startedAt, connectedAt: startedAt,
+        endedAt: new Date("2026-07-19T10:38:00Z").toISOString(),
+      }, 7),
+      "Crew Call ended · 38 min · 7 participants",
+    );
+    assert.equal(
+      groupCallEndLine({
+        startedAt, connectedAt: null,
+        endedAt: new Date("2026-07-19T10:00:20Z").toISOString(),
+      }, 1),
+      "Crew Call ended · 1 min · 1 participant",
+    );
   });
 });
 

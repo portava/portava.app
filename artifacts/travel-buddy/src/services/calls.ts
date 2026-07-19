@@ -98,6 +98,28 @@ export async function leaveCall(callId: string): Promise<CallResult<{ status: Ca
   return api(`/api/calls/${encodeURIComponent(callId)}/leave`, 'POST');
 }
 
+/** Participant row + privacy-safe identity for the in-room list. */
+export interface CallParticipantDto {
+  userId: string;
+  role: string;
+  status: string;
+  joinedAt: string | null;
+  leftAt: string | null;
+  name: string | null;
+  handle: string | null;
+  avatarUrl: string | null;
+}
+
+/** One call with its participant list (drives the group in-room UI). */
+export async function getCall(callId: string): Promise<CallResult<{ session: CallSessionDto; participants: CallParticipantDto[] }>> {
+  return api(`/api/calls/${encodeURIComponent(callId)}`, 'GET');
+}
+
+/** The live crew room for a trip, if any (members only). */
+export async function getCrewCall(tripId: string): Promise<CallResult<{ session: CallSessionDto | null; participantCount: number }>> {
+  return api(`/api/calls/group/trip_crew/${encodeURIComponent(tripId)}`, 'GET');
+}
+
 /** Privacy-safe caller identity attached to a restored ringing session. */
 export interface CallCallerIdentity {
   id: string;

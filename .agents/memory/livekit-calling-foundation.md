@@ -12,3 +12,12 @@ description: Durable lessons from the calling-system audit — SDK enum gotcha, 
 - Calling permission floor: only a messaging verdict of `allowed===true` may permit a call — `requires_request` must not.
 - RAB bookings' `buddy_id` is the buddy *profile* id, not a user id — always resolve `rent_buddy_profiles.user_id` before comparing against users.
 - Full Phase-0 binding table lives in `artifacts/api-server/docs/calling-foundation-audit.md`.
+
+## Group (trip_crew) room semantics — Phase 4 decisions
+- Group rooms have NO ring phase: start creates the session and immediately transitions CONNECTED (starter joined, role host). Joiners never re-ring anyone.
+- Concurrent start resolves server-side: POST /calls for group finds the open session for (contextType, contextId) and returns a 200 join grant into it — never a second room.
+- Rejoin rule lives in `markParticipantJoined`: statuses invited/ringing/joined/left/missed are re-joinable; `removed`/`declined` never resurface (engine also denies removed_from_room).
+- Group history line ("Crew Call ended · N min · M participants") is written by the store adapter for trip_crew sessions with null threadId, resolving the trip thread (thread_type='trip'); only on status `ended`.
+- One restrained start notification per member via `announceCrewCallStarted` (`_setTestCrewDeps` seam) — excludes starter, honors incoming_call_notifications; realtime `call.group_started`/`call.group_ended` fan out to crew member ids.
+- Concurrent group starts are guarded twice: a per-process lock in the calls route serializes lookup+create, and the live DB partial unique index `uniq_open_group_room_per_context` (one open group_voice room per context) turns cross-instance races into GroupRoomConflictError → join the winning room.
+- Standalone fork carries Phase 3 gating files but not the Phase 4 crew-call surfaces; check the actual tree before assuming parity either way.

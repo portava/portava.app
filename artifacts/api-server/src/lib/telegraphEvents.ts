@@ -37,7 +37,9 @@ export type TelegraphEventType =
   | "call.declined"
   | "call.canceled"
   | "call.ended"
-  | "call.missed";
+  | "call.missed"
+  | "call.group_started"
+  | "call.group_ended";
 
 export interface TelegraphEvent {
   type: TelegraphEventType;

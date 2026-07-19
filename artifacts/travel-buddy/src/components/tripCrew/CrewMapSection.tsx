@@ -18,6 +18,7 @@ import {
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
 import { CrewMemberCard } from './CrewMemberCard.tsx';
+import { CrewCallCard } from './CrewCallCard.tsx';
 import { LiveShareSheet } from './LiveShareSheet.tsx';
 import { useTripCrewMap } from '../../hooks/useTripCrewMap.ts';
 import { enableGhostMode, disableGhostMode, updateCrewPreferences } from '../../services/tripCrewLocation.ts';
@@ -184,6 +185,9 @@ export function CrewMapSection({ tripId, refreshKey = 0 }: Props) {
 
   return (
     <View style={s.wrap}>
+      {/* Crew voice room — Start / Join affordance (members only) */}
+      <CrewCallCard tripId={tripId} />
+
       {/* Ghost mode + share controls */}
       <View style={s.controlsCard}>
         <View style={s.controlRow}>

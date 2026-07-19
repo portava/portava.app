@@ -106,6 +106,25 @@ export function inMaxDurationWarningWindow(
     && elapsed < CALL_CONFIG.MAX_CALL_DURATION_MS;
 }
 
+/**
+ * Group-room end summary line (spec Phase 4): written into the crew's group
+ * conversation when the room closes, e.g. "Crew Call ended · 38 min · 7 participants".
+ * `participantCount` is the number of distinct people who ever joined.
+ */
+export function groupCallEndLine(
+  session: Pick<CallSession, 'connectedAt' | 'startedAt' | 'endedAt'>,
+  participantCount: number,
+): string {
+  const anchorIso = session.connectedAt ?? session.startedAt;
+  const anchor = new Date(anchorIso).getTime();
+  const ended = session.endedAt ? new Date(session.endedAt).getTime() : NaN;
+  const mins = Number.isFinite(anchor) && Number.isFinite(ended)
+    ? Math.max(1, Math.round((ended - anchor) / 60_000))
+    : 1;
+  const people = `${participantCount} participant${participantCount === 1 ? '' : 's'}`;
+  return `Crew Call ended · ${mins} min · ${people}`;
+}
+
 /** Human system-message line for contextual call history (spec §2/§17). */
 export function callHistoryLine(
   session: Pick<CallSession, 'callType' | 'status' | 'connectedAt' | 'endedAt'>,
