@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback, useRef, type MutableRefObject } from 'react';
 import type { OwnProfile, PassportPostcard, PassportStamp } from '../types/models.ts';
 import type { PassportMemory } from '../services/passportStamps.ts';
+import { useSnapshotCache } from './useSnapshotCache.ts';
 import { getMyProfile, getMyPassportPostcards, getMyStamps } from '../services/profile.ts';
 import { getMyPassportMemories, getMyPassportSuggestions } from '../services/passportStamps.ts';
 import { isSupabaseConfigured } from '../lib/supabase.ts';
@@ -26,6 +27,14 @@ export interface PassportState {
    *  a failed reload does NOT silence subsequent retry attempts. */
   lastLoadedAt: MutableRefObject<number>;
 }
+
+/** Shape stored in the AsyncStorage snapshot for stale-while-revalidate. */
+type PassportSnapshot = {
+  profile: OwnProfile;
+  postcards: PassportPostcard[];
+  stamps: PassportStamp[];
+  memories: PassportMemory[];
+};
 
 export function usePassport(): PassportState {
   const [profile, setProfile] = useState<OwnProfile | null>(null);
@@ -49,6 +58,21 @@ export function usePassport(): PassportState {
   const lastLoadedAt = useRef(0);
 
   const reload = useCallback(() => setTick((t) => t + 1), []);
+
+  // Stale-while-revalidate: pre-populate from AsyncStorage so the passport
+  // content paints immediately on second+ opens before the network resolves.
+  const { snapshot: passportSnapshot, save: savePassportSnapshot } = useSnapshotCache<PassportSnapshot>('passport');
+
+  // Apply snapshot data the first time it arrives from AsyncStorage.
+  // Skipped once real data has loaded (hasDataRef.current = true).
+  useEffect(() => {
+    if (!passportSnapshot || hasDataRef.current) return;
+    setProfile(passportSnapshot.profile);
+    setPostcards(passportSnapshot.postcards);
+    setStamps(passportSnapshot.stamps);
+    setMemories(passportSnapshot.memories);
+    setLoading(false);
+  }, [passportSnapshot]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let alive = true;
@@ -145,6 +169,15 @@ export function usePassport(): PassportState {
       setMemories(memRes.ok ? memRes.data : []);
       setSuggestions(sugRes.ok ? sugRes.data : []);
       setLoading(false);
+      // Persist snapshot for stale-while-revalidate on next open.
+      if (pRes.ok && pRes.data) {
+        savePassportSnapshot({
+          profile: pRes.data as OwnProfile,
+          postcards: pcRes.ok ? (pcRes.data ?? []) : [],
+          stamps: stRes.ok ? (stRes.data ?? []) : [],
+          memories: memRes.ok ? memRes.data : [],
+        });
+      }
     }).catch(() => {
       if (!alive) return;
       hadErrorRef.current = true;

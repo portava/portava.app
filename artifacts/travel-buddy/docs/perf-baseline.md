@@ -1,4 +1,4 @@
-# Performance Baseline — Phase 0
+# Performance Baseline — Phase 0 + Phase 2
 
 Captured: 2026-07-18  
 Instrumentation: `useScreenTiming` hook (client) + pino-http `responseTime` + cold-start middleware (server)  
@@ -98,3 +98,48 @@ A true cold miss (no L2 entry) was not observed in this session. From prior log 
 7. **Update the tables above** with the captured p50 and p95 values, noting the date.
 
 These numbers become the "before" snapshot that every Phase 1+ optimisation compares against.
+
+---
+
+## Phase 2 — Stale-While-Revalidate Snapshot Cache (2026-07-19)
+
+Generalised the Discovery tab's AsyncStorage cache-first pattern into a shared
+`useSnapshotCache<T>` hook and adopted it on the four remaining main tabs.
+
+### Hook contract
+
+| Property | Value |
+|----------|-------|
+| Storage key | `snap:v1:<name>:<userId>` (per-user, per-screen) |
+| TTL | 1 hour (stale data still returned; `isStale` flag set) |
+| Size cap | 128 KB JSON (writes silently dropped if exceeded) |
+| Pull-to-refresh | Calls `clear()` before reload — forces full network fetch |
+
+### Screens adopted
+
+| Screen | Snapshot key | Data snapshotted |
+|--------|-------------|-----------------|
+| Pulse | `snap:v1:pulse:<uid>` | `PulseFeedItem[]` — full for-you feed items |
+| Passport | `snap:v1:passport:<uid>` | `{ profile, postcards, stamps, memories }` |
+| Trips | `snap:v1:trips:<uid>` | `TripRow[]` — my trips list |
+| Events | `snap:v1:events:<uid>` | `{ todayEvents, tomorrowEvents, weekendEvents, followingEvents, categoryRows }` |
+
+### Expected second-open timings (target)
+
+| Screen | Before (cold network) | Target (second open w/ snapshot) |
+|--------|-----------------------|----------------------------------|
+| Pulse | ~1 200–1 800 ms | < 300 ms |
+| Passport | ~800–1 200 ms | < 300 ms |
+| Trips | ~400–800 ms | < 300 ms |
+| Events | ~1 000–2 000 ms | < 300 ms |
+
+> **To capture actuals:** filter Expo console for `[PerfTiming]` and look for
+> `second=<ms>` log lines on the second cold open of each tab. Update this table.
+
+### Relevant files
+
+- `artifacts/travel-buddy/src/hooks/useSnapshotCache.ts` — shared hook (new)
+- `artifacts/travel-buddy/app/(tabs)/index.tsx` — Pulse adoption
+- `artifacts/travel-buddy/src/hooks/usePassport.ts` — Passport adoption
+- `artifacts/travel-buddy/app/(tabs)/trips.tsx` — Trips adoption
+- `artifacts/travel-buddy/app/(tabs)/events.tsx` — Events adoption

@@ -33,6 +33,7 @@ import { useLivePulse } from '../../src/hooks/useLivePulse';
 import { fireRankOutcome } from '../../src/hooks/useRankOutcome';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
+import { useSnapshotCache } from '../../src/hooks/useSnapshotCache';
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
 
@@ -108,6 +109,10 @@ function Pulse() {
 
   const navBarScrollHandler = useNavBarScrollHandler();
   const { markFirstContent, epoch } = useScreenTiming('Pulse');
+
+  // Stale-while-revalidate: pre-paint the Pulse feed from the previous session's
+  // snapshot before any network round-trip completes.
+  const { snapshot: pulseSnapshot, save: savePulseSnapshot, clear: clearPulseSnapshot } = useSnapshotCache<PulseFeedItem[]>('pulse');
   const { locationState, openCityPicker } = useLocationContext();
   const activeCity = locationState.place.city ?? null;
   const activeCitySlug = (activeCity ?? '').toLowerCase().replace(/\s+/g, '-');
@@ -192,26 +197,48 @@ function Pulse() {
   const handleRefresh = useCallback(() => {
     // Reset TTL so the next focus-driven reload fires unconditionally.
     lastPulseFetchAt.current = 0;
+    // Clear snapshot so pull-to-refresh forces a full network reload.
+    clearPulseSnapshot();
     setPeopleRefreshKey((k) => k + 1);
     livePulse.refresh();
     if (feedMode === 'following') followingFeed.reload();
     else pulseFeed.reload();
-  }, [feedMode, followingFeed.reload, pulseFeed.reload, livePulse.refresh]);
+  }, [feedMode, followingFeed.reload, pulseFeed.reload, livePulse.refresh, clearPulseSnapshot]);
 
-  // Perf timing: fire on every focus cycle when feed items are present.
-  // epoch increments on each focus so warm opens fire even without data changes.
+  // Track whether the initial network load has completed — once true, live data
+  // (even empty) always wins over the snapshot so stale items are never sticky.
+  const [pulseLoadedOnce, setPulseLoadedOnce] = useState(false);
   useEffect(() => {
-    if (pulseFeed.items.length > 0) markFirstContent();
-  }, [epoch, pulseFeed.items.length > 0]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!pulseFeed.loading && !pulseLoadedOnce) setPulseLoadedOnce(true);
+  }, [pulseFeed.loading]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Perf timing: before first load, fire when snapshot has data;
+  // after first load, fire only when live data is present.
+  useEffect(() => {
+    const hasContent = pulseLoadedOnce
+      ? pulseFeed.items.length > 0
+      : pulseFeed.items.length > 0 || (pulseSnapshot?.length ?? 0) > 0;
+    if (hasContent) markFirstContent();
+  }, [epoch, pulseLoadedOnce, pulseFeed.items.length > 0, (pulseSnapshot?.length ?? 0) > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fits = [...buckets.fitsAvailability, ...buckets.openNearby];
   const noFits = fits.length === 0;
 
-  // pulseFeed.items are already PulseFeedItem[] (pre-mapped by usePulseFeed)
+  // pulseFeed.items are already PulseFeedItem[] (pre-mapped by usePulseFeed).
+  // Use snapshot only while the initial load is in-flight. Once any response
+  // arrives (even empty) live data always wins — no stale items left on screen.
   const realItems = useMemo<PulseFeedItem[]>(
-    () => pulseFeed.items,
-    [pulseFeed.items],
+    () => pulseLoadedOnce ? pulseFeed.items : (pulseSnapshot ?? pulseFeed.items),
+    [pulseFeed.items, pulseSnapshot, pulseLoadedOnce],
   );
+
+  // Persist feed items to the snapshot cache after each successful load.
+  // Save even on empty arrays so a genuinely-empty feed clears the old snapshot.
+  useEffect(() => {
+    if (!pulseFeed.loading && !pulseFeed.error) {
+      savePulseSnapshot(pulseFeed.items);
+    }
+  }, [pulseFeed.items, pulseFeed.loading, pulseFeed.error, savePulseSnapshot]);
 
   const forYouFeed = useMemo<PulseFeedItem[]>(() => {
     const filteredReal = active.includes('All') || active.includes('Posts')

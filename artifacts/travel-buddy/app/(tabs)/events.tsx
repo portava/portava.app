@@ -33,6 +33,7 @@ import { useSession } from '../../src/context/SessionContext';
 import { useLocationContext } from '../../src/context/LocationContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
+import { useSnapshotCache } from '../../src/hooks/useSnapshotCache';
 
 // ── Date preset helpers ───────────────────────────────────────────────────────
 
@@ -88,6 +89,17 @@ function EventsTabScreen() {
   const navScrollHandler = useNavBarScrollHandler();
   const { markFirstContent, epoch } = useScreenTiming('Events');
 
+  // Stale-while-revalidate: pre-paint event sections from the previous session's
+  // snapshot while the network fetch is in-flight.
+  type EventsSnapshot = {
+    todayEvents: EventListItem[];
+    tomorrowEvents: EventListItem[];
+    weekendEvents: EventListItem[];
+    followingEvents: EventListItem[];
+    categoryRows: Record<string, EventListItem[]>;
+  };
+  const { snapshot: eventsSnapshot, save: saveEventsSnapshot, clear: clearEventsSnapshot } = useSnapshotCache<EventsSnapshot>('events');
+
   const [refreshing, setRefreshing] = useState(false);
 
   // ── Discovery events ──────────────────────────────────────────────────────
@@ -132,6 +144,18 @@ function EventsTabScreen() {
   const lastFiltersKey = useRef('');
   // Always-current filter key, kept in sync on every render via ref assignment.
   const currentFiltersKeyRef = useRef('');
+
+  // Apply snapshot on first open so content paints before the network resolves.
+  // Skipped once a real load has completed (lastLoadedAt.current > 0).
+  useEffect(() => {
+    if (!eventsSnapshot || lastLoadedAt.current > 0) return;
+    setTodayEvents(eventsSnapshot.todayEvents);
+    setTomorrowEvents(eventsSnapshot.tomorrowEvents);
+    setWeekendEvents(eventsSnapshot.weekendEvents);
+    setFollowingEvents(eventsSnapshot.followingEvents);
+    setCategoryRows(eventsSnapshot.categoryRows);
+    setLoading(false);
+  }, [eventsSnapshot]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeFilters =
     (category !== 'All' ? 1 : 0) +
@@ -241,11 +265,20 @@ function EventsTabScreen() {
 
   // Perf timing: fire on every focus cycle when any events section has content.
   // epoch increments on each focus so warm opens fire even without data changes.
+  // Also fires when snapshot data is available so second opens are timed correctly.
   useEffect(() => {
-    if (!loading && (todayEvents.length > 0 || tomorrowEvents.length > 0 || weekendEvents.length > 0 || followingEvents.length > 0)) {
-      markFirstContent();
-    }
-  }, [epoch, !loading && (todayEvents.length > 0 || tomorrowEvents.length > 0 || weekendEvents.length > 0 || followingEvents.length > 0)]); // eslint-disable-line react-hooks/exhaustive-deps
+    const hasData = !loading && (todayEvents.length > 0 || tomorrowEvents.length > 0 || weekendEvents.length > 0 || followingEvents.length > 0);
+    const hasSnapshot = (eventsSnapshot?.todayEvents?.length ?? 0) > 0 || (eventsSnapshot?.tomorrowEvents?.length ?? 0) > 0;
+    if (hasData || hasSnapshot) markFirstContent();
+  }, [epoch, !loading && (todayEvents.length > 0 || tomorrowEvents.length > 0 || weekendEvents.length > 0 || followingEvents.length > 0), !!eventsSnapshot]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist events to snapshot cache after each successful load.
+  useEffect(() => {
+    if (loading || error) return;
+    const hasData = todayEvents.length > 0 || tomorrowEvents.length > 0 || weekendEvents.length > 0 || followingEvents.length > 0;
+    if (!hasData) return;
+    saveEventsSnapshot({ todayEvents, tomorrowEvents, weekendEvents, followingEvents, categoryRows });
+  }, [loading, error, todayEvents, tomorrowEvents, weekendEvents, followingEvents, categoryRows, saveEventsSnapshot]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Near-me load ───────────────────────────────────────────────────────────
   async function handleNearMeRequest() {
@@ -551,7 +584,7 @@ function EventsTabScreen() {
           onScroll={navScrollHandler}
           scrollEventThrottle={16}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={color.signal} />
+            <RefreshControl refreshing={refreshing} onRefresh={() => { clearEventsSnapshot(); load(true); }} tintColor={color.signal} />
           }
         >
 
