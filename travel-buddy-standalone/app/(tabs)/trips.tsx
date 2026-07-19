@@ -5,7 +5,7 @@ import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarC
 import { postCompassFrontloadEvent } from '../../src/services/compass';
 import {
   View, Text, ScrollView, Pressable, Image,
-  ActivityIndicator, StyleSheet, Alert,
+  ActivityIndicator, StyleSheet, Alert, RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -25,6 +25,8 @@ import { color, space, radius, type as t, shadow } from '../../src/theme/tokens'
 import { acceptTripInvite, declineTripInvite, type TripInvite } from '../../src/services/trips';
 import { classifyInviteAcceptError } from '../../src/lib/inviteCardGoneHandler';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
+import { useSnapshotCache } from '../../src/hooks/useSnapshotCache';
+import type { TripRow } from '../../src/services/trips';
 
 function MeetupsShortcut({ count }: { count: number }) {
   const label = count > 9 ? '9+' : count > 0 ? String(count) : null;
@@ -199,17 +201,43 @@ function TripsScreen() {
   const navScrollHandler = useNavBarScrollHandler();
   const { markFirstContent, epoch } = useScreenTiming('Trips');
 
+  // Stale-while-revalidate: pre-paint the trip list from the previous session's
+  // snapshot while the network fetch is in-flight.
+  const { snapshot: tripsSnapshot, save: saveTripsSnapshot, clear: clearTripsSnapshot } = useSnapshotCache<TripRow[]>('trips');
+
+  // Track whether the initial network load has completed — once true, live data
+  // (even empty) always wins over the snapshot so stale trips are never sticky.
+  const [tripsLoadedOnce, setTripsLoadedOnce] = useState(false);
+  React.useEffect(() => {
+    if (!loading && !tripsLoadedOnce) setTripsLoadedOnce(true);
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Use snapshot only while the initial load is in-flight. Once any response
+  // arrives (even empty) live data always wins — no stale trips left on screen.
+  const displayTrips = tripsLoadedOnce ? realTrips : (tripsSnapshot ?? realTrips);
+
   useFocusEffect(useCallback(() => {
     postCompassFrontloadEvent({ eventType: 'navigation', screen: 'trips' }).catch(() => {});
   }, []));
 
   React.useEffect(() => { if (live) reload(); }, [live, reload]);
 
-  // Perf timing: fire on every focus cycle when trips are loaded.
-  // epoch increments on each focus so warm opens fire even without data changes.
+  // Persist trip list to snapshot after each successful load.
+  // Save even on empty arrays so a genuinely-empty list clears the old snapshot.
   React.useEffect(() => {
-    if (realTrips.length > 0) markFirstContent();
-  }, [epoch, realTrips.length > 0]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!loading && !error) {
+      saveTripsSnapshot(realTrips);
+    }
+  }, [realTrips, loading, error, saveTripsSnapshot]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Perf timing: before first load, fire when snapshot has data;
+  // after first load, fire only when live data is present.
+  React.useEffect(() => {
+    const hasContent = tripsLoadedOnce
+      ? realTrips.length > 0
+      : realTrips.length > 0 || (tripsSnapshot?.length ?? 0) > 0;
+    if (hasContent) markFirstContent();
+  }, [epoch, tripsLoadedOnce, realTrips.length > 0, (tripsSnapshot?.length ?? 0) > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
@@ -219,6 +247,13 @@ function TripsScreen() {
             onScroll={navScrollHandler}
             scrollEventThrottle={16}
             contentContainerStyle={{ paddingBottom: 0 }}
+            refreshControl={
+              <RefreshControl
+                refreshing={loading && displayTrips.length > 0}
+                onRefresh={() => { clearTripsSnapshot(); reload(); }}
+                tintColor={color.signal}
+              />
+            }
           >
             {/* ScreenHeader and segControl now scroll with content */}
             <View style={{ paddingTop: insets.top }}>
@@ -263,7 +298,11 @@ function TripsScreen() {
 
               {live && <PendingInvitesSection onAccepted={reload} />}
               {live ? (
-                <LiveTrips trips={realTrips} loading={loading} error={error} />
+                <LiveTrips
+                  trips={displayTrips}
+                  loading={loading && displayTrips.length === 0}
+                  error={error}
+                />
               ) : (
                 <Pressable style={styles.signInCta} onPress={() => router.push('/(auth)/sign-in' as any)}>
                   <Text style={styles.signInCtaTitle}>Sign in to see your trips</Text>
