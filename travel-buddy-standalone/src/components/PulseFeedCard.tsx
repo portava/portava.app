@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, Image, Pressable, StyleSheet, Alert, useWindowDimensions } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Alert, useWindowDimensions } from 'react-native';
+import { CachedImage, withStorageParams } from './CachedImage.tsx';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import {
@@ -137,8 +138,8 @@ function AuthorRow({
               </Text>
             </View>
           ) : (
-            <Image
-              source={{ uri: item.author.avatarUrl }}
+            <CachedImage
+              source={{ uri: withStorageParams(item.author.avatarUrl, 'width=100&quality=80') }}
               style={s.avatar}
               onError={() => setAvatarError(true)}
             />
@@ -233,8 +234,8 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
               style={StyleSheet.absoluteFill}
             />
           ) : (
-            <Image
-              source={{ uri: item.media?.[0]?.thumbnail_url ?? item.media?.[0]?.url ?? item.mediaUrl }}
+            <CachedImage
+              source={{ uri: withStorageParams(item.media?.[0]?.thumbnail_url ?? item.media?.[0]?.url ?? item.mediaUrl, 'width=400&quality=80') }}
               style={StyleSheet.absoluteFill}
               resizeMode="cover"
               onError={() => setMediaFailed(true)}
@@ -475,7 +476,7 @@ function CircleCard({ item }: { item: PulseFeedItem }) {
       <View style={s.circleRow}>
         <View style={{ flexDirection: 'row' }}>
           {(item.participants ?? []).slice(0, 4).map((p, i) => (
-            <Image key={p.id} source={{ uri: p.avatarUrl }} style={[s.circleAvatar, { marginLeft: i === 0 ? 0 : -9, zIndex: 4 - i }]} />
+            <CachedImage key={p.id} source={{ uri: withStorageParams(p.avatarUrl, 'width=100&quality=80') }} style={[s.circleAvatar, { marginLeft: i === 0 ? 0 : -9, zIndex: 4 - i }]} />
           ))}
         </View>
         <View style={{ flex: 1 }} />
