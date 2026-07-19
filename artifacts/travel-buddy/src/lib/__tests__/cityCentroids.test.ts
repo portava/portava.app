@@ -250,6 +250,48 @@ describe('getCityCentroid — normalisation (casing & whitespace)', () => {
   });
 });
 
+describe('getCityCentroid — alternate-name aliases resolve via CITY_ALIASES', () => {
+  const HCMC: [number, number] = [10.8231, 106.6297];
+  const MUMBAI: [number, number] = [19.076, 72.8777];
+
+  it('"Ho Chi Minh" (without "City") resolves to Ho Chi Minh City', () => {
+    const coords = getCityCentroid('Ho Chi Minh');
+    assert.ok(coords !== undefined, '"Ho Chi Minh" returned undefined — alias lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - HCMC[0]) < 0.5, `lat ${lat} implausibly far from Ho Chi Minh City`);
+    assert.ok(Math.abs(lng - HCMC[1]) < 0.5, `lng ${lng} implausibly far from Ho Chi Minh City`);
+  });
+
+  it('"Saigon" resolves to Ho Chi Minh City', () => {
+    const coords = getCityCentroid('Saigon');
+    assert.ok(coords !== undefined, '"Saigon" returned undefined — alias lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - HCMC[0]) < 0.5, `lat ${lat} implausibly far from Ho Chi Minh City`);
+    assert.ok(Math.abs(lng - HCMC[1]) < 0.5, `lng ${lng} implausibly far from Ho Chi Minh City`);
+  });
+
+  it('"Bombay" resolves to Mumbai', () => {
+    const coords = getCityCentroid('Bombay');
+    assert.ok(coords !== undefined, '"Bombay" returned undefined — alias lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - MUMBAI[0]) < 0.5, `lat ${lat} implausibly far from Mumbai`);
+    assert.ok(Math.abs(lng - MUMBAI[1]) < 0.5, `lng ${lng} implausibly far from Mumbai`);
+  });
+
+  it('mixed-case alias input ("saigon", "BOMBAY") also resolves', () => {
+    assert.ok(getCityCentroid('saigon') !== undefined, '"saigon" (lowercase) failed');
+    assert.ok(getCityCentroid('BOMBAY') !== undefined, '"BOMBAY" (uppercase) failed');
+    assert.ok(getCityCentroid('ho chi minh') !== undefined, '"ho chi minh" (lowercase) failed');
+  });
+
+  it('every CITY_ALIASES value maps to a resolvable canonical centroid', () => {
+    for (const [alias, canonical] of Object.entries(CITY_ALIASES)) {
+      const coords = getCityCentroid(canonical);
+      assert.ok(coords !== undefined, `alias "${alias}" points at unresolvable canonical name "${canonical}"`);
+    }
+  });
+});
+
 describe('getCityCentroid — accent-stripped inputs resolve via alias keys', () => {
   /**
    * CITY_CENTROIDS stores both accented canonical keys and accent-stripped
