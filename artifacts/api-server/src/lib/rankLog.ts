@@ -12,6 +12,7 @@
  * 0–1 produced by the distance kernel) is safe and is retained.
  */
 
+import { randomUUID } from "node:crypto";
 import { getServiceClient } from "./supabase";
 import type { ScoredCandidate, RankCandidate } from "./portavaRank";
 
@@ -48,6 +49,10 @@ export async function logImpression(
     if (!sc || scored.length === 0) return;
 
     const servedAt = new Date().toISOString();
+    // Generate one fallback session UUID for the whole batch so every row from
+    // this invocation shares the same session_id — mirrors the "single open"
+    // semantics callers rely on for funnel reconstruction.
+    const effectiveSessionId = sessionId ?? randomUUID();
 
     const rows = scored.map((s, idx) => {
       const kind = s.candidate.kind;
@@ -67,7 +72,7 @@ export async function logImpression(
         outcome:    "impression",
         served_at:  servedAt,
         surface,
-        session_id: sessionId ?? null,
+        session_id: effectiveSessionId,
       };
     });
 

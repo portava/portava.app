@@ -222,6 +222,107 @@ async function timedGet(
   return { status: res.status, body, elapsedMs: Date.now() - t0 };
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+/** UUID v4 pattern */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+// ── Suite H: null / missing sessionId (direct logImpression unit tests) ────────
+//
+// discovery.ts calls logImpression without a sessionId argument, so the logger
+// receives undefined.  It must:
+//  H  — not write any row with session_id = null
+//  H2 — generate exactly ONE fallback UUID per invocation so all rows in the
+//       same batch share the same session_id (preserving "single-open" funnel
+//       grouping semantics)
+
+import { logImpression } from "../lib/rankLog.js";
+import { _setTestServiceClient } from "../lib/supabase.js";
+import type { ScoredCandidate, RankCandidate } from "../lib/portavaRank.js";
+
+/** Two minimal scored candidates — enough for a meaningful batch. */
+const SCORED_CANDIDATES: ScoredCandidate<RankCandidate>[] = [
+  {
+    candidate: { id: "item-0001", kind: "event" } as RankCandidate,
+    score: 0.9,
+    features: { recency: 0.8, distance: 0.3 },
+  },
+  {
+    candidate: { id: "item-0002", kind: "event" } as RankCandidate,
+    score: 0.7,
+    features: { recency: 0.6, distance: 0.5 },
+  },
+];
+
+describe("Impression logging — null sessionId: no broken rows written to rank_events", () => {
+  const capturedRows: any[] = [];
+
+  beforeEach(() => {
+    capturedRows.length = 0;
+
+    // Inject a capturing service client directly into logImpression's code path.
+    // logImpression calls getServiceClient() from supabase.ts — override that.
+    const capturingClient: any = {
+      from(table: string) {
+        return {
+          insert(data: any) {
+            if (table === "rank_events") {
+              const rows = Array.isArray(data) ? data : [data];
+              capturedRows.push(...rows);
+            }
+            return Promise.resolve({ data, error: null });
+          },
+        };
+      },
+    };
+
+    _setTestServiceClient(capturingClient);
+  });
+
+  afterEach(() => {
+    _setTestServiceClient(null);
+  });
+
+  it("H: logImpression with no sessionId writes rows — not an empty insert — when candidates are present", async () => {
+    await logImpression(SCORED_CANDIDATES, USER_ID, "discovery" /* no sessionId */);
+
+    assert.ok(
+      capturedRows.length > 0,
+      `Expected rank_events to receive at least one row but captured ${capturedRows.length}`,
+    );
+  });
+
+  it("H2: every row in the batch carries a valid non-null UUID as session_id — and all share the same one", async () => {
+    await logImpression(SCORED_CANDIDATES, USER_ID, "discovery" /* no sessionId */);
+
+    assert.ok(
+      capturedRows.length > 0,
+      `Expected rank_events to receive at least one row but captured ${capturedRows.length}`,
+    );
+
+    for (const row of capturedRows) {
+      assert.ok(
+        row.session_id !== null && row.session_id !== undefined,
+        `rank_events row has session_id = ${JSON.stringify(row.session_id)} — expected a generated UUID`,
+      );
+      assert.match(
+        String(row.session_id),
+        UUID_RE,
+        `rank_events row session_id "${row.session_id}" is not a valid UUID v4`,
+      );
+    }
+
+    // All rows in the same logImpression call must share a single session_id so
+    // the impression batch can be grouped as one "open" in the outcome funnel.
+    const sessionIds = new Set(capturedRows.map((r) => r.session_id));
+    assert.equal(
+      sessionIds.size,
+      1,
+      `Expected all rows to share one session_id but found ${sessionIds.size} distinct values: ${[...sessionIds].join(", ")}`,
+    );
+  });
+});
+
 // ── Suite A–D: immediate-reject stub ──────────────────────────────────────────
 
 describe("Impression logging — rank_events immediate-reject: no error propagation", () => {
