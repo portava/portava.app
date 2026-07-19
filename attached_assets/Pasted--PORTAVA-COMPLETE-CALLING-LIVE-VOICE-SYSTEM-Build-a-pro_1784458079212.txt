@@ -1,0 +1,1734 @@
+# PORTAVA — COMPLETE CALLING & LIVE VOICE SYSTEM
+
+Build a production-ready calling system across Portava using one shared calling architecture.
+
+This is an extension of the existing Telegraph messaging, Rent a Buddy, Trips, Trip Crews, Circles, and Events systems.
+
+DO NOT build isolated calling implementations for each feature.
+
+All calling must use the same:
+
+- Call service
+- LiveKit integration
+- Permission engine
+- Block/safety rules
+- Call session model
+- Notification system
+- Realtime signaling
+- Call history
+- User calling preferences
+- UI components
+- Analytics
+- Abuse protections
+
+The goal is to keep Portava users inside Portava instead of forcing them to exchange phone numbers or move conversations to WhatsApp, FaceTime, Messenger, Telegram, etc.
+
+---
+
+# 0. NON-NEGOTIABLE ARCHITECTURE RULE
+
+There must be ONE canonical Portava calling system.
+
+Telegraph, Rent a Buddy, Trips, Trip Crews, and Events are contexts that consume it.
+
+The architecture should be:
+
+PORTAVA CALL SERVICE
+
+↓
+
+Direct Calls
+- Telegraph
+- Rent a Buddy
+
+Group Calls
+- Trip Crew
+
+Live Voice Rooms
+- Events
+
+↓
+
+Shared LiveKit Infrastructure
+
+↓
+
+Shared Permission + Safety Layer
+
+Never create separate conflicting systems such as:
+
+- telegraphCallService
+- rentABuddyCallService
+- tripCallService
+- eventCallService
+
+Context-specific adapters are acceptable.
+
+Separate sources of truth are not.
+
+---
+
+# 1. LIVEKIT PREREQUISITE CHECK — MUST RUN FIRST
+
+Before auditing or implementing anything, verify that the server environment contains:
+
+- LIVEKIT_URL
+- LIVEKIT_API_KEY
+- LIVEKIT_API_SECRET
+
+Do not print secret values.
+
+Only report whether each required secret is present.
+
+Then perform a safe server-side LiveKit configuration check.
+
+Verify that the backend can:
+
+- Initialize the LiveKit server SDK
+- Mint a short-lived test access token
+- Use the configured LiveKit project credentials successfully
+
+Do not expose the generated token unnecessarily in logs.
+
+If practical and supported, validate basic connectivity to the configured LiveKit project without creating a permanent room.
+
+If any LiveKit configuration is missing or invalid:
+
+STOP immediately.
+
+Return:
+
+LIVEKIT PREREQUISITE CHECK: FAILED
+
+Then clearly show:
+
+LIVEKIT_URL: present/missing
+
+LIVEKIT_API_KEY: present/missing
+
+LIVEKIT_API_SECRET: present/missing
+
+Provide exact instructions for what needs to be added to Replit Secrets.
+
+Do not continue into implementation with incomplete LiveKit configuration.
+
+If all checks pass, return:
+
+LIVEKIT PREREQUISITE CHECK: PASSED
+
+Then continue the audit.
+
+---
+
+# 2. PHASE 0 — FULL ARCHITECTURE AUDIT
+
+Before modifying code, audit the existing Portava architecture.
+
+Audit:
+
+- Telegraph architecture
+- Telegraph conversation types
+- messagingPermissions
+- Block system
+- Report system
+- Rent a Buddy conversation architecture
+- Rent a Buddy booking/request states
+- Trips
+- Trip Crews
+- Circles
+- Events
+- Event attendees
+- Event hosts/co-hosts
+- Event privacy rules
+- Event age restrictions
+- Event Trust Score restrictions
+- Trust Score source of truth
+- Push notification infrastructure
+- Realtime infrastructure
+- Current Expo SDK
+- Current EAS build configuration
+- Existing notification permissions
+- Existing user preference storage
+- Existing system-message architecture
+- Existing analytics architecture
+- API source of truth
+- OpenAPI/Zod generation flow if present
+- Migration directories
+- Production migration process
+- Existing rate limiting
+- Existing moderation restrictions
+- Existing session/auth architecture
+- Existing global providers/navigation
+- Existing app-level state management
+
+Produce a table containing:
+
+- Existing system
+- Integration point
+- Files affected
+- Database affected
+- Risks
+- Dependencies
+- Potential conflicts
+- Recommended implementation order
+
+Do not guess.
+
+Check the actual repository and existing architecture.
+
+Before changing Telegraph/shared navigation/provider files, verify whether any existing performance tasks such as #1611–#1615 or successor tasks are still touching the same files.
+
+If they are unfinished:
+
+Queue calling work behind them.
+
+Do not create conflicting simultaneous edits.
+
+---
+
+# 3. CORE PRODUCT REQUIREMENT
+
+Implement the following calling modes.
+
+## A. Telegraph 1:1 Calls
+
+Inside eligible Telegraph direct-message conversations support:
+
+- Voice calls
+- Video calls
+
+Add:
+
+- Phone icon
+- Video icon
+
+to eligible Telegraph DM headers.
+
+Both must use the same canonical Portava Call Service.
+
+Voice calls start as voice.
+
+Video calls may start as video, but camera activation must always require explicit user action.
+
+Users must be able to:
+
+- Start voice call
+- Start video call
+- Accept voice call
+- Accept video call
+- Accept incoming video call as voice-only
+- Turn camera on/off
+- Flip front/rear camera
+- Mute/unmute
+- Change audio route
+- Minimize call
+- Return to call
+- End call
+
+No phone numbers are exposed.
+
+---
+
+# 4. RENT A BUDDY CALLING
+
+Integrate the same 1:1 voice/video calling system into eligible Rent a Buddy conversations.
+
+Allow calls from eligible:
+
+- Buddy inquiry conversations
+- Booking request conversations
+- Accepted booking conversations
+- Active booking conversations
+- Post-booking conversations where messaging remains permitted
+
+Do not create a separate Rent a Buddy calling backend.
+
+Use the same call service and permission engine.
+
+A traveler must NEVER be able to cold-call a Buddy merely because the Buddy has a public profile.
+
+The call must originate from an existing eligible Rent a Buddy conversation.
+
+Use cases include:
+
+- Airport arrival coordination
+- Meeting-point coordination
+- City help
+- Translation assistance
+- Activity planning
+- Safety check-ins
+- Nightlife coordination
+- Schedule changes
+
+Call history must appear directly inside the associated Telegraph/Rent-a-Buddy conversation.
+
+Example system messages:
+
+Voice call · 6 min
+
+Video call · 18 min
+
+Missed voice call
+
+Missed video call
+
+Call declined
+
+Call canceled
+
+No answer
+
+Do not create duplicate conversation systems.
+
+---
+
+# 5. TRIP CREW GROUP CALLS
+
+Add group voice calls for Trip Crews.
+
+Only active authorized Trip Crew members may enter.
+
+Support:
+
+- Start Crew Call
+- Join active Crew Call
+- Leave call
+- Mute/unmute
+- Speaker/audio routing
+- Participant list
+- Active speaker indicator
+- Minimized call bar
+- Rejoin active call
+- Participant count
+
+Video is NOT required for Trip Crew group calls in this initial group release.
+
+Voice first.
+
+UI examples:
+
+Start Crew Call
+
+Join Crew Call · 4 people
+
+The associated group conversation should receive call system messages.
+
+Examples:
+
+Draie started a Crew Call.
+
+Crew Call ended · 38 min · 7 participants
+
+Use secure opaque LiveKit room identifiers.
+
+Do not expose permanent or predictable room names.
+
+---
+
+# 6. EVENT LIVE VOICE ROOMS
+
+Add Event Voice Rooms.
+
+Do NOT automatically create an open voice room for every public event.
+
+Respect:
+
+- Event privacy
+- Attendance
+- Host rules
+- Co-host rules
+- Age restrictions
+- Trust Score restrictions
+- Approval status
+
+Eligible participants may include:
+
+- Event host
+- Event co-hosts
+- Approved attendees
+- Confirmed attendees
+
+Possible room states:
+
+- No room active
+- Starting soon
+- Live
+- Ended
+
+UI examples:
+
+Start Event Voice Room
+
+Join Live Voice Room
+
+Live Voice Room · 12 listening
+
+Initial Event Voice Rooms are voice-only.
+
+Roles:
+
+- Host
+- Co-host/moderator
+- Speaker
+- Listener
+
+Host controls:
+
+- Mute participant where supported
+- Remove participant
+- Promote listener to speaker
+- Demote speaker to listener
+- End room
+- Report participant
+- Block user where permitted
+
+Participants may:
+
+- Raise hand
+- Mute/unmute when permitted
+- Leave room
+- Report user
+
+The Event Voice Room is temporary and tied to the Event.
+
+It is not a permanent public audio channel.
+
+---
+
+# 7. EVENT CALLING PRIVACY
+
+For public events:
+
+Default voice-room access:
+
+Confirmed/approved attendees only.
+
+Optionally allow the host to enable public listening later if the existing event privacy architecture safely supports it.
+
+For private events:
+
+Only invited/approved participants.
+
+For age-restricted events:
+
+Existing event age eligibility must protect room access.
+
+For Trust Score restricted events:
+
+Existing canonical Trust Score rules must protect room access.
+
+Do not create a second eligibility system.
+
+---
+
+# 8. CANONICAL CALL PERMISSION ENGINE
+
+Create one canonical server-side permission layer.
+
+Examples:
+
+canUserStartCall(...)
+
+canUserJoinCall(...)
+
+canUserModerateCall(...)
+
+The permission layer should understand contexts such as:
+
+- telegraph_dm
+- rent_a_buddy
+- trip_crew
+- event_room
+
+For 1:1 calls verify:
+
+1. Caller is authenticated.
+2. Target thread exists.
+3. Caller is a participant.
+4. Callee is a participant.
+5. Existing messaging permissions allow communication.
+6. Neither side has blocked the other.
+7. Callee's calling preferences allow the call.
+8. Thread/context remains valid.
+9. Rent a Buddy context remains eligible when applicable.
+10. User is not suspended/restricted from calling.
+11. Caller is not rate-limited for call spam.
+
+For group calls verify:
+
+1. User is authenticated.
+2. Group/event/trip exists.
+3. User has required membership.
+4. User has not been removed/banned.
+5. Participation remains valid.
+6. Trust rules are respected.
+7. Age restrictions are respected.
+8. Safety/block rules are applied appropriately.
+9. Room is active and joinable.
+10. User is not restricted from calling.
+
+Authorization must happen server-side.
+
+Do not rely only on hidden/disabled client buttons.
+
+---
+
+# 9. WHO CAN CALL ME SETTINGS
+
+Add:
+
+Settings → Privacy & Safety → Calling
+
+For direct calls add:
+
+Who can call me?
+
+Options:
+
+- People I message with
+- Rent a Buddy contacts
+- Nobody
+
+Default:
+
+People I message with
+
+Also add:
+
+Allow calls related to Rent a Buddy bookings
+
+Default:
+
+ON
+
+Allow video calls
+
+Default:
+
+ON
+
+Incoming call notifications
+
+Default:
+
+ON
+
+Store preferences server-side.
+
+Backend must enforce them.
+
+Do not rely solely on client UI.
+
+---
+
+# 10. DATABASE
+
+Create proper migrations.
+
+Do not manually mutate production tables outside the migration system.
+
+Use existing canonical tables/settings where appropriate instead of duplicating structures.
+
+Recommended structure:
+
+## call_sessions
+
+Fields may include:
+
+- id UUID primary key
+- call_type
+- context_type
+- context_id
+- thread_id nullable
+- started_by
+- status
+- livekit_room_name
+- started_at
+- connected_at nullable
+- ended_at nullable
+- end_reason nullable
+- created_at
+- updated_at
+
+call_type:
+
+- voice
+- video
+- group_voice
+
+context_type:
+
+- telegraph_dm
+- rent_a_buddy
+- trip_crew
+- event
+
+status examples:
+
+- ringing
+- active
+- ending
+- ended
+- missed
+- declined
+- canceled
+- failed
+
+Add appropriate indexes.
+
+---
+
+## call_participants
+
+Include:
+
+- id
+- call_id
+- user_id
+- role
+- invited_at
+- joined_at
+- left_at
+- status
+
+Roles:
+
+- caller
+- callee
+- host
+- cohost
+- speaker
+- listener
+- participant
+
+Participant statuses:
+
+- invited
+- ringing
+- joined
+- declined
+- missed
+- left
+- removed
+
+---
+
+## call_preferences
+
+Use an existing user preferences/settings architecture if one exists.
+
+Do not create a duplicate preference table unnecessarily.
+
+Store:
+
+- who_can_call
+- allow_rent_a_buddy_calls
+- allow_video_calls
+- incoming_call_notifications
+
+---
+
+# 11. LIVEKIT ARCHITECTURE
+
+Use LiveKit Cloud.
+
+Secrets:
+
+LIVEKIT_URL
+
+LIVEKIT_API_KEY
+
+LIVEKIT_API_SECRET
+
+Never expose LIVEKIT_API_SECRET to the mobile client.
+
+Backend mints short-lived LiveKit access tokens.
+
+Every token request must pass Portava authorization first.
+
+Use opaque secure room identifiers.
+
+Do not use predictable room names such as:
+
+thread_123
+
+event_456
+
+trip_789
+
+A user must not be able to guess a room name and bypass Portava authorization.
+
+LiveKit connection is NOT proof of authorization.
+
+Portava remains the source of truth.
+
+---
+
+# 12. SERVER-SIDE ROOM LIFECYCLE
+
+The Portava backend must control LiveKit room lifecycle.
+
+Never rely exclusively on clients disconnecting correctly.
+
+When a call is:
+
+- Ended normally
+- Force-ended
+- Canceled
+- Terminated because of blocking
+- Terminated because of moderation
+- Auto-ended because of duration limit
+
+the backend must also terminate/delete the associated LiveKit room through the LiveKit server API where appropriate.
+
+Synchronize:
+
+- Database call session state
+- Participant state
+- LiveKit room state
+
+---
+
+# 13. LIVEKIT WEBHOOKS
+
+Implement authenticated LiveKit webhook handling.
+
+Verify supported event names against the installed/current LiveKit SDK before implementation.
+
+At minimum handle relevant events such as:
+
+- room_finished
+- participant_joined
+- participant_left
+
+Use webhooks to reconcile:
+
+- call_sessions
+- call_participants
+- joined_at
+- left_at
+- active state
+- ended state
+
+Webhook requests must be cryptographically verified using LiveKit's official verification mechanism.
+
+Never trust unsigned webhook payloads.
+
+Webhook processing must be idempotent.
+
+Duplicate webhook delivery must not corrupt state.
+
+---
+
+# 14. GHOST CALL RECOVERY
+
+If:
+
+- App crashes
+- App is force-closed
+- Network disappears
+- Device dies
+- Client fails to call /end
+- Process is killed
+
+the server/webhook reconciliation system must eventually correct call state.
+
+Do not leave permanent:
+
+status = active
+
+records for rooms that no longer exist.
+
+Add reconciliation logic for stale active sessions.
+
+---
+
+# 15. MAXIMUM CALL DURATION / COST GUARD
+
+Set a hard maximum call duration of:
+
+4 hours
+
+Define this as a centralized configuration value.
+
+Do not scatter magic numbers.
+
+Warn connected users shortly before automatic termination when technically practical.
+
+Example:
+
+Your call will end in 5 minutes.
+
+At the maximum duration:
+
+1. Mark call as ending.
+2. Terminate LiveKit room server-side.
+3. Update call session state.
+4. Update participant state.
+5. Write contextual call-history entry.
+6. Prevent stale reconnect attempts.
+
+A forgotten room must never consume unlimited media minutes.
+
+---
+
+# 16. API
+
+Build canonical call APIs following existing Portava API conventions.
+
+Potential routes:
+
+POST /api/calls
+
+POST /api/calls/:callId/accept
+
+POST /api/calls/:callId/decline
+
+POST /api/calls/:callId/end
+
+POST /api/calls/:callId/join
+
+POST /api/calls/:callId/leave
+
+GET /api/calls/:callId
+
+GET /api/calls/active
+
+Group moderation:
+
+POST /api/calls/:callId/raise-hand
+
+POST /api/calls/:callId/promote-speaker
+
+POST /api/calls/:callId/demote-speaker
+
+POST /api/calls/:callId/remove-participant
+
+Exact routes may follow the existing API structure.
+
+Every endpoint requires:
+
+- Authentication
+- Authorization
+- Validation
+- Typed schemas
+- Error handling
+- Appropriate rate limiting
+- Audit logging for moderation-sensitive actions
+
+Update canonical API/OpenAPI/Zod source if Portava uses generated clients/types.
+
+Do not hand-edit generated files without updating the source of truth.
+
+---
+
+# 17. REALTIME CALL SIGNALING
+
+Reuse existing Portava realtime architecture where appropriate.
+
+1:1 flow:
+
+Caller starts call.
+
+→ Server validates permission.
+
+→ Call session created.
+
+→ Callee receives realtime incoming-call event.
+
+→ Push notification is sent when enabled.
+
+→ Incoming call UI opens.
+
+→ Callee accepts.
+
+→ Backend revalidates permission.
+
+→ LiveKit token issued.
+
+→ Both users connect.
+
+Never treat an existing LiveKit room token as permanent authorization.
+
+---
+
+# 18. INCOMING CALL UI
+
+Build a polished incoming-call experience.
+
+Display:
+
+- Caller profile photo
+- Display name
+- Username/handle
+- Verified status
+- Trust indicator if consistent with Passport UI
+- Call type
+
+Example:
+
+Draie is calling
+
+Voice Call
+
+Buttons:
+
+Decline
+
+Accept
+
+For video:
+
+Decline
+
+Accept Voice
+
+Accept Video
+
+Never automatically enable camera without explicit consent.
+
+---
+
+# 19. OUTGOING CALL UI
+
+Display:
+
+- Profile photo
+- Name
+- Calling state
+- Cancel button
+
+States:
+
+- Calling
+- Ringing
+- Connecting
+- Connected
+- Unavailable
+- Declined
+- No answer
+- Call failed
+
+Add sensible timeouts.
+
+Never leave users stuck indefinitely on Connecting.
+
+---
+
+# 20. MISSED CALLS
+
+Automatically mark unanswered 1:1 calls as missed after approximately 45 seconds.
+
+Write a system message in the associated conversation.
+
+Examples:
+
+Missed voice call
+
+Missed video call
+
+Allow:
+
+Call back
+
+only if current permissions still allow calling.
+
+---
+
+# 21. IN-CALL UI
+
+Voice controls:
+
+- Mute
+- Speaker/audio route
+- End
+- Switch to video
+- Minimize
+
+Video controls:
+
+- Mute microphone
+- Camera on/off
+- Flip camera
+- Speaker/audio route
+- End
+- Minimize
+
+Voice calls must not activate camera automatically.
+
+Video calls must still respect explicit permission and user consent.
+
+---
+
+# 22. MINIMIZED CALL EXPERIENCE
+
+Users must be able to continue using Portava during a call.
+
+Create one persistent minimized call pill/bar.
+
+Examples:
+
+Call with Alex · 04:23
+
+Crew Call · 4 people
+
+Event Voice Room · 18 people
+
+Tapping returns to the active call.
+
+Include appropriate:
+
+- Mute shortcut
+- Return to call
+- End call
+
+The minimized call state must survive normal app navigation.
+
+Do not create a second call instance when navigating.
+
+---
+
+# 23. CENTRAL CLIENT CALL MANAGER
+
+Implement a centralized call manager/store/provider.
+
+It owns:
+
+- Current call
+- Incoming call
+- Current LiveKit room
+- Participants
+- Connection state
+- Mic state
+- Camera state
+- Audio route
+- Minimized state
+- Reconnection
+- Call timer
+- Active call context
+
+Screens consume this shared state.
+
+Do not let individual screens independently manage LiveKit rooms.
+
+---
+
+# 24. CALL HISTORY
+
+Do not build a disconnected call-history app.
+
+Call history should live primarily in context.
+
+Telegraph/Rent a Buddy:
+
+Show system messages in the conversation.
+
+Trip Crew:
+
+Show call activity in the group conversation/activity stream.
+
+Events:
+
+Show appropriate room activity in the Event context if consistent with current product architecture.
+
+Do not expose private participant information publicly.
+
+---
+
+# 25. PUSH NOTIFICATIONS
+
+1:1 calls:
+
+Send incoming call push notifications when enabled.
+
+Examples:
+
+Draie is calling you
+
+Incoming video call from Draie
+
+Group calls should NOT aggressively ring every member.
+
+Use notifications such as:
+
+Your Trip Crew started a voice call.
+
+Night Market Crawl has a live voice room.
+
+Respect notification preferences.
+
+Do not send a notification every time someone joins.
+
+---
+
+# 26. BACKGROUND CALLING — HONEST SCOPE
+
+Initial release supports:
+
+- In-app incoming-call UI
+- Standard push notifications
+- Foreground calls
+- Background notification alerts
+- App foreground/background handling
+- Reconnection handling
+
+Do NOT implement in the first release:
+
+- iOS CallKit
+- PushKit VoIP push
+- Android ConnectionService
+
+Do not falsely claim full native phone-call behavior.
+
+Calling settings copy should accurately explain behavior.
+
+Example:
+
+Incoming calls ring in Portava while the app is active. Push notifications alert you when Portava is in the background.
+
+---
+
+# 27. SAFETY
+
+Calling must integrate with the existing Portava safety system.
+
+Hard requirements:
+
+- Block user
+- Report user
+- Trust/verification display
+- No phone number exposure
+- No automatic recording
+- No unauthorized room joining
+
+If User A blocks User B during an active 1:1 call:
+
+1. Immediately force-end the Portava call.
+2. Terminate the associated LiveKit room server-side.
+3. Update session state.
+4. Prevent reconnect.
+5. Prevent another call.
+6. Apply existing block/messaging behavior.
+
+For group calls:
+
+Use canonical group safety policy.
+
+Do not terminate an entire group room just because two participants block each other unless current Portava safety architecture requires that behavior.
+
+---
+
+# 28. CALL RECORDING
+
+No recording.
+
+Do not store:
+
+- Audio
+- Video
+- Call transcripts
+
+Only store metadata needed for:
+
+- Duration
+- Participants
+- Operational analytics
+- Safety
+- Abuse investigation
+- Lifecycle reconciliation
+
+Any future recording feature requires a separate explicit product decision and consent architecture.
+
+---
+
+# 29. GROUP MODERATION
+
+For Event Voice Rooms and Trip Crew calls:
+
+Authorized hosts/moderators may:
+
+- Remove participant
+- Mute participant where supported
+- Report participant
+- End room
+
+Event hosts only receive moderation rights within their own event.
+
+Moderation actions should be audit logged.
+
+---
+
+# 30. MULTIPLE ACTIVE CALL PREVENTION
+
+Prevent users from unintentionally joining multiple simultaneous calls.
+
+If the user tries to join another call:
+
+Show:
+
+You're already in a call.
+
+Options:
+
+Return to current call
+
+Leave and join new call
+
+Never silently terminate an existing call.
+
+---
+
+# 31. NETWORK FAILURE AND RECONNECTION
+
+Handle:
+
+- Temporary network loss
+- Wi-Fi → cellular
+- Cellular → Wi-Fi
+- App backgrounding
+- App foregrounding
+- LiveKit disconnect
+- Server timeout
+
+Display:
+
+Reconnecting...
+
+Attempt controlled reconnection.
+
+If reconnection fails:
+
+End locally and synchronize server state.
+
+Do not leave ghost active sessions.
+
+---
+
+# 32. DEVICE PERMISSIONS
+
+Handle microphone/camera permissions gracefully.
+
+Microphone denied:
+
+Explain that microphone permission is required for calling.
+
+Camera denied:
+
+Allow voice-only calling.
+
+Do not block a voice call simply because camera permission is denied.
+
+Provide:
+
+Open Settings
+
+where supported.
+
+---
+
+# 33. AUDIO BEHAVIOR
+
+Handle:
+
+- Speaker
+- Earpiece
+- Bluetooth
+- Wired headphones
+
+Do not force speaker unexpectedly.
+
+1:1 calls should follow normal platform behavior.
+
+Group voice rooms may default to speaker where appropriate.
+
+---
+
+# 34. RATE LIMITING AND ABUSE PROTECTION
+
+Protect against:
+
+- Repeated call spam
+- Rapid redialing
+- Automated call creation
+- Push notification flooding
+
+A declined user must not be able to trigger endless incoming call notifications.
+
+Integrate with existing Portava moderation/restriction systems.
+
+---
+
+# 35. ACTIVE CALL PRESENCE
+
+Show context-aware presence.
+
+Telegraph:
+
+Active call indicator
+
+Trip Crew:
+
+4 members in Crew Call
+
+Event:
+
+Live Voice Room · 18
+
+Rent a Buddy:
+
+In call with Buddy
+
+Never reveal private call activity to users who cannot access the underlying context.
+
+---
+
+# 36. REUSABLE UI COMPONENTS
+
+Create reusable components such as:
+
+- CallButton
+- IncomingCallScreen
+- OutgoingCallScreen
+- DirectCallScreen
+- GroupVoiceRoomScreen
+- ActiveCallPill
+- CallParticipantAvatar
+- CallControls
+- CallSystemMessage
+
+Do not duplicate full call screens for Telegraph and Rent a Buddy.
+
+Pass context-specific details into shared components.
+
+---
+
+# 37. ANALYTICS
+
+Track privacy-safe operational events:
+
+- call_started
+- call_answered
+- call_declined
+- call_missed
+- call_ended
+- call_failed
+- call_joined
+- call_reconnected
+- group_call_started
+- group_call_joined
+- event_voice_room_started
+
+Track:
+
+- Call type
+- Context type
+- Duration
+- Connection outcome
+
+Do not record call content.
+
+---
+
+# 38. TESTING
+
+Backend tests must include:
+
+## Direct calls
+
+Valid DM participant → allowed
+
+Stranger → denied
+
+Blocked user → denied
+
+Calling disabled → denied
+
+Invalid thread → denied
+
+Removed participant → denied
+
+Valid Rent a Buddy contact → allowed
+
+Invalid Rent a Buddy context → denied
+
+## Lifecycle
+
+ringing → active → ended
+
+ringing → declined
+
+ringing → missed
+
+ringing → canceled
+
+active → force-ended by block
+
+active → auto-ended at max duration
+
+## Group calls
+
+Trip Crew member → join
+
+Non-member → denied
+
+Removed member → denied
+
+Event attendee → join
+
+Non-attendee → denied
+
+Private event outsider → denied
+
+Age-ineligible user → denied
+
+Trust-ineligible user → denied
+
+## Safety/security
+
+Blocking during direct call terminates room
+
+Removed participant cannot rejoin
+
+Ended session cannot be reused
+
+Expired token cannot bypass auth
+
+Opaque room identifiers cannot bypass auth
+
+Unsigned webhook rejected
+
+Duplicate webhook delivery is idempotent
+
+## Client
+
+Incoming call
+
+Outgoing call
+
+Accept
+
+Decline
+
+Missed call
+
+Video permission denied
+
+Mic permission denied
+
+Background/foreground
+
+Minimize/restore
+
+Network reconnect
+
+Multiple-call prevention
+
+Call state after app crash/restart where practical
+
+---
+
+# 39. IMPLEMENTATION ORDER
+
+Do this as sequential reviewed tasks.
+
+Do NOT attempt the whole system as one uncontrolled change.
+
+---
+
+## PHASE 0
+
+LiveKit prerequisite check.
+
+Then complete architecture audit.
+
+Return:
+
+- Audit
+- Integration map
+- Risk map
+- Exact task breakdown
+- Dependencies
+- Files expected to change
+
+Do not begin uncontrolled implementation before establishing architecture.
+
+---
+
+## PHASE 1 — CALLING FOUNDATION
+
+Build:
+
+- LiveKit server integration
+- Database migrations
+- Shared call permission engine
+- Call APIs
+- Secure token generation
+- Call lifecycle
+- Server-side LiveKit room termination
+- LiveKit webhook handling
+- Ghost-call reconciliation
+- Four-hour cost guard
+- Realtime signaling
+- Push notification signaling
+- Central client Call Manager
+
+No group rooms yet.
+
+---
+
+# 40. EAS BUILD DOCUMENTATION — REQUIRED AT END OF PHASE 1
+
+At the END of Phase 1, output complete native build documentation.
+
+Include:
+
+- All LiveKit/native packages added
+- Exact package versions
+- Expo config plugin changes
+- app.json/app.config changes
+- NSMicrophoneUsageDescription
+- NSCameraUsageDescription
+- Android microphone permissions
+- Android camera permissions
+- Bluetooth/audio permissions if required
+- Background configuration if required
+- eas.json changes if required
+- CocoaPods/prebuild considerations
+- Exact EAS development build command
+
+This documentation must be produced immediately after Phase 1 so the new development build can be created while Phase 2 is implemented.
+
+---
+
+## PHASE 2 — TELEGRAPH 1:1 VOICE + VIDEO
+
+Build:
+
+- Voice calls
+- Video calls
+- Incoming call UI
+- Outgoing call UI
+- In-call UI
+- Camera controls
+- Audio controls
+- Minimized call pill
+- Missed calls
+- Call system messages
+- Reconnection
+
+---
+
+# 41. HARD DEVICE-TEST GATE AFTER PHASE 2
+
+After Phase 2 completes:
+
+STOP.
+
+Do NOT begin:
+
+- Phase 3
+- Phase 4
+- Phase 5
+
+until 1:1 voice/video calling has been verified on a real physical device using the new EAS development build.
+
+Validate:
+
+- Outgoing voice call
+- Incoming voice call
+- Accept
+- Decline
+- Missed call
+- Call end
+- Microphone
+- Speaker/audio routing
+- Video call
+- Camera on/off
+- Camera flip
+- Accept video as voice
+- Minimize
+- Restore
+- Background → foreground
+- Push notification receipt
+- Network interruption/reconnection where practical
+- Call state synchronization after disconnect
+
+Return:
+
+DEVICE TEST GATE: READY FOR VERIFICATION
+
+Do not automatically continue.
+
+Group calling must not be built on an unverified 1:1 foundation.
+
+---
+
+## PHASE 3 — RENT A BUDDY
+
+Wire the same direct voice/video calling system into eligible Rent a Buddy conversations.
+
+Do not create new infrastructure.
+
+Verify booking/request state permissions.
+
+---
+
+## PHASE 4 — TRIP CREW GROUP VOICE
+
+Add Trip Crew group voice calling.
+
+Voice only initially.
+
+Reuse the same Portava Call Service.
+
+---
+
+## PHASE 5 — EVENT VOICE ROOMS
+
+Add moderated Event Voice Rooms.
+
+Voice only initially.
+
+Include:
+
+- Host
+- Co-host
+- Speaker
+- Listener
+- Raise hand
+- Promote/demote
+- Remove participant
+- End room
+- Event privacy
+- Age restrictions
+- Trust restrictions
+
+---
+
+## PHASE 6 — HARDENING
+
+Test and harden:
+
+- Permissions
+- Blocks
+- Trust
+- Age eligibility
+- Reconnection
+- Push notifications
+- Race conditions
+- Duplicate calls
+- Ghost calls
+- Token expiry
+- Room termination
+- Webhook reconciliation
+- Maximum duration
+- Rate limiting
+- Abuse protection
+- Regression testing
+- Load considerations
+
+---
+
+## PHASE 7 — FINAL RELEASE READINESS
+
+Verify:
+
+- Native build config
+- Production secrets
+- Migration state
+- Push setup
+- LiveKit webhooks
+- Permission strings
+- Production environment variables
+- Logging
+- Monitoring
+- Analytics
+- Regression status
+
+Do not claim production readiness until all required gates pass.
+
+---
+
+# 42. FUTURE GROUP VIDEO — NOT PART OF INITIAL RELEASE
+
+Architect the shared calling system so group video can be added later without rebuilding the call service.
+
+Potential future contexts:
+
+- Trip Crew group video
+- Small private event video rooms
+
+Do not enable large public event group video in this phase.
+
+Do not build Phase 8 now.
+
+The current required video scope is:
+
+- Telegraph 1:1 video
+- Rent a Buddy 1:1 video
+
+Trip Crew and Event calling remain voice-only for the initial group release.
+
+---
+
+# 43. DEFINITION OF DONE
+
+Calling is NOT complete merely because two devices can connect to LiveKit.
+
+The system is complete only when:
+
+- Telegraph voice calls work
+- Telegraph video calls work
+- Rent a Buddy voice calls work
+- Rent a Buddy video calls work
+- Trip Crew group voice works
+- Event Voice Rooms work
+- Incoming calls work
+- Push notifications work
+- Permissions are server-side
+- Blocks are enforced
+- Blocking force-ends direct calls and LiveKit rooms
+- User calling settings are enforced
+- Trust rules are enforced
+- Age/event eligibility is enforced
+- Call history appears in context
+- Missed calls work
+- Minimized calls work
+- Reconnection works
+- Ghost calls self-heal
+- LiveKit webhooks are verified
+- Rooms terminate server-side
+- Four-hour maximum call duration is enforced
+- Abuse protections exist
+- Group moderation works
+- Unauthorized users cannot mint/join rooms
+- LiveKit secret never reaches the client
+- Device-test gate passes
+- Tests pass
+- Typecheck passes
+- Existing Telegraph has no regressions
+- Existing Rent a Buddy has no regressions
+- Existing Trip/Event functionality has no regressions
+- Native build configuration is documented and verified
+
+Start with the LiveKit prerequisite check.
+
+Then perform PHASE 0.
+
+Return the complete Phase 0 audit and proposed sequential task breakdown before proceeding into major implementation.
+
+Do not rebuild Portava.
+
+Do not redesign unrelated systems.
+
+Extend the existing production architecture safely.
+
+ONE Portava Call Service.
+
+ONE permission and safety layer.
+
+ONE call-session source of truth.
+
+ONE LiveKit integration.
+
+All Portava calling contexts consume this canonical system.
