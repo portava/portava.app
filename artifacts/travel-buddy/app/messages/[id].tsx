@@ -29,6 +29,8 @@ import {
 import { useCallState, useCallActions } from '../../src/context/CallContext';
 import { ensureCallMediaPermissions } from '../../src/services/callPermissions';
 import { CallHistoryMessage } from '../../src/components/calls/CallHistoryMessage';
+import { canShowThreadCallButtons, threadCallContextType } from '../../src/components/calls/callEntryGating';
+import { getBooking } from '../../src/services/rentABuddy';
 import { useThreadMessages, useLanguageSettings, useOutgoingRequestStatus, markThreadRead } from '../../src/hooks/useMessaging';
 import { useTrip } from '../../src/hooks/useBackend';
 import { useSession } from '../../src/context/SessionContext';
@@ -1328,12 +1330,25 @@ export default function TelegraphThread() {
 
   const headerTitle = title && title.trim() ? title : 'Chat';
 
-  // ── Calling (Phase 2) — Telegraph DM entry points ──────────────────────────
-  // Buttons appear on eligible Telegraph DMs only; hiding them is UX — the
-  // server remains the authorization for every call attempt.
+  // ── Calling (Phases 2–3) — Telegraph DM + Rent a Buddy entry points ────────
+  // Buttons appear on eligible DMs and call-eligible RAB booking threads;
+  // hiding them is UX — the server remains the authorization for every call.
   const callState = useCallState();
   const callActions = useCallActions();
-  const canShowCallButtons = threadType === 'direct' && !!otherUserId && !isWaitingForReply;
+  // RAB booking status drives entry-point gating (and Call back eligibility).
+  const [rabBookingStatus, setRabBookingStatus] = useState<string | null>(null);
+  useEffect(() => {
+    if (threadType !== 'rent_buddy_booking' || !contextId) return;
+    let alive = true;
+    getBooking(contextId).then((res) => {
+      if (alive && res.ok && res.data?.booking) setRabBookingStatus(res.data.booking.status);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [threadType, contextId]);
+  const callContextType = threadCallContextType(threadType);
+  const canShowCallButtons = canShowThreadCallButtons({
+    threadType, otherUserId, isWaitingForReply, rabBookingStatus,
+  });
 
   const startThreadCall = useCallback(async (requested: 'voice' | 'video') => {
     if (!id || !otherUserId) return;
@@ -1352,7 +1367,7 @@ export default function TelegraphThread() {
               const allowed = await ensureCallMediaPermissions(requested);
               if (allowed === null) return;
               await callActions.startDirectCall({
-                threadId: id, calleeId: otherUserId, contextType: 'telegraph_dm', callType: allowed,
+                threadId: id, calleeId: otherUserId, contextType: callContextType, callType: allowed,
                 peer: { id: otherUserId, name: dmProfile?.name ?? headerTitle, handle: dmProfile?.handle ?? null, avatarUrl: dmProfile?.avatarUrl ?? null },
               });
             },
@@ -1365,10 +1380,10 @@ export default function TelegraphThread() {
     const allowed = await ensureCallMediaPermissions(requested);
     if (allowed === null) return; // mic denied — explained by the permission alert
     await callActions.startDirectCall({
-      threadId: id, calleeId: otherUserId, contextType: 'telegraph_dm', callType: allowed,
+      threadId: id, calleeId: otherUserId, contextType: callContextType, callType: allowed,
       peer: { id: otherUserId, name: dmProfile?.name ?? headerTitle, handle: dmProfile?.handle ?? null, avatarUrl: dmProfile?.avatarUrl ?? null },
     });
-  }, [id, otherUserId, callState.phase, callActions, dmProfile?.name, dmProfile?.avatarUrl, headerTitle]);
+  }, [id, otherUserId, callState.phase, callActions, callContextType, dmProfile?.name, dmProfile?.handle, dmProfile?.avatarUrl, headerTitle]);
 
   useEffect(() => {
     if (messages.length > 0) {

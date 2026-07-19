@@ -29,13 +29,38 @@ export const DEFAULT_CALL_PREFERENCES: CallPreferences & { incomingCallNotificat
   incomingCallNotifications: true,
 };
 
-/** Booking states in which a RAB conversation is call-eligible (Phase-0 audit). */
+/**
+ * Booking states in which a RAB conversation is unconditionally call-eligible.
+ * Mirrors the real thread lifecycle (routes/rentABuddy.ts): a Telegraph thread
+ * only exists from `confirmed` onward, remains live through `scheduled`,
+ * `in_progress`, `completed_pending_traveler_confirmation`, and stays open
+ * for `disputed` bookings (messaging remains permitted during a dispute).
+ * Note: there is no pre-confirmation ("inquiry"/"requested") RAB conversation
+ * in this codebase — pending bookings have no thread, so calls (like
+ * messages) begin at confirmation.
+ */
 export const RAB_CALL_ELIGIBLE_STATUSES = [
   "confirmed",
   "scheduled",
   "in_progress",
   "completed_pending_traveler_confirmation",
+  "disputed",
 ] as const;
+
+/**
+ * Full RAB call-eligibility rule for one booking row.
+ * Post-booking: a `completed` booking stays callable ONLY while both parties
+ * opted to stay connected — otherwise the thread was archived at completion
+ * and calls end with messaging.
+ */
+export function isRabBookingCallEligible(b: {
+  status: string;
+  stay_connected_traveler?: boolean | null;
+  stay_connected_buddy?: boolean | null;
+}): boolean {
+  if ((RAB_CALL_ELIGIBLE_STATUSES as readonly string[]).includes(b.status)) return true;
+  return b.status === "completed" && !!b.stay_connected_traveler && !!b.stay_connected_buddy;
+}
 
 export async function getFullCallPreferences(
   sc: SupabaseClient,
@@ -111,12 +136,13 @@ export function makeCallGateway(sc: SupabaseClient): CallContextGateway {
     async isEligibleRabConversation(threadId, userA, userB) {
       // rent_buddy_bookings.buddy_id is the buddy PROFILE id — resolve the
       // buddy's user id via rent_buddy_profiles (audit gotcha).
-      const { data: bookings, error } = await sc
+      const { data: rows, error } = await sc
         .from("rent_buddy_bookings")
-        .select("traveler_id, buddy_id, status")
-        .eq("telegraph_thread_id", threadId)
-        .in("status", [...RAB_CALL_ELIGIBLE_STATUSES]);
-      if (error || !bookings || bookings.length === 0) return false;
+        .select("traveler_id, buddy_id, status, stay_connected_traveler, stay_connected_buddy")
+        .eq("telegraph_thread_id", threadId);
+      if (error || !rows || rows.length === 0) return false;
+      const bookings = (rows as any[]).filter((b) => isRabBookingCallEligible(b));
+      if (bookings.length === 0) return false;
 
       const buddyProfileIds = [...new Set((bookings as any[]).map((b) => b.buddy_id).filter(Boolean))];
       const buddyUserByProfile = new Map<string, string>();

@@ -24,7 +24,7 @@ import {
   generateRoomName, livekitEnvStatus, makeRoomAdmin, mintCallToken, readLivekitEnv,
 } from "../lib/calls/livekitService";
 import { CALL_CONFIG, type CallDenyReason } from "../lib/calls/callTypes";
-import { makeCallGateway, getFullCallPreferences, RAB_CALL_ELIGIBLE_STATUSES } from "../lib/calls/callGatewayAdapter";
+import { makeCallGateway, getFullCallPreferences, isRabBookingCallEligible } from "../lib/calls/callGatewayAdapter";
 import { makeCallStore, type CallStoreEx, type StoredCallSession } from "../lib/calls/callStoreAdapter";
 import {
   callerIdentity, emitCallAnalytics, publishCallEvent, sendIncomingCallPush, sessionDto,
@@ -90,12 +90,11 @@ async function resolveDirectContextId(
   try {
     const { data } = await sc
       .from("rent_buddy_bookings")
-      .select("id")
+      .select("id, status, stay_connected_traveler, stay_connected_buddy")
       .eq("telegraph_thread_id", threadId)
-      .in("status", [...RAB_CALL_ELIGIBLE_STATUSES])
-      .order("created_at", { ascending: false })
-      .limit(1);
-    return ((data as any[]) ?? [])[0]?.id ?? threadId;
+      .order("created_at", { ascending: false });
+    const eligible = ((data as any[]) ?? []).find((b) => isRabBookingCallEligible(b));
+    return eligible?.id ?? threadId;
   } catch {
     return threadId;
   }

@@ -99,6 +99,9 @@ beforeEach(() => {
     ok: true,
     data: { session: SESSION, livekitUrl: 'wss://x', token: 't' },
   });
+  // Must resolve: the 45s ring-timeout mirror calls endCall(...).catch(...) —
+  // an undefined return would crash the worker when the timer fires.
+  mockEndCall.mockResolvedValue({ ok: true });
 });
 
 describe('CallContext.dismissIncoming', () => {

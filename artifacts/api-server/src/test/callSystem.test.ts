@@ -12,6 +12,7 @@ import {
   transition, ringExpired, maxDurationReached, callHistoryLine, isTerminal,
 } from '../lib/calls/callStateMachine';
 import { reconcileWebhookEvent, sweepOpenSessions, type CallStore } from '../lib/calls/callReconciler';
+import { isRabBookingCallEligible } from '../lib/calls/callGatewayAdapter';
 import { CALL_CONFIG } from '../lib/calls/callTypes';
 
 const NOW = Date.parse('2026-07-18T12:00:00Z');
@@ -119,6 +120,21 @@ describe('permission engine — direct calls', () => {
     assert.deepEqual(off, { allowed: false, reason: 'rab_calls_disabled' });
   });
 
+  it('blocked in a RAB context → denied (blocks beat booking eligibility)', async () => {
+    const r = await canUserStartCall(gw({ isBlockedEither: async () => true }), {
+      callerId: 'caller', calleeId: 'callee', threadId: 't1', contextType: 'rent_a_buddy', callType: 'voice', nowMs: NOW,
+    });
+    assert.deepEqual(r, { allowed: false, reason: 'blocked' });
+  });
+
+  it("callee 'rab_contacts' preference admits eligible RAB calls", async () => {
+    const g = gw({ getCallPreferences: async () => ({ ...DEFAULT_PREFS, whoCanCall: 'rab_contacts' }) });
+    const r = await canUserStartCall(g, {
+      callerId: 'caller', calleeId: 'callee', threadId: 't1', contextType: 'rent_a_buddy', callType: 'voice', nowMs: NOW,
+    });
+    assert.deepEqual(r, { allowed: true });
+  });
+
   it('restricted caller, redial cooldown, and rate limit → denied', async () => {
     const restricted = await canUserStartCall(gw({ isCallRestricted: async () => true }), {
       callerId: 'caller', calleeId: 'callee', threadId: 't1', contextType: 'telegraph_dm', callType: 'voice', nowMs: NOW,
@@ -132,6 +148,24 @@ describe('permission engine — direct calls', () => {
       callerId: 'caller', calleeId: 'callee', threadId: 't1', contextType: 'telegraph_dm', callType: 'voice', nowMs: NOW,
     });
     assert.deepEqual(limited, { allowed: false, reason: 'rate_limited' });
+  });
+});
+
+describe('RAB booking-state call eligibility (adapter matrix)', () => {
+  it('thread-live statuses are call-eligible; pre-thread and dead statuses are not', () => {
+    for (const status of ['confirmed', 'scheduled', 'in_progress', 'completed_pending_traveler_confirmation', 'disputed']) {
+      assert.equal(isRabBookingCallEligible({ status }), true, status);
+    }
+    for (const status of ['pending', 'requested', 'cancelled', 'no_show_pending']) {
+      assert.equal(isRabBookingCallEligible({ status }), false, status);
+    }
+  });
+
+  it('completed bookings stay callable only while BOTH parties stay connected', () => {
+    assert.equal(isRabBookingCallEligible({ status: 'completed', stay_connected_traveler: true, stay_connected_buddy: true }), true);
+    assert.equal(isRabBookingCallEligible({ status: 'completed', stay_connected_traveler: true, stay_connected_buddy: false }), false);
+    assert.equal(isRabBookingCallEligible({ status: 'completed', stay_connected_traveler: false, stay_connected_buddy: true }), false);
+    assert.equal(isRabBookingCallEligible({ status: 'completed' }), false);
   });
 });
 
