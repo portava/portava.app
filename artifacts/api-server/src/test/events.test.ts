@@ -826,6 +826,74 @@ describe("Events — listing and GET detail", () => {
   });
 });
 
+describe("Events — listing excludes internal-only columns", () => {
+  // Contract: every key formatEvent may emit for a listed event. Mirrors the
+  // client EventSummary type (travel-buddy/src/services/events.ts) plus the
+  // documented listing extras. If a future `SELECT *` revert or migration
+  // leaks a new DB column into the response, the subset assertion fails.
+  const EVENT_SUMMARY_KEYS = new Set([
+    "id", "hostId", "hostName", "hostAvatarUrl", "title", "description",
+    "locationName", "locationLat", "locationLng", "startsAt", "endsAt",
+    "coverUrl", "coverMediaType", "maxAttendees", "ageMin", "ageMax",
+    "trustScoreMin", "verifiedOnly", "visibility", "state", "chatEnabled",
+    "chatThreadId", "waitlistEnabled", "priceType", "priceUrl", "safetyNotes",
+    "rsvpOptions", "goingCount", "waitlistCount", "category", "city",
+    "country", "showExactLocation", "rsvpClosed", "tags", "isHost",
+    "createdAt", "updatedAt",
+    // listing extras appended by the route handlers
+    "myRsvp", "isSaved",
+  ]);
+
+  // Event row carrying internal-only DB columns that must never reach clients.
+  // The fake client returns whole rows regardless of the SELECT column list,
+  // so this exercises formatEvent's explicit field mapping as the last gate.
+  function makeLeakyClient() {
+    return makeFakeClient({
+      events: { rows: [
+        makeEvent({
+          id: ID.ev1, state: "open", visibility: "public",
+          is_recurring: true,
+          internal_audit_note: "moderator escalation — do not expose",
+          deleted_by: ID.other_host,
+        }),
+      ]},
+      profiles: { rows: [{ id: ID.host1, handle: "host", name: "Host User", avatar_url: null }] },
+    });
+  }
+
+  function assertNoInternalFields(ev: any) {
+    const unexpected = Object.keys(ev).filter((k) => !EVENT_SUMMARY_KEYS.has(k));
+    assert.deepEqual(unexpected, [], `unexpected fields leaked into listing response: ${unexpected.join(", ")}`);
+    // Explicit checks for the known internal columns, in both casings
+    assert.ok(!("isRecurring" in ev), "isRecurring must be absent from listing response");
+    assert.ok(!("is_recurring" in ev), "is_recurring must be absent from listing response");
+    assert.ok(!("internal_audit_note" in ev));
+    assert.ok(!("deleted_by" in ev));
+  }
+
+  it("GET /api/events response contains only EventSummary-shaped fields (isRecurring absent)", async () => {
+    _setTestClient(makeLeakyClient(), true);
+    const { port, close } = await startServer();
+    try {
+      const r = await apiReq(port, "GET", "/api/events?state=open&city=Testville", null, ID.user1);
+      assert.equal(r.status, 200);
+      assert.equal(r.body.events.length, 1);
+      assertNoInternalFields(r.body.events[0]);
+    } finally { await close(); }
+  });
+
+  it("GET /api/events/city/:city response contains only EventSummary-shaped fields", async () => {
+    _setTestClient(makeLeakyClient(), true);
+    const { port, close } = await startServer();
+    try {
+      const r = await apiReq(port, "GET", "/api/events/city/Testville", null, ID.user1);
+      assert.equal(r.status, 200);
+      assert.equal(r.body.events.length, 1);
+      assertNoInternalFields(r.body.events[0]);
+    } finally { await close(); }
+  });
+});
+
 // ── Waitlist expiry sweep ──────────────────────────────────────────────────────
 
 describe("Events — waitlist expiry sweep", () => {
