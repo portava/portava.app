@@ -864,3 +864,167 @@ describe('FullScreenMapScreen — invalid lat/lng strings silently discarded', (
     }
   });
 });
+
+// ── 12. Camera snaps to the entity pin after entities load ─────────────────────
+//
+// EventCard pushes city-centroid coords (lat/lng) as the initial camera position
+// AND a focusId so the map can snap to the event pin once useMapEntities resolves.
+// The snap must WIN over the city centroid: after entities load, cameraRef.setCamera
+// must be called with the entity's coords — not the URL's lat/lng.
+//
+// Approach: DiscoveryMapView mock captures the externalCameraRef and installs a
+// setCamera spy on it during rendering, so the ref is populated before the
+// useEffect([entities]) fires and calls cameraRef.current?.setCamera(...).
+
+describe('FullScreenMapScreen — camera snaps to entity pin after entities load', () => {
+  it('calls setCamera with the entity coords — not the city-centroid URL params — when focusId resolves', async () => {
+    const { useMapEntities } = require('../../hooks/useMapEntities.ts');
+    const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
+
+    // Entity at a location deliberately different from the URL city centroid.
+    const entityLat = 10.0;
+    const entityLng = 124.5;
+    (useMapEntities as jest.Mock).mockReturnValueOnce({
+      entities: [
+        {
+          id: 'event:evt-snap-42',
+          type: 'events',
+          lat: entityLat,
+          lng: entityLng,
+          title: 'Snap Target Event',
+          data: {},
+        },
+      ],
+    });
+
+    const mockSetCamera = jest.fn();
+
+    // Capture the externalCameraRef and populate it so the focusId effect
+    // can invoke setCamera after entities load.
+    (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
+      if (props.externalCameraRef) {
+        props.externalCameraRef.current = { setCamera: mockSetCamera };
+      }
+      return null;
+    });
+
+    // URL carries city-centroid coords (Cebu City) + focusId pointing at the entity.
+    // The city centroid differs from the entity coords to make the assertion meaningful.
+    mockUseLocalSearchParams.mockReturnValue({
+      entityTypes: 'events',
+      lat: '10.3157',   // city centroid lat — must NOT be the final camera target
+      lng: '123.8854',  // city centroid lng — must NOT be the final camera target
+      focusId: 'event:evt-snap-42',
+    });
+
+    await act(async () => { await render(<FullScreenMapScreen />); });
+
+    // setCamera must have been called at least once (the focusId snap).
+    expect(mockSetCamera).toHaveBeenCalled();
+
+    // Find the call that snapped to the entity (there may also be a proximity
+    // selection call; look for the one carrying the entity's coordinates).
+    const snapCall = mockSetCamera.mock.calls.find(
+      ([arg]: [any]) =>
+        Array.isArray(arg?.centerCoordinate) &&
+        Math.abs(arg.centerCoordinate[0] - entityLng) < 0.001 &&
+        Math.abs(arg.centerCoordinate[1] - entityLat) < 0.001,
+    );
+
+    expect(snapCall).toBeDefined();
+  });
+
+  it('does NOT call setCamera with the city-centroid coords after a focusId snap', async () => {
+    const { useMapEntities } = require('../../hooks/useMapEntities.ts');
+    const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
+
+    const entityLat = 9.8;
+    const entityLng = 118.7;
+    const cityLat   = 10.3157;
+    const cityLng   = 123.8854;
+
+    (useMapEntities as jest.Mock).mockReturnValueOnce({
+      entities: [
+        {
+          id: 'event:evt-city-check',
+          type: 'events',
+          lat: entityLat,
+          lng: entityLng,
+          title: 'Different-City Event',
+          data: {},
+        },
+      ],
+    });
+
+    const mockSetCamera = jest.fn();
+    (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
+      if (props.externalCameraRef) {
+        props.externalCameraRef.current = { setCamera: mockSetCamera };
+      }
+      return null;
+    });
+
+    mockUseLocalSearchParams.mockReturnValue({
+      entityTypes: 'events',
+      lat: String(cityLat),
+      lng: String(cityLng),
+      focusId: 'event:evt-city-check',
+    });
+
+    await act(async () => { await render(<FullScreenMapScreen />); });
+
+    // No setCamera call must target the city centroid — once focusId snaps to the
+    // entity, the camera must not be reset back to the URL coords.
+    const citySnapCall = mockSetCamera.mock.calls.find(
+      ([arg]: [any]) =>
+        Array.isArray(arg?.centerCoordinate) &&
+        Math.abs(arg.centerCoordinate[0] - cityLng) < 0.001 &&
+        Math.abs(arg.centerCoordinate[1] - cityLat) < 0.001,
+    );
+
+    expect(citySnapCall).toBeUndefined();
+  });
+
+  it('still passes the city-centroid coords as fallbackLat/fallbackLng to DiscoveryMapView for the initial frame', async () => {
+    const { useMapEntities } = require('../../hooks/useMapEntities.ts');
+    const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
+
+    (useMapEntities as jest.Mock).mockReturnValueOnce({
+      entities: [
+        {
+          id: 'event:evt-initial-frame',
+          type: 'events',
+          lat: 9.8,
+          lng: 118.7,
+          title: 'Initial Frame Event',
+          data: {},
+        },
+      ],
+    });
+
+    let capturedProps: Record<string, any> | null = null;
+    (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
+      capturedProps = props;
+      if (props.externalCameraRef) {
+        props.externalCameraRef.current = { setCamera: jest.fn() };
+      }
+      return null;
+    });
+
+    mockUseLocalSearchParams.mockReturnValue({
+      entityTypes: 'events',
+      lat: '10.3157',
+      lng: '123.8854',
+      focusId: 'event:evt-initial-frame',
+    });
+
+    await act(async () => { await render(<FullScreenMapScreen />); });
+
+    // The initial camera position (fallbackLat/fallbackLng) must still be the
+    // city centroid from the URL — this is what prevents a blank-ocean first frame
+    // while useMapEntities is loading.
+    expect(capturedProps).not.toBeNull();
+    expect(capturedProps!.fallbackLat).toBeCloseTo(10.3157);
+    expect(capturedProps!.fallbackLng).toBeCloseTo(123.8854);
+  });
+});
