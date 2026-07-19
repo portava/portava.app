@@ -137,6 +137,7 @@ describe('CallContext.dismissIncoming', () => {
     // a stale incoming banner must not hang it up.
     fireEvent.press(screen.getByTestId('start'));
     await act(async () => {}); // flush startDirectCall + connectMedia
+    // awaitAccept keeps the caller in 'outgoing_ringing' until call.accepted.
     expect(screen.getByTestId('phase').props.children).toBe('outgoing_ringing');
     expect(screen.getByTestId('session').props.children).toBe(SESSION.id);
 
