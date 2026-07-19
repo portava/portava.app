@@ -368,7 +368,8 @@ export async function getMyStamps(): Promise<ProfileResult<PassportStamp[]>> {
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated', message: 'Please sign in' };
 
   try {
-    const res = await fetch(`${apiBase()}/api/me/stamps`, {
+    // perf-trim: request first page (limit=100) via paginated endpoint; total available via body.total
+    const res = await fetch(`${apiBase()}/api/me/passport/stamps?limit=100`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) return { ok: true, data: [] };

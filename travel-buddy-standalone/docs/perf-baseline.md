@@ -101,6 +101,68 @@ These numbers become the "before" snapshot that every Phase 1+ optimisation comp
 
 ---
 
+## Phase 4 — Payload Trims (2026-07-19)
+
+Targeted the five heaviest routes identified in the Phase 0 baseline. Changes are server-side only; no ranking, privacy, or realtime logic was modified.
+
+### 1. `GET /api/pulse` — strip `rankedCandidates`
+
+`rankedCandidates` was an internal ranking array (events + plans + buddies interleaved) included in every pulse response but never rendered by any client component. Removed from `res.json(...)` in `pulse.ts`.
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Extra array per response | ~20 items × ~120 B each ≈ **~2.4 KB** | **0 B** |
+| Client parse savings (20-item feed) | — | **~2.4 KB JSON removed** |
+
+### 2. `GET /me/passport/stamps` — pagination
+
+Added `limit` (default 100, max 200) and `offset` (default 0) query params. Response shape changed from `{ stamps }` to `{ stamps, total }`.
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Max stamps loaded per request | 200 | 100 (first page) |
+| Estimated payload for power user (150 stamps × 200 B) | ~30 KB | ~20 KB |
+| Client updated | `getMyStamps()` → `/api/me/passport/stamps?limit=100` | ✓ |
+
+Future work: add infinite-scroll on the Passport stamps tab using `total` and `offset`.
+
+### 3. `GET /api/events` — `SELECT *` → explicit columns + strip `isRecurring`
+
+Two trims applied to the main events listing:
+
+**a) Replaced `SELECT *` with explicit column list** — unused DB columns (internal audit fields, large text blobs) are no longer transferred from Postgres to the API process. This reduces server-side memory and DB-to-API network transfer for the 200-row ranking candidate pool.
+
+**b) Removed `isRecurring` from `formatEvent()`** — the field is not present in the client `EventSummary` or `EventDetail` types and is never rendered. Saves ~15 B per event item.
+
+| Metric | Before | After |
+|--------|--------|-------|
+| DB columns transferred per event row | ALL (~40+) | 34 |
+| `isRecurring` per event in client JSON | ~15 B | **0 B** |
+| Savings for 20-event page | — | ~300 B client JSON |
+
+Same `SELECT *` → explicit column fix applied to `GET /api/events/city/:city`.
+
+### 4. `GET /api/trips/:tripId/plan` — `SELECT *` → explicit columns
+
+`trip_plan_items` was fetched with `SELECT *`. Replaced with an explicit 20-column list matching exactly what `toCamel()` reads. Unused DB columns (internal metadata, soft-delete timestamps, audit fields) are no longer transferred to the Node process.
+
+| Metric | Before | After |
+|--------|--------|-------|
+| DB columns transferred per plan item | ALL | 20 |
+| Client JSON unchanged | — | ✓ (toCamel already projected) |
+
+### Summary
+
+| Endpoint | Change | Estimated client JSON saving |
+|----------|--------|------------------------------|
+| `GET /api/pulse` | Removed `rankedCandidates` array | ~2.4 KB per request |
+| `GET /me/passport/stamps` | Pagination (limit=100 default) | ~50% for users with >100 stamps |
+| `GET /api/events` | Explicit SELECT + strip `isRecurring` | ~300 B per 20-event page |
+| `GET /api/events/city/:city` | Explicit SELECT | DB-to-API memory only |
+| `GET /api/trips/:tripId/plan` | Explicit SELECT | DB-to-API memory only |
+
+---
+
 ## Phase 2 — Stale-While-Revalidate Snapshot Cache (2026-07-19)
 
 Generalised the Discovery tab's AsyncStorage cache-first pattern into a shared
