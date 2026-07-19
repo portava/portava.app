@@ -1132,3 +1132,211 @@ describe('FullScreenMapScreen — camera snap fires on async entity arrival', ()
     expect(mockSetCamera).not.toHaveBeenCalled();
   });
 });
+
+// ── 14. focusAppliedRef guard prevents camera re-snap on entities refresh ──────
+//
+// focusAppliedRef is set to true on the first successful focusId snap.  If the
+// entity list is later replaced (e.g. a Compass query returns, then is cleared,
+// restoring the default entity list) the useEffect([entities]) fires again.  The
+// guard must block the focusId path the second time, so setCamera is NOT called
+// again with the focus-entity coords.
+//
+// Approach:
+//   1. Render with focusId + a single focus entity → initial snap fires.
+//   2. Use mockReturnValue (not Once) so the rerender picks up the new entity list.
+//   3. Rerender with a refreshed entity list that includes a nearby entity (close to
+//      the mocked user GPS) AND the original focus entity.
+//   4. The effect runs again: focusAppliedRef blocks the focusId branch → proximity
+//      selection fires instead and picks the nearby entity.
+//   5. Assert no setCamera call targets the focus-entity coordinates after the
+//      refresh — the guard held.
+//
+// The second entity (nearbyEntity) is deliberately located near the mocked user
+// GPS (Paris), far from focusEntity (Philippines).  This makes proximity selection
+// unambiguous and lets us confirm that the guard — not a coord coincidence — is
+// what prevented the re-snap.
+
+describe('FullScreenMapScreen — focusAppliedRef guard prevents re-snap on entities refresh', () => {
+  it('does NOT call setCamera with the focus-entity coords when entities are refreshed after the initial snap', async () => {
+    const { useMapEntities } = require('../../hooks/useMapEntities.ts');
+    const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
+
+    const focusEntity = {
+      id: 'event:focus-guard-evt',
+      type: 'events',
+      lat: 10.0,
+      lng: 124.5,
+      title: 'Focus Guard Event',
+      data: {},
+    };
+
+    // A second entity near the simulated user GPS position (Paris) — proximity
+    // selection will prefer this one over focusEntity after the guard fires.
+    const nearbyEntity = {
+      id: 'event:nearby-paris-evt',
+      type: 'events',
+      lat: 48.85,
+      lng: 2.35,
+      title: 'Nearby Paris Event',
+      data: {},
+    };
+
+    // User GPS at Paris — far from focusEntity (Philippines), close to nearbyEntity.
+    mockUseLocationContext.mockReturnValue({
+      locationState: {
+        permissionStatus: 'granted',
+        coords: { lat: 48.8566, lng: 2.3522 },
+        place: null,
+      },
+      resolvedLocation: {
+        place: null,
+        coords: { lat: 48.8566, lng: 2.3522 },
+        source: 'gps',
+        freshness: 'live',
+      },
+      requireLocation: jest.fn(),
+    });
+
+    // Initial entity list: only focusEntity — triggers the focusId snap.
+    (useMapEntities as jest.Mock).mockReturnValue({
+      entities: [focusEntity],
+    });
+
+    const mockSetCamera = jest.fn();
+
+    // Populate cameraRef during the initial render so the focusId useEffect
+    // can call setCamera once the component mounts.
+    (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
+      if (props.externalCameraRef) {
+        props.externalCameraRef.current = { setCamera: mockSetCamera };
+      }
+      return null;
+    });
+
+    mockUseLocalSearchParams.mockReturnValue({
+      entityTypes: 'events',
+      focusId: 'event:focus-guard-evt',
+    });
+
+    const { rerender } = await render(<FullScreenMapScreen />);
+    await act(async () => {});
+
+    // Verify the initial snap fired — focusAppliedRef is now armed.
+    const initialSnapCall = mockSetCamera.mock.calls.find(
+      ([arg]: [any]) =>
+        Array.isArray(arg?.centerCoordinate) &&
+        Math.abs(arg.centerCoordinate[0] - focusEntity.lng) < 0.001 &&
+        Math.abs(arg.centerCoordinate[1] - focusEntity.lat) < 0.001,
+    );
+    expect(initialSnapCall).toBeDefined();
+
+    // Clear the spy so we can inspect only the calls made after the refresh.
+    mockSetCamera.mockClear();
+
+    // Simulate entities refresh: Compass override cleared, default entity list
+    // restored — now includes both nearbyEntity (proximity winner) and focusEntity.
+    (useMapEntities as jest.Mock).mockReturnValue({
+      entities: [nearbyEntity, focusEntity],
+    });
+
+    await act(async () => {
+      rerender(<FullScreenMapScreen />);
+    });
+
+    // setCamera must NOT have been called with focusEntity's coords — the guard
+    // (focusAppliedRef.current === true) blocked the focusId branch.  Proximity
+    // selection fires instead and chooses nearbyEntity (closer to user GPS).
+    const reSnapToFocusEntity = mockSetCamera.mock.calls.find(
+      ([arg]: [any]) =>
+        Array.isArray(arg?.centerCoordinate) &&
+        Math.abs(arg.centerCoordinate[0] - focusEntity.lng) < 0.001 &&
+        Math.abs(arg.centerCoordinate[1] - focusEntity.lat) < 0.001,
+    );
+
+    expect(reSnapToFocusEntity).toBeUndefined();
+  });
+
+  it('calls setCamera with the nearby-entity coords on refresh — confirming proximity selection ran, not focusId', async () => {
+    // Companion assertion: the effect DID run after the refresh (proximity path
+    // executed) and chose the nearer entity — ruling out a scenario where the guard
+    // fired but setCamera simply wasn't called at all, which would make the first
+    // test trivially pass without actually exercising the guard.
+    const { useMapEntities } = require('../../hooks/useMapEntities.ts');
+    const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
+
+    const focusEntity = {
+      id: 'event:focus-guard2-evt',
+      type: 'events',
+      lat: 10.0,
+      lng: 124.5,
+      title: 'Focus Guard 2 Event',
+      data: {},
+    };
+
+    const nearbyEntity = {
+      id: 'event:nearby-paris2-evt',
+      type: 'events',
+      lat: 48.85,
+      lng: 2.35,
+      title: 'Nearby Paris 2 Event',
+      data: {},
+    };
+
+    mockUseLocationContext.mockReturnValue({
+      locationState: {
+        permissionStatus: 'granted',
+        coords: { lat: 48.8566, lng: 2.3522 },
+        place: null,
+      },
+      resolvedLocation: {
+        place: null,
+        coords: { lat: 48.8566, lng: 2.3522 },
+        source: 'gps',
+        freshness: 'live',
+      },
+      requireLocation: jest.fn(),
+    });
+
+    (useMapEntities as jest.Mock).mockReturnValue({
+      entities: [focusEntity],
+    });
+
+    const mockSetCamera = jest.fn();
+    (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
+      if (props.externalCameraRef) {
+        props.externalCameraRef.current = { setCamera: mockSetCamera };
+      }
+      return null;
+    });
+
+    mockUseLocalSearchParams.mockReturnValue({
+      entityTypes: 'events',
+      focusId: 'event:focus-guard2-evt',
+    });
+
+    const { rerender } = await render(<FullScreenMapScreen />);
+    await act(async () => {});
+
+    mockSetCamera.mockClear();
+
+    // Refresh: both entities, user near Paris → proximity picks nearbyEntity.
+    (useMapEntities as jest.Mock).mockReturnValue({
+      entities: [nearbyEntity, focusEntity],
+    });
+
+    await act(async () => {
+      rerender(<FullScreenMapScreen />);
+    });
+
+    // Proximity selection must have called setCamera with nearbyEntity's coords —
+    // confirming the effect ran via the proximity branch (not the focusId branch).
+    const proximitySnapCall = mockSetCamera.mock.calls.find(
+      ([arg]: [any]) =>
+        Array.isArray(arg?.centerCoordinate) &&
+        Math.abs(arg.centerCoordinate[0] - nearbyEntity.lng) < 0.001 &&
+        Math.abs(arg.centerCoordinate[1] - nearbyEntity.lat) < 0.001,
+    );
+
+    expect(proximitySnapCall).toBeDefined();
+  });
+});
