@@ -5,9 +5,14 @@
  * server-persisted session exists, the app should resolve the user's profile
  * home city with `source: 'home'`.
  *
- * Exercises `_loadHomeFromProfile` from `activeLocation.homeProfile.ts`
- * directly (no React renderer needed) using injected dependencies so the
- * test never touches the network or Supabase.
+ * Also tests the home→GPS transition: when the user later grants GPS,
+ * `buildGpsState` must replace the home-city Place entirely (not merge it),
+ * advancing to source:'gps_fresh'.
+ *
+ * Exercises:
+ *   - `_loadHomeFromProfile` from `activeLocation.homeProfile.ts`
+ *   - `buildGpsState` from `activeLocation.state.ts`
+ * Both are pure helpers; no React renderer is needed.
  *
  * Coverage:
  *   1. Happy path: profile returns homeCity → state is source:'home', city matches
@@ -20,6 +25,9 @@
  *   8. Edge case: token is null → returns null (no fetch made)
  *   9. Edge case: isConfigured is false → returns null immediately
  *  10. place.id is derived from homeCity, lowercased and slugified
+ *  11. GPS grant after home fallback: source advances to 'gps_fresh', place is replaced
+ *  12. GPS cached fix after home fallback: source becomes 'gps_cached'
+ *  13. Home place city is NOT present in the GPS place (full replacement, not merge)
  *
  * Run (auto-discovered by scripts/run-node-tests.mjs):
  *   node --import tsx/esm --test src/hooks/__tests__/useActiveLocation.homeCascade.test.ts
@@ -27,6 +35,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { _loadHomeFromProfile } from '../activeLocation.homeProfile.ts';
+import { buildGpsState } from '../activeLocation.state.ts';
+import type { ActiveLocationState } from '../useActiveLocation.ts';
+import type { Place } from '../../lib/location/placeTypes.ts';
 
 // ── Fake fetch helpers ────────────────────────────────────────────────────────
 
@@ -161,5 +172,121 @@ describe('_loadHomeFromProfile — edge cases (returns null)', () => {
     const result = await _loadHomeFromProfile('denied', deps(fakeFetch, false));
     assert.equal(result, null, 'isConfigured=false → should return null');
     assert.equal(fetched, false, 'isConfigured=false → fetch must not be called');
+  });
+});
+
+// ── buildGpsState: home → GPS transition ──────────────────────────────────────
+
+const HOME_PLACE: Place = {
+  id: 'home-tokyo',
+  type: 'city',
+  name: 'Tokyo',
+  displayName: 'Tokyo, Japan',
+  country: 'Japan',
+  countryCode: 'JP',
+  region: null,
+  city: 'Tokyo',
+  district: null,
+  lat: null,
+  lng: null,
+  timezone: null,
+  source: 'manual',
+};
+
+const HOME_STATE: ActiveLocationState = {
+  ok: true,
+  permissionStatus: 'denied',
+  source: 'home',
+  freshness: 'stale',
+  coords: null,
+  place: HOME_PLACE,
+  lastUpdatedAt: null,
+  userMessage: null,
+};
+
+const GPS_PLACE: Place = {
+  id: 'gps-osaka',
+  type: 'city',
+  name: 'Osaka',
+  displayName: 'Osaka, Japan',
+  country: 'Japan',
+  countryCode: 'JP',
+  region: null,
+  city: 'Osaka',
+  district: null,
+  lat: 34.6937,
+  lng: 135.5022,
+  timezone: 'Asia/Tokyo',
+  source: 'gps',
+};
+
+const NOW_ISO = '2026-07-19T10:00:00.000Z';
+
+describe('buildGpsState — home-city cleared when GPS is granted', () => {
+  it('source advances to gps_fresh when GPS gives a live fix', () => {
+    const next = buildGpsState(34.6937, 135.5022, 20, false, GPS_PLACE, NOW_ISO);
+    assert.equal(next.source, 'gps_fresh');
+  });
+
+  it('source becomes gps_cached for a cached fix', () => {
+    const next = buildGpsState(34.6937, 135.5022, 20, true, GPS_PLACE, NOW_ISO);
+    assert.equal(next.source, 'gps_cached');
+  });
+
+  it('place.city matches the geocoded result — not the home city', () => {
+    const next = buildGpsState(34.6937, 135.5022, 20, false, GPS_PLACE, NOW_ISO);
+    assert.equal(next.place.city, 'Osaka');
+    assert.notEqual(next.place.city, HOME_STATE.place.city,
+      'GPS city must not match the home city that was active before');
+  });
+
+  it('home-city place.id is gone — place is fully replaced, not merged', () => {
+    const next = buildGpsState(34.6937, 135.5022, 20, false, GPS_PLACE, NOW_ISO);
+    assert.notEqual(next.place.id, HOME_PLACE.id,
+      'the GPS state must not carry the old home-city place.id');
+    assert.equal(next.place.id, GPS_PLACE.id);
+  });
+
+  it('ok is true and permissionStatus is granted', () => {
+    const next = buildGpsState(34.6937, 135.5022, 20, false, GPS_PLACE, NOW_ISO);
+    assert.equal(next.ok, true);
+    assert.equal(next.permissionStatus, 'granted');
+  });
+
+  it('coords are populated with the GPS lat/lng', () => {
+    const next = buildGpsState(34.6937, 135.5022, 20, false, GPS_PLACE, NOW_ISO);
+    assert.ok(next.coords !== null, 'coords must not be null after a GPS fix');
+    assert.equal(next.coords!.lat, 34.6937);
+    assert.equal(next.coords!.lng, 135.5022);
+    assert.equal(next.coords!.accuracyMeters, 20);
+  });
+
+  it('freshness is live for a fresh fix', () => {
+    const next = buildGpsState(34.6937, 135.5022, 20, false, GPS_PLACE, NOW_ISO);
+    assert.equal(next.freshness, 'live');
+  });
+
+  it('freshness is recent for a cached fix', () => {
+    const next = buildGpsState(34.6937, 135.5022, 20, true, GPS_PLACE, NOW_ISO);
+    assert.equal(next.freshness, 'recent');
+  });
+
+  it('place.lat and place.lng are pinned to the GPS coords', () => {
+    const next = buildGpsState(34.6937, 135.5022, 20, false, GPS_PLACE, NOW_ISO);
+    assert.equal(next.place.lat, 34.6937);
+    assert.equal(next.place.lng, 135.5022);
+  });
+
+  it('userMessage is null when the geocoded place has a city (live fix)', () => {
+    const next = buildGpsState(34.6937, 135.5022, 20, false, GPS_PLACE, NOW_ISO);
+    assert.equal(next.userMessage, null);
+  });
+
+  it('userMessage mentions the city for a cached fix', () => {
+    const next = buildGpsState(34.6937, 135.5022, 20, true, GPS_PLACE, NOW_ISO);
+    assert.ok(
+      typeof next.userMessage === 'string' && next.userMessage.includes('Osaka'),
+      'cached fix userMessage should reference the geocoded city',
+    );
   });
 });
