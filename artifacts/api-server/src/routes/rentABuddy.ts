@@ -1475,6 +1475,11 @@ router.post("/api/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => 
     notifyBookingParty(sc2, notifyUserId, notifyEvent, bookingId);
   }
 
+  // Calls policy: an active call on this booking's thread deliberately rides
+  // out the cancellation (we do NOT terminate the call session here). Only
+  // the next call START is denied (rab_context_ineligible) once this booking
+  // leaves the call-eligible statuses. See lib/calls/callGatewayAdapter.ts.
+
   // Invalidate compass cache before response so caller sees fresh active_booking state
   await invalidateCompassCache(sc2, auth.user.id, "booking_cancel");
 

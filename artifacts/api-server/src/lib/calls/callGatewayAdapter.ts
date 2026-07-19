@@ -48,6 +48,22 @@ export const RAB_CALL_ELIGIBLE_STATUSES = [
 ] as const;
 
 /**
+ * POLICY — mid-call booking cancellation ("ride it out"):
+ * RAB call eligibility is enforced only at call START (and re-checked on
+ * JOIN for blocks/termination). If a booking is cancelled or disputed while
+ * a call is already active, the live call is deliberately NOT terminated —
+ * it rides out until someone hangs up (or the reconciler's ring-timeout /
+ * 4h-cap sweeps end it). Only the NEXT start attempt is denied, with
+ * `rab_context_ineligible`. This mirrors messaging: the cancel handler
+ * itself posts a system message into the still-open thread, and disputed
+ * bookings intentionally keep both messaging and calling available.
+ * (Also note: the cancel route only accepts pending/confirmed/scheduled
+ * bookings, so a cancellation can only race a pre-meetup coordination call
+ * — exactly the call where the parties may need to discuss the change.)
+ * If this ever changes to "end on cancel", the booking cancel handler must
+ * trigger a CAS transition via the call reconciler for sessions anchored to
+ * the booking's telegraph thread.
+ *
  * Full RAB call-eligibility rule for one booking row.
  * Post-booking: a `completed` booking stays callable ONLY while both parties
  * opted to stay connected — otherwise the thread was archived at completion

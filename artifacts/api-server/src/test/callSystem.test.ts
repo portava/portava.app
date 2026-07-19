@@ -161,6 +161,12 @@ describe('RAB booking-state call eligibility (adapter matrix)', () => {
     }
   });
 
+  it('all cancellation variants are start-ineligible (policy: only NEW calls are denied)', () => {
+    for (const status of ['cancelled', 'cancelled_by_traveler', 'cancelled_by_buddy']) {
+      assert.equal(isRabBookingCallEligible({ status }), false, status);
+    }
+  });
+
   it('completed bookings stay callable only while BOTH parties stay connected', () => {
     assert.equal(isRabBookingCallEligible({ status: 'completed', stay_connected_traveler: true, stay_connected_buddy: true }), true);
     assert.equal(isRabBookingCallEligible({ status: 'completed', stay_connected_traveler: true, stay_connected_buddy: false }), false);
@@ -288,6 +294,28 @@ describe('reconciler', () => {
     const res = await sweepOpenSessions(store, admin, NOW);
     assert.equal(session.status, 'missed');
     assert.equal(res.missed, 1);
+  });
+
+  it('POLICY: a mid-call booking cancellation rides out — the active session is NOT killed, only the next start is denied', async () => {
+    // Simulate the moment a RAB booking is cancelled while its call is live:
+    // eligibility flips to false, but nothing feeds the reconciler an event.
+    const { store, session, calls } = makeStore({
+      id: 'c_rab', roomName: 'pcall_rab', status: 'active', callType: 'voice', contextType: 'rent_a_buddy',
+      contextId: 't_rab', threadId: 't_rab', startedBy: 'caller', startedAt: ISO, connectedAt: ISO, endedAt: null,
+    });
+    // The booking cancel handler triggers no call transition; a sweep finds
+    // nothing to expire (ring not overdue, cap not reached) → session stays active.
+    const res = await sweepOpenSessions(store, admin, NOW);
+    assert.equal(session.status, 'active');
+    assert.deepEqual(res, { missed: 0, capped: 0 });
+    assert.equal(calls.length, 0); // no transition, no history line written
+
+    // But a NEW start attempt on the now-cancelled booking is denied.
+    const denied = await canUserStartCall(gw({ isEligibleRabConversation: async () => false }), {
+      callerId: 'caller', calleeId: 'callee', threadId: 't_rab',
+      contextType: 'rent_a_buddy', callType: 'voice', nowMs: NOW,
+    });
+    assert.deepEqual(denied, { allowed: false, reason: 'rab_context_ineligible' });
   });
 
   it('unknown webhook events are safe no-ops', async () => {
