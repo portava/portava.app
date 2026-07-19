@@ -229,3 +229,124 @@ describe('getCityCentroid — normalisation (casing & whitespace)', () => {
     assert.ok(exact !== undefined, '"Tashkent" (exact key) should always resolve');
   });
 });
+
+describe('getCityCentroid — accent-stripped inputs resolve via alias keys', () => {
+  /**
+   * CITY_CENTROIDS stores both accented canonical keys and accent-stripped
+   * alias keys for cities whose official names use diacritics.  These tests
+   * confirm that inputs without accents (as a user might type them) still
+   * resolve to a centroid — either via the alias key directly (exact match)
+   * or via the lowercase normalisation path.
+   */
+
+  it('"sao paulo" (no accent) resolves via the "Sao Paulo" alias', () => {
+    const coords = getCityCentroid('sao paulo');
+    assert.ok(coords !== undefined, '"sao paulo" returned undefined — accent-stripped alias lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - (-23.5505)) < 2, `lat ${lat} implausibly far from São Paulo`);
+    assert.ok(Math.abs(lng - (-46.6333)) < 2, `lng ${lng} implausibly far from São Paulo`);
+  });
+
+  it('"SAO PAULO" (uppercase, no accent) resolves via normalisation', () => {
+    const coords = getCityCentroid('SAO PAULO');
+    assert.ok(coords !== undefined, '"SAO PAULO" returned undefined — accent-stripped uppercase alias lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - (-23.5505)) < 2, `lat ${lat} implausibly far from São Paulo`);
+    assert.ok(Math.abs(lng - (-46.6333)) < 2, `lng ${lng} implausibly far from São Paulo`);
+  });
+
+  it('"medellin" (no accent) resolves via the "Medellin" alias', () => {
+    const coords = getCityCentroid('medellin');
+    assert.ok(coords !== undefined, '"medellin" returned undefined — accent-stripped alias lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 6.2442) < 2, `lat ${lat} implausibly far from Medellín`);
+    assert.ok(Math.abs(lng - (-75.5812)) < 2, `lng ${lng} implausibly far from Medellín`);
+  });
+
+  it('"MEDELLIN" (uppercase, no accent) resolves via normalisation', () => {
+    const coords = getCityCentroid('MEDELLIN');
+    assert.ok(coords !== undefined, '"MEDELLIN" returned undefined — accent-stripped uppercase alias lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 6.2442) < 2, `lat ${lat} implausibly far from Medellín`);
+    assert.ok(Math.abs(lng - (-75.5812)) < 2, `lng ${lng} implausibly far from Medellín`);
+  });
+
+  it('"bogota" (no accent) resolves via the "Bogota" alias', () => {
+    const coords = getCityCentroid('bogota');
+    assert.ok(coords !== undefined, '"bogota" returned undefined — accent-stripped alias lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 4.7110) < 2, `lat ${lat} implausibly far from Bogotá`);
+    assert.ok(Math.abs(lng - (-74.0721)) < 2, `lng ${lng} implausibly far from Bogotá`);
+  });
+
+  it('"BOGOTA" (uppercase, no accent) resolves via normalisation', () => {
+    const coords = getCityCentroid('BOGOTA');
+    assert.ok(coords !== undefined, '"BOGOTA" returned undefined — accent-stripped uppercase alias lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 4.7110) < 2, `lat ${lat} implausibly far from Bogotá`);
+    assert.ok(Math.abs(lng - (-74.0721)) < 2, `lng ${lng} implausibly far from Bogotá`);
+  });
+
+  it('"asuncion" (no accent) resolves via the "Asuncion" alias', () => {
+    const coords = getCityCentroid('asuncion');
+    assert.ok(coords !== undefined, '"asuncion" returned undefined — accent-stripped alias lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - (-25.2867)) < 2, `lat ${lat} implausibly far from Asunción`);
+    assert.ok(Math.abs(lng - (-57.6470)) < 2, `lng ${lng} implausibly far from Asunción`);
+  });
+
+  it('"montreal" (no accent) resolves via the "Montreal" alias', () => {
+    const coords = getCityCentroid('montreal');
+    assert.ok(coords !== undefined, '"montreal" returned undefined — accent-stripped alias lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 45.5017) < 2, `lat ${lat} implausibly far from Montréal`);
+    assert.ok(Math.abs(lng - (-73.5673)) < 2, `lng ${lng} implausibly far from Montréal`);
+  });
+
+  it('"san jose" (no accent) resolves via the "San Jose" alias', () => {
+    const coords = getCityCentroid('san jose');
+    assert.ok(coords !== undefined, '"san jose" returned undefined — accent-stripped alias lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 9.9281) < 2, `lat ${lat} implausibly far from San José`);
+    assert.ok(Math.abs(lng - (-84.0907)) < 2, `lng ${lng} implausibly far from San José`);
+  });
+
+  it('"krakow" (no accent) resolves via the "Krakow" alias', () => {
+    const coords = getCityCentroid('krakow');
+    assert.ok(coords !== undefined, '"krakow" returned undefined — accent-stripped alias lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 50.0647) < 2, `lat ${lat} implausibly far from Kraków`);
+    assert.ok(Math.abs(lng - 19.9450) < 2, `lng ${lng} implausibly far from Kraków`);
+  });
+
+  it('"chisinau" (no accent) resolves via the "Chisinau" alias', () => {
+    const coords = getCityCentroid('chisinau');
+    assert.ok(coords !== undefined, '"chisinau" returned undefined — accent-stripped alias lookup failed');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 47.0105) < 2, `lat ${lat} implausibly far from Chișinău`);
+    assert.ok(Math.abs(lng - 28.8638) < 2, `lng ${lng} implausibly far from Chișinău`);
+  });
+
+  it('accent-stripped and accented forms both resolve to identical coordinates', () => {
+    // São Paulo / Sao Paulo
+    const accented = getCityCentroid('São Paulo');
+    const stripped = getCityCentroid('Sao Paulo');
+    assert.ok(accented !== undefined, '"São Paulo" should resolve');
+    assert.ok(stripped !== undefined, '"Sao Paulo" should resolve');
+    assert.deepEqual(accented, stripped, 'São Paulo and Sao Paulo should have identical coordinates');
+
+    // Medellín / Medellin
+    const accentedMed = getCityCentroid('Medellín');
+    const strippedMed = getCityCentroid('Medellin');
+    assert.ok(accentedMed !== undefined, '"Medellín" should resolve');
+    assert.ok(strippedMed !== undefined, '"Medellin" should resolve');
+    assert.deepEqual(accentedMed, strippedMed, 'Medellín and Medellin should have identical coordinates');
+
+    // Bogotá / Bogota
+    const accentedBog = getCityCentroid('Bogotá');
+    const strippedBog = getCityCentroid('Bogota');
+    assert.ok(accentedBog !== undefined, '"Bogotá" should resolve');
+    assert.ok(strippedBog !== undefined, '"Bogota" should resolve');
+    assert.deepEqual(accentedBog, strippedBog, 'Bogotá and Bogota should have identical coordinates');
+  });
+});
