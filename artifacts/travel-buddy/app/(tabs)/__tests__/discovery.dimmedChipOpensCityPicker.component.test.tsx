@@ -277,6 +277,36 @@ describe('DiscoveryHub — dimmed chip tap opens city picker', () => {
 
       await act(async () => { unmount(); });
     });
+
+    it('a rapid double-tap on a dimmed chip only calls openCityPicker once', async () => {
+      const { unmount } = await render(<DiscoveryHub />);
+      await act(async () => {});
+
+      const chip = screen.getByText('Near Me');
+
+      // Fire two presses back-to-back without any await between them.
+      fireEvent.press(chip);
+      fireEvent.press(chip);
+
+      // The picker must have been opened exactly once — the second tap is a no-op
+      // because the guard (`cityPickerPendingRef`) is already set.
+      expect(mockOpenCityPicker).toHaveBeenCalledTimes(1);
+
+      await act(async () => { unmount(); });
+    });
+
+    it('a rapid double-tap on different dimmed chips still only calls openCityPicker once', async () => {
+      const { unmount } = await render(<DiscoveryHub />);
+      await act(async () => {});
+
+      // Tap two different chips in rapid succession.
+      fireEvent.press(screen.getByText('In City'));
+      fireEvent.press(screen.getByText('Going Soon'));
+
+      expect(mockOpenCityPicker).toHaveBeenCalledTimes(1);
+
+      await act(async () => { unmount(); });
+    });
   });
 
   describe('when a destination IS set', () => {

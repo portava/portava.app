@@ -152,6 +152,9 @@ export default function DiscoveryHub() {
   const [buddyCityNotAvailable, setBuddyCityNotAvailable] = useState(false);
   const [nudgeHighlighted, setNudgeHighlighted] = useState(false);
   const nudgeHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Guard: prevents a rapid double-tap on a dimmed chip from calling openCityPicker twice.
+  // Set to true on first press; cleared when the picker closes (showCityPicker → false).
+  const cityPickerPendingRef = useRef(false);
 
   // ── Step-1 instrumentation + Step-4 cache-first paint ─────────────────────
   const mountedAt          = useRef(Date.now());
@@ -183,10 +186,20 @@ export default function DiscoveryHub() {
     setRouteBuilderOpen(true);
   }, []);
 
+  // Reset the double-tap guard whenever the city picker is dismissed.
+  useEffect(() => {
+    if (!showCityPicker) {
+      cityPickerPendingRef.current = false;
+    }
+  }, [showCityPicker]);
+
   // Fired when a user taps a context-mode chip while it is disabled (no destination set).
   // Briefly highlights the location-nudge banner so the user understands why the chip
   // is inactive, and opens the city picker so they can act immediately.
+  // Guard: if the picker is already pending (rapid double-tap), ignore subsequent presses.
   const handleDisabledChipPress = useCallback(() => {
+    if (cityPickerPendingRef.current) return;
+    cityPickerPendingRef.current = true;
     setNudgeHighlighted(true);
     if (nudgeHighlightTimerRef.current) clearTimeout(nudgeHighlightTimerRef.current);
     nudgeHighlightTimerRef.current = setTimeout(() => {
