@@ -14,6 +14,9 @@
  *     (timing proof: if the route ever awaits logImpression, this test hangs/fails)
  *  F. GET /api/pulse/live responds before a 2-second delayed rank_events insert resolves
  *  G. GET /api/discovery responds before a 2-second delayed rank_events insert resolves
+ *  H. GET /api/compass/recommendations returns 200 when rank_events insert throws
+ *  I. GET /api/compass/recommendations responds before a 2-second delayed rank_events
+ *     insert resolves (logCompassImpression must be void — not awaited)
  *
  * Runtime: node:test + node:assert/strict (no vitest / no supertest).
  * Run: node --import tsx/esm --test src/test/impressionLogFireAndForget.test.ts
@@ -25,6 +28,9 @@ import { createServer } from "node:http";
 import type { Server } from "node:http";
 import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
+import { clearCompassProfileCache } from "../compass/CompassProfileService.js";
+import { invalidateFlagsCache } from "../compass/flags.js";
+import { logCompassImpression } from "../lib/rankLog.js";
 
 // ── IDs ────────────────────────────────────────────────────────────────────────
 
@@ -166,6 +172,7 @@ function makeClient(rankEventsInsertBehavior: "throw" | "pending") {
       { flag: "pulse_enabled",              enabled: true  },
       { flag: "rent_buddy_enabled",         enabled: false },
       { flag: "hidden_gems_enabled",        enabled: false },
+      { flag: "COMPASS_ENABLED",            enabled: true  },
     ],
     // pulse / discovery tables
     trip_members:             [],
@@ -330,6 +337,8 @@ describe("Impression logging — rank_events immediate-reject: no error propagat
   let url: string;
 
   beforeEach(async () => {
+    clearCompassProfileCache();
+    invalidateFlagsCache();
     _setTestClient(makeClient("throw"), true);
     ({ server, url } = await startServer());
   });
@@ -367,6 +376,11 @@ describe("Impression logging — rank_events immediate-reject: no error propagat
     const { status, body } = await timedGet(url, "/api/discovery?destination=testcity");
     assert.equal(status, 200, `Expected 200 but got ${status}: ${JSON.stringify(body)}`);
   });
+
+  it("H: GET /api/compass/recommendations returns 200 even when rank_events insert throws", async () => {
+    const { status, body } = await timedGet(url, "/api/compass/recommendations");
+    assert.equal(status, 200, `Expected 200 but got ${status}: ${JSON.stringify(body)}`);
+  });
 });
 
 // ── Suite E–G: delayed stub — timing proof ────────────────────────────────────
@@ -381,6 +395,8 @@ describe("Impression logging — rank_events delayed stub: response arrives befo
   let url: string;
 
   beforeEach(async () => {
+    clearCompassProfileCache();
+    invalidateFlagsCache();
     _setTestClient(makeClient("pending"), true);
     ({ server, url } = await startServer());
   });
@@ -418,5 +434,100 @@ describe("Impression logging — rank_events delayed stub: response arrives befo
       `Feed response took ${elapsedMs}ms — expected < ${RESPONSE_MUST_ARRIVE_WITHIN_MS}ms. ` +
         "The route may be awaiting logImpression.",
     );
+  });
+
+  it("I: GET /api/compass/recommendations responds well before the 2-second rank_events insert settles", async () => {
+    const { status, body, elapsedMs } = await timedGet(url, "/api/compass/recommendations");
+    assert.equal(status, 200, `Expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    assert.ok(
+      elapsedMs < RESPONSE_MUST_ARRIVE_WITHIN_MS,
+      `Compass response took ${elapsedMs}ms — expected < ${RESPONSE_MUST_ARRIVE_WITHIN_MS}ms. ` +
+        "The route may be awaiting logCompassImpression.",
+    );
+  });
+});
+
+// ── Suite J: schema shape validation ─────────────────────────────────────────
+//
+// Calls logCompassImpression directly with a spy client that captures the rows
+// passed to rank_events.insert.  Verifies that:
+//   - surface is always "compass"
+//   - item_kind values belong to the schema-allowed set
+//   - Compass-specific aliases are normalised (traveler→buddy, trip→plan, postcard→post)
+//   - Static items (safety_tip, language_tip) are filtered out — never inserted
+
+describe("logCompassImpression — schema shape validation", () => {
+  afterEach(() => {
+    _setTestClient(null as any, false);
+  });
+
+  it("J1: inserts rows with surface='compass' and normalised item_kinds", async () => {
+    const captured: any[] = [];
+    const spyClient: any = {
+      auth: { getUser: async () => ({ data: null, error: { message: "unused" } }) },
+      from: (table: string) => ({
+        insert: (rows: any[]) => {
+          if (table === "rank_events") captured.push(...rows);
+          return Promise.resolve({ data: null, error: null });
+        },
+        select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
+      }),
+    };
+    _setTestClient(spyClient, true);
+
+    await logCompassImpression(
+      [
+        { id: "id-event",    type: "event"    },
+        { id: "id-post",     type: "post"     },
+        { id: "id-postcard", type: "postcard" },  // alias → post
+        { id: "id-plan",     type: "plan"     },
+        { id: "id-trip",     type: "trip"     },  // alias → plan
+        { id: "id-buddy",    type: "buddy"    },
+        { id: "id-traveler", type: "traveler" },  // alias → buddy
+        { id: "id-place",    type: "place"    },
+        { id: "id-gem",      type: "gem"      },
+      ],
+      USER_ID,
+    );
+
+    assert.equal(captured.length, 9, `Expected 9 rows but got ${captured.length}`);
+    assert.ok(captured.every((r) => r.surface === "compass"), "All rows must have surface='compass'");
+    assert.ok(captured.every((r) => r.outcome === "impression"), "All rows must have outcome='impression'");
+    assert.ok(captured.every((r) => r.user_id === USER_ID), "All rows must carry the viewer user_id");
+
+    const kinds = captured.map((r) => r.item_kind);
+    assert.deepEqual(kinds, ["event", "post", "post", "plan", "plan", "buddy", "buddy", "place", "gem"]);
+  });
+
+  it("J2: filters out static items (safety_tip, language_tip) — they must not reach rank_events", async () => {
+    const captured: any[] = [];
+    const spyClient: any = {
+      auth: { getUser: async () => ({ data: null, error: { message: "unused" } }) },
+      from: (table: string) => ({
+        insert: (rows: any[]) => {
+          if (table === "rank_events") captured.push(...rows);
+          return Promise.resolve({ data: null, error: null });
+        },
+        select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
+      }),
+    };
+    _setTestClient(spyClient, true);
+
+    await logCompassImpression(
+      [
+        { id: "id-event",       type: "event"        },
+        { id: "id-safety",      type: "safety_tip"   },  // static — must be dropped
+        { id: "id-language",    type: "language_tip" },  // static — must be dropped
+        { id: "id-place",       type: "place"        },
+      ],
+      USER_ID,
+    );
+
+    assert.equal(captured.length, 2, `Expected 2 rows (static items filtered) but got ${captured.length}`);
+    const insertedIds = captured.map((r) => r.item_id);
+    assert.ok(!insertedIds.includes("id-safety"),   "safety_tip must not be inserted");
+    assert.ok(!insertedIds.includes("id-language"), "language_tip must not be inserted");
+    assert.ok(insertedIds.includes("id-event"),     "event must be inserted");
+    assert.ok(insertedIds.includes("id-place"),     "place must be inserted");
   });
 });

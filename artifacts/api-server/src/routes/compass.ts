@@ -26,6 +26,7 @@ import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { isCompassEnabled, isEnabled } from "../compass/flags.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { getCompassProfile } from "../compass/CompassProfileService.js";
+import { logCompassImpression } from "../lib/rankLog.js";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine.js";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine.js";
 import { buildFeed, buildSection, SECTION_NAMES, type SectionName, type FeedPage } from "../compass/CompassFeedBuilder.js";
@@ -2116,6 +2117,7 @@ router.get("/compass/recommendations", async (req, res) => {
       }
     }
 
+    void logCompassImpression(recommendations, user.id);
     res.json({ recommendations, surface });
   } catch (err) {
     req.log.error({ err }, "compass/recommendations: build failed");

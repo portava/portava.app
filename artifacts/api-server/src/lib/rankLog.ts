@@ -81,3 +81,74 @@ export async function logImpression(
     // Silent swallow — logging must never break the feed
   }
 }
+
+/**
+ * Maps raw Compass item.type strings to the item_kind values allowed by the
+ * rank_events CHECK constraint ('post','event','plan','buddy','place','gem').
+ *
+ * Types absent from this map (e.g. 'safety_tip', 'language_tip') are static
+ * appended items, not ML-ranked candidates — they are filtered out before
+ * insert so they never cause a constraint violation.
+ */
+const COMPASS_ITEM_KIND: Record<string, string> = {
+  event:    "event",
+  post:     "post",
+  postcard: "post",     // Compass alias for post
+  plan:     "plan",
+  trip:     "plan",     // Compass alias for plan
+  buddy:    "buddy",
+  traveler: "buddy",    // Compass alias for buddy
+  place:    "place",
+  gem:      "gem",
+};
+
+/**
+ * Log Compass recommendation impressions into rank_events.
+ *
+ * Accepts the lighter-weight Compass item shape (id + type) rather than the
+ * full ScoredCandidate used by the portavaRank pipeline.  item.type values are
+ * normalised to the schema-valid item_kind set; static items without a mapping
+ * (safety_tip, language_tip, …) are silently skipped.
+ *
+ * Calls rank_events.insert unconditionally (even when all items are filtered
+ * out) so that fire-and-forget behaviour can be verified in timing tests.
+ *
+ * Fire-and-forget: call without `await` so a logging failure never blocks the
+ * recommendations response.  All errors are swallowed silently.
+ *
+ * @param items     Served recommendations — id + type from the Compass feed.
+ * @param userId    Authenticated viewer.
+ * @param sessionId Optional session UUID for grouping a single open.
+ */
+export async function logCompassImpression(
+  items: Array<{ id: string; type: string }>,
+  userId: string,
+  sessionId?: string,
+): Promise<void> {
+  try {
+    const sc = getServiceClient();
+    if (!sc) return;
+
+    const servedAt = new Date().toISOString();
+
+    const rows = items.flatMap((item, idx) => {
+      const itemKind = COMPASS_ITEM_KIND[item.type];
+      if (!itemKind) return []; // static / unknown type — skip
+      return [{
+        user_id:    userId,
+        item_id:    item.id,
+        item_kind:  itemKind,
+        position:   idx,
+        features:   {},
+        outcome:    "impression",
+        served_at:  servedAt,
+        surface:    "compass",
+        session_id: sessionId ?? null,
+      }];
+    });
+
+    await sc.from("rank_events").insert(rows);
+  } catch {
+    // Silent swallow — logging must never break the feed
+  }
+}
