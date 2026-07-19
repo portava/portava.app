@@ -141,8 +141,11 @@ router.get("/me/passport/stamps", async (req, res) => {
   if (req.query.type)       filters.stampType  = String(req.query.type);
   if (req.query.visibility) filters.visibility = String(req.query.visibility) as VisibilityTier;
 
-  // Total count (before pagination) — uses the same DB-level filters
-  let total = 0;
+  // Total count (before pagination) — uses the same DB-level filters.
+  // If the count query errors or returns a null count, we do NOT default to 0
+  // (a page full of stamps with total=0 breaks client "load more" logic).
+  // Instead we fall back to a lower bound derived from the page we did fetch.
+  let total: number | null = null;
   try {
     let cq = client
       .from("passport_stamps")
@@ -152,13 +155,17 @@ router.get("/me/passport/stamps", async (req, res) => {
     if (filters.city)       cq = (cq as any).eq("city",       filters.city);
     if (filters.stampType)  cq = (cq as any).eq("stamp_type", filters.stampType);
     if (filters.visibility) cq = (cq as any).eq("visibility", filters.visibility);
-    const { count } = await cq;
-    total = count ?? 0;
-  } catch { /* non-fatal — total defaults to 0 */ }
+    const { count, error: countError } = await cq;
+    if (!countError && typeof count === "number") total = count;
+  } catch { /* non-fatal — fallback below */ }
 
   const rows = await loadStamps(client, user.id, { ...filters, limit: limitVal, offset: offsetVal } as any);
   // Owner sees all their own stamps
   const stamps = filterStamps(rows as any, "owner");
+
+  // Count unavailable → best-effort lower bound so total is never smaller than
+  // the stamps the client can already see.
+  if (total === null) total = offsetVal + stamps.length;
 
   res.json({
     stamps: stamps.map((s) => ({
