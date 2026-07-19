@@ -43,23 +43,6 @@ jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
   NAV_BAR_FILLER_HEIGHT: 96,
 }));
 
-// ── Screen timing — inert stub ────────────────────────────────────────────────
-// trips.tsx calls useScreenTiming('Trips'); the real hook drives a setEpoch
-// inside useFocusEffect. With useFocusEffect mocked to run synchronously the
-// setState re-renders infinitely ("Too many re-renders"). Stub it out.
-// NOTE: intentional stub — not under test here.
-jest.mock('../../../src/hooks/useScreenTiming', () => ({
-  useScreenTiming: () => ({ markFirstContent: () => {}, epoch: 0 }),
-}));
-
-// ── Snapshot cache — inert stub ───────────────────────────────────────────────
-// trips.tsx calls useSnapshotCache('trips'); the real save()/persistence effect
-// setStates each render and with a fresh [] from useMyTrips loops to OOM. Stub it.
-// NOTE: intentional stub — not under test here.
-jest.mock('../../../src/hooks/useSnapshotCache', () => ({
-  useSnapshotCache: () => ({ snapshot: null, isStale: false, save: () => {}, clear: () => {} }),
-}));
-
 // ── Session + backend hooks ───────────────────────────────────────────────────
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/SessionContext', () => ({
@@ -70,6 +53,21 @@ jest.mock('../../../src/context/SessionContext', () => ({
 jest.mock('../../../src/hooks/useBackend', () => ({
   useMyTrips: () => ({ data: [], loading: false, error: null, reload: jest.fn() }),
   usePendingTripInvites: () => ({ invites: [], reload: jest.fn() }),
+}));
+
+// ── Perf hooks — inert stubs ─────────────────────────────────────────────────
+// trips.tsx gained useScreenTiming + useSnapshotCache after this test was
+// written. The real useSnapshotCache returns a save() that setStates; with
+// the fresh [] identity from the useMyTrips stub above, the persistence
+// effect loops → heap exhaustion → worker SIGTERM (same root cause as the
+// fixed sibling Trips.navBarScrollHandler).
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/hooks/useScreenTiming', () => ({
+  useScreenTiming: () => ({ markFirstContent: () => {}, epoch: 0 }),
+}));
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/hooks/useSnapshotCache', () => ({
+  useSnapshotCache: () => ({ snapshot: null, isStale: false, save: () => {}, clear: () => {} }),
 }));
 
 // NOTE: intentional stub — not under test here.

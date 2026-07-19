@@ -1,22 +1,17 @@
 /**
- * Pulse (app/(tabs)/index.tsx) — nav-bar clearance architecture test.
+ * Pulse (app/(tabs)/index.tsx) — nav-bar collapse handler wiring test.
  *
- * DIVERGENCE FROM THE MOBILE TREE (rule 13 rewrite):
- * The mobile Pulse screen wires a `useNavBarScrollHandler()` result into the
- * primary FlatList's `onScroll` prop so the floating tab pill collapses as the
- * feed scrolls. The STANDALONE fork does NOT use that collapse mechanism at
- * all — app/(tabs)/index.tsx does not import `useNavBarScrollHandler`, and the
- * FlatList has no `onScroll` prop. Instead it clears the tab pill statically
- * via `useBottomInset()` (NAV_BAR_FILLER_HEIGHT + insets.bottom) applied as the
- * FlatList's contentContainerStyle.paddingBottom.
+ * The scroll-architecture tests (Task #1523) verify the PulseHeader lives
+ * inside the FlatList, but they mock useNavBarScrollHandler to a no-op.
+ * This test confirms that the primary FlatList receives the handler as its
+ * onScroll prop — so removing the wiring would fail here.
  *
- * This test therefore pins the standalone's ACTUAL contract:
- *   1. The primary FlatList exists and carries NO onScroll handler (there is no
- *      scroll-driven nav-bar collapse in this fork).
- *   2. The FlatList's contentContainerStyle.paddingBottom clears the pill —
- *      i.e. equals the useBottomInset() value (NAV_BAR_FILLER_HEIGHT + inset).
- * Removing the paddingBottom clearance (or accidentally introducing a broken
- * onScroll wiring) would fail here.
+ * Strategy:
+ *   1. Mock useNavBarScrollHandler to return a jest.fn() spy.
+ *   2. Render the Pulse screen; walk the toJSON tree to find the ScrollView
+ *      (the FlatList renders onScroll through to its internal ScrollView)
+ *      whose onScroll prop === spy — identity comparison confirms wiring.
+ *   3. Fire the handler and confirm the spy is invoked.
  *
  * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
  */
@@ -25,15 +20,18 @@ import React from 'react';
 import { render, act } from '@testing-library/react-native';
 
 // ── FlatList prop capture ─────────────────────────────────────────────────────
-// Stub FlatList itself so we can inspect the raw props Pulse passes to it
-// (onScroll and contentContainerStyle) before React Native wraps anything.
-let capturedListProps: Record<string, any> | undefined;
+// React Native wraps the `onScroll` callback before forwarding it to the
+// internal ScrollView, so identity-checking the inner ScrollView's onScroll
+// prop always fails for FlatList.  Instead, stub FlatList itself to capture
+// the prop before the wrapping occurs.  capturedListOnScroll is written
+// (not read) inside the factory, which jest.mock hoisting allows.
+let capturedListOnScroll: ((e: any) => void) | undefined;
 
 // ── react-native Proxy (FlatList capture) ─────────────────────────────────────
 jest.mock('react-native', () => {
   const actual = jest.requireActual('react-native');
-  const MockFlatList = (props: any) => {
-    capturedListProps = props;
+  const MockFlatList = ({ onScroll }: any) => {
+    capturedListOnScroll = onScroll;
     return null;
   };
   return new Proxy(actual, {
@@ -45,11 +43,24 @@ jest.mock('react-native', () => {
 });
 
 // ── Safe-area ─────────────────────────────────────────────────────────────────
-// bottom: 34 (iPhone 14 home indicator) so useBottomInset() === 96 + 34 = 130.
+// index.tsx calls useBottomInset() → useSafeAreaInsets(); without a mocked
+// provider it throws "No safe area value available". Stub the insets.
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
   SafeAreaProvider: ({ children }: any) => children,
+}));
+
+// ── Screen timing / snapshot cache — stub ─────────────────────────────────────
+// index.tsx gained useScreenTiming + useSnapshotCache; stub both to inert values
+// (not under test here) so no setState loops / device-module access occurs.
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/hooks/useScreenTiming', () => ({
+  useScreenTiming: () => ({ markFirstContent: () => {}, epoch: 0 }),
+}));
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/hooks/useSnapshotCache', () => ({
+  useSnapshotCache: () => ({ snapshot: null, isStale: false, save: () => {}, clear: () => {} }),
 }));
 
 // ── expo-router ───────────────────────────────────────────────────────────────
@@ -66,13 +77,14 @@ jest.mock('expo-router', () => ({
   },
 }));
 
-// ── Nav-bar collapse ──────────────────────────────────────────────────────────
-// Standalone index.tsx does NOT import useNavBarScrollHandler, but useBottomInset
-// (which index.tsx DOES use) imports NAV_BAR_FILLER_HEIGHT from this module. Pin
-// it to 96 so useBottomInset() resolves deterministically.
-// NOTE: intentional stub — NAV_BAR_FILLER_HEIGHT feeds useBottomInset.
+// ── Nav-bar collapse — spy factory ────────────────────────────────────────────
+// mockNavScrollHandler is the exact value returned by useNavBarScrollHandler.
+// Pulse passes it directly as onScroll to the main FlatList, so an identity
+// check in the toJSON props is reliable.
+const mockNavScrollHandler = jest.fn();
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
-  useNavBarScrollHandler: () => () => {},
+  useNavBarScrollHandler: () => mockNavScrollHandler,
   NavBarFiller: () => null,
   NAV_BAR_FILLER_HEIGHT: 96,
 }));
@@ -248,40 +260,36 @@ jest.mock('../../../src/components/LocationPermissionPrompt', () => ({
 
 import Pulse from '../index.tsx';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Flatten a RN style prop (array or object) into a single plain object. */
-function flattenStyle(style: any): Record<string, any> {
-  if (!style) return {};
-  return Array.isArray(style)
-    ? Object.assign({}, ...style.map((s: any) => (s && typeof s === 'object' ? s : {})))
-    : style;
-}
+// ── Fake scroll event ─────────────────────────────────────────────────────────
+const FAKE_SCROLL_EVENT = {
+  nativeEvent: { contentOffset: { y: 120 }, contentSize: { height: 2000 }, layoutMeasurement: { height: 800 } },
+} as any;
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('Pulse screen — nav-bar clearance architecture (standalone)', () => {
+describe('Pulse screen — nav-bar scroll handler wiring', () => {
   beforeEach(() => {
-    capturedListProps = undefined;
+    capturedListOnScroll = undefined;
+    mockNavScrollHandler.mockClear();
   });
 
-  it('primary FlatList carries NO onScroll handler — no scroll-driven collapse in this fork', async () => {
+  it('primary FlatList onScroll prop is the useNavBarScrollHandler result', async () => {
     await render(<Pulse />);
     await act(async () => {});
 
-    // The standalone fork does not wire useNavBarScrollHandler; the FlatList
-    // must not receive an onScroll prop.
-    expect(capturedListProps).toBeDefined();
-    expect(capturedListProps!.onScroll).toBeUndefined();
+    // The stub captures the raw onScroll prop before React Native wraps it.
+    // index.tsx: <FlatList onScroll={navBarScrollHandler} …>
+    // navBarScrollHandler IS mockNavScrollHandler — identity match confirms wiring.
+    expect(capturedListOnScroll).toBe(mockNavScrollHandler);
   });
 
-  it('FlatList contentContainerStyle.paddingBottom clears the tab pill via useBottomInset (96 + inset)', async () => {
+  it('firing the captured FlatList onScroll invokes the collapse handler', async () => {
     await render(<Pulse />);
     await act(async () => {});
 
-    expect(capturedListProps).toBeDefined();
-    const flat = flattenStyle(capturedListProps!.contentContainerStyle);
-    // useBottomInset() === NAV_BAR_FILLER_HEIGHT (96) + insets.bottom (34) = 130.
-    expect(flat.paddingBottom).toBe(130);
+    expect(capturedListOnScroll).toBeDefined();
+    capturedListOnScroll!(FAKE_SCROLL_EVENT);
+    expect(mockNavScrollHandler).toHaveBeenCalledTimes(1);
+    expect(mockNavScrollHandler).toHaveBeenCalledWith(FAKE_SCROLL_EVENT);
   });
 });

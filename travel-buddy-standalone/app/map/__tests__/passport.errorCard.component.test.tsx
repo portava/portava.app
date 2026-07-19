@@ -223,20 +223,21 @@ describe('FullScreenMapScreen — passport error-card state machine', () => {
   });
 
   it('shows the loading card while the passport fetch is in-flight', async () => {
-    // Never-resolving promise — fetch stays pending, so the loading state stays
-    // latched (setPassportLoading(false) is never reached).
+    // Never-resolving promise — fetch stays pending for the duration of the test.
     mockGetPassportMap.mockReturnValue(new Promise(() => {}));
 
     const view = await render(<FullScreenMapScreen />);
 
-    // The loading card is deliberately deferred behind a real 150 ms setTimeout
-    // in product code (only shown if the fetch takes longer than 150 ms). Sleep
-    // past that timer inside act so the setPassportLoading(true) commit lands.
+    // The loading card is intentionally deferred behind a 150 ms timer (see
+    // app/map/index.tsx) to avoid a one-frame flicker when stamps resolve fast.
+    // Fake timers corrupt the renderer in this suite (RENDERER RULE 2), so we
+    // sleep past the REAL timer inside act() to let setPassportLoading(true)
+    // commit.  The fetch promise never resolves, so the loading state persists.
     await act(async () => {
       await new Promise((r) => setTimeout(r, 150 + 400));
     });
 
-    // Loading card must now be visible while the fetch is still in-flight.
+    // Loading card must be visible once the deferred loading state commits.
     expect(view.getByText('Loading your stamps…')).toBeTruthy();
 
     // Error card must not be shown while still loading.

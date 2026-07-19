@@ -1,9 +1,14 @@
 /**
- * DiscoveryHub — Context mode chips disabled when no destination
+ * DiscoveryHub — Map shortcut button params
  *
- * Confirms that when no destination is set (screenStatus === 'location-required'),
- * none of the context mode chips call setContextMode when pressed — they are
- * disabled and visually dimmed.
+ * Confirms the Map shortcut Pressable in the tabRow calls router.push with:
+ *   - pathname: '/map'
+ *   - params.lat / params.lng when coords are available
+ *   - params.title set to the current destination city
+ *   - params.category matching the active tab
+ *
+ * Also confirms the button is disabled (router.push NOT called) when no
+ * destination is set — so the full-screen map never opens blank.
  *
  * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
  */
@@ -13,6 +18,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import DiscoveryHub from '../discovery.tsx';
 
 // ── expo-router ───────────────────────────────────────────────────────────────
+// Override the moduleNameMapper entry so we can capture the router.push spy.
 // react-native Proxy mock — DiscoveryHub mounts a raw <Modal> (age filter).
 // Modal's animation lifecycle leaves a floating async act() scope inside
 // RNTL's render() promise; the next act() collides with it, corrupting the
@@ -74,7 +80,7 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 // ── Services ──────────────────────────────────────────────────────────────────
-// NOTE: intentional stub — not under test here.
+// NOTE: intentionally exhaustive — all import Supabase; requireActual OOMs.
 jest.mock('../../../src/services/hashtag', () => ({
   getTrendingHashtags: jest.fn().mockResolvedValue({ ok: true, data: { trending: [] } }),
 }));
@@ -96,14 +102,14 @@ jest.mock('../../../src/services/rentABuddy', () => ({
 }));
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
-// NOTE: intentional stub — not under test here.
+// NOTE: intentionally exhaustive — accesses native scroll metrics / Reanimated.
 jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
   useNavBarScrollHandler: () => () => {},
   navBarProgress:         { value: 0 },
   NAV_BAR_FILLER_HEIGHT:  96,
 }));
 
-// NOTE: intentional stub — not under test here.
+// NOTE: intentionally exhaustive — depends on native inset calculations.
 jest.mock('../../../src/hooks/useBottomInset', () => ({
   usePlainBottomInset: () => 130,
   PlainBottomFiller: () => null,
@@ -113,22 +119,22 @@ jest.mock('../../../src/hooks/useBottomInset', () => ({
   useBottomInset: () => 130,
 }));
 
-// NOTE: intentional stub — not under test here.
+// NOTE: intentionally exhaustive — calls Supabase subscriptions.
 jest.mock('../../../src/hooks/useFollowingHighlights', () => ({
   useFollowingHighlights: () => ({
-    users:             [],
-    sessionViewedIds:  new Set<string>(),
+    users:            [],
+    sessionViewedIds: new Set<string>(),
     markSessionViewed: jest.fn(),
   }),
 }));
 
 // ── Contexts ──────────────────────────────────────────────────────────────────
-// NOTE: intentional stub — not under test here.
+// NOTE: intentionally exhaustive — imports Supabase + native-incompatible modules.
 jest.mock('../../../src/context/SessionContext', () => ({
   useSession: () => ({ userId: 'user-test-1', isAuthed: true }),
 }));
 
-// Mutable — individual tests set what they need.
+// Mutable so individual tests can supply different location states.
 let mockLocationState: {
   place: { city: string | null; country: string | null };
   coords: { lat: number; lng: number } | null;
@@ -139,7 +145,7 @@ jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
     setSessionLocation: jest.fn(),
     clearSessionLocation: jest.fn(),
-    locationState:   mockLocationState,
+    locationState:  mockLocationState,
     // resolvedLocation — required by discovery.tsx after location unification.
     resolvedLocation: {
       place:  mockLocationState.place,
@@ -147,11 +153,11 @@ jest.mock('../../../src/context/LocationContext', () => ({
       source: 'home',
       freshness: 'unavailable',
     },
-    showCityPicker:  false,
-    openCityPicker:  jest.fn(),
+    showCityPicker: false,
+    openCityPicker: jest.fn(),
     closeCityPicker: jest.fn(),
-    setManualCity:   jest.fn().mockResolvedValue(undefined),
-    isLoading:       false,
+    setManualCity:  jest.fn().mockResolvedValue(undefined),
+    isLoading:      false,
   }),
 }));
 
@@ -162,6 +168,8 @@ jest.mock('../../../src/components/PlanPickerController', () => ({
 }));
 
 // ── Heavy sub-components ──────────────────────────────────────────────────────
+// Each pulls in native modules (maps, camera, Supabase) unavailable in the
+// jest-expo runner. Stub as null renders to isolate the Map shortcut logic.
 const Null = () => null;
 
 // The tabs render discoveryHeader (chips, search bar, nudge, tab row) inside
@@ -171,79 +179,126 @@ const HeaderOnly = ({ listHeaderComponent }: { listHeaderComponent?: React.React
   listHeaderComponent ?? null;
 
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/layover/LayoverModeSheet',        () => ({ LayoverModeSheet:      Null }));
+jest.mock('../../../src/components/layover/LayoverModeSheet',    () => ({ LayoverModeSheet:    Null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/discovery/DiscoveryCategoryTab',  () => ({ DiscoveryCategoryTab:  HeaderOnly }));
+jest.mock('../../../src/components/discovery/DiscoveryCategoryTab', () => ({ DiscoveryCategoryTab: HeaderOnly }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/discovery/PlaceDetailSheet',      () => ({ PlaceDetailSheet:      Null }));
+jest.mock('../../../src/components/discovery/PlaceDetailSheet',  () => ({ PlaceDetailSheet:  Null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/discovery/ForYouTab',             () => ({ ForYouTab:             HeaderOnly }));
+jest.mock('../../../src/components/discovery/ForYouTab',         () => ({ ForYouTab:         HeaderOnly }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/discovery/DestinationBar',        () => ({ DestinationBar:        Null }));
+jest.mock('../../../src/components/discovery/DestinationBar',    () => ({ DestinationBar:    Null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/compass/CompassBuddyRow',         () => ({ CompassBuddyRow:       Null }));
+jest.mock('../../../src/components/compass/CompassBuddyRow',     () => ({ CompassBuddyRow:   Null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/ManualCityPicker',                () => ({ ManualCityPicker:      Null }));
+jest.mock('../../../src/components/ManualCityPicker',            () => ({ ManualCityPicker:  Null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/FollowingHighlightsStrip',        () => ({ FollowingHighlightsStrip: Null }));
+jest.mock('../../../src/components/FollowingHighlightsStrip',    () => ({ FollowingHighlightsStrip: Null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/RouteBuilderSheet',               () => ({ RouteBuilderSheet:     Null }));
+jest.mock('../../../src/components/RouteBuilderSheet',           () => ({ RouteBuilderSheet: Null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/discovery/SubmitPlaceSheet',      () => ({ SubmitPlaceSheet:      Null }));
+jest.mock('../../../src/components/discovery/SubmitPlaceSheet',  () => ({ SubmitPlaceSheet:  Null }));
 
+// SectionErrorBoundary must pass children through so nested content renders.
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/discovery/SectionErrorBoundary', () => ({
   SectionErrorBoundary: ({ children }: { children: React.ReactNode }) => children,
 }));
 
-// ── Chip labels from CONTEXT_MODES ────────────────────────────────────────────
-const CHIP_LABELS = ['Near Me', 'In City', 'Going Soon', 'Around Crew', 'Safe Nearby'];
+// ── Typed spy reference ───────────────────────────────────────────────────────
+// Capture router.push after jest.mock hoisting completes.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const mockRouterPush = require('expo-router').router.push as jest.Mock;
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
+// Split from discovery.mapShortcut.component.test.tsx: these scenarios need
+// different pre-mount location states (fresh instances), and that renderer's
+// press budget is spent on the coords/tab-switch scenarios.  Instance order
+// here matters — see the constraints comment in the sibling file.
 
-describe('DiscoveryHub — context mode chips', () => {
+describe('DiscoveryHub — Map shortcut geocode and disabled states', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockLocationState = { place: { city: null, country: null }, coords: null };
   });
 
-  // Single consolidated test: this renderer (React 19 + RNTL v14) only
-  // reliably dispatches presses on the FIRST component instance per file and
-  // kills press dispatch on instances mounted after a post-press act()
-  // flush.  Scenario 2 (destination set) therefore runs as initial-render
-  // queries on a key-swap instance — honest, because accessibilityState
-  // .disabled and the press-handler branch are driven by the same
-  // `chipsDisabled` conditional and cannot regress separately.
-  it('chips are disabled (and inert) without a destination, enabled with one', async () => {
-    // ── Instance 0: no destination → all chips disabled and inert ──
-    const view = await render(<DiscoveryHub key="location-required" />);
-    await act(async () => {});
+  it('null coords omit lat/lng; country-only and no-destination disable the button', async () => {
+    const origFetch = global.fetch;
+    const origKey = process.env.EXPO_PUBLIC_MAPTILER_KEY;
+    try {
+      // ── Instance 0: city set but coords null, geocode key absent ──
+      // With no MapTiler key the geocode guard skips, coords stay null, and
+      // the push must omit lat/lng entirely (not 'null'/'undefined').
+      delete process.env.EXPO_PUBLIC_MAPTILER_KEY;
 
-    for (const label of CHIP_LABELS) {
-      const chip = view.getByText(label);
-      expect(chip).toBeTruthy();
-      expect(chip.parent?.props?.accessibilityState?.disabled).toBe(true);
-      // Pressing a disabled chip must not throw or switch contextMode.
-      fireEvent.press(chip);
-    }
+      mockLocationState = {
+        place:  { city: 'Tokyo', country: 'Japan' },
+        coords: null,
+      };
+      const view = await render(<DiscoveryHub key="coords-null" />);
+      await act(async () => {});
 
-    // NOTE: no act() flush after these presses — a post-press flush stops
-    // the next key-swap instance from committing (queries would then hit
-    // this stale tree).  The disabled-regression guarantee comes from the
-    // accessibilityState assertions above: RN skips onPress entirely for
-    // disabled Pressables, and `chipsDisabled` drives both the a11y flag
-    // and the handler gate.
+      fireEvent.press(view.getByText('Map'));
 
-    // ── Instance 1: destination set → chips enabled (queries only) ──
-    mockLocationState = {
-      place:  { city: 'Rome', country: 'Italy' },
-      coords: { lat: 41.9028, lng: 12.4964 },
-    };
-    await view.rerender(<DiscoveryHub key="dest-set" />);
-    await act(async () => {});
+      expect(mockRouterPush).toHaveBeenCalledTimes(1);
+      const call = mockRouterPush.mock.calls[0][0] as {
+        pathname: string;
+        params: Record<string, string | undefined>;
+      };
+      expect(call.pathname).toBe('/map');
+      // City and category are still forwarded
+      expect(call.params.title).toBe('Tokyo');
+      expect(call.params.category).toBe('for_you');
+      // Lat/lng must be absent — not set to 'null' or 'undefined'
+      expect(call.params.lat).toBeUndefined();
+      expect(call.params.lng).toBeUndefined();
 
-    for (const label of CHIP_LABELS) {
-      expect(view.getByText(label).parent?.props?.accessibilityState?.disabled).toBeFalsy();
+      // ── Instance 1: only country set — the Map shortcut is DISABLED ──
+      // `destination` seeds from resolvedLocation.place.city only, so a
+      // country-only state leaves it null and `disabled={!destination}`
+      // keeps the shortcut inert.  (The country-level geocode effect still
+      // runs — fetch is stubbed so it resolves — but its zoom-4 state is
+      // only observable through the map preview, not this button.)
+      global.fetch = jest.fn().mockResolvedValue({
+        json: () => Promise.resolve({
+          features: [{ center: [2.3514, 46.2276] }],
+        }),
+      } as unknown as Response);
+      process.env.EXPO_PUBLIC_MAPTILER_KEY = 'test-key';
+
+      mockLocationState = {
+        place:  { city: null, country: 'France' },
+        coords: null,
+      };
+      await view.rerender(<DiscoveryHub key="country-only" />);
+      await act(async () => {});
+      mockRouterPush.mockClear();
+
+      const countryButton = view.getByLabelText('Map view');
+      expect(countryButton.props?.accessibilityState?.disabled).toBe(true);
+      fireEvent.press(countryButton);
+      expect(mockRouterPush).not.toHaveBeenCalled();
+
+      // ── Instance 2: no destination at all — button disabled ──
+      global.fetch = origFetch;
+      delete process.env.EXPO_PUBLIC_MAPTILER_KEY;
+
+      mockLocationState = { place: { city: null, country: null }, coords: null };
+      await view.rerender(<DiscoveryHub key="no-destination" />);
+      await act(async () => {});
+      mockRouterPush.mockClear();
+
+      const mapButton = view.getByLabelText('Map view');
+      expect(mapButton.props?.accessibilityState?.disabled).toBe(true);
+      fireEvent.press(mapButton);
+      expect(mockRouterPush).not.toHaveBeenCalled();
+    } finally {
+      global.fetch = origFetch;
+      if (origKey === undefined) {
+        delete process.env.EXPO_PUBLIC_MAPTILER_KEY;
+      } else {
+        process.env.EXPO_PUBLIC_MAPTILER_KEY = origKey;
+      }
     }
   });
 });

@@ -1,16 +1,21 @@
 /**
- * DiscoveryHub — Context mode chips disabled when no destination
+ * DiscoveryHub — tapping a dimmed chip opens the city picker
  *
- * Confirms that when no destination is set (screenStatus === 'location-required'),
- * none of the context mode chips call setContextMode when pressed — they are
- * disabled and visually dimmed.
+ * Confirms that when screenStatus === 'location-required' (no destination set):
+ *   1. Tapping a context-mode chip calls openCityPicker.
+ *   2. The nudge banner receives the highlighted style immediately after the tap.
+ *   3. The highlighted style is cleared after the 1800 ms timeout elapses.
+ *
+ * And that when a destination IS set, tapping a chip does NOT call openCityPicker
+ * (the chip switches contextMode normally instead).
  *
  * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
  */
 
 import React from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import DiscoveryHub from '../discovery.tsx';
+import { color } from '../../../src/theme/tokens';
 
 // ── expo-router ───────────────────────────────────────────────────────────────
 // react-native Proxy mock — DiscoveryHub mounts a raw <Modal> (age filter).
@@ -125,7 +130,7 @@ jest.mock('../../../src/hooks/useFollowingHighlights', () => ({
 // ── Contexts ──────────────────────────────────────────────────────────────────
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/SessionContext', () => ({
-  useSession: () => ({ userId: 'user-test-1', isAuthed: true }),
+  useSession: () => ({ userId: 'user-test-1', isAuthed: false }),
 }));
 
 // Mutable — individual tests set what they need.
@@ -134,24 +139,26 @@ let mockLocationState: {
   coords: { lat: number; lng: number } | null;
 } = { place: { city: null, country: null }, coords: null };
 
+// Stable spy captured at module level so tests can assert on it.
+const mockOpenCityPicker = jest.fn();
+
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
-    setSessionLocation: jest.fn(),
-    clearSessionLocation: jest.fn(),
-    locationState:   mockLocationState,
-    // resolvedLocation — required by discovery.tsx after location unification.
+    locationState:        mockLocationState,
     resolvedLocation: {
-      place:  mockLocationState.place,
-      coords: mockLocationState.coords,
-      source: 'home',
+      place:     mockLocationState.place,
+      coords:    mockLocationState.coords,
+      source:    'home',
       freshness: 'unavailable',
     },
-    showCityPicker:  false,
-    openCityPicker:  jest.fn(),
-    closeCityPicker: jest.fn(),
-    setManualCity:   jest.fn().mockResolvedValue(undefined),
-    isLoading:       false,
+    showCityPicker:       false,
+    openCityPicker:       mockOpenCityPicker,
+    closeCityPicker:      jest.fn(),
+    setManualCity:        jest.fn().mockResolvedValue(undefined),
+    setSessionLocation:   jest.fn(),
+    clearSessionLocation: jest.fn(),
+    isLoading:            false,
   }),
 }));
 
@@ -196,54 +203,51 @@ jest.mock('../../../src/components/discovery/SectionErrorBoundary', () => ({
   SectionErrorBoundary: ({ children }: { children: React.ReactNode }) => children,
 }));
 
-// ── Chip labels from CONTEXT_MODES ────────────────────────────────────────────
+// NOTE: intentional stub — not under test here.
+jest.mock('../../../src/services/discoveryLocalCache', () => ({
+  loadCachedCounts: jest.fn().mockResolvedValue(null),
+  saveCachedCounts: jest.fn().mockResolvedValue(undefined),
+}));
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 const CHIP_LABELS = ['Near Me', 'In City', 'Going Soon', 'Around Crew', 'Safe Nearby'];
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+/** The `locationNudgeHighlighted` backgroundColor value from the stylesheet. */
+const NUDGE_HIGHLIGHTED_BG = color.signal + '28';
 
-describe('DiscoveryHub — context mode chips', () => {
+/** Accessibility label of the location-nudge banner in the discovery header. */
+const BANNER_LABEL = 'Set your location to discover nearby places';
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+// Split from discovery.dimmedChipOpensCityPicker.component.test.tsx: the
+// renderer there exhausts its reliable-press budget on the dimmed-chip and
+// nudge-lifecycle assertions (see that file's constraints comment), so the
+// destination-set scenario runs here on a fresh renderer where its presses
+// are live and the coverage is honest.
+
+describe('DiscoveryHub — enabled chips when a destination is set', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockLocationState = { place: { city: null, country: null }, coords: null };
+    mockLocationState = {
+      place:  { city: 'Tokyo', country: 'Japan' },
+      coords: { lat: 35.6895, lng: 139.6917 },
+    };
   });
 
-  // Single consolidated test: this renderer (React 19 + RNTL v14) only
-  // reliably dispatches presses on the FIRST component instance per file and
-  // kills press dispatch on instances mounted after a post-press act()
-  // flush.  Scenario 2 (destination set) therefore runs as initial-render
-  // queries on a key-swap instance — honest, because accessibilityState
-  // .disabled and the press-handler branch are driven by the same
-  // `chipsDisabled` conditional and cannot regress separately.
-  it('chips are disabled (and inert) without a destination, enabled with one', async () => {
-    // ── Instance 0: no destination → all chips disabled and inert ──
-    const view = await render(<DiscoveryHub key="location-required" />);
+  it('chips are enabled, no nudge banner, and taps do not open the city picker', async () => {
+    const view = await render(<DiscoveryHub />);
     await act(async () => {});
 
+    // No nudge banner when a destination is set.
+    expect(view.queryByLabelText(BANNER_LABEL)).toBeNull();
+
+    // Every chip is enabled (not a11y-disabled), and pressing each one
+    // switches context mode instead of opening the picker.
     for (const label of CHIP_LABELS) {
-      const chip = view.getByText(label);
-      expect(chip).toBeTruthy();
-      expect(chip.parent?.props?.accessibilityState?.disabled).toBe(true);
-      // Pressing a disabled chip must not throw or switch contextMode.
-      fireEvent.press(chip);
+      const a11y = view.getByText(label).parent?.props?.accessibilityState;
+      expect(a11y?.disabled ?? false).toBe(false);
+      fireEvent.press(view.getByText(label));
     }
-
-    // NOTE: no act() flush after these presses — a post-press flush stops
-    // the next key-swap instance from committing (queries would then hit
-    // this stale tree).  The disabled-regression guarantee comes from the
-    // accessibilityState assertions above: RN skips onPress entirely for
-    // disabled Pressables, and `chipsDisabled` drives both the a11y flag
-    // and the handler gate.
-
-    // ── Instance 1: destination set → chips enabled (queries only) ──
-    mockLocationState = {
-      place:  { city: 'Rome', country: 'Italy' },
-      coords: { lat: 41.9028, lng: 12.4964 },
-    };
-    await view.rerender(<DiscoveryHub key="dest-set" />);
-    await act(async () => {});
-
-    for (const label of CHIP_LABELS) {
-      expect(view.getByText(label).parent?.props?.accessibilityState?.disabled).toBeFalsy();
-    }
+    expect(mockOpenCityPicker).not.toHaveBeenCalled();
   });
 });

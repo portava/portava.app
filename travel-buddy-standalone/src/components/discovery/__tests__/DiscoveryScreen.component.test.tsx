@@ -3,49 +3,34 @@
  * crash on open).
  *
  * Covered:
- *  (a) Renders with complete data (trending strip + default ForYouTab all
- *      resolve).
+ *  (a) Renders with complete data (trending, buddies, sections all resolve).
  *  (b) Renders when all optional sections return empty.
- *  (c) Renders when location is unavailable/denied — the shell + For You tab
- *      still render (generalized, non-location-gated content) instead of
+ *  (c) Renders when location is unavailable/denied — shows the "choose a
+ *      city" nudge and generalized (non-location-gated) content instead of
  *      crashing.
  *  (d) Renders when one section throws — that section shows an inline
  *      error fallback while the rest of the screen stays up.
  *
- * NOTE (standalone fork divergence): this app/(tabs)/discovery.tsx is a
- * tab-based hub. It does NOT render CompassBuddyRow or an "available buddies"
- * strip, and there is no "choose a city" nudge label — those are mobile-tree
- * features. The tests below assert the standalone tree's ACTUAL behavior:
- * a trending-hashtag strip (getTrendingHashtags → chip showing the slug) plus
- * the default For You tab, wrapped in real SectionErrorBoundary isolation
- * (labels "DiscoveryHub" / "ForYouTab" / "DiscoveryCategoryTab-<key>").
- *
- * Heavy child sections (ForYouTab, DiscoveryCategoryTab) are stubbed so the
- * tests exercise the screen shell, its data-fetch effects, and the real
- * SectionErrorBoundary isolation.
+ * Heavy child sections (ForYouTab, DiscoveryCategoryTab, CompassBuddyRow, …)
+ * are stubbed so the tests exercise the screen shell, its data-fetch effects,
+ * and the real SectionErrorBoundary isolation.
  */
 import React from 'react';
 import { render, screen, waitFor, act } from '@testing-library/react-native';
 
 // ── Controls shared with mock factories (must be `mock`-prefixed) ─────────────
 
-const mockFlags = { throwForYouTab: false };
+const mockFlags = { throwCompassRow: false };
 
 const mockLocation = {
   locationState: {
     place: { city: 'Lisbon', country: 'Portugal' },
     coords: { lat: 38.7223, lng: -9.1393 },
-    permissionStatus: 'granted' as 'granted' | 'denied' | 'undetermined',
-  } as {
-    place: { city: string | null; country: string | null };
-    coords: { lat: number; lng: number } | null;
-    permissionStatus: 'granted' | 'denied' | 'undetermined';
-  },
+  } as { place: { city: string | null; country: string | null }; coords: { lat: number; lng: number } | null },
   showCityPicker: false,
   openCityPicker: jest.fn(),
   closeCityPicker: jest.fn(),
   setManualCity: jest.fn().mockResolvedValue(undefined),
-  requestLocation: jest.fn(),
   isLoading: false,
 };
 
@@ -132,27 +117,41 @@ jest.mock('../../../hooks/useFollowingHighlights', () => ({
 // NOTE: intentionally exhaustive — each stub replaces a component whose real
 // implementation pulls maps/reanimated/etc. that are not safe under jest.
 
+// NOTE: the real tabs render the screen's shared header (title "Discover",
+// trending/buddy/CompassPicks sections) via the `listHeaderComponent` prop —
+// discovery.tsx moved the header stack inside each tab's FlatList.  The stub
+// MUST render that prop, otherwise the screen shell (and the assertions that
+// query it) never appears.
 jest.mock('../ForYouTab', () => {
   const RN = jest.requireActual('react-native');
   return {
-    ForYouTab: () => {
-      if (mockFlags.throwForYouTab) throw new Error('for-you tab boom');
-      return <RN.Text testID="stub-for-you">ForYouTab</RN.Text>;
-    },
+    ForYouTab: ({ listHeaderComponent }: { listHeaderComponent?: React.ReactNode }) => (
+      <RN.View>
+        <RN.Text testID="stub-for-you">ForYouTab</RN.Text>
+        {listHeaderComponent}
+      </RN.View>
+    ),
   };
 });
 
-// NOTE: intentionally exhaustive — DiscoveryCategoryTab's real module also
-// exports FilterStrip + SORT_LABELS, both imported by discovery.tsx; omitting
-// them crashes the filters panel into SectionErrorBoundary.
 jest.mock('../DiscoveryCategoryTab', () => {
   const RN = jest.requireActual('react-native');
-  const Stub = () => <RN.Text testID="stub-category-tab">DiscoveryCategoryTab</RN.Text>;
+  const Stub = ({ listHeaderComponent }: { listHeaderComponent?: React.ReactNode }) => (
+    <RN.View>
+      <RN.Text testID="stub-category-tab">DiscoveryCategoryTab</RN.Text>
+      {listHeaderComponent}
+    </RN.View>
+  );
+  return { DiscoveryCategoryTab: Stub, default: Stub };
+});
+
+jest.mock('../../compass/CompassBuddyRow', () => {
+  const RN = jest.requireActual('react-native');
   return {
-    DiscoveryCategoryTab: Stub,
-    default: Stub,
-    FilterStrip: () => null,
-    SORT_LABELS: {},
+    CompassBuddyRow: () => {
+      if (mockFlags.throwCompassRow) throw new Error('compass row boom');
+      return <RN.Text testID="stub-compass-row">CompassBuddyRow</RN.Text>;
+    },
   };
 });
 
@@ -213,7 +212,6 @@ function setLocationAvailable() {
   mockLocation.locationState = {
     place: { city: 'Lisbon', country: 'Portugal' },
     coords: { lat: 38.7223, lng: -9.1393 },
-    permissionStatus: 'granted',
   };
   mockLocation.isLoading = false;
 }
@@ -222,7 +220,6 @@ function setLocationDenied() {
   mockLocation.locationState = {
     place: { city: null, country: null },
     coords: null,
-    permissionStatus: 'denied',
   };
   mockLocation.isLoading = false;
 }
@@ -234,7 +231,7 @@ afterEach(async () => {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockFlags.throwForYouTab = false;
+  mockFlags.throwCompassRow = false;
   setLocationAvailable();
   mockTrending.mockResolvedValue({
     ok: true,
@@ -253,18 +250,19 @@ describe('DiscoveryHub crash resilience', () => {
     await render(<DiscoveryHub />);
 
     expect(screen.getByText('Discover')).toBeTruthy();
-    // Default active tab is For You (initialCategory defaults to 'for_you').
     expect(screen.getByTestId('stub-for-you')).toBeTruthy();
+    expect(screen.getByTestId('stub-compass-row')).toBeTruthy();
 
-    // The trending-hashtag strip hydrates from getTrendingHashtags without
-    // throwing — the chip renders the slug.
+    // Optional sections hydrate from their queries without throwing.
     await waitFor(() => {
       expect(screen.getByText('lisbon')).toBeTruthy();       // trending chip
+      expect(screen.getByText('Ana')).toBeTruthy();           // buddy strip
     });
   });
 
   it('(b) renders when all optional sections return empty', async () => {
     mockTrending.mockResolvedValue({ ok: true, data: { trending: [] } });
+    mockAvailableNow.mockResolvedValue({ ok: true, data: { buddies: [] } });
 
     await render(<DiscoveryHub />);
 
@@ -273,11 +271,13 @@ describe('DiscoveryHub crash resilience', () => {
 
     await waitFor(() => {
       expect(screen.queryByText('lisbon')).toBeNull();
+      expect(screen.queryByText('Ana')).toBeNull();
     });
   });
 
   it('(b2) renders when an optional payload is malformed (missing arrays)', async () => {
     mockTrending.mockResolvedValue({ ok: true, data: {} });      // no trending field
+    mockAvailableNow.mockResolvedValue({ ok: true, data: {} });  // no buddies field
 
     await render(<DiscoveryHub />);
 
@@ -287,17 +287,16 @@ describe('DiscoveryHub crash resilience', () => {
     });
   });
 
-  it('(c) renders when location is denied — shell + For You tab still render, no crash', async () => {
+  it('(c) renders when location is denied — shows the choose-a-city nudge, no crash', async () => {
     setLocationDenied();
     mockTrending.mockResolvedValue({ ok: true, data: { trending: [] } });
 
     await render(<DiscoveryHub />);
 
     expect(screen.getByText('Discover')).toBeTruthy();
-    // For You tab still renders — generalized (non-location-gated) content.
-    // NOTE: the standalone hub has no "choose a city" nudge label (mobile-only);
-    // the resilience contract here is that a denied location does not crash the
-    // screen and the default tab still mounts.
+    // Location nudge (generalized, non-location-gated path) is offered.
+    expect(screen.getByLabelText('Set your location to discover nearby places')).toBeTruthy();
+    // For You tab still renders (its stub stands in for generalized picks).
     expect(screen.getByTestId('stub-for-you')).toBeTruthy();
 
     await waitFor(() => {
@@ -306,21 +305,22 @@ describe('DiscoveryHub crash resilience', () => {
   });
 
   it("(d) one section throwing shows that section's inline error, rest still renders", async () => {
-    mockFlags.throwForYouTab = true;
+    mockFlags.throwCompassRow = true;
     // Silence React's expected error-boundary noise for this test only.
     const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
     await render(<DiscoveryHub />);
 
-    // The crashed section (For You tab) shows its isolated fallback…
-    expect(screen.getByTestId('section-error-ForYouTab')).toBeTruthy();
+    // The crashed section shows its isolated fallback…
+    expect(screen.getByTestId('section-error-CompassPicks')).toBeTruthy();
     expect(screen.getByText("Couldn't load this section")).toBeTruthy();
-    // …while the rest of the screen shell still renders.
+    // …while the rest of the screen still renders.
     expect(screen.getByText('Discover')).toBeTruthy();
+    expect(screen.getByTestId('stub-for-you')).toBeTruthy();
     // And the real error was logged for developers.
     expect(
       consoleErrorSpy.mock.calls.some((args) =>
-        String(args[0]).includes('section "ForYouTab" crashed'),
+        String(args[0]).includes('section "CompassPicks" crashed'),
       ),
     ).toBe(true);
 

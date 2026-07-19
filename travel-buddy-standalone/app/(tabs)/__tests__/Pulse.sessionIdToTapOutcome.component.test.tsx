@@ -176,10 +176,8 @@ jest.mock('../../../src/hooks/useCircleFlag', () => ({
 }));
 
 // ── fireRankOutcome spy ───────────────────────────────────────────────────────
-// DIVERGENT FORK: the standalone index.tsx does NOT wire fireRankOutcome or an
-// onTouchStart tap handler onto the per-item wrapper (that is a mobile-only
-// feature). We keep the spy mock so the module resolves, and assert below that
-// the standalone behavior is exactly this: no tap-outcome telemetry is fired.
+// This is the key mock: we intercept the module-level helper that
+// index.tsx calls on onTouchStart to verify sessionId is forwarded.
 const mockFireRankOutcome = jest.fn();
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useRankOutcome', () => ({
@@ -215,16 +213,9 @@ jest.mock('../../../src/components/PulseFits', () => ({
   FlexibleStrip: () => null,
 }));
 
-// Prop-capture stub — records the props each PulseFeedCard render receives so
-// we can prove what the standalone renderItem wrapper forwards (no visual
-// commit needed; renders execute even when commits stall).
-const mockPulseFeedCardProps: any[] = [];
-// NOTE: intentional stub — captures props; PulseFeedCard renders native media.
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PulseFeedCard', () => ({
-  PulseFeedCard: (props: any) => {
-    mockPulseFeedCardProps.push(props);
-    return null;
-  },
+  PulseFeedCard: () => null,
 }));
 
 // NOTE: intentional stub — not under test here.
@@ -289,29 +280,6 @@ import Pulse from '../index.tsx';
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Walk the rendered React element tree and find the first element whose `type`
- * is a function/class component carrying an `item` prop (the PulseFeedCard the
- * standalone renderItem wraps). We match on `props.item` rather than the
- * component name because the jest stub is an anonymous function.
- */
-function findByComponentName(node: any, _name: string): { props: any } | undefined {
-  if (!node || typeof node !== 'object') return undefined;
-  if (typeof node.type === 'function' && node.props && 'item' in node.props) {
-    return node;
-  }
-  const children: any[] = Array.isArray(node.props?.children)
-    ? node.props.children
-    : node.props?.children != null
-    ? [node.props.children]
-    : [];
-  for (const child of children) {
-    const found = findByComponentName(child, _name);
-    if (found) return found;
-  }
-  return undefined;
-}
-
-/**
  * Walk the rendered React element tree and find the first node that has an
  * `onTouchStart` prop set (the per-item wrapper View in index.tsx).
  */
@@ -334,16 +302,10 @@ function findOnTouchStart(node: any): (() => void) | undefined {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-// DIVERGENT FORK: the standalone renderItem wraps PulseFeedCard in a plain
-// <View> with NO onTouchStart handler and does NOT call fireRankOutcome — the
-// tap-outcome telemetry wiring is a mobile-only feature. These tests pin the
-// standalone tree's ACTUAL behavior so a future refactor can't silently change
-// it, rather than porting the mobile assertions (rule 13).
-describe('Pulse screen — renderItem wrapper (standalone tap-outcome behavior)', () => {
+describe('Pulse screen — sessionId forwarded to fireRankOutcome on tap', () => {
   beforeEach(() => {
     capturedRenderItem = undefined;
     mockFireRankOutcome.mockClear();
-    mockPulseFeedCardProps.length = 0;
   });
 
   it('renderItem is captured from the FlatList after render', async () => {
@@ -352,7 +314,7 @@ describe('Pulse screen — renderItem wrapper (standalone tap-outcome behavior)'
     expect(capturedRenderItem).toBeDefined();
   });
 
-  it('the per-item wrapper carries NO onTouchStart handler (no tap-outcome wiring in this tree)', async () => {
+  it('fireRankOutcome is called with the sessionId from usePulseFeed when a feed item is tapped', async () => {
     await render(<Pulse />);
     await act(async () => {});
 
@@ -365,17 +327,23 @@ describe('Pulse screen — renderItem wrapper (standalone tap-outcome behavior)'
       separators: { highlight: jest.fn(), unhighlight: jest.fn(), updateProps: jest.fn() },
     });
 
-    // The standalone wrapper is a plain View — there is no onTouchStart prop.
+    // The per-item View wraps PulseFeedCard and carries onTouchStart.
     const onTouchStart = findOnTouchStart(rendered);
-    expect(onTouchStart).toBeUndefined();
+    expect(onTouchStart).toBeDefined();
 
-    // The wrapper still renders a PulseFeedCard element carrying the item.
-    const feedCard = findByComponentName(rendered, 'PulseFeedCard');
-    expect(feedCard).toBeDefined();
-    expect(feedCard!.props.item).toEqual(mockFeedItem);
+    // Simulate the tap.
+    onTouchStart!();
+
+    expect(mockFireRankOutcome).toHaveBeenCalledTimes(1);
+    expect(mockFireRankOutcome).toHaveBeenCalledWith(
+      mockFeedItem.id,
+      'pulse',
+      'tap',
+      MOCK_SESSION_ID,
+    );
   });
 
-  it('fireRankOutcome is NOT called on render — no tap-outcome telemetry fires in the standalone tree', async () => {
+  it('session_id argument position is the 4th argument — not omitted or moved', async () => {
     await render(<Pulse />);
     await act(async () => {});
 
@@ -385,9 +353,10 @@ describe('Pulse screen — renderItem wrapper (standalone tap-outcome behavior)'
       separators: { highlight: jest.fn(), unhighlight: jest.fn(), updateProps: jest.fn() },
     });
 
-    // Even after producing the element tree, no onTouchStart exists to fire and
-    // fireRankOutcome is never invoked (mobile-only wiring absent here).
-    expect(findOnTouchStart(rendered)).toBeUndefined();
-    expect(mockFireRankOutcome).not.toHaveBeenCalled();
+    const onTouchStart = findOnTouchStart(rendered);
+    onTouchStart!();
+
+    const [, , , sessionIdArg] = mockFireRankOutcome.mock.calls[0];
+    expect(sessionIdArg).toBe(MOCK_SESSION_ID);
   });
 });

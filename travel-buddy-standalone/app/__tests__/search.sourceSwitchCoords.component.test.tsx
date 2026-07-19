@@ -52,11 +52,7 @@ const GPS_CITY = 'Sydney';
 
 // ── Mutable context factory ────────────────────────────────────────────────────
 
-// Holds a reference the test can swap between renders. DIVERGENT FORK: the
-// standalone search.tsx reads coords straight from locationState (via
-// useActiveLocation) when permissionStatus === 'granted' — there is no
-// resolvedLocation cascade. A source switch therefore lands in locationState,
-// which we swap between renders to model manual_city → gps.
+// Holds a reference the test can swap between renders.
 let resolvedLocationOverride = {
   place:   { city: MANUAL_CITY, country: 'JP', lat: MANUAL_LAT, lng: MANUAL_LNG },
   coords:  { lat: MANUAL_LAT, lng: MANUAL_LNG, accuracyMeters: null as number | null },
@@ -109,16 +105,12 @@ jest.mock('expo-router', () => {
   };
 });
 
-// NOTE: intentionally exhaustive — the standalone search.tsx reads location via
-// useActiveLocation() (a local-state hook) which imports expo-location native
-// modules unavailable under jest-expo. We expose it as a jest.fn() so we can
-// change the returned locationState between renders (DIVERGENT FORK: no
-// useLocationContext / resolvedLocation in this tree).
-const mockUseActiveLocation = jest.fn();
-// NOTE: exhaustive factory delegating to the jest.fn above — no requireActual
-// to avoid loading expo-location native modules.
-jest.mock('../../src/hooks/useActiveLocation', () => ({
-  useActiveLocation: (...args: unknown[]) => mockUseActiveLocation(...args),
+// NOTE: intentionally exhaustive — LocationContext pulls in useActiveLocation
+// which imports expo-location native modules. We expose useLocationContext as
+// a jest.fn() so we can change the returned resolvedLocation between renders.
+const mockUseLocationContext = jest.fn();
+jest.mock('../../src/context/LocationContext', () => ({
+  useLocationContext: (...args: unknown[]) => mockUseLocationContext(...args),
 }));
 
 // NOTE: intentionally exhaustive — SessionContext pulls in Supabase client
@@ -207,20 +199,30 @@ jest.mock('react-native-safe-area-context', () => ({
 
 function makeLocationContext(override: typeof resolvedLocationOverride) {
   return {
-    // The active locationState carries the currently-resolved coords/place.
-    // On a source switch, the whole locationState is replaced (that is where
-    // the standalone userCoords memo reads from).
     locationState: {
       permissionStatus: 'granted',
       ok: true,
-      coords: override.coords,
-      place:  override.place,
-      source: override.source,
-      freshness: override.freshness,
+      // locationState always carries the raw GPS coords regardless of the
+      // resolved source — the component must read from resolvedLocation.
+      coords: { lat: GPS_LAT, lng: GPS_LNG, accuracyMeters: 20 },
+      place:  { city: GPS_CITY, country: 'AU', lat: GPS_LAT, lng: GPS_LNG },
+      source: 'gps',
+      freshness: 'live',
     },
     requestLocation:          jest.fn(),
     setManualCity:            jest.fn(),
-    isLoading:                false,
+    showPermissionPrompt:     false,
+    showCityPicker:           false,
+    requireLocation:          jest.fn(),
+    dismissPermissionPrompt:  jest.fn(),
+    openCityPicker:           jest.fn(),
+    closeCityPicker:          jest.fn(),
+    locationPrefs:            {},
+    locationPrefsLoading:     false,
+    refreshLocationPrefs:     jest.fn(),
+    setSessionLocation:       jest.fn(),
+    clearSessionLocation:     jest.fn(),
+    resolvedLocation:         override,
   };
 }
 
@@ -230,17 +232,9 @@ const mockSearchUnified = searchUnified as jest.Mock;
 
 // ── Suite ──────────────────────────────────────────────────────────────────────
 
-// DIVERGENT FORK: unlike the mobile tree, the standalone search.tsx re-runs the
-// search only when query/tab/submitted change (its debounce effect deps), NOT
-// when coords change mid-session — and there is no resolvedLocation cascade; the
-// userCoords memo reads straight from the active locationState (useActiveLocation)
-// when permission is granted. A live rerender-with-new-coords therefore does not
-// re-fire searchUnified in this tree. We instead prove the standalone's actual
-// behavior: the userCoords memo re-derives from whatever locationState is active
-// at mount, so each source resolves to its own coords/city on a fresh render.
-describe('SearchScreen — search coords derive from the active locationState source', () => {
+describe('SearchScreen — GPS coords reach search after source switches mid-session', () => {
   beforeEach(() => {
-    // Default active location: manual_city (Tokyo).
+    // Reset resolvedLocation to the initial manual_city state before each test.
     resolvedLocationOverride = {
       place:     { city: MANUAL_CITY, country: 'JP', lat: MANUAL_LAT, lng: MANUAL_LNG },
       coords:    { lat: MANUAL_LAT, lng: MANUAL_LNG, accuracyMeters: null },
@@ -248,7 +242,9 @@ describe('SearchScreen — search coords derive from the active locationState so
       freshness: 'live',
     };
 
-    mockUseActiveLocation.mockImplementation(() =>
+    // Return the current resolvedLocationOverride on every call so the
+    // test can swap it between render and rerender.
+    mockUseLocationContext.mockImplementation(() =>
       makeLocationContext(resolvedLocationOverride),
     );
 
@@ -267,26 +263,24 @@ describe('SearchScreen — search coords derive from the active locationState so
     jest.clearAllMocks();
   });
 
-  it('searchUnified receives manual_city (Tokyo) coords when that source is active', async () => {
-    await render(<SearchScreen />);
+  it('second searchUnified call receives GPS coords after source switches from manual_city to gps', async () => {
+    // ── Phase 1: initial render with session override (manual_city → Tokyo) ──
+    const { rerender } = await render(<SearchScreen />);
 
+    // Wait for the first search to fire (debounced 300 ms).
     await waitFor(
       () => { expect(mockSearchUnified).toHaveBeenCalledTimes(1); },
       { timeout: 1000 },
     );
 
-    const opts = mockSearchUnified.mock.calls[0][3] as {
+    // First call must carry Tokyo (manual_city) coords.
+    const firstOpts = mockSearchUnified.mock.calls[0][3] as {
       lat?: number; lng?: number; city?: string;
     };
-    expect(opts.lat).toBe(MANUAL_LAT);
-    expect(opts.lng).toBe(MANUAL_LNG);
-    expect(opts.city).toBe(MANUAL_CITY);
-  });
+    expect(firstOpts.lat).toBe(MANUAL_LAT);
+    expect(firstOpts.lng).toBe(MANUAL_LNG);
 
-  it('searchUnified receives gps (Sydney) coords when the active source is gps — memo re-derives per source', async () => {
-    // Active location is now the GPS source (Sydney) — a fresh mount models the
-    // post-switch state (the standalone re-derives coords from locationState at
-    // mount rather than re-firing on a mid-session coords change).
+    // ── Phase 2: source switches to gps — resolvedLocation now carries Sydney ──
     resolvedLocationOverride = {
       place:     { city: GPS_CITY, country: 'AU', lat: GPS_LAT, lng: GPS_LNG },
       coords:    { lat: GPS_LAT, lng: GPS_LNG, accuracyMeters: 15 },
@@ -294,26 +288,42 @@ describe('SearchScreen — search coords derive from the active locationState so
       freshness: 'live',
     };
 
-    await render(<SearchScreen />);
+    // Rerender to propagate the new context value into the component.
+    await act(async () => {
+      await rerender(<SearchScreen />);
+    });
+
+    // The userCoords memo must re-derive and the debounced effect must re-fire.
+    await waitFor(
+      () => { expect(mockSearchUnified).toHaveBeenCalledTimes(2); },
+      { timeout: 1000 },
+    );
+
+    // Second call must carry Sydney (gps) coords — not the frozen Tokyo values.
+    const secondOpts = mockSearchUnified.mock.calls[1][3] as {
+      lat?: number; lng?: number; city?: string;
+    };
+    expect(secondOpts.lat).toBe(GPS_LAT);
+    expect(secondOpts.lng).toBe(GPS_LNG);
+
+    // The old manual_city coords must not appear in the second call.
+    expect(secondOpts.lat).not.toBe(MANUAL_LAT);
+    expect(secondOpts.lng).not.toBe(MANUAL_LNG);
+  });
+
+  it('second searchUnified call receives the GPS city name after the source switch', async () => {
+    const { rerender } = await render(<SearchScreen />);
 
     await waitFor(
       () => { expect(mockSearchUnified).toHaveBeenCalledTimes(1); },
       { timeout: 1000 },
     );
 
-    const opts = mockSearchUnified.mock.calls[0][3] as {
-      lat?: number; lng?: number; city?: string;
-    };
-    // GPS coords/city must be forwarded — not the manual_city defaults.
-    expect(opts.lat).toBe(GPS_LAT);
-    expect(opts.lng).toBe(GPS_LNG);
-    expect(opts.city).toBe(GPS_CITY);
-    expect(opts.lat).not.toBe(MANUAL_LAT);
-    expect(opts.lng).not.toBe(MANUAL_LNG);
-    expect(opts.city).not.toBe(MANUAL_CITY);
-  });
+    // Verify first call used Tokyo.
+    const firstOpts = mockSearchUnified.mock.calls[0][3] as { city?: string };
+    expect(firstOpts.city).toBe(MANUAL_CITY);
 
-  it('gps coords are defined and non-zero when the gps source is active — not silently dropped', async () => {
+    // Switch source to GPS (Sydney).
     resolvedLocationOverride = {
       place:     { city: GPS_CITY, country: 'AU', lat: GPS_LAT, lng: GPS_LNG },
       coords:    { lat: GPS_LAT, lng: GPS_LNG, accuracyMeters: 15 },
@@ -321,14 +331,47 @@ describe('SearchScreen — search coords derive from the active locationState so
       freshness: 'live',
     };
 
-    await render(<SearchScreen />);
+    await act(async () => {
+      await rerender(<SearchScreen />);
+    });
+
+    await waitFor(
+      () => { expect(mockSearchUnified).toHaveBeenCalledTimes(2); },
+      { timeout: 1000 },
+    );
+
+    const secondOpts = mockSearchUnified.mock.calls[1][3] as { city?: string };
+    // City name must be updated to Sydney after the source switch.
+    expect(secondOpts.city).toBe(GPS_CITY);
+    expect(secondOpts.city).not.toBe(MANUAL_CITY);
+  });
+
+  it('GPS coords are defined and non-zero after the source switch — not silently dropped', async () => {
+    const { rerender } = await render(<SearchScreen />);
 
     await waitFor(
       () => { expect(mockSearchUnified).toHaveBeenCalledTimes(1); },
       { timeout: 1000 },
     );
 
-    const opts = mockSearchUnified.mock.calls[0][3] as {
+    // Switch source to GPS (Sydney).
+    resolvedLocationOverride = {
+      place:     { city: GPS_CITY, country: 'AU', lat: GPS_LAT, lng: GPS_LNG },
+      coords:    { lat: GPS_LAT, lng: GPS_LNG, accuracyMeters: 15 },
+      source:    'gps',
+      freshness: 'live',
+    };
+
+    await act(async () => {
+      await rerender(<SearchScreen />);
+    });
+
+    await waitFor(
+      () => { expect(mockSearchUnified).toHaveBeenCalledTimes(2); },
+      { timeout: 1000 },
+    );
+
+    const opts = mockSearchUnified.mock.calls[1][3] as {
       lat?: number; lng?: number;
     };
     // Both lat and lng must be present — dropping either would silently fall

@@ -174,9 +174,10 @@ describe('EventCard — sessionId forwarding', () => {
   });
 });
 
-// NOTE: the two FlexibleSection scenarios each need an expand press + an
-// inner-card press. Per the per-file press budget (cumulative fireEvent.press
-// degradation under React 19 + RNTL v14), they were moved into two fresh-
-// renderer sibling files so each mounts once with a clean press budget:
-//   EventCard.sessionId.flexible.component.test.tsx          (with sessionId)
-//   EventCard.sessionId.flexibleNoSession.component.test.tsx (without sessionId)
+// NOTE: The FlexibleSection sessionId-forwarding tests live in their own file
+// (EventCard.flexibleSection.component.test.tsx).  Each one needs TWO live
+// presses that commit setState (expand the section, then tap the revealed
+// card).  Per the renderer's cumulative press-degradation limit, only the
+// first ~2 mounts in a file dispatch presses whose setState commits, and these
+// scenarios sit after 6 EventCard mounts here — the expand press silently
+// no-ops.  Splitting into a separate file gives each scenario a fresh renderer.

@@ -295,10 +295,16 @@ describe('CreateMemoryModal — upload error clears on re-pick', () => {
       upload.resolve({ ok: false, url: null, mediaType: null, message: 'Upload failed' }),
     );
 
-    // Structural proof of the failure branch (same pattern as the sibling
-    // MemoriesTab.photoUploadFail): the banner text commit is unreliable in
-    // this renderer under worker load — upload attempted, save never reached.
-    // The re-pick assertions below prove the error state existed and cleared.
+    // NOTE: the inline 'Upload failed' banner text is intentionally NOT asserted
+    // here.  In this environment (React 19 + jest-expo + RNTL v14) the state
+    // update from handleSave's error branch — setUploadError(...) after the
+    // uploadMedia await — is not reliably committed to the queried tree (see the
+    // sibling test MemoriesTab.photoUploadFail.component.test.tsx for the full
+    // write-up of why UI-text assertions can't capture this state).  The
+    // failure branch running is instead proven structurally: uploadMedia was
+    // attempted exactly once and createPassportMemory was NOT called (the save
+    // aborted because there is no valid photoUrl).  The re-pick's setUploadError('')
+    // clear is then proven via __testOnResultCount below.
     expect(uploadMediaMock).toHaveBeenCalledTimes(1);
     expect(createPassportMemoryMock).not.toHaveBeenCalled();
 

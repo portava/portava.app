@@ -1,20 +1,18 @@
 /**
- * FlexibleSection — sessionId forwarding (without sessionId)
+ * FlexibleSection — sessionId forwarding (WITH a sessionId)
  *
- * Split out from EventCard.sessionId.component.test.tsx: this scenario needs an
- * expand press followed by an inner-card press. Under React 19 + RNTL v14 the
- * per-file fireEvent.press budget degrades cumulatively, so each FlexibleSection
- * scenario lives in its own fresh-renderer file (one it(), single mount, two
- * synchronous presses, no post-press flush).
+ * Split into its own file: expanding the collapsed section and then tapping the
+ * revealed dimmed card requires TWO live presses whose setState must commit
+ * (open the section, then dispatch the card's onPress).  Per the renderer's
+ * cumulative press-degradation limit, only the first ~1-2 mounts in a file
+ * commit press-driven setState reliably, so each FlexibleSection scenario needs
+ * a fresh renderer (= its own file).  See the "with a sessionId" sibling file.
  *
- * Confirms that pressing a dimmed card inside FlexibleSection with no sessionId
- * calls fireRankOutcome with the 'tap' outcome and an undefined sessionId.
- *
- * ## Mock strategy — mirrors the sibling files.
+ * Run with: pnpm test:component
  */
 
 import React from 'react';
-import { render, fireEvent, act } from '@testing-library/react-native';
+import { render, fireEvent, screen, act } from '@testing-library/react-native';
 
 // ── Module mocks (hoisted before imports) ────────────────────────────────────
 
@@ -64,30 +62,31 @@ const MOCK_EVENT: CityEvent = {
   score:         null,
 };
 
-// ── Test ───────────────────────────────────────────────────────────────────
+// ── Test ─────────────────────────────────────────────────────────────────────
 
-describe('FlexibleSection — sessionId forwarding (without sessionId)', () => {
+describe('FlexibleSection — sessionId forwarding (with sessionId)', () => {
   beforeEach(() => {
     mockFireRankOutcome.mockClear();
   });
 
-  test('pressing a dimmed card inside FlexibleSection without a sessionId calls fireRankOutcome with undefined', async () => {
-    const view = await render(<FlexibleSection events={[MOCK_EVENT]} />);
+  test('pressing a dimmed card inside FlexibleSection calls fireRankOutcome with the correct sessionId', async () => {
+    await render(<FlexibleSection events={[MOCK_EVENT]} sessionId="sess-flex-456" />);
 
-    // Expand the collapsed section first. The expand toggles `open` state which
-    // conditionally renders the body; flush once so that commit lands before we
-    // query/press the inner card. This is the only post-press flush in the file.
-    fireEvent.press(view.getByText("When you're flexible"));
+    // Expand the collapsed section first (live press → setState commit).
+    fireEvent.press(screen.getByText("When you're flexible"));
+    // Flush the expand setState so the dimmed card mounts.  Safe here: no
+    // further mounts follow this press (single-scenario file), so the
+    // post-press flush cannot poison a later instance.
     await act(async () => {});
 
     // Now press the dimmed event card inside.
-    fireEvent.press(view.getByText('Sunset Mixer'));
+    fireEvent.press(screen.getByText('Sunset Mixer'));
 
     expect(mockFireRankOutcome).toHaveBeenCalledWith(
       'ev-test-1',
       'events',
       'tap',
-      undefined,
+      'sess-flex-456',
     );
   });
 });

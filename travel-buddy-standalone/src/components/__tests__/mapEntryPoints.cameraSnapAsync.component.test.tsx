@@ -1,15 +1,43 @@
 /**
- * Full-screen map — camera snap to entity pin (split sibling file).
+ * Full-screen map entry points — CAMERA SNAP (async entity arrival, section 13).
  *
- * Split out of mapEntryPoints.navigation.component.test.tsx: the camera-snap
- * describe blocks were the 31st+ mounts in that file and fell past the RNTL v14
- * mount budget (effects never committed → setCamera never fired, DiscoveryMapView
- * props never captured). Each snap group now lives in its own fresh-renderer
- * sibling file. This file covers section 12 (first-mount focusId snap).
+ * Run with: pnpm test:component
  *
- * See mapEntryPoints.navigation.component.test.tsx for the full mock-strategy
- * rationale; the mock preamble below is duplicated verbatim because jest.mock
- * factories must be hoisted within each test file.
+ * ## Why this file is split
+ *
+ * The async-arrival scenario needs render() FOLLOWED BY rerender() with both
+ * cycles committing effects (empty entities → non-empty).  Per RENDERER RULES
+ * 3–5, only the earliest mounts in a jest file flush effects; a render+rerender
+ * sequence must therefore be the FIRST sequence in its own file.  It is isolated
+ * here so the rerender commits against a fresh render budget.
+ *
+ * ## Original split rationale (shared with the other camera-snap files)
+ *
+ * These camera-snap scenarios each need LIVE effect-driven behaviour: the
+ * useEffect([entities]) must fire and call cameraRef.current.setCamera(...), and
+ * the DiscoveryMapView prop-capture mock must be invoked on a freshly-mounted
+ * instance.  Per this repo's empirically-established renderer limits (RENDERER
+ * RULES 3–5), only the first ~2 mounts in a single jest file flush effects and
+ * capture props reliably; later mounts render but see a stale/empty tree, so
+ * setCamera is never called and capturedProps stays null.
+ *
+ * The navigation file already consumes the render budget with 30+ mounts, so
+ * these effect-dependent tests were moved here to run against a FRESH renderer
+ * (separate file = separate jest worker = fresh render budget).  Everything else
+ * (entry-point navigation, robustness, fallback-coord, permission-prompt) stays
+ * in mapEntryPoints.navigation.component.test.tsx.
+ *
+ * ## What's covered here
+ *   12. Camera snaps to the entity pin after entities load (focusId snap wins
+ *       over the city-centroid URL params; initial frame still uses city coords).
+ *   13. Camera snap fires when entities arrive asynchronously (empty → non-empty).
+ *   14. focusAppliedRef guard prevents a camera re-snap on entities refresh.
+ *
+ * ## Mock strategy
+ *
+ * Identical to the navigation file: jest.fn() calls live INSIDE the jest.mock
+ * factories so they're available at require time; DiscoveryMapView is a jest.fn()
+ * stub so prop-capture tests can install a one-shot mockImplementationOnce.
  */
 
 import React from 'react';
@@ -276,66 +304,77 @@ beforeEach(() => {
     requireLocation: jest.fn(),
   }));
 });
-
-// ── 12. Camera snaps to the entity pin after entities load ─────────────────────
+// ── 13. Camera snap fires when entities arrive asynchronously ──────────────────
 //
-// EventCard pushes city-centroid coords (lat/lng) as the initial camera position
-// AND a focusId so the map can snap to the event pin once useMapEntities resolves.
-// The snap must WIN over the city centroid: after entities load, cameraRef.setCamera
-// must be called with the entity's coords — not the URL's lat/lng.
+// In production useMapEntities fetches data, so entities is [] on the first render
+// and the real list arrives in a later render cycle.  The focusId effect must fire
+// when the entities array transitions from empty → non-empty, not only when
+// entities is already populated on the very first render.
 //
-// Approach: DiscoveryMapView mock captures the externalCameraRef and installs a
-// setCamera spy on it during rendering, so the ref is populated before the
-// useEffect([entities]) fires and calls cameraRef.current?.setCamera(...).
+// Approach:
+//   - useMapEntities returns [] on the first render call (loading state).
+//   - A rerender() is issued to simulate the async data arriving; the mock now
+//     returns the entity.
+//   - The useEffect([entities]) fires again; setCamera must be called with the
+//     entity's coordinates.
 
-describe('FullScreenMapScreen — camera snaps to entity pin after entities load', () => {
-  it('calls setCamera with the entity coords — not the city-centroid URL params — when focusId resolves', async () => {
+describe('FullScreenMapScreen — camera snap fires on async entity arrival', () => {
+  it('calls setCamera with entity coords when entities arrive in a second render cycle', async () => {
     const { useMapEntities } = require('../../hooks/useMapEntities.ts');
     const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
 
-    // Entity at a location deliberately different from the URL city centroid.
     const entityLat = 10.0;
     const entityLng = 124.5;
-    (useMapEntities as jest.Mock).mockReturnValueOnce({
-      entities: [
-        {
-          id: 'event:evt-snap-42',
-          type: 'events',
-          lat: entityLat,
-          lng: entityLng,
-          title: 'Snap Target Event',
-          data: {},
-        },
-      ],
-    });
+
+    const asyncEntity = {
+      id: 'event:evt-async-load',
+      type: 'events',
+      lat: entityLat,
+      lng: entityLng,
+      title: 'Async Load Event',
+      data: {},
+    };
+
+    // Drive entities via a mutable list the mock reads on EVERY call.  React 19
+    // renders (and re-runs hooks) more than the two logical cycles here — the
+    // rerender alone triggers several hook calls — so mockReturnValueOnce would
+    // be exhausted and return undefined, dropping the entity list.  A live
+    // variable keeps every render consistent within each phase.
+    let currentEntities: Array<typeof asyncEntity> = [];
+    (useMapEntities as jest.Mock).mockImplementation(() => ({ entities: currentEntities }));
 
     const mockSetCamera = jest.fn();
 
-    // Capture the externalCameraRef and populate it so the focusId effect
-    // can invoke setCamera after entities load.
-    (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
+    // Install setCamera on the ref on every render so it persists across rerenders.
+    (DiscoveryMapView as jest.Mock).mockImplementation((props: any) => {
       if (props.externalCameraRef) {
         props.externalCameraRef.current = { setCamera: mockSetCamera };
       }
       return null;
     });
 
-    // URL carries city-centroid coords (Cebu City) + focusId pointing at the entity.
-    // The city centroid differs from the entity coords to make the assertion meaningful.
     mockUseLocalSearchParams.mockReturnValue({
       entityTypes: 'events',
-      lat: '10.3157',   // city centroid lat — must NOT be the final camera target
-      lng: '123.8854',  // city centroid lng — must NOT be the final camera target
-      focusId: 'event:evt-snap-42',
+      focusId: 'event:evt-async-load',
     });
 
-    await act(async () => { await render(<FullScreenMapScreen />); });
+    const { rerender } = await render(<FullScreenMapScreen />);
 
-    // setCamera must have been called at least once (the focusId snap).
+    // After the first render entities is [], so the focusId effect finds nothing
+    // and must NOT have called setCamera yet.
+    expect(mockSetCamera).not.toHaveBeenCalled();
+
+    // Simulate the async load completing: flip the live list, then trigger a
+    // re-render so the hook now returns the entity and the effect re-fires.
+    currentEntities = [asyncEntity];
+    await act(async () => {
+      await rerender(<FullScreenMapScreen />);
+    });
+
+    // The useEffect([entities]) must have fired with the new non-empty list and
+    // called setCamera with the entity's coordinates.
     expect(mockSetCamera).toHaveBeenCalled();
 
-    // Find the call that snapped to the entity (there may also be a proximity
-    // selection call; look for the one carrying the entity's coordinates).
     const snapCall = mockSetCamera.mock.calls.find(
       ([arg]: [any]) =>
         Array.isArray(arg?.centerCoordinate) &&
@@ -346,30 +385,15 @@ describe('FullScreenMapScreen — camera snaps to entity pin after entities load
     expect(snapCall).toBeDefined();
   });
 
-  it('does NOT call setCamera with the city-centroid coords after a focusId snap', async () => {
+  it('does not call setCamera on the first render when entities is still empty', async () => {
     const { useMapEntities } = require('../../hooks/useMapEntities.ts');
     const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
 
-    const entityLat = 9.8;
-    const entityLng = 118.7;
-    const cityLat   = 10.3157;
-    const cityLng   = 123.8854;
-
-    (useMapEntities as jest.Mock).mockReturnValueOnce({
-      entities: [
-        {
-          id: 'event:evt-city-check',
-          type: 'events',
-          lat: entityLat,
-          lng: entityLng,
-          title: 'Different-City Event',
-          data: {},
-        },
-      ],
-    });
+    // Entities never arrive in this test — we only care about the first render.
+    (useMapEntities as jest.Mock).mockReturnValue({ entities: [] });
 
     const mockSetCamera = jest.fn();
-    (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
+    (DiscoveryMapView as jest.Mock).mockImplementation((props: any) => {
       if (props.externalCameraRef) {
         props.externalCameraRef.current = { setCamera: mockSetCamera };
       }
@@ -378,66 +402,13 @@ describe('FullScreenMapScreen — camera snaps to entity pin after entities load
 
     mockUseLocalSearchParams.mockReturnValue({
       entityTypes: 'events',
-      lat: String(cityLat),
-      lng: String(cityLng),
-      focusId: 'event:evt-city-check',
+      focusId: 'event:evt-not-yet-loaded',
     });
 
     await act(async () => { await render(<FullScreenMapScreen />); });
 
-    // No setCamera call must target the city centroid — once focusId snaps to the
-    // entity, the camera must not be reset back to the URL coords.
-    const citySnapCall = mockSetCamera.mock.calls.find(
-      ([arg]: [any]) =>
-        Array.isArray(arg?.centerCoordinate) &&
-        Math.abs(arg.centerCoordinate[0] - cityLng) < 0.001 &&
-        Math.abs(arg.centerCoordinate[1] - cityLat) < 0.001,
-    );
-
-    expect(citySnapCall).toBeUndefined();
-  });
-
-  it('still passes the city-centroid coords as fallbackLat/fallbackLng to DiscoveryMapView for the initial frame', async () => {
-    const { useMapEntities } = require('../../hooks/useMapEntities.ts');
-    const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
-
-    (useMapEntities as jest.Mock).mockReturnValueOnce({
-      entities: [
-        {
-          id: 'event:evt-initial-frame',
-          type: 'events',
-          lat: 9.8,
-          lng: 118.7,
-          title: 'Initial Frame Event',
-          data: {},
-        },
-      ],
-    });
-
-    let capturedProps: Record<string, any> | null = null;
-    (DiscoveryMapView as jest.Mock).mockImplementationOnce((props: any) => {
-      capturedProps = props;
-      if (props.externalCameraRef) {
-        props.externalCameraRef.current = { setCamera: jest.fn() };
-      }
-      return null;
-    });
-
-    mockUseLocalSearchParams.mockReturnValue({
-      entityTypes: 'events',
-      lat: '10.3157',
-      lng: '123.8854',
-      focusId: 'event:evt-initial-frame',
-    });
-
-    await act(async () => { await render(<FullScreenMapScreen />); });
-
-    // The initial camera position (fallbackLat/fallbackLng) must still be the
-    // city centroid from the URL — this is what prevents a blank-ocean first frame
-    // while useMapEntities is loading.
-    expect(capturedProps).not.toBeNull();
-    expect(capturedProps!.fallbackLat).toBeCloseTo(10.3157);
-    expect(capturedProps!.fallbackLng).toBeCloseTo(123.8854);
+    // With an empty entity list the focusId effect bails early — no snap yet.
+    expect(mockSetCamera).not.toHaveBeenCalled();
   });
 });
 
