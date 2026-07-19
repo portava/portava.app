@@ -38,6 +38,7 @@ import {
   type TelegraphEvent,
 } from '../services/telegraphRealtimeService.ts';
 import { useSession } from '../context/SessionContext.tsx';
+import { useSnapshotCache } from './useSnapshotCache.ts';
 
 // When realtime is connected we lean on pushed events and poll only as a slow
 // safety net. When realtime is unavailable the service reports 'polling' and
@@ -150,27 +151,75 @@ export function useIncomingMessageRequests() {
 // ── Threads list (with inbox polling) ─────────────────────────────────────────
 
 export function useMyThreads() {
+  const { snapshot, save: saveSnapshot, clear: clearSnapshot } = useSnapshotCache<ThreadSummary[]>('messages');
   const [data, setData] = useState<ThreadSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  // True once the first network response has been applied; prevents snapshot
+  // from overwriting fresher network data if AsyncStorage is unusually slow.
+  const networkFetchedRef = useRef(false);
+  const mountedAtRef = useRef(Date.now());
+
+  // Paint snapshot immediately when AsyncStorage read completes (second open).
+  useEffect(() => {
+    if (snapshot === null) return;
+    if (networkFetchedRef.current) return; // network already painted fresher data
+    setData(snapshot);
+    setLoading(false);
+    if (__DEV__) {
+      const elapsed = Date.now() - mountedAtRef.current;
+      // eslint-disable-next-line no-console
+      console.log(`[PerfTiming] Messages second=${elapsed}ms`);
+    }
+  }, [snapshot]);
 
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
     const res = await getMyThreads();
-    if (res.ok) setData((res.data as any)?.threads ?? []);
-    else setError(res.message ?? 'Failed to load threads');
+    if (res.ok) {
+      const threads: ThreadSummary[] = (res.data as any)?.threads ?? [];
+      setData(threads);
+      saveSnapshot(threads); // persist first page for next open
+    } else {
+      setError(res.message ?? 'Failed to load threads');
+    }
+    networkFetchedRef.current = true;
     setLoading(false);
-  }, []);
+  }, [saveSnapshot]);
+
+  /**
+   * Pull-to-refresh: wipe the snapshot so the next mount starts fresh, then
+   * do a full network reload.
+   */
+  const refresh = useCallback(async () => {
+    clearSnapshot();
+    networkFetchedRef.current = false;
+    setRefreshing(true);
+    setError(null);
+    const res = await getMyThreads();
+    if (res.ok) {
+      const threads: ThreadSummary[] = (res.data as any)?.threads ?? [];
+      setData(threads);
+      saveSnapshot(threads);
+    } else {
+      setError(res.message ?? 'Failed to load threads');
+    }
+    networkFetchedRef.current = true;
+    setRefreshing(false);
+  }, [clearSnapshot, saveSnapshot]);
 
   const silentPoll = useCallback(async () => {
     if (appStateRef.current !== 'active') return;
     const res = await getMyThreads();
     if (res.ok && res.data) {
-      setData((res.data as any).threads ?? []);
+      const threads: ThreadSummary[] = (res.data as any).threads ?? [];
+      setData(threads);
+      saveSnapshot(threads);
     }
-  }, []);
+  }, [saveSnapshot]);
 
   useEffect(() => {
     reload();
@@ -202,7 +251,7 @@ export function useMyThreads() {
     return unsub;
   }, [silentPoll]);
 
-  return { data, loading, error, reload };
+  return { data, loading, refreshing, error, reload, refresh };
 }
 
 // ── Thread chat (with message polling) ────────────────────────────────────────
