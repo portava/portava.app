@@ -506,6 +506,22 @@ describe('getCityCentroid — compound / parenthesised / suffixed city strings',
     assert.ok(Math.abs(lat - 59.9139) < 2, `lat ${lat} implausibly far from Oslo`);
     assert.ok(Math.abs(lng - 10.7522) < 2, `lng ${lng} implausibly far from Oslo`);
   });
+
+  it('"Tokyo, Japan" resolves to identical coords as bare "Tokyo"', () => {
+    const bare = getCityCentroid('Tokyo');
+    const suffixed = getCityCentroid('Tokyo, Japan');
+    assert.ok(bare !== undefined, '"Tokyo" should resolve');
+    assert.ok(suffixed !== undefined, '"Tokyo, Japan" should resolve — country suffix not stripped');
+    assert.deepEqual(suffixed, bare, '"Tokyo, Japan" must produce the same coordinates as "Tokyo"');
+  });
+
+  it('"Ho Chi Minh City, Vietnam" resolves to identical coords as bare "Ho Chi Minh City"', () => {
+    const bare = getCityCentroid('Ho Chi Minh City');
+    const suffixed = getCityCentroid('Ho Chi Minh City, Vietnam');
+    assert.ok(bare !== undefined, '"Ho Chi Minh City" should resolve');
+    assert.ok(suffixed !== undefined, '"Ho Chi Minh City, Vietnam" should resolve — country suffix not stripped');
+    assert.deepEqual(suffixed, bare, '"Ho Chi Minh City, Vietnam" must produce the same coordinates as "Ho Chi Minh City"');
+  });
 });
 
 describe('getCityCentroid — country-name fallback', () => {

@@ -461,6 +461,22 @@ describe('getCityCentroid — compound / parenthesised / suffixed city strings',
     assert.deepEqual(suffixed, bare, '"Singapore, Singapore" must produce the same coordinates as "Singapore"');
   });
 
+  it('"Tokyo, Japan" resolves to identical coords as bare "Tokyo"', () => {
+    const bare = getCityCentroid('Tokyo');
+    const suffixed = getCityCentroid('Tokyo, Japan');
+    assert.ok(bare !== undefined, '"Tokyo" should resolve');
+    assert.ok(suffixed !== undefined, '"Tokyo, Japan" should resolve — country suffix not stripped');
+    assert.deepEqual(suffixed, bare, '"Tokyo, Japan" must produce the same coordinates as "Tokyo"');
+  });
+
+  it('"Ho Chi Minh City, Vietnam" resolves to identical coords as bare "Ho Chi Minh City"', () => {
+    const bare = getCityCentroid('Ho Chi Minh City');
+    const suffixed = getCityCentroid('Ho Chi Minh City, Vietnam');
+    assert.ok(bare !== undefined, '"Ho Chi Minh City" should resolve');
+    assert.ok(suffixed !== undefined, '"Ho Chi Minh City, Vietnam" should resolve — country suffix not stripped');
+    assert.deepEqual(suffixed, bare, '"Ho Chi Minh City, Vietnam" must produce the same coordinates as "Ho Chi Minh City"');
+  });
+
   // ISO-code suffix variants — some event APIs suffix city names with the
   // two-letter ISO 3166-1 alpha-2 country code instead of the full country
   // name (e.g. "Stockholm, SE", "Helsinki, FI", "Oslo, NO").  The comma-split
