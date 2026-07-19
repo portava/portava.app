@@ -439,6 +439,75 @@ export const COUNTRY_CENTROIDS: Record<string, [number, number]> = {
 };
 
 /**
+ * Continent and sub-region centroids — a last-resort fallback (step 5) for
+ * event records that store a broad geographic label such as "Southeast Asia",
+ * "Europe", or "East Africa" in the city field instead of an actual city or
+ * country.  These values are approximate geographic centres of the named
+ * region, sufficient to give the map a non-blank starting position.
+ *
+ * Keys are common English region / continent names.  Lookup is
+ * case-insensitive via the same normalisation applied to cities and countries.
+ */
+export const REGION_CENTROIDS: Record<string, [number, number]> = {
+  // ── Continents ───────────────────────────────────────────────────────────
+  'Africa':               [  8.7832,   34.5085],
+  'Antarctica':           [-82.8628,   135.0000],
+  'Asia':                 [ 34.0479,  100.6197],
+  'Europe':               [ 54.5260,   15.2551],
+  'North America':        [ 54.5260,  -105.2551],
+  'South America':        [-14.2350,  -51.9253],
+  'Oceania':              [-22.7359,  140.0188],
+  'Australia':            [-25.2744,  133.7751],  // doubles as continent label
+
+  // ── Asia sub-regions ─────────────────────────────────────────────────────
+  'Southeast Asia':       [ 12.0000,  105.0000],
+  'East Asia':            [ 35.0000,  115.0000],
+  'South Asia':           [ 20.5937,   78.9629],
+  'Central Asia':         [ 45.0000,   63.0000],
+  'Middle East':          [ 29.0000,   41.0000],
+  'West Asia':            [ 29.0000,   41.0000],   // synonym for Middle East
+  'Eastern Asia':         [ 35.0000,  115.0000],
+  'Southern Asia':        [ 20.5937,   78.9629],
+  'Western Asia':         [ 29.0000,   41.0000],
+
+  // ── Africa sub-regions ───────────────────────────────────────────────────
+  'East Africa':          [ -1.0000,   38.0000],
+  'West Africa':          [  9.0000,    2.0000],
+  'North Africa':         [ 25.0000,   17.0000],
+  'Central Africa':       [ -3.0000,   23.0000],
+  'Southern Africa':      [-28.0000,   25.0000],
+  'Sub-Saharan Africa':   [  5.0000,   20.0000],
+  'Eastern Africa':       [ -1.0000,   38.0000],
+  'Western Africa':       [  9.0000,    2.0000],
+  'Northern Africa':      [ 25.0000,   17.0000],
+
+  // ── Europe sub-regions ───────────────────────────────────────────────────
+  'Western Europe':       [ 49.0000,    4.0000],
+  'Eastern Europe':       [ 52.0000,   28.0000],
+  'Northern Europe':      [ 60.0000,   15.0000],
+  'Southern Europe':      [ 41.0000,   16.0000],
+  'Central Europe':       [ 49.0000,   16.0000],
+  'Scandinavia':          [ 62.0000,   15.0000],
+  'Nordic Countries':     [ 62.0000,   15.0000],
+  'Balkans':              [ 43.0000,   20.0000],
+  'Baltic States':        [ 57.0000,   24.0000],
+
+  // ── Americas sub-regions ─────────────────────────────────────────────────
+  'Latin America':        [ -5.0000,  -60.0000],
+  'Central America':      [ 12.8654,  -85.2072],
+  'Caribbean':            [ 19.0000,  -69.0000],
+  'North Caribbean':      [ 19.0000,  -69.0000],
+
+  // ── Oceania sub-regions ──────────────────────────────────────────────────
+  'Pacific':              [  5.0000,  170.0000],
+  'South Pacific':        [-20.0000, -140.0000],
+  'Southeast Pacific':    [-15.0000, -145.0000],
+  'Melanesia':            [-10.0000,  155.0000],
+  'Micronesia':           [  7.0000,  158.0000],
+  'Polynesia':            [-15.0000, -140.0000],
+};
+
+/**
  * Alternate-spelling aliases that are NOT already direct entries in
  * CITY_CENTROIDS.  Each key is the lowercased alias; the value is the
  * corresponding canonical CITY_CENTROIDS key.
@@ -546,10 +615,20 @@ const _lowerIndex = new Map<string, [number, number]>(
 
 /**
  * Case- and accent-insensitive lookup index for COUNTRY_CENTROIDS, built once
- * at module load.  Used as the final fallback when no city match is found.
+ * at module load.  Used as a fallback when no city match is found.
  */
 const _countryLowerIndex = new Map<string, [number, number]>(
   Object.entries(COUNTRY_CENTROIDS).map(([k, v]) => [normaliseCityKey(k), v]),
+);
+
+/**
+ * Case- and accent-insensitive lookup index for REGION_CENTROIDS, built once
+ * at module load.  Used as the final fallback (step 5) when no city or country
+ * match is found — covers continent and sub-region labels stored in the city
+ * field (e.g. "Southeast Asia", "Europe", "East Africa").
+ */
+const _regionLowerIndex = new Map<string, [number, number]>(
+  Object.entries(REGION_CENTROIDS).map(([k, v]) => [normaliseCityKey(k), v]),
 );
 
 /**
@@ -619,10 +698,13 @@ const _nfdIndex = new Map<string, [number, number]>(
  *      input (e.g. "Koln") to a city whose canonical key has diacritics
  *      (e.g. "Köln") without requiring a hand-maintained alias.
  *
- * If no city match is found after all tokens are exhausted, a final country-
- * level fallback is attempted on the full input string (step 4).  This covers
- * event records that store a country name (e.g. "Thailand", "United States")
- * in the city field — preventing the map from jumping to null island.
+ * If no city match is found after all tokens are exhausted, country- and
+ * region-level fallbacks are attempted:
+ *   Step 4 (country): covers event records storing a country name (e.g.
+ *     "Thailand", "United States") in the city field.
+ *   Step 5 (region): covers event records storing a continent or sub-region
+ *     label (e.g. "Southeast Asia", "Europe", "East Africa") in the city
+ *     field — the final line of defence before returning undefined.
  *
  * Returns `undefined` when the input is genuinely unknown after all steps.
  */
@@ -661,6 +743,15 @@ export function getCityCentroid(city: string): [number, number] | undefined {
     const normKey = normaliseCityKey(token);
     const country = _countryLowerIndex.get(normKey);
     if (country !== undefined) return country;
+  }
+
+  // Step 5: region-level fallback — try each token against REGION_CENTROIDS.
+  // This handles event records where the city field holds a continent or
+  // sub-region label (e.g. "Southeast Asia", "Europe", "East Africa").
+  for (const token of tokens) {
+    const normKey = normaliseCityKey(token);
+    const region = _regionLowerIndex.get(normKey);
+    if (region !== undefined) return region;
   }
 
   return undefined;
