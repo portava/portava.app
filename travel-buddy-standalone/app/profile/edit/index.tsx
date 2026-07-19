@@ -6,7 +6,7 @@ import React from 'react';
 import { router } from 'expo-router';
 import {
   User, Camera, LayoutGrid, Heart, Compass, Eye, Shield,
-  Bell, MapPin, Link2, KeyRound,
+  Bell, MapPin, Link2, KeyRound, Phone,
 } from 'lucide-react-native';
 import {
   SettingsScreen, SettingsSection, SettingsRow, SettingsDivider,
@@ -86,6 +86,13 @@ export default function EditSettingsHub() {
           title="Notifications"
           subtitle="What you get notified about"
           onPress={go('/profile/edit/notifications')}
+        />
+        <SettingsDivider />
+        <SettingsRow
+          icon={<Phone size={ICON} color={PP.ink} />}
+          title="Calling"
+          subtitle="Who can call you, video calls"
+          onPress={go('/profile/edit/calling')}
         />
         <SettingsDivider />
         <SettingsRow

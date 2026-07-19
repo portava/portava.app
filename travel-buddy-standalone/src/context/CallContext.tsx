@@ -7,8 +7,14 @@
  *
  * Media is behind a LiveKitBridge port so this file has no native SDK
  * import: the app wires the real bridge (built on @livekit/react-native)
- * into <CallProvider bridge={...}> during Phase 2 integration. Until a
- * bridge is provided, calls fail gracefully with a clear error.
+ * into <CallProvider bridge={...}>. Until a bridge is provided, calls fail
+ * gracefully with a clear error.
+ *
+ * Outgoing semantics: the caller connects to the room immediately but the
+ * UI phase stays 'outgoing_ringing' until the server publishes
+ * call.accepted (routed here via noteAccepted). The local ring timer is a
+ * UI mirror of the server sweep — on expiry the call ends with "No answer"
+ * so the user is never stuck.
  */
 import React, {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
@@ -23,7 +29,7 @@ import { supabase } from '../lib/supabase.ts';
 /** Ring window mirror of the server's CALL_CONFIG.RING_TIMEOUT_MS. */
 const RING_TIMEOUT_MS = 45_000;
 
-// ── Media bridge port (implemented with @livekit/react-native in Phase 2) ────
+// ── Media bridge port (implemented with @livekit/react-native) ──────────────
 
 export interface LiveKitBridge {
   connect(opts: { url: string; token: string; videoEnabled: boolean }): Promise<void>;
@@ -46,18 +52,27 @@ export type CallPhase =
   | 'connected'
   | 'reconnecting';
 
+export interface CallPeerInfo {
+  id: string;
+  name: string | null;
+  avatarUrl: string | null;
+  verified?: boolean;
+}
+
 export interface IncomingCallInfo {
   callId: string;
   callType: CallType;
   contextType: CallCtxType;
   threadId: string | null;
-  caller: { id: string; name: string | null; avatarUrl: string | null; verified?: boolean };
+  caller: CallPeerInfo;
 }
 
 export interface CallState {
   phase: CallPhase;
   session: CallSessionDto | null;
   incoming: IncomingCallInfo | null;
+  /** The other party of the current 1:1 call (drives call-screen identity). */
+  peer: CallPeerInfo | null;
   minimized: boolean;
   micMuted: boolean;
   cameraOn: boolean;
@@ -72,6 +87,7 @@ export interface CallActions {
     threadId: string; calleeId: string;
     contextType: 'telegraph_dm' | 'rent_a_buddy';
     callType: 'voice' | 'video';
+    peer?: CallPeerInfo;
   }): Promise<boolean>;
   /** Realtime layer delivers incoming-call events here (spec §11). */
   presentIncomingCall(info: IncomingCallInfo): void;
@@ -80,6 +96,11 @@ export interface CallActions {
    * touches an in-progress call's session or media — unlike hangUp().
    */
   dismissIncoming(): void;
+  /** Realtime call.accepted for our outgoing call — ringing → connected. */
+  noteAccepted(callId: string): void;
+  /** Remote outcome (declined / missed / canceled / ended) — end locally. */
+  endLocallyWithNotice(notice: string | null): void;
+  dismissError(): void;
   accept(asVideo?: boolean): Promise<boolean>;
   decline(): Promise<void>;
   hangUp(): Promise<void>;
@@ -93,7 +114,7 @@ export interface CallActions {
 }
 
 const INITIAL: CallState = {
-  phase: 'idle', session: null, incoming: null, minimized: false,
+  phase: 'idle', session: null, incoming: null, peer: null, minimized: false,
   micMuted: false, cameraOn: false, speakerOn: false, elapsedSec: 0, error: null,
 };
 
@@ -120,18 +141,24 @@ export function CallProvider({
   const tick = useRef<ReturnType<typeof setInterval> | null>(null);
   const unbindConn = useRef<(() => void) | null>(null);
   const sessionRef = useRef<CallSessionDto | null>(null);
+  /** While true, transport 'connected' events must not override ringing UI. */
+  const holdRinging = useRef(false);
 
   const patch = useCallback((p: Partial<CallState>) => {
     setState((s) => ({ ...s, ...p }));
   }, []);
 
-  const clearTimers = useCallback(() => {
+  const clearRing = useCallback(() => {
     if (ringTimer.current) { clearTimeout(ringTimer.current); ringTimer.current = null; }
-    if (tick.current) { clearInterval(tick.current); tick.current = null; }
   }, []);
+  const clearTimers = useCallback(() => {
+    clearRing();
+    if (tick.current) { clearInterval(tick.current); tick.current = null; }
+  }, [clearRing]);
 
   const teardown = useCallback(async (error: string | null = null) => {
     clearTimers();
+    holdRinging.current = false;
     unbindConn.current?.(); unbindConn.current = null;
     sessionRef.current = null;
     try { await bridge?.disconnect(); } catch { /* already down */ }
@@ -140,10 +167,14 @@ export function CallProvider({
 
   useEffect(() => () => { clearTimers(); unbindConn.current?.(); }, [clearTimers]);
 
-  const connectMedia = useCallback(async (grant: CallJoinGrant, videoEnabled: boolean): Promise<boolean> => {
+  const connectMedia = useCallback(async (
+    grant: CallJoinGrant,
+    videoEnabled: boolean,
+    opts?: { awaitAccept?: boolean },
+  ): Promise<boolean> => {
     if (!bridge) {
       await apiEnd(grant.session.id).catch(() => {});
-      patch({ phase: 'idle', error: 'Calling is not available in this build yet.' });
+      await teardown('Calling is not available in this build yet.');
       return false;
     }
     patch({ phase: 'connecting', session: grant.session });
@@ -157,16 +188,24 @@ export function CallProvider({
     }
     unbindConn.current = bridge.onConnectionState?.((cs) => {
       if (cs === 'reconnecting') patch({ phase: 'reconnecting' });
-      else if (cs === 'connected') patch({ phase: 'connected' });
-      else if (cs === 'disconnected') void teardown(null);
+      else if (cs === 'connected') {
+        if (!holdRinging.current) patch({ phase: 'connected' });
+      } else if (cs === 'disconnected') void teardown(null);
     }) ?? null;
-    clearTimers();
+    // Elapsed timer runs for the whole call; it only counts while connected.
+    if (tick.current) clearInterval(tick.current);
     tick.current = setInterval(() => {
       setState((s) => (s.phase === 'connected' ? { ...s, elapsedSec: s.elapsedSec + 1 } : s));
     }, 1_000);
-    patch({ phase: 'connected', cameraOn: videoEnabled, error: null });
+    if (opts?.awaitAccept) {
+      // Caller waits in-room: keep showing "Ringing…" until call.accepted.
+      holdRinging.current = true;
+      patch({ phase: 'outgoing_ringing', cameraOn: videoEnabled, error: null });
+    } else {
+      patch({ phase: 'connected', cameraOn: videoEnabled, error: null });
+    }
     return true;
-  }, [bridge, clearTimers, patch, teardown]);
+  }, [bridge, patch, teardown]);
 
   const presentIncoming = useCallback((info: IncomingCallInfo) => {
     if (sessionRef.current) return; // already in a call → server marks missed
@@ -182,19 +221,23 @@ export function CallProvider({
       if (sessionRef.current) return false; // §23 — never silently drop a call
       const res = await apiStart(input);
       if (!res.ok || !res.data) {
-        patch({ error: res.error ?? 'Could not start the call.' });
+        patch({ error: friendlyStartError(res.error) });
         return false;
       }
-      patch({ phase: 'outgoing_ringing', session: res.data.session, error: null });
+      patch({
+        phase: 'outgoing_ringing', session: res.data.session, error: null,
+        peer: input.peer ?? { id: input.calleeId, name: null, avatarUrl: null },
+      });
       sessionRef.current = res.data.session;
       const grant = res.data;
       // Ring timeout mirror — server sweep is authoritative; this keeps UI honest.
+      clearRing();
       ringTimer.current = setTimeout(() => {
         void apiEnd(grant.session.id).catch(() => {});
-        void teardown(null);
+        void teardown('No answer');
       }, RING_TIMEOUT_MS);
       // Caller connects immediately and waits in-room for the callee.
-      return connectMedia(grant, input.callType === 'video');
+      return connectMedia(grant, input.callType === 'video', { awaitAccept: true });
     },
 
     presentIncomingCall(info) { presentIncoming(info); },
@@ -216,16 +259,29 @@ export function CallProvider({
       });
     },
 
+    noteAccepted(callId) {
+      if (sessionRef.current?.id !== callId) return;
+      holdRinging.current = false;
+      clearRing();
+      setState((s) => (s.phase === 'outgoing_ringing' || s.phase === 'connecting'
+        ? { ...s, phase: 'connected' }
+        : s));
+    },
+
+    endLocallyWithNotice(notice) { void teardown(notice); },
+
+    dismissError() { patch({ error: null }); },
+
     async accept(asVideo = false) {
       const inc = state.incoming;
       if (!inc) return false;
-      clearTimers();
+      clearRing();
       const res = await apiAccept(inc.callId, { asVideo });
       if (!res.ok || !res.data) {
         patch({ ...INITIAL, error: res.error ?? 'Could not join the call.' });
         return false;
       }
-      patch({ incoming: null });
+      patch({ incoming: null, peer: inc.caller });
       return connectMedia(res.data, asVideo && inc.callType === 'video');
     },
 
@@ -307,11 +363,32 @@ export function CallProvider({
         patch({ minimized: true });
       }
     },
-  }), [bridge, clearTimers, connectMedia, patch, presentIncoming, state.cameraOn, state.incoming, state.micMuted, state.speakerOn, teardown]);
+  }), [bridge, clearRing, clearTimers, connectMedia, patch, presentIncoming, state.cameraOn, state.incoming, state.micMuted, state.speakerOn, teardown]);
 
   return (
     <StateCtx.Provider value={state}>
       <ActionsCtx.Provider value={actions}>{children}</ActionsCtx.Provider>
     </StateCtx.Provider>
   );
+}
+
+/** Map stable server deny reasons to honest, human copy (spec §13). */
+function friendlyStartError(reason: string | undefined): string {
+  switch (reason) {
+    case 'callee_calls_disabled':
+    case 'callee_video_disabled':
+    case 'not_permitted':
+    case 'blocked':
+      return "This person can't receive calls right now.";
+    case 'callee_busy':
+      return 'They are on another call. Try again later.';
+    case 'rate_limited':
+    case 'redial_cooldown':
+      return 'Please wait a moment before calling again.';
+    case 'Backend not configured':
+    case 'Not authenticated':
+      return 'Calling is unavailable right now.';
+    default:
+      return reason ?? 'Could not start the call.';
+  }
 }
