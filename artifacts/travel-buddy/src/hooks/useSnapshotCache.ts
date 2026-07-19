@@ -52,8 +52,14 @@ export function useSnapshotCache<T>(
   // Derive the namespaced storage key (null when no userId yet)
   const storageKey = userId ? _buildKey(key, userId) : null;
 
-  // Read snapshot from AsyncStorage on mount / when userId becomes available
+  // Read snapshot from AsyncStorage when the storage key changes.
+  // IMPORTANT: always clear state first so a previous user's data is never
+  // carried over into the next user's session (or into a logged-out state).
   useEffect(() => {
+    // Reset immediately — covers key change, userId gone, and cold mount.
+    setSnapshot(null);
+    setIsStale(false);
+
     if (!storageKey) return;
     let cancelled = false;
     _loadSnapshot<T>(AsyncStorage, storageKey, ttlMs, Date.now())
