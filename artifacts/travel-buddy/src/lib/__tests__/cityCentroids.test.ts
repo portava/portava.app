@@ -134,4 +134,23 @@ describe('CITY_CENTROIDS — key-level spot checks for new cities', () => {
   check('Bishkek',      42.8746,   74.5698);
   check('Dushanbe',     38.5598,   68.7733);
   check('Ashgabat',     37.9601,   58.3261);
+
+  // Eastern European & Balkan cities
+  check('Kyiv',         50.4501,   30.5234);
+  check('Minsk',        53.9045,   27.5615);
+  check('Chisinau',     47.0105,   28.8638);
+  check('Belgrade',     44.8176,   20.4569);
+  check('Skopje',       41.9981,   21.4254);
+  check('Tirana',       41.3275,   19.8187);
+  check('Sarajevo',     43.8563,   18.4131);
+  check('Riga',         56.9460,   24.1059);
+  check('Tallinn',      59.4370,   24.7536);
+  check('Vilnius',      54.6872,   25.2797);
+  check('Bucharest',    44.4268,   26.1025);
+  check('Sofia',        42.6977,   23.3219);
+  check('Zagreb',       45.8150,   15.9819);
+  check('Ljubljana',    46.0569,   14.5058);
+  check('Bratislava',   48.1486,   17.1077);
+  check('Krakow',       50.0647,   19.9450);
+  check('Lviv',         49.8397,   24.0297);
 });
