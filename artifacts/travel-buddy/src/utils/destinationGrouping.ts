@@ -1,7 +1,10 @@
 /**
  * Destination grouping utility — aggregates passport content by city.
  *
- * Grouping key: lowercase `city|country` (exact match, not accent-folded).
+ * Grouping key: NFC-normalised lowercase `city|country`.
+ * NFC normalisation ensures that visually identical city names stored in
+ * different Unicode forms (e.g. precomposed 'Bogot\u00E1' vs decomposed
+ * 'Bogota\u0301') map to the same key and are merged into one group.
  * Sources: Memories (city/country), Postcards (locationCity/locationCountry),
  *          Trips (destinationCity/destinationCountry).
  * Stamps are surfaced in the detail view by matching stamp.label (city stamps only).
@@ -31,7 +34,8 @@ export interface DestinationGroup {
 }
 
 function makeKey(city: string, country: string | null | undefined): string {
-  return `${city.toLowerCase()}|${(country ?? '').toLowerCase()}`;
+  const normalise = (s: string) => s.normalize('NFC').toLowerCase();
+  return `${normalise(city)}|${normalise(country ?? '')}`;
 }
 
 function mostRecentDate(dates: (string | null | undefined)[]): string {
