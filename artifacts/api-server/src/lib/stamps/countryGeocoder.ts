@@ -446,6 +446,9 @@ async function retryPersist(key: string, cached: CacheEntry): Promise<void> {
 
 function normCity(raw: string): string {
   return raw
+    .replace(/[Łł]/g, "l")
+    .replace(/[Øø]/g, "o")
+    .replace(/[Đđ]/g, "d")
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")

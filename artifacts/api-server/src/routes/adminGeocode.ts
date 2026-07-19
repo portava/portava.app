@@ -217,4 +217,96 @@ router.put("/admin/geocode-cache/:city_key", async (req, res) => {
   });
 });
 
+// ── PUT /admin/repair_catalog ─────────────────────────────────────────────────
+
+const STROKED_LETTER_RE = /[ŁłØøĐđ]/;
+
+/**
+ * Transliterate stroked letters (Ł→l, Ø→o, Đ→d) and apply the same
+ * normalisation used when geocode cache keys are written:
+ * lowercase, NFD, strip combining diacritics, collapse whitespace.
+ *
+ * Mirrors normCity in countryGeocoder.ts and normCityKey in xxCatalogRepair.ts.
+ */
+function transliterateStrokedKey(raw: string): string {
+  return raw
+    .replace(/[Łł]/g, "l")
+    .replace(/[Øø]/g, "o")
+    .replace(/[Đđ]/g, "d")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * PUT /admin/repair_catalog
+ *
+ * One-shot sweep: find every geocode-cache row whose city_key contains a
+ * stroked letter (Ł, Ø, Đ — or their lowercase counterparts) that survives
+ * the old NFD normalisation, upsert a new row under the fully-transliterated
+ * key, and soft-delete the old row so the periodic tombstone sweep removes it.
+ *
+ * Returns { rekeyed: number, entries: [{ old_key, new_key }] }.
+ */
+router.put("/admin/repair_catalog", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const { data, error } = await sc
+    .from(DB_CACHE_TABLE)
+    .select("city_key, country, country_code, resolved_at, updated_at");
+  if (error) return sendError(res, "db_error", error.message);
+
+  const rows = (data ?? []) as Array<{
+    city_key: string;
+    country: string | null;
+    country_code: string | null;
+    resolved_at: string | null;
+    updated_at: string | null;
+  }>;
+
+  const rekeyed: Array<{ old_key: string; new_key: string }> = [];
+
+  for (const row of rows) {
+    if (!STROKED_LETTER_RE.test(row.city_key)) continue;
+
+    const newKey = transliterateStrokedKey(row.city_key);
+    if (newKey === row.city_key) continue;
+
+    const now = new Date().toISOString();
+
+    const { error: upsertErr } = await sc.from(DB_CACHE_TABLE).upsert(
+      {
+        city_key:    newKey,
+        country:     row.country,
+        country_code: row.country_code,
+        resolved_at: row.resolved_at,
+        updated_at:  now,
+        // Ensure any prior tombstone on the new key is cleared.
+        deleted_at:  null,
+      },
+      { onConflict: "city_key" },
+    );
+    if (upsertErr) {
+      console.warn(`[repair_catalog] upsert failed for "${newKey}":`, upsertErr.message);
+      continue;
+    }
+
+    // Soft-delete the stroked-letter key; the periodic sweep will hard-delete it.
+    await sc
+      .from(DB_CACHE_TABLE)
+      .update({ deleted_at: now })
+      .eq("city_key", row.city_key);
+
+    evictGeocodeCacheKey(row.city_key);
+
+    rekeyed.push({ old_key: row.city_key, new_key: newKey });
+  }
+
+  res.json({ rekeyed: rekeyed.length, entries: rekeyed });
+});
+
 export default router;

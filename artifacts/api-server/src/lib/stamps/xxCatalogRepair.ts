@@ -140,10 +140,17 @@ export async function mergeCatalogEntry(
 
 /**
  * Normalise a city string the same way the geocode cache key is derived:
- * lowercase, NFD, strip combining diacritics, collapse whitespace.
+ * transliterate stroked letters (Ł→l, Ø→o, Đ→d), lowercase, NFD, strip
+ * combining diacritics, collapse whitespace.
+ *
+ * Stroked letters are atomic Unicode codepoints not decomposable by NFD so
+ * they must be mapped explicitly before the NFD pass.
  */
 function normCityKey(raw: string): string {
   return raw
+    .replace(/[Łł]/g, "l")
+    .replace(/[Øø]/g, "o")
+    .replace(/[Đđ]/g, "d")
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")

@@ -4966,3 +4966,206 @@ describe("DELETE then PUT for the same city_key — tombstone revival", () => {
     );
   });
 });
+
+// ── PUT /admin/repair_catalog ──────────────────────────────────────────────────
+
+describe("PUT /admin/repair_catalog", () => {
+  it("re-keys a geocode-cache entry stored as 'Łódź' to the normalised key 'lodz'", async () => {
+    // A city_key written before stroked-letter normalisation was applied may
+    // contain Ł, Ø, or Đ.  PUT /admin/repair_catalog must detect such rows,
+    // upsert a new row under the fully-transliterated key, and soft-delete the
+    // old stroked-letter row so future lookups via normCity("Łódź") = "lodz"
+    // find the entry.
+    const upserted: unknown[] = [];
+    const softDeleted: string[] = [];
+
+    const client: any = {
+      auth: {
+        getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+      },
+      from: (table: string) => {
+        if (table === "profiles") {
+          return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+        }
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: (_cols: string) => ({
+              // Full-table scan — awaited directly (thenable).
+              then: (resolve: (v: any) => void) =>
+                resolve({
+                  data: [
+                    {
+                      city_key:    "Łódź",
+                      country:     "Poland",
+                      country_code: "PL",
+                      resolved_at: null,
+                      updated_at:  "2026-01-01T00:00:00.000Z",
+                    },
+                  ],
+                  error: null,
+                }),
+            }),
+            upsert: (row: unknown, _o?: unknown) => {
+              upserted.push(row);
+              return Promise.resolve({ data: null, error: null });
+            },
+            update: (_fields: unknown) => ({
+              eq: (_col: string, key: string) => {
+                softDeleted.push(key);
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+        }
+        return builder([]);
+      },
+    };
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("PUT", "/admin/repair_catalog");
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.rekeyed, 1, "must report exactly one re-keyed entry");
+    assert.ok(
+      (upserted as any[]).some((row: any) => row.city_key === "lodz"),
+      "new entry must be upserted with city_key 'lodz' — Łódź must transliterate to lodz",
+    );
+    assert.ok(
+      softDeleted.includes("Łódź"),
+      "old stroked-letter key 'Łódź' must be soft-deleted after re-key",
+    );
+    assert.deepEqual(
+      r.body.entries,
+      [{ old_key: "Łódź", new_key: "lodz" }],
+      "response entries must list old and new keys",
+    );
+  });
+
+  it("skips rows whose city_key contains no stroked letters", async () => {
+    // Rows that are already clean should pass through untouched.
+    let upsertCalled = false;
+
+    const client: any = {
+      auth: {
+        getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+      },
+      from: (table: string) => {
+        if (table === "profiles") {
+          return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+        }
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: (_cols: string) => ({
+              then: (resolve: (v: any) => void) =>
+                resolve({
+                  data: [
+                    { city_key: "paris",  country: "France",  country_code: "FR", resolved_at: null, updated_at: "2026-01-01T00:00:00.000Z" },
+                    { city_key: "berlin", country: "Germany", country_code: "DE", resolved_at: null, updated_at: "2026-01-01T00:00:00.000Z" },
+                  ],
+                  error: null,
+                }),
+            }),
+            upsert: (_row: unknown, _o?: unknown) => {
+              upsertCalled = true;
+              return Promise.resolve({ data: null, error: null });
+            },
+            update: (_fields: unknown) => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+        return builder([]);
+      },
+    };
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("PUT", "/admin/repair_catalog");
+
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.rekeyed, 0, "no entries should be re-keyed when none contain stroked letters");
+    assert.equal(upsertCalled, false, "upsert must not be called for already-clean rows");
+  });
+
+  it("re-keys entries for all three stroked-letter families (Ł Ø Đ) in a single pass", async () => {
+    const upsertedKeys: string[] = [];
+
+    const client: any = {
+      auth: {
+        getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+      },
+      from: (table: string) => {
+        if (table === "profiles") {
+          return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+        }
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: (_cols: string) => ({
+              then: (resolve: (v: any) => void) =>
+                resolve({
+                  data: [
+                    { city_key: "łodz",     country: "Poland",  country_code: "PL", resolved_at: null, updated_at: "2026-01-01T00:00:00.000Z" },
+                    { city_key: "oslo-ø",   country: "Norway",  country_code: "NO", resolved_at: null, updated_at: "2026-01-01T00:00:00.000Z" },
+                    { city_key: "đanang",   country: "Vietnam", country_code: "VN", resolved_at: null, updated_at: "2026-01-01T00:00:00.000Z" },
+                  ],
+                  error: null,
+                }),
+            }),
+            upsert: (row: any, _o?: unknown) => {
+              upsertedKeys.push(row.city_key);
+              return Promise.resolve({ data: null, error: null });
+            },
+            update: (_fields: unknown) => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+        return builder([]);
+      },
+    };
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("PUT", "/admin/repair_catalog");
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.rekeyed, 3, "must re-key all three stroked-letter entries");
+    assert.ok(upsertedKeys.includes("lodz"),    "Ł must transliterate to l");
+    assert.ok(upsertedKeys.includes("oslo-o"),  "Ø must transliterate to o");
+    assert.ok(upsertedKeys.includes("danang"),  "Đ must transliterate to d");
+  });
+
+  it("returns 403 for non-admin users", async () => {
+    setClients({ role: "user" });
+    const r = await apiReq("PUT", "/admin/repair_catalog");
+    assert.equal(r.status, 403, "non-admin must be rejected with 403");
+  });
+
+  it("returns 500 when the DB select fails", async () => {
+    const client: any = {
+      auth: {
+        getUser: async () => ({ data: { user: { id: FAKE_USER_ID } }, error: null }),
+      },
+      from: (table: string) => {
+        if (table === "profiles") {
+          return builder([{ id: FAKE_USER_ID, role: "admin" }]);
+        }
+        if (table === "city_country_geocode_cache") {
+          return {
+            select: (_cols: string) => ({
+              then: (resolve: (v: any) => void) =>
+                resolve({ data: null, error: { message: "db read failed" } }),
+            }),
+          };
+        }
+        return builder([]);
+      },
+    };
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await apiReq("PUT", "/admin/repair_catalog");
+    assert.equal(r.status, 500, "DB select failure must return 500");
+  });
+});
