@@ -26,7 +26,7 @@
 
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { DestinationsTab } from '../DestinationsTab.tsx';
+import { DestinationsTab } from '../DestinationsTab';
 import type { TripRow } from '../../../services/trips.ts';
 import type { PassportMemory } from '../../../services/passportStamps.ts';
 

@@ -17,7 +17,7 @@
 
 import React from 'react';
 import { fireEvent, render, screen, waitFor, act } from '@testing-library/react-native';
-import { DestinationsTab } from '../DestinationsTab.tsx';
+import { DestinationsTab } from '../DestinationsTab';
 import type { TripRow } from '../../../services/trips.ts';
 
 // ── MapLibre mock ──────────────────────────────────────────────────────────────
