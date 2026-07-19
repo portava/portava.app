@@ -60,9 +60,10 @@ export function CallRealtimeBinding() {
           // Remote party ended/declined/canceled — dismiss a matching incoming
           // banner, or hang up a matching in-progress call.
           if (s.incoming?.callId === callId) {
-            // Incoming banner for a call that no longer rings: hangUp has no
-            // session ref here, so it just tears state back to idle.
-            void a.hangUp();
+            // Incoming banner for a call that no longer rings: clear only the
+            // banner state — never hangUp(), which would end an unrelated
+            // in-progress call if one exists.
+            a.dismissIncoming();
             return;
           }
           if (s.session?.id === callId && evt.type !== 'call.missed') {

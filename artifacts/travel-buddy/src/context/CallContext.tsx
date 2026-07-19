@@ -74,6 +74,11 @@ export interface CallActions {
   }): Promise<boolean>;
   /** Realtime layer delivers incoming-call events here (spec §11). */
   presentIncomingCall(info: IncomingCallInfo): void;
+  /**
+   * Clear ONLY the incoming banner (remote cancel/decline/miss/end). Never
+   * touches an in-progress call's session or media — unlike hangUp().
+   */
+  dismissIncoming(): void;
   accept(asVideo?: boolean): Promise<boolean>;
   decline(): Promise<void>;
   hangUp(): Promise<void>;
@@ -189,6 +194,23 @@ export function CallProvider({
       ringTimer.current = setTimeout(() => {
         setState((s) => (s.phase === 'incoming_ringing' ? { ...INITIAL } : s));
       }, RING_TIMEOUT_MS);
+    },
+
+    dismissIncoming() {
+      // Only the incoming-ring timer belongs to the banner; when a session is
+      // live the ring timer (if any) belongs to that call — leave it alone.
+      if (!sessionRef.current && ringTimer.current) {
+        clearTimeout(ringTimer.current);
+        ringTimer.current = null;
+      }
+      setState((s) => {
+        if (!s.incoming) return s;
+        return {
+          ...s,
+          incoming: null,
+          phase: s.phase === 'incoming_ringing' ? 'idle' : s.phase,
+        };
+      });
     },
 
     async accept(asVideo = false) {
