@@ -16,7 +16,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { getCurrentGps, reverseGeocodeToPlace, checkLocationPermission } from '../services/location.ts';
 import type { Place } from '../lib/location/placeTypes.ts';
 import { isSupabaseConfigured } from '../lib/supabase.ts';
-import { buildManualCityState, buildManualCityPayload } from './activeLocation.state';
+import { buildManualCityState, buildManualCityPayload, buildGpsState } from './activeLocation.state';
 import { _loadHomeFromProfile } from './activeLocation.homeProfile.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -283,19 +283,9 @@ export function useActiveLocation(): UseActiveLocationResult {
       const place = await reverseGeocodeToPlace(gps.lat!, gps.lng!);
       const now = new Date().toISOString();
       const isCached = gps.cached === true;
-      const source: LocationSource = isCached ? 'gps_cached' : 'gps_fresh';
-      const next: ActiveLocationState = {
-        ok: true,
-        permissionStatus: 'granted',
-        source,
-        freshness: isCached ? 'recent' : 'live',
-        coords: { lat: gps.lat!, lng: gps.lng!, accuracyMeters: gps.accuracyMeters },
-        place: { ...place, lat: gps.lat!, lng: gps.lng! },
-        lastUpdatedAt: now,
-        userMessage: isCached
-          ? (place.city ? `Showing recent location near ${place.city}.` : 'Showing a recent location. Live GPS unavailable.')
-          : (place.city ? null : "We found your location, but couldn't name the city yet."),
-      };
+      const next: ActiveLocationState = buildGpsState(
+        gps.lat!, gps.lng!, gps.accuracyMeters, isCached, place, now,
+      );
 
       if (!mountedRef.current) return;
       setLocationState(next);
