@@ -17,4 +17,6 @@ The rule: **diff each file against the main tree before copying anything.**
 5. Known fork difference: standalone enables `experiments.typedRoutes` (main does not), so dynamic `router.push(`/x/${id}`)` template literals fail its tsc. Cast per the fork's own convention (`as any` at the call site, matching its existing screens).
 6. Delegating a port to a subagent works well when the task spells out: diff-first rule, which files replace wholesale vs append, and "run standalone tsc; fix only ported files."
 
+**Install gotcha:** standalone has its own package.json/node_modules; after merges add deps there too — a "Cannot find module" from its tsc usually just means `pnpm install` in `travel-buddy-standalone/`.
+
 **Porting tip:** for divergent files, `git diff` the main-tree change and `git apply -p3` (or `patch -p3`) it onto the fork — hunks outside the divergent regions apply cleanly and beat manual re-editing.

@@ -22,6 +22,7 @@ import { useActiveLocation } from '../src/hooks/useActiveLocation';
 import { parseSearchIntent, intentSummary } from '../src/lib/compassIntent';
 import { SearchSuggestionsPanel } from '../src/components/search/SearchSuggestionsPanel';
 import { useSearchSuggestions } from '../src/hooks/useSearchSuggestions';
+import { usePlainBottomInset } from '../src/hooks/useBottomInset';
 import { resolveRoute } from '../src/components/search/searchNav';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 
@@ -85,6 +86,7 @@ function buildIntentParams(
 }
 
 export default function SearchScreen() {
+  const plainInset = usePlainBottomInset();
   const params = useLocalSearchParams<{ q?: string; type?: string }>();
   const { locationState, requestLocation } = useActiveLocation();
 
@@ -678,7 +680,7 @@ export default function SearchScreen() {
       ) : showEmptyStart ? (
         /* Pre-search — recent history + quick suggestions */
         <ScrollView
-          contentContainerStyle={{ paddingBottom: 100 }}
+          contentContainerStyle={{ paddingBottom: plainInset }}
           keyboardShouldPersistTaps="handled"
         >
           {historyLoaded && recentSearches.length > 0 && (
@@ -745,7 +747,7 @@ export default function SearchScreen() {
               onActionStateChange={handleActionStateChange}
             />
           )}
-          contentContainerStyle={{ paddingBottom: 100 }}
+          contentContainerStyle={{ paddingBottom: plainInset }}
           keyboardShouldPersistTaps="handled"
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.4}

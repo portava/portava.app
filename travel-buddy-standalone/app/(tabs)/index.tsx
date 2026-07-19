@@ -28,6 +28,7 @@ import { ActiveLayoverPill } from '../../src/components/layover/ActiveLayoverPil
 import { Plane, Users, MapPin } from 'lucide-react-native';
 import { PeopleYouMayKnow } from '../../src/components/PeopleYouMayKnow';
 import { CircleCompassSuggestions } from '../../src/components/CircleCompassSuggestions';
+import { useBottomInset } from '../../src/hooks/useBottomInset';
 import { LivePulseRail } from '../../src/components/LivePulseRail';
 import { useLivePulse } from '../../src/hooks/useLivePulse';
 
@@ -86,6 +87,7 @@ function timeAgo(iso: string): string {
 }
 
 function Pulse() {
+  const bottomInset = useBottomInset();
   const [feedMode, setFeedMode] = useState<FeedMode>('forYou');
   const [active, setActive] = useState<PulseFilter[]>(['All']);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -451,7 +453,7 @@ function Pulse() {
           </View>
         )}
         ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: bottomInset }}
         showsVerticalScrollIndicator={false}
         onEndReached={() => {
           if (feedMode === 'following') followingFeed.loadMore();
