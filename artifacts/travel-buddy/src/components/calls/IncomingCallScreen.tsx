@@ -20,7 +20,8 @@ export function IncomingCallScreen({
 }) {
   if (!info) return null;
   const isVideo = info.callType === 'video';
-  const name = info.caller.name ?? 'Traveler';
+  const displayName = info.caller.name
+    ?? (info.caller.handle ? `@${info.caller.handle}` : 'Traveler');
 
   return (
     <Modal visible={visible} animationType="fade" onRequestClose={onDecline}>
@@ -30,11 +31,11 @@ export function IncomingCallScreen({
             <Image source={{ uri: info.caller.avatarUrl }} style={s.avatar} />
           ) : (
             <View style={[s.avatar, s.avatarFallback]}>
-              <Text style={s.initials}>{name.slice(0, 2).toUpperCase()}</Text>
+              <Text style={s.initials}>{displayName.slice(0, 2).toUpperCase()}</Text>
             </View>
           )}
           <View style={s.nameRow}>
-            <Text style={s.name} numberOfLines={1}>{name}</Text>
+            <Text style={s.name} numberOfLines={1}>{displayName}</Text>
             {info.caller.verified ? <PassportVerificationStamp status="verified" /> : null}
           </View>
           <Text style={s.kind}>

@@ -39,7 +39,7 @@ export function CallRealtimeBinding() {
       const payload = (evt.payload ?? {}) as {
         callId?: string;
         session?: CallSessionDto;
-        caller?: { id: string; name: string | null; avatarUrl: string | null };
+        caller?: { id: string; name: string | null; handle?: string | null; avatarUrl: string | null };
       };
       const callId = payload.callId ?? payload.session?.id;
       if (!callId) return;
@@ -58,6 +58,7 @@ export function CallRealtimeBinding() {
             caller: {
               id: payload.caller?.id ?? session.startedBy,
               name: payload.caller?.name ?? null,
+              handle: payload.caller?.handle ?? null,
               avatarUrl: payload.caller?.avatarUrl ?? null,
             },
           };

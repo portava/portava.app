@@ -1353,7 +1353,7 @@ export default function TelegraphThread() {
               if (allowed === null) return;
               await callActions.startDirectCall({
                 threadId: id, calleeId: otherUserId, contextType: 'telegraph_dm', callType: allowed,
-                peer: { id: otherUserId, name: dmProfile?.name ?? headerTitle, avatarUrl: dmProfile?.avatarUrl ?? null },
+                peer: { id: otherUserId, name: dmProfile?.name ?? headerTitle, handle: dmProfile?.handle ?? null, avatarUrl: dmProfile?.avatarUrl ?? null },
               });
             },
           },
@@ -1366,7 +1366,7 @@ export default function TelegraphThread() {
     if (allowed === null) return; // mic denied — explained by the permission alert
     await callActions.startDirectCall({
       threadId: id, calleeId: otherUserId, contextType: 'telegraph_dm', callType: allowed,
-      peer: { id: otherUserId, name: dmProfile?.name ?? headerTitle, avatarUrl: dmProfile?.avatarUrl ?? null },
+      peer: { id: otherUserId, name: dmProfile?.name ?? headerTitle, handle: dmProfile?.handle ?? null, avatarUrl: dmProfile?.avatarUrl ?? null },
     });
   }, [id, otherUserId, callState.phase, callActions, dmProfile?.name, dmProfile?.avatarUrl, headerTitle]);
 

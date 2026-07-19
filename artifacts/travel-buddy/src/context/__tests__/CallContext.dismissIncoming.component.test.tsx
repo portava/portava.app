@@ -52,7 +52,7 @@ const INCOMING = {
   callType: 'voice' as const,
   contextType: 'telegraph_dm' as const,
   threadId: 'thread-2',
-  caller: { id: 'u2', name: 'Bo', avatarUrl: null },
+  caller: { id: 'u2', name: 'Bo', handle: null, avatarUrl: null },
 };
 
 function makeBridge(): LiveKitBridge & { disconnect: jest.Mock } {

@@ -32,10 +32,38 @@ const baseInfo: IncomingCallInfo = {
   callType: 'voice',
   contextType: 'telegraph_dm',
   threadId: 't1',
-  caller: { id: 'u2', name: 'Alex Rivera', avatarUrl: null, verified: true },
+  caller: { id: 'u2', name: 'Alex Rivera', handle: 'alex_r', avatarUrl: null, verified: true },
 };
 
 afterEach(async () => { await act(async () => {}); });
+
+test('shows @handle when real name is null and handle is present', async () => {
+  const info: IncomingCallInfo = {
+    ...baseInfo,
+    caller: { id: 'u3', name: null, handle: 'wanderlust_sam', avatarUrl: null },
+  };
+  const { getByText } = await render(
+    <IncomingCallScreen
+      info={info} visible
+      onAcceptVoice={jest.fn()} onAcceptVideo={jest.fn()} onDecline={jest.fn()}
+    />,
+  );
+  expect(getByText('@wanderlust_sam')).toBeTruthy();
+});
+
+test('falls back to Traveler when both name and handle are null', async () => {
+  const info: IncomingCallInfo = {
+    ...baseInfo,
+    caller: { id: 'u4', name: null, handle: null, avatarUrl: null },
+  };
+  const { getByText } = await render(
+    <IncomingCallScreen
+      info={info} visible
+      onAcceptVoice={jest.fn()} onAcceptVideo={jest.fn()} onDecline={jest.fn()}
+    />,
+  );
+  expect(getByText('Traveler')).toBeTruthy();
+});
 
 test('voice and video incoming flows: decline/accept options and no implicit camera', async () => {
   const onAcceptVoice = jest.fn();

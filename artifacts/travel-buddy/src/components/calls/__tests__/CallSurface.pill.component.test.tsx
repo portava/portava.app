@@ -74,7 +74,7 @@ beforeEach(() => {
       startedAt: '2026-07-19T10:00:00Z', connectedAt: '2026-07-19T10:00:05Z', endedAt: null,
     },
     incoming: null,
-    peer: { id: 'u2', name: 'Alex', avatarUrl: null },
+    peer: { id: 'u2', name: 'Alex', handle: null, avatarUrl: null },
     minimized: true, micMuted: false, cameraOn: false, speakerOn: false,
     elapsedSec: 263, error: null,
   };
