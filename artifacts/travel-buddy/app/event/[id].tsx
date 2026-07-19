@@ -55,6 +55,7 @@ import { primaryIdentityText } from '../../src/lib/displayIdentity';
 import { getWaitlistUiState } from '../../src/lib/waitlistState';
 import { getAttendeeActionSet, type EventLifecycleState } from '../../src/lib/eventRoleActions';
 import { NavBarFiller, useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
+import { FOCUS_REFETCH_TTL_MS } from '../../src/hooks/usePosts';
 
 const STATE_BADGE: Record<string, { label: string; bg: string; fg: string }> = {
   draft:     { label: 'Draft',          bg: color.haze, fg: color.mute },
@@ -151,7 +152,22 @@ export default function EventDetailScreen() {
     setLoading(false);
   }, [id]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  // Tracks when the last load fired so focus-driven reloads are skipped within
+  // the TTL window (60 s) — avoids redundant fetches on rapid back-navigation.
+  const lastLoadAt = useRef(0);
+
+  useFocusEffect(useCallback(() => {
+    if (Date.now() - lastLoadAt.current >= FOCUS_REFETCH_TTL_MS) {
+      lastLoadAt.current = Date.now();
+      load();
+    }
+  }, [load]));
+
+  /** Pull-to-refresh / host dashboard refresh: bypass the TTL guard. */
+  const refreshLoad = useCallback(() => {
+    lastLoadAt.current = 0;
+    load();
+  }, [load]);
 
   // Perf timing: fire on every focus cycle when event data is loaded.
   // epoch increments on each focus so warm opens fire even without data changes.
@@ -952,7 +968,7 @@ export default function EventDetailScreen() {
         <HostDashboardPanel
           event={event}
           onDismiss={() => setShowDashboard(false)}
-          onRefresh={load}
+          onRefresh={refreshLoad}
         />
       )}
     </View>

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { View, Text, FlatList, ScrollView, Pressable, StyleSheet, Image, ActivityIndicator, RefreshControl } from 'react-native';
 import { getCommentCountSnapshot, subscribeCommentCount } from '../../src/lib/commentCountStore';
 import { router, useFocusEffect } from 'expo-router';
@@ -11,7 +11,7 @@ import { PulseFilterSheet, UnifiedPostComposer } from '../../src/components/Puls
 import { Chip } from '../../src/components/ui';
 import { TravelEmptyState } from '../../src/components/primitives';
 import { useCityPulse } from '../../src/hooks/useCityPulse';
-import { useFollowingFeed } from '../../src/hooks/usePosts';
+import { useFollowingFeed, FOCUS_REFETCH_TTL_MS } from '../../src/hooks/usePosts';
 import { usePulseFeed } from '../../src/hooks/usePulseFeed';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useCircleFlag } from '../../src/hooks/useCircleFlag';
@@ -139,6 +139,10 @@ function Pulse() {
   });
   const followingFeed = useFollowingFeed();
 
+  // Tracks when the last Pulse/following feed reload fired so focus-driven
+  // reloads are skipped within the TTL window (avoids refetch storms on tab switches).
+  const lastPulseFetchAt = useRef(0);
+
   // When any post is deleted, remove it from both feeds so it cannot reappear on refresh
   const handlePostDeleted = useCallback((id: string) => {
     pulseFeed.markDeleted(id);
@@ -153,10 +157,16 @@ function Pulse() {
       if (snapshot.size > 0) {
         setCommentCountOverrides(new Map(snapshot));
       }
-      pulseFeed.reload();
-      if (feedMode === 'following') followingFeed.reload();
+      // TTL guard: skip the network reload if data is still fresh (60 s).
+      // Pull-to-refresh resets lastPulseFetchAt.current = 0 to bypass this.
+      if (Date.now() - lastPulseFetchAt.current >= FOCUS_REFETCH_TTL_MS) {
+        pulseFeed.reload();
+        if (feedMode === 'following') followingFeed.reload();
+        lastPulseFetchAt.current = Date.now();
+      }
       // Refresh the Live Pulse rail whenever the Pulse tab is focused so
       // users always see fresh data on re-open, not just on mount or pull-to-refresh.
+      // This is a lightweight subscription refresh — kept outside the TTL guard.
       livePulse.refresh();
     }, [pulseFeed.reload, followingFeed.reload, feedMode, livePulse.refresh]),
   );
@@ -180,6 +190,8 @@ function Pulse() {
   }, [followingFeed.reload]);
 
   const handleRefresh = useCallback(() => {
+    // Reset TTL so the next focus-driven reload fires unconditionally.
+    lastPulseFetchAt.current = 0;
     setPeopleRefreshKey((k) => k + 1);
     livePulse.refresh();
     if (feedMode === 'following') followingFeed.reload();
