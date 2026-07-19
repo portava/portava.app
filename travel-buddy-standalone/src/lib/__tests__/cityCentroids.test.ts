@@ -12,7 +12,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { CITY_CENTROIDS, CITY_ALIASES, getCityCentroid } from '../cityCentroids.ts';
+import { CITY_CENTROIDS, CITY_ALIASES, REGION_CENTROIDS, getCityCentroid } from '../cityCentroids.ts';
 
 describe('CITY_CENTROIDS — coordinate validity', () => {
   const entries = Object.entries(CITY_CENTROIDS);
@@ -809,5 +809,146 @@ describe('getCityCentroid — accent- and case-insensitive normalisation', () =>
   it('returns undefined for a genuinely unknown city', () => {
     const coords = getCityCentroid('Atlantis');
     assert.equal(coords, undefined, 'Expected undefined for unknown city "Atlantis"');
+  });
+});
+
+describe('REGION_CENTROIDS — coordinate validity', () => {
+  const entries = Object.entries(REGION_CENTROIDS);
+
+  it('has at least 10 entries', () => {
+    assert.ok(entries.length >= 10, `Expected ≥10 entries, got ${entries.length}`);
+  });
+
+  it('all lat values are within [-90, 90]', () => {
+    const bad = entries.filter(([, [lat]]) => lat < -90 || lat > 90);
+    assert.deepEqual(bad.map(([k]) => k), [], `Regions with out-of-range lat: ${bad.map(([k]) => k).join(', ')}`);
+  });
+
+  it('all lng values are within [-180, 180]', () => {
+    const bad = entries.filter(([, [, lng]]) => lng < -180 || lng > 180);
+    assert.deepEqual(bad.map(([k]) => k), [], `Regions with out-of-range lng: ${bad.map(([k]) => k).join(', ')}`);
+  });
+
+  it('all coordinate pairs are finite numbers', () => {
+    const bad = entries.filter(([, [lat, lng]]) => !Number.isFinite(lat) || !Number.isFinite(lng));
+    assert.deepEqual(bad.map(([k]) => k), [], `Regions with non-finite coords: ${bad.map(([k]) => k).join(', ')}`);
+  });
+});
+
+describe('getCityCentroid — region-name fallback (step 5)', () => {
+  /**
+   * Some event records store a continent or sub-region label in the city
+   * field (e.g. "Southeast Asia", "Europe", "East Africa").  getCityCentroid
+   * must return a plausible centroid rather than undefined so the map always
+   * has a non-blank starting position.
+   */
+
+  it('resolves "Southeast Asia" to a plausible centroid', () => {
+    const coords = getCityCentroid('Southeast Asia');
+    assert.ok(coords !== undefined, '"Southeast Asia" returned undefined — region fallback missing');
+    const [lat, lng] = coords;
+    // Southeast Asia spans roughly lat -10 to 28 N, lng 92–141 E
+    assert.ok(lat > -11 && lat < 29, `lat ${lat} is not within Southeast Asia`);
+    assert.ok(lng > 91 && lng < 142, `lng ${lng} is not within Southeast Asia`);
+  });
+
+  it('resolves "southeast asia" (lowercase) to the same centroid', () => {
+    const lower = getCityCentroid('southeast asia');
+    const title = getCityCentroid('Southeast Asia');
+    assert.ok(lower !== undefined, '"southeast asia" returned undefined — region fallback normalisation failed');
+    assert.deepEqual(lower, title);
+  });
+
+  it('resolves "SOUTHEAST ASIA" (uppercase) to the same centroid', () => {
+    const upper = getCityCentroid('SOUTHEAST ASIA');
+    const title = getCityCentroid('Southeast Asia');
+    assert.ok(upper !== undefined, '"SOUTHEAST ASIA" returned undefined — region fallback normalisation failed');
+    assert.deepEqual(upper, title);
+  });
+
+  it('resolves "Europe" to a plausible centroid', () => {
+    const coords = getCityCentroid('Europe');
+    assert.ok(coords !== undefined, '"Europe" returned undefined — region fallback missing');
+    const [lat, lng] = coords;
+    // Europe spans roughly lat 35–71 N, lng -25–45 E
+    assert.ok(lat > 34 && lat < 72, `lat ${lat} is not within Europe`);
+    assert.ok(lng > -26 && lng < 46, `lng ${lng} is not within Europe`);
+  });
+
+  it('resolves "europe" (lowercase) to the same centroid as "Europe"', () => {
+    const lower = getCityCentroid('europe');
+    const title = getCityCentroid('Europe');
+    assert.ok(lower !== undefined, '"europe" returned undefined — region fallback normalisation failed');
+    assert.deepEqual(lower, title);
+  });
+
+  it('resolves "East Africa" to a plausible centroid', () => {
+    const coords = getCityCentroid('East Africa');
+    assert.ok(coords !== undefined, '"East Africa" returned undefined — region fallback missing');
+    const [lat, lng] = coords;
+    // East Africa spans roughly lat -12 to 15 N, lng 29–51 E
+    assert.ok(lat > -13 && lat < 16, `lat ${lat} is not within East Africa`);
+    assert.ok(lng > 28 && lng < 52, `lng ${lng} is not within East Africa`);
+  });
+
+  it('resolves "east africa" (lowercase) to the same centroid as "East Africa"', () => {
+    const lower = getCityCentroid('east africa');
+    const title = getCityCentroid('East Africa');
+    assert.ok(lower !== undefined, '"east africa" returned undefined — region fallback normalisation failed');
+    assert.deepEqual(lower, title);
+  });
+
+  it('resolves "EAST AFRICA" (uppercase) to the same centroid as "East Africa"', () => {
+    const upper = getCityCentroid('EAST AFRICA');
+    const title = getCityCentroid('East Africa');
+    assert.ok(upper !== undefined, '"EAST AFRICA" returned undefined — region fallback normalisation failed');
+    assert.deepEqual(upper, title);
+  });
+
+  it('resolves "West Africa" to a plausible centroid', () => {
+    const coords = getCityCentroid('West Africa');
+    assert.ok(coords !== undefined, '"West Africa" returned undefined — region fallback missing');
+    const [lat, lng] = coords;
+    assert.ok(lat > -2 && lat < 20, `lat ${lat} is not within West Africa`);
+    assert.ok(lng > -18 && lng < 25, `lng ${lng} is not within West Africa`);
+  });
+
+  it('resolves "Asia" to a plausible centroid', () => {
+    const coords = getCityCentroid('Asia');
+    assert.ok(coords !== undefined, '"Asia" returned undefined — region fallback missing');
+    const [lat, lng] = coords;
+    assert.ok(lat > 0 && lat < 70, `lat ${lat} is not within Asia`);
+    assert.ok(lng > 25 && lng < 180, `lng ${lng} is not within Asia`);
+  });
+
+  it('resolves "Latin America" to a plausible centroid', () => {
+    const coords = getCityCentroid('Latin America');
+    assert.ok(coords !== undefined, '"Latin America" returned undefined — region fallback missing');
+    const [lat, lng] = coords;
+    assert.ok(lat > -60 && lat < 35, `lat ${lat} is not within Latin America`);
+    assert.ok(lng > -120 && lng < -30, `lng ${lng} is not within Latin America`);
+  });
+
+  it('city lookup still wins when a real city name is provided', () => {
+    // "Bangkok" must not accidentally fall through to a region
+    const coords = getCityCentroid('Bangkok');
+    assert.ok(coords !== undefined, '"Bangkok" returned undefined');
+    const [lat, lng] = coords;
+    assert.ok(Math.abs(lat - 13.7563) < 2, `lat ${lat} implausibly far from Bangkok`);
+    assert.ok(Math.abs(lng - 100.5018) < 2, `lng ${lng} implausibly far from Bangkok`);
+  });
+
+  it('country lookup still wins over region when a country name is provided', () => {
+    // "Thailand" is in COUNTRY_CENTROIDS; the region fallback must not interfere
+    const coords = getCityCentroid('Thailand');
+    assert.ok(coords !== undefined, '"Thailand" returned undefined');
+    const [lat, lng] = coords;
+    assert.ok(lat > 4 && lat < 22, `lat ${lat} is not within Thailand`);
+    assert.ok(lng > 96 && lng < 107, `lng ${lng} is not within Thailand`);
+  });
+
+  it('still returns undefined for a string that is neither city, country, nor region', () => {
+    const coords = getCityCentroid('atlantis');
+    assert.equal(coords, undefined, 'Expected undefined for unknown input "atlantis"');
   });
 });
