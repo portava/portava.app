@@ -17,14 +17,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSession } from '../context/SessionContext.tsx';
+import {
+  _buildKey,
+  _loadSnapshot,
+  _saveSnapshot,
+  _clearSnapshot,
+} from './snapshotCacheUtils.ts';
 
 const DEFAULT_TTL_MS = 60 * 60 * 1000; // 1 hour
-const MAX_BYTES = 128 * 1024;            // 128 KB
-
-interface SnapshotEntry<T> {
-  data: T;
-  savedAt: number;
-}
 
 export interface SnapshotCacheResult<T> {
   /** Cached data from the previous session, or null if not yet loaded / expired (only if stale-past-TTL is null). */
@@ -50,25 +50,17 @@ export function useSnapshotCache<T>(
   useEffect(() => { userIdRef.current = userId; }, [userId]);
 
   // Derive the namespaced storage key (null when no userId yet)
-  const storageKey = userId ? `snap:v1:${key}:${userId}` : null;
+  const storageKey = userId ? _buildKey(key, userId) : null;
 
   // Read snapshot from AsyncStorage on mount / when userId becomes available
   useEffect(() => {
     if (!storageKey) return;
     let cancelled = false;
-    AsyncStorage.getItem(storageKey)
-      .then((raw) => {
-        if (cancelled || !raw) return;
-        try {
-          const entry: SnapshotEntry<T> = JSON.parse(raw);
-          const age = Date.now() - entry.savedAt;
-          if (!cancelled) {
-            setSnapshot(entry.data);
-            setIsStale(age > ttlMs);
-          }
-        } catch {
-          // Corrupt entry — ignore
-        }
+    _loadSnapshot<T>(AsyncStorage, storageKey, ttlMs, Date.now())
+      .then((result) => {
+        if (cancelled || !result) return;
+        setSnapshot(result.data);
+        setIsStale(result.isStale);
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -77,16 +69,7 @@ export function useSnapshotCache<T>(
   const save = useCallback((data: T) => {
     const uid = userIdRef.current;
     if (!uid) return;
-    const sk = `snap:v1:${key}:${uid}`;
-    const entry: SnapshotEntry<T> = { data, savedAt: Date.now() };
-    let serialized: string;
-    try {
-      serialized = JSON.stringify(entry);
-    } catch {
-      return;
-    }
-    if (serialized.length > MAX_BYTES) return; // Silently skip if too large
-    AsyncStorage.setItem(sk, serialized).catch(() => {});
+    _saveSnapshot<T>(AsyncStorage, key, uid, data, Date.now());
     setSnapshot(data);
     setIsStale(false);
   }, [key]);
@@ -94,8 +77,7 @@ export function useSnapshotCache<T>(
   const clear = useCallback(() => {
     const uid = userIdRef.current;
     if (!uid) return;
-    const sk = `snap:v1:${key}:${uid}`;
-    AsyncStorage.removeItem(sk).catch(() => {});
+    _clearSnapshot(AsyncStorage, key, uid);
     setSnapshot(null);
     setIsStale(false);
   }, [key]);
