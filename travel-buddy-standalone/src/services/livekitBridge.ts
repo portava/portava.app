@@ -43,9 +43,19 @@ export function createLiveKitBridge(): LiveKitBridge | null {
 
   let room: any = null;
   let connListeners: Array<(s: 'connected' | 'reconnecting' | 'disconnected') => void> = [];
+  let speakerListeners: Array<(userIds: string[]) => void> = [];
 
   const emit = (s: 'connected' | 'reconnecting' | 'disconnected') => {
     for (const cb of connListeners) cb(s);
+  };
+
+  // Server mints LiveKit tokens with identity = userId (livekitService), so
+  // participant identities map 1:1 to app user ids — no lookup needed.
+  const emitSpeakers = (speakers: any[]) => {
+    const ids = (speakers ?? [])
+      .map((p) => p?.identity)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+    for (const cb of speakerListeners) cb(ids);
   };
 
   return {
@@ -56,6 +66,9 @@ export function createLiveKitBridge(): LiveKitBridge | null {
         if (state === ConnectionState.Connected) emit('connected');
         else if (state === ConnectionState.Reconnecting) emit('reconnecting');
         else if (state === ConnectionState.Disconnected) emit('disconnected');
+      });
+      room.on(RoomEvent.ActiveSpeakersChanged, (speakers: any[]) => {
+        emitSpeakers(speakers);
       });
       await room.connect(url, token);
       await room.localParticipant.setMicrophoneEnabled(true);
@@ -69,6 +82,7 @@ export function createLiveKitBridge(): LiveKitBridge | null {
       const r = room;
       room = null;
       connListeners = [];
+      speakerListeners = [];
       if (r) { try { await r.disconnect(); } catch { /* already down */ } }
       try { await sdk.AudioSession.stopAudioSession(); } catch { /* non-critical */ }
     },
@@ -102,6 +116,11 @@ export function createLiveKitBridge(): LiveKitBridge | null {
     onConnectionState(cb) {
       connListeners.push(cb);
       return () => { connListeners = connListeners.filter((x) => x !== cb); };
+    },
+
+    onActiveSpeakers(cb) {
+      speakerListeners.push(cb);
+      return () => { speakerListeners = speakerListeners.filter((x) => x !== cb); };
     },
   };
 }
