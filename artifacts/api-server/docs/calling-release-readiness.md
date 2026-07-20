@@ -45,8 +45,8 @@ build.
 | --- | --- | --- |
 | Endpoint code path (`POST /api/calls/webhook`, raw-body, signature-verified) | PASS | mounted before `express.json()`; unsigned → 401 verified against the dev server |
 | Signed round-trip | PASS (dev) | self-signed `room_finished` webhook (correct `sha256` claim) → 200 `{ok:true}`; tampered body → 401 |
-| **Production round-trip** | **FAIL — blocking** | `https://portava.replit.app/api/calls/webhook` returns **404**: the live deployment is a **stale build that predates the calling system** (old routes like `/api/stamps/me` respond 401; every `/api/calls/*` path 404s). Republish, then re-run the round-trip probe. |
-| LiveKit Cloud webhook registration | **UNVERIFIED — blocking** | Webhook URLs are configured in the LiveKit Cloud dashboard, which is not reachable from this workspace. After republish, register `https://portava.replit.app/api/calls/webhook` with the same key/secret pair and confirm a delivery lands (route logs reconciliation failures; unknown rooms are safe no-ops). |
+| **Production round-trip** | **FAIL — blocking** | `https://portava.replit.app/api/calls/webhook` returns **404**: the live deployment is a **stale build that predates the calling system**. Unsigned → 401 and signed → 200 verified against dev server 2026-07-20. Re-run `node artifacts/api-server/scripts/verify-prod-webhook.mjs` after republish — steps 1–3 must pass before step 4 can run. |
+| LiveKit Cloud webhook registration | **UNVERIFIED — blocking** | Dashboard registration is a manual UI step (cloud.livekit.io → Settings → Webhooks). Registration instructions and troubleshooting guide: `docs/livekit-webhook-registration.md`. After republish + registration, step 4 of `verify-prod-webhook.mjs` creates and deletes a throwaway room; production logs must show `event=room_finished` with HTTP 200. |
 
 ## 4. Migration state (live Supabase, verified via Management API)
 
@@ -119,11 +119,13 @@ build.
 
 1. **Republish the API server.** The live deployment predates the calling
    system — every `/api/calls/*` route (including the webhook receiver) 404s
-   in production. All later gates depend on this.
+   in production. All later gates depend on this. Dev-server round-trip
+   verified 2026-07-20: unsigned → 401, signed → 200, tampered → 401.
 2. **Register + round-trip the LiveKit Cloud webhook** against
-   `https://portava.replit.app/api/calls/webhook` after republish (dashboard
-   action; then re-run the signed/unsigned/tampered probe — expected
-   200/401/401).
+   `https://portava.replit.app/api/calls/webhook` after republish. Dashboard
+   registration instructions: `docs/livekit-webhook-registration.md`. After
+   registration, run `node artifacts/api-server/scripts/verify-prod-webhook.mjs`
+   — all 4 steps must pass, and production logs must show `event=room_finished`.
 3. **Pass the device-test gate** (`travel-buddy/docs/device-test-gate-phase2.md`)
    on physical hardware with the EAS development build, including the
    background-push and reconnection sections. One-time manual: confirm
