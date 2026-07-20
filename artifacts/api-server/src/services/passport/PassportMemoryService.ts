@@ -4,6 +4,10 @@
  * Creates and manages passport memories.
  * Memories begin as 'suggested' (private, not public) and become 'active'
  * only when the user explicitly accepts them.
+ *
+ * NOTE: passport_memories genuinely has an `earned_at` column in the live
+ * schema (verified 2026-07-20) — unlike passport_stamps, whose live column is
+ * `awarded_at`. Do not "fix" earned_at here.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";

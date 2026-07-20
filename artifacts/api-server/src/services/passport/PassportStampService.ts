@@ -123,7 +123,8 @@ export async function createStamp(
       source_type: sourceType,
       verification_level: verificationLevel,
       visibility,
-      earned_at: earnedAt ?? new Date().toISOString(),
+      // Live column is awarded_at (earned_at does not exist on passport_stamps).
+      awarded_at: earnedAt ?? new Date().toISOString(),
     })
     .select("id")
     .single();
@@ -214,11 +215,13 @@ export async function loadStamps(
   const limit  = Math.min(200, Math.max(1, filters.limit  ?? 100));
   const offset = Math.max(0, filters.offset ?? 0);
 
+  // Live column is awarded_at; alias it to earned_at so downstream consumers
+  // (PassportPrivacyGuard.StampRow, route serializers) keep their shape.
   let query = db
     .from("passport_stamps")
-    .select("id, stamp_type, country, city, neighborhood, place_id, plan_id, trip_id, source_type, verification_level, visibility, earned_at, created_at")
+    .select("id, stamp_type, country, city, neighborhood, place_id, plan_id, trip_id, source_type, verification_level, visibility, earned_at:awarded_at, created_at")
     .eq("user_id", userId)
-    .order("earned_at", { ascending: false })
+    .order("awarded_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
   if (filters.country)    query = (query as any).eq("country",    filters.country);

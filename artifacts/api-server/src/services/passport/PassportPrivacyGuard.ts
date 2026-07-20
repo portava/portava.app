@@ -46,6 +46,11 @@ export interface StampRow {
   source_type: string;
   verification_level: string;
   visibility: VisibilityTier;
+  /**
+   * Live passport_stamps column is `awarded_at`; services select it with an
+   * `earned_at:awarded_at` alias so rows keep this key (see
+   * PassportStampService.loadStamps / PassportMapService).
+   */
   earned_at: string;
   created_at: string;
 }
