@@ -285,20 +285,19 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
     await sc.from("notifications").insert({
       user_id:           (appeal as any).appellant_id,
       actor_id:          adminId,
-      notification_type: "appeal_approved",
+      event_type:        "appeal.approved",
       category:          "admin",
       title:             "Appeal approved",
       body:              resolutionNote
         ? `Your appeal was approved. ${resolutionNote}`
         : "Your appeal was approved and the action has been reversed.",
       action_url:        "/appeals",
-      content: {
+      metadata: {
         appealId:       id,
         targetType:     (appeal as any).target_type,
         resolutionNote: resolutionNote ?? null,
         reversalAction: result.action,
       },
-      read: false,
     }).then(() => {}).catch(() => {});
   }
 
@@ -307,19 +306,18 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
     await sc.from("notifications").insert({
       user_id:           (appeal as any).appellant_id,
       actor_id:          adminId,
-      notification_type: "appeal_denied",
+      event_type:        "appeal.denied",
       category:          "admin",
       title:             "Appeal denied",
       body:              resolutionNote
         ? `Your appeal was denied. ${resolutionNote}`
         : "Your appeal was reviewed and denied.",
       action_url:        "/appeals",
-      content: {
+      metadata: {
         appealId:       id,
         targetType:     (appeal as any).target_type,
         resolutionNote: resolutionNote ?? null,
       },
-      read: false,
     }).then(() => {}).catch(() => {});
   }
 

@@ -1985,15 +1985,17 @@ router.patch("/events/:id", async (req, res) => {
           await Promise.allSettled(
             (confirmed as any[]).map((r: any) =>
               sc.from("notifications").insert({
-                user_id:           r.user_id,
-                actor_id:          user.id,
-                notification_type: "review_prompt",
-                content: {
+                user_id:    r.user_id,
+                actor_id:   user.id,
+                event_type: "event.review_prompt",
+                category:   "plans",
+                title:      "How was the event?",
+                body:       `Leave a review for "${eventTitle}" — your feedback helps the community.`,
+                metadata: {
                   entityType: "event",
                   entityId:   id,
                   entityName: eventTitle,
                 },
-                read: false,
               }),
             ),
           );
@@ -3485,10 +3487,10 @@ async function createEventChatThread(sc: any, eventId: string, title: string, ho
       .from("message_threads")
       .insert({
         id: candidateId,
-        type: "group",
-        name: title,
-        created_by: hostId,
-        metadata: { event_id: eventId, type: "event_chat" },
+        thread_type: "direct",
+        title,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       })
       .select("id")
       .single();
@@ -5478,13 +5480,23 @@ router.post("/events/:id/telegraph-thread", async (req, res) => {
           e.city ? `🏙 ${e.city}` : null,
           `🔒 ${e.visibility ?? "public"}`,
         ].filter(Boolean).join("\n");
+        // Card payload lives inside body as JSON (same pattern as other system cards);
+        // messages has no metadata column and sender_id is NOT NULL.
+        const cardBody = JSON.stringify({
+          type: "event_context_card",
+          eventId: id,
+          title: e.title ?? "Event",
+          startsAt: e.starts_at ?? null,
+          city: e.city ?? null,
+          visibility: e.visibility ?? "public",
+          text: lines,
+        });
         await sc.from("messages").insert({
           thread_id: threadId,
-          sender_id: null,
-          body: lines,
+          sender_id: e.host_id ?? user.id,
+          body: cardBody,
           msg_type: "system",
           subtype: "event_context_card",
-          metadata: { event_id: id, pinned: true },
         });
       }
     } catch {}

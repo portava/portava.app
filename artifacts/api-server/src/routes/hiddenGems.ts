@@ -658,15 +658,9 @@ router.post("/hidden-gems/:id/verify-visit", async (req, res) => {
           // Insert a Pulse post tagged to the gem's city — no exact coords
           await sc.from("posts").insert({
             author_id: user.id,
-            body: `Just verified a hidden gem: "${(gem as any).name}" in ${(gem as any).city} 📍`,
+            content: `Just verified a hidden gem: "${(gem as any).name}" in ${(gem as any).city} 📍`,
             visibility: "public",
-            post_type: "hidden_gem_checkin",
-            metadata: {
-              gemId:    (gem as any).id,
-              gemName:  (gem as any).name,
-              city:     (gem as any).city,
-              category: (gem as any).category,
-            },
+            category: "hidden_gem_checkin",
           });
         } catch { /* non-fatal */ }
       })();
@@ -759,16 +753,19 @@ router.post("/hidden-gems/:id/share-telegraph", async (req, res) => {
       vibeTags: (safe as any).vibeTags ?? (safe as any).vibe_tags ?? [],
     };
 
-    // Insert Telegraph message with gem card as metadata
+    // Insert Telegraph message with the gem card embedded as JSON in body
+    // (messages has body — not content — and no metadata column).
     await client
       .from("messages")
       .insert({
         thread_id: threadId,
         sender_id: user.id,
-        content: `📍 Shared a hidden gem: ${(gem as any).name} in ${(gem as any).city}`,
+        body: JSON.stringify({
+          ...card,
+          text: `📍 Shared a hidden gem: ${(gem as any).name} in ${(gem as any).city}`,
+        }),
         msg_type: "card",
         subtype: "hidden_gem",
-        metadata: card,
       });
 
     res.json({ ok: true, card });

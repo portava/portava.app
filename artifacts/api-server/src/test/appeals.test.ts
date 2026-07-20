@@ -462,7 +462,7 @@ describe("PATCH /api/appeals/:id", () => {
     await new Promise((r) => setTimeout(r, 20));
     const notifs = tables.notifications.rows;
     assert.ok(notifs.length > 0, "notification should be inserted");
-    const notif = notifs.find((n) => n.notification_type === "appeal_approved");
+    const notif = notifs.find((n) => n.event_type === "appeal.approved");
     assert.ok(notif, "appeal_approved notification should exist");
     assert.equal(notif.user_id, APPELLANT_ID);
     assert.equal(notif.category, "admin");
@@ -480,7 +480,7 @@ describe("PATCH /api/appeals/:id", () => {
     assert.equal(body.state, "denied");
     await new Promise((r) => setTimeout(r, 20));
     const notifs = tables.notifications.rows;
-    const notif = notifs.find((n) => n.notification_type === "appeal_denied");
+    const notif = notifs.find((n) => n.event_type === "appeal.denied");
     assert.ok(notif, "appeal_denied notification should exist");
     assert.equal(notif.user_id, APPELLANT_ID);
     assert.equal(notif.action_url, "/appeals");
