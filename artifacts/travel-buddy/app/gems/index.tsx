@@ -4,14 +4,16 @@
  *
  * Tab bar: Discover · Saved · Layover
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   TextInput, ActivityIndicator, RefreshControl, ScrollView,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useGemList, useSavedGems, useLayoverGems } from '../../src/hooks/useHiddenGems';
+import { getCurrentGps } from '../../src/services/location';
 import { verificationBadge, sensitivityLabel, type HiddenGem, type GemCategory } from '../../src/services/hiddenGems';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
@@ -104,11 +106,38 @@ function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
   const [category, setCategory]   = useState<GemCategory | 'all'>('all');
   const [appliedCity, setApplied] = useState('');
   const [nearMe, setNearMe]       = useState(false);
+  const [myCoords, setMyCoords]   = useState<{ lat: number; lng: number } | null>(null);
 
-  const { gems, loading, error, refresh } = useGemList({
+  const { gems: allGems, loading, error, refresh } = useGemList({
     city:     appliedCity || undefined,
     category: category === 'all' ? undefined : category,
   });
+
+  // Real "Near Me": fetch device GPS on demand, then filter/sort by distance.
+  const handleNearMe = useCallback(async () => {
+    if (nearMe) { setNearMe(false); return; }
+    const fix = await getCurrentGps();
+    if (!fix.granted || fix.lat == null || fix.lng == null) {
+      Alert.alert('Location unavailable', 'Allow location access to see gems near you.');
+      return;
+    }
+    setMyCoords({ lat: fix.lat, lng: fix.lng });
+    setNearMe(true);
+  }, [nearMe]);
+
+  const gems = useMemo(() => {
+    if (!nearMe || !myCoords) return allGems;
+    const distKm = (lat: number, lng: number) => {
+      const dLat = (lat - myCoords.lat) * Math.PI / 180;
+      const dLng = (lng - myCoords.lng) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2
+        + Math.cos(myCoords.lat * Math.PI / 180) * Math.cos(lat * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+      return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    };
+    return allGems
+      .filter((g) => g.lat != null && g.lng != null && distKm(g.lat, g.lng) <= 50)
+      .sort((a, b) => distKm(a.lat!, a.lng!) - distKm(b.lat!, b.lng!));
+  }, [allGems, nearMe, myCoords]);
 
   const applySearch = useCallback(() => { setApplied(city.trim()); }, [city]);
 
@@ -143,7 +172,7 @@ function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
         {/* Near Me chip */}
         <TouchableOpacity
           style={[styles.chip, nearMe && styles.chipActive]}
-          onPress={() => setNearMe((v) => !v)}
+          onPress={handleNearMe}
         >
           <Ionicons name="navigate-outline" size={14} color={nearMe ? '#fff' : '#8A9BB5'} />
           <Text style={[styles.chipText, nearMe && styles.chipTextActive]}>Near Me</Text>
@@ -166,19 +195,9 @@ function DiscoverTab({ viewMode = 'list' }: { viewMode?: 'list' | 'map' }) {
         ))}
       </ScrollView>
 
-      {/* Map placeholder — shown when map toggle is active */}
-      {viewMode === 'map' && (
-        <View style={styles.mapPlaceholder}>
-          <Ionicons name="map-outline" size={48} color="#4C8BF5" />
-          <Text style={styles.mapPlaceholderText}>Map view</Text>
-          <Text style={styles.mapPlaceholderSub}>
-            {gems.length > 0 ? `${gems.length} gems in this area` : 'No gems to display'}
-          </Text>
-        </View>
-      )}
-
-      {/* Gem list — only shown in list mode */}
-      {viewMode === 'list' && (
+      {/* Static map placeholder removed — the header map button now opens the
+          real map with the gems layer (/map?entityTypes=gems). */}
+      {(
         loading && gems.length === 0 ? (
           <View style={styles.center}><ActivityIndicator color="#4C8BF5" /></View>
         ) : error ? (
@@ -344,13 +363,10 @@ export default function GemsScreen() {
           {activeTab === 'Discover' && (
             <TouchableOpacity
               style={styles.viewToggle}
-              onPress={() => setViewMode((m) => m === 'list' ? 'map' : 'list')}
+              onPress={() => router.push('/map?entityTypes=gems' as any)}
+              accessibilityLabel="View gems on the map"
             >
-              <Ionicons
-                name={viewMode === 'list' ? 'map-outline' : 'list-outline'}
-                size={20}
-                color="#4C8BF5"
-              />
+              <Ionicons name="map-outline" size={20} color="#4C8BF5" />
             </TouchableOpacity>
           )}
           <TouchableOpacity
