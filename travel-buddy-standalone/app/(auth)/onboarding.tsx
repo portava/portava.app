@@ -10,12 +10,25 @@ import { buildOnboardingSaveAlert } from '../../src/services/profileSaveFlow';
 import { getCurrentGps, reverseGeocodeToPlace } from '../../src/services/location';
 import { runFillHomeFromGps } from '../../src/services/fillHomeFromGps.machine';
 import { ManualCityPicker } from '../../src/components/ManualCityPicker';
+import { DatePickerField } from '../../src/components/DatePickerField';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 
 const INTERESTS: Interest[] = ['nightlife','beach','food','luxury','backpacking','culture','adventure','shopping','photography','business','dating','wellness','events'];
 const STYLES: TravelStyle[] = ['solo','couple','group','business'];
-const TOTAL_STEPS = 4;
+const TOTAL_STEPS = 5;
 const DISPLAY_NAME_MAX = 30;
+
+/** Returns age in full years from a YYYY-MM-DD string, or null if invalid. */
+function computeAge(dob: string): number | null {
+  if (!dob || !/^\d{4}-\d{2}-\d{2}$/.test(dob)) return null;
+  const birth = new Date(dob + 'T00:00:00');
+  if (isNaN(birth.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - birth.getFullYear();
+  const m = now.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age--;
+  return age;
+}
 
 export default function Onboarding() {
   const plainInset = usePlainBottomInset();
@@ -26,6 +39,8 @@ export default function Onboarding() {
   const [handle, setHandle] = useState('');
   const [homeCity, setHomeCity] = useState('');
   const [homeCountry, setHomeCountry] = useState('');
+  const [dateOfBirth, setDateOfBirth] = useState('');
+  const [dobError, setDobError] = useState<string | null>(null);
   const [style, setStyle] = useState<TravelStyle>('solo');
   const [picked, setPicked] = useState<Interest[]>([]);
   const [saving, setSaving] = useState(false);
@@ -96,6 +111,7 @@ export default function Onboarding() {
     }
     setSaving(true);
     const patch = buildOnboardingPatch({ displayName: trimmedName, handle, homeCity, homeCountry, travelStyle: style, interests: picked });
+    if (dateOfBirth) (patch as any).dateOfBirth = dateOfBirth;
     const result = await updateMyProfile(patch);
     setSaving(false);
     if (!result.ok && result.errorKind !== 'config_error' && result.errorKind !== 'unauthenticated') {
@@ -114,6 +130,23 @@ export default function Onboarding() {
   }
 
   function handleNext() {
+    // Validate DOB step before advancing
+    if (step === 1) {
+      if (!dateOfBirth) {
+        setDobError('Please enter your date of birth.');
+        return;
+      }
+      const age = computeAge(dateOfBirth);
+      if (age === null) {
+        setDobError('Please enter a valid date.');
+        return;
+      }
+      if (age < 18) {
+        setDobError('You must be at least 18 years old to use this app.');
+        return;
+      }
+      setDobError(null);
+    }
     if (step < TOTAL_STEPS - 1) setStep((s) => s + 1);
     else handleFinish();
   }
@@ -130,7 +163,9 @@ export default function Onboarding() {
     );
   }
 
-  const nextDisabled = saving || (step === 0 && !displayName.trim());
+  const nextDisabled = saving
+    || (step === 0 && !displayName.trim())
+    || (step === 1 && !dateOfBirth);
   const isLastStep = step === TOTAL_STEPS - 1;
 
   return (
@@ -149,7 +184,7 @@ export default function Onboarding() {
         {step === 0 && (
           <View style={{ gap: space.xl }}>
             <View>
-              <Stamp label="step 1 of 4" tone="signal" />
+              <Stamp label="step 1 of 5" tone="signal" />
               <Text style={styles.title}>What should{'\n'}we call you?</Text>
               <Text style={styles.sub}>Your name and handle appear on your passport.</Text>
             </View>
@@ -193,7 +228,31 @@ export default function Onboarding() {
         {step === 1 && (
           <View style={{ gap: space.xl }}>
             <View>
-              <Stamp label="step 2 of 4" tone="signal" />
+              <Stamp label="step 2 of 5" tone="signal" />
+              <Text style={styles.title}>How old{'\n'}are you?</Text>
+              <Text style={styles.sub}>You must be 18 or older to use this app.</Text>
+            </View>
+            <View style={{ gap: space.md }}>
+              <View>
+                <Text style={styles.label}>Date of birth *</Text>
+                <DatePickerField
+                  value={dateOfBirth}
+                  onChange={(v) => { setDateOfBirth(v); setDobError(null); }}
+                  placeholder="Select your date of birth"
+                />
+                {dobError
+                  ? <Text style={styles.dobErrorText}>{dobError}</Text>
+                  : <Text style={styles.hint}>Your date of birth is kept private and never shown publicly.</Text>
+                }
+              </View>
+            </View>
+          </View>
+        )}
+
+        {step === 2 && (
+          <View style={{ gap: space.xl }}>
+            <View>
+              <Stamp label="step 3 of 5" tone="signal" />
               <Text style={styles.title}>Where are{'\n'}you from?</Text>
               <Text style={styles.sub}>Helps us surface relevant places and travelers.</Text>
             </View>
@@ -238,10 +297,10 @@ export default function Onboarding() {
           </View>
         )}
 
-        {step === 2 && (
+        {step === 3 && (
           <View style={{ gap: space.xl }}>
             <View>
-              <Stamp label="step 3 of 4" tone="signal" />
+              <Stamp label="step 4 of 5" tone="signal" />
               <Text style={styles.title}>How do you{'\n'}travel?</Text>
               <Text style={styles.sub}>We'll connect you with compatible travelers.</Text>
             </View>
@@ -251,10 +310,10 @@ export default function Onboarding() {
           </View>
         )}
 
-        {step === 3 && (
+        {step === 4 && (
           <View style={{ gap: space.xl }}>
             <View>
-              <Stamp label="step 4 of 4" tone="signal" />
+              <Stamp label="step 5 of 5" tone="signal" />
               <Text style={styles.title}>What are{'\n'}you into?</Text>
               <Text style={styles.sub}>We'll tune your feed and who you meet.</Text>
             </View>
@@ -324,6 +383,7 @@ const styles = StyleSheet.create({
     backgroundColor: color.paperRaised,
   },
   hint: { ...t.small, color: color.faint, marginTop: 4 },
+  dobErrorText: { ...t.small, color: color.signal, marginTop: 4 },
   labelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
   charCount: { ...t.small, color: color.faint, fontWeight: '600' as const },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },

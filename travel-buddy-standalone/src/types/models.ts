@@ -547,6 +547,7 @@ export interface OwnProfile {
   preferredLanguage: string | null;
   dateOfBirth: string | null;
   dobVerified: boolean;
+  ageGateRequired?: boolean;
   trustScore?: number | null;
   trustLabel?: string | null;
   verificationLevel?: 'none' | 'basic_verified' | 'trusted_traveler' | 'host_verified' | 'buddy_verified' | null;
