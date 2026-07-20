@@ -188,4 +188,30 @@ describe("runSchemaDriftCheck", () => {
       assert.ok(probed.has(col), `rent_buddy_profiles.${col} must be in CRITICAL_COLUMNS`);
     }
   });
+
+  it("covers every audited wizard-style write path (task-1925 audit)", () => {
+    // Regression guard: the 2026-07-20 audit diffed all multi-column
+    // insert/upsert/update payloads against the live information_schema and
+    // found three drifted paths (fixed by 0163). Each audited high-traffic
+    // write path must keep at least the probes below so a re-drift is caught
+    // at startup rather than as a hard write failure in production.
+    const probed = new Set(CRITICAL_COLUMNS.map((p) => `${p.table}.${p.column}`));
+    for (const key of [
+      // found missing live by the audit; added by 0163
+      "posts.filter_id",
+      "posts.filter_intensity",
+      "posts.media_duration_seconds",
+      "rent_buddy_bookings.country_code",
+      "rent_buddy_policy_flags.updated_at",
+      // one sentinel column per remaining audited path
+      "profiles.public_social_links",
+      "trips.cover_media_type",
+      "events.cover_media_type",
+      "profile_privacy_settings.delayed_posting_default",
+      "passport_postcards.note",
+      "compass_user_preferences.rent_buddy_discoverable",
+    ]) {
+      assert.ok(probed.has(key), `${key} must be in CRITICAL_COLUMNS`);
+    }
+  });
 });

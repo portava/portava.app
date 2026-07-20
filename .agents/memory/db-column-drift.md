@@ -17,3 +17,7 @@ description: Verify Supabase column names against the LIVE schema (generated typ
 
 ## CHECK-constraint drift (2026-07-15)
 Column existence isn't the only drift axis: DB CHECK constraints can lag the API's zod enums (e.g. a mode column CHECK allowing only legacy values while the route validates a newer five-value vocabulary → every PATCH 500s). When a PATCH 500s with a db_error but columns exist, compare `pg_get_constraintdef` against the route's enum. Also: `upsert(..., { onConflict })` must name the table's actual unique constraint columns — `user_account_states` is unique on (user_id, state), not user_id.
+
+## Wizard write-path audit (2026-07-20)
+- Mechanical pass: extract insert/upsert/update payload keys per table (perl over routes/services), fetch live `information_schema.columns` via the Management API, diff. Regex bleeds across chained calls — verify each hit in code before calling it drift.
+- Real drifts found & fixed by 0163: posts.filter_id/filter_intensity/media_duration_seconds, rent_buddy_bookings.country_code, rent_buddy_policy_flags.updated_at. All now probed in CRITICAL_COLUMNS with a sentinel column per audited path (test-guarded).

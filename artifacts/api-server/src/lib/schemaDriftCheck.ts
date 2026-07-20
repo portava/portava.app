@@ -127,6 +127,78 @@ export const CRITICAL_COLUMNS: ColumnProbe[] = [
     migration: "0133_rent_buddy_availability_alignment.sql",
     impact: "bookings are not blocked on vacation/blocked dates",
   },
+  // ── Task-1925 wizard-write-path audit (2026-07-20) ────────────────────────
+  // Every multi-column insert/upsert/update column list in src/routes and
+  // src/services was mechanically diffed against the live information_schema.
+  // The probes below cover each audited high-traffic write path: the newest
+  // column in each path's payload (most likely to drift) plus every column
+  // the audit actually found missing live (applied by 0163).
+  {
+    table: "posts",
+    column: "filter_id",
+    migration: "0163_write_path_drift_columns.sql",
+    impact: "every post creation fails (column is written unconditionally by POST /posts)",
+  },
+  {
+    table: "posts",
+    column: "filter_intensity",
+    migration: "0163_write_path_drift_columns.sql",
+    impact: "every post creation fails (column is written unconditionally by POST /posts)",
+  },
+  {
+    table: "posts",
+    column: "media_duration_seconds",
+    migration: "0163_write_path_drift_columns.sql",
+    impact: "every post creation fails (column is written unconditionally by POST /posts)",
+  },
+  {
+    table: "rent_buddy_bookings",
+    column: "country_code",
+    migration: "0163_write_path_drift_columns.sql",
+    impact: "rebooking a past buddy booking fails",
+  },
+  {
+    table: "rent_buddy_policy_flags",
+    column: "updated_at",
+    migration: "0163_write_path_drift_columns.sql",
+    impact: "admin policy-flag resolution updates fail",
+  },
+  {
+    table: "profiles",
+    column: "public_social_links",
+    migration: "(pre-0155 legacy chain — profile settings wizard writes it)",
+    impact: "profile settings saves fail (column is in the PATCH /profile update payload)",
+  },
+  {
+    table: "trips",
+    column: "cover_media_type",
+    migration: "(pre-0155 legacy chain — trip create/edit wizard writes it)",
+    impact: "trip create and edit fail (column is in both insert and update payloads)",
+  },
+  {
+    table: "events",
+    column: "cover_media_type",
+    migration: "(pre-0155 legacy chain — event create wizard writes it)",
+    impact: "event creation fails (column is in the insert payload)",
+  },
+  {
+    table: "profile_privacy_settings",
+    column: "delayed_posting_default",
+    migration: "(pre-0155 legacy chain — privacy settings upsert writes it)",
+    impact: "privacy settings saves fail (whole upsert rejected)",
+  },
+  {
+    table: "passport_postcards",
+    column: "note",
+    migration: "(pre-0155 legacy chain — postcard edit writes it and reads select it)",
+    impact: "postcard edits fail and postcard reads fail",
+  },
+  {
+    table: "compass_user_preferences",
+    column: "rent_buddy_discoverable",
+    migration: "20260720_compass_preference_columns.sql",
+    impact: "compass preference saves fail (full-field upsert rejected)",
+  },
   {
     table: "trips",
     column: "reminder_delivered_at",
