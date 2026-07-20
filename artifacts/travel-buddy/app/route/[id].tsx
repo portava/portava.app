@@ -26,7 +26,7 @@ import {
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { useSession } from '../../src/context/SessionContext';
 import { joinRoutePlan, leaveRoutePlan } from '../../src/services/routePlan';
-import { postCompassAsk, type CompassAskRecommendation } from '../../src/services/compass';
+import { postCompassAsk, type CompassQuickAction } from '../../src/services/compass';
 import { useRoutePlan } from '../../src/hooks/useRoutePlan';
 import { RouteMinimapView } from '../../src/components/RouteMinimapView';
 import { RouteFullMapModal } from '../../src/components/RouteFullMapModal';
@@ -111,7 +111,7 @@ export default function ActiveRouteScreen() {
   const [fullMapVisible, setFullMapVisible]     = useState(false);
   const [membersExpanded, setMembersExpanded]   = useState(false);
   const [membershipLoading, setMembershipLoading] = useState(false);
-  const [compassActions, setCompassActions]     = useState<CompassAskRecommendation['nextActions'] | null>(null);
+  const [compassActions, setCompassActions]     = useState<Array<{ label: string; kind: string }> | null>(null);
 
   const userLat = resolvedLocation.coords?.lat ?? null;
   const userLng = resolvedLocation.coords?.lng ?? null;
@@ -175,11 +175,11 @@ export default function ActiveRouteScreen() {
     const city = fullPlan.plan.startLocation?.label ?? '';
     postCompassAsk(
       `Suggest route adjustments for these stops in order: ${stopTitles}`,
-      { city: city || undefined, mode: 'itinerary' },
+      { city: city || undefined },
     )
       .then((res) => {
-        if (res.ok && res.data?.nextActions && res.data.nextActions.length > 0) {
-          setCompassActions(res.data.nextActions);
+        if (res.ok && res.data?.quickActions && res.data.quickActions.length > 0) {
+          setCompassActions(res.data.quickActions.map((a: CompassQuickAction) => ({ label: a.label, kind: a.actionType })));
         }
       })
       .catch(() => { /* non-fatal — chips fall back to static */ });

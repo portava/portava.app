@@ -363,30 +363,55 @@ export async function putCompassBoostVisibility(
   }
 }
 
-// ── AI Buddy (ask) ────────────────────────────────────────────────────────────
+// ── AI Buddy (ask) — Phase 1 ─────────────────────────────────────────────────
 
-export interface CompassAskRecommendation {
-  id: string;
-  bestPick: string;
-  why: string;
-  whyLabel?: string;
-  socialProof: string;
-  socialProofLabel?: string;
-  tradeoff?: string;
-  tradeoffLabel?: string;
-  usedPostIds: string[];
-  nextActions: Array<{ label: string; kind: string }>;
+export interface CompassQuickAction {
+  label:       string;
+  actionType:  string;
+  params?:     Record<string, unknown>;
 }
 
+export interface CompassAskPayload {
+  type:         'recommendation' | 'itinerary';
+  picks?:       Array<{ title: string; category?: string; why?: string; priceLevel?: string }>;
+  primaryPick?: number;
+  destination?: string;
+  days?:        Array<{ label: string; highlights: string[] }>;
+}
+
+/** Phase-1 response shape from POST /api/compass/ask. */
+export interface CompassAskResponse {
+  conversationId:  string | null;
+  message:         string;
+  payload:         CompassAskPayload | null;
+  quickActions:    CompassQuickAction[];
+  promptVersion:   string;
+  intent?:         { intent: string; confidence: number };
+  fallback?:       boolean;
+  fallbackReason?: string;
+}
+
+/**
+ * @deprecated Legacy shape — kept for types that reference it.
+ * New code should use CompassAskResponse.
+ */
+export interface CompassAskRecommendation extends CompassAskResponse {}
+
 export async function postCompassAsk(
-  prompt: string,
-  opts: { city?: string; mode?: 'recommend' | 'itinerary' } = {},
-): Promise<{ ok: boolean; data?: CompassAskRecommendation; error?: string }> {
+  prompt:  string,
+  opts: {
+    city?:            string;
+    conversationId?:  string;
+    /** @deprecated ignored when conversationId is present */
+    conversationContext?: string;
+    stream?:          boolean;
+  } = {},
+): Promise<{ ok: boolean; data?: CompassAskResponse; error?: string }> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();
   try {
     const r = await authedFetch('/api/compass/ask', {
       method: 'POST',
-      body: JSON.stringify({ prompt, ...opts }),
+      body:   JSON.stringify({ prompt, ...opts }),
     });
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     return { ok: true, data: await r.json() };

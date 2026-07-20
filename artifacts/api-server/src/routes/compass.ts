@@ -66,6 +66,17 @@ import {
   passesTripFilter,
   passesPassportFilter,
 } from "../compass/CompassSurfaceFilters.js";
+import { getOpenAI }                             from "../lib/openai.js";
+import { COMPASS_ASK_PROMPT, COMPASS_ASK_PROMPT_VERSION } from "../lib/prompts/compass-v1.js";
+import {
+  getOrCreateConversation,
+  loadHistory,
+  appendMessage,
+  touchConversation,
+}                                                from "../services/compass/CompassConversationService.js";
+import { classify as classifyIntent, type IntentClassification } from "../services/compass/CompassIntentClassifier.js";
+import { getWeatherContext as getWeatherForAsk }  from "../lib/weatherCache.js";
+import { buildCompassContext as buildLocationCompassContext } from "../services/location/CompassLocationContext.js";
 
 const router = Router();
 
@@ -715,55 +726,70 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
 });
 
 // ── POST /api/compass/ask ─────────────────────────────────────────────────────
-// Conversational AI-buddy endpoint: takes a natural-language travel prompt and
-// returns an AiRecommendation shaped object using the compass pipeline.
+// Phase-1 conversational Compass endpoint.
+//
+// Changes from the legacy handler:
+//   • Real multi-turn history via compass_conversations + compass_conversation_messages
+//   • Actual LLM call (gpt-5-mini) with full history + context block — no string templates
+//   • Intent classifier shadow mode: runs alongside legacy keyword routing; logs disagreements
+//   • 'action' intent (≥0.6 confidence) short-circuits with a graceful explanation
+//   • Dynamic quick-actions proposed by the model, validated against a server-side whitelist
+//   • Versioned system prompt (COMPASS_ASK_PROMPT_VERSION logged per request)
+//   • Honest fallbacks — no canned fake recommendations on any error path
+//   • Opt-in SSE streaming via body.stream=true
+//
+// Deprecated: body.conversationContext is accepted but ignored when conversationId is present.
+// Deprecated: body.mode — replaced by classifier-derived intent routing.
+
+const ALLOWED_QUICK_ACTION_TYPES = new Set([
+  "addTrip", "buildItinerary", "askCommunity", "explore",
+  "viewEvent", "viewPlace", "startPoll", "shareTip",
+  "openMap", "viewPassport", "findBuddy", "viewTrips",
+]);
+
+const HONEST_FALLBACK_MESSAGE =
+  "Compass AI assistant is temporarily unavailable. Please try again shortly.";
 
 const askBodySchema = z.object({
-  prompt: z.string().min(1).max(400),
-  city:   z.string().max(80).optional(),
-  mode:   z.enum(["recommend", "itinerary"]).default("recommend"),
+  prompt:              z.string().min(1).max(1000),
+  city:                z.string().max(80).optional(),
+  conversationId:      z.string().uuid().optional(),
+  /** @deprecated accepted but ignored when conversationId is present */
+  conversationContext: z.string().max(600).optional(),
+  stream:              z.boolean().default(false),
 });
 
-function _extractDayCount(prompt: string): number {
-  const m = prompt.match(/(\d+)[- ]day/i);
-  return m && m[1] ? Math.min(Math.max(parseInt(m[1], 10), 2), 7) : 3;
-}
-
-function _itemLabel(item: Record<string, unknown> | null | undefined): string {
-  return String(item?.title ?? item?.category ?? item?.type ?? "local spot");
-}
-
-function _itemCity(item: Record<string, unknown> | null | undefined): string {
-  return String(item?.city ?? "");
-}
-
-function _buildFallbackRec(city: string, isItinerary: boolean): Record<string, unknown> {
-  if (isItinerary) {
-    return {
-      id:               `ask_${Date.now()}`,
-      bestPick:         `3-Day Itinerary: ${city}`,
-      why:              "Arrive, settle in, explore the neighbourhood. Try a local food market in the evening.",
-      whyLabel:         "Day 1",
-      socialProof:      "Key sights, street food, and a cultural spot. Ask locals for their go-to.",
-      socialProofLabel: "Day 2",
-      tradeoff:         "Day trip or deeper local exploration. Perfect for a slow morning before heading out.",
-      tradeoffLabel:    "Day 3",
-      usedPostIds:      [],
-      nextActions:      [{ label: "Add to trip", kind: "addTrip" }],
-    };
+function _parseModelResponse(raw: string): {
+  message:      string;
+  payload:      Record<string, unknown> | null;
+  quickActions: Array<{ label: string; actionType: string; params?: Record<string, unknown> }>;
+} {
+  const cleaned = raw.trim().replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "");
+  try {
+    const p = JSON.parse(cleaned);
+    const message =
+      typeof p.message === "string" ? p.message.slice(0, 2000) : raw.slice(0, 2000);
+    const payload =
+      p.payload && typeof p.payload === "object" && !Array.isArray(p.payload)
+        ? (p.payload as Record<string, unknown>)
+        : null;
+    const rawActions = Array.isArray(p.quickActions) ? p.quickActions : [];
+    const quickActions = rawActions
+      .filter((a: any) =>
+        typeof a.label === "string" && ALLOWED_QUICK_ACTION_TYPES.has(a.actionType))
+      .slice(0, 4)
+      .map((a: any) => ({
+        label:      String(a.label).slice(0, 60),
+        actionType: String(a.actionType),
+        ...(a.params && typeof a.params === "object"
+          ? { params: a.params as Record<string, unknown> }
+          : {}),
+      }));
+    return { message, payload, quickActions };
+  } catch {
+    // Not JSON — treat entire response as plain message
+    return { message: raw.slice(0, 2000), payload: null, quickActions: [] };
   }
-  return {
-    id:          `ask_${Date.now()}`,
-    bestPick:    city,
-    why:         "Based on your travel preferences and community activity.",
-    socialProof: "Trending with travelers this week.",
-    usedPostIds: [],
-    nextActions: [
-      { label: "Add to trip",       kind: "addTrip" },
-      { label: "Build itinerary",   kind: "buildItinerary" },
-      { label: "Ask community",     kind: "askCommunity" },
-    ],
-  };
 }
 
 router.post("/compass/ask", async (req, res) => {
@@ -774,129 +800,239 @@ router.post("/compass/ask", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
+  // ── Feature-flag gate ─────────────────────────────────────────────────────
+  const compassEnabled = await isCompassEnabled(sc).catch(() => false);
+  if (!compassEnabled) {
+    req.log.info({ userId: user.id }, "compass/ask: COMPASS_ENABLED=false");
+    res.json({
+      conversationId: null,
+      message:        HONEST_FALLBACK_MESSAGE,
+      payload:        null,
+      quickActions:   [],
+      promptVersion:  COMPASS_ASK_PROMPT_VERSION,
+      fallback:       true,
+      fallbackReason: "compass_disabled",
+    });
+    return;
+  }
+
   const parsed = askBodySchema.safeParse(req.body);
   if (!parsed.success) {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid request");
     return;
   }
-  const { prompt, city, mode } = parsed.data;
+  const { prompt, city, conversationId: incomingConvId, stream } = parsed.data;
 
-  const isItinerary =
-    mode === "itinerary" ||
-    /itinerary|day[\s-]by[\s-]day|day\s+trip|schedule|full\s+plan|\d+[\s-]day/i.test(prompt);
+  // ── Conversation resolve ──────────────────────────────────────────────────
+  let conversationId: string;
+  try {
+    conversationId = await getOrCreateConversation(sc, user.id, incomingConvId);
+  } catch (err) {
+    req.log.error({ err, userId: user.id }, "compass/ask: conversation resolve failed");
+    res.json({
+      conversationId: null,
+      message:        HONEST_FALLBACK_MESSAGE,
+      payload:        null,
+      quickActions:   [],
+      promptVersion:  COMPASS_ASK_PROMPT_VERSION,
+      fallback:       true,
+      fallbackReason: "conversation_error",
+    });
+    return;
+  }
+
+  // ── History load ──────────────────────────────────────────────────────────
+  let history: Awaited<ReturnType<typeof loadHistory>> = [];
+  try {
+    history = await loadHistory(sc, conversationId);
+  } catch { /* non-fatal — proceed with empty history */ }
+
+  // ── Intent classifier (shadow mode) ──────────────────────────────────────
+  // Shadow: runs alongside legacy keyword check and logs disagreements.
+  // Exception: 'action' intent at ≥0.6 confidence is handled immediately.
+  let intentResult: IntentClassification | null = null;
+  try {
+    intentResult = await classifyIntent(prompt);
+    if (intentResult) {
+      const legacyIsItinerary =
+        /itinerary|day[\s-]by[\s-]day|day\s+trip|schedule|full\s+plan|\d+[\s-]day/i.test(prompt);
+      const legacyIntent = legacyIsItinerary ? "itinerary" : "recommendation";
+      if (
+        intentResult.confidence >= 0.6 &&
+        (intentResult.intent === "recommendation" || intentResult.intent === "itinerary") &&
+        intentResult.intent !== legacyIntent
+      ) {
+        req.log.info(
+          {
+            userId:     user.id,
+            legacyIntent,
+            newIntent:  intentResult.intent,
+            confidence: intentResult.confidence,
+            prompt:     prompt.slice(0, 80),
+          },
+          "compass/ask: classifier vs keyword disagreement (shadow mode)",
+        );
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  // ── Action intent gate ────────────────────────────────────────────────────
+  if (intentResult && intentResult.confidence >= 0.6 && intentResult.intent === "action") {
+    const actionReply =
+      "I can suggest actions but can\u2019t execute them directly. " +
+      "To add a place to your trip use the Trips tab, to save a spot tap the bookmark on any place card, " +
+      "and to connect with someone visit their profile.";
+    try {
+      await appendMessage(sc, conversationId, "user",      prompt);
+      await appendMessage(sc, conversationId, "assistant", actionReply, undefined, COMPASS_ASK_PROMPT_VERSION);
+      await touchConversation(sc, conversationId);
+    } catch { /* non-fatal */ }
+    res.json({
+      conversationId,
+      message:       actionReply,
+      payload:       null,
+      quickActions:  [{ label: "View Trips", actionType: "addTrip" }],
+      promptVersion: COMPASS_ASK_PROMPT_VERSION,
+      intent:        intentResult,
+    });
+    return;
+  }
+
+  // ── Build context block ───────────────────────────────────────────────────
+  const effectiveCity = city ?? "";
+  let locationCtx: Awaited<ReturnType<typeof buildLocationCompassContext>> | null = null;
+  let weatherBrief:          string   | null = null;
+  let followedHashtagSlugs:  string[]        = [];
+  let topItemsContext:        string[]        = [];
+
+  try { locationCtx = await buildLocationCompassContext(auth.client, user.id); } catch { /* */ }
+
+  const wxCity = effectiveCity || locationCtx?.currentCity || null;
+  if (wxCity) {
+    try { const wx = await getWeatherForAsk(wxCity); weatherBrief = wx?.briefSummary ?? null; }
+    catch { /* non-fatal */ }
+  }
 
   try {
-    const profile = await getCompassProfile(sc, user.id);
-    const signals = defaultSignals(profile);
-    const context = buildCompassContext(profile, signals);
+    const { data: followRows } = await sc
+      .from("user_hashtag_follows")
+      .select("hashtags(slug)")
+      .eq("user_id", user.id)
+      .limit(15);
+    followedHashtagSlugs = ((followRows ?? []) as any[])
+      .map((r: any) => r.hashtags?.slug)
+      .filter(Boolean) as string[];
+  } catch { /* non-fatal */ }
 
-    // If caller specified a city, blend it in for scoring/hydration
-    const effectiveProfile = city
-      ? ({ ...profile, currentCity: city } as typeof profile)
-      : profile;
-
-    const rawItems = await hydrateCompassItems(sc, effectiveProfile);
-
-    const { section: feedSection } = await buildSection(
-      "for_you",
-      rawItems,
-      effectiveProfile,
-      context,
-      sc,
-    );
-
-    const topItems = feedSection.items.slice(0, 3);
-
-    if (topItems.length === 0) {
-      const profileAny = profile as unknown as Record<string, unknown>;
-      const fallbackCity = city ?? String(profileAny.currentCity ?? "your destination");
-      res.json(_buildFallbackRec(fallbackCity, isItinerary));
-      return;
-    }
-
-    const top    = topItems[0] as unknown as Record<string, unknown>;
-    const second = topItems[1] as unknown as (Record<string, unknown> | undefined);
-    const third  = topItems[2] as unknown as (Record<string, unknown> | undefined);
-
-    const item0  = (top.item    ?? {}) as Record<string, unknown>;
-    const item1  = second ? ((second.item ?? {}) as Record<string, unknown>) : null;
-    const item2  = third  ? ((third.item  ?? {}) as Record<string, unknown>) : null;
-
-    const topTitle   = _itemLabel(item0);
-    const topCity    = _itemCity(item0) || city || "";
-    const tags       = (item0.interestTags as string[] | undefined) ?? [];
-    const interests  = tags.slice(0, 3);
-
-    let bestPick: string;
-    let why: string;
-    let whyLabel: string | undefined;
-    let socialProof: string;
-    let socialProofLabel: string | undefined;
-    let tradeoff: string | undefined;
-    let tradeoffLabel: string | undefined;
-    let nextActions: Array<{ label: string; kind: string }>;
-
-    if (isItinerary) {
-      const dayCount  = _extractDayCount(prompt);
-      const dest      = topCity || topTitle;
-      bestPick        = `${dayCount}-Day Itinerary: ${dest}`;
-      whyLabel        = "Day 1";
-      socialProofLabel = "Day 2";
-
-      why = item1
-        ? `${topTitle} in the morning. Afternoon: ${_itemLabel(item1)}.`
-        : `Explore ${topTitle}. Morning activity, local lunch, neighbourhood walk.`;
-
-      socialProof = item1
-        ? `${_itemLabel(item1)}${_itemCity(item1) ? ` · ${_itemCity(item1)}` : ""}. ${item2 ? `Then: ${_itemLabel(item2)}.` : ""}`.trim()
-        : `Flexibility day — follow local tips from traveler posts and your saves.`;
-
-      if (dayCount >= 3) {
-        tradeoffLabel = "Day 3";
-        tradeoff = item2
-          ? `${_itemLabel(item2)}${_itemCity(item2) ? ` · ${_itemCity(item2)}` : ""} — great as a final day or day trip.`
-          : `Day trip or slow exploration. Check community posts for hidden gems near ${dest}.`;
-      }
-
-      nextActions = [{ label: "Add to trip", kind: "addTrip" }];
-    } else {
-      bestPick = topCity ? `${topTitle} · ${topCity}` : topTitle;
-
-      why = interests.length
-        ? `Matches your ${interests.join(" + ")} interests${topCity ? ` — ${topCity} is active this week` : ""}.`
-        : `Top pick based on your travel profile${topCity ? ` in ${topCity}` : ""}.`;
-
-      socialProof = item1
-        ? `${_itemLabel(item1)} is also trending with travelers sharing your style.`
-        : `Traveler interest in ${topCity || "this area"} is high this week.`;
-
-      tradeoff = item2
-        ? `${_itemLabel(item2)} is worth considering as a day trip or alternative base.`
-        : undefined;
-
-      nextActions = [
-        { label: "Add to trip",     kind: "addTrip" },
-        { label: "Build itinerary", kind: "buildItinerary" },
-        { label: "Ask community",   kind: "askCommunity" },
-      ];
-    }
-
-    res.json({
-      id:               `ask_${Date.now()}`,
-      bestPick,
-      why,
-      whyLabel,
-      socialProof,
-      socialProofLabel,
-      tradeoff,
-      tradeoffLabel,
-      usedPostIds:      [],
-      nextActions,
+  // Compass pipeline items — injected as named context for the LLM to reference.
+  try {
+    const profile    = await getCompassProfile(sc, user.id);
+    const effProfile = effectiveCity ? { ...profile, currentCity: effectiveCity } : profile;
+    const signals    = defaultSignals(effProfile);
+    const ctx        = buildCompassContext(effProfile, signals);
+    const rawItems   = await hydrateCompassItems(sc, effProfile);
+    const { section: feedSection } = await buildSection("for_you", rawItems, effProfile, ctx, sc);
+    topItemsContext = feedSection.items.slice(0, 5).map((itm: any) => {
+      const d    = (itm.item ?? {}) as Record<string, unknown>;
+      const name = String(d.title ?? d.name ?? d.type ?? "place");
+      const cat  = String(d.category ?? d.type ?? "");
+      const ic   = String(d.city ?? "");
+      return `\u2022 ${name}${cat ? ` (${cat})` : ""}${ic ? ` \u2014 ${ic}` : ""}`;
     });
-  } catch (err: unknown) {
-    req.log.error({ err }, "compass/ask failed");
-    const fallbackCity = city ?? "your destination";
-    res.json(_buildFallbackRec(fallbackCity, isItinerary));
+  } catch { /* non-fatal — proceed without pipeline items */ }
+
+  const locLine = locationCtx?.currentCity
+    ? `${locationCtx.currentCity}${locationCtx.currentCountry ? `, ${locationCtx.currentCountry}` : ""}`
+    : effectiveCity || "unspecified";
+
+  const ctxLines: string[] = ["[Context \u2014 city-level only, no coordinates]"];
+  ctxLines.push(`Location: ${locLine}`);
+  if (locationCtx?.upcomingTripCity)
+    ctxLines.push(`Upcoming trip: ${locationCtx.upcomingTripCity}${locationCtx.upcomingTripCountry ? `, ${locationCtx.upcomingTripCountry}` : ""}`);
+  if (followedHashtagSlugs.length > 0)
+    ctxLines.push(`Interests: ${followedHashtagSlugs.map((s) => `#${s}`).join(", ")}`);
+  if (weatherBrief)
+    ctxLines.push(`Weather: ${weatherBrief}`);
+  if (topItemsContext.length > 0)
+    ctxLines.push(`Verified nearby places:\n${topItemsContext.join("\n")}`);
+
+  const userMessageWithContext = `${prompt}\n\n${ctxLines.join("\n")}`;
+
+  // ── Build messages array ──────────────────────────────────────────────────
+  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+    { role: "system", content: COMPASS_ASK_PROMPT },
+    ...history.map((h) => ({ role: h.role as "user" | "assistant", content: h.content })),
+    { role: "user",   content: userMessageWithContext },
+  ];
+
+  // Persist user message (non-fatal)
+  try { await appendMessage(sc, conversationId, "user", prompt); } catch { /* */ }
+
+  req.log.info(
+    {
+      userId:        user.id,
+      conversationId,
+      historyTurns:  history.length,
+      promptVersion: COMPASS_ASK_PROMPT_VERSION,
+      intent:        intentResult?.intent,
+      confidence:    intentResult?.confidence,
+    },
+    "compass/ask: LLM call",
+  );
+
+  // ── SSE streaming ─────────────────────────────────────────────────────────
+  if (stream) {
+    res.setHeader("Content-Type",  "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection",    "keep-alive");
+    res.flushHeaders();
+    try {
+      const streamResp = await (getOpenAI() as any).chat.completions.create({
+        model: "gpt-5-mini", max_completion_tokens: 1200, messages, stream: true,
+      });
+      let full = "";
+      for await (const chunk of streamResp as any) {
+        const delta: string = chunk.choices?.[0]?.delta?.content ?? "";
+        if (delta) { full += delta; res.write(`data: ${JSON.stringify({ delta })}\n\n`); }
+      }
+      const { message, payload, quickActions } = _parseModelResponse(full);
+      try {
+        await appendMessage(sc, conversationId, "assistant", message, payload ? { payload } : undefined, COMPASS_ASK_PROMPT_VERSION);
+        await touchConversation(sc, conversationId);
+      } catch { /* non-fatal */ }
+      res.write(`data: ${JSON.stringify({ done: true, conversationId, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, intent: intentResult })}\n\n`);
+      res.end();
+    } catch (err) {
+      req.log.error({ err, userId: user.id }, "compass/ask stream failed");
+      res.write(`data: ${JSON.stringify({ error: true, message: HONEST_FALLBACK_MESSAGE })}\n\n`);
+      res.end();
+    }
+    return;
+  }
+
+  // ── Non-streaming (default) ───────────────────────────────────────────────
+  try {
+    const completion = await getOpenAI().chat.completions.create({
+      model: "gpt-5-mini", max_completion_tokens: 1200, messages,
+    });
+    const raw = completion.choices[0]?.message?.content ?? "";
+    const { message, payload, quickActions } = _parseModelResponse(raw);
+    try {
+      await appendMessage(sc, conversationId, "assistant", message, payload ? { payload } : undefined, COMPASS_ASK_PROMPT_VERSION);
+      await touchConversation(sc, conversationId);
+    } catch { /* non-fatal */ }
+    res.json({ conversationId, message, payload: payload ?? null, quickActions, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
+  } catch (err) {
+    req.log.error({ err, userId: user.id }, "compass/ask: LLM call failed");
+    res.json({
+      conversationId,
+      message:        HONEST_FALLBACK_MESSAGE,
+      payload:        null,
+      quickActions:   [],
+      promptVersion:  COMPASS_ASK_PROMPT_VERSION,
+      fallback:       true,
+      fallbackReason: "ai_error",
+    });
   }
 });
 

@@ -209,6 +209,42 @@ export type AiAction =
   | { label: 'Ask community'; kind: 'askCommunity' }
   | { label: 'Build itinerary'; kind: 'buildItinerary' };
 
+// ── Compass AI Buddy — Phase 1 types ─────────────────────────────────────────
+
+export type CompassQuickActionType =
+  | 'addTrip' | 'buildItinerary' | 'askCommunity' | 'explore'
+  | 'viewEvent' | 'viewPlace' | 'startPoll' | 'shareTip'
+  | 'openMap' | 'viewPassport' | 'findBuddy' | 'viewTrips';
+
+export interface CompassQuickAction {
+  label:      string;
+  actionType: CompassQuickActionType;
+  params?:    Record<string, unknown>;
+}
+
+export interface CompassAskPayload {
+  type:         'recommendation' | 'itinerary';
+  picks?:       Array<{ title: string; category?: string; why?: string; priceLevel?: string }>;
+  primaryPick?: number;
+  destination?: string;
+  days?:        Array<{ label: string; highlights: string[] }>;
+}
+
+/**
+ * Phase-1 Compass ask response.
+ * Replaces the legacy AiRecommendation shape from the old /compass/ask endpoint.
+ */
+export interface CompassAskResponse {
+  conversationId:  string | null;
+  message:         string;
+  payload:         CompassAskPayload | null;
+  quickActions:    CompassQuickAction[];
+  promptVersion:   string;
+  intent?:         { intent: string; confidence: number };
+  fallback?:       boolean;
+  fallbackReason?: string;
+}
+
 export interface ChatMessage {
   id: ID;
   role: 'user' | 'assistant';

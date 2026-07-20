@@ -8,9 +8,8 @@ import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarC
 import { Sparkles, Send, Plane, MessageCircle, Map, PlusCircle } from 'lucide-react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { postCompassFrontloadEvent, postCompassAsk } from '../../src/services/compass';
-import type { CompassAskRecommendation } from '../../src/services/compass';
+import type { CompassAskResponse } from '../../src/services/compass';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
-import { Stamp } from '../../src/components/ui';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
@@ -18,7 +17,7 @@ import { color, space, radius, type as t, shadow } from '../../src/theme/tokens'
 type ChatEntry =
   | { kind: 'user';    id: string; text: string }
   | { kind: 'ai_text'; id: string; text: string }
-  | { kind: 'rec';     id: string; rec: CompassAskRecommendation }
+  | { kind: 'rec';     id: string; rec: CompassAskResponse }
   | { kind: 'typing';  id: string };
 
 export default function AiChat() {
@@ -39,7 +38,7 @@ export default function AiChat() {
     setTimeout(() => scroll.current?.scrollToEnd({ animated: true }), 80);
   }
 
-  async function send(promptOverride?: string, modeOverride?: 'recommend' | 'itinerary') {
+  async function send(promptOverride?: string) {
     const text = (promptOverride ?? input).trim();
     if (!text || loading) return;
     if (!promptOverride) setInput('');
@@ -55,7 +54,7 @@ export default function AiChat() {
     setLoading(true);
     scrollToEnd();
 
-    const result = await postCompassAsk(text, { mode: modeOverride });
+    const result = await postCompassAsk(text);
 
     setEntries((prev) => {
       const without = prev.filter((e) => e.id !== typingId);
@@ -75,18 +74,18 @@ export default function AiChat() {
     scrollToEnd();
   }
 
-  function handleAction(rec: CompassAskRecommendation, kind: string) {
+  function handleAction(rec: CompassAskResponse, kind: string) {
     switch (kind) {
       case 'addTrip':
         planPicker.open({
-          id:       rec.id,
+          id:       rec.conversationId ?? 'compass_suggestion',
           type:     'compass_suggestion',
-          title:    rec.bestPick,
+          title:    rec.message.slice(0, 120),
           category: 'activity',
         });
         break;
       case 'buildItinerary':
-        send(`Build a 3-day itinerary for ${rec.bestPick}`, 'itinerary');
+        send(`Build a 3-day itinerary based on: ${rec.message.slice(0, 80)}`);
         break;
       case 'askCommunity':
         router.push('/(tabs)/messages');
@@ -196,46 +195,31 @@ function RecCard({
   rec,
   onAction,
 }: {
-  rec: CompassAskRecommendation;
+  rec: CompassAskResponse;
   onAction: (kind: string) => void;
 }) {
   return (
     <View style={styles.rec}>
       <View style={styles.aiHead}>
         <Sparkles size={15} color={color.signal} />
-        <Text style={styles.aiHeadText}>BEST PICK</Text>
+        <Text style={styles.aiHeadText}>AI BUDDY</Text>
       </View>
-      <Text style={styles.recPick}>{rec.bestPick}</Text>
+      <Text style={styles.recBody}>{rec.message}</Text>
 
-      <Text style={styles.recLabel}>{rec.whyLabel ?? 'Why'}</Text>
-      <Text style={styles.recBody}>{rec.why}</Text>
-
-      <Text style={styles.recLabel}>{rec.socialProofLabel ?? 'Travelers are saying'}</Text>
-      <Text style={styles.recBody}>{rec.socialProof}</Text>
-
-      {rec.tradeoff ? (
-        <>
-          <Text style={styles.recLabel}>{rec.tradeoffLabel ?? 'Tradeoff'}</Text>
-          <Text style={styles.recBody}>{rec.tradeoff}</Text>
-        </>
+      {(rec.quickActions ?? []).length > 0 ? (
+        <View style={styles.actions}>
+          {(rec.quickActions ?? []).map((a) => (
+            <Pressable
+              key={a.actionType}
+              style={styles.actionBtn}
+              onPress={() => onAction(a.actionType)}
+            >
+              {ACTION_ICONS[a.actionType] ?? null}
+              <Text style={styles.actionText}>{a.label}</Text>
+            </Pressable>
+          ))}
+        </View>
       ) : null}
-
-      <View style={styles.usedRow}>
-        <Stamp label={`${rec.usedPostIds?.length ?? 0} posts used`} tone="deep" />
-      </View>
-
-      <View style={styles.actions}>
-        {(rec.nextActions ?? []).map((a) => (
-          <Pressable
-            key={a.kind}
-            style={styles.actionBtn}
-            onPress={() => onAction(a.kind)}
-          >
-            {ACTION_ICONS[a.kind] ?? null}
-            <Text style={styles.actionText}>{a.label}</Text>
-          </Pressable>
-        ))}
-      </View>
     </View>
   );
 }

@@ -38,3 +38,4 @@
 - [Fake-client builder drift](fake-client-builder-drift.md) — new route builder calls (maybeSingle/gte/order) silently break hand-written test fakes; grep fakes when touching shared query paths.
 - Background `&`/nohup processes die when a ShellExec call ends — run server + client probes inside ONE grouped command `{ ...; }`.
 - [RNTL React 19 renderer budget](rntl-react19-renderer-budget.md) — per-file press budget, one press-commit, post-press-flush poison, prop-capture escape hatch; structure component tests around it.
+- [Compass Phase 1 test gotchas](compass-phase1-test-gotchas.md) — feature_flags column is `flag` not `key`; Express test servers need req.log shim; _setTestClient second arg is boolean not string.
