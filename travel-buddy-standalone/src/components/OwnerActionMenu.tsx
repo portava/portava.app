@@ -81,7 +81,7 @@ const ACTIONS = [
     icon: Info,
     bg: '#E8F8FB',
     iconColor: '#1A9CB0',
-    onPress: (handlers: Props) => { handlers.onClose(); router.push('/profile/about' as any); },
+    onPress: (handlers: Props) => { handlers.onClose(); router.push('/profile/edit/about' as any); },
   },
   {
     label: 'Safety',
