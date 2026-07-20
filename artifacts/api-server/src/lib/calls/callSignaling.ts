@@ -378,11 +378,25 @@ export function announceEventRoomEnded(sc: SupabaseClient, session: CallSession)
     .catch((err) => logger.warn({ err }, "event-room ended announce failed (non-critical)"));
 }
 
-/** Privacy-safe operational analytics — event + type metadata only. */
+/**
+ * Compute call duration in milliseconds from session timestamps.
+ * Returns null when the call never connected (missed, declined, canceled, failed).
+ * Exported for unit tests.
+ */
+export function computeCallDurationMs(
+  session: Pick<CallSession, "connectedAt" | "endedAt">,
+): number | null {
+  if (!session.connectedAt || !session.endedAt) return null;
+  const ms = Date.parse(session.endedAt) - Date.parse(session.connectedAt);
+  return ms >= 0 ? ms : null;
+}
+
+/** Privacy-safe operational analytics — event + type metadata only, no content. */
 export function emitCallAnalytics(
   type: "started" | "answered" | "declined" | "missed" | "ended" | "failed",
-  session: Pick<CallSession, "id" | "callType" | "contextType">,
+  session: Pick<CallSession, "id" | "callType" | "contextType" | "connectedAt" | "endedAt">,
 ): void {
+  const durationMs = computeCallDurationMs(session);
   logger.info(
     {
       event: "call_analytics",
@@ -390,6 +404,7 @@ export function emitCallAnalytics(
       callId: session.id,
       callType: session.callType,
       contextType: session.contextType,
+      durationMs,
     },
     "call analytics",
   );
@@ -413,7 +428,7 @@ export async function forceEndDirectCallsBetween(
       await applyEvent(store, admin, session, { type: "END" }, nowIso);
       const ended: StoredCallSession = { ...session, status: "ended", endedAt: nowIso };
       publishCallEvent("call.ended", [userA, userB], ended, { reason: "blocked" });
-      emitCallAnalytics("ended", session);
+      emitCallAnalytics("ended", ended); // use post-transition object so endedAt is populated
     }
   } catch (err) {
     logger.warn({ err }, "forceEndDirectCallsBetween failed (non-critical)");
