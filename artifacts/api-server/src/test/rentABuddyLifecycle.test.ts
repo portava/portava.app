@@ -531,11 +531,17 @@ describe("C — Full-payload application: wizard fields persist and round-trip v
         if (table === "rent_buddy_profiles") {
           return {
             ...base,
-            upsert: () => ({
-              ...base,
-              then: (resolve: (r: any) => any) =>
-                Promise.resolve({ data: null, error: { message: "db constraint violation" } }).then(resolve),
-            }),
+            upsert: () => {
+              const errResult = { data: null, error: { message: "db constraint violation" } };
+              const errChain: any = {
+                ...base,
+                select: () => errChain,
+                maybeSingle: () => Promise.resolve(errResult),
+                single: () => Promise.resolve(errResult),
+                then: (resolve: (r: any) => any) => Promise.resolve(errResult).then(resolve),
+              };
+              return errChain;
+            },
           };
         }
         return base;

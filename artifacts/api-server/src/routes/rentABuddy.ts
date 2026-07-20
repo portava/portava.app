@@ -338,7 +338,10 @@ function mapBooking(row: any) {
   };
 }
 
-function mapApplication(row: any) {
+// `profile` is the applicant's rent_buddy_profiles row (if any). Wizard-collected
+// fields (displayName, bio, hourlyRateUsd, availability, zones) are persisted there
+// at apply time, so we surface them on the application shape for admin review.
+function mapApplication(row: any, profile?: any) {
   if (!row) return null;
   return {
     id: row.id,
@@ -349,6 +352,11 @@ function mapApplication(row: any) {
     categories: row.categories ?? [],
     languages: row.languages ?? [],
     motivation: row.motivation,
+    displayName: profile?.display_name ?? null,
+    bio: profile?.bio ?? null,
+    hourlyRateUsd: profile?.hourly_rate_usd != null ? Number(profile.hourly_rate_usd) : null,
+    availability: profile?.availability_blocks ?? [],
+    zones: profile?.preferred_meetup_zones ?? [],
     idVerificationRef: row.id_verification_ref,
     socialLinks: row.social_links ?? {},
     policyAccepted: row.policy_accepted,
@@ -3084,13 +3092,20 @@ router.get("/api/rent-a-buddy/apply", async (req, res) => {
   const serviceClient = sc(auth.client);
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { data } = await serviceClient
-    .from("rent_buddy_applications")
-    .select("*")
-    .eq("user_id", auth.user.id)
-    .maybeSingle();
+  const [{ data }, { data: profileRow }] = await Promise.all([
+    serviceClient
+      .from("rent_buddy_applications")
+      .select("*")
+      .eq("user_id", auth.user.id)
+      .maybeSingle(),
+    serviceClient
+      .from("rent_buddy_profiles")
+      .select("display_name, bio, hourly_rate_usd, availability_blocks, preferred_meetup_zones")
+      .eq("user_id", auth.user.id)
+      .maybeSingle(),
+  ]);
 
-  return res.json({ application: mapApplication(data) });
+  return res.json({ application: mapApplication(data, profileRow) });
 });
 
 router.post("/api/rent-a-buddy/apply", async (req, res) => {
@@ -3165,14 +3180,16 @@ router.post("/api/rent-a-buddy/apply", async (req, res) => {
   if (Array.isArray(availability))                                  profilePatch.availability_blocks  = availability;
   if (Array.isArray(zones))                                         profilePatch.preferred_meetup_zones = zones;
 
-  const { error: profileError } = await serviceClient
+  const { data: profileRow, error: profileError } = await serviceClient
     .from("rent_buddy_profiles")
-    .upsert(profilePatch, { onConflict: "user_id" });
+    .upsert(profilePatch, { onConflict: "user_id" })
+    .select("display_name, bio, hourly_rate_usd, availability_blocks, preferred_meetup_zones")
+    .maybeSingle();
 
   if (profileError) return sendError(res, "db_error", profileError.message);
 
   return res.status(201).json({
-    application: mapApplication(data),
+    application: mapApplication(data, profileRow),
     message: "Application submitted. Our team will review it soon.",
     policyText: POLICY_TEXT,
   });
@@ -3828,7 +3845,24 @@ router.get("/api/rent-a-buddy/admin/applications", async (req, res) => {
   if (status) query = query.eq("status", status);
 
   const { data, count } = await query;
-  return res.json({ applications: (data ?? []).map(mapApplication), total: count ?? 0 });
+  const rows = data ?? [];
+
+  // Enrich with wizard-collected profile fields so the review page shows
+  // everything in one place (no separate profile-tab lookup needed).
+  const userIds = Array.from(new Set(rows.map((r: any) => r.user_id).filter(Boolean)));
+  const profilesByUserId = new Map<string, any>();
+  if (userIds.length > 0) {
+    const { data: profileRows } = await serviceClient
+      .from("rent_buddy_profiles")
+      .select("user_id, display_name, bio, hourly_rate_usd, availability_blocks, preferred_meetup_zones")
+      .in("user_id", userIds);
+    for (const p of profileRows ?? []) profilesByUserId.set((p as any).user_id, p);
+  }
+
+  return res.json({
+    applications: rows.map((r: any) => mapApplication(r, profilesByUserId.get(r.user_id))),
+    total: count ?? 0,
+  });
 });
 
 router.patch("/api/rent-a-buddy/admin/applications/:appId", async (req, res) => {

@@ -137,6 +137,12 @@ export interface BuddyApplication {
   categories: BuddyCategory[];
   languages: string[];
   motivation: string | null;
+  /** Wizard-collected profile fields, surfaced for admin review (from rent_buddy_profiles). */
+  displayName: string | null;
+  bio: string | null;
+  hourlyRateUsd: number | null;
+  availability: Array<Record<string, unknown>>;
+  zones: string[];
   socialLinks: Record<string, string>;
   reviewNotes: string | null;
   reviewedAt: string | null;

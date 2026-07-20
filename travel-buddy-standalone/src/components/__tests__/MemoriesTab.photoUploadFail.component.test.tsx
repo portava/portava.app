@@ -229,7 +229,15 @@ describe('CreateMemoryModal — upload failure', () => {
       fireEvent.press(screen.getByText('Add photo or video'));
       await new Promise<void>((r) => setTimeout(r, 30));
     });
-    screen.getByText('Change'); // sync confirmation that setPhotoUri committed
+    // Under parallel-suite load a single 30 ms window can be too short for the
+    // ImagePicker awaits to resolve; flush in extra act() ticks until the
+    // 'Change' label commits (no waitFor — see act()/screen discipline above).
+    for (let i = 0; i < 20 && screen.queryByText('Change') === null; i++) {
+      await act(async () => {
+        await new Promise<void>((r) => setTimeout(r, 30));
+      });
+    }
+    screen.getByText('Change'); // confirmation that setPhotoUri committed
 
     // Save press: 30 ms gives the mockResolvedValue microtask time to fire so
     // handleSave's error branch runs before act() exits.
