@@ -19,9 +19,21 @@ app.use(helmet());
 // (mobile apps, curl, server-to-server) are always allowed through.
 // Document new origins in .env.example.
 const _rawOrigins = process.env.ALLOWED_ORIGINS;
+const CORS_FALLBACK_ORIGINS = [
+  "https://app.travel-buddy.io",
+  "https://www.travel-buddy.io",
+  "https://portava.replit.app",
+];
 const ALLOWED_ORIGINS: string[] = _rawOrigins
   ? _rawOrigins.split(",").map((s) => s.trim()).filter(Boolean)
-  : ["https://app.travel-buddy.io", "https://www.travel-buddy.io"];
+  : (() => {
+      logger.warn(
+        { fallbackOrigins: CORS_FALLBACK_ORIGINS },
+        "ALLOWED_ORIGINS env var is not set — CORS allowlist is using hardcoded fallback domains. " +
+          "Set ALLOWED_ORIGINS in production to avoid silently blocking or allowing wrong origins.",
+      );
+      return CORS_FALLBACK_ORIGINS;
+    })();
 
 app.use(
   cors({
